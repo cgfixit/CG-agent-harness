@@ -98,6 +98,8 @@ pub struct OpsRequest {
     /// planner model's measured speed. The same value budgets the child here and
     /// crosses as `--planner-timeout-sec`; `None` keeps the configured one.
     pub planner_timeout_sec: Option<u64>,
+    /// Startup planner inputs used to size this run; checked by the child after config load.
+    pub planner_identity: Option<String>,
 }
 
 impl OpsRequest {
@@ -245,6 +247,7 @@ pub fn validate(req: &OpsRequest) -> Result<(), ShimError> {
         &req.commit_message,
         &req.run_id,
         &req.decision,
+        &req.planner_identity,
     ];
     if argv_text.iter().any(|v| v.as_deref().is_some_and(|s| s.contains('\0'))) {
         return Err(ShimError::Ops(format!("{a} argv values must not contain NUL bytes")));
@@ -402,6 +405,9 @@ pub fn build_argv(ctx: &ShimContext, req: &OpsRequest) -> Result<(Vec<String>, V
             }
             if let Some(seconds) = req.planner_timeout_sec {
                 argv.push(format!("--planner-timeout-sec={seconds}"));
+            }
+            if let Some(identity) = &req.planner_identity {
+                argv.push(format!("--planner-identity={identity}"));
             }
             if req.confirm {
                 argv.push("--confirm".into());

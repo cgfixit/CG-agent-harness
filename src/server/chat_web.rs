@@ -241,6 +241,7 @@ pub async fn run_stream(
     temperature: f64,
     token_ratio: f64,
     web_mode: super::sessions::GoalWebMode,
+    sized_tuned: bool,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let lease = web.chat_turn.start(owner)?;
@@ -249,7 +250,7 @@ pub async fn run_stream(
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
         // A turn of several tool rounds gets more than one call's deadline; each
         // model call keeps its own (`ChatClient::timeout_for`).
-        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, output)) =>
+        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, output)) =>
             result.map_err(|_| error("WEB_TIMEOUT", "chat web turn deadline exceeded"))?,
     }
 }
@@ -266,6 +267,7 @@ async fn run_inner(
     temperature: f64,
     token_ratio: f64,
     web_mode: super::sessions::GoalWebMode,
+    sized_tuned: bool,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let mut messages: Vec<Value> = history
@@ -342,7 +344,9 @@ async fn run_inner(
         peak_extra = peak_extra.max(extra);
         let validate = || check_evidence(state, owner, &sources);
         // A tool round may run long: the window must still allow this budget.
-        state.ensure_window_allows(model, 0, web.limits.total_tokens).await?;
+        state
+            .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
+            .await?;
         let response = state
             .chat
             .chat_with_tools_stream(
