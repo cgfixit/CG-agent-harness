@@ -271,8 +271,9 @@ pub fn propose(
         values.push(json!({"key": key, "current": current(key), "proposed": value}));
     }
     // The timeout is installed once, but budgets apply as min(configured,
-    // proposed). The prompt and reply settings are restart-only (a restart
-    // tunes again), so size those for what is in force. web.chat_tool_calls
+    // proposed). The reply setting is restart-only (a restart tunes again), so
+    // size it for what is in force. The prompt can reach the hard limit, the
+    // prompt cap for this window, past the compaction trigger. web.chat_tool_calls
     // reloads up to the proposal, so size tool rounds for the proposal.
     if let Some(seconds) = speed.and_then(|speed| {
         let proposed = |key: &str| {
@@ -283,7 +284,7 @@ pub fn propose(
         };
         derived_timeout(
             speed,
-            proposed("chat.compact_prompt_tokens")?.min(current("chat.compact_prompt_tokens")),
+            compaction::prompt_cap(Some(window)),
             compaction::reply_reservation(backend, proposed_reply.min(current("models.local_llm.max_tokens"))),
             proposed("web.chat_tool_calls").unwrap_or(0),
         )
@@ -664,14 +665,14 @@ mod tests {
         let none = backend(Some("none"));
         let shipped_size = propose(&loaded(TUNED_WINDOW), Some(&speed), &cfg, &web, &none);
         let large = propose(&loaded(131_072), Some(&speed), &cfg, &web, &none);
-        // The larger prompt and reply proposals are not applied over the
-        // restart-only shipped config (budgets only tighten), so the timeout is
-        // sized for the configured ones. Tool calls reload up to the proposal,
-        // so they are sized for it.
+        // The larger reply proposal is not applied over the restart-only
+        // shipped config (budgets only tighten), so the timeout is sized for the
+        // configured reply, and for the hard limit a prompt can reach: this
+        // window's prompt cap. Tool calls reload up to the proposal.
         assert!(value(&large, "chat.compact_prompt_tokens") > value(&shipped_size, "chat.compact_prompt_tokens"));
         let expected = derived_timeout(
             &speed,
-            cfg.u64_or("chat.compact_prompt_tokens", compaction::DEFAULT_PROMPT_TOKENS),
+            compaction::prompt_cap(Some(131_072)),
             compaction::reply_reservation(
                 &none,
                 cfg.u64_or("models.local_llm.max_tokens", compaction::DEFAULT_REPLY_TOKENS),

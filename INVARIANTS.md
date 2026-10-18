@@ -514,7 +514,7 @@ cap `MAX_MESSAGES`); no 20-turn or 8000-char clip; compaction owns overflow.
 The effective trigger is
 `max(chat.compact_prompt_tokens, effective_reply_reservation + 4096 +
 calibrated_tool_definition_tokens)`, capped at 30000 (scaled to an `auto_tune`-verified
-window). Web-enabled chat tightens the trigger
+window); that cap is the hard limit a compacting turn may still send. Web-enabled chat tightens both
 toward `web.total_tokens - minimal tool result` (the projection carries the reservation and definitions, so every admitted
 prompt fits a round)
 and never below that floor; the web dispatcher charges each call's prompt once,
@@ -530,18 +530,23 @@ The incoming user paste is never compacted. One local-model call
 (`compaction.summary_max_tokens`, default 768, clamped 128–2048, sent as its
 reservation) summarizes within 24000 characters and the calibrated budget: goal
 and first message read-only, the prior `[session-compacted]`
-summary intact (else compaction fails), then the newest middle turns clipped to
+summary intact (else it is unusable), then the newest middle turns clipped to
 800 characters, gaps marked. Ungrounded identifiers become `[unverified]`;
-absence claims and unquoted corrections are dropped. The tail is whole exchanges
+absence claims and corrections quoting no user turn (a quote under 8 characters
+must be a whole turn) are dropped; identifiers match whole tokens. The tail is whole exchanges
 within `chat.compact_keep_messages` and `chat.compact_tail_percent` of the
 trigger, at least one; the summary goes as a user-role note ranked below
 exact messages.
-A failed, empty, timed-out or aborted summary, or a prompt compaction cannot
-bring below the trigger, leaves the session unrewritten; the latter refuses the turn. Otherwise the summary persists atomically with the next successful exchange,
+A failed, empty, cut-off, timed-out or aborted summary leaves the session
+unrewritten. An unusable one (empty, cut off, prior summaries too big), or a middle
+under twice the summary's cost, sends the turn uncompacted within the hard
+limit (audit `chat_compaction_skipped`); transport failures refuse it. A new
+message alone must fit the trigger; a compacted prompt above the hard limit is
+refused. Otherwise the summary persists atomically with the next successful exchange,
 with calibration, via `write_json_atomic_mode` at `0o600`. The system prompt is
 composed each turn, never stored in `messages`; `Session.goal` and the first
-user message are preserved, even at `MAX_MESSAGES`. The audits `chat_session_compacted`, `chat_prompt_too_large` (projected sizes)
-and `chat_busy` store no bodies.
+user message are preserved, even at `MAX_MESSAGES`. The audits `chat_session_compacted`, `chat_compaction_skipped`, `chat_prompt_too_large`
+(projected sizes) and `chat_busy` store no bodies.
 
 - Locked by: `src/server/compaction.rs`,
   `src/server/sessions.rs::record_exchange_inner`,

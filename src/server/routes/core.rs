@@ -915,6 +915,8 @@ async fn chat_inner(
         prompt_history(&session.messages)
     };
     let mut compaction = None;
+    // Why this turn was sent uncompacted although it passed the trigger.
+    let mut compaction_skipped: Option<&'static str> = None;
     let mut summary_prompt_tokens = 0u64;
     let mut summary_completion_tokens = 0u64;
     // The prompt limit this turn was sized for, checked again before the reply.
@@ -938,7 +940,20 @@ async fn chat_inner(
             crate::server::compaction::calibrated_tokens(crate::server::web_search::MIN_EVIDENCE_TOKENS, ratio),
             reply_setting,
         );
-        turn_prompt_limit = threshold;
+        // The trigger starts compaction; the hard limit (the prompt cap, or the
+        // web room for web chat) is the most a turn may send. History that
+        // compaction cannot bring under the trigger, or a summary the model
+        // could not produce usably, is sent while it fits the hard limit.
+        let (hard_limit, hard_source) = crate::server::compaction::turn_prompt_limit(
+            prompt_cap,
+            prompt_cap,
+            web_chat.then_some(web.limits.total_tokens),
+            reservation,
+            crate::server::compaction::calibrated_tokens(tool_tokens, ratio),
+            crate::server::compaction::calibrated_tokens(crate::server::web_search::MIN_EVIDENCE_TOKENS, ratio),
+            reply_setting,
+        );
+        turn_prompt_limit = hard_limit;
         // What can raise the web budget, so the remedy never suggests a change that cannot help.
         let web_raise = crate::server::compaction::WebRaise::for_budget(
             web.limits.total_tokens,
@@ -947,7 +962,7 @@ async fn chat_inner(
         );
         // Name the setting that actually bounds this prompt: "start a new session"
         // cannot help when the system prompt and reply reservation fill the limit.
-        let too_large = |what: &str, projected: u64, compacted: u64| {
+        let too_large = |what: &str, projected: u64, compacted: u64, threshold: u64, limit_source: &'static str| {
             state.audit.log(json!({
                 "event": "chat_prompt_too_large",
                 "session_id": session.session_id,
@@ -1011,6 +1026,8 @@ async fn chat_inner(
                     "the new message and system prompt alone exceed",
                     projected,
                     paste_alone,
+                    threshold,
+                    limit_source,
                 ));
             }
             let before = session.messages.len();
@@ -1046,16 +1063,25 @@ async fn chat_inner(
                 ratio,
                 tool_tokens,
             ) + if middle.is_empty() { 0 } else { scaffold };
-            if retained_projected > threshold {
+            if retained_projected > hard_limit {
                 return Err(too_large(
                     "the next prompt still exceeds, after history compaction,",
                     projected,
                     retained_projected,
+                    hard_limit,
+                    hard_source,
                 ));
             }
+            let fits_uncompacted = projected <= hard_limit;
             let mut summary_meta = crate::server::compaction::Summary::default();
-            let summary = if middle.is_empty() {
-                crate::server::compaction::COMPACT_PREFIX.to_string()
+            let summary = if fits_uncompacted
+                && !crate::server::compaction::worth_summarizing(middle, summary_send + scaffold, ratio)
+            {
+                // Too little to summarize to be worth a model call.
+                compaction_skipped = Some("no_gain");
+                None
+            } else if middle.is_empty() {
+                Some(crate::server::compaction::COMPACT_PREFIX.to_string())
             } else {
                 // The summary is a model call too: check the window first and
                 // size its input to the model's cap, not the 32768 default.
@@ -1067,7 +1093,7 @@ async fn chat_inner(
                     goal: &session.goal,
                     first_user: session.messages.iter().find(|m| m.role == "user").map(|m| m.text.as_str()),
                 };
-                summary_meta = crate::server::compaction::summarize_turns(
+                match crate::server::compaction::summarize_turns(
                     &state.chat,
                     &model,
                     pinned,
@@ -1078,11 +1104,23 @@ async fn chat_inner(
                     state.prompt_cap(&model),
                 )
                 .await
-                .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-                summary_prompt_tokens = summary_meta.prompt_tokens;
-                summary_completion_tokens = summary_meta.completion_tokens;
-                std::mem::take(&mut summary_meta.text)
+                {
+                    Ok(meta) => {
+                        summary_meta = meta;
+                        summary_prompt_tokens = summary_meta.prompt_tokens;
+                        summary_completion_tokens = summary_meta.completion_tokens;
+                        Some(std::mem::take(&mut summary_meta.text))
+                    }
+                    // A summary the model could not produce usably leaves the
+                    // session unrewritten; the turn goes uncompacted if it fits.
+                    Err(e) if e.code == crate::server::compaction::SUMMARY_UNUSABLE && fits_uncompacted => {
+                        compaction_skipped = Some("summary_unusable");
+                        None
+                    }
+                    Err(e) => return Err(ApiError::from_err(StatusCode::BAD_GATEWAY, &e)),
+                }
             };
+            if let Some(summary) = summary {
             let compacted = crate::server::compaction::compact_messages(&session.messages, keep, &summary);
             let compacted_history = prompt_history(&compacted);
             let compacted_projected = crate::server::compaction::projected_prompt_tokens(
@@ -1093,11 +1131,13 @@ async fn chat_inner(
                 ratio,
                 tool_tokens,
             );
-            if compacted_projected > threshold {
+            if compacted_projected > hard_limit {
                 return Err(too_large(
                     "the next prompt still exceeds, after history compaction,",
                     projected,
                     compacted_projected,
+                    hard_limit,
+                    hard_source,
                 ));
             }
             compaction = Some(Compaction {
@@ -1114,6 +1154,7 @@ async fn chat_inner(
                 repairs: summary_meta.repairs,
             });
             history = compacted_history;
+            }
         }
     }
     history.push(ChatMessage {
@@ -1323,6 +1364,9 @@ async fn chat_inner(
             "dropped_corrections": c.repairs.dropped_corrections,
         })
     });
+    if let Some(reason) = compaction_skipped {
+        state.audit.log(json!({"event": "chat_compaction_skipped", "session_id": session.session_id, "reason": reason}));
+    }
     if let Some(report) = &compaction_report {
         let mut event = json!({"event": "chat_session_compacted", "session_id": session.session_id});
         if let (Some(event), Some(report)) = (event.as_object_mut(), report.as_object()) {
@@ -1372,6 +1416,7 @@ async fn chat_inner(
         "memory_suggestion": memory_suggestion,
         "context_window": context_window,
         "compaction": compaction_report,
+        "compaction_skipped": compaction_skipped,
         "structured_facts": {
             "explicit_recall": crate::server::structured_memory::recall_available(
                 &state.cfg,

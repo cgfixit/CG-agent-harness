@@ -87,7 +87,10 @@ keeps only its key name and `/loop` turns are skipped. The session log keeps the
 latest 50 across restart; legacy logs seed it from user messages and compaction
 keeps it. Session switches and logout reset navigation; the browser stores nothing.
 
-The session store retains at most 500 messages per conversation. Local prompt
+The session store retains at most 500 messages per conversation, dropping the
+oldest whole exchanges after the first exchange or its summary. A model reply
+that opens with `[session-compacted]` is stored with a leading space, so only
+compaction writes a summary. Local prompt
 history uses that window; [compaction](#local-history-compaction) reduces
 overflow against the configured token budget, preserving the goal and recent messages. Stored token totals can
 therefore exceed the compacted context sent to the model.
@@ -598,7 +601,10 @@ model window per [MODELS.md](MODELS.md).
 `compaction.summary_max_tokens` defaults to 768 and clamps to 128–2048. Tune
 these in home `config.yaml`, then restart. Compaction is inline;
 empty, failed, truncated, or cancelled output commits neither summary nor
-calibration. A prompt that still exceeds the limit returns
+calibration. Past the trigger a turn may still send up to the hard limit, the
+prompt cap (web chat: the web room): an empty or cut-off summary, or too little
+to summarize, sends it uncompacted, and the response's `compaction_skipped`
+says why. A new message alone must fit the trigger. A prompt over its limit returns
 `CHAT_PROMPT_TOO_LARGE` (422) naming the bounding setting (`details.limit_source`),
 the turn's reply budget (`models.local_llm.max_tokens`, or
 `api.harness_loop_rate_limit.max_tokens` for `/loop`) and only remedies that can help.

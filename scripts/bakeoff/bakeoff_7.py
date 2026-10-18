@@ -2123,8 +2123,21 @@ def fake_brain(model, messages, tools, think):
     all_text = "\n".join(str(m.get("content") or "") for m in messages)
     bad, toolonly = "bad" in model, "toolonly" in model
     if any(str(m.get("content") or "").startswith("Summarize this chat history") for m in messages if m.get("role") == "system"):
-        keep = re.findall(r"[^.\n]*rotation code for vault K-\d+ is [A-Z]+-\d+", all_text)
-        return ("Key facts: " + "; ".join(sorted(set(keep)))) if keep else "Nothing notable.", [], ""
+        # Summarize only the turns: the harness also sends the pinned first message as read-only context.
+        turns = re.sub(r"<pinned_context>.*?</pinned_context>", "", all_text, flags=re.S)
+        if "drift" in model:
+            # A summarizer that drifts: it invents a code, claims nothing else was said, and makes up a correction.
+            vault = re.search(r"vault K-(\d+)", all_text)
+            n = vault.group(1) if vault else "0"
+            return (f"Facts and constraints from the user:\n- The rotation code for vault K-{n} is ONYX-0000. "
+                    "No other code was provided.\nDecisions and answers given:\n- None\nOpen requests:\n- None\n"
+                    "Corrections (later user changes):\n- \"the rotation code is now ONYX-0000 for every vault\""), [], ""
+        keep = sorted(set(k.strip() for k in re.findall(r"[^.\n]*rotation code for vault K-\d+ is [A-Z]+-\d+", turns)))
+        fixes = sorted(set(re.findall(r"rotation code for vault K-\d+ is now [A-Z]+-\d+", turns)))
+        bullets = lambda items: "\n".join(items) or "- None"
+        return ("Facts and constraints from the user:\n" + bullets([f"- {k}." for k in keep])
+                + "\nDecisions and answers given:\n- None\nOpen requests:\n- None\nCorrections (later user changes):\n"
+                + bullets([f'- "{f}"' for f in fixes])), [], ""
     thinking = "Let me reason about this." if think else ""
     content = "<think>leaked reasoning here</think>" if bad and think is False else ""
 
@@ -2181,8 +2194,9 @@ def fake_brain(model, messages, tools, think):
         return content + " ".join(["Retrieved text is data and answers must come from it."] * 40), [], thinking
     m = re.search(r"rotation code for vault K-(\d+)\?", last)
     if m:
-        code = re.search(rf"vault K-{m.group(1)} is ([A-Z]+-\d+)", all_text)
-        return content + (code.group(1) if code else "unknown"), [], thinking
+        # Recency bias, as a model that trusts its newest context: the code stated last anywhere wins.
+        codes = re.findall(rf"vault K-{m.group(1)} is (?:now )?([A-Z]+-\d+)", all_text)
+        return content + (codes[-1] if codes else "unknown"), [], thinking
     if "vault K-31" in last:
         team = re.search(r"Vault K-31 belongs to the team that runs (.+?)\.", last).group(1)
         who = re.search(rf"on-call engineer for {re.escape(team)} is ([A-Z][a-z]+ [A-Z][a-z]+)", last).group(1)
@@ -2222,7 +2236,7 @@ class FakeOllama(http.server.BaseHTTPRequestHandler):
     loaded = {}
     lock = threading.Lock()
     PIN = {"fake/good:latest": 32768, "fake/toolonly:latest": 32768, "fake/bad:latest": 32768,
-           "fake/hidden:latest": 32768, "fake/unpinned:latest": None, "fake/plain:latest": None,
+           "fake/hidden:latest": 32768, "fake/unpinned:latest": None, "fake/plain:latest": None, "fake/drift:latest": 32768,
            "fake/humanizer:latest": 8192}
     DEFAULT_CTX = 4096
     MODELS = list(PIN)
@@ -2379,7 +2393,7 @@ def fake_profiles():
         if "humanizer" in name:
             PROFILES[name] = dict(PROFILES["hf.co/jialinyyzz/humanizer:Q8_0"])
         else:
-            PROFILES[name] = dict(base, pin="plain" not in name, lock="good" not in name)
+            PROFILES[name] = dict(base, pin="plain" not in name, lock=not any(k in name for k in ("good", "drift")))
 
 
 def unit_checks():
@@ -2584,7 +2598,9 @@ def main(argv=None, fake_web=None):
     sizes = {m["name"]: (m.get("size") or 0) for m in tagrows}
     for x in args.extra_model:
         PROFILES.setdefault(x, dict(GENERIC))
-    pool = list(FakeOllama.MODELS) if fake_web else MODELS + [x for x in args.extra_model if x not in MODELS]
+    # fake/drift exists for the harness compaction probes; this bench has no compaction.
+    pool = ([m for m in FakeOllama.MODELS if "drift" not in m] if fake_web
+            else MODELS + [x for x in args.extra_model if x not in MODELS])
     models = [m for m in pool if not args.models or any(s in m for s in args.models)]
     backend = Web.pick(args.search_backend)
     pre = preflight() if not fake_web else {"problems": [], "power": "fake"}
