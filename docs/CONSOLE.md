@@ -27,8 +27,10 @@ persona, or reply never authorizes commands, commits, pushes, or publication.
 | Recovery | Rediscover retained jobs and runs after reopening. Worker leases distinguish active work from interrupted runs; reopening does not automatically resume work or replay a publication. |
 
 Text follows browser zoom. In the sidebar tab list, arrow keys, Home and End move
-and Enter or Space opens a tab. The conversation is a polite live log, marked
-busy while a reply streams.
+and Enter or Space opens a tab. Drag its right edge to resize; drag far left to
+hide it. The top-left **>>** restores it. The divider also accepts arrow keys,
+Home to hide and End to expand. Width lasts until reload. The conversation is a
+polite live log, marked busy while a reply streams.
 
 ## 7. Chat, soul, skills and goals
 
