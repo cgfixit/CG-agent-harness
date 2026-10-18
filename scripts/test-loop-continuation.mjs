@@ -7,8 +7,8 @@ const start = html.indexOf('/* ── chat ── */');
 const end = html.indexOf('function sleepMs(', start);
 assert.ok(start !== -1 && end > start, 'loop helpers are present in the console');
 const ctx = vm.createContext({});
-vm.runInContext(html.slice(start, end) + ';this.api={replyHasGoalDone,loopTurnPrompt,repliesNearlyRepeat,loopBlockingWebCode};', ctx);
-const {replyHasGoalDone, loopTurnPrompt, repliesNearlyRepeat, loopBlockingWebCode} = ctx.api;
+vm.runInContext(html.slice(start, end) + ';this.api={replyHasGoalDone,loopTurnPrompt,repliesNearlyRepeat,loopBlockingWebCode,loopGoalFromMessages,loopGoalFromSession};', ctx);
+const {replyHasGoalDone, loopTurnPrompt, repliesNearlyRepeat, loopBlockingWebCode, loopGoalFromMessages, loopGoalFromSession} = ctx.api;
 
 for (const done of ['GOAL_DONE', '**GOAL_DONE**', '`GOAL_DONE`', '## GOAL_DONE', 'GOAL_DONE.', '> GOAL_DONE',
   '- GOAL_DONE', '__GOAL_DONE__', 'Summary.\n\n**GOAL_DONE**\n', '1. GOAL_DONE', '3) **GOAL_DONE**']) {
@@ -94,12 +94,134 @@ console.log('Unattended loop retries a verdict-less turn up to MAX_LOOP_FAILURES
 
 // Execute the actual slash branch too: preflight must use its own session guard.
 const loopCase=html.slice(html.indexOf("      case 'loop': {"),html.indexOf("      case 'tokens': {"));
-const command=vm.createContext({rest:['2'],loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,api:async(path)=>path==='/api/status'?{provider:'ollama',chat_tools_available:true}:{goal:'stored goal',live_attachment_pins:1},paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{command.ran=true;}});
+const command=vm.createContext({rest:['2'],loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,api:async(path)=>path==='/api/status'?{provider:'ollama',chat_tools_available:true}:{goal:'stored goal',live_attachment_pins:1},paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{command.ran=true;}});
 await vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',command);
 assert.equal(command.ran,true);
 assert.equal(command.sessionGoal,'stored goal');
 assert.equal(command.loopState.remaining,2);
 console.log('Loop command preflight loads goal and starts the owned loop.');
+
+// Goal derivation: the last own prompt, never a loop turn or compaction note.
+assert.equal(loopGoalFromMessages([{role:'user',content:'first'},{role:'assistant',content:'ack'},{role:'user',content:'fix the parser'}],2000),'fix the parser');
+assert.equal(loopGoalFromMessages([{role:'user',content:'Loop turn 1 of 3. Session goal: x'},{role:'user',content:'[session-compacted]\nsummary'}],2000),'','loop turns and compaction notes are not goals');
+assert.equal(loopGoalFromMessages([{role:'user',content:'  '},{role:'assistant',content:null}],2000),'');
+assert.equal(loopGoalFromMessages(null,2000),'');
+assert.equal(loopGoalFromMessages([{role:'user',content:'x'.repeat(3000)}],2000).length,2000,'bounded by the server goal limit');
+assert.equal(loopGoalFromMessages(['older ask','/loop stop','/goal clear'],2000),'older ask','prompt-history strings work; slash commands are not goals');
+assert.equal(loopGoalFromSession({prompt_history:['first','timed-out ask','/loop'],messages:[{role:'user',content:'first'}]},2000),'timed-out ask','a failed prompt in the history outranks the last successful message');
+assert.equal(loopGoalFromSession({prompt_history:['/help'],messages:[{role:'user',content:'legacy'}]},2000),'legacy','history of only commands falls back to messages');
+assert.equal(loopGoalFromSession(null,2000),'');
+console.log('Loop goal derivation takes the last own prompt and stays bounded.');
+
+// A goal-less /loop derives the goal from the session and starts; with no
+// prompt history at all it is still refused.
+{
+  const calls=[];
+  const derive=vm.createContext({rest:['2'],loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,MAX_GOAL_CHARS:2000,loopGoalFromSession,
+    api:async(path,method,body)=>{calls.push({path,method,body});
+      if(path==='/api/status')return{provider:'ollama',chat_tools_available:true};
+      if(method==='POST')return{goal:body.goal,goal_web_mode:'all'};
+      return {goal:'',messages:[{role:'user',content:'Loop turn 1 of 3. Session goal: x'},{role:'assistant',content:'ack'},{role:'user',content:'fix the parser'}],live_attachment_pins:0};},
+    paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{derive.ran=true;}});
+  await vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',derive);
+  const set=calls.find(c=>c.method==='POST');
+  assert.equal(set.path,'/api/sessions/owned/goal');
+  assert.equal(set.body.goal,'fix the parser','the last own prompt becomes the goal');
+  assert.equal(derive.ran,true);
+  const bare=vm.createContext({rest:['2'],loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,MAX_GOAL_CHARS:2000,loopGoalFromSession,
+    api:async(path)=>path==='/api/status'?{provider:'ollama',chat_tools_available:true}:{goal:'',messages:[],live_attachment_pins:0},
+    paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{bare.ran=true;}});
+  await vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',bare);
+  assert.equal(bare.ran,false,'no goal and no prompt history never starts a loop');
+  const cloudCalls=[];
+  const cloud=vm.createContext({rest:['--web','fetch'],loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,MAX_GOAL_CHARS:2000,loopGoalFromSession,
+    api:async(path,method,body)=>{cloudCalls.push({path,method,body});
+      if(path==='/api/status')return{provider:'grok',base_url:null};
+      if(method==='POST')return{goal:body.goal,goal_web_mode:body.web_mode||'all'};
+      return {goal:'',messages:[{role:'user',content:'fix the parser'}],live_attachment_pins:0};},
+    paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{cloud.ran=true;}});
+  await vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',cloud);
+  assert.equal(cloud.ran,false,'cloud /loop is refused');
+  assert.equal(cloudCalls.some(c=>c.method==='POST'),false,'a refused cloud /loop persists neither a derived goal nor a web mode');
+  function loopFixture(rest,extra){
+    const box=Object.assign({rest,loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,MAX_GOAL_CHARS:2000,loopGoalFromSession,
+      calls:[],paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{box.ran=true;},
+      api:async(path,method,body)=>{box.calls.push({path,method,body});if(box.during)box.during(path,method);
+        if(path==='/api/status')return{provider:'ollama',chat_tools_available:true};
+        if(method==='POST')return{goal:body.goal,goal_web_mode:body.web_mode||'all'};
+        return {goal:'',messages:[{role:'user',content:'fix the parser'}],live_attachment_pins:0};}},extra||{});
+    return vm.createContext(box);
+  }
+  const run=c=>vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',c);
+  const invalid=loopFixture(['nope']); await run(invalid);
+  assert.equal(invalid.calls.length,0,'an invalid turn count persists nothing');
+  assert.equal(invalid.ran,false);
+  const zero=loopFixture(['0']); await run(zero);
+  assert.equal(zero.calls.length,0,'/loop 0 persists nothing');
+  const atomic=loopFixture(['--web','fetch','2']); await run(atomic);
+  const posts=atomic.calls.filter(c=>c.method==='POST');
+  assert.equal(posts.length,1,'the derived goal and the requested mode land in one write');
+  assert.equal(JSON.stringify(posts[0].body),JSON.stringify({goal:'fix the parser',web_mode:'fetch'}));
+  assert.equal(atomic.ran,true);
+  const stoppedSlash=loopFixture(['2']);
+  stoppedSlash.during=(path,method)=>{if(method==='POST')stoppedSlash.loopCancelGeneration++;};
+  await run(stoppedSlash);
+  assert.equal(stoppedSlash.ran,false,'/loop stop during the goal seed cancels the explicit /loop');
+  assert.equal(stoppedSlash.loopState,null);
+  console.log('Goal-less /loop validates first, seeds goal and mode atomically, and honors a stop during setup.');
+  console.log('Goal-less /loop derives the goal from the last prompt; empty history stays refused.');
+}
+
+// Context-pressure default: maybeAutoLoop continues a compacted turn toward
+// the goal, derives a missing goal, and stays off for cloud or running loops.
+{
+  const autoSrc=html.slice(html.indexOf('async function maybeAutoLoop()'),html.indexOf('window.addEventListener',html.indexOf('async function maybeAutoLoop()')));
+  function autoFixture(provider,goal,messages){
+    const box={loopState:null,currentSession:'s',sessionRevision:0,loopCancelGeneration:0,sessionGoal:goal,lastStatus:{provider,base_url:provider==='ollama'?'http://127.0.0.1:11434':null},
+      MAX_GOAL_CHARS:2000,DEFAULT_LOOP_TURNS:3,loopGoalFromSession,calls:[],
+      api:async(path,method,body)=>{box.calls.push({path,method,body});if(box.during)box.during(path,method);return method==='POST'?{goal:body.goal}:{goal,messages};},
+      paintGoalLoop(){},sys:m=>box.calls.push({sys:m}),showError:e=>{throw e;},runLoopTurns:async()=>{box.looped=true;}};
+    const c=vm.createContext(box);vm.runInContext(autoSrc,c);return c;
+  }
+  const local=autoFixture('ollama','',['fix the parser'].map(content=>({role:'user',content})));
+  await local.maybeAutoLoop();
+  assert.equal(local.looped,true,'compacted local turn auto-continues');
+  assert.equal(local.loopState.auto,true);
+  assert.equal(local.calls.find(c=>c.method==='POST').body.goal,'fix the parser');
+  assert.equal(local.loopState.autoStarted,true,'an automatic loop is marked so staged attachments stay staged');
+  const otherTab=autoFixture('ollama','',[]);
+  otherTab.api=async(path,method,body)=>{otherTab.calls.push({path,method,body});return method==='POST'?{goal:body.goal}:{goal:'goal from another tab',messages:[{role:'user',content:'stale prompt'}]};};
+  await otherTab.maybeAutoLoop();
+  assert.equal(otherTab.looped,true);
+  assert.equal(otherTab.sessionGoal,'goal from another tab','a goal stored elsewhere is kept, not overwritten');
+  assert.equal(otherTab.calls.some(c=>c.method==='POST'),false);
+  const cloud=autoFixture('grok','goal',[]);
+  await cloud.maybeAutoLoop();
+  assert.equal(cloud.looped,undefined,'cloud never auto-loops');
+  const running=autoFixture('ollama','goal',[]);
+  running.loopState={running:true};
+  await running.maybeAutoLoop();
+  assert.equal(running.looped,undefined,'a running loop is left alone');
+  const goalless=autoFixture('ollama','',[]);
+  await goalless.maybeAutoLoop();
+  assert.equal(goalless.looped,undefined,'nothing to continue stays idle');
+  const switched=autoFixture('ollama','',[{role:'user',content:'fix the parser'}]);
+  switched.during=(path,method)=>{if(method!=='POST'){switched.currentSession='other';switched.sessionRevision++;}};
+  await switched.maybeAutoLoop();
+  assert.equal(switched.looped,undefined,'a session switch during setup wins');
+  assert.equal(switched.calls.some(c=>c.method==='POST'),false,'the old prompt is never written to the new session');
+  const stopped=autoFixture('ollama','',[{role:'user',content:'fix the parser'}]);
+  stopped.during=(path,method)=>{if(method==='POST')stopped.loopCancelGeneration++;};
+  await stopped.maybeAutoLoop();
+  assert.equal(stopped.looped,undefined,'/loop stop during setup cancels the continuation');
+  assert.equal(stopped.loopState,null);
+  // /loop auto during a compaction-started loop turns it off on the first toggle.
+  const toggle=vm.createContext({rest:['auto'],loopState:{auto:true,running:true,remaining:2},loopAuto:false,sys(){},paintGoalLoop(){}});
+  await vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',toggle);
+  assert.equal(toggle.loopState.auto,false,'one /loop auto stops automatic continuation of an auto-started loop');
+  assert.equal(toggle.loopAuto,false);
+  console.log('Auto-loop on compaction: local only, goal-derived, never overlaps.');
+}
 
 // Execute goal option parsing, persisted payload and invalid-mode refusal.
 const goalCase=html.slice(html.indexOf("      case 'goal': {"),html.indexOf("      case 'loop': {"));
@@ -114,7 +236,7 @@ console.log('Goal command persists explicit web modes, omits the mode otherwise,
 // /loop --web <mode> re-sets the stored goal with that mode before the first turn.
 {
   const calls=[];
-  const command=vm.createContext({rest:['--web','all','2'],loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,api:async(path,method,body)=>{calls.push({path,method,body});return path==='/api/status'?{provider:'ollama',chat_tools_available:true}:method==='POST'?{goal:body.goal,goal_web_mode:body.web_mode}:{goal:'stored goal',goal_web_mode:'fetch',live_attachment_pins:0};},paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{command.ran=true;}});
+  const command=vm.createContext({rest:['--web','all','2'],loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,api:async(path,method,body)=>{calls.push({path,method,body});return path==='/api/status'?{provider:'ollama',chat_tools_available:true}:method==='POST'?{goal:body.goal,goal_web_mode:body.web_mode}:{goal:'stored goal',goal_web_mode:'fetch',live_attachment_pins:0};},paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{command.ran=true;}});
   await vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',command);
   const set=calls.find(c=>c.method==='POST');
   assert.equal(set.path,'/api/sessions/owned/goal');
