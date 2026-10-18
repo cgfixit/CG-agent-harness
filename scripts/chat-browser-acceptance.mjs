@@ -10,8 +10,11 @@ import {join} from 'node:path';
 const html = await readFile(new URL('../assets/static/harness.html', import.meta.url), 'utf8');
 const slashSource = await readFile(new URL('../src/server/slash.rs', import.meta.url), 'utf8');
 const canonicalCommands = [...slashSource.match(/const COMMANDS: &[\s\S]*?= &\[([\s\S]*?)\];/)[1].matchAll(/"([a-z]+)"/g)].map(match=>'/'+match[1]).sort();
-// The mock's fresh-home admin signs in with a one-time setup code, as the real store does.
+// The mock's fresh-home admin signs in with a one-time setup code, as the real store does;
+// a password change replaces it and the code stops working (auth_store.rs change_password).
 const FIXTURE_SETUP_CODE='fx2a-b3cd-e4fg-h5jk';
+let adminPassword=FIXTURE_SETUP_CODE;
+const userIds={admin:'1'.repeat(32),'audit-fixture':'2'.repeat(32),'memory-second':'3'.repeat(32)}; // random_hex(16) owner ids
 let persona=''; let clearFails=false, slashMode='dispatch';
 let authFixture=false, signedIn=false, logoutStatus=200, whoamiDrop=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
 let automationFixture=null; // null keeps the unknown-path {} reply for the header feature probes
@@ -47,6 +50,10 @@ const server=createServer(async(req,res)=>{
  const reply=(value,status=200)=>{if(!res.headersSent)res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
  if(path==='/'){res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'nonce-fixture'; style-src 'nonce-fixture'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");res.end(html.replaceAll('__CYCLAW_CSRF_TOKEN__','fixture').replaceAll('__CYCLAW_CSP_NONCE__','fixture'));return;}
  if(path.startsWith('/static/')){res.end('');return;}
+ // Mirrors account_gate (src/server/guards.rs): an audit account reaches only the public
+ // routes, its own whoami/password/logout and GET /api/audit.
+ const route=path.split('?')[0];
+ if(authFixture&&signedIn&&authRole==='audit'&&route.startsWith('/api/')&&!['/api/status','/api/auth/setup-status','/api/auth/login','/api/auth/whoami','/api/auth/password','/api/auth/logout'].includes(route)&&!(route==='/api/audit'&&req.method==='GET')){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
  // Browser dispatch contract fixture; actual grammar is covered by Rust slash tests.
  if(path==='/api/slash/parse'){
   if(slashMode==='error'){reply({detail:{code:'UNAVAILABLE',message:'parser fixture unavailable'}},503);return;}
@@ -67,18 +74,18 @@ const server=createServer(async(req,res)=>{
   if(apiSet){reply({kind:'dispatch',dispatch:true,canonical:'/api set '+apiSet[1],command:'api',sub:'set',rest:apiSet[1]});return;}
   reply({kind:'dispatch',dispatch:true,canonical:body.line});return;
  }
- if(path==='/api/auth/whoami'){if(whoamiDrop){req.socket.destroy();return;}reply(authFixture&&signedIn?{username:authUsername,role:authRole,must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
- if(path==='/api/auth/setup-status'){reply({setup_code:authFixture&&mustChange});return;}
+ if(path==='/api/auth/whoami'){if(whoamiDrop){req.socket.destroy();return;}reply(authFixture&&signedIn?{username:authUsername,role:authRole,user_id:userIds[authUsername],must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
+ if(path==='/api/auth/setup-status'){reply({enabled:true,setup_code:authFixture&&adminPassword===FIXTURE_SETUP_CODE});return;}
  if(path==='/api/auth/login'){
   const auditor=body.username==='audit-fixture'&&body.password==='browser-auditor-password';
   const secondOwner=body.username==='memory-second'&&body.password==='browser-memory-password';
-  signedIn=auditor||secondOwner||(body.username==='admin'&&body.password===FIXTURE_SETUP_CODE);
+  signedIn=auditor||secondOwner||(body.username==='admin'&&body.password===adminPassword);
   authUsername=auditor?'audit-fixture':secondOwner?'memory-second':'admin';authRole=auditor?'audit':'admin';
   if(auditor)mustChange=false;
-  reply({username:authUsername,role:authRole,must_change_password:mustChange},signedIn?200:401);return;
+  reply({username:authUsername,role:authRole,user_id:userIds[authUsername],must_change_password:mustChange},signedIn?200:401);return;
  }
- if(path==='/api/auth/password'){assert.equal(body.current_password,FIXTURE_SETUP_CODE);assert.ok(body.password.length>=12);mustChange=false;reply({changed:true});return;}
- if(path==='/api/auth/logout'){if(logoutStatus!==200){reply({detail:{code:'AUTH_REQUIRED',message:'session expired'}},logoutStatus);return;}signedIn=false;reply({logged_out:true});return;}
+ if(path==='/api/auth/password'){assert.equal(body.current_password,adminPassword);assert.ok(body.password.length>=12);adminPassword=body.password;mustChange=false;reply({ok:true,must_change_password:false});return;}
+ if(path==='/api/auth/logout'){if(logoutStatus!==200){reply({detail:{code:'AUTH_REQUIRED',message:'session expired'}},logoutStatus);return;}signedIn=false;reply({ok:true});return;}
  if(path==='/api/keys'){
   if(!signedIn || mustChange || authRole!=='admin'){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
   if(req.method==='POST'){if(body.clear?.includes('DEEPAGENT_API_KEY'))savedKey='';if(body.clear?.includes('SERPAPI_API_KEY'))savedSearchKey='';if(body.keys?.DEEPAGENT_API_KEY)savedKey=body.keys.DEEPAGENT_API_KEY;if(body.keys?.SERPAPI_API_KEY)savedSearchKey=body.keys.SERPAPI_API_KEY;}
@@ -92,7 +99,6 @@ const server=createServer(async(req,res)=>{
  }
  if(path==='/api/prompt/preview'){reply({scope:'Chat preview',prompt:'Discipline contract\n'+(body.soul_content??persona)});return;}
  if(path==='/api/registry'){reply({skills:[],tools:[],connectors:[]});return;}
- if(authFixture&&signedIn&&authRole==='audit'&&(path==='/api/sessions'||path.startsWith('/api/sessions/'))){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'Your role does not permit access to sessions.'}},403);return;}
  if(path.startsWith('/api/style')){
   const sessionId=req.method==='POST'?body.session_id:new URL(path,'http://fixture').searchParams.get('session_id');
   const session=sessionId?sessions.get(sessionId):null;
@@ -124,7 +130,7 @@ const server=createServer(async(req,res)=>{
  if(path==='/api/agent/checks'){reply({profiles:[{name:'cargo-fmt'}],default_profile:'cargo-test',capabilities:{jobs:true},planner_model:'mock'});return;}
  if(path==='/api/notifications'||path==='/api/tools'){
   if(authFixture&&!signedIn){reply({detail:{code:'AUTH_REQUIRED',message:'authentication required'}},401);return;}
-  if(authFixture&&(mustChange||authRole==='audit')){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
+  if(authFixture&&mustChange){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
   if(automationFixture){reply(path==='/api/notifications'?{enabled:automationFixture.notifications,destinations:[],deliveries:[]}:{tools:[{name:'agent-schedule-start',path:'/api/agent/schedules',enabled:automationFixture.agentic}],wired:1,total:1});return;}
  }
  if(path==='/api/spend/predict'){
@@ -875,7 +881,7 @@ try {
  assert.equal(await evaluate('document.querySelectorAll("#pane-memory form").length'),1,'the current account keeps its own proposal after the rejected stale request');
  await evaluate('document.getElementById("hAuthLogout").click()');
  await until('!document.getElementById("hAuthLoginBox").hidden');memoryOwnerFixture=null;
- await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value='+JSON.stringify(FIXTURE_SETUP_CODE)+';document.getElementById("hAuthLogin").click()');
+ await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="browser-fixture-password";document.getElementById("hAuthLogin").click()');
  await until('document.getElementById("hAuthLoginBox").hidden');
  // An expired session rejects logout (401); the Memory pane must still be cleared before anyone signs in again.
  await send('/memory facts');
@@ -899,7 +905,7 @@ try {
  assert.equal(await evaluate('sessionGoal'),'');assert.equal(await evaluate('document.getElementById("input").value'),'');
  assert.equal(await evaluate('document.getElementById("sSession").textContent'),'none');
  logoutStatus=200;const factsBeforeRelogin=factReads();
- await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value='+JSON.stringify(FIXTURE_SETUP_CODE)+';document.getElementById("hAuthLogin").click()');
+ await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value="browser-fixture-password";document.getElementById("hAuthLogin").click()');
  await until('document.getElementById("hAuthLoginBox").hidden');
  // Logout cleared the old view above; successful login now reloads the retained
  // Memory tab through the current account instead of leaving it empty.
@@ -917,13 +923,15 @@ try {
  assert.equal(await evaluate('document.getElementById("signInScreen").hidden'),false,'logout returns to the sign-in card');
  // Authentication succeeds for an auditor even though the server denies operational sessions.
  await evaluate('document.getElementById("hAuthUser").value="audit-fixture";document.getElementById("hAuthPass").value="browser-auditor-password";document.getElementById("hAuthLogin").click()');
- await until('document.getElementById("pane-sessions").textContent.includes("Your role does not permit access to sessions.")');
- assert.equal(await evaluate('document.getElementById("hAuthWho").textContent'),'audit-fixture · audit','a session permission denial must not turn successful login into a network error');
+ await until('document.getElementById("pane-sessions").textContent.includes("AUTH_PERMISSION_DENIED: denied")');
+ assert.equal(await evaluate('document.getElementById("hAuthWho").textContent'),'audit-fixture · audit · '+userIds['audit-fixture'],'a session permission denial must not turn successful login into a network error');
  assert.equal(await evaluate('document.getElementById("sStyle").disabled'),true,'auditors cannot select a session style');
  assert.equal(await evaluate('document.querySelectorAll("#pane-sessions button").length'),0,'auditors must not see New Session or Clear History controls');
  assert.equal(await evaluate('refreshHeaderFeatures(true).then(()=>["openDeliveries","openSchedules"].every(id=>document.getElementById(id).hidden))'),true,'refused (403) probes keep automation hidden');
  assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true);
- await evaluate('document.getElementById("stream").replaceChildren()');await send('/status');
+ // account_gate denies an auditor /api/slash/parse, so a typed /status is refused unsent;
+ // drive the reduced status view through the dispatcher instead.
+ await evaluate('document.getElementById("stream").replaceChildren()');await evaluate('runSlash("/status")');
  const auditorStatus=await evaluate('document.getElementById("stream").innerText');
  assert.equal(auditorStatus.includes('undefined'),false,'redacted status must not render missing fields');
  assert.match(auditorStatus,/read.only/i,'auditor status must explain its read-only scope');

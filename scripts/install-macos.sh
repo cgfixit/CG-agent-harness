@@ -59,15 +59,43 @@ clt_ok() { xcode-select -p >/dev/null 2>&1 && xcrun clang --version >/dev/null 2
 brew_ok() { have brew && brew --version >/dev/null 2>&1; }
 # A GitHub CLI that runs (not a stale link or a wrong-arch binary).
 gh_ok() { have gh && gh --version >/dev/null 2>&1; }
-# The app's backend searches only these directories (desktop/src/backend.rs finder_path),
-# so a gh elsewhere (e.g. MacPorts' /opt/local/bin) is invisible to its coding pipeline.
+# Up to eight directories from <home>/desktop-tools.json, one per line, that the app
+# puts first on its backend's PATH (desktop/src/backend.rs configured_path). Nothing when
+# the file is absent or one the app refuses. Without the Command Line Tools,
+# /usr/bin/python3 opens an install dialog, so it is not run then.
+desktop_tool_dirs() {
+  local f="${CGAGENTHARNESS_HOME:-$HOME/.CGagentHarness}/desktop-tools.json"
+  [ -f "$f" ] && clt_ok || return 0
+  python3 -I - "$f" 2>/dev/null <<'PY' || true
+import json, os, stat, sys
+s = os.lstat(sys.argv[1])
+assert stat.S_ISREG(s.st_mode) and s.st_uid == os.getuid() and not s.st_mode & 0o077 and s.st_size <= 8192
+with open(sys.argv[1], "rb") as f:
+    dirs = json.load(f)["directories"]
+assert isinstance(dirs, list) and len(dirs) <= 8
+for d in dirs:
+    assert isinstance(d, str) and d.startswith("/") and ":" not in d and "\n" not in d
+    s = os.stat(d)
+    assert stat.S_ISDIR(s.st_mode) and s.st_uid == os.getuid() and not s.st_mode & 0o022
+print("\n".join(dirs))
+PY
+}
+# The app's backend searches those, then only these directories (finder_path), so a gh
+# elsewhere (e.g. MacPorts' /opt/local/bin) is invisible to its coding pipeline.
 # The backend resolves the first file named gh in that order (src/common/process.rs which),
 # whether or not it runs, so print exactly that one.
 gh_app_first() {
   local d
-  for d in "$HOME/.cargo/bin" /opt/homebrew/bin /usr/local/bin /usr/bin /bin; do
-    if [ -f "$d/gh" ]; then printf '%s\n' "$d/gh"; return 0; fi
-  done
+  while IFS= read -r d; do
+    if [ -n "$d" ] && [ -f "$d/gh" ]; then printf '%s\n' "$d/gh"; return 0; fi
+  done <<EOF
+$(desktop_tool_dirs)
+$HOME/.cargo/bin
+/opt/homebrew/bin
+/usr/local/bin
+/usr/bin
+/bin
+EOF
   return 1
 }
 # X.Y.Z >= X.Y.Z, numerically.
