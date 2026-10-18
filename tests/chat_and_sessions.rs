@@ -846,6 +846,17 @@ async fn compaction_is_persisted_only_with_a_successful_exchange() {
 async fn summary_model(
     summary: Option<&'static str>,
 ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>) {
+    match summary {
+        Some(text) => summary_model_finishing(text, "stop").await,
+        None => summary_model_finishing("cut", "length").await,
+    }
+}
+
+/// [`summary_model`] whose summary calls finish with `finish_reason`.
+async fn summary_model_finishing(
+    summary: &'static str,
+    finish_reason: &'static str,
+) -> (String, std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>) {
     use axum::{routing::post, Json, Router};
     use std::sync::{Arc, Mutex};
     let requests = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
@@ -859,9 +870,9 @@ async fn summary_model(
                 let is_summary = body["messages"][0]["content"]
                     .as_str()
                     .is_some_and(|s| s.starts_with("Summarize this chat history"));
-                let mut reply = ok_reply(if is_summary { summary.unwrap_or("cut") } else { "fine" }, 100, 2);
-                if is_summary && summary.is_none() {
-                    reply["choices"][0]["finish_reason"] = json!("length");
+                let mut reply = ok_reply(if is_summary { summary } else { "fine" }, 100, 2);
+                if is_summary {
+                    reply["choices"][0]["finish_reason"] = json!(finish_reason);
                 }
                 Json(reply)
             }
@@ -940,6 +951,47 @@ async fn unusable_summary_falls_back(summary: Option<&'static str>) {
         .audit_log()
         .lines()
         .any(|l| l.contains("\"event\":\"chat_compaction_skipped\"") && l.contains("\"reason\":\"summary_unusable\"")));
+}
+
+/// Only a summary cut off at the token cap is unusable. A filtered one is a
+/// failed call: the turn is refused, not sent uncompacted, and the session is
+/// not rewritten.
+#[tokio::test]
+async fn a_filtered_summary_refuses_the_turn_without_rewriting_the_session() {
+    let (url, requests) = summary_model_finishing("partial", "content_filter").await;
+    let s = spawn_server(
+        &url,
+        ServerOptions::default()
+            .with("chat.compact_prompt_tokens", "4096")
+            .with("chat.compact_keep_messages", "2"),
+    )
+    .await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let usage = cgagentharness::server::sessions::TokenTally::default();
+    for i in 0..6 {
+        s.state
+            .store
+            .for_owner("local")
+            .record_exchange(
+                sid,
+                &format!("u{i} {}", "u".repeat(2000)),
+                &format!("a{i} {}", "a".repeat(2000)),
+                "fixture",
+                &usage,
+                &[],
+            )
+            .unwrap();
+    }
+    let path = s.home.join("sessions").join(format!("{sid}.json"));
+    let before = std::fs::read(&path).unwrap();
+
+    let (status, body) = s
+        .post_json("/api/chat", json!({"session_id":sid,"message":"next"}))
+        .await;
+    assert_eq!(status, 502, "{body}");
+    assert_eq!(requests.lock().unwrap().len(), 1, "the summary call only, no reply");
+    assert_eq!(std::fs::read(&path).unwrap(), before);
 }
 
 #[tokio::test]
