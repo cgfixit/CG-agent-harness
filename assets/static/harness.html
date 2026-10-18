@@ -992,6 +992,8 @@ const LOOP_RETRY_CAP_SEC = 300;
 /* Status/decision/push/discard/publish and GitHub-status calls spawn a CLI
    bounded at 120s. Job submission returns immediately; polling uses short calls. */
 const AGENT_CLI_TIMEOUT_MS = 130000;   /* 120s ops_runner._TIMEOUT_SEC + 10s margin */
+/* Push and publish: shim::REAL_REPO_RUN_WRITE_SEC (420s) + 10s margin. */
+const AGENT_WRITE_TIMEOUT_MS = 430000;
 /* Active human-gated /loop. Never starts a real-repo run. Cleared on
    /loop stop, /clear, session switch, budget exhaust, or GOAL_DONE. */
 let loopState = null;
@@ -3431,7 +3433,7 @@ async function runSlash(line, webCommand) {
           const id = (rest[1] || '').trim();
           const why = rest.slice(2).join(' ').trim();
           if (!id || !why) { sys('usage: /agent push <run id> <reason for push>'); break; }
-          const rec = agentRecord(await api('/api/agent/runs/' + encodeURIComponent(id) + '/push', 'POST', { reason: why, confirm: true }, AGENT_CLI_TIMEOUT_MS));
+          const rec = agentRecord(await api('/api/agent/runs/' + encodeURIComponent(id) + '/push', 'POST', { reason: why, confirm: true }, AGENT_WRITE_TIMEOUT_MS));
           if (!staleReview() && rec) showAgentRecord(rec);
         } else if (sub === 'discard') {
           const id = (rest[1] || '').trim();
@@ -3451,7 +3453,7 @@ async function runSlash(line, webCommand) {
           if (!body) { sys('load and review the repository PR template with /agent pr-body ' + id + ' first'); break; }
           const rec = agentRecord(await api(
             '/api/agent/runs/' + encodeURIComponent(id) + '/publish', 'POST', { reason: why, confirm: true, body },
-            AGENT_CLI_TIMEOUT_MS,
+            AGENT_WRITE_TIMEOUT_MS,
           ));
           if (!staleReview() && rec) showAgentRecord(rec);
         } else {
