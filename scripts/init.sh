@@ -193,7 +193,7 @@ first_credential() {
   case $status in
     *'"setup_code":true'*) echo code ;;
     *'"default_password":true'*) echo default ;;
-    *'"needs_password"'*) echo none ;;
+    *'"setup_code":false'*) echo none ;;
     *) echo unknown ;;
   esac
 }

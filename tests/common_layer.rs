@@ -352,7 +352,6 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
     mgr.set_clock(Box::new(move || *c.lock().unwrap()));
     assert!(mgr.bootstrap_if_empty().unwrap());
     assert!(!mgr.bootstrap_if_empty().unwrap());
-    assert!(!mgr.needs_password_setup());
     assert!(mgr.get_user("admin").unwrap().must_change_password);
     // A fresh store has no shipped password: `admin` signs in only with the
     // one-time code in the private `<home>/setup-code` file.
@@ -386,11 +385,34 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
         "AUTH_LOGIN_FAILED",
         "the formerly shipped password must not work"
     );
-    let restricted = mgr.login("admin", &code).unwrap();
+    mgr.login("admin", &code).unwrap();
     assert!(
         mgr.setup_code_active(),
         "a sign-in that skips the change keeps the code"
     );
+    assert_eq!(
+        mgr.change_password("admin", &code, &code).unwrap_err().code,
+        "PASSWORD_POLICY",
+        "the setup code cannot become the password"
+    );
+    // The restricted session lives 10 min idle / 30 min absolute, not 12 h / 7 d.
+    let idle = mgr.login("admin", &code).unwrap();
+    *now.lock().unwrap() += 600.0;
+    assert!(
+        mgr.validate_session(&idle.session_id).is_none(),
+        "restricted idle limit"
+    );
+    let busy = mgr.login("admin", &code).unwrap();
+    for _ in 0..5 {
+        *now.lock().unwrap() += 300.0;
+        assert!(mgr.validate_session(&busy.session_id).is_some());
+    }
+    *now.lock().unwrap() += 300.0;
+    assert!(
+        mgr.validate_session(&busy.session_id).is_none(),
+        "restricted absolute limit"
+    );
+    let restricted = mgr.login("admin", &code).unwrap();
     let first = mgr.change_password("admin", &code, &first_password).unwrap();
     assert!(!mgr.setup_code_active());
     assert!(!code_file.exists(), "the code file goes once admin has a real password");
@@ -399,12 +421,17 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
         .setup_code_active());
     assert!(mgr.validate_session(&restricted.session_id).is_none());
     assert!(!mgr.get_user("admin").unwrap().must_change_password);
-    assert!(!mgr.needs_password_setup());
-    assert_eq!(
-        mgr.bootstrap_set_password("another-password-1").unwrap_err().code,
-        "AUTH_BOOTSTRAP_COMPLETE"
-    );
     assert_eq!(mgr.validate_session(&first.session_id).unwrap().username, "admin");
+    // The replaced password gets the normal lifetime again.
+    *now.lock().unwrap() += 1_800.0;
+    assert!(mgr.validate_session(&first.session_id).is_some());
+    assert_eq!(
+        mgr.change_password("admin", &first_password, &first_password)
+            .unwrap_err()
+            .code,
+        "PASSWORD_POLICY",
+        "a change must change the password"
+    );
 
     // Login + unknown user identical error; lockout after 5 failures.
     assert_eq!(

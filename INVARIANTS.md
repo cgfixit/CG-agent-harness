@@ -96,20 +96,21 @@ what stop cross-site use; the CSRF token provides no account isolation.
 
 ## Account, transport and request boundaries
 
-Fresh configuration requires `auth.enabled: true` and `tls.enabled: true`.
-Existing explicit configuration is preserved. Invalid auth/TLS switch types fail
-closed. The optional harness key grants no account, provider or coding authority;
+Fresh configuration requires `auth.enabled: true` and `tls.enabled: true`;
+existing explicit values are kept. Invalid auth/TLS switch types fail closed.
+The optional harness key grants no account, provider or coding authority;
 legacy key-required mode is deprecated and ignored. Forwarded requests are refused.
 
-Every API request passes rate limiting, exact same-origin checks and direct
-loopback validation. Operational reads and writes additionally require an enabled
-account and its server-side role permissions. Mutations retain the existing CSRF
-header/token; only minimal status/static/login/setup surfaces are public. A fresh
-`admin`, whose first password is a one-time setup code in the owner-only
-`<home>/setup-code` file (never a shipped password, never page content), can only
-replace its password, inspect its identity or log out, from the console (dialog
-open or dismissed), HTTP clients and the CLI alike.
-The replacement revokes old sessions. The last enabled administrator is protected.
+Every API request passes rate limiting, exact same-origin and direct loopback
+checks. Operational reads and writes also need an enabled account and its
+server-side role. Mutations need the CSRF header/token; only
+status/static/login/setup-status are public, and none sets a password. A fresh
+`admin` signs in with a one-time code in the owner-only `<home>/setup-code`
+(never shipped, never page content); older `admin`/`admin` and pending-password
+homes rotate to one at startup. Until replaced, any client (console, HTTP, CLI)
+may only change the password, read whoami or log out, under shorter session
+limits. The replacement must differ from the code and revokes old sessions. The
+last enabled administrator is protected.
 
 SQLite is authoritative after transactional legacy migration; corrupt, empty or
 missing initialized storage never recreates default credentials. Failed commits

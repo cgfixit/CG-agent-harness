@@ -12,11 +12,10 @@ use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
 use serde_json::{json, Value};
 
-use crate::common::auth_store::{AuthManager, UserSummary, BOOTSTRAP_USERNAME};
+use crate::common::auth_store::{AuthManager, UserSummary};
 use crate::common::authn::validate_role;
 use crate::common::errors::HarnessError;
 use crate::server::errors::{ApiError, ApiResult};
-use crate::server::guards::{is_loopback_peer, looks_proxied};
 use crate::server::schemas::*;
 use crate::server::state::AppState;
 
@@ -96,7 +95,6 @@ fn map_auth_error(e: &HarnessError) -> ApiError {
         "AUTH_USER_NOT_FOUND" => ApiError::new(StatusCode::NOT_FOUND, &e.code, e.message.clone()),
         "AUTH_LAST_ADMIN" => ApiError::new(StatusCode::FORBIDDEN, &e.code, e.message.clone()),
         "AUTH_USER_EXISTS" => ApiError::new(StatusCode::CONFLICT, &e.code, e.message.clone()),
-        "AUTH_BOOTSTRAP_COMPLETE" => ApiError::new(StatusCode::CONFLICT, &e.code, e.message.clone()),
         // Only the wait crosses the wire; the stored details also name the account.
         "AUTH_ACCOUNT_LOCKED" => ApiError::new(StatusCode::LOCKED, &e.code, e.message.clone())
             .details(json!({"retry_after_sec": e.details.get("retry_after_sec").cloned().unwrap_or(Value::Null)})),
@@ -165,36 +163,14 @@ fn account_identity(account: &UserSummary) -> Value {
     })
 }
 
+/// Public, so the sign-in screen can name the setup code before any session
+/// exists. It reports only whether that code still works, never the code.
 pub async fn setup_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
     let mgr = manager(&state)?;
-    let pending = mgr.needs_password_setup();
     Ok(Json(json!({
         "enabled": true,
-        "needs_password": pending,
         "setup_code": mgr.setup_code_active(),
-        "username": if pending { Some(BOOTSTRAP_USERNAME) } else { None },
     })))
-}
-
-pub async fn bootstrap_password(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Response> {
-    let secure = crate::server::guards::request_scheme(&req) == "https";
-    manager(&state)?;
-    if !is_loopback_peer(&req) || looks_proxied(req.headers()) {
-        return Err(ApiError::new(
-            StatusCode::FORBIDDEN,
-            "AUTH_LOOPBACK_ONLY",
-            "first password must be set from this machine without reverse-proxy forwarding headers",
-        ));
-    }
-    let ValidJson(body) = ValidJson::<AuthSetPasswordRequest>::from_request(req, &()).await?;
-    let st = state.clone();
-    let result = run_password_operation(state.auth_operation_permits.clone(), move || {
-        manager(&st).and_then(|m| m.bootstrap_set_password(&body.password).map_err(|e| map_auth_error(&e)))
-    })
-    .await?;
-    let mut resp = Json(json!({"username": result.username, "role": ROLE_ADMIN})).into_response();
-    set_cookie(&mut resp, &result.session_id, secure);
-    Ok(resp)
 }
 
 pub async fn login(

@@ -184,7 +184,7 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
     }
     let public = matches!(
         path.as_str(),
-        "/api/status" | "/api/auth/setup-status" | "/api/auth/login" | "/api/auth/bootstrap-password"
+        "/api/status" | "/api/auth/setup-status" | "/api/auth/login"
     );
     let mut actor_name = "local".to_string();
     if state.auth.is_some() {

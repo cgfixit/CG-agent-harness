@@ -489,5 +489,12 @@ mod tests {
             assert!(!mgr.setup_code_active());
             mgr.login(BOOTSTRAP_USERNAME, &temporary).unwrap();
         }
+        // A `pending$` admin only the retired public bootstrap route could set
+        // now signs in with a setup code and must replace it.
+        let (dir, mgr) = open_with(format!("pending${}", authn::hash_password(&temporary).unwrap()), false);
+        let code = std::fs::read_to_string(dir.path().join(authn::SETUP_CODE_FILE)).unwrap();
+        assert!(mgr.get_user(BOOTSTRAP_USERNAME).unwrap().must_change_password);
+        assert!(mgr.setup_code_active());
+        mgr.login(BOOTSTRAP_USERNAME, code.trim()).unwrap();
     }
 }

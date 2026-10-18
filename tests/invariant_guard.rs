@@ -1072,7 +1072,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: operator-approved (2026-10-14) Guide cap so docs/INSTALL.md can reach its 7,500-word row (Guide at 47,827 after
 // ANALYTICS.md and USER_MANUAL.md were folded in; 64,500 keeps the gap under the 17,000 override); DOCS_GROUP_SLACK_OVERRIDES
 // lets this one group sit that far above its words.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_500), (Guide, 64_500), (Evidence, 500), (Agent, 21_500)];
+// why: operator-approved (2026-10-18) +200 Root words for the #494 first-run session contract in INVARIANTS.md.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_700), (Guide, 64_500), (Evidence, 500), (Agent, 21_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.

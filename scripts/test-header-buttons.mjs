@@ -25,7 +25,7 @@ const reply = (status, body = {}) => ({status, ok:status >= 200 && status < 300,
 const refused = status => Object.assign(new Error('HTTP ' + status), {status});
 const shipped = {'/api/notifications':{enabled:false,destinations:[],deliveries:[]}, '/api/tools':{tools:[{path:'/api/agent/checks',enabled:null},{path:'/api/agent/schedules',enabled:false}]}};
 const enabled = {'/api/notifications':{enabled:true,destinations:[],deliveries:[]}, '/api/tools':{tools:[{path:'/api/agent/checks',enabled:null},{path:'/api/agent/schedules',enabled:true}]}};
-let replies = shipped, auth = {whoami:reply(503), setup:reply(200, {needs_password:false})}, probes = [];
+let replies = shipped, auth = {whoami:reply(503), setup:reply(200, {setup_code:false})}, probes = [];
 const classes = () => { const set = new Set(); return {add:n => set.add(n), remove:n => set.delete(n), contains:n => set.has(n),
   toggle:(n, on) => { if (on) set.add(n); else set.delete(n); return on; }}; };
 const page = {getElementById:node, body:{classList:classes()}, documentElement:{classList:classes()}, activeElement:null, listeners:{},
@@ -36,7 +36,7 @@ const context = vm.createContext({
   api:async path => { probes.push(path); const value = replies[path]; if (value instanceof Error) throw value; return typeof value === 'function' ? value() : value; },
   fetchWithTimeout:async url => {
     const value = {'/api/auth/whoami':auth.whoami, '/api/auth/setup-status':auth.setup, '/api/auth/login':auth.login,
-      '/api/auth/logout':auth.logout, '/api/auth/bootstrap-password':auth.bootstrap}[url];
+      '/api/auth/logout':auth.logout}[url];
     assert.ok(value, 'unexpected request ' + url);
     return typeof value === 'function' ? value() : value;
   },
@@ -51,8 +51,7 @@ const context = vm.createContext({
 vm.runInContext([
   between('const hAuthLogin = document.getElementById(', 'if (hAuthLogin) {'),
   between('if (hAuthLogin) {', 'if (hAuthLogout) {'),
-  between('if (hAuthLogout) {', 'const hAuthSetupBtn'),
-  between('const hAuthSetupBtn', 'function openPasswordChange('),
+  between('if (hAuthLogout) {', 'function openPasswordChange('),
   between("document.addEventListener('keydown'", 'refreshHarnessAuth();\nlet memoryRefreshTimer'),
 ].join('\n'), context);
 // Cmd/Ctrl and "+" on the sign-in card; returns whether the browser default was kept.
@@ -104,7 +103,7 @@ assert.deepEqual(probes, [], 'signed-out consoles send no feature probes');
 assert.ok(page.body.classList.contains('signed-out'));
 assert.equal(node('hAuthLoginBox').hidden, false);
 assert.equal(node('hAuthHint').hidden, true, 'no note unless setup-status reports setup_code');
-auth.setup = reply(200, {needs_password:false, setup_code:true});
+auth.setup = reply(200, {setup_code:true});
 await context.refreshHarnessAuth(); await settle();
 assert.equal(node('hAuthHint').hidden, false, 'note shown while the setup code is active');
 node('hAuthHint').hidden = true;
@@ -115,7 +114,7 @@ node('hAuthHint').hidden = true;
 assert.equal(plus({ctrlKey:true}), false, 'Ctrl and + works off macOS too');
 assert.equal(node('hAuthHint').hidden, false);
 assert.equal(plus({metaKey:false}), true, 'a bare + is typing, not the shortcut');
-auth.setup = reply(200, {needs_password:false, setup_code:false});
+auth.setup = reply(200, {setup_code:false});
 await context.refreshHarnessAuth(); await settle();
 assert.equal(node('hAuthHint').hidden, true, 'note hidden once it changed');
 assert.equal(plus(), false);
@@ -140,7 +139,7 @@ assert.equal(plus(), true, 'signed in, Cmd and + keeps its browser meaning (zoom
 assert.ok(!page.body.classList.contains('password-required'), 'a replaced password unlocks the console');
 assert.equal(node('passwordLockScreen').hidden, true);
 
-// Login re-evaluates; so does bootstrap-password setup. Blank fields never reach the server.
+// Login re-evaluates. Blank fields never reach the server.
 context.refreshHeaderFeatures(false); await settle();
 auth.login = () => assert.fail('a blank sign-in must not send a request');
 await node('hAuthLogin').listeners.click(); await settle();
@@ -170,8 +169,9 @@ node('hAuthPass').value = 'wrong-password';
 await node('hAuthLogin').listeners.click(); await settle();
 assert.equal(node('hAuthError').textContent, "That username and password don't match. Check both and try again.");
 assert.deepEqual(shown(), [], 'a failed login shows nothing');
-auth.bootstrap = reply(200, {username:'admin', role:'admin'});
-await node('hAuthSetupBtn').listeners.click(); await settle();
+auth.login = reply(200, {username:'admin', role:'admin', must_change_password:false});
+node('hAuthPass').value = 'fixture-password';
+await node('hAuthLogin').listeners.click(); await settle();
 assert.deepEqual(shown(), buttons);
 
 // Logout hides first; a rejected logout that kept the session restores and rechecks.

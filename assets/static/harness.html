@@ -619,16 +619,6 @@ dialog p { margin-bottom:12px; }
       <button id="hAuthLogin" type="submit">Sign in</button>
       <p id="hAuthHint" class="signin-hint" hidden>First run: sign in as <strong>admin</strong> with the setup code. In the app, press <kbd>Cmd</kbd>+<kbd>+</kbd> (Cmd, Shift and =) to open <strong>Harness → Setup and recovery</strong>, which shows it; for a terminal server it is in the <code>setup-code</code> file in the harness home. You'll set a new password next.</p>
     </form>
-    <form id="hAuthSetup" aria-labelledby="setupTitle" hidden>
-      <h1 id="setupTitle">Set the administrator password</h1>
-      <p class="signin-lede">This home has no admin password yet. Choose one with at least 12 characters.</p>
-      <label for="hAuthSetupPass">New password</label>
-      <input id="hAuthSetupPass" type="password" autocomplete="new-password" minlength="12" maxlength="1024">
-      <label for="hAuthSetupPass2">Confirm password</label>
-      <input id="hAuthSetupPass2" type="password" autocomplete="new-password" minlength="12" maxlength="1024">
-      <p id="hAuthSetupError" class="signin-error" role="alert"></p>
-      <button id="hAuthSetupBtn" type="submit">Set password</button>
-    </form>
   </section>
   <section class="signin" id="passwordLockScreen" hidden>
     <form id="passwordLockCard" aria-labelledby="passwordLockTitle">
@@ -4973,7 +4963,6 @@ async function showNetconnect() {
 }
 const hAuthLogin = document.getElementById('hAuthLogin');
 const hAuthLoginBox = document.getElementById('hAuthLoginBox');
-const hAuthSetup = document.getElementById('hAuthSetup');
 const hAuthLogout = document.getElementById('hAuthLogout');
 function setHarnessLogoutVisible(on) {
   if (hAuthLogout) hAuthLogout.hidden = !on;
@@ -5005,27 +4994,24 @@ function resetAccountView() {
   promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false};
   currentStyle = 'off'; currentStyleIssue = null; paintStyle(); sessionRevision++;
 }
-/* mode is 'login', 'setup' or null (signed in, or authentication disabled).
+/* mode is 'login' or null (signed in, or authentication disabled).
    The setup-code note shows only while setup-status reports that the one-time
    code is still in effect. Signing out ends any password lock. */
 let setupCodePending = false;
 function showSignIn(mode, setupCode) {
   setupCodePending = mode === 'login' && setupCode === true;
-  const out = mode === 'login' || mode === 'setup';
+  const out = mode === 'login';
   const wasOut = document.body.classList.contains('signed-out');
   document.body.classList.toggle('signed-out', out);
   $('signInScreen').hidden = !out;
   hAuthLoginBox.hidden = mode !== 'login';
-  hAuthSetup.hidden = mode !== 'setup';
   $('hAuthHint').hidden = !(mode === 'login' && setupCode === true);
   if (out) setPasswordRequired(false);
   /* Clearing also disconnects any Memory listing still in flight, so it
      stops. The first probe has shown nothing yet, so it resets nothing. */
   if (out && !wasOut && !document.documentElement.classList.contains('auth-pending')) resetAccountView();
-  if (!out) { $('hAuthError').textContent = ''; $('hAuthSetupError').textContent = ''; return; }
-  if (!wasOut || !$('signInScreen').contains(document.activeElement)) {
-    (mode === 'login' ? $('hAuthUser') : $('hAuthSetupPass')).focus();
-  }
+  if (!out) { $('hAuthError').textContent = ''; return; }
+  if (!wasOut || !$('signInScreen').contains(document.activeElement)) $('hAuthUser').focus();
 }
 /* Plain sentences for a refused sign-in; the code stays out of the way. */
 function signInFailure(status, data) {
@@ -5098,7 +5084,7 @@ async function refreshHarnessAuth() {
     window.__cyclawRole = null;
     if (who) who.textContent = '';
     setHarnessLogoutVisible(false);
-    showSignIn(status.needs_password ? 'setup' : 'login', status.setup_code);
+    showSignIn('login', status.setup_code);
   } catch (e) {
     /* Keep the last UI, except on the first probe: there is no last UI yet,
        and revealing the console would show it as usable. */
@@ -5136,7 +5122,6 @@ if (hAuthLogin) {
       clearPendingAttachments();
       window.__cyclawRole = data.role;
       if (who) who.textContent = accountLabel(data);
-      if (hAuthSetup) hAuthSetup.hidden = true;
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setPasswordRequired(data.must_change_password === true);
       setHarnessLogoutVisible(true);
@@ -5197,46 +5182,6 @@ if (hAuthLogout) {
     window.__cyclawRole = null; await refreshStatus();
     await refreshHarnessAuth();
     sendBtn.disabled = false;
-  });
-}
-const hAuthSetupBtn = document.getElementById('hAuthSetupBtn');
-if (hAuthSetupBtn) {
-  hAuthSetupBtn.addEventListener('click', async function (event) {
-    if (event) event.preventDefault();
-    const p1 = document.getElementById('hAuthSetupPass');
-    const p2 = document.getElementById('hAuthSetupPass2');
-    const who = document.getElementById('hAuthWho');
-    const error = $('hAuthSetupError');
-    const password = p1 ? p1.value : '';
-    const confirm = p2 ? p2.value : '';
-    if (p1) p1.value = '';
-    if (p2) p2.value = '';
-    error.textContent = '';
-    if (password !== confirm) { error.textContent = "The passwords don't match. Enter the same password twice."; return; }
-    try {
-      const r = await fetchWithTimeout('/api/auth/bootstrap-password', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
-      }, 15000);
-      if (!r.ok) {
-        const data = await r.json().catch(() => null);
-        const detail = data && data.detail && typeof data.detail === 'object' ? data.detail : {};
-        error.textContent = detail.code === 'AUTH_POLICY' ? detail.message : 'The password was not set (HTTP ' + r.status + '). Try again.';
-        return;
-      }
-      const data = await r.json();
-      clearPendingAttachments();
-      window.__cyclawRole = data.role;
-      if (who) who.textContent = accountLabel(data);
-      if (hAuthSetup) hAuthSetup.hidden = true;
-      if (hAuthLoginBox) hAuthLoginBox.hidden = true;
-      setHarnessLogoutVisible(true);
-      showSignIn(null);
-      refreshHeaderFeatures(!data.must_change_password);
-    } catch (e) {
-      error.textContent = "Can't reach the harness. Check that it is still running, then try again.";
-    }
   });
 }
 function openPasswordChange(required) {
