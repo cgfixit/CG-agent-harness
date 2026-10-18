@@ -30,7 +30,8 @@ if [ -n "$HOME_DIR" ]; then
   [ "$(printf '%s' "$REAL" | tr -cd / | wc -c | tr -d ' ')" -ge 2 ] || { echo "refusing: $REAL is too shallow" >&2; exit 2; }
   [ -f "$REAL/config.yaml" ] || [ -f "$REAL/harness.json" ] || { echo "refusing: $REAL has no config.yaml or harness.json, so it does not look like a harness home" >&2; exit 2; }
   command -v lsof >/dev/null || { echo "refusing: lsof not found, so open databases cannot be checked" >&2; exit 2; }
-  for f in "$REAL"/auth.sqlite3 "$REAL"/memory/structured.sqlite3; do
+  # Every running owner (serve, the app's backend) keeps .server.lock open.
+  for f in "$REAL"/.server.lock "$REAL"/auth.sqlite3 "$REAL"/memory/structured.sqlite3; do
     [ -e "$f" ] || continue
     if PIDS="$(lsof -t -- "$f" 2>/dev/null)"; then RC=0; else RC=$?; fi
     if [ -n "$PIDS" ] || [ "$RC" -gt 1 ]; then
@@ -51,6 +52,14 @@ CGagentHarness admin (${HOME_DIR:-$GIVEN})"
 [ -z "$HOME_DIR" ] || [ "$GIVEN" = "$HOME_DIR" ] || SERVICES="$SERVICES
 CGagentHarness ($GIVEN)
 CGagentHarness admin ($GIVEN)"
+# A missing home cannot be canonicalized, but the harness and init.sh stored the
+# resolved path while it existed (/tmp/h is /private/tmp/h), so resolve its parent.
+if [ -z "$HOME_DIR" ] && PARENT="$(cd "$(dirname -- "$GIVEN")" 2>/dev/null && pwd -P)"; then
+  RESOLVED="${PARENT%/}/$(basename -- "$GIVEN")"
+  [ "$RESOLVED" = "$GIVEN" ] || SERVICES="$SERVICES
+CGagentHarness ($RESOLVED)
+CGagentHarness admin ($RESOLVED)"
+fi
 COUNT=0
 FOUND=""
 while IFS= read -r SERVICE; do

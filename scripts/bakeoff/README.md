@@ -14,4 +14,6 @@ holds the measured results and the window guidance.
   `bakeoff-self-test` job in `ci.yml` does that on every code change.
 
 Run on a Mac: `python3 scripts/bakeoff/bakeoff_harness.py --models <tag> --bin
-target/release/cgagentharness`. Needs only Python 3 and the built binary.
+target/release/cgagentharness`. `--models` only filters the built-in profile
+list; a new tag needs `--extra-model <tag> --models <tag>`. Needs only Python 3
+and the built binary.

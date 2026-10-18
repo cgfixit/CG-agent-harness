@@ -85,18 +85,41 @@ def serve_expecting_refusal(home):
 
 BIN = Path(os.environ.get("CGAH_TEST_BINARY", "target/release/cgagentharness")).resolve()
 HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+SHIPPED_CONFIG = Path(__file__).resolve().parent.parent / 'assets/config.default.yaml'
+
+
+def seed_home(home):
+    """Seed a new home as ensure_layout does, with model startup probes off.
+
+    The shipped config warms up and auto-tunes the configured Ollama model on
+    every start (POST /api/generate), which loads a real model on a developer
+    machine. ensure_layout seeds the empty web policy only when config.yaml is
+    missing, so it is written here too; the binary's own fresh-home seeding is
+    covered by tests/panels.rs web_tool_is_allowlist_only_ssrf_safe_and_bounded."""
+    config = SHIPPED_CONFIG.read_text()
+    for needle in ('warmup:\n      enabled: true', 'auto_tune: true'):
+        if needle not in config:
+            raise AssertionError(f'shipped config lost {needle!r}')
+        config = config.replace(needle, needle.replace('true', 'false'), 1)
+    (home / 'tools').mkdir(parents=True, exist_ok=True)
+    (home / 'tools/web_allowlist.json').write_text(json.dumps({'version': 1, 'rules': []}))
+    (home / 'config.yaml').touch(mode=0o600)
+    (home / 'config.yaml').write_text(config)
 
 class ModelFixture:
     """Exercise the real HTTP client without model downloads or cloud credentials."""
     def __init__(self):
         self.requests = []
+        self.paths = []  # every (method, path), including the unrecorded 404s
         requests = self.requests
+        paths = self.paths
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *_args):
                 pass
 
             def do_GET(self):
+                paths.append((self.command, self.path))
                 if self.path != '/v1/models':
                     self.send_error(404)
                     return
@@ -108,6 +131,7 @@ class ModelFixture:
                 self.wfile.write(body)
 
             def do_POST(self):
+                paths.append((self.command, self.path))
                 if self.path != '/v1/chat/completions':
                     self.send_error(404)
                     return
@@ -137,7 +161,10 @@ class ModelFixture:
 
 class Sidecar:
     def __init__(self, home, key=None, protocol=2):
+        # Every name in src/server/env_keys.rs MANAGED_KEYS: an inherited value
+        # wins over the fixture home's saved one.
         env = {k: v for k, v in os.environ.items() if k not in (
+            "CGAGENTHARNESS_WEBHOOK_TOKEN", "SERPAPI_API_KEY", "GH_TOKEN",
             "CGAGENTHARNESS_API_KEY", "GROK_API_KEY", "ANTHROPIC_API_KEY", "DEEPAGENT_API_KEY")}
         env["CGAGENTHARNESS_HOME"] = str(home)
         self.home = Path(home)
@@ -231,6 +258,8 @@ class DesktopBoundary(unittest.TestCase):
         self.directory.cleanup()
 
     def start(self, **kwargs):
+        if not (self.home / 'config.yaml').exists():
+            seed_home(self.home)
         child = Sidecar(self.home, **kwargs)
         self.children.append(child)
         return child
@@ -268,6 +297,7 @@ class DesktopBoundary(unittest.TestCase):
             self.assertEqual(result['chat']['state'], 'tag_missing')
             self.assertEqual(result['planner']['state'], 'installed')
             self.assertEqual(fixture.requests, [], 'inventory must not request inference')
+            self.assertNotIn(('POST', '/api/generate'), fixture.paths, 'inventory must not request inference')
         finally:
             fixture.close()
 
@@ -289,7 +319,7 @@ class DesktopBoundary(unittest.TestCase):
             with self.subTest(explicit_environment=override is not None, file_present=file_present):
                 if not file_present:
                     dotenv.unlink()
-                # Model startup probes are disabled in the shipped config.
+                # seed_home turned the shipped model startup probes off.
                 env = {'PATH': '/usr/bin:/bin', 'CGAGENTHARNESS_HOME': str(self.home)}
                 if override is not None:
                     env['CGAGENTHARNESS_API_KEY'] = override
@@ -585,6 +615,7 @@ class DesktopBoundary(unittest.TestCase):
         self.assertTrue(call(restarted, fresh, '/api/memory')['enabled'])
         self.assertEqual(call(restarted, fresh, '/api/status')['model'], 'fixture-model')
         self.assertEqual(len(model.requests), 2, 'startup must not replay inference')
+        self.assertNotIn(('POST', '/api/generate'), model.paths, 'startup must not request inference')
         reply = call(restarted, fresh, '/api/chat', {
             "session_id": sid, "message": "continue the goal", "loop": True})
         self.assertEqual(reply['tally']['exchanges'], 2)

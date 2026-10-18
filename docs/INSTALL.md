@@ -49,6 +49,12 @@ below in order from a fresh clone or download, from zsh or bash:
 cd CG-agent-harness && scripts/init.sh    # or: bash scripts/init.sh
 ```
 
+Or double-click **init.command** in the clone's top folder in Finder: it runs the
+same script in a Terminal window and waits for Return at the end. A git clone opens
+directly. A folder unpacked from a downloaded ZIP is quarantined: Control-click
+the file and choose **Open** (macOS 15 and later: **Open Anyway** in System Settings
+→ Privacy & Security), or run `xattr -dr com.apple.quarantine <folder>` once.
+
 It waits for the Command Line Tools dialog, runs `install-macos.sh` (skipped when
 `--check` passes), adds Homebrew and Rust to your login shell's profile
 (`~/.zprofile` for zsh, `~/.bash_profile` or `~/.profile` for bash), replaces
@@ -64,6 +70,7 @@ skip or quit. A rerun skips finished steps and signs in with the saved password.
 | `--yes` | Asks nothing; generates the admin password (Keychain only) |
 | `--choice 0`–`3` | What opens at the end |
 | `--model TAG`, `--with-gh`, `--no-ollama`, `--app-dir DIR` | Passed to `install-macos.sh` |
+| `--replace-app` | Passed on too, and runs the installer even when `--check` passes: replaces an installed app with the latest release (quit it first) |
 | `--trust-cert`, `--no-profile`, `--no-allowlist` | Trust the console certificate (choices 2 and 3 with the app); skip the profile or allowlist |
 
 Each line is logged with a time to `scripts/logs/install.log` (private, ignored by
@@ -553,6 +560,7 @@ on first run. Common operator settings follow:
 | `chat.compact_prompt_tokens` / `compact_keep_messages` | 24000 / 8 | Calibrated next-prompt trigger and recent messages retained (2–40); the prompt cap is the hard limit past it. Threshold floor/cap and web interaction: [compaction](CONSOLE.md#local-history-compaction) |
 | `chat.compact_tail_percent` | 25 | Verbatim tail budget as a percent of the trigger, 10–50; whole exchanges, at least the last one |
 | `compaction.summary_max_tokens` | 768 | Summary output ceiling, clamped 128–2048; missing in an existing home also uses 768; sent doubled where the reply is reserved twice |
+| `chat.compact_follow_window` / `compact_max_prefill_sec` | true / 120 | A verified window above 32768 scales the trigger up, within this many seconds of measured prefill (30–1800); literal false keeps it fixed |
 | `models.local_llm.inventory.*` | 2.0 s / 262144 bytes | Model-list probe timeout and response cap |
 | `auth.max_concurrent_operations` | 2 | Concurrent scrypt derivations (about 128 MiB each); range 1–4 |
 | `auth.session.idle_timeout_sec` / `absolute_timeout_sec` | 43200 / 604800 | Session expiry without use (recorded at most once a minute), and regardless of use |
@@ -663,7 +671,7 @@ What the scripts leave behind, all optional to remove:
 |---|---|---|
 | `install-macos.sh --replace-app` | Previous app in `~/Library/Caches/CG-agent-harness-installer/previous` | `rm -rf` that directory |
 | `start-macos.sh --trust-cert` | "CG Agent Harness local portal" certificate trusted in the login keychain | Keychain Access |
-| `start-macos.sh` | `OLLAMA_CONTEXT_LENGTH` for GUI apps until logout; `~/Library/Logs/ollama-serve.log` | `launchctl unsetenv OLLAMA_CONTEXT_LENGTH`; `rm` the log |
+| `start-macos.sh`, `install-macos.sh --model` | `OLLAMA_CONTEXT_LENGTH` for GUI apps until logout; `~/Library/Logs/ollama-serve.log` | `launchctl unsetenv OLLAMA_CONTEXT_LENGTH`; `rm` the log |
 | The harness | Home and its Keychain credentials | `scripts/reset-macos.sh` (dry run), then `--yes` after a backup |
 | `init.sh` | "CG Agent Harness admin password" in the login keychain; marked lines in your shell profile; `scripts/logs/` | `reset-macos.sh --yes`; delete the lines under `# Added by CG-agent-harness`; `rm -rf scripts/logs` |
 

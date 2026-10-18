@@ -12,8 +12,8 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 [Terminal walkthrough](../docs/INSTALL.md#step-by-step-in-terminal); once signed in,
 [CONSOLE.md](../docs/CONSOLE.md) is the user guide.
 
-- [`init.sh`](init.sh): Apple Silicon first-time setup from zsh or bash: installer, shell PATH, admin password into Keychain, allowlist, then opens app, browser or both; log in `logs/install.log`.
-- [`install-macos.sh`](install-macos.sh): idempotent macOS installer: missing tools, backend build, checksummed release app; `--check`, `--dry-run`.
+- [`init.sh`](init.sh): Apple Silicon first-time setup (Finder: double-click [`init.command`](../init.command)): installer, shell PATH, admin password into Keychain, allowlist, then opens app, browser or both; log in `logs/install.log`.
+- [`install-macos.sh`](install-macos.sh): idempotent macOS installer: missing tools, backend build, checksummed release app; `--check`, `--dry-run`, `--replace-app`.
 - [`start-macos.sh`](start-macos.sh): starts Ollama (app or `ollama serve`) and the app, then the app's own origin through `start-web.sh --desktop-url`; `--standalone`, `--trust-cert`, `--no-ollama`, `--no-browser`.
 - [`start-web.sh`](start-web.sh): starts the console on loopback (default 8790) and opens a browser; bundled into the `.app`, so byte changes need a rebuild.
 - [`web-allowlist-bootstrap.sh`](web-allowlist-bootstrap.sh): grants a technical-docs web allowlist through `cgagentharness web allow` (admin login needed); extra lines from `CGAH_GRANTS_FILE`.
@@ -28,7 +28,7 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 - [`verify-local.sh`](verify-local.sh): full local verification: lint, tests, contract scripts, build, smoke.
 - [`check-pr-template.sh`](check-pr-template.sh): local PR-body gate mirroring `pr-template-check.yml`.
 - [`ci-docs-only.sh`](ci-docs-only.sh): classifies a diff as docs-only so `ci.yml` and `bundle.yml` skip compile jobs.
-- [`browser-acceptance.mjs`](browser-acceptance.mjs): native Chrome acceptance against a disposable fixture (CI, skill runs).
+- [`browser-acceptance.mjs`](browser-acceptance.mjs): native Chrome acceptance against a disposable fixture (manual, after `browser-fixture.py --http`).
 - [`chat-browser-acceptance.mjs`](chat-browser-acceptance.mjs): real-browser slash-command tests against a mock API.
 - [`test-analytics.mjs`](test-analytics.mjs): analytics and spend helpers, logout clearing.
 - [`test-attachment-preview.mjs`](test-attachment-preview.mjs): preview reuses uploads and never leaks across sessions.
