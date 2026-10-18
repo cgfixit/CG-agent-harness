@@ -56,6 +56,7 @@ session timeouts.
 | POST | `/api/notes-corpus` | Copy/classify `.md`/`.txt` into `notes_corpus/<owner-digest>/` under `notes_corpus.*` caps; local prompt retrieval. |
 | DELETE | `/api/notes-corpus/{id}` | Unlink one owner-owned note. |
 | POST | `/api/chat/cancel` | Cancel the active turn (`/loop stop`) |
+| POST | `/api/sessions/{session_id}/prompt-history` | Owner-scoped: save one submitted composer line (`{text}`) for ArrowUp recall, refused or not; last 50 kept, an immediate repeat once. The console omits `/api set` values. |
 | DELETE | `/api/sessions/{session_id}/attachment-pins` | Owner-scoped unpin; keeps blobs/messages; refuses during generation. Session GET reports `live_attachment_pins`. |
 | POST | `/api/model` | Select the local model or `grok` / `claude` (`/model use`) |
 | GET | `/api/ollama/inventory` | Live loopback tags (`/model list`) plus configured-model readiness |

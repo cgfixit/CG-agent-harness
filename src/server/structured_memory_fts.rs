@@ -84,6 +84,9 @@ pub fn safe_prompt_match(raw: &str, max_tokens: usize, max_token_chars: usize) -
     ];
     let mut tokens = tokenize_query(raw, raw.chars().count(), max_token_chars);
     tokens.retain(|token| !QUESTION_WORDS.iter().any(|word| token.eq_ignore_ascii_case(word)));
+    // A repeated word would spend another of the few token slots on nothing new.
+    let mut seen = std::collections::HashSet::new();
+    tokens.retain(|token| seen.insert(token.to_lowercase()));
     tokens.truncate(max_tokens);
     joined_expression(&tokens, " OR ")
 }
@@ -113,6 +116,20 @@ mod tests {
         assert!(!expr.contains("title:secret"));
         assert!(safe_match("AND OR NOT * ^ +", 8, 32).is_none());
         assert!(safe_match("", 8, 32).is_none());
+    }
+
+    #[test]
+    fn prompt_match_spends_token_slots_on_distinct_words() {
+        let expr = safe_prompt_match("use /web search and /web research to research hvac near Web", 4, 32).unwrap();
+        for word in ["use", "web", "search", "research"] {
+            assert_eq!(
+                expr.matches(&format!("\"{word}\"")).count(),
+                3,
+                "{word} once per column: {expr}"
+            );
+        }
+        let expr = safe_prompt_match("web web WEB hvac", 2, 32).unwrap();
+        assert!(expr.contains("\"hvac\""), "{expr}");
     }
 
     #[test]

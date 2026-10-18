@@ -231,6 +231,79 @@ fn identity_ok(session: &Session, stem: &str) -> bool {
         }
 }
 
+/// What may be kept of a submitted line: an `/api` line keeps its root,
+/// set|clear and an UPPER_CASE key name (never a value), and URL userinfo is
+/// dropped. The console redacts first; this repeats it for any other caller.
+pub fn redacted_prompt(text: &str) -> String {
+    let line = text
+        .trim()
+        .trim_start_matches(['`', '\'', '"', '“', '‘'])
+        .trim_end_matches(['`', '\'', '"', '”', '’'])
+        .trim();
+    let line = match line.strip_prefix('/') {
+        Some(rest) => format!("/{}", rest.trim_start_matches('/').trim_start()),
+        None => line.to_string(),
+    };
+    let words: Vec<&str> = line.split_whitespace().collect();
+    let lower = line.to_ascii_lowercase();
+    let set_or_clear =
+        |w: Option<&&str>| w.is_some_and(|w| w.eq_ignore_ascii_case("set") || w.eq_ignore_ascii_case("clear"));
+    // A slashless line counts only with a key name (every managed key has an
+    // underscore) or a token-like word (12+ characters with a digit), as the
+    // console's isApiCredentialLine does: "API set up …" is chat.
+    let credential_like =
+        |w: &&str| w.contains('_') || (w.chars().count() >= 12 && w.chars().any(|c| c.is_ascii_digit()));
+    let slashless = lower.starts_with("api") && set_or_clear(words.get(1)) && words.iter().skip(2).any(credential_like);
+    if lower.starts_with("/api") || slashless {
+        let mut kept = vec![words[0]];
+        if set_or_clear(words.get(1)) {
+            kept.push(words[1]);
+            if let Some(key) = words.get(2).filter(|k| {
+                k.starts_with(|c: char| c.is_ascii_uppercase())
+                    && k.contains('_')
+                    && k.chars()
+                        .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+            }) {
+                kept.push(key);
+            }
+        }
+        return kept.join(" ");
+    }
+    // scheme://user:pass@host -> scheme://host
+    text.trim()
+        .split(' ')
+        .map(|word| match word.split_once("://") {
+            Some((scheme, rest)) => {
+                let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+                match authority.rfind('@') {
+                    Some(at) => format!("{scheme}://{}", &rest[at + 1..]),
+                    None => word.to_string(),
+                }
+            }
+            None => word.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A `/loop` turn's generated framing, which older logs recorded as typed.
+fn is_loop_framing(prompt: &str) -> bool {
+    prompt.starts_with("Loop turn ") && prompt.contains(". Session goal: ")
+}
+
+/// Appends a recalled prompt, keeping an immediate repeat once, as a shell does.
+/// The console is the only writer: a chat turn's text can be generated (/loop
+/// framing, the query of /memory retrieve), which is not what was typed.
+fn push_prompt(history: &mut Vec<String>, text: &str) -> bool {
+    if history.last().is_some_and(|last| last == text) {
+        return false;
+    }
+    history.push(text.to_string());
+    let excess = history.len().saturating_sub(PROMPT_HISTORY_LIMIT);
+    history.drain(..excess);
+    true
+}
+
 pub struct SessionStore {
     dir: PathBuf,
     lock: Mutex<()>,
@@ -273,19 +346,24 @@ impl SessionStore {
                 format!("unreadable session file: {session_id}.json"),
             )
         })?;
-        let mut session: Session = serde_json::from_str(&text).map_err(|_| {
+        let unreadable = || {
             HarnessError::new(
                 SESSION_ERROR_CODE,
                 format!("unreadable session file: {session_id}.json"),
             )
-        })?;
+        };
+        let raw: Value = serde_json::from_str(&text).map_err(|_| unreadable())?;
+        // Only a log written before the recall list existed is seeded from its
+        // user messages; a current log's list holds what the console recorded.
+        let legacy_history = raw.get("prompt_history").is_none();
+        let mut session: Session = serde_json::from_value(raw).map_err(|_| unreadable())?;
         if !identity_ok(&session, session_id) {
             return Err(session_error(
                 "invalid session identity or ownership version",
                 session_id,
             ));
         }
-        if session.prompt_history.is_empty() {
+        if legacy_history && session.prompt_history.is_empty() {
             session.prompt_history = session
                 .messages
                 .iter()
@@ -296,6 +374,7 @@ impl SessionStore {
                 .collect();
             session.prompt_history.reverse();
         }
+        session.prompt_history.retain(|p| !is_loop_framing(p));
         let excess = session.prompt_history.len().saturating_sub(PROMPT_HISTORY_LIMIT);
         session.prompt_history.drain(..excess);
         session.goal = session.goal.trim().to_string();
@@ -626,9 +705,6 @@ impl OwnedSessionStore<'_> {
             session.messages = crate::server::compaction::compact_messages(&session.messages, keep_recent, &summary);
         }
         let now = crate::common::now_ts();
-        session.prompt_history.push(user_text.to_string());
-        let excess = session.prompt_history.len().saturating_sub(PROMPT_HISTORY_LIMIT);
-        session.prompt_history.drain(..excess);
         session.messages.push(Message {
             role: "user".into(),
             text: user_text.to_string(),
@@ -710,6 +786,18 @@ impl OwnedSessionStore<'_> {
         let mut session = self.get(session_id)?;
         session.selected_facts = facts.to_vec();
         self.write(&session)
+    }
+
+    /// Every submitted composer line joins the recall list, including slash
+    /// commands and lines that were refused or failed before a model reply.
+    /// Logs written before this recorder existed are seeded from user messages.
+    pub fn record_prompt(&self, session_id: &str, text: &str) -> Result<()> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut session = self.get(session_id)?;
+        if push_prompt(&mut session.prompt_history, &redacted_prompt(text)) {
+            self.write(&session)?;
+        }
+        Ok(())
     }
 
     pub fn clear_attachment_pins(&self, session_id: &str) -> Result<usize> {
@@ -1098,14 +1186,7 @@ mod prompt_history_tests {
         let session = store.create("fixture", "history").unwrap();
         for i in 0..55 {
             store
-                .record_exchange(
-                    &session.session_id,
-                    &format!("prompt {i}"),
-                    "reply",
-                    "fixture",
-                    &TokenTally::default(),
-                    &[],
-                )
+                .record_prompt(&session.session_id, &format!("prompt {i}"))
                 .unwrap();
         }
         let mut saved = store.get(&session.session_id).unwrap();
@@ -1141,6 +1222,47 @@ mod prompt_history_tests {
         );
         assert!(store.create("fixture", "new").unwrap().prompt_history.is_empty());
         assert!(!store.list().iter().any(|row| row.get("prompt_history").is_some()));
+        // Refused slash commands are recallable too; a chat exchange (whose text
+        // may be generated) adds nothing, and an immediate repeat is kept once.
+        store
+            .record_prompt(&legacy.session_id, "/web allow *.example.org")
+            .unwrap();
+        store.record_prompt(&legacy.session_id, "next prompt").unwrap();
+        store.record_prompt(&legacy.session_id, "next prompt").unwrap();
+        store
+            .record_exchange(
+                &legacy.session_id,
+                "Loop turn 1 of 3",
+                "reply",
+                "fixture",
+                &TokenTally::default(),
+                &[],
+            )
+            .unwrap();
+        assert_eq!(
+            store.get(&legacy.session_id).unwrap().prompt_history,
+            vec!["old prompt", "/web allow *.example.org", "next prompt"]
+        );
+        assert!(store_root
+            .for_owner("other")
+            .record_prompt(&legacy.session_id, "x")
+            .is_err());
+        for (typed, kept) in [
+            ("/api set GROK_API_KEY xai-secret", "/api set GROK_API_KEY"),
+            ("`/api set GH_TOKEN ghp_x`", "/api set GH_TOKEN"),
+            ("/ api set fake-token-not-a-key-name", "/api set"),
+            ("api set SERPAPI_API_KEY k", "api set SERPAPI_API_KEY"),
+            ("api set xai-1234567890abcdef", "api set"),
+            ("API set up for webhooks: how?", "API set up for webhooks: how?"),
+            ("API gateway vs service mesh?", "API gateway vs service mesh?"),
+            (
+                "/web fetch https://admin:hunter2@intranet.example.com/x",
+                "/web fetch https://intranet.example.com/x",
+            ),
+        ] {
+            assert_eq!(redacted_prompt(typed), kept, "{typed}");
+        }
+        assert!(is_loop_framing("Loop turn 2 of 5. Session goal: hvac"));
         store.clear().unwrap();
         assert!(store.get(&session.session_id).is_err());
     }

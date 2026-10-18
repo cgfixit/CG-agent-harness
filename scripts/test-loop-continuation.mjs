@@ -69,7 +69,7 @@ console.log('Loop command preflight loads goal and starts the owned loop.');
 const goalCase=html.slice(html.indexOf("      case 'goal': {"),html.indexOf("      case 'loop': {"));
 for (const [arg, mode, goal] of [['--web off use attachment only','off','use attachment only'],['--web fetch read supplied URL','fetch','read supplied URL'],['ordinary goal',undefined,'ordinary goal'],['--web all '+ '界'.repeat(2000),'all','界'.repeat(2000)],['--web nope test',null,null]]) {
   const calls=[];
-  const command=vm.createContext({arg,rest:arg.split(/\s+/),currentSession:'owned',sessionGoal:'',MAX_GOAL_CHARS:2000,api:async(path,method,body)=>{calls.push({path,body});return {goal:body.goal,goal_web_mode:body.web_mode};},paintGoalLoop(){},sys(){},refreshSessions:async()=>{}});
+  const command=vm.createContext({arg,rest:arg.split(/\s+/),currentSession:'owned',sessionGoal:'',MAX_GOAL_CHARS:2000,goalWebNote:()=>'',adoptPendingHistory(){},staleReview:()=>false,api:async(path,method,body)=>{calls.push({path,body});return {goal:body.goal,goal_web_mode:body.web_mode};},paintGoalLoop(){},sys(){},refreshSessions:async()=>{}});
   await vm.runInContext('(async()=>{switch("goal"){'+goalCase+'}})()',command);
   if(mode===null) assert.equal(calls.length,0); else {assert.equal(calls[0].body.web_mode,mode);assert.equal(calls[0].body.goal,goal);}
 }

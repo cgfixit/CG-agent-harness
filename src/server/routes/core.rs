@@ -437,6 +437,24 @@ pub async fn clear_attachment_pins(
     Ok(Json(json!({"removed": removed, "blobs_retained": true})))
 }
 
+/// Saves one submitted composer line for ArrowUp recall in this session,
+/// whatever happened to it. `/api` values and URL userinfo are dropped here as
+/// well as in the console (`sessions::redacted_prompt`).
+pub async fn record_prompt(
+    State(state): State<Arc<AppState>>,
+    user: Caller,
+    Path(session_id): Path<String>,
+    ValidJson(req): ValidJson<PromptHistoryRequest>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
+    state
+        .store
+        .for_owner(&owner)
+        .record_prompt(&session_id, req.text.trim())
+        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    Ok(Json(json!({"recorded": true})))
+}
+
 pub async fn rename_session(
     State(state): State<Arc<AppState>>,
     user: Caller,
@@ -521,8 +539,14 @@ pub async fn model_select(
         .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     let model = state.current_model();
     let tuning = if state.cfg.flag_is_true("models.local_llm.auto_tune") {
+        // tune() also clears stale limits for a cloud selection, but measures
+        // (and loads) only a local Ollama model.
         tokio::spawn(crate::server::model_limits::tune(state.clone(), model.clone()));
-        "pending"
+        if state.cloud_chat.is_cloud_selection(&model) || state.backend.provider != "ollama" {
+            "skipped"
+        } else {
+            "pending"
+        }
     } else {
         "off"
     };
@@ -808,7 +832,14 @@ async fn chat_inner(
     // Fact recall and retrieval read SQLite: run them off the async worker.
     let (pinned, facts, memory_budget, recalled, retrieval_error) = {
         let (state, owner, selections) = (state.clone(), owner.clone(), selections.clone());
-        let (force, query, message) = (req.retrieve, req.retrieve_query.clone(), req.message.clone());
+        // A loop turn's message is framing ("Loop turn 2 of 5. Session goal: …"),
+        // which would spend the retrieval token cap on "loop" and "turn".
+        let message = if req.loop_turn && !session.goal.trim().is_empty() {
+            session.goal.clone()
+        } else {
+            req.message.clone()
+        };
+        let (force, query) = (req.retrieve, req.retrieve_query.clone());
         let memory_enabled = settings.memory_enabled;
         super::structured_memory::off_worker(move || {
             super::structured_memory::prompt_memory(
@@ -1251,15 +1282,21 @@ async fn chat_inner(
         })
         .await
     };
-    let memory_suggestion = crate::server::structured_memory_suggest::enqueue_for_model(
-        &state,
-        &owner,
-        crate::server::structured_memory_suggest::Source::Chat,
-        episode["id"].as_str(),
-        &req.message,
-        &reply.body_text,
-        &model,
-    );
+    // A /loop turn's input is generated framing; queuing it each turn fills the
+    // bounded suggestion queue with repeats of the same goal.
+    let memory_suggestion = if req.loop_turn {
+        json!({"queued": false, "reason": "loop_turn"})
+    } else {
+        crate::server::structured_memory_suggest::enqueue_for_model(
+            &state,
+            &owner,
+            crate::server::structured_memory_suggest::Source::Chat,
+            episode["id"].as_str(),
+            &req.message,
+            &reply.body_text,
+            &model,
+        )
+    };
     Ok(Json(json!({
         "session_id": session.session_id,
         "reply": reply.body_text,
