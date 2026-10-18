@@ -126,7 +126,8 @@ Edit the section that owns a topic; create no Markdown files except a folder
 PRs/issues; screenshots go in `docs/screenshots/` (a root `screenshots/` fails
 the guard), and only for significant changes. `tests/invariant_guard.rs`
 enforces `DOCS_BUDGET`: a word cap per listed Markdown file, group caps, no new
-root screenshots or docs PDFs, no files over 1 MiB. Check `wc -w` before
+root screenshots or docs PDFs, no files over 1 MiB (8 MiB for videos in
+`docs/screenshots/`). Check `wc -w` before
 committing any `.md` edit, including web-UI edits. New rows or raised caps need
 operator approval and a `// why:`.
 

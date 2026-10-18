@@ -6,7 +6,9 @@
 # SMOKE_MODEL is any installed tag (default: the first /v1/models id), including
 # a local derived tag such as qwen3.8:27b-mlx-cg. The first chat must answer
 # exactly "pong". The server sends reasoning_effort none when the provider is
-# ollama, for every tag. FINGERPRINT_MODELS, when set, is the fingerprint set
+# ollama, for every tag. SMOKE_EXACT_REPLY=0 (live-ollama.yml's tiny fixture
+# models) instead requires a non-empty reply from that model with completion
+# tokens and no <think> text, the bar scripts/live-ollama/fingerprint.py uses. FINGERPRINT_MODELS, when set, is the fingerprint set
 # (scripts/live-ollama/), not that derived tag.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -36,13 +38,20 @@ esac
 
 # The refused bind seeded the fresh configuration. Set the explicitly selected
 # local endpoint before server startup, without requiring a YAML dependency.
+# Temperature 0 makes the "pong" turn greedy: at the shipped 0.2 a 0.5B model
+# sometimes sampled "péng!", so the check failed by chance, not by regression.
 python3 - "$CGAGENTHARNESS_HOME/config.yaml" "$MODEL_URL" <<'PYMODEL'
 import json,sys
 from pathlib import Path
 from urllib.parse import urlsplit
 url=sys.argv[2].rstrip('/')
-assert urlsplit(url).hostname in ('127.0.0.1','localhost','::1')
-p=Path(sys.argv[1]);p.write_text(p.read_text().replace('base_url: "http://127.0.0.1:11434/v1"', 'base_url: '+json.dumps(url+'/v1'), 1))
+assert urlsplit(url).hostname in ('127.0.0.1','localhost','::1')  # DevSkim: ignore DS162092 because this refuses any non-loopback model URL.
+p=Path(sys.argv[1]);text=p.read_text()
+for old,new in (('base_url: "http://127.0.0.1:11434/v1"','base_url: '+json.dumps(url+'/v1')),('    temperature: 0.2\n','    temperature: 0\n')):  # DevSkim: ignore DS162092,DS137138 because these are the seeded loopback Ollama URL and the operator's loopback URL.
+    # The first match is models.local_llm (agentic.deepagent_github repeats base_url later).
+    assert old in text,'seeded config changed; update smoke-ollama.sh: '+old.strip()
+    text=text.replace(old,new,1)
+p.write_text(text)
 PYMODEL
 "$BIN" serve >"$CGAGENTHARNESS_HOME/serve.log" 2>&1 &
 PID=$!
@@ -122,7 +131,15 @@ for attempt in $(seq 1 300); do
   sleep 2
 done
 echo "$REPLY" | tee /dev/stderr | grep -q '"reply"'; echo
-echo "$REPLY" | python3 -c 'import json,sys;d=json.load(sys.stdin);assert d["usage"]["completion_tokens"]>=0;assert d["reply"].strip().lower().rstrip(".!")=="pong",d["reply"];print("model:",d["model"],"tokens:",d["tally"]["total"])'
+echo "$REPLY" | python3 -c '
+import json,sys
+d=json.load(sys.stdin);reply=d["reply"];model=sys.argv[1]
+if sys.argv[2]=="0":
+    # Greedy decoding still differs by backend: Metal says "péng!" where CPU says "pong".
+    assert reply.strip() and "<think" not in reply.lower() and d["model"]==model and d["usage"]["completion_tokens"]>0,d
+else:
+    assert d["usage"]["completion_tokens"]>=0;assert reply.strip().lower().rstrip(".!")=="pong",reply
+print("model:",d["model"],"tokens:",d["tally"]["total"])' "$MODEL" "${SMOKE_EXACT_REPLY:-1}"
 if [[ -n "${FINGERPRINT_OUT:-}" ]]; then
   echo "== fingerprint (${FINGERPRINT_MODELS:-$MODEL})"
   python3 scripts/live-ollama/fingerprint.py --base "$BASE" --cacert "$CERT" \

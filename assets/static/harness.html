@@ -125,6 +125,12 @@
      until a session exists. ── */
   body.signed-out .main,
   body.signed-out .header-right > :not(#harnessAuth) { display: none; }
+  /* A session still on its setup code has no other authority: the server
+     answers everything but password, whoami and logout with
+     AUTH_PASSWORD_CHANGE_REQUIRED. The lock card replaces the console the
+     same way, so closing the password dialog never reveals panels. */
+  body.password-required .main,
+  body.password-required .header-right > :not(#harnessAuth) { display: none; }
   /* Until the first account probe settles, nothing is shown as usable. */
   .auth-pending .main, .auth-pending .header-right { visibility: hidden; }
   .signin { flex: 1; min-height: 0; overflow-y: auto; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
@@ -611,7 +617,7 @@ dialog p { margin-bottom:12px; }
       <input id="hAuthPass" name="password" type="password" autocomplete="current-password" maxlength="1024">
       <p id="hAuthError" class="signin-error" role="alert"></p>
       <button id="hAuthLogin" type="submit">Sign in</button>
-      <p id="hAuthHint" class="signin-hint" hidden>First run: sign in as <strong>admin</strong> with the setup code. The app's Setup window (Cmd-,) shows it; for a terminal server it is in the <code>setup-code</code> file in the harness home. You'll set a new password next.</p>
+      <p id="hAuthHint" class="signin-hint" hidden>First run: sign in as <strong>admin</strong> with the setup code. In the app, press <kbd>Cmd</kbd>+<kbd>+</kbd> (Cmd, Shift and =) to open <strong>Harness → Setup and recovery</strong>, which shows it; for a terminal server it is in the <code>setup-code</code> file in the harness home. You'll set a new password next.</p>
     </form>
     <form id="hAuthSetup" aria-labelledby="setupTitle" hidden>
       <h1 id="setupTitle">Set the administrator password</h1>
@@ -622,6 +628,14 @@ dialog p { margin-bottom:12px; }
       <input id="hAuthSetupPass2" type="password" autocomplete="new-password" minlength="12" maxlength="1024">
       <p id="hAuthSetupError" class="signin-error" role="alert"></p>
       <button id="hAuthSetupBtn" type="submit">Set password</button>
+    </form>
+  </section>
+  <section class="signin" id="passwordLockScreen" hidden>
+    <form id="passwordLockCard" aria-labelledby="passwordLockTitle">
+      <h1 id="passwordLockTitle">Replace the setup code</h1>
+      <p class="signin-lede">This account still signs in with its one-time setup code. Until you set a password, this session can only change its password, show who is signed in, or log out; the rest of the harness stays locked.</p>
+      <button id="passwordLockOpen" type="submit">Set a new password</button>
+      <p class="signin-hint">The setup code is the current password. In the app, <kbd>Cmd</kbd>+<kbd>+</kbd> (Cmd, Shift and =) opens <strong>Harness → Setup and recovery</strong>, which shows it; for a terminal server it is in the <code>setup-code</code> file in the harness home.</p>
     </form>
   </section>
 
@@ -4916,7 +4930,17 @@ const hAuthLogout = document.getElementById('hAuthLogout');
 function setHarnessLogoutVisible(on) {
   if (hAuthLogout) hAuthLogout.hidden = !on;
   document.getElementById('hAuthPassword').hidden = !on;
-  $('reloadLimits').hidden = !on || window.__cyclawRole !== 'admin';
+  $('reloadLimits').hidden = !on || window.__cyclawRole !== 'admin' || passwordRequired;
+}
+/* True while the signed-in account must replace its setup code. The server
+   allows such a session only password, whoami and logout, so the lock card
+   replaces the console until then; closing the dialog cannot unlock it. */
+let passwordRequired = false;
+function setPasswordRequired(on) {
+  passwordRequired = on === true;
+  document.body.classList.toggle('password-required', passwordRequired);
+  $('passwordLockScreen').hidden = !passwordRequired;
+  if (passwordRequired) $('reloadLimits').hidden = true;
 }
 /* Local reset for leaving an account: transcript, account panes and the
    active session, style and prompt history. A successful logout runs it, and
@@ -4934,9 +4958,11 @@ function resetAccountView() {
   currentStyle = 'off'; currentStyleIssue = null; paintStyle(); sessionRevision++;
 }
 /* mode is 'login', 'setup' or null (signed in, or authentication disabled).
-   The default-credentials note shows only while the server reports that the
-   shipped admin password is still in effect. */
+   The setup-code note shows only while setup-status reports that the one-time
+   code is still in effect. Signing out ends any password lock. */
+let setupCodePending = false;
 function showSignIn(mode, setupCode) {
+  setupCodePending = mode === 'login' && setupCode === true;
   const out = mode === 'login' || mode === 'setup';
   const wasOut = document.body.classList.contains('signed-out');
   document.body.classList.toggle('signed-out', out);
@@ -4944,6 +4970,7 @@ function showSignIn(mode, setupCode) {
   hAuthLoginBox.hidden = mode !== 'login';
   hAuthSetup.hidden = mode !== 'setup';
   $('hAuthHint').hidden = !(mode === 'login' && setupCode === true);
+  if (out) setPasswordRequired(false);
   /* Clearing also disconnects any Memory listing still in flight, so it
      stops. The first probe has shown nothing yet, so it resets nothing. */
   if (out && !wasOut && !document.documentElement.classList.contains('auth-pending')) resetAccountView();
@@ -4998,6 +5025,7 @@ async function refreshHarnessAuth() {
     const me = await fetchWithTimeout('/api/auth/whoami', {}, 5000);
     if (me.status === 503) {
       showSignIn(null);
+      setPasswordRequired(false);
       setHarnessLogoutVisible(false);
       refreshHeaderFeatures(true);
       if (who) who.textContent = 'authentication disabled by local configuration';
@@ -5007,6 +5035,7 @@ async function refreshHarnessAuth() {
       const data = await me.json();
       window.__cyclawRole = data.role;
       showSignIn(null);
+      setPasswordRequired(data.must_change_password === true);
       setHarnessLogoutVisible(true);
       refreshHeaderFeatures(!data.must_change_password);
       $('reloadLimits').hidden = data.role !== 'admin' || data.must_change_password;
@@ -5061,6 +5090,7 @@ if (hAuthLogin) {
       if (who) who.textContent = accountLabel(data);
       if (hAuthSetup) hAuthSetup.hidden = true;
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
+      setPasswordRequired(data.must_change_password === true);
       setHarnessLogoutVisible(true);
       showSignIn(null);
       refreshHeaderFeatures(!data.must_change_password);
@@ -5162,14 +5192,20 @@ if (hAuthSetupBtn) {
   });
 }
 function openPasswordChange(required) {
-  $('passwordHelp').textContent = required ? 'Replace the initial admin password before using the harness. Use at least 12 characters.' : 'Changing your password signs out other sessions. Use at least 12 characters.';
+  $('passwordHelp').textContent = required ? 'Replace the setup code with your own password before using the harness. Until you do, this session can only change its password or log out. Use at least 12 characters.' : 'Changing your password signs out other sessions. Use at least 12 characters.';
   $('passwordFeedback').textContent = '';
   if (!$('passwordDialog').open) $('passwordDialog').showModal();
   $('passwordCurrent').focus();
 }
-$('hAuthPassword').addEventListener('click', () => openPasswordChange(false));
+$('hAuthPassword').addEventListener('click', () => openPasswordChange(passwordRequired));
+$('passwordLockCard').addEventListener('submit', event => { event.preventDefault(); openPasswordChange(true); });
 $('passwordClose').addEventListener('click', () => $('passwordDialog').close());
-$('passwordDialog').addEventListener('close', () => $('passwordForm').reset());
+/* Close, Escape or any other dismissal of a required replacement lands on the
+   lock card, never on the console. */
+$('passwordDialog').addEventListener('close', () => {
+  $('passwordForm').reset();
+  if (passwordRequired) $('passwordLockOpen').focus();
+});
 $('passwordForm').addEventListener('submit', async event => {
   event.preventDefault();
   if ($('passwordNew').value !== $('passwordConfirm').value) { $('passwordFeedback').textContent = 'Passwords do not match.'; return; }
@@ -5181,6 +5217,19 @@ $('passwordForm').addEventListener('submit', async event => {
     await refreshHarnessAuth(); await refreshStatus(); await refreshSessions();
     sys('Password changed. Your other sessions were signed out.');
   } catch (error) { $('passwordFeedback').textContent = error.message; }
+});
+/* Cmd/Ctrl and "+" (Shift and =) points at the setup code from the sign-in
+   card. The desktop app's menu takes the same keys first and opens Setup and
+   recovery; a browser gets the hint, which names where the code lives and
+   never contains it. Elsewhere the keys keep their browser meaning (zoom). */
+document.addEventListener('keydown', event => {
+  if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+  if (event.key !== '+' && !(event.shiftKey && event.code === 'Equal')) return;
+  if (!document.body.classList.contains('signed-out') || hAuthLoginBox.hidden) return;
+  event.preventDefault();
+  $('hAuthHint').hidden = false;
+  if (!setupCodePending) $('hAuthError').textContent = 'No setup code is pending on this harness; sign in with your password.';
+  $('hAuthHint').scrollIntoView({ block: 'nearest' });
 });
 refreshHarnessAuth();
 let memoryRefreshTimer = null, memoryRefreshBusy = false, memoryViewRevision = 0, memoryFactsRevision = 0;
@@ -5229,7 +5278,7 @@ function memoryRunOutcome(run) {
 }
 async function refreshMemoryProposals() {
   const panel = $('pane-memory');
-  if (memoryRefreshBusy || document.hidden || !panel.classList.contains('active') || document.body.classList.contains('signed-out')) return;
+  if (memoryRefreshBusy || document.hidden || !panel.classList.contains('active') || document.body.classList.contains('signed-out') || document.body.classList.contains('password-required')) return;
   if (apiRetryDelay()) { clearTimeout(memoryRefreshTimer); memoryRefreshTimer = setTimeout(refreshMemoryProposals, apiRetryDelay()); return; }
   memoryRefreshBusy = true;
   clearTimeout(memoryRefreshTimer);
@@ -5365,7 +5414,7 @@ async function refreshMemoryProposals() {
   finally {
     if (revision === memoryViewRevision) {
       memoryRefreshBusy = false;
-      if (delay && !document.hidden && panel.classList.contains('active') && !document.body.classList.contains('signed-out')) memoryRefreshTimer = setTimeout(refreshMemoryProposals, Math.max(delay, apiRetryDelay()));
+      if (delay && !document.hidden && panel.classList.contains('active') && !document.body.classList.contains('signed-out') && !document.body.classList.contains('password-required')) memoryRefreshTimer = setTimeout(refreshMemoryProposals, Math.max(delay, apiRetryDelay()));
     }
   }
 }

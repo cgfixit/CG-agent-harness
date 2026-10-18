@@ -44,6 +44,8 @@ notes_corpus/
 /exports/
 /memory/
 /logs/
+# scripts/init.sh writes its install log here
+/scripts/logs/
 /tmp/
 /tools/
 tls/
