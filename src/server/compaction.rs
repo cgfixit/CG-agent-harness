@@ -1,7 +1,8 @@
 //! Prompt-window compaction for local chat sessions.
 //!
 //! Trigger uses next-prompt size (UTF-8 bytes / 4, calibrated from local usage)
-//! plus an effective reply reservation. This remains an estimate, not a tokenizer.
+//! plus one reply; the hard limit counts the effective reply reservation. This
+//! remains an estimate, not a tokenizer.
 //! System prompt and `Session.goal`
 //! are composed each turn and are never stored in `messages`, so they cannot
 //! be compacted. The first user message is kept verbatim, and so is a tail of
