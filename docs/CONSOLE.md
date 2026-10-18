@@ -87,7 +87,10 @@ keeps only its key name and `/loop` turns are skipped. The session log keeps the
 latest 50 across restart; legacy logs seed it from user messages and compaction
 keeps it. Session switches and logout reset navigation; the browser stores nothing.
 
-The session store retains at most 500 messages per conversation. Local prompt
+The session store retains at most 500 messages per conversation, dropping the
+oldest whole exchanges after the first exchange or its summary. A model reply
+that opens with `[session-compacted]` is stored with a leading space, so only
+compaction writes a summary. Local prompt
 history uses that window; [compaction](#local-history-compaction) reduces
 overflow against the configured token budget, preserving the goal and recent messages. Stored token totals can
 therefore exceed the compacted context sent to the model.

@@ -530,7 +530,8 @@ reservation) summarizes within 24000 characters and the calibrated budget: goal
 and first message read-only, the prior `[session-compacted]`
 summary intact (else compaction fails), then the newest middle turns clipped to
 800 characters, gaps marked. Ungrounded identifiers become `[unverified]`;
-absence claims and unquoted corrections are dropped. The tail is whole exchanges
+absence claims and corrections quoting no user turn (a quote under 8 characters
+must be a whole turn) are dropped; identifiers match whole tokens. The tail is whole exchanges
 within `chat.compact_keep_messages` and `chat.compact_tail_percent` of the
 trigger, at least one; the summary goes as a user-role note ranked below
 exact messages.

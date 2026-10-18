@@ -712,15 +712,15 @@ impl OwnedSessionStore<'_> {
         });
         session.messages.push(Message {
             role: "assistant".into(),
-            text: assistant_text.to_string(),
+            text: crate::server::compaction::stored_reply(assistant_text),
             ts: now,
         });
         if session.messages.len() > MAX_MESSAGES {
-            // Drop whole exchanges from just after the first user message and
-            // its summary, never the pinned turn or the newest exchange.
+            // Drop whole exchanges after the first user message and the slot
+            // that follows it (its reply or the summary), never the pinned
+            // exchange or the newest one.
             let first = session.messages.iter().position(|m| m.role == "user");
-            let head = first.map_or(0, |i| i + 1)
-                + usize::from(crate::server::compaction::summary_slot(&session.messages).is_some());
+            let head = first.map_or(0, |i| i + 2).min(session.messages.len());
             let excess = session.messages.len() - MAX_MESSAGES;
             let drop = (excess + excess % 2).min(session.messages.len().saturating_sub(head + 2));
             session.messages.drain(head..head + drop);
@@ -1316,6 +1316,42 @@ mod attachment_pin_tests {
         assert_eq!(messages.len(), MAX_MESSAGES);
         assert_eq!(messages[0].text, "PINNED");
         assert_eq!(messages[1].text, summary);
+        assert!(messages[2..]
+            .chunks(2)
+            .all(|pair| pair[0].role == "user" && pair[1].role == "assistant"));
+        assert_eq!(messages.last().unwrap().text, format!("a{}", MAX_MESSAGES / 2 + 5));
+    }
+
+    #[test]
+    fn the_message_cap_keeps_the_pinned_reply_when_nothing_was_compacted() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = SessionStore::new(dir.path()).unwrap();
+        let store = root.for_owner("local");
+        let session = store.create("fixture", "cap").unwrap();
+        let usage = TokenTally::default();
+        let echoed = format!("{}a reply, not a summary", crate::server::compaction::COMPACT_PREFIX);
+        let mut saved = None;
+        for i in 0..=(MAX_MESSAGES / 2 + 5) {
+            let (user, reply) = if i == 0 {
+                ("PINNED".to_string(), echoed.clone())
+            } else {
+                (format!("u{i}"), format!("a{i}"))
+            };
+            saved = Some(
+                store
+                    .record_exchange(&session.session_id, &user, &reply, "m", &usage, &[])
+                    .unwrap(),
+            );
+        }
+        let messages = saved.unwrap().messages;
+        assert_eq!(messages.len(), MAX_MESSAGES);
+        assert_eq!(messages[0].text, "PINNED");
+        assert_eq!(
+            messages[1].text.trim_start(),
+            echoed,
+            "the pinned turn keeps its own reply"
+        );
+        assert!(crate::server::compaction::summary_slot(&messages).is_none());
         assert!(messages[2..]
             .chunks(2)
             .all(|pair| pair[0].role == "user" && pair[1].role == "assistant"));
