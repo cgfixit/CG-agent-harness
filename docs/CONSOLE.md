@@ -585,7 +585,8 @@ exact messages; unsourced codes become `[unverified]`.
 
 Reply reservation is `max_tokens` for resolved Ollama with explicit
 `reasoning_effort: "none"`, or twice that otherwise: a conservative harness
-margin, not provider accounting. Startup accepts at most 25904 reply tokens on
+margin, not provider accounting. The compaction trigger counts one reply on every
+backend, so all compact at the same history size. Startup accepts at most 25904 reply tokens on
 the first path or 12952 on the second for chat and `/loop`. The trigger floor,
 web-chat tightening and the bytes/4 estimate with its per-session calibration
 are specified in
