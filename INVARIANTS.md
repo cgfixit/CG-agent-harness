@@ -491,8 +491,8 @@ and rejects references to reserved source names, including in SSE URLs.
 ## A detached run cannot outlive its gates
 
 `POST /api/agent/jobs` runs the identical validated request as
-`POST /api/agent/run` in a tokio task, but the run gate and (when the local model
-is also the planner) the chat gate are held by the TASK via
+`POST /api/agent/run` in a tokio task, but the run gate and (when the local
+model is also the planner) the chat gate are held by the TASK via
 `GateGuard`'s `Drop`, not by the HTTP request. A closed tab or dead client
 cannot leave the gate stuck: cancelling
 (`POST /api/agent/jobs/{job_id}/cancel`) aborts the task, dropping the guards and
@@ -637,8 +637,8 @@ A persisted schedule (`$CGAGENTHARNESS_HOME/data/agentic/console-schedules.json`
 closed. `confirm` is never defaulted; write gates stay closed. Each occurrence
 is consumed before the job starts (at-most-once): versioned interval/cron specs,
 occurrence identity and `next_fire_at` / `last_fired_at`
-survive process restart. Elapsed work is skipped at startup; normal polling has a
-bounded grace. New activation requires a single-use owner-bound preview of the
+survive process restart. Elapsed work is skipped at startup; normal polling has
+a bounded grace. New activation requires a single-use owner-bound preview of the
 exact reviewed request. Calendar gaps skip and repeated wall times select only
 the first UTC mapping. Stale poll snapshots cannot consume a future occurrence.
 The store lock serializes cancellation with synchronous job registration. Cancelled schedules do not fire; cancelling
