@@ -670,7 +670,7 @@ What the scripts leave behind, all optional to remove:
 |---|---|---|
 | `install-macos.sh --replace-app` | Previous app in `~/Library/Caches/CG-agent-harness-installer/previous` | `rm -rf` that directory |
 | `start-macos.sh --trust-cert` | "CG Agent Harness local portal" certificate trusted in the login keychain | Keychain Access |
-| `start-macos.sh` | `OLLAMA_CONTEXT_LENGTH` for GUI apps until logout; `~/Library/Logs/ollama-serve.log` | `launchctl unsetenv OLLAMA_CONTEXT_LENGTH`; `rm` the log |
+| `start-macos.sh`, `install-macos.sh --model` | `OLLAMA_CONTEXT_LENGTH` for GUI apps until logout; `~/Library/Logs/ollama-serve.log` | `launchctl unsetenv OLLAMA_CONTEXT_LENGTH`; `rm` the log |
 | The harness | Home and its Keychain credentials | `scripts/reset-macos.sh` (dry run), then `--yes` after a backup |
 | `init.sh` | "CG Agent Harness admin password" in the login keychain; marked lines in your shell profile; `scripts/logs/` | `reset-macos.sh --yes`; delete the lines under `# Added by CG-agent-harness`; `rm -rf scripts/logs` |
 

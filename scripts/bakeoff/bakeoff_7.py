@@ -16,7 +16,8 @@ Usage:
 Rows. Each model gets separate rows that are never averaged together:
   runtime   tag contract (load with NO num_ctx, then /api/ps and /api/show), memory, speed, long context,
             and the /v1 harness wire (reasoning_effort "none"). Speed is refused off AC power, with the app
-            listening on 8790, or with another model loaded; swap growth or throttling voids it afterwards.
+            running (its process, or anything on 8790), or with another model loaded; swap growth or throttling
+            voids it afterwards.
   harness   quality, tools and injection over /v1/chat/completions exactly as the harness posts them:
             temperature 0.2, reasoning_effort "none", no num_ctx, max_tokens 4096. Only this row has a gate.
   card      the same probes natively with the model card's sampling and thinking mode, plus A/B in the other
@@ -1302,14 +1303,26 @@ def port_open(port):
         return False
 
 
+# This user's harness app, shell or backend: the pattern scripts/init.sh tests. The .app backend binds a random
+# loopback port (src/server/desktop.rs), so 8790 alone only finds a `cgagentharness serve`.
+APP_PROCS = r"/Contents/MacOS/(cgagentharness desktop$|cg-agent-harness-desktop( |$))"
+
+
+def app_process():
+    """Whether this user's app runs. Without pgrep, sh() returns "" and this fails open to the port check."""
+    return bool(sh(["pgrep", "-u", str(os.getuid()), "-f", APP_PROCS]))
+
+
 def therm_limit():
     m = re.search(r"CPU_Speed_Limit\s*=\s*(\d+)", sh(["pmset", "-g", "therm"]))
     return int(m.group(1)) if m else None
 
 
 def preflight(app_port=8790):
-    p = {"power": "unknown", "power_ok": None, "battery_pct": None, "app_listening": port_open(app_port),
-         "ollama_serve_procs": None, "ctx_env": ctx_env(), "cpu_speed_limit": therm_limit(), "problems": []}
+    listening, proc = port_open(app_port), app_process()
+    p = {"power": "unknown", "power_ok": None, "battery_pct": None, "app_running": listening or proc,
+         "app_process": proc, "app_port_open": listening, "ollama_serve_procs": None, "ctx_env": ctx_env(),
+         "cpu_speed_limit": therm_limit(), "problems": []}
     batt = sh(["pmset", "-g", "batt"])
     if batt:
         first = batt.splitlines()[0]
@@ -1319,8 +1332,10 @@ def preflight(app_port=8790):
         p["battery_pct"] = int(m.group(1)) if m else None
     if p["power_ok"] is not True:
         p["problems"].append(f"power {p['power']}" + (f" {p['battery_pct']}%" if p["battery_pct"] is not None else ""))
-    if p["app_listening"]:
-        p["problems"].append(f"something listens on 127.0.0.1:{app_port} (the harness app?); its warmup can load a model under the bench")
+    if p["app_running"]:
+        seen = " and ".join(x for x in ("its process" if proc else "",
+                                         f"something on 127.0.0.1:{app_port}" if listening else "") if x)
+        p["problems"].append(f"the harness app runs ({seen}); its warmup can load a model under the bench")
     procs = [x for x in sh(["pgrep", "-fl", "ollama serve"]).splitlines() if x.strip()]
     p["ollama_serve_procs"] = len(procs) if procs else None
     if procs and len(procs) > 1:
@@ -1782,8 +1797,8 @@ class ModelRun:
         rt["therm_start"] = pre["cpu_speed_limit"] if pre["cpu_speed_limit"] is not None else ""
         if pre["power_ok"] is not True:
             self.speed_reasons.append(f"power:{pre['power']}")
-        if pre["app_listening"]:
-            self.speed_reasons.append("app:8790")
+        if pre["app_running"]:
+            self.speed_reasons.append("app")
         self.evict_others()
         swap0 = swap_used_mb()
 

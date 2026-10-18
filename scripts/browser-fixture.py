@@ -19,7 +19,8 @@ args = parser.parse_args()
 assert urlparse(args.endpoint).hostname == '127.0.0.1', 'local inference only'
 repo = Path(__file__).resolve().parent.parent
 binary = repo / 'target/release/cgagentharness'
-assert binary.is_file(), 'build the release binary first'
+# Only the serve path launches it; checked before the directory exists.
+assert args.prepare_only or binary.is_file(), 'build the release binary first'
 root = args.directory.resolve()
 root.mkdir(mode=0o700)
 seed = root / 'seed'
@@ -99,7 +100,9 @@ keyfile.touch(mode=0o600)
 keyfile.write_text(key)
 env.update(CGAGENTHARNESS_HOME=str(home), CGAGENTHARNESS_API_KEY=key,
            PATH=str(fakebin) + os.pathsep + env['PATH'])
-print(json.dumps({'base_url': f'{"http" if args.http else "https"}://127.0.0.1:{args.port}', 'home': str(home), 'key_file': str(keyfile), 'fixture': 'disposable-arithmetic'}), flush=True)
+# --prepare-only binds nothing, so there is no base URL to report.
+base_url = None if args.prepare_only else f'{"http" if args.http else "https"}://127.0.0.1:{args.port}'
+print(json.dumps({'base_url': base_url, 'home': str(home), 'key_file': str(keyfile), 'fixture': 'disposable-arithmetic'}), flush=True)
 if args.prepare_only:
     (home / '.env').touch(mode=0o600)
     (home / '.env').write_text("export CGAGENTHARNESS_API_KEY='" + key + "'\n")

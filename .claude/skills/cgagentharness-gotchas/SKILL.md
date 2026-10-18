@@ -26,8 +26,9 @@ not runtime `/api/skills` plugins.
 - **Right fix:** Treat as known flake class (issue **#43** — Start Chrome
   reliably). Retry/quarantine with tracking; fix the starter, don't hollow the
   test.
-- **Also seen:** a *non*-startup flake at `chat-browser-acceptance.mjs:418`,
-  where `saved-DEEPAGENT_API_KEY` still held a typed value after a refresh.
+- **Also seen:** a *non*-startup flake in the `chat-browser-acceptance.mjs`
+  assertion that the `saved-DEEPAGENT_API_KEY` input is empty after saving: it
+  still held the typed value after a refresh.
   Observed once in eleven local runs; the same commit then passed ten straight,
   so do not attribute it to your diff on n=1. Mechanism unconfirmed. The one
   candidate worth checking first: the script launches Chrome without

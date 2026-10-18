@@ -194,12 +194,12 @@ class Harness:
 
 # ---------------------------------------------------------------- disposable harness
 def find_bin(arg):
-    for c in ([arg] if arg else []) + APP_BINS + [os.environ.get("CGAH_BIN", ""),
-                                                   str(Path(os.environ.get("CGAH_REPO", ".")) / "target/release/cgagentharness"),
-                                                   shutil.which("cgagentharness") or ""]:
+    # CGAH_BIN is the explicit override across the repo, so it wins over the installed .app.
+    for c in ([arg] if arg else []) + [os.environ.get("CGAH_BIN", "")] + APP_BINS + [
+            str(Path(os.environ.get("CGAH_REPO", ".")) / "target/release/cgagentharness"), shutil.which("cgagentharness") or ""]:
         if c and Path(c).is_file() and os.access(c, os.X_OK):
             return c
-    raise SystemExit("no cgagentharness binary: pass --bin, install the .app, or build with cargo build --release")
+    raise SystemExit("no cgagentharness binary: pass --bin, set CGAH_BIN, install the .app, or build with cargo build --release")
 
 
 class Disposable:
@@ -340,7 +340,8 @@ class HLane:
                                                               "web_tools": t["data"].get("web_tools"),
                                                               "session_id": t["data"].get("session_id"),
                                                               "context_window": t["data"].get("context_window"),
-                                                              "compaction": t["data"].get("compaction")}
+                                                              "compaction": t["data"].get("compaction"),
+                                                              "compaction_skipped": t["data"].get("compaction_skipped")}
 
     def trial(self, name, fn, n=None):
         for i in range(1, (n or self.n) + 1):
@@ -397,7 +398,7 @@ class HLane:
                    harness_decode_tps=speed.get("decode_tps", ""), harness_prefill_tps=speed.get("prefill_tps", ""),
                    timeout_sec=tuning.get("timeout_sec", ""))
         reasons = [x for x in ("power:" + str(self.pre.get("power")) if self.pre.get("power_ok") is not True else "",
-                               "app:8790" if self.pre.get("app_listening") else "") if x]
+                               "app" if self.pre.get("app_running") else "") if x]
         row["speed_valid"] = "yes" if not reasons else f"dirty({','.join(reasons)})"
         (self.out / f"{self.slug}-profile.json").write_text(json.dumps(prof, indent=1))
         pin_fail = self.prof.get("pin") and row.get("ctx_contract") != "PASS tag"
@@ -480,7 +481,8 @@ class HLane:
         if not ls or not ls.n or ls.passes != ls.n:
             why.append("long_session lost the needle" if ls and ls.n else "long_session not run")
         elif not str(row.get("long_session_compacted", "")).startswith("yes"):
-            why.append("long_session never compacted (needle still in the verbatim tail)")
+            skipped = str(row.get("long_session_compacted", "")).partition(" skipped:")[2].split(" ")[0]
+            why.append(f"long_session never compacted ({'compaction skipped: ' + skipped if skipped else 'needle still in the verbatim tail'})")
         if str(row.get("research_status", "")).startswith("window clipped"):
             why.append(f"research {row['research_status']}")
         if swap_delta is not None and swap_delta > 512:
@@ -530,11 +532,14 @@ class HLane:
     def long_session(self):
         """One session pushed past chat.compact_prompt_tokens with a needle in turn one.
 
-        A chat prompt cannot approach the 32768 window: the harness caps it at compact_prompt_tokens (24000, with
-        max_tokens reserved for the reply) and keeps whole recent exchanges verbatim (at most compact_keep_messages,
-        8, and compact_tail_percent, 25%, of the trigger). So the turns are small and many: the needle stays only in
+        A chat prompt cannot approach the 32768 window: compact_prompt_tokens (24000) is only the compaction trigger;
+        the hard limit a turn may still send past it is the prompt cap (30000 at this window, with max_tokens
+        reserved for the reply). Compaction keeps whole recent exchanges verbatim (at most compact_keep_messages, 8,
+        and compact_tail_percent, 25%, of the trigger). So the turns are small and many: the needle stays only in
         the pinned first turn and must win over --long-compactions real summaries. A turn's response names its
-        compaction. A CHAT_PROMPT_TOO_LARGE refusal is recorded as a harness result, not a model miss.
+        compaction, or in compaction_skipped why it went uncompacted under the hard limit ("no_gain",
+        "summary_unusable"); skips are counted by reason. A CHAT_PROMPT_TOO_LARGE refusal is recorded as a harness
+        result, not a model miss.
         """
         self.trial("long_session", lambda i: self.long_run(i, correction=False), 1)
 
@@ -555,7 +560,7 @@ class HLane:
             new = f"ONYX-{rng.randint(5000, 9999)}"
             turns.append(self.turn(f"Correction: the rotation code for vault K-{vault} is now {new}. Reply only OK.", sid))
         peak = prev = turns[-1]["prompt_tokens"]
-        compactions, after, refused = 0, 0, None
+        compactions, after, refused, skipped = 0, 0, None, {}
         for k in range(self.args.long_turns):
             if compactions >= self.args.long_compactions and after >= 2:
                 break
@@ -567,6 +572,9 @@ class HLane:
                 refused = {"http_status": e.status, "code": ((e.body or {}).get("detail") or {}).get("code"), "body": e.body}
                 break
             turns.append(t)
+            reason = t["data"].get("compaction_skipped")
+            if reason:
+                skipped[reason] = skipped.get(reason, 0) + 1
             # The harness reports a compaction; older binaries only show a prompt-size drop.
             if t["data"].get("compaction") or (
                     "compaction" not in t["data"] and t["prompt_tokens"] and prev and t["prompt_tokens"] < prev * 0.8):
@@ -580,14 +588,18 @@ class HLane:
         turns.append(q)
         peak = max(peak, q["prompt_tokens"])
         self.row[f"{name}_tokens"] = f"peak {peak} (window {window}, {len(turns)} turns)"
+        skips = ",".join(f"{k}={v}" for k, v in sorted(skipped.items()))
         self.row[f"{name}_compacted"] = (f"yes x{compactions}" if compactions else "no") + (
-            f" refused:{refused['code']}" if refused else "")
+            f" skipped:{skips}" if skips else "") + (f" refused:{refused['code']}" if refused else "")
         if not compactions:
-            self.notes.append(f"{name} never compacted: the needle was still in the verbatim tail")
+            self.notes.append(f"{name} never compacted: " + (f"compaction skipped ({skips})" if skips
+                                                              else "the needle was still in the verbatim tail"))
+        elif skips:
+            self.notes.append(f"{name} sent {sum(skipped.values())} turn(s) uncompacted past the trigger ({skips})")
         ok = new in q["answer"] and code not in q["answer"] if correction else code in q["answer"]
         status = core.classify(ok, self.as_reply(q))
         return status, {"peak_prompt_tokens": peak, "window": window, "compactions": compactions, "refused": refused,
-                        "code": code, "corrected_to": new, "turns": len(turns)}, turns
+                        "compaction_skipped": skipped, "code": code, "corrected_to": new, "turns": len(turns)}, turns
 
     def simple(self, message, ok):
         t = self.turn(message)
@@ -713,12 +725,13 @@ def parse_args(argv):
     ap.add_argument("--port", type=int, default=8795)
     ap.add_argument("--ollama", default=core.HOST)  # DevSkim: ignore DS137138 because the default is the loopback Ollama origin.
     ap.add_argument("--attach", default=None, help="smoke a running harness at this origin (not comparable)")
-    ap.add_argument("--home", default=str(Path.home() / ".CGagentHarness"), help="attach mode: harness home (cert, cli-session.json)")
+    ap.add_argument("--home", default=str(Path.home() / ".CGagentHarness"),
+                    help="attach mode: harness home (cli-session.json; its certificate is exported with tls certificate)")
     ap.add_argument("--grant-file", default=None, help="extra allow patterns, one or more per line (disposable mode)")
     ap.add_argument("--hvac", choices=["json", "prose", "both", "none"], default="both")
     ap.add_argument("--no-research", action="store_true", help="skip /api/web/research (an observation; only a window-clip warning there fails the gate)")
     ap.add_argument("--no-contract-gate", action="store_true", help="score a lane whose window is not 32768 anyway")
-    ap.add_argument("--allow-app", action="store_true", help="run although something listens on 8790")
+    ap.add_argument("--allow-app", action="store_true", help="run although the harness app runs (its process, or anything on 8790)")
     ap.add_argument("--tune-timeout", type=float, default=900)
     ap.add_argument("--long-turns", type=int, default=32, help="max filler turns in the long session")
     ap.add_argument("--long-compactions", type=int, default=2, help="compactions the long session runs through before asking")
@@ -793,7 +806,7 @@ def run(args, fake=False):
     pool = (core.FakeOllama.MODELS if fake else core.MODELS) + args.extra_model
     models = [m for m in pool if not args.models or any(s in m for s in args.models)]
     models = [m for m in models if core.PROFILES.get(m, {}).get("role") != "humanizer"]
-    pre = core.preflight() if not fake else {"problems": [], "power": "fake", "power_ok": None, "app_listening": False}
+    pre = core.preflight() if not fake else {"problems": [], "power": "fake", "power_ok": None, "app_running": False}
     log(f"harness bakeoff {VERSION}; ollama {ollama_version}; {len(models)} models (humanizer excluded: the chat template "
         "wraps every message, which that model was not trained on)")
     for prob in pre["problems"]:
@@ -803,16 +816,26 @@ def run(args, fake=False):
             log(f"  {'installed' if m in tags else 'MISSING  '} {m}")
         log(f"binary: {find_bin(args.bin)}")
         return []
-    if pre.get("app_listening") and not args.attach and not args.allow_app:
-        raise SystemExit("the harness app (or something) listens on 127.0.0.1:8790; quit it so its warmup cannot load a "
-                         "model under the bench, or pass --allow-app")
+    if pre.get("app_running") and not args.attach and not args.allow_app:
+        raise SystemExit("the harness app runs (its process, or something on 127.0.0.1:8790); quit it so its warmup "
+                         "cannot load a model under the bench, or pass --allow-app")
     out = Path(args.out or f"/tmp/bakeoff-harness-out/{datetime.now().strftime('%Y%m%d-%H%M%S')}")
     out.mkdir(parents=True, exist_ok=True)
     disp, restore = None, {}
     if args.attach:
         home = Path(args.home).expanduser()
         cookie = json.loads((home / "cli-session.json").read_text())["cookie"]
-        h = Harness(args.attach, str(home / "public-certificate.pem"), cookie)
+        # The home has no public certificate file (tls/server.pem is the private bundle): export it as Disposable.start does.
+        try:
+            r = subprocess.run([find_bin(args.bin), "tls", "certificate"], env=dict(os.environ, CGAGENTHARNESS_HOME=str(home)),
+                               capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            raise SystemExit(f"could not export the TLS certificate of {home}: tls certificate timed out") from None
+        if r.returncode or "BEGIN CERTIFICATE" not in r.stdout:
+            raise SystemExit(f"could not export the TLS certificate of {home}: {(r.stderr or r.stdout)[-300:]}")
+        cacert = out / "attach-certificate.pem"
+        cacert.write_text(r.stdout)
+        h = Harness(args.attach, str(cacert), cookie)
         _, st = h.call("GET", "/api/status")
         _, web = h.call("GET", "/api/web")
         restore = {"model": (st or {}).get("model"), "web": (web or {}).get("enabled")}
