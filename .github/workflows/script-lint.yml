@@ -60,7 +60,7 @@ jobs:
         # compile() rather than py_compile: same syntax check, no __pycache__.
         run: |
           set -euo pipefail
-          git ls-files -z -- 'scripts/*.py' | xargs -0 python3 -I -c '
+          git ls-files -z -- 'scripts/*.py' '.claude/skills/*.py' | xargs -0 python3 -I -c '
           import sys
           for path in sys.argv[1:]:
               with open(path, encoding="utf-8") as f:
