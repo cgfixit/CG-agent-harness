@@ -738,6 +738,7 @@ impl Validate for OllamaPullRequest {
 impl Validate for ModelSelectRequest {
     fn validate(&self) -> Vec<String> {
         if len_ok(&self.model, 1, MAX_TITLE_LEN)
+            && !self.model.trim().is_empty()
             && !self.model.trim().chars().any(char::is_whitespace)
             && !self.model.contains('•')
         {

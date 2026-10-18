@@ -78,6 +78,11 @@ async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secr
     }
     let local = start_mock_model().await;
     let missing = spawn_server(&local.base_url(), ServerOptions::default()).await;
+    let settings = std::fs::read(missing.state.home.settings_path()).unwrap();
+    let (status, body) = missing.post_json("/api/model", json!({"model":"   "})).await;
+    assert_eq!(status, 422);
+    no_secret(&body);
+    assert_eq!(std::fs::read(missing.state.home.settings_path()).unwrap(), settings);
     for local_tag in ["xai-custom-local", "sk-ant-small-local"] {
         assert_eq!(switch(&missing, local_tag, false, 200).await["model"], local_tag);
     }
