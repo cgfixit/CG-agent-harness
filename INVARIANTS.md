@@ -271,7 +271,8 @@ policy edit and a syscall is claimed.
 
 ## The clone jail
 
-Writes: canonical path -> per-segment `.git` name-equivalence refusal
+Writes: `canonical_repo_relative_path` (the read rule, so the review diff can
+read back every written path) -> per-segment `.git` name-equivalence refusal
 (trailing dot/space, NTFS `git~1`, HFS-ignored codepoints, case folding) ->
 resolve (dangling-leaf aware) -> containment -> landed-path vs the real
 `.git` dir -> report the LANDED path (so a symlink onto a protected file is
@@ -658,9 +659,9 @@ the existing audit spend sink. Rows store provider, model, source
 `vendor_cost_ticks` (`TICKS_PER_USD = 10_000_000_000`); otherwise the dated
 rate table; incomplete usage and unknown models stay unpriced; local rows are
 always `local_unpriced`. `usage_reported` is true only when both input and
-output counts parsed as JSON numbers. HTTP 2xx with empty text, or a cloud reply
-the provider did not report as finished (Claude `stop_reason` other than
-`end_turn`, Grok `status` other than `completed`), still appends
+output counts parsed as JSON numbers. HTTP 2xx with an interrupted (or cancelled),
+oversized or malformed body, empty text, or a cloud reply the provider did not report as
+finished (Claude `stop_reason` other than `end_turn`, Grok `status` other than `completed`), still appends
 `outcome: failed_after_billing` then errors the chat; the text is never shown or
 saved. `TokenTally` and local prompt/compaction token estimates are context
 budgets, not USD.

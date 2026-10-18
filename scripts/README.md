@@ -27,7 +27,7 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 
 - [`verify-local.sh`](verify-local.sh): full local verification: lint, tests, contract scripts, build, smoke.
 - [`check-pr-template.sh`](check-pr-template.sh): local PR-body gate mirroring `pr-template-check.yml`.
-- [`ci-docs-only.sh`](ci-docs-only.sh): classifies a diff as docs-only so `ci.yml` and `bundle.yml` skip compile jobs.
+- [`ci-docs-only.sh`](ci-docs-only.sh): classifies a pull-request diff as docs-only so `ci.yml` skips compile jobs.
 - [`browser-acceptance.mjs`](browser-acceptance.mjs): native Chrome acceptance against a disposable fixture (manual, after `browser-fixture.py --http`).
 - [`chat-browser-acceptance.mjs`](chat-browser-acceptance.mjs): real-browser slash-command tests against a mock API.
 - [`test-analytics.mjs`](test-analytics.mjs): analytics and spend helpers, logout clearing.
@@ -55,7 +55,7 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 
 ## Hooks, fixtures and probes
 
-- [`ensure-githooks.sh`](ensure-githooks.sh): idempotent `core.hooksPath` setup; run by the SessionStart hook and Copilot ([GITHOOKS.md](../docs/GITHOOKS.md)).
+- [`ensure-githooks.sh`](ensure-githooks.sh): idempotent `core.hooksPath` setup; run by the SessionStart hook, Copilot and `init.sh` ([GITHOOKS.md](../docs/GITHOOKS.md)).
 - [`install-githooks.sh`](install-githooks.sh): older once-per-clone installer with a gitleaks hint; nothing automated runs it.
 - [`browser-fixture.py`](browser-fixture.py): creates and serves a disposable arithmetic repo fixture; no real GitHub writes.
 - [`mcp-fixture.py`](mcp-fixture.py): disposable stdio and SSE MCP server for the MCP and process-lifecycle tests.

@@ -7,9 +7,9 @@
 # a local derived tag such as qwen3.8:27b-mlx-cg. The first chat must answer
 # exactly "pong". The server sends reasoning_effort none when the provider is
 # ollama, for every tag. SMOKE_EXACT_REPLY=0 (live-ollama.yml's tiny fixture
-# models) instead requires a non-empty reply from that model with completion
-# tokens and no <think> text, the bar scripts/live-ollama/fingerprint.py uses. FINGERPRINT_MODELS, when set, is the fingerprint set
-# (scripts/live-ollama/), not that derived tag.
+# models) instead requires a non-empty reply from that model (fingerprint.py's
+# chat check) plus completion tokens and no <think> text. FINGERPRINT_MODELS,
+# when set, is the fingerprint set (scripts/live-ollama/), not that derived tag.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -20,6 +20,7 @@ MODEL_URL="${MODEL_URL:-http://127.0.0.1:11434}"
 
 CGAGENTHARNESS_HOME="$(mktemp -d)"
 export CGAGENTHARNESS_HOME
+trap 'rm -rf -- "$CGAGENTHARNESS_HOME"' EXIT
 export CGAGENTHARNESS_API_KEY=""
 export CGAGENTHARNESS_HARNESS_PORT="$PORT"
 echo "== home $CGAGENTHARNESS_HOME"
@@ -56,8 +57,13 @@ PYMODEL
 "$BIN" serve >"$CGAGENTHARNESS_HOME/serve.log" 2>&1 &
 PID=$!
 cleanup() {
+  local status=$?
   kill "$PID" 2>/dev/null || true
   wait "$PID" 2>/dev/null || true
+  if [[ "$status" -ne 0 && -f "$CGAGENTHARNESS_HOME/serve.log" ]]; then
+    echo "== harness serve.log (last 200 lines)" >&2 || true
+    tail -n 200 "$CGAGENTHARNESS_HOME/serve.log" >&2 || true
+  fi
   rm -rf -- "$CGAGENTHARNESS_HOME"
 }
 trap cleanup EXIT
@@ -113,7 +119,7 @@ curl_account -fsS "$BASE/api/agent/checks" | grep -q 'cargo-test'
 echo "== live model turn ($MODEL_URL)"
 if ! curl -fsS -m 3 "$MODEL_URL/v1/models" >/dev/null 2>&1; then
   if [[ "${SMOKE_REQUIRE_MODEL:-0}" == "1" ]]; then
-    echo "model server not reachable at $MODEL_URL; the live chat turn is required (SKIP_LIVE=1 skips it)" >&2
+    echo "model server not reachable at $MODEL_URL; every other stage passed, but the live chat turn is required (run scripts/smoke-ollama.sh without SMOKE_REQUIRE_MODEL to skip only this turn; SKIP_LIVE=1 scripts/verify-local.sh skips the whole smoke)" >&2
     exit 1
   fi
   echo "model server not reachable at $MODEL_URL; skipping the live chat turn"

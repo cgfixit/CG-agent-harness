@@ -279,7 +279,8 @@ step_developer_tools() {
 }
 
 step_checkout() {
-  if [ ! -d "$root/.git" ]; then say 'downloaded copy (no git); nothing to set up'; return "$SKIP"; fi
+  # -e, not -d: a linked worktree or submodule has a .git file.
+  if [ ! -e "$root/.git" ]; then say 'downloaded copy (no git); nothing to set up'; return "$SKIP"; fi
   bash "$root/scripts/ensure-githooks.sh"
   say "checkout: $(git -C "$root" log -1 --format='%h %s' 2>/dev/null)"
 }
