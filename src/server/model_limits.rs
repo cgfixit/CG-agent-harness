@@ -261,10 +261,9 @@ pub fn propose(
         let mut value = scale(key, base, effective, step, min).min(ceiling(key));
         match key {
             "models.local_llm.max_tokens" => proposed_reply = value,
-            // The proposed trigger is never below one reply reservation plus headroom.
-            "chat.compact_prompt_tokens" => {
-                value = value.max(compaction::reply_reservation(backend, proposed_reply) + MIN_PROMPT_HEADROOM)
-            }
+            // The proposed trigger is never below one reply plus headroom: like
+            // the trigger itself, it counts one reply on every backend.
+            "chat.compact_prompt_tokens" => value = value.max(proposed_reply + MIN_PROMPT_HEADROOM),
             _ => {}
         }
         set_path(&mut candidate, key, value);
@@ -730,15 +729,22 @@ mod tests {
     }
 
     #[test]
-    fn reasoning_backends_floor_compaction_at_a_doubled_reservation() {
+    fn every_backend_floors_the_proposed_trigger_at_one_reply() {
+        // The trigger counts one reply on every backend; only the hard limit keeps
+        // a doubled reservation. At 8192 the scaled 6000 stands (a doubled
+        // 1024-token reply + 4096 is 6144); at 4096 one 512-token reply + 4096 binds.
         let cfg = shipped().unwrap();
         let web = Limits::load(&cfg).unwrap();
-        let proposal = propose(&loaded(8_192), None, &cfg, &web, &backend(Some("high")));
-        let reply = value(&proposal, "models.local_llm.max_tokens");
-        assert!(
-            value(&proposal, "chat.compact_prompt_tokens") >= reply * 2 + MIN_PROMPT_HEADROOM,
-            "{proposal}"
-        );
+        for (window, trigger) in [(8_192, 6_000), (4_096, 512 + MIN_PROMPT_HEADROOM)] {
+            for reasoning in [Some("none"), Some("high")] {
+                let proposal = propose(&loaded(window), None, &cfg, &web, &backend(reasoning));
+                assert_eq!(
+                    value(&proposal, "chat.compact_prompt_tokens"),
+                    trigger,
+                    "{reasoning:?} at {window}: {proposal}"
+                );
+            }
+        }
     }
 
     #[test]
