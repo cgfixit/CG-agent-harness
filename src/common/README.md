@@ -31,6 +31,7 @@ Contracts: [INVARIANTS.md](../../INVARIANTS.md); process rules:
 - [`process/`](process/README.md): the Unix half of the argv-list runner.
 - [`process.rs`](process.rs): `RunSpec`/`run`/`run_cancellable`: argv-only runner, `MAX_CAPTURE_BYTES`, `kill_tree`, `which`.
 - [`ratelimit.rs`](ratelimit.rs): in-memory per-client sliding window with `retry_after_sec`.
+- [`reference_loop.rs`](reference_loop.rs): fail-closed turn, tool-call, and connector admission. It does not spawn, dial, or arm `/loop`.
 - [`repo_paths.rs`](repo_paths.rs): `canonical_repo_relative_path`: rejects absolute, `..`, leading `-`, `:`, trailing dot or space.
 - [`sandbox_wrap.rs`](sandbox_wrap.rs): Seatbelt profile and bubblewrap argv wrapping; refuses binding the host root.
 - [`tool_broker.rs`](tool_broker.rs): tool-name allowlist `decide`/`assert_allowed`; empty allowlist denies.

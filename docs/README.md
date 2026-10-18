@@ -119,7 +119,7 @@ links resolve. Truth order for every claim is code, then
   `mcp.enabled`, broker allowlist and literal `confirm: true`; migrating stdio
   declarations with capabilities, `env:NAME` references resolved at startup,
   lifecycle choices, the Windows trusted-server exception, and troubleshooting.
-  `/loop` never gets MCP tools.
+  `/loop` never gets MCP tools. Admission policy is `src/common/reference_loop.rs`; it does not spawn a connector.
   Owns: `src/server/mcp.rs`, `src/common/{mcp,mcp_policy,mcp_worker,sandbox_wrap,
   windows_job,tool_broker}.rs`. Tests: `tests/mcp_client.rs`, `tests/mcp_lifecycle.rs`,
   `tests/mcp_windows.rs`, fixture `scripts/mcp-fixture.py`.

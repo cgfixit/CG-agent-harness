@@ -23,6 +23,7 @@ pub mod mcp_worker;
 pub mod private_sqlite;
 pub mod process;
 pub mod ratelimit;
+pub mod reference_loop;
 pub mod repo_paths;
 pub mod sandbox_wrap;
 pub mod tool_broker;

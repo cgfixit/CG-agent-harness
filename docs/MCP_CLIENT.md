@@ -130,3 +130,4 @@ stay out of audit.
 
 SSE declarations continue using DNS-pinned URL checks and the separate,
 default-off loopback grant. They do not receive local stdio filesystem grants.
+Turn admission is `src/common/reference_loop.rs`: no spawn, and `/loop` still has no connector tools.
