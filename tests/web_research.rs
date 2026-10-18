@@ -113,13 +113,15 @@ async fn research_accounts_for_all_calls_checks_citations_and_keeps_state_reques
         ))
         .exists());
     assert_eq!(s.state.web.policy().unwrap().revision, revision);
-    assert_eq!(result["coverage"]["requests"], 2);
+    // One extra request per run reads the origin's robots.txt (implicitly
+    // permitted for covered origins; the fixture 404s it, which is fine).
+    assert_eq!(result["coverage"]["requests"], 3);
     // Matching cached passages must not suppress a fresh multi-source run.
     let (_, fresh) = s
         .post_json("/api/web/research", json!({"query":"retry connections"}))
         .await;
     assert_eq!(
-        fresh["coverage"]["requests"], 2,
+        fresh["coverage"]["requests"], 3,
         "fresh discovery still covers both granted sources"
     );
     // Explicit starting URLs narrow evidence as well as discovery, even when
@@ -128,7 +130,7 @@ async fn research_accounts_for_all_calls_checks_citations_and_keeps_state_reques
     let (_, narrow) = s
         .post_json("/api/web/research", json!({"query":"retry connections","urls":[one]}))
         .await;
-    assert_eq!(narrow["coverage"]["requests"], 1);
+    assert_eq!(narrow["coverage"]["requests"], 2);
     let passages = narrow["passages"].as_array().unwrap();
     assert!(!passages.is_empty(), "{narrow}");
     assert!(
