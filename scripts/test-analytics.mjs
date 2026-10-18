@@ -105,7 +105,7 @@ assert.equal($('analyticsStatus').textContent, '');
 assert.equal($('analyticsFilter').value, '');
 assert.equal($('analyticsTotalTokens').textContent, '');
 assert.equal($('refreshAnalytics').disabled, false);
-const logout = html.slice(html.indexOf("if (hAuthLogout) {"), html.indexOf("if (hAuthSetupBtn) {"));
+const logout = html.slice(html.indexOf("if (hAuthLogout) {"), html.indexOf("function openPasswordChange("));
 assert.ok(logout.indexOf('clearAnalytics();') < logout.indexOf("fetchWithTimeout('/api/auth/logout'"));
 // Latest refresh wins even while the dialog remains open.
 $('analyticsDialog').open = true;
