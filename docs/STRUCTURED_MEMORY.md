@@ -134,13 +134,13 @@ run id, changed files, push/PR fields and commit message), not stdout/stderr,
 file bodies or tool logs. Metadata alone cannot prove a coding lesson or
 successful tests.
 
-The local model returns `session_summary` or `insight` candidates. Strict parsing,
-source membership, sensitivity checks, confidence, and existing bindings create
-pending proposals through idempotent runs. Only validated candidates count toward
-the single-summary limit. Facts change only after Apply with
-confirm and reason. Generation has no tools, web, recalled facts, schema change,
-or cloud egress; it uses temperature 0 and 1024 output tokens. Automatic
-`consolidator-v2` still requires human semantic summaries.
+Strict parsing, source membership, sensitivity, confidence, and fact bindings
+govern idempotent `session_summary` or `insight` proposals. Identical normalized
+candidates in one output count as rejected duplicates; different source bindings
+stay distinct. Only valid candidates consume the single-summary limit. Facts
+require Apply with confirmation and reason. Generation uses temperature 0 and
+1024 output tokens, without tools, web, recalled facts, schema changes, or cloud
+egress. Automatic `consolidator-v2` requires human semantic summaries.
 
 Chat suggestions retain their turn's local model; coding suggestions snapshot
 the selection at completion. Manual and idle consolidation use the current

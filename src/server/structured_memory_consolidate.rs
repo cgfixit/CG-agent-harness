@@ -57,7 +57,7 @@ pub struct ConsolidatorCandidate {
     pub source_refs: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundCandidate {
     pub action: String,
     pub content: Option<String>,
@@ -143,8 +143,8 @@ pub fn bind_candidates(
             max_category_chars,
             min_confidence,
         ) {
-            Ok(item) => bound.push(item),
-            Err(()) => rejected += 1,
+            Ok(item) if !bound.contains(&item) => bound.push(item),
+            _ => rejected += 1,
         }
     }
     (bound, rejected)
