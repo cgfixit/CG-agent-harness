@@ -78,31 +78,31 @@ In the dialog, choose **Delete my session history** to confirm or **Cancel**.
 Confirmation stops active chat, clears the conversation, and deletes your saved
 sessions, goals, skill selections, and token totals. It retains other accounts,
 unassigned legacy records, and unreadable files. Late replies cannot recreate a
-deleted session. Afterward, send a message or use `/session new`. If storage
+deleted session. Then send a message or `/session new`. If storage
 fails, resolve the reported problem before retrying; deletion may be partial.
 
-Deletion is not secure erasure: backups, model-service copies, and text loaded
-in other clients remain.
+Deletion is not secure erasure: backups, model-service copies and text in
+other clients remain.
 
-In the composer, Up recalls older prompts; Down moves forward or restores the draft. Every submitted line enters history, refused commands included; `/api`
+In the composer, Up recalls older prompts; Down moves forward or restores the draft. Every submitted line enters history, even refused commands; `/api`
 keeps only its key name and `/loop` turns are skipped. The session log keeps the
-latest 50 across restart; legacy logs seed it from user messages and compaction
+latest 50 across restart; legacy logs seed it from user messages; compaction
 keeps it. Session switches and logout reset navigation; the browser stores nothing.
 
 The session store retains at most 500 messages per conversation, dropping the
 oldest whole exchanges after the first exchange or its summary. A model reply
 that opens with `[session-compacted]` is stored with a leading space, so only
-compaction writes a summary. Local prompt
-history uses that window; [compaction](#local-history-compaction) reduces
-overflow against the configured token budget, preserving the goal and recent messages. Stored token totals can
-therefore exceed the compacted context sent to the model.
+compaction writes a summary. Local prompt history uses that window;
+[compaction](#local-history-compaction) reduces overflow against the configured
+token budget, preserving the goal and recent messages, so stored token totals
+can exceed the compacted context sent to the model.
 
 Runtime `sessions/` directories, named `.CGagentHarness/` homes and dotenv files
-are Git-ignored in this repository. Avoid `git add -f` for private files: ignore
-rules do not remove files already tracked by Git and are not global Git policy.
-A custom home with another name can expose notes, web extracts, or coding
-records. Keep the whole home outside the checkout. Before publication, these
-checks must show matching ignore rules and no tracked runtime files:
+are Git-ignored here. Avoid `git add -f` for private files: ignore rules do not
+remove files Git already tracks and are not global policy. A home with another
+name can expose notes, web extracts, or coding records; keep the whole home
+outside the checkout. Before publication, these checks must show matching ignore
+rules and no tracked runtime files:
 
 ```bash
 git check-ignore .CGagentHarness/config.yaml example-home/sessions/example.json .env
@@ -117,18 +117,16 @@ git ls-files -- ':(glob)**/sessions/**' ':(glob)**/.CGagentHarness/**' '.env' '.
 ```
 
 `/loop 3` runs up to three follow-up turns toward the goal (default three,
-maximum five), each restating the bounded goal. With no stored goal, `/loop`
-takes the last prompt as the goal. Manual mode pauses after each turn; `/loop`
-continues. `/loop auto` only toggles automatic continuation; it starts
-nothing. A turn that needed compaction continues the same way automatically.
-`/loop stop` cancels generation or cooldown. Goal clear, session switching, token budgets, a 90%-identical reply and two
-consecutive failed turns (auto retries once) stop it. A `GOAL_DONE` line (even `**GOAL_DONE**`) stops it
-too, but is only model advice.
+maximum five), each restating it; with no stored goal, the last prompt
+becomes it. Manual mode pauses after each turn; `/loop` continues.
+`/loop auto` only toggles automatic continuation and starts nothing. A turn that
+needed compaction continues this way automatically. `/loop stop` cancels
+generation or cooldown. Goal clear, session switching, token budgets, a
+90%-identical reply, two consecutive failed turns (auto retries once) and a
+`GOAL_DONE` line (even `**GOAL_DONE**`; model advice only) stop it.
 
-This loop does not edit files, run skills as programs, or perform coding checks.
-`--web` on `/goal` or `/loop` sets the chat tools of every turn while the goal is set; without it the goal takes `web.goal_web_default` (ships `all`, restart-only). `fetch` excludes search, `off` excludes web context and tools. Search listings never grant URL permission; URL permissions still apply. Preflight shows the mode. Counters and auto state are page state.
-Refresh/restart does not resume an unattended loop. Goal-to-coding execution is
-an explicit separate workflow in [goal staging](CODING_PIPELINE.md#94-stage-a-session-goal-as-a-coding-task).
+The loop never edits files, runs skills as programs, or performs coding checks.
+`--web` on `/goal` or `/loop` sets every turn's chat tools while the goal is set; without it the goal takes `web.goal_web_default` (ships `all`, restart-only). `fetch` excludes search; `off` excludes web context and tools; search listings never grant URL permission. Preflight shows the mode. Counters and auto state live on the page; refresh or restart resumes no unattended loop. Coding from a goal is a separate workflow: [goal staging](CODING_PIPELINE.md#94-stage-a-session-goal-as-a-coding-task).
 
 #### Search and export session transcripts
 
@@ -139,12 +137,11 @@ and 2,000,000 bytes. Queries allow 200 characters; indexing uses up to 32 terms.
 Results contain at most 16 hits, two per session, with 160-character snippets.
 Overlap finds case-insensitive literal phrases across 1,200-character chunks. Search runs on
 the blocking pool, writes no web cache, and sends nothing off-machine. Rebuilding per
-query is accepted within these bounds; measure representative latency before
-introducing a cache (#258).
+query is accepted within these bounds; measure latency before caching (#258).
 
 `GET /api/sessions/{session_id}/export` returns Markdown and writes it to
-`<home>/exports/{id}.md`. Both APIs enforce owner and CSRF. Export includes
-bounded attachment metadata without bodies or filenames.
+`<home>/exports/{id}.md`. Both APIs enforce owner and CSRF. Export carries
+bounded attachment metadata, never bodies or filenames.
 
 ### 7.2 Default soul, effective prompt and persona editing
 
