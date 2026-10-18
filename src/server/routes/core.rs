@@ -1004,30 +1004,34 @@ async fn chat_inner(
                 crate::server::compaction::DEFAULT_KEEP_MESSAGES,
             )
             .clamp(2, 40) as usize;
-        let projected = crate::server::compaction::projected_prompt_tokens(
-            &system_prompt,
-            &history,
-            &req.message,
-            reservation,
-            ratio,
-            tool_tokens,
-        );
-        if projected > threshold {
-            let paste_alone = crate::server::compaction::projected_prompt_tokens(
+        // Every backend compacts at the same input size: the trigger counts one
+        // reply. The hard limit, the window checks and dispatch keep the
+        // effective reservation, twice where hidden reasoning may spend it.
+        let project = |history: &[ChatMessage], reply: u64| {
+            crate::server::compaction::projected_prompt_tokens(
                 &system_prompt,
-                &[],
+                history,
                 &req.message,
-                reservation,
+                reply,
                 ratio,
                 tool_tokens,
-            );
-            if paste_alone > threshold {
+            )
+        };
+        let projected = project(&history, reservation);
+        if project(&history, max_tokens) > threshold || projected > hard_limit {
+            let (paste_trigger, paste_alone) = (project(&[], max_tokens), project(&[], reservation));
+            if paste_trigger > threshold || paste_alone > hard_limit {
+                let (limit, source) = if paste_trigger > threshold {
+                    (threshold, limit_source)
+                } else {
+                    (hard_limit, hard_source)
+                };
                 return Err(too_large(
                     "the new message and system prompt alone exceed",
                     projected,
                     paste_alone,
-                    threshold,
-                    limit_source,
+                    limit,
+                    source,
                 ));
             }
             let before = session.messages.len();
@@ -1041,14 +1045,7 @@ async fn chat_inner(
             let scaffold =
                 crate::server::compaction::calibrated_tokens(crate::server::compaction::scaffold_tokens(), ratio);
             let pinned_only: Vec<_> = session.messages.iter().find(|m| m.role == "user").cloned().into_iter().collect();
-            let fixed = crate::server::compaction::projected_prompt_tokens(
-                &system_prompt,
-                &prompt_history(&pinned_only),
-                &req.message,
-                reservation,
-                ratio,
-                tool_tokens,
-            );
+            let fixed = project(&prompt_history(&pinned_only), max_tokens);
             let room = threshold.saturating_sub(fixed + summary_send + scaffold);
             let tail_budget = (threshold * crate::server::compaction::tail_percent(&state.cfg) / 100).min(room);
             let keep = crate::server::compaction::tail_keep(&session.messages, keep_max, tail_budget, ratio);
