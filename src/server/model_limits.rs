@@ -261,7 +261,7 @@ pub fn propose(
         let mut value = scale(key, base, effective, step, min).min(ceiling(key));
         match key {
             "models.local_llm.max_tokens" => proposed_reply = value,
-            // Compaction never triggers below one reply reservation plus headroom.
+            // The proposed trigger is never below one reply reservation plus headroom.
             "chat.compact_prompt_tokens" => {
                 value = value.max(compaction::reply_reservation(backend, proposed_reply) + MIN_PROMPT_HEADROOM)
             }

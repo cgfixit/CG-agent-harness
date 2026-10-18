@@ -908,7 +908,8 @@ async fn chat_inner(
     };
     // Projection uses stored prompt history (up to SessionStore::MAX_MESSAGES).
     // Compaction owns overflow against chat.compact_prompt_tokens, floored at
-    // effective reply reservation+4096. The incoming paste is never compacted.
+    // one reply+4096 (the hard limit at the effective reservation+4096). The
+    // incoming paste is never compacted.
     let mut history = if cloud_selected {
         Vec::new()
     } else {
@@ -931,11 +932,12 @@ async fn chat_inner(
             "models.local_llm.max_tokens"
         };
         let web_chat = chat_tools;
+        // The trigger's floor counts one reply, like its projection below.
         let (threshold, limit_source) = crate::server::compaction::turn_prompt_limit(
             configured_threshold,
             prompt_cap,
             web_chat.then_some(web.limits.total_tokens),
-            reservation,
+            max_tokens,
             crate::server::compaction::calibrated_tokens(tool_tokens, ratio),
             crate::server::compaction::calibrated_tokens(crate::server::web_search::MIN_EVIDENCE_TOKENS, ratio),
             reply_setting,
@@ -962,7 +964,8 @@ async fn chat_inner(
         );
         // Name the setting that actually bounds this prompt: "start a new session"
         // cannot help when the system prompt and reply reservation fill the limit.
-        let too_large = |what: &str, projected: u64, compacted: u64, threshold: u64, limit_source: &'static str| {
+        // `reply` is what the bound counts: one reply for the trigger, the reservation otherwise.
+        let too_large = |what: &str, projected: u64, compacted: u64, threshold: u64, limit_source: &'static str, reply: u64| {
             state.audit.log(json!({
                 "event": "chat_prompt_too_large",
                 "session_id": session.session_id,
@@ -986,7 +989,7 @@ async fn chat_inner(
                 "CHAT_PROMPT_TOO_LARGE",
                 format!(
                     "{what} the {threshold}-token prompt limit (set by {limit_source}; {reply_setting} reserves \
-                     {reservation} of those tokens for the reply); {remedy}"
+                     {reply} of those tokens for the reply); {remedy}"
                 ),
             )
             .details(json!({
@@ -994,7 +997,7 @@ async fn chat_inner(
                 "compacted_tokens": compacted,
                 "limit_tokens": threshold,
                 "limit_source": limit_source,
-                "reply_reservation_tokens": reservation,
+                "reply_reservation_tokens": reply,
             }))
         };
         let keep_max = state
@@ -1004,9 +1007,10 @@ async fn chat_inner(
                 crate::server::compaction::DEFAULT_KEEP_MESSAGES,
             )
             .clamp(2, 40) as usize;
-        // Every backend compacts at the same input size: the trigger counts one
+        // Every backend reaches the trigger at the same input size: it counts one
         // reply. The hard limit, the window checks and dispatch keep the
-        // effective reservation, twice where hidden reasoning may spend it.
+        // effective reservation, twice where hidden reasoning may spend it, so
+        // a doubled one can compact sooner, at the hard limit.
         let project = |history: &[ChatMessage], reply: u64| {
             crate::server::compaction::projected_prompt_tokens(
                 &system_prompt,
@@ -1021,10 +1025,11 @@ async fn chat_inner(
         if project(&history, max_tokens) > threshold || projected > hard_limit {
             let (paste_trigger, paste_alone) = (project(&[], max_tokens), project(&[], reservation));
             if paste_trigger > threshold || paste_alone > hard_limit {
-                let (limit, source) = if paste_trigger > threshold {
-                    (threshold, limit_source)
+                // Past the hard limit a larger trigger cannot help: name the hard limit.
+                let (limit, source, reply) = if paste_alone > hard_limit {
+                    (hard_limit, hard_source, reservation)
                 } else {
-                    (hard_limit, hard_source)
+                    (threshold, limit_source, max_tokens)
                 };
                 return Err(too_large(
                     "the new message and system prompt alone exceed",
@@ -1032,6 +1037,7 @@ async fn chat_inner(
                     paste_alone,
                     limit,
                     source,
+                    reply,
                 ));
             }
             let before = session.messages.len();
@@ -1071,6 +1077,7 @@ async fn chat_inner(
                     retained_projected,
                     hard_limit,
                     hard_source,
+                    reservation,
                 ));
             }
             let mut summary_meta = crate::server::compaction::Summary::default();
@@ -1141,6 +1148,7 @@ async fn chat_inner(
                     compacted_projected,
                     hard_limit,
                     hard_source,
+                    reservation,
                 ));
             }
             compaction = Some(Compaction {

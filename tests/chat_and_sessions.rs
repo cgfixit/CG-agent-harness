@@ -262,6 +262,8 @@ async fn reasoning_and_compatible_backends_enforce_the_effective_reply_reservati
     let (status, body) = s.post_json("/api/chat", json!({"message":"x".repeat(20000)})).await;
     assert_eq!(status, 422, "doubling must also reach projection: {body}");
     assert_eq!(body["detail"]["details"]["limit_tokens"], 30000);
+    // Past the hard limit, a larger trigger cannot help.
+    assert!(!message(&body).contains("raise chat.compact_prompt_tokens"), "{body}");
 }
 
 /// The compaction trigger counts one reply on every backend, so a backend that
@@ -339,6 +341,57 @@ async fn every_backend_compacts_at_the_same_history_size() {
         assert!(
             !body["compaction"].is_null(),
             "{provider} must compact past the trigger: {body}"
+        );
+    }
+}
+
+/// A trigger below its floor is floored at one reply + 4096 on every backend:
+/// with an 8192-token reply both compact past 12288, where LM Studio/MLX waited
+/// for its doubled reservation's 20480.
+#[tokio::test]
+async fn every_backend_compacts_at_the_same_floored_trigger() {
+    use cgagentharness::server::{compaction, routes::core::prompt_history};
+    for provider in ["ollama", "lmstudio"] {
+        let model = start_mock_model().await;
+        let s = spawn_server(
+            &model.base_url(),
+            ServerOptions::default()
+                .with("models.local_llm.provider", provider)
+                .with("models.local_llm.max_tokens", "8192")
+                .with("chat.compact_prompt_tokens", "4096")
+                .with("chat.compact_keep_messages", "2"),
+        )
+        .await;
+        s.post_json("/api/web", json!({"enabled":false})).await;
+        let (_, created) = s.post_json("/api/sessions", json!({})).await;
+        let sid = created["session_id"].as_str().unwrap();
+        let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id":sid})).await;
+        let usage = cgagentharness::server::sessions::TokenTally::default();
+        for i in 0..4 {
+            s.state
+                .store
+                .for_owner("local")
+                .record_exchange(
+                    sid,
+                    &format!("u{i} {}", "u".repeat(4000)),
+                    &format!("a{i} {}", "a".repeat(4000)),
+                    "fixture",
+                    &usage,
+                    &[],
+                )
+                .unwrap();
+        }
+        let history = prompt_history(&s.state.store.for_owner("local").get(sid).unwrap().messages);
+        let system = preview["prompt"].as_str().unwrap();
+        let one_reply = compaction::projected_prompt_tokens(system, &history, "next", 8192, 1.0, 0);
+        assert!((12_289..20_480).contains(&one_reply), "{provider}: {one_reply}");
+        let (status, body) = s
+            .post_json("/api/chat", json!({"session_id":sid,"message":"next"}))
+            .await;
+        assert_eq!(status, 200, "{provider}: {body}");
+        assert!(
+            !body["compaction"].is_null(),
+            "{provider} must compact past the one-reply floor: {body}"
         );
     }
 }

@@ -512,12 +512,13 @@ of measured prefill, unless `chat.compact_follow_window` is false.
 The send window is stored prompt history (user and assistant turns, persist
 cap `MAX_MESSAGES`); no 20-turn or 8000-char clip; compaction owns overflow.
 The effective trigger is
-`max(chat.compact_prompt_tokens, effective_reply_reservation + 4096 +
+`max(chat.compact_prompt_tokens, max_tokens + 4096 +
 calibrated_tool_definition_tokens)`, capped at 30000 (scaled to an `auto_tune`-verified
-window); that cap is the hard limit a compacting turn may still send. Web-enabled chat tightens both
+window); that cap, floored with `effective_reply_reservation` in place of
+`max_tokens`, is the hard limit a compacting turn may still send. Web-enabled chat tightens both
 toward `web.total_tokens - minimal tool result` (the projection carries the reservation and definitions, so every admitted
 prompt fits a round)
-and never below that floor; the web dispatcher charges each call's prompt once,
+and never below their floors; the web dispatcher charges each call's prompt once,
 offers tools only while the prompt, definitions, a minimal result and one reply
 fit, runs a batch only when each result's minimum fits, cuts a result to the
 room left, and returns a failed read to the model as its result (a batch that
@@ -525,7 +526,7 @@ fails entirely ends the turn or, after evidence, the tool rounds). A web turn's
 deadline adds a measured tool-round allowance, at most doubling the chat timeout.
 Startup and reload warn below 4096 remaining input tokens. Ollama with explicit `reasoning_effort: "none"` reserves the reply ceiling
 once; anything else reserves it twice in validation, the hard limit and dispatch
-(the trigger counts one reply on every backend),
+(the trigger counts one reply on every backend; exceeding the hard limit also compacts),
 and startup caps both reply settings ([CONSOLE.md](docs/CONSOLE.md#local-history-compaction)).
 The incoming user paste is never compacted. One local-model call
 (`compaction.summary_max_tokens`, default 768, clamped 128–2048, sent as its

@@ -77,7 +77,7 @@ models:
 # Local chat prompt compaction. Trigger is estimated next-prompt size, not
 # lifetime TokenTally.total. System prompt and session.goal are never compacted.
 chat:
-  compact_prompt_tokens: 24000 # floor=effective reply reservation + 4096, capped at 30000 (more for a larger window auto_tune measured)
+  compact_prompt_tokens: 24000 # floor=max_tokens + 4096 (hard limit: effective reply reservation + 4096), capped at 30000 (more for a larger window auto_tune measured)
   compact_keep_messages: 8 # 2–40: at most this many recent messages kept verbatim, whole exchanges only
   compact_tail_percent: 25 # 10–50: verbatim tail budget as a percent of the trigger; at least the last exchange
   compact_follow_window: true # an auto_tune-verified window above 32768 scales the trigger up in proportion; literal false keeps it
