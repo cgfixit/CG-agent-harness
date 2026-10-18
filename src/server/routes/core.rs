@@ -1110,7 +1110,10 @@ async fn chat_inner(
                     }
                     // A summary the model could not produce usably leaves the
                     // session unrewritten; the turn goes uncompacted if it fits.
+                    // The attempt was still a model call, so the tally counts it.
                     Err(e) if e.code == crate::server::compaction::SUMMARY_UNUSABLE && fits_uncompacted => {
+                        summary_prompt_tokens = e.details["prompt_tokens"].as_u64().unwrap_or(0);
+                        summary_completion_tokens = e.details["completion_tokens"].as_u64().unwrap_or(0);
                         compaction_skipped = Some("summary_unusable");
                         None
                     }

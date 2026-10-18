@@ -777,7 +777,13 @@ async fn summary_model(
 
 #[tokio::test]
 async fn an_unusable_summary_sends_the_turn_uncompacted_within_the_hard_limit() {
-    let (url, requests) = summary_model(None).await;
+    // Cut off at the token cap, then finished but empty.
+    unusable_summary_falls_back(None).await;
+    unusable_summary_falls_back(Some("")).await;
+}
+
+async fn unusable_summary_falls_back(summary: Option<&'static str>) {
+    let (url, requests) = summary_model(summary).await;
     let s = spawn_server(
         &url,
         ServerOptions::default()
@@ -810,12 +816,15 @@ async fn an_unusable_summary_sends_the_turn_uncompacted_within_the_hard_limit() 
         .await;
     assert_eq!(
         status, 200,
-        "a cut-off summary must not fail a turn that fits the hard limit: {body}"
+        "an unusable summary must not fail a turn that fits the hard limit: {body}"
     );
     assert_eq!(body["compaction_skipped"], "summary_unusable");
     assert!(body["compaction"].is_null(), "{body}");
     let sent = requests.lock().unwrap().clone();
     assert_eq!(sent.len(), 2, "one summary attempt, then the reply");
+    // Each call reports 100 prompt and 2 completion tokens: the tally counts both.
+    assert_eq!(body["tally"]["prompt_tokens"], 200, "{body}");
+    assert_eq!(body["tally"]["completion_tokens"], 4, "{body}");
     assert!(
         !sent[1]["messages"].as_array().unwrap().iter().any(|m| m["content"]
             .as_str()

@@ -871,7 +871,8 @@ pub struct Summary {
 /// One bounded local-model call, its input sized to `prompt_cap` (the model's
 /// [`prompt_cap`]). It sends `reservation` as `max_tokens`, the same room its
 /// input budget leaves, and asks for about 45% of `summary_max_tokens` in
-/// words. Empty or failed output must not persist.
+/// words. Empty or failed output must not persist; an unusable reply's
+/// `prompt_tokens` and `completion_tokens` ride in the error details.
 #[allow(clippy::too_many_arguments)]
 pub async fn summarize_turns(
     chat: &ChatClient,
@@ -907,7 +908,7 @@ pub async fn summarize_turns(
         // token cap) is unusable; transport failures and timeouts stay errors.
         .map_err(|e| {
             if e.details.get("output_bytes").is_some() {
-                unusable(&e.message)
+                unusable(&e.message).with_details(e.details)
             } else {
                 e
             }
@@ -919,7 +920,9 @@ pub async fn summarize_turns(
     let user_sources: Vec<&str> = corrections.iter().map(String::as_str).collect();
     let (body, repairs) = repair_summary(&reply.body_text, &sources, &user_sources);
     if body.trim().is_empty() {
-        return Err(unusable("the summary was empty"));
+        return Err(unusable("the summary was empty")
+            .detail("prompt_tokens", reply.prompt_tokens)
+            .detail("completion_tokens", reply.completion_tokens));
     }
     let mut text = String::from(COMPACT_PREFIX);
     text.push_str(body.trim());
