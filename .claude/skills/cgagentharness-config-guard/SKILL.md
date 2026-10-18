@@ -1,6 +1,6 @@
 ---
 name: cgagentharness-config-guard
-description: Statically assert assets/config.default.yaml still honors harness security contracts — flag_is_true semantics, confirm never defaulted, shipped execution gates closed, loopback posture. Use before merging config.default.yaml changes or when asked to check config.
+description: Statically assert assets/config.default.yaml still honors cg-agent-harness security contracts — flag_is_true semantics, confirm never defaulted, shipped execution gates closed, loopback posture. Use before merging config.default.yaml changes or when asked to check config.
 ---
 
 # Config Guard (CG-agent-harness)
