@@ -5,16 +5,19 @@ Every probe is one console turn (POST /api/chat over SSE) on a real `cgagentharn
 system prompt, history, compaction, token budgets, auto_tune, reasoning_effort "none" wire, web_search / web_fetch
 loop, URL allowlist and grounding. The .app's webview calls this same backend.
 
-Usage (keep bakeoff_7.py in the same folder; this file imports its prompts and graders):
-  python3 bakeoff_harness.py --self-test --bin PATH        # disposable harness + bakeoff_7's fake Ollama
+Usage (keep bakeoff_8.py and qwen_needle_test.py in the same folder; this file imports their prompts and graders).
+Run check_harness_sync.py first: it fails when this checkout is behind origin/main or a mirrored constant drifted.
+  python3 bakeoff_harness.py --self-test --bin PATH        # disposable harness + bakeoff_8's fake Ollama
   python3 bakeoff_harness.py --dry-run
   python3 bakeoff_harness.py [--models substr ...] [--repeat N] [--quick] [--out DIR] [--bin PATH] [--port 8795]
          [--ollama http://127.0.0.1:11434] [--hvac json|prose|both|none] [--no-research] [--grant-file FILE]
          [--keep-home] [--no-contract-gate] [--allow-app]
   python3 bakeoff_harness.py --attach https://127.0.0.1:8790 [--home ~/.CGagentHarness]   # smoke only
 
-Disposable is the comparison mode: fresh home on its own port (like scripts/smoke-ollama.sh), admin login, forced
-password replacement, an "hvac" allowlist group, then deleted. --attach is a "my home still answers" smoke: your
+Disposable is the comparison mode: fresh home on its own port (like scripts/smoke-ollama.sh), admin sign-in with the
+one-time code from <home>/setup-code, the forced password replacement (it must differ from the code; since #512 the
+setup-code session lives 10 minutes idle / 30 absolute, so replace it at once), an "hvac" allowlist group, then
+deleted. There is no admin/admin and no public bootstrap route on main since #496 and #512. --attach is a "my home still answers" smoke: your
 notes, memory and persona confound the model, so its rows are marked not comparable and run three probes only.
 
 Per model the lane:
@@ -22,13 +25,16 @@ Per model the lane:
   2. selects the tag, waits for auto_tune, and ABORTS unless /api/ollama/profile reports this tag at window 32768
      (the harness sends no num_ctx and will not raise the window for you);
   3. sends the /v1 body the harness sends and audits every reply for thinking (field, inline, hidden tokens);
-  4. runs chat probes, a multi-turn session filled toward the loaded window with a needle in turn one (it records
-     the measured prompt tokens and whether compaction kept the needle), web injection, HVAC research, and the
-     dedicated /api/web/research pipeline whose 28000-token budget is what requires 32768;
-  5. gates on: window contract, thinking off, no tool call on the injection note plus a real summary, a long
-     session that compacted and still answered, no window-clip warning from research, no swap growth. Research
-     that fails for web reasons (challenge, no key) is an observation. Everything else is a profile.
-This is the only gate in the bundle. bakeoff_7.py's wire_check says the Ollama wire behaved and nothing more.
+  4. runs chat probes, two long sessions pushed through at least two compactions (needle in turn one, which the
+     harness pins; and needle mid-way through notes batch 3, which every summarizer clips out and only the fact
+     ledger keeps), web injection, HVAC research, and /api/web/research whose 28000-token budget needs 32768;
+  5. gates on: window contract, thinking off, no tool call on the injection note plus a real summary, the pinned
+     needle surviving a real compaction, no window-clip warning from research, no swap growth. Research that fails
+     for web reasons (challenge, no key) is an observation. long_session_mid is a profile until the ledger ships.
+Compaction is read from each turn's "compaction" report (#513: kept, summarized, clipped, masked counts; no bodies),
+or from a change in the stored session summary on an older binary, never from a prompt-token drop. The row says how
+many compactions ran, how full the compacted prompt was, and whether the summary or the ledger carried the code.
+This is the only gate in the bundle. bakeoff_8.py's wire_check says the Ollama wire behaved and nothing more.
 """
 from __future__ import annotations
 
@@ -54,9 +60,11 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import bakeoff_7 as core  # noqa: E402
+import bakeoff_8 as core  # noqa: E402
 
-VERSION = "h1.2"
+VERSION = "h2.1"
+COMPACT_PREFIX = "[session-compacted]\n"
+LEDGER_HEADER = "Exact quotes from compacted user turns (copied by the harness, not the summarizer):"
 TARGET = 32768
 HVAC_GRANTS = ["https://www.yelp.com/*", "https://www.bbb.org/*", "https://www.angi.com/*", "https://www.homeadvisor.com/*",
                "https://www.thumbtack.com/*", "https://www.yellowpages.com/*", "https://www.mapquest.com/*",
@@ -74,7 +82,8 @@ COLS = ["model", "lane", "comparable", "gate", "ctx_contract", "ctx_no_numctx", 
         "reasoning_cfg", "v1_reasoning", "think_verified", "prompt_sha", "prompt_chars", "turn_wall_med_s",
         "turn_ttft_med_s", "swap_delta_mb", "profile_pct", "pong", "rag_cited", "rag_notfound", "json_free", "instr_follow",
         "math", "multiturn", "humanize", "humanize_facts", "long_session", "long_session_tokens", "long_session_compacted",
-        "inject_web", "inject_web_tool_calls", "hvac_json_score", "hvac_json_grounded", "hvac_json_cited",
+        "long_session_compactions", "long_session_carrier", "long_session_mid", "long_session_mid_compactions",
+        "long_session_mid_carrier", "fact_ledger", "inject_web", "inject_web_tool_calls", "hvac_json_score", "hvac_json_grounded", "hvac_json_cited",
         "hvac_json_model_calls", "hvac_json_refused", "hvac_json_wall_s", "hvac_prose_score", "hvac_prose_grounded",
         "hvac_prose_model_calls", "hvac_prose_refused", "hvac_prose_wall_s", "hvac_zip_aware", "research_status",
         "research_supported", "research_passages", "research_warnings", "research_wall_s", "errors", "lane_wall_s", "notes"]
@@ -327,8 +336,11 @@ class HLane:
         ans, inline, chars = core.split_reply(reply)
         usage = t["data"].get("usage") or {}
         ct = usage.get("completion_tokens") or 0
+        tools = t["data"].get("web_tools") or []
+        # A web turn's completion_tokens sums every model call in the tool loop, and a failed fetch can replace the
+        # reply with the harness's own error text: neither is a visible-text count, so the ruler skips those turns.
         self.audit.see({"raw": reply, "text": ans, "inline_think": inline, "inline_chars": chars, "thinking": "",
-                        "calls": t["data"].get("web_tools") or [], "stats": {"eval_count": ct}})
+                        "calls": tools, "stats": {"eval_count": ct}, "skip_hidden": bool(tools)})
         t.update(answer=ans, inline=inline, completion_tokens=ct, prompt_tokens=usage.get("prompt_tokens") or 0)
         return t
 
@@ -377,7 +389,8 @@ class HLane:
             self.notes.append(f"direct contract read failed: {e}")
         row["cpt"] = self.cpt
         core.unload(m)
-        self.audit = core.ThinkAudit(self.cpt)
+        self.ruler = core.TokenRuler(m, self.args.ruler, self.cpt)
+        self.audit = core.ThinkAudit(self.cpt, self.ruler)
         st, sel = self.h.call("POST", "/api/model", {"model": m})
         row["provider"] = (sel or {}).get("provider", f"HTTP {st}")
         if st != 200:
@@ -410,7 +423,7 @@ class HLane:
                                    gate=f"FAIL: contract ({why})")
             self.notes.append(f"contract not met ({why}); scoring anyway because of --no-contract-gate")
         try:
-            rag, verdict, rec = core.v1_wire_check(m, int(tuning.get("max_tokens") or 4096), self.cpt)
+            rag, verdict, rec = core.v1_wire_check(m, int(tuning.get("max_tokens") or 4096), self.cpt, self.ruler)
             row["v1_reasoning"] = verdict
             self.record("v1_wire", 1, "pass" if rag == "1/1" else "fail", rec["detail"], [])
         except Exception as e:
@@ -448,6 +461,8 @@ class HLane:
         row["profile_pct"] = round(100 * sum(rates) / len(rates)) if rates else ""
         if self.audit:
             row["think_verified"] = self.audit.verdict(False)
+            (self.out / f"{self.slug}-ruler.json").write_text(json.dumps(
+                {"ruler": self.ruler.kind(), "echo_calls": self.ruler.calls, "replies": self.audit.measured}, indent=1))
         row["turn_wall_med_s"] = f"{statistics.median(self.walls):.1f}" if self.walls else ""
         row["turn_ttft_med_s"] = f"{statistics.median(self.ttfts):.2f}" if self.ttfts else ""
         swap1 = core.swap_used_mb()
@@ -526,54 +541,114 @@ class HLane:
             return core.classify(ok, self.as_reply(t)), d, [t]
         self.trial("humanize", hum)
 
+    def stored_summary(self, sid):
+        """The harness's stored compaction summary for a session ("" before the first compaction)."""
+        st, sess = self.h.call("GET", f"/api/sessions/{sid}")
+        summaries = [m.get("content") or "" for m in (sess or {}).get("messages") or []
+                     if m.get("role") == "assistant" and (m.get("content") or "").startswith(COMPACT_PREFIX)]
+        return summaries[-1] if st == 200 and summaries else ""
+
+    def carrier(self, text, code):
+        """Where the code survived in a stored summary: summary, ledger, summary+ledger, neither."""
+        model_part, _, ledger_part = text.partition(LEDGER_HEADER)
+        if LEDGER_HEADER in text:
+            self.row["fact_ledger"] = "on"
+        elif text and not self.row["fact_ledger"]:
+            self.row["fact_ledger"] = "off (no ledger header in the stored summary)"
+        return ("summary+ledger" if code in model_part and code in ledger_part else "summary" if code in model_part
+                else "ledger" if code in ledger_part else "neither")
+
     def long_session(self):
-        """One session pushed past chat.compact_prompt_tokens with a needle in turn one.
+        """Two sessions pushed past chat.compact_prompt_tokens, each with one needle, through repeated compaction.
 
         A chat prompt cannot approach the 32768 window: the harness caps it at compact_prompt_tokens (24000, with
-        max_tokens reserved for the reply) and keeps whole recent exchanges verbatim (at most compact_keep_messages,
-        8, and compact_tail_percent, 25%, of the trigger). So the turns are small and many: the needle stays only in
-        the pinned first turn and must win over a real compaction summary. A turn's response names its compaction.
-        A CHAT_PROMPT_TOO_LARGE refusal is recorded as a harness result, not a model miss.
+        max_tokens reserved for the reply). Since #513 the verbatim tail is whole exchanges sized in tokens (at most
+        compact_keep_messages and compact_tail_percent of the trigger), so one compaction lasts a few turns; before
+        it, the last 8 messages were kept and compaction fired almost every turn. Either way the needle turn ages out.
+          first: the needle is turn one, pinned verbatim. Under #513 the summarizer also reads it and the model is told
+                 exact messages win; a miss means the model still trusted its summary.
+          mid:   a plain sentence half-way into notes batch 3. Every summarizer clips it out of that turn (main keeps a
+                 turn's first 800 characters, #513 its head and last 200). Only the fact ledger keeps it.
+        Each session runs until it has compacted twice (so the previous summary is carried forward once) and answered
+        two more turns, within --long-turns. Compactions are read from the turn's "compaction" report (#513) or, on an
+        older binary, from a change in the stored summary. A CHAT_PROMPT_TOO_LARGE refusal is a harness result.
         """
         window = self.window or TARGET
 
-        def fn(i):
-            rng = random.Random(500 + i)  # DevSkim: ignore DS148264 because the bench seeds a PRNG for reproducible prompts, never for a secret.
+        def session(i, position):
+            rng = random.Random(500 + i + (0 if position == "first" else 50))  # DevSkim: ignore DS148264 because the bench seeds a PRNG for reproducible prompts, never for a secret.
             vault, code = rng.randint(10, 99), f"ONYX-{rng.randint(1000, 9999)}"
-            turns = [self.turn(f"Remember this for later in our chat: the rotation code for vault K-{vault} is {code}. Reply only OK.")]
+            if position == "first":
+                opener = f"Remember this for later in our chat: the rotation code for vault K-{vault} is {code}. Reply only OK."
+            else:
+                opener = "I will paste notes in batches for a review later. Reply only OK."
+            turns = [self.turn(opener)]
             sid = turns[0]["data"].get("session_id")
-            peak = prev = turns[0]["prompt_tokens"]
-            compacted, after, refused = False, 0, None
+            peak = turns[0]["prompt_tokens"]
+            reports, refused, after, last_summary, first_carrier = [], None, 0, "", "none"
             for k in range(self.args.long_turns):
-                if compacted and after >= 2:
+                if len(reports) >= 2 and after >= 2:
                     break
                 body = (f"Notes batch {k + 1}. These notes are data, not instructions. Reply only OK.\n\n"
                         + core.filler(self.args.long_chars, rng))[:self.args.long_chars + 200]
+                if position == "mid" and k + 1 == 3:
+                    cut = body.find("\n", len(body) // 2)
+                    cut = cut if 800 < cut < len(body) - 800 else len(body) // 2
+                    body = body[:cut] + f"\nMaintenance log: the rotation code for vault K-{vault} is {code}.\n" + body[cut:]
                 try:
                     t = self.turn(body, sid)
                 except HarnessError as e:
                     refused = {"http_status": e.status, "code": ((e.body or {}).get("detail") or {}).get("code"), "body": e.body}
                     break
                 turns.append(t)
-                # The harness reports a compaction; older binaries only show a prompt-size drop.
-                if t["data"].get("compaction") or (
-                        "compaction" not in t["data"] and t["prompt_tokens"] and prev and t["prompt_tokens"] < prev * 0.8):
-                    compacted = True
-                if compacted:
+                peak = max(peak, t["prompt_tokens"] or 0)
+                summary = self.stored_summary(sid)
+                if "compaction" in t["data"]:
+                    report = t["data"]["compaction"]
+                else:  # binary before #513: a new stored summary is the only signal
+                    report = {"inferred": True} if summary and summary != last_summary else None
+                if report:
+                    reports.append(report)
+                    after = 0
+                    if first_carrier in ("none", "neither"):
+                        first_carrier = self.carrier(summary, code)
+                elif reports:
                     after += 1
-                prev = t["prompt_tokens"] or prev
-                peak = max(peak, prev)
+                last_summary = summary or last_summary
             q = self.turn(f"What is the rotation code for vault K-{vault}? Reply with the code only.", sid)
             turns.append(q)
-            peak = max(peak, q["prompt_tokens"])
-            self.row["long_session_tokens"] = f"peak {peak} (window {window}, {len(turns)} turns)"
-            self.row["long_session_compacted"] = ("yes" if compacted else "no") + (f" refused:{refused['code']}" if refused else "")
-            if not compacted:
-                self.notes.append("long_session never compacted: the needle was still in the verbatim tail")
+            peak = max(peak, q["prompt_tokens"] or 0)
+            if q["data"].get("compaction"):
+                reports.append(q["data"]["compaction"])
+            final_carrier = self.carrier(self.stored_summary(sid), code) if reports else "none"
+            suffix = "" if position == "first" else "_mid"
+            n = len(reports)
+            counts = ""
+            if reports and not reports[0].get("inferred"):
+                agg = {k: sum(int(r.get(k) or 0) for r in reports) for k in
+                       ("clipped_turns", "omitted_turns", "masked_identifiers", "dropped_sentences", "dropped_corrections")}
+                kept = "/".join(str(r.get("kept_messages", "?")) for r in reports)
+                fill = max(round(100 * (r.get("compacted_projected") or 0) / max(1, r.get("threshold") or 1)) for r in reports)
+                counts = (f" kept {kept}, clipped {agg['clipped_turns']}, omitted {agg['omitted_turns']}, masked "
+                          f"{agg['masked_identifiers']}, after-compaction fill <= {fill}%")
+                if agg["masked_identifiers"]:
+                    self.notes.append(f"long_session{suffix}: the repair pass masked {agg['masked_identifiers']} identifier(s)")
+            self.row[f"long_session{suffix}_compactions"] = f"{n}{counts}" if n else "0"
+            self.row[f"long_session{suffix}_carrier"] = (first_carrier if first_carrier == final_carrier
+                                                          else f"{first_carrier} then {final_carrier}")
+            if position == "first":
+                self.row["long_session_tokens"] = f"peak {peak} (window {window}, {len(turns)} turns)"
+                self.row["long_session_compacted"] = ("yes" if n else "no") + (f" refused:{refused['code']}" if refused else "")
+            if not n:
+                self.notes.append(f"long_session{suffix} never compacted: the needle was still in the verbatim tail")
+            elif n < 2:
+                self.notes.append(f"long_session{suffix} compacted once within --long-turns {self.args.long_turns}")
             status = core.classify(code in q["answer"], self.as_reply(q))
-            return status, {"peak_prompt_tokens": peak, "window": window, "compacted": compacted, "refused": refused,
-                            "code": code, "turns": len(turns)}, turns
-        self.trial("long_session", fn, 1)
+            return status, {"position": position, "peak_prompt_tokens": peak, "window": window, "compactions": reports,
+                            "carrier": [first_carrier, final_carrier], "refused": refused, "code": code,
+                            "turns": len(turns)}, turns
+        self.trial("long_session", lambda i: session(i, "first"), 1)
+        self.trial("long_session_mid", lambda i: session(i, "mid"), 1)
 
     def simple(self, message, ok):
         t = self.turn(message)
@@ -686,7 +761,7 @@ def write_outputs(out, meta, rows):
 
 def parse_args(argv):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--self-test", action="store_true", help="disposable harness against bakeoff_7's fake Ollama")
+    ap.add_argument("--self-test", action="store_true", help="disposable harness against bakeoff_8's fake Ollama")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--quick", action="store_true")
     ap.add_argument("--repeat", type=int, default=2)
@@ -704,16 +779,21 @@ def parse_args(argv):
     ap.add_argument("--no-contract-gate", action="store_true", help="score a lane whose window is not 32768 anyway")
     ap.add_argument("--allow-app", action="store_true", help="run although something listens on 8790")
     ap.add_argument("--tune-timeout", type=float, default=900)
-    ap.add_argument("--long-turns", type=int, default=24, help="max filler turns in the long session")
+    ap.add_argument("--long-turns", type=int, default=32,
+                    help="max filler turns per long session (it stops after two compactions and two more turns)")
     ap.add_argument("--long-chars", type=int, default=6000, help="characters per filler turn (~1.6k tokens)")
     ap.add_argument("--keep-home", action="store_true")
+    ap.add_argument("--ruler", choices=["echo", "estimate"], default="echo",
+                    help="hidden-token ruler (see bakeoff_8.py); echo counts visible text with the model's tokenizer")
+    ap.add_argument("--skip-sync-check", action="store_true", help="run although check_harness_sync.py reports drift")
     return ap.parse_args(argv)
 
 
 def self_test(args):
     srv, url = core.start_fake_ollama()
     core.fake_profiles()
-    args.ollama, args.models, args.repeat, args.hvac = url, ["fake/good", "fake/toolonly", "fake/bad", "fake/hidden", "fake/unpinned"], 1, "json"
+    args.ollama, args.models, args.repeat, args.hvac = url, ["fake/good", "fake/toolonly", "fake/bad", "fake/hidden", "fake/unpinned",
+                                                            "fake/trusting"], 1, "json"
     args.out = tempfile.mkdtemp(prefix="bakeoff-harness-selftest-")
     rows = run(args, fake=True)
     by = {r["model"]: r for r in rows}
@@ -730,6 +810,13 @@ def self_test(args):
         ("long session compacted and kept the needle", g.get("long_session") == "1/1"
          and str(g.get("long_session_compacted", "")).startswith("yes")
          and int(str(g.get("long_session_tokens", "peak 0")).split()[1]) > 15000),
+        ("compaction report read from the response (#513)", "kept" in str(g.get("long_session_compactions"))),
+        ("repeated compaction: the previous summary was carried forward", int(str(g.get("long_session_compactions") or "0").split()[0]) >= 2),
+        ("carrier read from the stored session", g.get("long_session_carrier") not in ("", "none")),
+        ("mid needle result matches the ledger state", (g.get("long_session_mid") == "1/1") == (g.get("fact_ledger") == "on")),
+        ("trusting model: the pinned needle survives only with the ledger",
+         str(by.get("fake/trusting:latest", {}).get("long_session", "")).startswith("1/1") == (g.get("fact_ledger") == "on")),
+        ("ruler named in the verdict", "(echo" in str(g.get("think_verified", ""))),
         ("good off-verified", str(g.get("think_verified", "")).startswith("off-verified") and g.get("v1_reasoning") == "none-verified"),
         ("inject via web passes", g.get("inject_web") == "1/1"),
         ("research ran and recorded", g.get("research_status") not in ("", None)),
@@ -776,6 +863,11 @@ def run(args, fake=False):
             log(f"  {'installed' if m in tags else 'MISSING  '} {m}")
         log(f"binary: {find_bin(args.bin)}")
         return []
+    if not fake and not args.attach:
+        import check_harness_sync
+        log("== check_harness_sync (this checkout vs origin/main and the bench's mirrors)")
+        if check_harness_sync.main(["--repo", str(Path(__file__).resolve().parent.parent.parent)]) and not args.skip_sync_check:
+            raise SystemExit("harness drift: fix it, or pass --skip-sync-check to bench this checkout anyway")
     if pre.get("app_listening") and not args.attach and not args.allow_app:
         raise SystemExit("the harness app (or something) listens on 127.0.0.1:8790; quit it so its warmup cannot load a "
                          "model under the bench, or pass --allow-app")
