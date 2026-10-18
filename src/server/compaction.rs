@@ -42,6 +42,10 @@ const GOAL_CHARS: usize = SUMMARY_TURN_CHARS;
 const PINNED_CHARS: usize = 2 * SUMMARY_TURN_CHARS;
 /// Characters a clipped turn keeps from its end.
 const CLIP_TAIL_CHARS: usize = SUMMARY_TURN_CHARS / 4;
+/// The error code of a summary the model could not produce usably: empty after
+/// repair, cut off, or prior summaries over the input budget. The turn is then
+/// sent uncompacted while it fits the hard limit, instead of failing.
+pub const SUMMARY_UNUSABLE: &str = "COMPACTION_SUMMARY_UNUSABLE";
 /// What a summary identifier that no source contains becomes.
 const UNVERIFIED: &str = "[unverified]";
 /// Sent around the summary so roles keep alternating and the summary is not in
@@ -441,6 +445,13 @@ pub fn summary_slot(messages: &[Message]) -> Option<usize> {
         .get(idx)
         .filter(|m| m.role == "assistant" && m.text.starts_with(COMPACT_PREFIX))
         .map(|_| idx)
+}
+
+/// Whether summarizing `middle` frees enough to be worth a model call: its
+/// calibrated size must be at least twice what the summary itself costs.
+pub fn worth_summarizing(middle: &[Message], allowance: u64, ratio: f64) -> bool {
+    let size: u64 = middle.iter().map(|m| estimate_tokens(&m.text)).sum();
+    calibrated_tokens(size, ratio) >= allowance.saturating_mul(2)
 }
 
 /// Estimate tokens the sent summary framing adds around the stored summary.
@@ -872,12 +883,14 @@ pub async fn summarize_turns(
     ratio: f64,
     prompt_cap: u64,
 ) -> Result<Summary> {
+    let unusable = |why: &str| HarnessError::new(SUMMARY_UNUSABLE, format!("compaction summary unusable: {why}"));
     let system = summary_system(summary_max_tokens);
     let input = summary_input(
         pinned,
         middle,
         summary_input_bytes(prompt_cap, reservation, ratio, &system),
-    )?;
+    )
+    .map_err(|e| unusable(&e.message))?;
     let reply = chat
         .chat(
             &system,
@@ -889,7 +902,16 @@ pub async fn summarize_turns(
             reservation,
             0.0,
         )
-        .await?;
+        .await
+        // A reply that arrived but did not finish normally (cut off at the
+        // token cap) is unusable; transport failures and timeouts stay errors.
+        .map_err(|e| {
+            if e.details.get("output_bytes").is_some() {
+                unusable(&e.message)
+            } else {
+                e
+            }
+        })?;
     let mut sources: Vec<&str> = middle.iter().map(|m| m.text.as_str()).collect();
     sources.extend(pinned.first_user);
     sources.push(pinned.goal);
@@ -897,10 +919,7 @@ pub async fn summarize_turns(
     let user_sources: Vec<&str> = corrections.iter().map(String::as_str).collect();
     let (body, repairs) = repair_summary(&reply.body_text, &sources, &user_sources);
     if body.trim().is_empty() {
-        return Err(HarnessError::new(
-            crate::llm::openai_chat::LLM_ERROR_CODE,
-            "compaction summary was empty",
-        ));
+        return Err(unusable("the summary was empty"));
     }
     let mut text = String::from(COMPACT_PREFIX);
     text.push_str(body.trim());
@@ -1488,5 +1507,14 @@ Corrections (later user changes):\n\
             &users,
         );
         assert_eq!(none, "Corrections (later user changes):\n- None");
+    }
+
+    #[test]
+    fn summarizing_must_free_twice_its_own_cost() {
+        let middle = [msg("user", &"x".repeat(4000)), msg("assistant", &"y".repeat(4000))]; // 2000 tokens
+        assert!(worth_summarizing(&middle, 1_000, 1.0));
+        assert!(!worth_summarizing(&middle, 1_001, 1.0));
+        assert!(worth_summarizing(&middle, 2_000, 2.0), "calibrated tokens count");
+        assert!(!worth_summarizing(&[], 1, 1.0));
     }
 }

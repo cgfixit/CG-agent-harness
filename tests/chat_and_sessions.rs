@@ -664,6 +664,149 @@ async fn compaction_is_persisted_only_with_a_successful_exchange() {
             .is_some_and(|text| text.starts_with(cgagentharness::server::compaction::COMPACT_PREFIX))));
 }
 
+/// A model that answers chat turns with "fine" and summary calls with `summary`
+/// (or a reply cut off at the token cap when `summary` is None).
+async fn summary_model(
+    summary: Option<&'static str>,
+) -> (String, std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>) {
+    use axum::{routing::post, Json, Router};
+    use std::sync::{Arc, Mutex};
+    let requests = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+    let captured = requests.clone();
+    let router = Router::new().route(
+        "/v1/chat/completions",
+        post(move |Json(body): Json<serde_json::Value>| {
+            let captured = captured.clone();
+            async move {
+                captured.lock().unwrap().push(body.clone());
+                let is_summary = body["messages"][0]["content"]
+                    .as_str()
+                    .is_some_and(|s| s.starts_with("Summarize this chat history"));
+                let mut reply = ok_reply(if is_summary { summary.unwrap_or("cut") } else { "fine" }, 100, 2);
+                if is_summary && summary.is_none() {
+                    reply["choices"][0]["finish_reason"] = json!("length");
+                }
+                Json(reply)
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+    let url = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (url, requests)
+}
+
+#[tokio::test]
+async fn an_unusable_summary_sends_the_turn_uncompacted_within_the_hard_limit() {
+    let (url, requests) = summary_model(None).await;
+    let s = spawn_server(
+        &url,
+        ServerOptions::default()
+            .with("chat.compact_prompt_tokens", "4096")
+            .with("chat.compact_keep_messages", "2"),
+    )
+    .await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let usage = cgagentharness::server::sessions::TokenTally::default();
+    for i in 0..6 {
+        s.state
+            .store
+            .for_owner("local")
+            .record_exchange(
+                sid,
+                &format!("u{i} {}", "u".repeat(2000)),
+                &format!("a{i} {}", "a".repeat(2000)),
+                "fixture",
+                &usage,
+                &[],
+            )
+            .unwrap();
+    }
+    let path = s.home.join("sessions").join(format!("{sid}.json"));
+    let stored_before = s.state.store.for_owner("local").get(sid).unwrap().messages;
+
+    let (status, body) = s
+        .post_json("/api/chat", json!({"session_id":sid,"message":"next"}))
+        .await;
+    assert_eq!(
+        status, 200,
+        "a cut-off summary must not fail a turn that fits the hard limit: {body}"
+    );
+    assert_eq!(body["compaction_skipped"], "summary_unusable");
+    assert!(body["compaction"].is_null(), "{body}");
+    let sent = requests.lock().unwrap().clone();
+    assert_eq!(sent.len(), 2, "one summary attempt, then the reply");
+    assert!(
+        !sent[1]["messages"].as_array().unwrap().iter().any(|m| m["content"]
+            .as_str()
+            .is_some_and(|t| t.starts_with(cgagentharness::server::compaction::COMPACT_PREFIX))),
+        "the reply is sent uncompacted"
+    );
+    let saved = s.state.store.for_owner("local").get(sid).unwrap().messages;
+    assert_eq!(
+        &saved[..stored_before.len()],
+        &stored_before[..],
+        "the session is not rewritten"
+    );
+    assert!(path.exists());
+    assert!(s
+        .audit_log()
+        .lines()
+        .any(|l| l.contains("\"event\":\"chat_compaction_skipped\"") && l.contains("\"reason\":\"summary_unusable\"")));
+}
+
+#[tokio::test]
+async fn history_compaction_cannot_shrink_below_the_trigger_is_sent_within_the_hard_limit() {
+    let (url, requests) = summary_model(Some("Facts and constraints from the user:\n- None")).await;
+    let s = spawn_server(
+        &url,
+        ServerOptions::default()
+            .with("chat.compact_prompt_tokens", "4096")
+            .with("chat.compact_keep_messages", "2"),
+    )
+    .await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let usage = cgagentharness::server::sessions::TokenTally::default();
+    s.state
+        .store
+        .for_owner("local")
+        .record_exchange(sid, "PINNED", "ok", "fixture", &usage, &[])
+        .unwrap();
+    // Each exchange is ~4000 tokens: the last one alone keeps the compacted
+    // prompt above the ~8.4k trigger, but far under the 30000 hard limit.
+    for i in 0..3 {
+        s.state
+            .store
+            .for_owner("local")
+            .record_exchange(
+                sid,
+                &format!("u{i} {}", "u".repeat(16_000)),
+                "ok",
+                "fixture",
+                &usage,
+                &[],
+            )
+            .unwrap();
+    }
+    let (status, body) = s
+        .post_json("/api/chat", json!({"session_id":sid,"message":"next"}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let report = &body["compaction"];
+    assert!(
+        report["compacted_projected"].as_u64().unwrap() > report["threshold"].as_u64().unwrap(),
+        "{report}"
+    );
+    let saved = s.state.store.for_owner("local").get(sid).unwrap().messages;
+    assert_eq!(saved[0].text, "PINNED");
+    assert!(saved[1]
+        .text
+        .starts_with(cgagentharness::server::compaction::COMPACT_PREFIX));
+    assert_eq!(requests.lock().unwrap().len(), 2);
+}
+
 #[tokio::test]
 async fn a_long_normal_session_compacts_instead_of_clipping_at_8000_chars() {
     let model = start_mock_model().await;

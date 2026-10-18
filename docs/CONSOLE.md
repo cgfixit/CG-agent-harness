@@ -599,7 +599,10 @@ model window per [MODELS.md](MODELS.md).
 `compaction.summary_max_tokens` defaults to 768 and clamps to 128–2048. Tune
 these in home `config.yaml`, then restart. Compaction is inline;
 empty, failed, truncated, or cancelled output commits neither summary nor
-calibration. A prompt that still exceeds the limit returns
+calibration. Past the trigger a turn may still send up to the hard limit, the
+prompt cap (web chat: the web room): an empty or cut-off summary, or too little
+to summarize, sends it uncompacted, and the response's `compaction_skipped`
+says why. A new message alone must fit the trigger. A prompt over its limit returns
 `CHAT_PROMPT_TOO_LARGE` (422) naming the bounding setting (`details.limit_source`),
 the turn's reply budget (`models.local_llm.max_tokens`, or
 `api.harness_loop_rate_limit.max_tokens` for `/loop`) and only remedies that can help.
