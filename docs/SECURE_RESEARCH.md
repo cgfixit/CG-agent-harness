@@ -286,22 +286,20 @@ that literal argument. Other flag rules are in the
 ### Chat web tools
 
 With web enabled, local chat and `/loop` can invoke `web_search` (Google keyword listings)
-and `web_fetch` (an exact permitted public URL). They use OpenAI-compatible tool
-calls, which the configured local model must support; it receives the retrieved
-content. No repository, shell, policy, account, key or other mutation tool is
-exposed. Invalid names,
-arguments and excess tool requests are refused; batches are validated before
-their first read and executed sequentially. A turn allows at most
-`web.chat_tool_calls` (1–10, default 10) across all rounds, shares the chat
-timeout, and reserves estimated tokens against `web.total_tokens` before each
-model call. A tool call resends the prompt with its results, so tools are offered
-only while both calls, both replies and a minimal result (≥256 calibrated tokens)
-fit. A batch without that minimum per call runs no read; the model answers
+and `web_fetch` (an exact permitted public URL). They use OpenAI-compatible tool calls, which the local model must support, and
+receive the retrieved content.
+No repository, shell, policy, account, key or mutation tool is exposed. Invalid names, arguments and excess tool requests are refused; batches are
+validated before their first read and run sequentially. A turn allows at most
+`web.chat_tool_calls` (1–10, default 10) across all rounds, gets the chat timeout
+plus a measured tool-round allowance (at most twice it), and checks each call's
+prompt against `web.total_tokens`, charged once. Tools are offered only while
+the prompt, its definitions, one reply and a minimal result (≥256 calibrated
+tokens) fit. A batch without that minimum per call runs no read and the model answers
 without tools. Results are cut to the room left, keeping that minimum per later
-call: pages keep prefixes, listings drop trailing results. Budget refusals report
-`WEB_TOKEN_BUDGET`; after successful reads, `WEB_TOOLS_WITHHELD` reserves synthesis
-with `tool_choice: none`, buffered as JSON to avoid stale streamed calls. Chat
-reuses duplicate searches and stops when evidence answers the question.
+call (pages keep prefixes, listings drop results). A failed
+read returns to the model as its result; a batch that fails entirely ends the
+turn (no evidence yet) or the tool rounds. Budget refusals report `WEB_TOKEN_BUDGET`; after reads, `WEB_TOOLS_WITHHELD`
+reserves synthesis.
 Reported usage sums all completed model calls; absent upstream usage stays marked
 unreported, never invented.
 `/loop stop` or the chat cancellation endpoint aborts the whole turn, including

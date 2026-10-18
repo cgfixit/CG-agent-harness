@@ -542,6 +542,14 @@ impl AppState {
         }
     }
 
+    /// The deadline for a whole web-enabled chat turn on `model`: its per-call
+    /// timeout plus the tool-round allowance `model_limits::web_turn_deadline_sec`
+    /// derives from the measured speed, when `auto_tune` has one.
+    pub fn web_turn_deadline_sec(&self, model: &str, limits: &super::web_search::Limits) -> f64 {
+        let speed = self.tuning_for(model).and_then(|tuning| tuning.speed.clone());
+        super::model_limits::web_turn_deadline_sec(self.chat_timeout_sec(model), speed.as_ref(), limits)
+    }
+
     pub fn abort_chat(&self) {
         self.chat.abort_in_flight();
         self.cloud_chat.abort_in_flight();

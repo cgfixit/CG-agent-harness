@@ -247,7 +247,9 @@ pub async fn run_stream(
     tokio::select! {
         biased;
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
-        result = tokio::time::timeout(Duration::from_secs_f64(state.chat_timeout_sec(model).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, output)) =>
+        // A turn of several tool rounds gets more than one call's deadline; each
+        // model call keeps its own (`ChatClient::timeout_for`).
+        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, output)) =>
             result.map_err(|_| error("WEB_TIMEOUT", "chat web turn deadline exceeded"))?,
     }
 }
@@ -278,7 +280,6 @@ async fn run_inner(
     let mut completion_tokens = 0u64;
     let mut reported = true;
     let mut initial_prompt_tokens = None;
-    let mut budget_used = 0u64;
     let definitions = tools_for(web_mode);
     let definition_json = serde_json::to_string(&definitions)?;
     let definition_bytes = definition_json.len();
@@ -293,18 +294,21 @@ async fn run_inner(
         let reservation = super::compaction::reply_reservation(&state.backend, cap);
         let remaining = web.limits.chat_tool_calls - used_calls;
         // A tool round is two calls: this one, whose reply carries the tool calls,
-        // and a follow-up that sends this prompt again with the results. Offer tools
-        // only while both prompts, a minimal result and both replies fit; the batch
-        // the model returns is checked again before its first read. The follow-up
-        // carries the definitions only after passing this check itself, so it is
-        // counted without them.
+        // and a follow-up that sends this prompt again with the results. Each call
+        // is one prompt inside `web.total_tokens`, the window-shaped budget: the
+        // history is read again on the follow-up, not spent twice (a local runtime
+        // normally serves the shared prefix from its prompt cache), so the prompt
+        // is charged once. Offer tools only while this prompt with its definitions,
+        // a minimal result and one reply fit; the batch the model returns is checked
+        // again before its first read, with each result cut to the room the
+        // follow-up leaves. Before, this charged the prompt twice and summed every
+        // round, which withheld tools from any session past about a third of the
+        // budget while compaction waited for chat.compact_prompt_tokens.
         let round_fits = remaining > 0
             && !tools_withheld
-            && budget_used
-                .saturating_add(with_tools)
-                .saturating_add(prompt_estimate(sent, token_ratio))
+            && with_tools
                 .saturating_add(min_result_tokens(token_ratio))
-                .saturating_add(reservation.saturating_mul(2))
+                .saturating_add(reservation)
                 <= web.limits.total_tokens;
         // Charge what is sent: the tool definitions only when tools are offered.
         let (available, estimate) = if round_fits {
@@ -312,7 +316,7 @@ async fn run_inner(
         } else {
             (&[][..], prompt_estimate(sent, token_ratio))
         };
-        if budget_used.saturating_add(estimate).saturating_add(reservation) > web.limits.total_tokens {
+        if estimate.saturating_add(reservation) > web.limits.total_tokens {
             return Err(error("WEB_TOKEN_BUDGET", "chat web token budget exhausted"));
         }
         if !round_fits && remaining > 0 && !tools_withheld {
@@ -325,7 +329,7 @@ async fn run_inner(
                 "message":if have_evidence {
                     "Remaining web budget reserves the final answer from gathered evidence; no further web tools were offered"
                 } else {
-                    "web.total_tokens has no room for a tool round (this prompt twice, a result and two replies); web tools were not offered"
+                    "web.total_tokens has no room for a tool round (this prompt, its tool definitions, a result and a reply); web tools were not offered"
                 }}));
         }
         if turn == 0 {
@@ -359,9 +363,6 @@ async fn run_inner(
             initial_prompt_tokens = crate::llm::openai_chat::initial_prompt_tokens(&response);
         }
         reported &= usage["prompt_tokens"].is_u64() && usage["completion_tokens"].is_u64();
-        budget_used = budget_used
-            .saturating_add(usage["prompt_tokens"].as_u64().unwrap_or(estimate))
-            .saturating_add(usage["completion_tokens"].as_u64().unwrap_or(cap));
         prompt_tokens = prompt_tokens.saturating_add(crate::llm::openai_chat::token_count(usage.get("prompt_tokens")));
         completion_tokens =
             completion_tokens.saturating_add(crate::llm::openai_chat::token_count(usage.get("completion_tokens")));
@@ -462,8 +463,7 @@ async fn run_inner(
                 Ok(prompt_estimate(bytes, token_ratio).max(min_result_tokens(token_ratio)))
             })
             .collect::<Result<Vec<u64>>>()?;
-        if budget_used
-            .saturating_add(prompt_estimate(sent, token_ratio))
+        if prompt_estimate(sent, token_ratio)
             .saturating_add(reserves.iter().sum::<u64>())
             .saturating_add(reservation)
             > web.limits.total_tokens
@@ -475,6 +475,8 @@ async fn run_inner(
         }
         used_calls += calls.len();
         messages.push(batch);
+        let mut batch_failures: Vec<(String, String)> = Vec::new();
+        let mut batch_ok = 0usize;
         for (index, call) in calls.iter().enumerate() {
             let id = call["id"]
                 .as_str()
@@ -560,8 +562,7 @@ async fn run_inner(
             let result = match result {
                 Ok(value) => fit_result(value, |candidate| {
                     let bytes = sent + 1 + serde_json::to_vec(&tool_message(id, candidate)?)?.len();
-                    Ok(budget_used
-                        .saturating_add(prompt_estimate(bytes, token_ratio))
+                    Ok(prompt_estimate(bytes, token_ratio)
                         .saturating_add(reservation)
                         .saturating_add(later)
                         <= web.limits.total_tokens)
@@ -570,48 +571,68 @@ async fn run_inner(
                 Err(failure) => Err(failure),
             };
             check_evidence(state, owner, &sources)?;
+            // A refused or failed read is that call's result, not the end of the
+            // turn: the model is handed the harness's own code and message (never
+            // page text) and answers from the reads that did succeed. A refused
+            // URL is still never fetched, and the event stays `ok: false` for the
+            // console. Before, one denied or unreachable URL in a batch discarded
+            // every sibling result and ended the turn with no answer, which also
+            // stopped an unattended /loop.
             let result = match result {
-                Ok(result) => result,
+                Ok(result) => {
+                    batch_ok += 1;
+                    result
+                }
                 Err(failure) => {
                     events.push(json!({"tool":name,"ok":false,"code":failure.code,"message":failure.message}));
-                    return Ok((
-                        ChatResult {
-                            body_text: format!(
-                                "Web operation failed: {} — {}. {}",
-                                failure.code,
-                                failure.message,
-                                if sources.is_empty() && searches.is_empty() {
-                                    "No successful result was obtained."
-                                } else {
-                                    "Earlier reads succeeded, but this research is incomplete; no synthesis was produced."
-                                }
-                            ),
-                            model: model.into(),
-                            prompt_tokens,
-                            completion_tokens,
-                            usage_reported: reported,
-                            initial_prompt_tokens,
-                            initial_prompt_tools,
-                            // The last model call offered tools: it returned this batch.
-                            final_prompt_tools: true,
-                            peak_prompt_extra_tokens: peak_extra,
-                        },
-                        events,
-                    ));
+                    batch_failures.push((failure.code.clone(), failure.message.clone()));
+                    json!({"error":failure.code,"message":failure.message,
+                        "notice":"This read did not run or did not fit. Answer from the other results, or say what could not be read."})
                 }
             };
-            if result["provider"] != "google-serpapi" {
-                if let Some(source) = result
-                    .get("search_url")
-                    .or_else(|| result.get("url"))
-                    .and_then(Value::as_str)
-                {
-                    sources.push(source.to_string());
+            if result.get("error").is_none() {
+                if result["provider"] != "google-serpapi" {
+                    if let Some(source) = result
+                        .get("search_url")
+                        .or_else(|| result.get("url"))
+                        .and_then(Value::as_str)
+                    {
+                        sources.push(source.to_string());
+                    }
                 }
+                check_evidence(state, owner, &sources)?;
+                events.push(json!({"tool":name,"ok":true,"result":result}));
             }
-            check_evidence(state, owner, &sources)?;
-            events.push(json!({"tool":name,"ok":true,"result":result}));
             messages.push(tool_message(id, &result)?);
+        }
+        if batch_ok == 0 {
+            if sources.is_empty() && searches.is_empty() {
+                // Every call failed and nothing has succeeded this turn: a refusal
+                // the model cannot fix by asking again (no URL permitted, keyless
+                // search, an unreachable site). End the turn as before, with the
+                // first failure named, rather than spend the remaining rounds on it.
+                let (code, message) = batch_failures.first().cloned().unwrap_or_default();
+                return Ok((
+                    ChatResult {
+                        body_text: format!(
+                            "Web operation failed: {code} — {message}. No successful result was obtained."
+                        ),
+                        model: model.into(),
+                        prompt_tokens,
+                        completion_tokens,
+                        usage_reported: reported,
+                        initial_prompt_tokens,
+                        initial_prompt_tools,
+                        // The last model call offered tools: it returned this batch.
+                        final_prompt_tools: true,
+                        peak_prompt_extra_tokens: peak_extra,
+                    },
+                    events,
+                ));
+            }
+            // Evidence exists but this whole batch failed: the model is told and
+            // answers from what it has; no further round is offered.
+            tools_withheld = true;
         }
     }
     Err(error("WEB_TOOL_LIMIT", "chat tool limit exceeded"))

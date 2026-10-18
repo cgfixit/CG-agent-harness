@@ -68,13 +68,17 @@ pub fn reply_reservation(backend: &ResolvedLocalBackend, max_tokens: u64) -> u64
     max_tokens.saturating_mul(multiplier)
 }
 
-/// Largest projected prompt (input plus one reply reservation) that web-enabled
-/// chat admits. The projection already carries one reservation, so subtracting
-/// one more leaves room for a second reply, after a tool round, inside
-/// `web.total_tokens`. Subtracting two here charged the reservation three times,
-/// which on a doubled-reservation backend is six times `max_tokens`.
-pub fn web_prompt_limit(web_total_tokens: u64, reservation: u64) -> u64 {
-    web_total_tokens.saturating_sub(reservation)
+/// Largest projected prompt (input, tool definitions and one reply reservation)
+/// that web-enabled chat admits: `web.total_tokens` less `min_result`, the
+/// (calibrated) smallest tool result, so every admitted prompt still fits a tool
+/// round. The web dispatcher charges each model call's prompt once against the
+/// same budget (`chat_web::run_inner`), so the projection, which already carries
+/// the reservation and the definitions, needs nothing else subtracted. Before,
+/// this subtracted a second reservation while the dispatcher charged the prompt
+/// twice and summed every round, which left sessions between about a third of
+/// the budget and this limit admitted but without tools.
+pub fn web_prompt_limit(web_total_tokens: u64, min_result: u64) -> u64 {
+    web_total_tokens.saturating_sub(min_result)
 }
 
 /// What, if anything, can make more `web.total_tokens` available, so a remedy
@@ -113,24 +117,26 @@ impl WebRaise {
 }
 
 /// Why web-enabled chat cannot fit a usable prompt with these settings, if it
-/// cannot: under [`MIN_PROMPT_HEADROOM`] input tokens remain once both replies
-/// and the tool definitions are reserved, and the system prompt alone can fill that.
+/// cannot: under [`MIN_PROMPT_HEADROOM`] input tokens remain once the reply, a
+/// minimal tool result and the tool definitions are reserved, and the system
+/// prompt alone can fill that.
 pub fn web_budget_warning(
     web_total_tokens: u64,
     reservation: u64,
     tool_tokens: u64,
     raise: WebRaise,
 ) -> Option<String> {
-    let input = web_prompt_limit(web_total_tokens, reservation)
+    let min_result = super::web_search::MIN_EVIDENCE_TOKENS;
+    let input = web_prompt_limit(web_total_tokens, min_result)
         .saturating_sub(reservation)
         .saturating_sub(tool_tokens);
     let raise = raise.clause();
     (input < MIN_PROMPT_HEADROOM).then(|| {
         format!(
-            "web.total_tokens {web_total_tokens} leaves {input} prompt tokens for web-enabled chat after two \
-             {reservation}-token reply reservations (from models.local_llm.max_tokens) and {tool_tokens} tokens of \
-             tool definitions; below {MIN_PROMPT_HEADROOM}, web chat refuses almost every message. Lower \
-             models.local_llm.max_tokens, {raise}or turn web off"
+            "web.total_tokens {web_total_tokens} leaves {input} prompt tokens for web-enabled chat after a \
+             {reservation}-token reply reservation (from models.local_llm.max_tokens), a {min_result}-token tool \
+             result and {tool_tokens} tokens of tool definitions; below {MIN_PROMPT_HEADROOM}, web chat refuses \
+             almost every message. Lower models.local_llm.max_tokens, {raise}or turn web off"
         )
     })
 }
@@ -183,20 +189,22 @@ pub fn prompt_limit(
 /// One chat turn's prompt limit and the setting that binds it: [`prompt_limit`]
 /// over a floor of the reply reservation, [`MIN_PROMPT_HEADROOM`] and the
 /// (calibrated) tool definitions, held at `cap`. `web_total` is the in-force
-/// `web.total_tokens` when the turn offers web tools.
+/// `web.total_tokens` when the turn offers web tools, and `min_result` the
+/// calibrated room the dispatcher keeps for the smallest tool result.
 pub fn turn_prompt_limit(
     configured: u64,
     cap: u64,
     web_total: Option<u64>,
     reservation: u64,
     tool_tokens: u64,
+    min_result: u64,
     reply_setting: &'static str,
 ) -> (u64, &'static str) {
     let floor = reservation
         .saturating_add(MIN_PROMPT_HEADROOM)
         .saturating_add(tool_tokens)
         .min(cap);
-    let web_room = web_total.map(|total| web_prompt_limit(total, reservation));
+    let web_room = web_total.map(|total| web_prompt_limit(total, min_result));
     prompt_limit(configured, cap, web_room, floor, reply_setting)
 }
 
@@ -453,14 +461,19 @@ mod tests {
     }
 
     #[test]
-    fn web_prompt_limit_reserves_the_reply_once_on_top_of_the_projection() {
+    fn web_prompt_limit_keeps_room_for_one_minimal_result_on_top_of_the_projection() {
+        // The projection carries the reply reservation and the definitions; the
+        // web room keeps the smallest tool result on top, so every admitted
+        // prompt still fits a tool round, which charges the prompt once.
+        assert_eq!(web_prompt_limit(28_000, 256), 27_744);
+        assert_eq!(web_prompt_limit(28_000, 768), 27_232);
         // Shipped web budget with a doubled reservation (MLX / LM Studio, max_tokens 4096).
-        assert_eq!(web_prompt_limit(28_000, 8_192), 19_808);
         assert!(web_budget_warning(28_000, 8_192, 272, WebRaise::Config).is_none());
-        let warning = web_budget_warning(16_000, 8_192, 272, WebRaise::Config).unwrap();
+        let warning = web_budget_warning(12_000, 8_192, 272, WebRaise::Config).unwrap();
         assert!(warning.contains("models.local_llm.max_tokens") && warning.contains("web.total_tokens"));
-        // Exactly MIN_PROMPT_HEADROOM input tokens after both replies and the tools is usable.
-        let usable = 2 * 8_192 + 272 + MIN_PROMPT_HEADROOM;
+        assert!(warning.contains("256-token tool result"), "{warning}");
+        // Exactly MIN_PROMPT_HEADROOM input tokens after one reply, a minimal result and the tools is usable.
+        let usable = 8_192 + 256 + 272 + MIN_PROMPT_HEADROOM;
         assert!(web_budget_warning(usable, 8_192, 272, WebRaise::Config).is_none());
         assert!(web_budget_warning(usable - 1, 8_192, 272, WebRaise::Config).is_some());
         assert!(web_budget_warning(0, 8_192, 272, WebRaise::Config).is_some());
@@ -480,7 +493,7 @@ mod tests {
         );
         // A doubled 12,952-token reply: the floor, capped at 30000, binds even at
         // the largest web.total_tokens, so raising that setting cannot help.
-        let room = web_prompt_limit(32_000, 25_904);
+        let room = web_prompt_limit(32_000, 256);
         let (limit, source) = prompt_limit(24_000, MAX_PROMPT_TOKENS, Some(room), MAX_PROMPT_TOKENS, chat);
         assert_eq!((limit, source), (MAX_PROMPT_TOKENS, chat));
         let remedy = prompt_limit_remedy(source, limit, MAX_PROMPT_TOKENS, WebRaise::Config, chat, true);
@@ -569,12 +582,18 @@ mod tests {
             WebRaise::Nothing
         );
         // The turn limit is prompt_limit over the reservation + headroom + tools floor.
+        // The shipped 28000 budget less a minimal result is above the configured
+        // 24000, so the compaction setting binds a web turn; a 16000 budget binds it.
         assert_eq!(
-            turn_prompt_limit(24_000, MAX_PROMPT_TOKENS, Some(28_000), 4_096, 272, chat),
-            (23_904, "web.total_tokens")
+            turn_prompt_limit(24_000, MAX_PROMPT_TOKENS, Some(28_000), 4_096, 272, 256, chat),
+            (24_000, "chat.compact_prompt_tokens")
         );
         assert_eq!(
-            turn_prompt_limit(24_000, MAX_PROMPT_TOKENS, None, 4_096, 0, chat),
+            turn_prompt_limit(24_000, MAX_PROMPT_TOKENS, Some(16_000), 4_096, 272, 512, chat),
+            (15_488, "web.total_tokens")
+        );
+        assert_eq!(
+            turn_prompt_limit(24_000, MAX_PROMPT_TOKENS, None, 4_096, 0, 256, chat),
             (24_000, "chat.compact_prompt_tokens")
         );
         // A measured 64k window lifts the cap, so 40000 is held only at its own value.
@@ -598,20 +617,23 @@ mod tests {
 
     #[test]
     fn the_startup_warning_checks_the_budget_chat_will_hold() {
-        // A doubled 12952-token reservation: 128000 would fit, but 32000 is what applies.
+        // A doubled 12952-token reservation: 128000 would fit, but a 28000 ceiling
+        // (a 28672-token window) is what applies and leaves under 4096 input tokens.
         let warning =
-            configured_web_budget_warning(128_000, 32_000, None, 25_904, 272).expect("32000 cannot fit two replies");
-        assert!(warning.contains("held at 32000"), "{warning}");
+            configured_web_budget_warning(128_000, 28_000, None, 25_904, 272).expect("28000 cannot fit the reply");
+        assert!(warning.contains("held at 28000"), "{warning}");
         // Raising the setting cannot help; a larger measured window can.
         assert!(!warning.contains("raise web.total_tokens"), "{warning}");
         assert!(warning.contains("measure a larger window"), "{warning}");
         assert!(configured_web_budget_warning(28_000, 32_000, None, 8_192, 272).is_none());
-        let plain = configured_web_budget_warning(16_000, 32_000, None, 8_192, 272).unwrap();
+        let plain = configured_web_budget_warning(12_000, 32_000, None, 8_192, 272).unwrap();
         assert!(!plain.contains("held at"), "{plain}");
         // A reload under a 65536 tuning checks its 56000 budget and tuned 8192 reply,
-        // which fit; the raw reply and the untuned 32000 would not.
+        // which fit. The raw 25904-token reply fits the untuned 32000 budget too, by
+        // 5568 input tokens: one reply is reserved, not two.
         assert!(configured_web_budget_warning(60_000, 56_000, Some(65_536), 8_192, 272).is_none());
-        assert!(configured_web_budget_warning(60_000, 32_000, None, 25_904, 272).is_some());
+        assert!(configured_web_budget_warning(60_000, 32_000, None, 25_904, 272).is_none());
+        assert!(configured_web_budget_warning(60_000, 28_000, None, 25_904, 272).is_some());
     }
 
     #[test]

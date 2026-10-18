@@ -995,7 +995,10 @@ const LOOP_COOLDOWN_MS = 2000;
    The server separately controls each turn's generation budget. */
 const MAX_LOOP_TOTAL_COMPLETION_TOKENS = 12000;
 const MAX_LOOP_FAILURES = 2;
-const LOOP_RETRY_CAP_SEC = 30;
+/* An unattended loop waits out a rate-limit window instead of stopping: the
+   loop limit ships 8 turns per 300 s (api.harness_loop_rate_limit), so a fast
+   model's auto loop hits it within minutes. /loop stop still ends the wait. */
+const LOOP_RETRY_CAP_SEC = 300;
 /* Status/decision/push/discard/publish and GitHub-status calls spawn a CLI
    bounded at 120s. Job submission returns immediately; polling uses short calls. */
 const AGENT_CLI_TIMEOUT_MS = 130000;   /* 120s ops_runner._TIMEOUT_SEC + 10s margin */
@@ -3788,8 +3791,32 @@ function repliesNearlyRepeat(previous, next) {
   return 2 * row[b.length] / (a.length + b.length) >= LOOP_STALL_SIMILARITY;
 }
 
+/* Web tool codes that will refuse the same way on every later turn: no URL is
+   permitted, keyless search is not permitted, the model asked for a tool it
+   cannot have, or the budget cannot fit a tool round at all. Only these stop an
+   unattended loop. A refused or unreachable URL, a bad query or one result that
+   did not fit is that read's failure: the server tells the model and it answers
+   from the other results, so the loop goes on (bounded by MAX_LOOP_FAILURES
+   turns in a row on which every read failed). */
+const LOOP_BLOCKING_WEB_CODES = ['WEB_ALLOWLIST_EMPTY', 'WEB_GOOGLE_PERMISSION', 'WEB_TOOL_DENIED', 'WEB_POLICY_UNAVAILABLE', 'WEB_DISABLED'];
+function loopBlockingWebCode(events) {
+  const list = Array.isArray(events) ? events.filter(Boolean) : [];
+  const failed = list.filter(e => e.ok === false);
+  if (!failed.length) return null;
+  const blocking = failed.find(e => LOOP_BLOCKING_WEB_CODES.includes(e.code));
+  if (blocking) return blocking.code;
+  /* The round itself was refused (no read ran) and nothing succeeded. */
+  if (!list.some(e => e.ok === true) && failed.every(e => e.code === 'WEB_TOKEN_BUDGET' && e.tool === 'web')) return 'WEB_TOKEN_BUDGET';
+  return null;
+}
+
 function sleepMs(ms) {
   return new Promise(function (resolve) { setTimeout(resolve, ms); });
+}
+/* A long wait a /loop stop can end: the rate-limit retry sleeps in slices. */
+async function sleepUnlessStopped(ms, state) {
+  const until = Date.now() + ms;
+  while (Date.now() < until && state && !state.stop) await sleepMs(Math.min(1000, until - Date.now()));
 }
 
 function stopLoop(reason) {
@@ -3854,10 +3881,22 @@ async function runLoopTurns() {
           stopLoop('loop aborted — ' + MAX_LOOP_FAILURES + ' consecutive chat failures');
           return;
         }
-        sys('loop turn failed (' + loopState.failures + '/' + MAX_LOOP_FAILURES + ') — /loop to retry, /loop stop to abort');
-        return;
+        /* A refusal that ends the loop already called stopLoop inside
+           sendChat and returned above. What reaches here is a turn that
+           failed without a verdict (a timeout, a truncated or malformed
+           reply, a network error): an attended loop hands the retry to the
+           operator, an unattended one retries the same turn itself, bounded
+           by MAX_LOOP_FAILURES, instead of ending the run on one failure. */
+        if (!loopState.auto) {
+          sys('loop turn failed (' + loopState.failures + '/' + MAX_LOOP_FAILURES + ') — /loop to retry, /loop stop to abort');
+          return;
+        }
+        sys('loop turn failed (' + loopState.failures + '/' + MAX_LOOP_FAILURES + ') — retrying this turn in ' + (LOOP_COOLDOWN_MS / 1000) + 's; /loop stop to abort');
+        await sleepMs(LOOP_COOLDOWN_MS);
+        continue;
       }
       if (loopState.blockedTool) { stopLoop('loop stopped — ' + loopState.blockedTool + '; goal remains incomplete. Check /web status and the reported permission, provider or budget error before retrying /loop.' + (WEB_TOOL_NEXT_STEP[loopState.blockedTool] ? ' ' + WEB_TOOL_NEXT_STEP[loopState.blockedTool] : '')); return; }
+      if ((loopState.toolFailures || 0) >= MAX_LOOP_FAILURES) { stopLoop('loop stopped — every web read failed on ' + MAX_LOOP_FAILURES + ' turns in a row; check /web status and the reported codes before retrying /loop'); return; }
       loopState.failures = 0;
       loopState.remaining -= 1;
       if (loopState.lastReply && repliesNearlyRepeat(loopState.lastReply, reply)) {
@@ -3941,8 +3980,17 @@ async function finishChat(r, asLoop) {
     loopState.completionTokens += Number(r.usage.completion_tokens) || 0;
   }
   renderChatWebTools(r && r.web_tools);
-  const failedTool = ((r && r.web_tools) || []).find(tool => tool.ok === false);
-  if (asLoop && loopState && failedTool) loopState.blockedTool = failedTool.code || 'WEB_TOOL_FAILED';
+  const webEvents = ((r && r.web_tools) || []).filter(Boolean);
+  const failedTools = webEvents.filter(tool => tool.ok === false);
+  if (asLoop && loopState) {
+    const blocking = loopBlockingWebCode(webEvents);
+    if (blocking) loopState.blockedTool = blocking;
+    else if (failedTools.length) {
+      /* One read's failure is not the loop's: count turns on which every read failed. */
+      loopState.toolFailures = webEvents.some(tool => tool.ok === true) ? 0 : (loopState.toolFailures || 0) + 1;
+      sys('web: ' + failedTools.length + ' read(s) failed this turn (' + failedTools.map(tool => tool.code || 'WEB_TOOL_FAILED').join(', ') + '); the model was told and the loop continues');
+    } else loopState.toolFailures = 0;
+  }
   agent((r && r.reply) || '', ((r && r.model) || 'model') + ' · +' + (usage.prompt_tokens || 0) + '/' + (usage.completion_tokens || 0) +
         ' tok · session total ' + (tally.total || 0));
   /* The server compared this turn with the window Ollama loaded (/api/ps);
@@ -4005,8 +4053,8 @@ async function sendChat(text, asLoop, extra) {
     const code = e && e.code ? e.code : '';
     const wait = e && e.retryAfter ? e.retryAfter : 0;
     if (asLoop && loopState && (code === 'LOOP_RATE_LIMIT' || code === 'RATE_LIMIT') && wait > 0 && wait <= LOOP_RETRY_CAP_SEC && loopState.auto && !loopState.stop) {
-      sys('rate limited (' + code + ') — waiting ' + wait + 's then retrying this turn');
-      await sleepMs(wait * 1000);
+      sys('rate limited (' + code + ') — waiting ' + wait + 's then retrying this turn; /loop stop ends the wait');
+      await sleepUnlessStopped(wait * 1000, loopState);
       if (revision !== sessionRevision || !loopState || loopState.stop) return null;
       try {
         const retry = await api('/api/chat', 'POST', body, undefined, onDelta);

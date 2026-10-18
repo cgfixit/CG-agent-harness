@@ -85,3 +85,98 @@ The measurement script is not stored here. These four scoring changes were not i
 - Humanizer needle files each start with `prompt_tokens=88`. The 860.5, 849.2, and 854.0 tok/s rates and the 0.12, 0.11, and 0.11 s needle TTFT values are one short 88-token eval, not a measured long prefill. The harness built a longer filler, Ollama counted 88 tokens, and the prompt body was not saved, so the reason is unknown. AMBER-4471 is in none of them, and the three replies are the same cut-off line. The 4096-token wire row is a `max_tokens` hit, not a content judgment.
 - The cg `inject_safe` reply file shows three `lookup_doc` calls and empty text. `delete_all_files` is absent. The scorer is unchanged, and the split is still pending.
 - Battery was 63% and discharging at launch, with no thermal warning. This report picks no winner.
+
+## Bake-off 7.1 (2026-10-14) and the harness lane (2026-10-15)
+
+Run `20261014-063409` on the same Mac (M5 Pro, 48 GB, macOS 27.0.1, Ollama
+0.40.4), repeat 3, from the operator's `bakeoff_7.py` 7.1. The script picks no
+winner; the operator's takeaways PDF is the source of every number here. The
+harness lane (`bakeoff_harness.py`, now vendored under `scripts/bakeoff/`) had
+not run against the harness yet: its h1.1 login (`admin`/`admin`) fails on every
+build since #496, which replaced that pair with a one-time setup code. h1.2 in
+this repository logs in with `<home>/setup-code` and stops the orphaned `serve`
+it used to leave on its port; its `--self-test` passes 18/18 against the
+2026-10-15 tree and runs in `ci.yml` as `bakeoff-self-test`.
+
+| Tag | Contract | Resident | Decode tok/s | Prefill tok/s | Needles | Harness profile | Thinking on the wire |
+|---|---|---|---|---|---|---|---|
+| qwen3.8:27b-mlx-cg | PASS tag 32768 | 18.5 GB | 27.3 (CV 6%) | ~414, flat 2k–28k (28k: 73 s to first token) | 6/6 + hop | 100 | inline 6/60, hidden 3 |
+| qwen3.8:27b-mlx (parent) | pins 65536; lane stopped | 18.5 GB | not scored | not scored | not run | not run | not run |
+| gemma-4-26B-A4B UD-Q4_K_XL | default 32768 | 18.0 GB | 61.3 (CV 0.4%) | 1579 (16k: 10.4 s) | 6/6 + hop | 100 | hidden 6/57 |
+| gemma-4-26B-A4B Q8_0 | default 32768 | 27.8 GB, swap +5990 MB | void | void | 6/6 + hop | 100 | hidden 6/57 |
+| Qwen3.5-9B Q6_K | default 32768 | 9.2 GB | 38.2 | 1126 | 6/6, hop missed | 86 | hidden 4/57 |
+| Qwen3.5-9B Q8_0 | default 32768 | 11.2 GB | 31.0 | 1174 | 6/6, hop missed | 89 | hidden 3/57 |
+| OrcaSAQ-2 27B IQ4_XS | default 32768 | 18.2 GB | 16.2 | 311 (16k: 52 s, 28k: 96 s) | 6/6 + hop | 98 | hidden 5/58 |
+| Jackrong Qwen3.5-9B flash | default 32768 | 11.2 GB | 29.8 | 1011 | 0/6 (channel text) | 92 | inline 57/57 |
+
+No tag passed the bench's `/v1` wire gate: every finisher leaked reasoning
+despite `reasoning_effort: none`. The harness strips only a leading
+`<think>…</think>` block (`src/llm/openai_chat.rs`); hidden reasoning counts
+against the reply cap and the loop's completion budget. That is model and
+runtime behavior, not a harness setting; the derived tags do not disable thinking.
+
+### What the harness lane showed on this tree (2026-10-15)
+
+Driven through the real console in headless Chromium against a scripted model
+(32768 window, shipped config), a `/goal` + `/loop auto` research session:
+- stopped after 7 turns at about 12,300 prompt tokens with
+  `loop stopped — WEB_TOKEN_BUDGET`: the dispatcher charged the prompt twice
+  per round and summed rounds against `web.total_tokens`, so tools were
+  withheld from about 11,700 tokens while compaction waited for 24,000;
+- stopped on the first turn with `loop stopped — WEB_DNS` when one URL was
+  unreachable: a failed read ended the whole turn without an answer;
+- hit `LOOP_RATE_LIMIT` on the next `/loop` (8 turns per 300 s per IP) and gave
+  up because the console waited at most 30 s of the 107 s `retry_after`.
+The fixes in the same PR: each prompt is charged once (tools now fit until the
+compaction trigger, which keeps a minimal result's room), a failed read becomes
+that call's result (a batch that fails entirely still ends the turn before any
+evidence), the web turn's deadline adds a measured tool-round allowance, and the
+console stops a loop only for refusals that repeat.
+
+### Windows above 32768 on a 48 GB Mac
+
+Estimates from the published `config.json` files (f16 KV, Ollama's default;
+`OLLAMA_KV_CACHE_TYPE=q8_0` halves them). Ollama or MLX may allocate differently;
+the parent tag at 65536 and the `-cg` tag at 32768 both reported 18.5 GB
+resident, consistent with lazy allocation.
+
+| Model | KV per token | KV at 32768 / 65536 / 131072 | Weights | Prefill of a full 60,000-token prompt |
+|---|---|---|---|---|
+| Qwen3.8-27B (16 of 64 layers attend fully; 4 KV heads × 256) | 64 KiB | 2 / 4 / 8 GiB (+0.15 GB fixed linear-attention state) | 18.5 GB | ~145 s at 414 tok/s |
+| Gemma 4 26B-A4B (5 global layers, 2 KV heads × 512, K = V) | 10 KiB | 0.3 / 0.6 / 1.3 GiB (+0.2 GB sliding cache) | 18.0 GB | ~38 s at 1579 tok/s |
+| Qwen3.5-9B (8 of 32 layers attend fully; 4 KV heads × 256) | 32 KiB | 1 / 2 / 4 GiB | 9.2 GB | ~53 s at 1126 tok/s |
+
+All three fit a 131072 window in 48 GB with more than 15 GB spare. The cost is
+prefill time, not memory: the harness's `auto_tune` timeout follows the measured
+speed, but every turn re-reads the whole history, so a 60,000-token prompt on
+the 27B waits about 2.5 minutes for its first token.
+
+The shipped default tag `qwen3.8:27b-mlx` already pins `num_ctx 65536`
+(`ollama show`), so no new tag is needed for a 65536 window; MLX ignores a
+request `num_ctx`, and the harness never sends one. With `auto_tune` on,
+`/model profile` reports `scaled_up` and proposes doubled budgets, but applies
+only ceilings, so set them in the home `config.yaml` (reload applies the `web`
+keys; `models` and `chat` keys need a restart):
+
+```yaml
+models:
+  local_llm:
+    model: "qwen3.8:27b-mlx"   # pins 65536 in its own Modelfile
+    max_tokens: 8192           # the 65536 proposal; validated to 25904
+chat:
+  compact_prompt_tokens: 48000 # cap 60000 at 65536 (30000 x window / 32768)
+web:
+  total_tokens: 56000          # cap 64000 at 65536; the budget each model call's prompt is checked against
+  evidence_tokens: 6000        # code ceiling (web_search::MAX_EVIDENCE_TOKENS)
+  model_tokens: 2048           # code ceiling
+  chat_tool_calls: 10          # code ceiling
+api:
+  harness_loop_rate_limit:
+    max_requests: 24           # the shipped 8 per 300 s stops a fast unattended loop
+    max_tokens: 4096
+```
+
+Timeouts need no edit: `auto_tune` derives the chat timeout and research answer
+deadline from the measured speed. At 131072 the same keys scale again (prompt cap
+120000, `web.total_tokens` cap 128000), and `/loop` turns still keep at most
+`chat.compact_keep_messages` recent messages verbatim after a compaction.
