@@ -52,8 +52,17 @@ code fallback.
 `web.max_rules` (default 64, 1–256) is restart-only too: a cap below the saved
 rule count refuses the policy until it is raised and extras are denied.
 TLS, authentication, credentials, `security.allow_plaintext_key_file` (default
-false), models, sandbox, coding policy, notifications and unknown keys require
-restart.
+false), models (including `models.cloud_chat.<provider>.profile`), sandbox, coding
+policy, notifications and unknown keys require restart. Cloud profiles are config-owned:
+`context_window` (positive, above output), `max_output_tokens` (1–32768),
+`temperature` (optional 0–1), `timeout_sec` (1–720), `count_timeout_sec` (0.1–10),
+`tool_support` (informational boolean), and `rpm` (1–100000 chat/prediction calls/minute;
+a generation’s token count shares that call). Output and timeouts clamp and only tighten shared limits.
+Absent profiles retain shared settings; context/RPM stay unset and temperature is
+omitted. Invalid profiles refuse startup without echoing values. No proposed vendor
+limits ship. [Anthropic](https://platform.claude.com/docs/en/api/messages/create)
+deprecates temperature for newer models; [xAI](https://docs.x.ai/developers/model-capabilities/text/best-practices)
+supports it. Set it only for a compatible configured model.
 This route never writes YAML or changes permissions. Use [normal restart and
 settings guidance](INSTALL.md#which-settings-take-effect-where) for those fields.
 

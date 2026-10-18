@@ -102,7 +102,7 @@ jobs:
           retention-days: 14
 
   desktop:
-    needs: verify
+    needs: [plan, verify]
     permissions:
       contents: read
     # No timeout-minutes here: actionlint rejects it on a reusable workflow call.
@@ -111,6 +111,7 @@ jobs:
     with:
       artifact-name: release-cgagentharness-macos-universal-app
       skip-cache: true
+      release-version: ${{ needs.plan.outputs.tag }}
 
   publish:
     needs: [plan, build, desktop]

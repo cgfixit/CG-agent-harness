@@ -10,8 +10,12 @@ squash merge. A changed tree still skips unless that exact source SHA already
 has a successful **Bundle** workflow run (`bundle.yml`, `conclusion=success`).
 A green Bundle unblocks the next scheduled or manual release. A changed tree
 then selects the next patch version, such as `v0.1.0` to `v0.1.1`. Documentation
-and workflow changes count. The application/Cargo version is not automatically
-edited; the release tag and bundled `Resources/COMMIT` identify the build.
+and workflow changes count. The planned tag sets the app's About and macOS bundle
+versions; Cargo manifests stay unchanged. Bundled `Resources/COMMIT` identifies
+the source. Packaging and extracted-archive checks require the planned version.
+For a local release candidate, set `CGAH_RELEASE_VERSION=vMAJOR.MINOR.PATCH`
+when running `scripts/package-desktop.sh`; without it, development builds keep
+the template version.
 
 Both Bundle and release stage CLI artifacts through `scripts/package-release.sh`
 (release build, named artifact, sha256, extract-verify). Backend CI must pass before clean CLI packaging and the reusable universal

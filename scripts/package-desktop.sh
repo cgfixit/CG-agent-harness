@@ -12,6 +12,12 @@ for argument in "$@"; do
     *) echo 'Usage: package-desktop.sh [--universal] [--dmg]' >&2; exit 2 ;;
   esac
 done
+# Releases supply the planner's tag; development builds retain the template version.
+version="${CGAH_RELEASE_VERSION:-$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' desktop/Info.plist)}"
+version="${version#v}"
+[[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || { echo 'Expected release version: vMAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH' >&2; exit 2; }
+# Tauri's native About menu embeds the version independently of Info.plist.
+export TAURI_CONFIG="{\"version\":\"$version\"}"
 if [[ -n "$(git status --porcelain --untracked-files=normal)" && "${CGAH_ALLOW_DIRTY:-0}" != 1 ]]; then
   echo 'Commit the reviewed change before packaging, or use CGAH_ALLOW_DIRTY=1 for a clearly marked development artifact.' >&2
   exit 2
@@ -55,6 +61,8 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp target/release/cgagentharness "$app/Contents/MacOS/"
 cp desktop/target/release/cg-agent-harness-desktop "$app/Contents/MacOS/"
 cp desktop/Info.plist "$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set CFBundleShortVersionString $version" "$app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set CFBundleVersion $version" "$app/Contents/Info.plist"
 cp desktop/icons/icon.icns scripts/prepare-cargo.py scripts/start-web.sh "$app/Contents/Resources/"
 cp docs/DESKTOP.md docs/PROCESS_LIFECYCLE.md docs/SECURE_RESEARCH.md docs/DEPENDENCIES.md "$app/Contents/Resources/"
 git rev-parse HEAD > "$app/Contents/Resources/COMMIT"
@@ -63,7 +71,7 @@ if [[ -n "$(git status --porcelain --untracked-files=normal)" ]]; then
 fi
 codesign --force --sign - --options runtime "$app/Contents/MacOS/cg-agent-harness-desktop"
 codesign --force --sign - --options runtime "$app"
-scripts/verify-desktop-bundle.sh "$app" "$architecture"
+scripts/verify-desktop-bundle.sh "$app" "$architecture" "$version"
 # These paths contain only generated bundles, never application homes.
 rm -rf 'dist/CG Agent Harness.app'
 mv "$app" 'dist/CG Agent Harness.app'

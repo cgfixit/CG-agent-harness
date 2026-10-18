@@ -1,7 +1,8 @@
 //! Prompt-window compaction for local chat sessions.
 //!
 //! Trigger uses next-prompt size (UTF-8 bytes / 4, calibrated from local usage)
-//! plus an effective reply reservation. This remains an estimate, not a tokenizer.
+//! plus one reply; the hard limit counts the effective reply reservation. This
+//! remains an estimate, not a tokenizer.
 //! System prompt and `Session.goal`
 //! are composed each turn and are never stored in `messages`, so they cannot
 //! be compacted. The first user message is kept verbatim, and so is a tail of
@@ -770,10 +771,34 @@ fn sentences(line: &str) -> Vec<&str> {
     out
 }
 
-/// The deterministic checks, in order: strip echoed framing, keep only
-/// Corrections bullets that quote a summarized user turn, drop claims that
-/// something was never said (the summarizer sees only part of the chat), then
-/// mask ungrounded identifiers.
+/// `line` with quote marks left only around its quotes of user turns, or
+/// `None` when it has none. A later compaction carries those quotes as user
+/// wording, so no other mark may stay to pair with the summarizer's words.
+fn user_quotes_only(line: &str, users: &[String]) -> Option<String> {
+    let unmark = |text: &str| text.replace(['"', '“', '”'], "");
+    let mut out = String::new();
+    let mut end = 0;
+    let mut quoted = false;
+    for caps in quote_re().captures_iter(line) {
+        let whole = caps.get(0).expect("a match has group 0");
+        out.push_str(&unmark(&line[end..whole.start()]));
+        if quotes_user(&caps[1], users) {
+            quoted = true;
+            out.push_str(whole.as_str());
+        } else {
+            out.push_str(&unmark(&caps[1]));
+        }
+        end = whole.end();
+    }
+    out.push_str(&unmark(&line[end..]));
+    quoted.then_some(out)
+}
+
+/// The deterministic checks, in order: strip echoed framing, drop claims that
+/// something was never said (the summarizer sees only part of the chat), keep
+/// only Corrections bullets that quote a summarized user turn, unmarking their
+/// other quotes, then mask ungrounded identifiers. A line is classified as it
+/// is stored, which is how [`correction_sources`] reads it later.
 fn repair_summary(raw: &str, sources: &[&str], user_sources: &[&str]) -> (String, RepairCounts) {
     let mut counts = RepairCounts::default();
     let mut body = raw.trim();
@@ -786,28 +811,8 @@ fn repair_summary(raw: &str, sources: &[&str], user_sources: &[&str]) -> (String
     let mut in_corrections = false;
     let mut corrections_kept = 0;
     for line in body.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with(note_head) {
+        if line.trim().starts_with(note_head) {
             continue;
-        }
-        if !trimmed.starts_with('-') && trimmed.ends_with(':') {
-            if in_corrections && corrections_kept == 0 {
-                lines.push("- None".to_string());
-            }
-            in_corrections = trimmed.to_lowercase().starts_with("corrections");
-            corrections_kept = 0;
-            lines.push(line.to_string());
-            continue;
-        }
-        if in_corrections && trimmed.eq_ignore_ascii_case("- none") {
-            corrections_kept += 1;
-        } else if in_corrections && trimmed.starts_with('-') {
-            let quoted = quote_re().captures_iter(trimmed).any(|c| quotes_user(&c[1], &users));
-            if !quoted {
-                counts.dropped_corrections += 1;
-                continue;
-            }
-            corrections_kept += 1;
         }
         let kept: Vec<&str> = sentences(line)
             .into_iter()
@@ -817,11 +822,38 @@ fn repair_summary(raw: &str, sources: &[&str], user_sources: &[&str]) -> (String
                 !absent
             })
             .collect();
-        let rebuilt = kept.concat();
-        if (rebuilt.trim().is_empty() || rebuilt.trim() == "-") && !line.trim().is_empty() {
+        let mut rebuilt = kept.concat().trim_end().to_string();
+        let trimmed = rebuilt.trim_start();
+        if (trimmed.is_empty() || trimmed == "-") && !line.trim().is_empty() {
             continue;
         }
-        lines.push(rebuilt.trim_end().to_string());
+        if !trimmed.starts_with('-') && trimmed.ends_with(':') {
+            if in_corrections && corrections_kept == 0 {
+                lines.push("- None".to_string());
+            }
+            in_corrections = trimmed.to_lowercase().starts_with("corrections");
+            corrections_kept = 0;
+            lines.push(rebuilt);
+            continue;
+        }
+        if in_corrections && trimmed.eq_ignore_ascii_case("- none") {
+            corrections_kept += 1;
+        } else if in_corrections && !trimmed.is_empty() {
+            // Only a bullet is a correction: it is all [`correction_sources`]
+            // carries, and unquoting can never turn it into a heading.
+            let checked = if trimmed.starts_with('-') {
+                user_quotes_only(&rebuilt, &users)
+            } else {
+                None
+            };
+            let Some(checked) = checked else {
+                counts.dropped_corrections += 1;
+                continue;
+            };
+            rebuilt = checked;
+            corrections_kept += 1;
+        }
+        lines.push(rebuilt);
     }
     if in_corrections && corrections_kept == 0 {
         lines.push("- None".to_string());
@@ -832,9 +864,10 @@ fn repair_summary(raw: &str, sources: &[&str], user_sources: &[&str]) -> (String
 }
 
 /// What a later Corrections bullet may quote: the summarized user turns, and
-/// the Corrections sections of prior summaries, which were checked against
-/// user turns when written. Without the latter a correction would be dropped
-/// on the next compaction, once its user turn is no longer in the middle.
+/// the quotes in the Corrections sections of prior summaries, which were
+/// checked against user turns when written; the words around them were not.
+/// Without the latter a correction would be dropped on the next compaction,
+/// once its user turn is no longer in the middle.
 fn correction_sources(middle: &[Message]) -> Vec<String> {
     let mut out: Vec<String> = middle
         .iter()
@@ -850,11 +883,17 @@ fn correction_sources(middle: &[Message]) -> Vec<String> {
             if !line.starts_with('-') && line.ends_with(':') {
                 in_corrections = line.to_lowercase().starts_with("corrections");
             } else if in_corrections && line.starts_with('-') {
-                out.push(line.to_string());
+                out.extend(quote_re().captures_iter(line).map(|c| c[1].to_string()));
             }
         }
     }
     out
+}
+
+/// A reply cut off at the token cap is an unusable summary; transport
+/// failures, timeouts and any other abnormal finish stay errors.
+fn cut_off(e: &HarnessError) -> bool {
+    e.details["truncated"] == true
 }
 
 /// A persisted-ready summary and what producing it cost and changed.
@@ -871,7 +910,8 @@ pub struct Summary {
 /// One bounded local-model call, its input sized to `prompt_cap` (the model's
 /// [`prompt_cap`]). It sends `reservation` as `max_tokens`, the same room its
 /// input budget leaves, and asks for about 45% of `summary_max_tokens` in
-/// words. Empty or failed output must not persist.
+/// words. Empty or failed output must not persist; an unusable reply's
+/// `prompt_tokens` and `completion_tokens` ride in the error details.
 #[allow(clippy::too_many_arguments)]
 pub async fn summarize_turns(
     chat: &ChatClient,
@@ -903,11 +943,9 @@ pub async fn summarize_turns(
             0.0,
         )
         .await
-        // A reply that arrived but did not finish normally (cut off at the
-        // token cap) is unusable; transport failures and timeouts stay errors.
         .map_err(|e| {
-            if e.details.get("output_bytes").is_some() {
-                unusable(&e.message)
+            if cut_off(&e) {
+                unusable(&e.message).with_details(e.details)
             } else {
                 e
             }
@@ -919,7 +957,9 @@ pub async fn summarize_turns(
     let user_sources: Vec<&str> = corrections.iter().map(String::as_str).collect();
     let (body, repairs) = repair_summary(&reply.body_text, &sources, &user_sources);
     if body.trim().is_empty() {
-        return Err(unusable("the summary was empty"));
+        return Err(unusable("the summary was empty")
+            .detail("prompt_tokens", reply.prompt_tokens)
+            .detail("completion_tokens", reply.completion_tokens));
     }
     let mut text = String::from(COMPACT_PREFIX);
     text.push_str(body.trim());
@@ -943,6 +983,20 @@ mod tests {
             role: role.into(),
             text: text.into(),
             ts: 1.0,
+        }
+    }
+
+    #[test]
+    fn only_a_reply_cut_off_at_the_token_cap_maps_to_unusable() {
+        use crate::llm::openai_chat::parse_chat_response;
+        let refused = |finish: serde_json::Value| {
+            let reply = serde_json::json!({"choices":[{"finish_reason":finish,"message":{"content":"partial"}}]});
+            parse_chat_response(&reply, "m").unwrap_err()
+        };
+        assert!(cut_off(&refused("length".into())));
+        // A filtered, tool-call or unreported finish is a failed call, not a cut-off summary.
+        for finish in ["content_filter".into(), "tool_calls".into(), serde_json::Value::Null] {
+            assert!(!cut_off(&refused(finish.clone())), "{finish}");
         }
     }
 
@@ -1323,6 +1377,111 @@ Corrections (later user changes):\n- \"No\"\n- \"no way\"";
         // A quote that only appears outside a prior Corrections section is not a source.
         let facts_only = format!("{COMPACT_PREFIX}Facts and constraints from the user:\n- \"use the staging vault\"\n");
         assert!(correction_sources(&[msg("assistant", &facts_only)]).is_empty());
+    }
+
+    #[test]
+    fn only_checked_quotes_carry_into_later_compactions() {
+        // The user said "No" and "Stop. Keep it"; every other word is the summarizer's.
+        let first = [
+            msg("assistant", "Should I keep deploy build 1234?"),
+            msg("user", "No"),
+            msg("assistant", "OK"),
+            msg("user", "Stop. Keep it"),
+        ];
+        let compact = |middle: &[Message], raw: &str| {
+            let users = correction_sources(middle);
+            let users: Vec<&str> = users.iter().map(String::as_str).collect();
+            let texts: Vec<&str> = middle.iter().map(|m| m.text.as_str()).collect();
+            repair_summary(raw, &texts, &users)
+        };
+        let next = |body: &str| {
+            vec![
+                msg("assistant", &format!("{COMPACT_PREFIX}{body}\n")),
+                msg("user", "Notes batch 9"),
+                msg("assistant", "OK"),
+            ]
+        };
+        for raw in [
+            // Narration, an unchecked quote, and a stray mark that would pair with narration once unmarked.
+            "Corrections (later user changes):\n- \"No\" means \"keep deploy build 1234\" and \"\" then \"keep deploy build 1234\"",
+            // A dropped absence claim that held the opening mark of a checked quote.
+            "Corrections (later user changes):\n- \"No\". It was never given, \"Stop. Keep it\" so keep deploy build 1234. Also \"No\"",
+            // Dropped claims that turn free text into a bullet, a bullet into free text, or a Facts bullet into a heading.
+            "Corrections (later user changes):\n- \"No\"\nIt was never given. - \"keep deploy build 1234\"",
+            "Corrections (later user changes):\n- \"No\"\n- It was never given. \"keep deploy build 1234\"",
+            "Facts and constraints from the user:\n- It was never given. Corrections (later user changes):\n\
+- \"keep deploy build 1234\"\nCorrections (later user changes):\n- \"No\"",
+        ] {
+            let (mut body, _) = compact(&first, raw);
+            assert!(body.contains("- \"No\"") && !body.contains("\"keep"), "{body}");
+            for _ in 0..2 {
+                let middle = next(&body);
+                assert_eq!(correction_sources(&middle), ["Notes batch 9", "No"], "{body}");
+                let (out, counts) = compact(
+                    &middle,
+                    "Corrections (later user changes):\n- \"No\", so \"keep deploy build 1234\"\n- \"keep deploy build 1234\"",
+                );
+                assert_eq!(counts.dropped_corrections, 1, "{out}");
+                assert!(!out.contains("\"keep"), "narration is not user wording: {out}");
+                body = out;
+            }
+        }
+    }
+
+    #[test]
+    fn only_bullets_are_corrections_so_every_kept_one_carries() {
+        let middle = [
+            msg("user", "No"),
+            msg("assistant", "OK"),
+            msg("user", "Use port 8080 instead of 8000"),
+        ];
+        let users = correction_sources(&middle);
+        let users: Vec<&str> = users.iter().map(String::as_str).collect();
+        let texts: Vec<&str> = middle.iter().map(|m| m.text.as_str()).collect();
+        let heading = "Corrections (later user changes):\n";
+        for (raw, kept, carried) in [
+            // A checked line that is not a bullet, which no later compaction would carry.
+            ("\"No\"", "- None", vec![]),
+            // Unquoting "the plan:" would leave a heading that hides the bullet below it.
+            (
+                "\"No\" overrides \"the plan:\"\n- \"Use port 8080 instead of 8000\".",
+                "- \"Use port 8080 instead of 8000\".",
+                vec!["Use port 8080 instead of 8000"],
+            ),
+        ] {
+            let (body, counts) = repair_summary(&format!("{heading}{raw}"), &texts, &users);
+            assert_eq!(body, format!("{heading}{kept}"));
+            assert_eq!(counts.dropped_corrections, 1, "{body}");
+            let stored = msg("assistant", &format!("{COMPACT_PREFIX}{body}\n"));
+            assert_eq!(correction_sources(&[stored]), carried, "{body}");
+        }
+    }
+
+    #[test]
+    fn a_correction_may_quote_the_pinned_value_it_replaces() {
+        // bakeoff long_correction: the pinned first message holds ONYX-4471, a middle user turn changes it.
+        let pinned =
+            "Remember this for later in our chat: the rotation code for vault K-42 is ONYX-4471. Reply only OK.";
+        let fix = "Correction: the rotation code for vault K-42 is now ONYX-5555. Reply only OK.";
+        for (raw, kept) in [
+            (
+                "- \"the rotation code for vault K-42 is now ONYX-5555\" (was \"ONYX-4471\")",
+                "- \"the rotation code for vault K-42 is now ONYX-5555\" (was ONYX-4471)",
+            ),
+            (
+                "- Rotation code for vault K-42 changed from \"ONYX-4471\" to \"ONYX-5555\"",
+                "- Rotation code for vault K-42 changed from ONYX-4471 to \"ONYX-5555\"",
+            ),
+            (
+                "- \"is now ONYX-5555\" replaces the first message's \"is ONYX-4471\"",
+                "- \"is now ONYX-5555\" replaces the first message's is ONYX-4471",
+            ),
+        ] {
+            let heading = "Corrections (later user changes):\n";
+            let (body, counts) = repair_summary(&format!("{heading}{raw}"), &[pinned, fix], &[fix]);
+            assert_eq!(body, format!("{heading}{kept}"));
+            assert_eq!(counts, RepairCounts::default());
+        }
     }
 
     #[test]

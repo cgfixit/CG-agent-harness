@@ -262,6 +262,8 @@ async fn reasoning_and_compatible_backends_enforce_the_effective_reply_reservati
     let (status, body) = s.post_json("/api/chat", json!({"message":"x".repeat(20000)})).await;
     assert_eq!(status, 422, "doubling must also reach projection: {body}");
     assert_eq!(body["detail"]["details"]["limit_tokens"], 30000);
+    // Past the hard limit, a larger trigger cannot help.
+    assert!(!message(&body).contains("raise chat.compact_prompt_tokens"), "{body}");
 }
 
 /// The compaction trigger counts one reply on every backend, so a backend that
@@ -341,6 +343,102 @@ async fn every_backend_compacts_at_the_same_history_size() {
             "{provider} must compact past the trigger: {body}"
         );
     }
+}
+
+/// A trigger below its floor is floored at one reply + 4096 on every backend:
+/// with an 8192-token reply both compact past 12288, where LM Studio/MLX waited
+/// for its doubled reservation's 20480.
+#[tokio::test]
+async fn every_backend_compacts_at_the_same_floored_trigger() {
+    use cgagentharness::server::{compaction, routes::core::prompt_history};
+    for provider in ["ollama", "lmstudio"] {
+        let model = start_mock_model().await;
+        let s = spawn_server(
+            &model.base_url(),
+            ServerOptions::default()
+                .with("models.local_llm.provider", provider)
+                .with("models.local_llm.max_tokens", "8192")
+                .with("chat.compact_prompt_tokens", "4096")
+                .with("chat.compact_keep_messages", "2"),
+        )
+        .await;
+        s.post_json("/api/web", json!({"enabled":false})).await;
+        let (_, created) = s.post_json("/api/sessions", json!({})).await;
+        let sid = created["session_id"].as_str().unwrap();
+        let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id":sid})).await;
+        let usage = cgagentharness::server::sessions::TokenTally::default();
+        for i in 0..4 {
+            s.state
+                .store
+                .for_owner("local")
+                .record_exchange(
+                    sid,
+                    &format!("u{i} {}", "u".repeat(4000)),
+                    &format!("a{i} {}", "a".repeat(4000)),
+                    "fixture",
+                    &usage,
+                    &[],
+                )
+                .unwrap();
+        }
+        let history = prompt_history(&s.state.store.for_owner("local").get(sid).unwrap().messages);
+        let system = preview["prompt"].as_str().unwrap();
+        let one_reply = compaction::projected_prompt_tokens(system, &history, "next", 8192, 1.0, 0);
+        assert!((12_289..20_480).contains(&one_reply), "{provider}: {one_reply}");
+        let (status, body) = s
+            .post_json("/api/chat", json!({"session_id":sid,"message":"next"}))
+            .await;
+        assert_eq!(status, 200, "{provider}: {body}");
+        assert!(
+            !body["compaction"].is_null(),
+            "{provider} must compact past the one-reply floor: {body}"
+        );
+    }
+}
+
+/// A new message past the trigger but under the hard limit is refused at the
+/// trigger, and the sizes the refusal reports count the trigger's one reply,
+/// not the doubled reservation of LM Studio/MLX.
+#[tokio::test]
+async fn a_message_past_only_the_trigger_reports_its_one_reply_size() {
+    use cgagentharness::server::compaction;
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("models.local_llm.provider", "lmstudio")
+            .with("models.local_llm.max_tokens", "4096")
+            .with("chat.compact_prompt_tokens", "8192"),
+    )
+    .await;
+    s.post_json("/api/web", json!({"enabled":false})).await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id":sid})).await;
+    let system = preview["prompt"].as_str().unwrap();
+    let base = compaction::projected_prompt_tokens(system, &[], "", 4096, 1.0, 0);
+    // One reply puts the message 100 tokens past the 8192 trigger; with the
+    // doubled reservation it is still far under the 30000 hard limit.
+    let message = "m".repeat(4 * (8_192 + 100 - base) as usize);
+    let one_reply = compaction::projected_prompt_tokens(system, &[], &message, 4096, 1.0, 0);
+    assert!(one_reply > 8_192 && one_reply + 4096 < 30_000, "{one_reply}");
+    let (status, body) = s
+        .post_json("/api/chat", json!({"session_id":sid,"message":message}))
+        .await;
+    assert_eq!(status, 422, "{body}");
+    let details = &body["detail"]["details"];
+    assert_eq!(details["limit_tokens"], 8192, "{body}");
+    assert_eq!(details["reply_reservation_tokens"], 4096, "{body}");
+    assert_eq!(details["projected_tokens"], one_reply, "{body}");
+    assert_eq!(details["compacted_tokens"], one_reply, "{body}");
+    let audit = s.audit_log();
+    assert!(
+        audit.lines().any(|l| l.contains("\"event\":\"chat_prompt_too_large\"")
+            && l.contains(&format!("\"projected\":{one_reply},"))
+            && l.contains(&format!("\"compacted_projected\":{one_reply},"))),
+        "{audit}"
+    );
+    assert!(model.requests.lock().unwrap().is_empty());
 }
 
 /// #212 F8. A backend that reserves the reply twice (LM Studio/MLX, or Ollama with
@@ -635,14 +733,23 @@ async fn irreducible_prompt_is_rejected_without_rewriting_the_session() {
     let path = s.home.join("sessions").join(format!("{sid}.json"));
     let before = std::fs::read(&path).unwrap();
 
+    // About 9000 tokens: past the trigger, but far under the hard limit, so the
+    // refusal names the trigger at its floor of one reply, headroom and tools.
     let (status, body) = s
-        .post_json("/api/chat", json!({"session_id":sid,"message":"🦀".repeat(32768)}))
+        .post_json("/api/chat", json!({"session_id":sid,"message":"🦀".repeat(9000)}))
         .await;
 
     assert_eq!(status, 422, "{body}");
     assert_eq!(code(&body), "CHAT_PROMPT_TOO_LARGE");
+    assert_eq!(
+        body["detail"]["details"]["limit_source"], "models.local_llm.max_tokens",
+        "{body}"
+    );
     let limit = body["detail"]["details"]["limit_tokens"].as_u64().unwrap();
-    assert!(limit > 8192, "web tool definitions get their own prompt headroom");
+    assert!(
+        limit > 8192,
+        "web tool definitions get their own prompt headroom: {body}"
+    );
     assert!(body["detail"]["details"]["compacted_tokens"].as_u64().unwrap() > limit);
     assert!(model.requests.lock().unwrap().is_empty());
     assert_eq!(std::fs::read(path).unwrap(), before);
@@ -748,6 +855,17 @@ async fn compaction_is_persisted_only_with_a_successful_exchange() {
 async fn summary_model(
     summary: Option<&'static str>,
 ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>) {
+    match summary {
+        Some(text) => summary_model_finishing(text, "stop").await,
+        None => summary_model_finishing("cut", "length").await,
+    }
+}
+
+/// [`summary_model`] whose summary calls finish with `finish_reason`.
+async fn summary_model_finishing(
+    summary: &'static str,
+    finish_reason: &'static str,
+) -> (String, std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>) {
     use axum::{routing::post, Json, Router};
     use std::sync::{Arc, Mutex};
     let requests = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
@@ -761,9 +879,9 @@ async fn summary_model(
                 let is_summary = body["messages"][0]["content"]
                     .as_str()
                     .is_some_and(|s| s.starts_with("Summarize this chat history"));
-                let mut reply = ok_reply(if is_summary { summary.unwrap_or("cut") } else { "fine" }, 100, 2);
-                if is_summary && summary.is_none() {
-                    reply["choices"][0]["finish_reason"] = json!("length");
+                let mut reply = ok_reply(if is_summary { summary } else { "fine" }, 100, 2);
+                if is_summary {
+                    reply["choices"][0]["finish_reason"] = json!(finish_reason);
                 }
                 Json(reply)
             }
@@ -777,7 +895,13 @@ async fn summary_model(
 
 #[tokio::test]
 async fn an_unusable_summary_sends_the_turn_uncompacted_within_the_hard_limit() {
-    let (url, requests) = summary_model(None).await;
+    // Cut off at the token cap, then finished but empty.
+    unusable_summary_falls_back(None).await;
+    unusable_summary_falls_back(Some("")).await;
+}
+
+async fn unusable_summary_falls_back(summary: Option<&'static str>) {
+    let (url, requests) = summary_model(summary).await;
     let s = spawn_server(
         &url,
         ServerOptions::default()
@@ -810,12 +934,15 @@ async fn an_unusable_summary_sends_the_turn_uncompacted_within_the_hard_limit() 
         .await;
     assert_eq!(
         status, 200,
-        "a cut-off summary must not fail a turn that fits the hard limit: {body}"
+        "an unusable summary must not fail a turn that fits the hard limit: {body}"
     );
     assert_eq!(body["compaction_skipped"], "summary_unusable");
     assert!(body["compaction"].is_null(), "{body}");
     let sent = requests.lock().unwrap().clone();
     assert_eq!(sent.len(), 2, "one summary attempt, then the reply");
+    // Each call reports 100 prompt and 2 completion tokens: the tally counts both.
+    assert_eq!(body["tally"]["prompt_tokens"], 200, "{body}");
+    assert_eq!(body["tally"]["completion_tokens"], 4, "{body}");
     assert!(
         !sent[1]["messages"].as_array().unwrap().iter().any(|m| m["content"]
             .as_str()
@@ -833,6 +960,47 @@ async fn an_unusable_summary_sends_the_turn_uncompacted_within_the_hard_limit() 
         .audit_log()
         .lines()
         .any(|l| l.contains("\"event\":\"chat_compaction_skipped\"") && l.contains("\"reason\":\"summary_unusable\"")));
+}
+
+/// Only a summary cut off at the token cap is unusable. A filtered one is a
+/// failed call: the turn is refused, not sent uncompacted, and the session is
+/// not rewritten.
+#[tokio::test]
+async fn a_filtered_summary_refuses_the_turn_without_rewriting_the_session() {
+    let (url, requests) = summary_model_finishing("partial", "content_filter").await;
+    let s = spawn_server(
+        &url,
+        ServerOptions::default()
+            .with("chat.compact_prompt_tokens", "4096")
+            .with("chat.compact_keep_messages", "2"),
+    )
+    .await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let usage = cgagentharness::server::sessions::TokenTally::default();
+    for i in 0..6 {
+        s.state
+            .store
+            .for_owner("local")
+            .record_exchange(
+                sid,
+                &format!("u{i} {}", "u".repeat(2000)),
+                &format!("a{i} {}", "a".repeat(2000)),
+                "fixture",
+                &usage,
+                &[],
+            )
+            .unwrap();
+    }
+    let path = s.home.join("sessions").join(format!("{sid}.json"));
+    let before = std::fs::read(&path).unwrap();
+
+    let (status, body) = s
+        .post_json("/api/chat", json!({"session_id":sid,"message":"next"}))
+        .await;
+    assert_eq!(status, 502, "{body}");
+    assert_eq!(requests.lock().unwrap().len(), 1, "the summary call only, no reply");
+    assert_eq!(std::fs::read(&path).unwrap(), before);
 }
 
 #[tokio::test]
@@ -884,6 +1052,63 @@ async fn history_compaction_cannot_shrink_below_the_trigger_is_sent_within_the_h
         .text
         .starts_with(cgagentharness::server::compaction::COMPACT_PREFIX));
     assert_eq!(requests.lock().unwrap().len(), 2);
+}
+
+/// A turn between the trigger and the hard limit whose removable middle is
+/// smaller than the summary scaffold is sent uncompacted, not refused because
+/// a compaction that frees nothing would not fit.
+#[tokio::test]
+async fn a_middle_smaller_than_the_summary_scaffold_sends_the_turn_uncompacted_within_the_hard_limit() {
+    use cgagentharness::server::{compaction, routes::core::prompt_history};
+    let (url, requests) = summary_model(Some("Facts and constraints from the user:\n- None")).await;
+    // Shipped 32k limits: trigger 24000, hard limit 30000, one 4096-token reply.
+    let s = spawn_server(&url, ServerOptions::default()).await;
+    s.post_json("/api/web", json!({"enabled":false})).await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id":sid})).await;
+    let system = preview["prompt"].as_str().unwrap().to_string();
+    let usage = cgagentharness::server::sessions::TokenTally::default();
+    // Two pastes near the message length cap and a full-length reply: the tail
+    // is the last exchange and the middle only the two-token "Got it.".
+    for (user, reply) in [
+        ("p".repeat(28_000), "Got it.".to_string()),
+        ("q".repeat(32_000), "r".repeat(16_000)),
+    ] {
+        s.state
+            .store
+            .for_owner("local")
+            .record_exchange(sid, &user, &reply, "fixture", &usage, &[])
+            .unwrap();
+    }
+    let history = prompt_history(&s.state.store.for_owner("local").get(sid).unwrap().messages);
+    let base = compaction::projected_prompt_tokens(&system, &history, "", 4096, 1.0, 0);
+    // The next message lands the turn 60 tokens under the hard limit: it fits
+    // uncompacted, but dropping "Got it." and adding the scaffold would not.
+    let message = "m".repeat(4 * (30_000 - 60 - base) as usize);
+    let projected = compaction::projected_prompt_tokens(&system, &history, &message, 4096, 1.0, 0);
+    assert!(
+        projected > 24_000 && projected <= 30_000 && projected - 2 + compaction::scaffold_tokens() > 30_000,
+        "fixture missed the window: {projected}"
+    );
+    let (status, body) = s
+        .post_json("/api/chat", json!({"session_id":sid,"message":message}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["compaction_skipped"], "no_gain");
+    assert!(body["compaction"].is_null(), "{body}");
+    let sent = requests.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1, "no summary call, only the reply");
+    assert!(
+        !sent[0]["messages"].as_array().unwrap().iter().any(|m| m["content"]
+            .as_str()
+            .is_some_and(|t| t.starts_with(compaction::COMPACT_PREFIX))),
+        "the reply is sent uncompacted"
+    );
+    assert_eq!(
+        s.state.store.for_owner("local").get(sid).unwrap().messages[1].text,
+        "Got it."
+    );
 }
 
 #[tokio::test]

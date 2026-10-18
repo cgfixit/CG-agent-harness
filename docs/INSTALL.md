@@ -596,7 +596,7 @@ not a general environment-variable editor or connector credential vault.
 | `SERPAPI_API_KEY` | Optional fixed search API for chat web search; public Google is the no-key fallback |
 
 Saving a key does not select chat, open coding gates, or install a connector.
-After restart, `/model use grok` or `/model use claude` selects cloud chat;
+After restart, `/model use grok` or `/model use claude` requests cloud consent;
 coding still needs provider and per-run online approval. Review provider controls
 in [the configuration reference](../assets/config.default.yaml). Values must be
 nonempty, at most 4,096 characters, and contain no newline, carriage return, or

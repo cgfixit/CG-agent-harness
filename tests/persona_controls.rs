@@ -5,7 +5,6 @@ use serde_json::json;
 
 #[tokio::test]
 async fn chat_and_preview_report_effective_suggestion_gates() {
-    let model = start_mock_model().await;
     for (store, capture, source, mode, expected_chat, expected_coding) in [
         ("true", "true", "true", "\"both\"", true, true),
         ("true", "true", "false", "\"both\"", false, true),
@@ -14,6 +13,8 @@ async fn chat_and_preview_report_effective_suggestion_gates() {
         ("false", "true", "true", "\"both\"", false, false),
         ("true", "true", "true", "\"invalid\"", false, false),
     ] {
+        // A previous case may still send a delayed memory-suggestion request.
+        let model = start_mock_model().await;
         let s = spawn_server(
             &model.base_url(),
             ServerOptions::default()

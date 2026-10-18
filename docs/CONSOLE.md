@@ -14,7 +14,7 @@ persona, or reply never authorizes commands, commits, pushes, or publication.
 |---|---|
 | Chat and sessions | Create, rename, and revisit separate conversations with saved messages and token counts. New Session replaces the transcript; the confirmed Clear my session history control deletes saved conversations. Derived structured-memory episodes remain unless the operator also confirms that cascade. |
 | Persona, memory and prompt context | Inspect `/prompt`, manage shared `soul.md`, select session prompt skills, and save literal `/memory` notes. `/memory on` includes only those notes; account-private structured memory has separate gates, and models propose but never approve ([memory guide](MEMORY_GUIDE.md)). |
-| Chat model selection | Select an installed local tag, or select `grok` or `claude` after an administrator saves its key and restarts. The unvalidated name persists. Cloud chat sends only the new message; local history, memory, skills, and web context stay local. `/loop` refuses cloud selection (`CLOUD_CHAT_LOOP`). [Cloud defaults](INSTALL.md#tunables-you-may-want-to-know-about). |
+| Chat model selection | Select local tags, `local`, `grok/xai`, or `claude/anthropic`. Cloud requires an enabled provider, active key and confirmation; restart resets to local. `/model status` shows key presence and profile sources. Only new text leaves; history, memory, skills and web context stay local. `/loop` refuses cloud (`CLOUD_CHAT_LOOP`). [Profiles](MODELS.md). |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
 | Tool visibility and use | `/skills` and `/tools` distinguish registered adapters from readiness and execution evidence. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
 | Chat web tools | Natural-language Google search and permitted URL fetch. API Keys accepts `SERPAPI_API_KEY`; no active key selects public Google. Actual tool outcomes and source links appear in chat. |
@@ -418,7 +418,7 @@ confirmation and persistence.
 | `/memory remember <sentence> :: <reason>` | Confirm a semantic summary on the latest completed episode; no fact write |
 | `/memory facts`, `/memory retrieve <query>`, `/memory search <query>` | List your active facts, force fact retrieval for this chat prompt, or inspect candidates without injection |
 | `/memory save <text> :: <reason>` | Confirm an immediate private fact write |
-| `/model`, `/model list`, `/model use <name>\|grok\|claude` | Inspect/list/select a local chat model or explicit cloud provider; does not select the coding planner |
+| `/model [status]`, `/model list`, `/model use <name>` | Inspect/list/select a local chat model or explicit cloud provider; does not select the coding planner |
 | `/net status`, `/net devices` | Read-only scope and gates, or passive neighbors. Aliases and refused tier words: [netconnect](netconnect.md) |
 | `/prompt` | Private preview of the next chat system prompt |
 | `/registry` | Combined skill, tool and connector catalog |
@@ -581,24 +581,24 @@ not the quality or cancellation scheduling of a real model.
 
 ### Local history compaction
 
-Before local chat or `/loop`, the harness estimates the next prompt and
-reply reservation. Above
+Before local chat or `/loop`, the harness estimates the next prompt plus
+one reply. Above
 `chat.compact_prompt_tokens` (default 24000), it summarizes middle turns,
 keeping the first user message, goal, and whole recent exchanges (at most
 `chat.compact_keep_messages`, 8, and `chat.compact_tail_percent`, 25% of the
-trigger). An `auto_tune`-verified window above 32768 scales the trigger up in
+trigger). An `auto_tune`-verified window above 32768 scales the trigger in
 proportion, within `chat.compact_max_prefill_sec` (120) of measured prefill;
 `chat.compact_follow_window: false` keeps it fixed. The summarizer reads goal and first message, keeps the prior summary
-whole, clips other turns at 800 characters, within 24000 characters and its
-calibrated budget, else history stays. The model gets a lossy note yielding to
+whole, clips other turns at 800 characters within its budget, else history
+stays. The model gets a lossy note yielding to
 exact messages; unsourced codes become `[unverified]`.
 
 Reply reservation is `max_tokens` for resolved Ollama with explicit
-`reasoning_effort: "none"`, or twice that otherwise: a conservative harness
-margin, not provider accounting. The compaction trigger counts one reply on every
-backend, so all compact at the same history size. Startup accepts at most 25904 reply tokens on
+`reasoning_effort: "none"`, or twice that otherwise: a conservative
+margin, not provider accounting. The trigger counts one reply on every
+backend; a doubled reservation can still compact sooner, at the hard limit. Startup accepts at most 25904 reply tokens on
 the first path or 12952 on the second for chat and `/loop`. The trigger floor,
-web-chat tightening and the bytes/4 estimate with its per-session calibration
+web-chat tightening and the calibrated bytes/4 estimate
 are specified in
 [INVARIANTS.md](../INVARIANTS.md#local-chat-compaction-preserves-goal-and-the-first-user-turn).
 Calibration cannot predict language shifts or ratios above 3; verify the

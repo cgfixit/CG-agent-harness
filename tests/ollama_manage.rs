@@ -20,6 +20,7 @@ struct NativeOllama {
     pull_delay_ms: Arc<Mutex<u64>>,
     /// Delay for the configured model's raw speed sample (the startup tune).
     sample_delay_ms: Arc<Mutex<u64>>,
+    load_delay_ms: Arc<Mutex<u64>>,
     /// The window `/api/ps` reports for `longctx:q8`; 0 means not loaded.
     longctx_window: Arc<Mutex<u64>>,
     /// The window a generate loads `longctx:q8` with while it is not loaded.
@@ -39,6 +40,8 @@ async fn start_native_ollama() -> NativeOllama {
     let delay = Arc::new(Mutex::new(0u64));
     let sample_delay = Arc::new(Mutex::new(0u64));
     let s2 = sample_delay.clone();
+    let load_delay = Arc::new(Mutex::new(0u64));
+    let ld2 = load_delay.clone();
     let longctx_window = Arc::new(Mutex::new(65_536u64));
     let w2 = longctx_window.clone();
     let w3 = longctx_window.clone();
@@ -136,8 +139,14 @@ async fn start_native_ollama() -> NativeOllama {
             post(move |Json(body): Json<Value>| {
                 let g = g2.clone();
                 let s = s2.clone();
+                let ld = ld2.clone();
                 let (w, l) = (w3.clone(), l2.clone());
                 async move {
+                    g.lock().unwrap().push(body.clone());
+                    if body["raw"] != true {
+                        let ms = *ld.lock().unwrap();
+                        tokio::time::sleep(Duration::from_millis(ms)).await;
+                    }
                     // Any generate loads longctx with Ollama's current default window.
                     if body["model"] == "longctx:q8" && *w.lock().unwrap() == 0 {
                         *w.lock().unwrap() = *l.lock().unwrap();
@@ -147,7 +156,6 @@ async fn start_native_ollama() -> NativeOllama {
                     if timed && ms > 0 && body["model"] == "qwen3.8:27b-mlx" {
                         tokio::time::sleep(Duration::from_millis(ms)).await;
                     }
-                    g.lock().unwrap().push(body);
                     // Warmup sends an empty prompt; the auto_tune sample is raw and
                     // gets Ollama's nanosecond durations: 1500 tok/s in, 50 tok/s out.
                     Json(if timed {
@@ -183,6 +191,7 @@ async fn start_native_ollama() -> NativeOllama {
         chats,
         pull_delay_ms: delay,
         sample_delay_ms: sample_delay,
+        load_delay_ms: load_delay,
         longctx_window,
         longctx_load_window,
     }
@@ -256,10 +265,33 @@ async fn profile_reports_declared_and_loaded_facts_without_side_effects() {
     assert_eq!(body["state"], "tag_missing", "{body}");
     assert!(!body.to_string().contains("fixture-private"), "{body}");
 
-    let (status, _) = s.post_json("/api/model", json!({"model": "grok"})).await;
-    assert_eq!(status, 200);
+    // Read-only profiling still refuses to probe a cloud selection, including a legacy saved one.
+    s.state.settings.lock().unwrap().selected_model = "grok".into();
     let (_, body) = s.get_json("/api/ollama/profile").await;
     assert_eq!(body["state"], "not_probed", "{body}");
+}
+
+/// The profiled trigger counts one reply, like chat's, on a backend whose
+/// reasoning doubles the reservation only the hard limit keeps.
+#[tokio::test]
+async fn the_profiled_trigger_counts_one_reply_when_reasoning_is_on() {
+    let ollama = start_native_ollama().await;
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default()
+            .with("models.local_llm.reasoning_effort", "high")
+            .with("chat.compact_prompt_tokens", "4096"),
+    )
+    .await;
+    s.post_json("/api/web", json!({"enabled": false})).await;
+    let (status, body) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(status, 200, "{body}");
+    // max_tokens (4096) + 4096 headroom, not the doubled 8192 + 4096.
+    assert_eq!(body["in_force"]["prompt_limit"], 4096 + 4096, "{body}");
+    assert_eq!(
+        body["in_force"]["limit_source"], "models.local_llm.max_tokens",
+        "{body}"
+    );
 }
 
 #[tokio::test]
@@ -335,6 +367,74 @@ async fn wait_for_tuning(s: &TestServer, window: u64) -> Value {
         assert!(std::time::Instant::now() < deadline, "no tuning at {window}: {body}");
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+#[tokio::test]
+async fn research_cold_load_obeys_its_deadline_and_releases_the_gate() {
+    let ollama = start_native_ollama().await;
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default()
+            .with("models.local_llm.model", "longctx:q8")
+            .with("models.local_llm.auto_tune", "true")
+            .with("web.research_seconds", "10"),
+    )
+    .await;
+    wait_for_tuning(&s, 65536).await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"https://example.org/*"}))
+            .await
+            .0,
+        200
+    );
+    *ollama.longctx_window.lock().unwrap() = 0;
+    *ollama.load_delay_ms.lock().unwrap() = 30_000;
+    ollama.generates.lock().unwrap().clear();
+    let (_, result) = tokio::time::timeout(
+        Duration::from_secs(12),
+        s.post_json("/api/web/research", json!({"query":"cold load deadline"})),
+    )
+    .await
+    .expect("the research deadline must interrupt the cold load");
+    assert_eq!(result["detail"]["code"], "WEB_RESEARCH_TIMEOUT", "{result}");
+    assert_eq!(ollama.generates.lock().unwrap().len(), 1);
+    assert!(ollama.chats.lock().unwrap().is_empty());
+    assert!(!s.state.generation_gate.is_held());
+    *ollama.load_delay_ms.lock().unwrap() = 0;
+    let (status, result) = s.post_json("/api/chat", json!({"message":"Recovery"})).await;
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(ollama.chats.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn research_preload_keeps_the_model_for_both_phase_budgets() {
+    let ollama = start_native_ollama().await;
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default()
+            .with("models.local_llm.model", "longctx:q8")
+            .with("models.local_llm.auto_tune", "true")
+            .with("models.local_llm.warmup.keep_alive_sec", "1")
+            .with("web.research_seconds", "10")
+            .with("web.synthesis_seconds", "60"),
+    )
+    .await;
+    wait_for_tuning(&s, 65536).await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"https://example.org/*"}))
+            .await
+            .0,
+        200
+    );
+    *ollama.longctx_window.lock().unwrap() = 0;
+    ollama.generates.lock().unwrap().clear();
+    s.post_json("/api/web/research", json!({"query":"preload residency"}))
+        .await;
+    let generates = ollama.generates.lock().unwrap();
+    assert_eq!(generates.len(), 1, "{generates:?}");
+    assert_eq!(generates[0]["keep_alive"], 70, "{generates:?}");
+    assert_eq!(generates[0]["prompt"], "");
+    assert!(generates[0].get("num_ctx").is_none());
 }
 
 #[tokio::test]
@@ -452,7 +552,7 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     // The load under the gate refuses on its own failure, after one attempt, so
     // the check before the model call does not repeat it.
     let before = ollama.generates.lock().unwrap().len();
-    let refused = state.load_if_absent("longctx:q8").await.unwrap_err();
+    let refused = state.load_if_absent("longctx:q8", 0).await.unwrap_err();
     assert_eq!(refused.code, "OLLAMA_WINDOW_CHANGED", "{refused:?}");
     assert_eq!(ollama.generates.lock().unwrap().len() - before, 1, "one load, not two");
     // A turn sized for the tuning, which a model switch then clears: its raised
@@ -517,6 +617,114 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
         sent.contains("turn 0 ") && sent.contains("and now?"),
         "history was compacted or cut"
     );
+}
+
+/// The window-scaled trigger bounds the input measured prefill reads in
+/// chat.compact_max_prefill_sec, plus the turn's own reply: a /loop turn
+/// (2048) compacts at the same input as a chat turn (4096).
+#[tokio::test]
+async fn a_loop_turn_compacts_at_the_input_measured_prefill_reads() {
+    let ollama = start_native_ollama().await;
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default()
+            .with("models.local_llm.auto_tune", "true")
+            .with("api.rate_limit.max_requests", "1000"),
+    )
+    .await;
+    s.post_json("/api/web", json!({"enabled": false})).await;
+    wait_for_tuning(&s, 32768).await;
+    let (status, body) = s.post_json("/api/model", json!({"model": "longctx:q8"})).await;
+    assert_eq!(status, 200, "{body}");
+    wait_for_tuning(&s, 65536).await;
+    // A slower prefill: 300 tok/s reads 36000 tokens in 120 s, under the 48000 proposal.
+    let mut tuning = (*s.state.tuning_for("longctx:q8").expect("tuned")).clone();
+    tuning.speed = Some(json!({"prefill_tps": 300.0}));
+    s.state.set_tuning(Some(tuning));
+    let (_, body) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(body["in_force"]["prompt_limit"], 36_000 + 4096, "{body}");
+    let (_, created) = s.post_json("/api/sessions", json!({"title": "t"})).await;
+    let sid = created["session_id"].as_str().unwrap().to_string();
+    s.post_json(&format!("/api/sessions/{sid}/goal"), json!({"goal": "g"}))
+        .await;
+    // About 31000 tokens of history, under what prefill reads.
+    for turn in 0..4 {
+        let long = format!("turn {turn} {}", "x".repeat(31_000));
+        let (status, reply) = s
+            .post_json("/api/chat", json!({"session_id": sid, "message": long}))
+            .await;
+        assert_eq!(status, 200, "{reply}");
+        assert!(reply["compaction"].is_null(), "{reply}");
+    }
+    // A /loop turn of about 37000 input tokens compacts, though with its
+    // 2048-token reply it is still under the 40096 a chat turn counts with 4096.
+    let (status, reply) = s
+        .post_json(
+            "/api/chat",
+            json!({"message": "y".repeat(16_000), "loop": true, "session_id": sid}),
+        )
+        .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["compaction"]["threshold"], 36_000 + 2048, "{reply}");
+}
+
+#[tokio::test]
+async fn a_reload_at_a_smaller_window_scales_the_lifted_trigger_down_with_it() {
+    let ollama = start_native_ollama().await;
+    *ollama.longctx_window.lock().unwrap() = 131_072;
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default()
+            .with("models.local_llm.auto_tune", "true")
+            .with("api.rate_limit.max_requests", "1000"),
+    )
+    .await;
+    s.post_json("/api/web", json!({"enabled": false})).await;
+    let (status, body) = s.post_json("/api/model", json!({"model": "longctx:q8"})).await;
+    assert_eq!(status, 200, "{body}");
+    // The shipped 24000 trigger lifts to the 96000 proposed for 131072.
+    let body = wait_for_tuning(&s, 131_072).await;
+    assert_eq!(body["in_force"]["prompt_limit"], 96000, "{body}");
+    // Ollama restarted smaller, or unloaded it, while the tuning still says
+    // 131072: the trigger follows the verified window in proportion, below its
+    // prompt cap, and an unknown window keeps the shipped 24000.
+    for (window, cap, trigger) in [(65_536, 60000, 48000), (32_768, 30000, 24000), (0, 30000, 24000)] {
+        *ollama.longctx_window.lock().unwrap() = window;
+        let (_, body) = s.get_json("/api/ollama/profile").await;
+        assert_eq!(body["tuning"]["window"], 131_072, "{body}");
+        assert_eq!(body["in_force"]["prompt_cap"], cap, "{body}");
+        assert_eq!(body["in_force"]["prompt_limit"], trigger, "{body}");
+    }
+}
+
+#[tokio::test]
+async fn a_configured_trigger_sized_for_the_measured_window_follows_a_smaller_reload_down() {
+    let ollama = start_native_ollama().await;
+    *ollama.longctx_window.lock().unwrap() = 131_072;
+    // The operator raised the trigger to the 96000 the profile proposes for 131072.
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default()
+            .with("models.local_llm.auto_tune", "true")
+            .with("chat.compact_prompt_tokens", "96000")
+            .with("api.rate_limit.max_requests", "1000"),
+    )
+    .await;
+    s.post_json("/api/web", json!({"enabled": false})).await;
+    let (status, body) = s.post_json("/api/model", json!({"model": "longctx:q8"})).await;
+    assert_eq!(status, 200, "{body}");
+    let body = wait_for_tuning(&s, 131_072).await;
+    assert_eq!(body["in_force"]["prompt_limit"], 96000, "{body}");
+    // Reloaded at 65536 the configured 96000 would sit above the 60000 hard
+    // limit with no headroom; it scales with the window to the 48000 proposal,
+    // and an unknown window keeps the 24000 the 32768 defaults give.
+    for (window, cap, trigger) in [(65_536, 60000, 48000), (32_768, 30000, 24000), (0, 30000, 24000)] {
+        *ollama.longctx_window.lock().unwrap() = window;
+        let (_, body) = s.get_json("/api/ollama/profile").await;
+        assert_eq!(body["tuning"]["window"], 131_072, "{body}");
+        assert_eq!(body["in_force"]["prompt_cap"], cap, "{body}");
+        assert_eq!(body["in_force"]["prompt_limit"], trigger, "{body}");
+    }
 }
 
 #[tokio::test]
@@ -724,7 +932,7 @@ async fn startup_reconciles_saved_selection_before_warmup_and_tuning() {
         ("longctx:q8", None, "qwen3.8:27b-mlx"),
         ("qwen3.8:27b-mlx", None, "qwen3.8:27b-mlx"),
         ("", None, "qwen3.8:27b-mlx"),
-        ("grok", Some("qwen3.8:27b-mlx"), "grok"),
+        ("grok", Some("qwen3.8:27b-mlx"), "qwen3.8:27b-mlx"),
     ] {
         let ollama = start_native_ollama().await;
         let prepared = prepare_server(
@@ -746,23 +954,19 @@ async fn startup_reconciles_saved_selection_before_warmup_and_tuning() {
         let s = start_test_server(prepared.tmp, prepared.home_dir, prepared.api_key, router, state).await;
         assert_eq!(s.state.current_model(), expected);
         for _ in 0..200 {
-            if expected == "grok" || s.state.tuning_for(expected).is_some() {
+            if s.state.tuning_for(expected).is_some() {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
         let gens = ollama.generates.lock().unwrap().clone();
-        if expected == "grok" {
-            assert!(gens.is_empty(), "cloud selection must not load local model: {gens:?}");
-        } else {
-            assert_eq!(gens.len(), 2, "{saved} / {previous:?}: {gens:?}");
-            assert_eq!(gens[0]["prompt"], "");
-            assert_eq!(gens[1]["raw"], true);
-            assert!(gens
-                .iter()
-                .all(|g| g["model"] == expected && !g.to_string().contains("num_ctx")));
-        }
+        assert_eq!(gens.len(), 2, "{saved} / {previous:?}: {gens:?}");
+        assert_eq!(gens[0]["prompt"], "");
+        assert_eq!(gens[1]["raw"], true);
+        assert!(gens
+            .iter()
+            .all(|g| g["model"] == expected && !g.to_string().contains("num_ctx")));
         let persisted: Value =
             serde_json::from_str(&std::fs::read_to_string(s.home.join("harness.json")).unwrap()).unwrap();
         assert_eq!(persisted["selected_model_config"], "qwen3.8:27b-mlx");

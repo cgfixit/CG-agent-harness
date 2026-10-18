@@ -106,6 +106,8 @@ pub struct AppState {
     pub backend: ResolvedLocalBackend,
     pub chat: ChatClient,
     pub cloud_chat: CloudChat,
+    /// Account/provider consent for this server run; never persisted with settings.
+    pub cloud_consents: Mutex<BTreeSet<(String, String)>>,
     pub audit: Audit,
     pub rate_limiter: RateLimiter,
     pub loop_rate_limiter: RateLimiter,
@@ -351,7 +353,7 @@ impl AppState {
             };
         }
         if self.probe_window_state(model).await == crate::llm::ollama::LoadedWindow::NotLoaded {
-            self.load_for_window(model).await;
+            self.load_for_window(model, 0).await;
         }
         let Some(window) = self.verified_window(model) else {
             return Err(unreported_window(model));
@@ -378,14 +380,14 @@ impl AppState {
     /// prompt that fits its tuned window is refused before anything wakes it. A
     /// load that leaves the window unreported is refused here, so the check
     /// before the model call does not run the same bounded load a second time.
-    pub async fn load_if_absent(&self, model: &str) -> Result<bool> {
+    pub async fn load_if_absent(&self, model: &str, min_keep_alive_sec: u64) -> Result<bool> {
         if self.tuning_for(model).is_none() || self.verified_window(model).is_some() {
             return Ok(false);
         }
         if self.probe_window_state(model).await != crate::llm::ollama::LoadedWindow::NotLoaded {
             return Ok(false);
         }
-        self.load_for_window(model).await;
+        self.load_for_window(model, min_keep_alive_sec).await;
         match self.verified_window(model) {
             Some(_) => Ok(true),
             None => Err(unreported_window(model)),
@@ -393,11 +395,13 @@ impl AppState {
     }
 
     /// Load `model` with the bounded warmup request, then read its window.
-    async fn load_for_window(&self, model: &str) {
+    async fn load_for_window(&self, model: &str, min_keep_alive_sec: u64) {
         let Some(native) = crate::llm::ollama::native_base_url(&self.chat.base_url) else {
             return;
         };
-        let keep_alive = crate::llm::ollama::clamped(&self.cfg, "models.local_llm.warmup.keep_alive_sec", 300, 1, 3600);
+        let keep_alive = crate::llm::ollama::clamped(&self.cfg, "models.local_llm.warmup.keep_alive_sec", 300, 1, 3600)
+            .max(min_keep_alive_sec)
+            .min(3600);
         let timeout = Duration::from_secs(crate::llm::ollama::clamped(
             &self.cfg,
             "models.local_llm.warmup.timeout_sec",
@@ -485,8 +489,9 @@ impl AppState {
 
     /// `chat.compact_prompt_tokens`, lowered to `model`'s tuning, then scaled
     /// up to a larger verified window unless `chat.compact_follow_window` is
-    /// literally false ([`super::model_limits::window_trigger`]).
-    pub fn compact_prompt_tokens(&self, model: &str) -> u64 {
+    /// literally false ([`super::model_limits::window_trigger`]). `reply` is the
+    /// turn's reply budget, which the trigger counts.
+    pub fn compact_prompt_tokens(&self, model: &str, reply: u64) -> u64 {
         let configured = self
             .cfg
             .u64_or("chat.compact_prompt_tokens", super::compaction::DEFAULT_PROMPT_TOKENS);
@@ -497,12 +502,27 @@ impl AppState {
         if self.cfg.bool_opt("chat.compact_follow_window") == Some(false) {
             return tightened;
         }
+        // The tuning proposed its trigger for the window it measured. The
+        // verified window is never larger: a reload at a smaller one scales that
+        // proposal down with it, and an unknown one keeps the 32768 defaults.
+        let window = self.verified_window(model).unwrap_or(super::model_limits::TUNED_WINDOW);
+        let measured = tuning.window.clamp(1, super::compaction::MAX_WINDOW);
+        let proposed = tuning.compact_prompt_tokens * window.min(measured) / measured;
+        // A configured value that reaches the tuning's own proposal was sized
+        // for the measured window (an operator who raised it as the profile
+        // advises), so it follows a smaller window down too. A value below the
+        // proposal is the operator's own choice and stands.
+        let tightened = if configured >= tuning.compact_prompt_tokens {
+            tightened.min(proposed)
+        } else {
+            tightened
+        };
         super::model_limits::window_trigger(
             tightened,
-            tuning.compact_prompt_tokens,
-            tuning.window,
+            proposed,
+            window,
             self.prompt_cap(model),
-            self.chat_max_tokens(model),
+            reply,
             tuning.speed.as_ref(),
             self.cfg
                 .u64_or(
@@ -559,7 +579,7 @@ impl AppState {
 
     pub fn chat_timeout_sec(&self, model: &str) -> f64 {
         if self.cloud_chat.is_cloud_selection(model) {
-            self.cloud_chat.timeout_sec()
+            self.cloud_chat.timeout_sec(model)
         } else {
             self.chat.timeout_for(model)
         }

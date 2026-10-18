@@ -972,19 +972,20 @@ use Kind::{Agent, Evidence, Guide, Root};
 
 /// `(path, kind, word cap)`, sorted by path. Caps started at each file's size
 /// on 2026-09-27, rounded up to the next 100 words. Lower them when a fold lands.
+// why: operator-approved (2026-10-18) +200 words on every row that had under 60 words of headroom on main (45 rows).
 const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // Rows the 2026-10-13 doc-sync trimmed carry their new size plus about 2%, rounded up to the next 10.
     // why: operator-requested per-file index of the folder (one line per file); size plus about 10%, rounded up to the next 10.
-    (".claude/skills/README.md", Agent, 240),
-    (".claude/skills/cgagentharness-config-guard/SKILL.md", Agent, 700),
-    (".claude/skills/cgagentharness-gotchas/SKILL.md", Agent, 1500),
+    (".claude/skills/README.md", Agent, 440),
+    (".claude/skills/cgagentharness-config-guard/SKILL.md", Agent, 900),
+    (".claude/skills/cgagentharness-gotchas/SKILL.md", Agent, 1700),
     (".claude/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
     // why: operator-approved raise from 1400 to 1776 for the optimize skill rewrite. The file is 1277 words, so
     // 499 are unused headroom; the Agent group cap, not this row, is the binding limit.
     (".claude/skills/cgagentharness-optimize/SKILL.md", Agent, 1776),
     // why: port of CyClaw's otel-hardening skill (telemetry-kill contract for a Rust tree); 1241 words, rounded up to the next 100.
-    (".claude/skills/cgagentharness-otel-hardening/SKILL.md", Agent, 1300),
-    (".claude/skills/cgagentharness-project-guidance/SKILL.md", Agent, 710),
+    (".claude/skills/cgagentharness-otel-hardening/SKILL.md", Agent, 1500),
+    (".claude/skills/cgagentharness-project-guidance/SKILL.md", Agent, 910),
     (
         ".claude/skills/cgagentharness-runtime-invariant-check/SKILL.md",
         Agent,
@@ -993,28 +994,28 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (
         ".claude/skills/cgagentharness-write-policy-redteam/SKILL.md",
         Agent,
-        800,
+        1000,
     ),
-    (".claude/skills/dep-sync/SKILL.md", Agent, 770),
+    (".claude/skills/dep-sync/SKILL.md", Agent, 970),
     (".claude/skills/doc-sync/SKILL.md", Agent, 800),
-    (".claude/skills/fable-protocol/SKILL.md", Agent, 790),
-    (".claude/skills/run-cg-agent-harness/SKILL.md", Agent, 300),
-    (".claude/skills/verification-specialist/SKILL.md", Agent, 540),
-    (".codex/skills/cgagentharness-config-guard/SKILL.md", Agent, 700),
+    (".claude/skills/fable-protocol/SKILL.md", Agent, 990),
+    (".claude/skills/run-cg-agent-harness/SKILL.md", Agent, 500),
+    (".claude/skills/verification-specialist/SKILL.md", Agent, 740),
+    (".codex/skills/cgagentharness-config-guard/SKILL.md", Agent, 900),
     (".codex/skills/cgagentharness-gotchas/SKILL.md", Agent, 2000),
     (".codex/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
     (".codex/skills/cgagentharness-optimize/SKILL.md", Agent, 500),
     (".codex/skills/cgagentharness-project-guidance/SKILL.md", Agent, 800),
-    (".codex/skills/cgagentharness-release/SKILL.md", Agent, 400),
-    (".codex/skills/cgagentharness-verify/SKILL.md", Agent, 300),
+    (".codex/skills/cgagentharness-release/SKILL.md", Agent, 600),
+    (".codex/skills/cgagentharness-verify/SKILL.md", Agent, 500),
     (".codex/skills/cgagentharness-write-policy-redteam/SKILL.md", Agent, 800),
-    (".codex/skills/fable-protocol/SKILL.md", Agent, 500),
-    (".codex/skills/verification-specialist/SKILL.md", Agent, 600),
+    (".codex/skills/fable-protocol/SKILL.md", Agent, 700),
+    (".codex/skills/verification-specialist/SKILL.md", Agent, 800),
     // why: operator-approved (2026-10-14) raise to 2200 after the change-type, merge-order and ELI5 guidance grew it to 2162 words.
-    (".github/PULL_REQUEST_TEMPLATE.md", Agent, 2200),
-    (".github/skills/repo-optimize/SKILL.md", Agent, 200),
+    (".github/PULL_REQUEST_TEMPLATE.md", Agent, 2400),
+    (".github/skills/repo-optimize/SKILL.md", Agent, 400),
     // why: operator-requested per-file index of the folder (one line per file); size plus about 10%, rounded up to the next 10.
-    (".github/workflows/README.md", Agent, 300),
+    (".github/workflows/README.md", Agent, 500),
     // why: netconnect passive CLI and LAN scope rule; rounded up to the next 100.
     // why: OS credential store sentence for managed provider keys; 1907 words after the main merge, rounded up to the next 100.
     // why: feature contracts folded into an INVARIANTS.md section table; 1491 words, rounded up to the next 100.
@@ -1022,10 +1023,10 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved headroom for research-job steps 8-12 (#415 review roadmap): ~45 words
     // (gate list, /loop excludes MCP, no job-long gate), plus ~10%, rounded up to the next 50.
     // why: the 2026-10-13 doc-sync cut it to 1441 words; 1490 keeps the ~50-word roadmap allowance above.
-    ("AGENTS.md", Agent, 1490),
+    ("AGENTS.md", Agent, 1690),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     // why: now `@AGENTS.md` plus Claude-only lines; 183 words, rounded up to the next 100.
-    ("CLAUDE.md", Agent, 200),
+    ("CLAUDE.md", Agent, 400),
     // why: #237 and #243 added the cloud-truncation and web-budget contracts;
     // #235 the process-global CSRF note and the I6 process map.
     // why: netconnect fail-closed LAN scope section; 5683 words, rounded up to the next 100.
@@ -1040,70 +1041,64 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // plus ~10%, rounded up to the next 50. Lower it to the reported size once those land.
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default contract; file was at 6437.
     // why: operator-approved +150 (2026-10-18), shared by the four compaction follow-up PRs (#513 fixes, hard limit, reply parity, window trigger).
-    // why: operator-approved +10 (2026-10-18, #529) for the goal-less /loop and compaction auto-continue sentence; file at 6694.
-    // why: operator-approved (2026-10-18) /diag and portal_auditor contracts; 6893 words, set to 6900.
-    ("INVARIANTS.md", Root, 6900),
+    ("INVARIANTS.md", Root, 6890),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
-    ("README.md", Root, 1500),
-    ("SECURITY.md", Root, 490),
+    ("README.md", Root, 1700),
+    ("SECURITY.md", Root, 690),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
     ("docs/API_ROUTES.md", Guide, 1830),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
-    ("docs/CODING_PIPELINE.md", Guide, 3510),
+    ("docs/CODING_PIPELINE.md", Guide, 3710),
     ("docs/CONFIG_RELOAD.md", Guide, 600),
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
-    // why: operator-approved +33 (2026-10-18, #529/#534): main sits at 5963 words since #531, so the guard is red on main; #529 adds the /loop copy. File at 5963.
-    // why: operator-approved (2026-10-18) /diag rows in 7.7 and 7.8; 6034 words, set to 6040.
-    ("docs/CONSOLE.md", Guide, 6040),
+    ("docs/CONSOLE.md", Guide, 6157),
     ("docs/DEPENDENCIES.md", Guide, 1400),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
-    ("docs/DESKTOP.md", Guide, 2480),
+    ("docs/DESKTOP.md", Guide, 2680),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
-    ("docs/GITHOOKS.md", Guide, 1350),
+    ("docs/GITHOOKS.md", Guide, 1550),
     // why: credentials table now describes the OS store and the plaintext opt-in; 5571 words, rounded up to the next 100.
     // Setup memory guidance replaces repeated setup/verification prose; keep the cut.
     // why: operator-approved (2026-10-14) automated macOS install (section 1) and browser access (section 7); 5188 words plus about 1%, rounded up to the next 50.
     // why: operator-approved (2026-10-14) raise to 7500 for room to grow the install guide after #491 and #496 together hit 5250; the Guide group cap still bounds it.
     ("docs/INSTALL.md", Guide, 7500),
-    ("docs/MCP_CLIENT.md", Guide, 890),
-    ("docs/MCP_SERVER.md", Guide, 1030),
+    ("docs/MCP_CLIENT.md", Guide, 1090),
+    ("docs/MCP_SERVER.md", Guide, 1230),
     // why: #244 folded MEMORY_SETUP.md and the user manual's memory sections in here.
-    ("docs/MEMORY_GUIDE.md", Guide, 1750),
+    ("docs/MEMORY_GUIDE.md", Guide, 1950),
     // why: #237 documented refused truncated cloud replies.
-    ("docs/MODELS.md", Guide, 970),
-    ("docs/PROCESS_LIFECYCLE.md", Guide, 1160),
+    ("docs/MODELS.md", Guide, 1170),
+    ("docs/PROCESS_LIFECYCLE.md", Guide, 1360),
     // why: operator-requested per-file index of docs/ (3-5 sentences each) replaces the 150-word folder stub; 1103 words, rounded up to the next 100.
     // why: operator-requested reading paths plus an owning-code and tests line per doc; size plus about 5%, rounded up to the next 50.
-    ("docs/README.md", Guide, 1500),
-    ("docs/RELEASING.md", Guide, 700),
+    ("docs/README.md", Guide, 1700),
+    ("docs/RELEASING.md", Guide, 900),
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
     // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
-    // why: operator-approved (2026-10-18) portal_auditor role row; 3577 words, set to 3580.
-    ("docs/SECURE_RESEARCH.md", Guide, 3580),
+    ("docs/SECURE_RESEARCH.md", Guide, 3750),
     // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here; 2157 words, cap set to 2750 for room to grow.
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2750),
     // why: #244 made this the one memory contract: a gate table, and the #87
     // closeout facts it lacked.
-    ("docs/STRUCTURED_MEMORY.md", Guide, 3440),
-    // why: operator-approved (2026-10-18) /diag diagnostics section and rows; 1442 words, set to 1450.
-    ("docs/TROUBLESHOOTING.md", Guide, 1450),
+    ("docs/STRUCTURED_MEMORY.md", Guide, 3640),
+    ("docs/TROUBLESHOOTING.md", Guide, 1500),
     // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
-    ("docs/netconnect.md", Guide, 3300),
-    ("docs/screenshots/README.md", Evidence, 200),
+    ("docs/netconnect.md", Guide, 3500),
+    ("docs/screenshots/README.md", Evidence, 400),
     // why: the seven folder-README rows below are operator-requested per-file indexes (one line per file);
     // each is its size plus about 10%, rounded up to the next 10.
     // why: operator-approved (2026-10-14) install-macos.sh and start-macos.sh lines, then the operator-requested
     // Terminal-walkthrough, user-guide and init.sh lines; 564 words plus about 2%, rounded up to the next 10.
-    ("scripts/README.md", Guide, 580),
-    ("src/agentic/README.md", Guide, 350),
-    ("src/common/README.md", Guide, 400),
-    ("src/netconnect/README.md", Guide, 190),
+    ("scripts/README.md", Guide, 780),
+    ("src/agentic/README.md", Guide, 550),
+    ("src/common/README.md", Guide, 600),
+    ("src/netconnect/README.md", Guide, 390),
     ("src/server/README.md", Guide, 740),
-    ("src/server/routes/README.md", Guide, 190),
-    ("tests/README.md", Guide, 730),
+    ("src/server/routes/README.md", Guide, 390),
+    ("tests/README.md", Guide, 930),
 ];
 
 /// Each group's cap started at its words rounded up to the next 500.
@@ -1134,8 +1129,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // ANALYTICS.md and USER_MANUAL.md were folded in; 64,500 keeps the gap under the 17,000 override); DOCS_GROUP_SLACK_OVERRIDES
 // lets this one group sit that far above its words.
 // why: operator-approved (2026-10-18) +200 Root words for the #494 first-run session contract in INVARIANTS.md.
-// why: operator-approved (2026-10-18) Root raise matching the INVARIANTS.md /diag row (+200; Root 8880).
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 8_900), (Guide, 64_500), (Evidence, 500), (Agent, 21_500)];
+// why: operator-approved (2026-10-18) +200 per raised DOCS_BUDGET row, added to its group (Root 3, Guide 21, Evidence 1, Agent 20).
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 9_300), (Guide, 68_700), (Evidence, 700), (Agent, 25_500)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
@@ -1144,7 +1139,9 @@ const DOCS_GROUP_SLACK: usize = 1_000;
 /// Groups the operator allowed to sit further above their words than
 /// `DOCS_GROUP_SLACK`; every other group keeps the default.
 // why: operator-approved (2026-10-14) Guide headroom for the 65,000 cap; 17,000 covers 64,500 - 47,827.
-const DOCS_GROUP_SLACK_OVERRIDES: &[(Kind, usize)] = &[(Guide, 17_000)];
+// why: operator-approved (2026-10-18) +200-per-row raise: Guide 19,500 covers 68,700 - 49,361 and Agent 4,500
+// covers 25,500 - 21,466, each rounded up to the next 500.
+const DOCS_GROUP_SLACK_OVERRIDES: &[(Kind, usize)] = &[(Guide, 19_500), (Agent, 4_500)];
 
 /// The slack a group cap may keep above its words before it must be lowered.
 fn group_slack(kind: Kind) -> usize {

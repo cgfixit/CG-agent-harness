@@ -360,7 +360,7 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 71] = [
         "/api/structured-memory/export",
         "bounded local HTML export; escaped; this owner only",
     ),
-    ("model", "/model use", "POST", "/api/model", "select the local chat model"),
+    ("model", "/model use", "POST", "/api/model", "select local chat or explicitly confirmed configured cloud chat"),
     (
         "status",
         "/status",

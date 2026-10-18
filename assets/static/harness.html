@@ -870,6 +870,7 @@ function historyLine(text) {
   const line = bareCommand(text);
   const words = line.split(/\s+/);
   const root = words[0].replace(/^\//, '').toLowerCase();
+  if (root === 'model' && words.slice(1).some(word => /sk-ant-[a-zA-Z0-9_-]{20,}|xai-[a-zA-Z0-9]{20,}|•/.test(word))) return '/model use';
   /* Keep only the root, set|clear and an UPPER_CASE key name; a value, or a
      token typed where the key name belongs, is dropped. */
   if (isApiCredentialLine(text)) {
@@ -1961,7 +1962,7 @@ const COMMANDS = [
   ['/memory retrieve <query>', 'force fact retrieval for this chat prompt only'],
   ['/memory save <text> :: <reason>', 'confirm an immediate private fact write'],
   ['/memory search <query>', 'search fact candidates without injecting them'],
-  ['/model [list|use <name>|profile]', 'show, list or select a chat model, or profile the selected local model; planner selection is separate'],
+  ['/model [list|use <name>|profile|status]', 'show, list or select a chat model, or profile the selected local model; planner selection is separate'],
   ['/net diag', 'TCP connect probe of the configured diagnostics_targets and port_allowlist; needs the diagnostics tier; stops at the dial budget'],
   ['/net status|devices', 'status is scope and gates and loads no collector; devices lists passive neighbors; aliases /netconnect /lan /scan /ports /speed only suggest on a near-miss'],
   ['/prompt', 'preview the next chat system prompt (private)'],
@@ -2149,7 +2150,7 @@ const COMMAND_MAN = {
   '/memory retrieve <query>': {detail:'Sends a chat turn with fact retrieval forced on, for that prompt only.'},
   '/memory save <text> :: <reason>': {detail:'Writes a private fact immediately. The two colons separate the fact from the required reason. Whether it is retrieved later is controlled separately.'},
   '/memory search <query>': {detail:'Lists matching fact candidates with scores. Needs the retrieval gate; /memory facts lists facts without it. Nothing is injected into chat.'},
-  '/model [list|use <name>|profile]': {detail:'Alone, shows the chat model, provider and endpoint. list shows the installed local tags. use selects the chat model: a local tag exactly as the model service lists it, or the configured cloud alias grok or claude. The selection is saved without checking installation; a missing local tag fails on the next message. With models.local_llm.auto_tune on, use also loads the model, times one short generate and applies per-model limits that only tighten. profile shows the selected local model as Ollama reports it, its loaded window, window-scaled limit proposals and any applied tuning; it changes nothing. The planner model is configured separately and unchanged.', args:{name:'a local tag exactly as the model service lists it, or grok or claude for the configured cloud provider'}, examples:['/model list', '/model use ', '/model profile']},
+  '/model [list|use <name>|profile|status]': {detail:'Alone or with status, shows the active model, local/cloud provider, key presence and effective profile with value sources. list shows installed local tags. use accepts an exact local tag, local to restore the configured local model, or grok/xai and claude/anthropic (case-insensitive). Cloud selection requires an enabled provider, an active key and account/provider consent for this server run; it resets to local after restart. Save keys in Settings → API Keys and restart; never paste one into chat. A missing local tag fails on the next message. With models.local_llm.auto_tune on, use also loads the model, times one short generate and applies per-model limits that only tighten. profile shows the selected local model as Ollama reports it, its loaded window, window-scaled limit proposals and any applied tuning; it changes nothing. The planner model is configured separately and unchanged.', args:{name:'an exact local tag, local, grok/xai or claude/anthropic'}, examples:['/model status', '/model list', '/model use local', '/model use claude', '/model profile']},
   '/net status|devices': {detail:'status shows scope and gate state and loads no collector; devices lists passively seen neighbors. Both open the LAN pane. Anything else is refused: this console runs no scans or device control.'},
   '/prompt': {detail:'Previews the next chat system prompt: persona, style, pinned notes, selected facts and web context. Shown only to you; nothing is sent to the model.'},
   '/registry': {detail:'Lists skills, tools and connectors together.'},
@@ -2193,9 +2194,10 @@ const WORTH_KNOWING = [
   {label:'/agent pr-body <run-id>', insert:'/agent pr-body ', hint:'Review the PR template here before /agent publish will accept', key:'/agent pr-body <run-id>'},
   {label:'/memory save <text> :: <reason>', insert:'/memory save ', hint:'Two colons separate the fact from the required reason', key:'/memory save <text> :: <reason>'},
   {label:'/skill check:<profile>', insert:'/skill check:', hint:'One word with a colon; needs a staged /agent run', key:'/skill check:<profile>'},
-  {label:'/model list', insert:'/model list', hint:'Read-only: installed local tags, exactly as /model use takes them', key:'/model [list|use <name>|profile]'},
-  {label:'/model use <exact-installed-tag>', insert:'/model use ', hint:'A local tag exactly as listed, or the cloud alias grok or claude; not checked until you send', key:'/model [list|use <name>|profile]'},
-  {label:'/model profile', insert:'/model profile', hint:'Read-only: model facts, loaded window, proposed limits and any applied tuning', key:'/model [list|use <name>|profile]'},
+  {label:'/model list', insert:'/model list', hint:'Read-only: installed local tags, exactly as /model use takes them', key:'/model [list|use <name>|profile|status]'},
+  {label:'/model use <exact-installed-tag>', insert:'/model use ', hint:'An exact local tag, local, grok/xai or claude/anthropic; cloud readiness is checked before saving', key:'/model [list|use <name>|profile|status]'},
+  {label:'/model status', insert:'/model status', hint:'Read-only: model, key presence and effective profile sources', key:'/model [list|use <name>|profile|status]'},
+  {label:'/model profile', insert:'/model profile', hint:'Read-only: model facts, loaded window, proposed limits and any applied tuning', key:'/model [list|use <name>|profile|status]'},
   {label:'/loop stop', insert:'/loop stop', hint:'Also cancels a reply that is still streaming', key:'/loop [--web off|fetch|all] [n]|auto|stop'},
   {label:'/web check <URL>', insert:'/web check ', hint:'Tests permission without fetching or granting anything', key:'/web check <URL> [URL ...] [--group name]'},
 ];
@@ -2997,9 +2999,28 @@ async function runSlash(line, webCommand) {
       case 'model': {
         if (rest[0] === 'use' && rest.length !== 2) { sys('usage: /model use <exact-installed-tag> — /model list shows the tags'); break; }
         if (rest[0] === 'use') {
-          const r = await api('/api/model', 'POST', { model: rest[1] });
+          let r;
+          try { r = await api('/api/model', 'POST', { model: rest[1] }); }
+          catch (e) {
+            if (e.code !== 'CLOUD_CHAT_CONFIRM_REQUIRED') throw e;
+            const dialog = document.createElement('dialog');
+            dialog.setAttribute('aria-label', 'Confirm cloud chat');
+            const notice = document.createElement('p');
+            notice.textContent = 'Only your newly typed message leaves this machine for ' + e.details.egress_host + '. History, attachments, memory and tools stay local. Cloud selection resets to local after restart.';
+            const form = document.createElement('form'); form.method = 'dialog';
+            for (const [value, label] of [['cancel', 'Keep current model'], ['confirm', 'Use cloud model']]) {
+              const button = document.createElement('button'); button.value = value; button.textContent = label; form.appendChild(button);
+            }
+            dialog.append(notice, form); document.body.appendChild(dialog);
+            const consent = new Promise(resolve => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), {once:true}));
+            dialog.showModal();
+            const confirmed = await consent; dialog.remove();
+            if (!confirmed) { sys('Model selection unchanged.'); break; }
+            r = await api('/api/model', 'POST', { model: rest[1], confirm: true });
+          }
           const planner = await api('/api/agent/checks');
           sys('chat model selected: ' + r.model + ' via ' + r.provider + '; planner model remains: ' + planner.planner_model + ' (configured separately)');
+          if (r.egress_notice) sys(r.egress_notice);
           if (r.provider === 'ollama') {
             const inv = await api('/api/ollama/inventory').catch(() => null);
             const tags = inv && Array.isArray(inv.models) ? inv.models.map(m => m.name) : [];
@@ -3027,7 +3048,7 @@ async function runSlash(line, webCommand) {
           const isSelected = n => selected !== '' && (n === selected || n === selected + ':latest');
           const gb = n => typeof n === 'number' && n > 0 ? (n / 1e9).toFixed(1) + ' GB' : '—';
           sys(table(models.map(m => [m.name, gb(m.size), isSelected(m.name) ? 'selected' : '']), ['tag', 'size', 'chat']));
-          sys('/model use <tag> selects one, or grok or claude for cloud chat. The list is cached for models.local_llm.inventory.refresh_sec (30 s by default).');
+          sys('/model use <tag> selects one, or grok/xai or claude/anthropic for cloud chat; local restores the configured local model. The list is cached for models.local_llm.inventory.refresh_sec (30 s by default).');
         } else if (rest[0] === 'profile') {
           // Read-only: facts, proposals, and whatever auto_tune already applied.
           const p = await api('/api/ollama/profile');
@@ -3085,8 +3106,14 @@ async function runSlash(line, webCommand) {
           }
         } else {
           const s = await api('/api/status');
-          sys(table([['model', s.model || '(unset)'], ['provider', s.provider], ['base_url', s.base_url]]));
-          if (s.selection_overrides_config) sys('Saved selection overrides configured model ' + s.configured_model + '; changing that config model and restarting clears the selection.');
+          const m = s.model_status;
+          sys(table([['model', s.model || '(unset)'], ['model source', m && m.tuning_profile.sources.model || 'config'], ['provider', s.provider], ['base_url', s.base_url]]));
+          if (m) {
+            sys(table([['location', m.cloud ? 'cloud' : 'local'], ['key present', m.key_present === null ? 'not required' : String(m.key_present)], ['consent required', String(m.consent_required || false)]]));
+            const p = m.tuning_profile || {};
+            sys(table(Object.entries(p).filter(([key]) => key !== 'sources').map(([key, value]) => [key, value === null ? 'unset' : String(value), (p.sources || {})[key] || 'default']), ['effective profile', 'value', 'source']));
+          }
+          if (s.selection_overrides_config) sys(m && m.cloud ? 'Cloud selection resets to local after restart.' : 'Saved selection overrides configured model ' + s.configured_model + '; changing that config model and restarting clears the selection.');
         }
         break;
       }
@@ -3744,7 +3771,7 @@ async function runSlash(line, webCommand) {
           sys(table([['version', s.version], ['access', access]]));
           break;
         }
-        if (s.selection_overrides_config) sys('Saved selection overrides configured model ' + s.configured_model + '; changing that config model and restarting clears the selection.');
+        if (s.selection_overrides_config) sys(s.model_status && s.model_status.cloud ? 'Cloud selection resets to local after restart.' : 'Saved selection overrides configured model ' + s.configured_model + '; changing that config model and restarting clears the selection.');
         /* The style row must reflect the persisted state: settle queued
            style writes and re-read the open session's selection. */
         await awaitStyleWrites();

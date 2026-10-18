@@ -182,11 +182,14 @@ pub async fn build_app_with_sources(
         .with_literal_secrets(crate::common::audit::known_secret_values(&cfg))
         .with_writer_thread();
     let configured_model = cfg.str_or("models.local_llm.model", &backend.model).trim().to_string();
+    let mut cloud_chat = CloudChat::from_config(&cfg)?;
+    let cloud_reset = cloud_chat.is_cloud_selection(&settings.selected_model);
     let selection_stale = !settings.selected_model.trim().is_empty()
-        && settings.selected_model_config.as_deref().map_or_else(
-            || settings.selected_model.trim() != configured_model,
-            |previous| previous != configured_model,
-        );
+        && (cloud_reset
+            || settings.selected_model_config.as_deref().map_or_else(
+                || settings.selected_model.trim() != configured_model,
+                |previous| previous != configured_model,
+            ));
     if selection_stale {
         settings.selected_model.clear();
     }
@@ -195,7 +198,7 @@ pub async fn build_app_with_sources(
         settings.save(&home)?;
     }
     if selection_stale {
-        audit.log(serde_json::json!({"event": "model_selection_reset", "reason": "configured_model_changed_or_legacy_mismatch", "configured_model": configured_model}));
+        audit.log(serde_json::json!({"event": "model_selection_reset", "reason": if cloud_reset {"cloud_consent_requires_fresh_selection"} else {"configured_model_changed_or_legacy_mismatch"}, "configured_model": configured_model}));
         tracing::info!(model = configured_model, "saved model selection reset to configuration");
     }
     let auth_operation_permits = Arc::new(tokio::sync::Semaphore::new(state::auth_operation_concurrency(&cfg)?));
@@ -216,7 +219,6 @@ pub async fn build_app_with_sources(
         backend.reasoning_effort.clone(),
     )?;
     let spend_file = crate::llm::spend::spend_path(&home.root, &cfg);
-    let mut cloud_chat = CloudChat::from_config(&cfg)?;
     #[cfg(feature = "test-support")]
     if cloud_chat.test_fixture_mode() {
         audit.log(serde_json::json!({"event":"cloud_chat_test_fixture", "loopback_only":true}));
@@ -324,6 +326,7 @@ pub async fn build_app_with_sources(
         backend,
         chat,
         cloud_chat,
+        cloud_consents: Mutex::new(BTreeSet::new()),
         audit,
         rate_limiter,
         loop_rate_limiter,
