@@ -26,8 +26,9 @@ def api(path):
 def bundle_succeeded(runs, sha):
     if not isinstance(runs, dict) or not isinstance(runs.get("workflow_runs"), list):
         raise ValueError("Expected workflow runs list")
-    # Only push and dispatch runs package: a docs-only pull_request run skips
-    # every Bundle job yet still concludes "success".
+    # Bundle runs only on main pushes since #486. Before that, docs-only
+    # pull_request runs skipped packaging yet concluded "success", and other PR
+    # runs packaged a merge preview, so only push (and pre-#486 dispatch) count.
     return any(
         run.get("head_sha") == sha and run.get("conclusion") == "success"
         and run.get("event") in ("push", "workflow_dispatch")
@@ -47,24 +48,30 @@ def plan(event, ref, publish, sha, tree, latest, latest_tree, tags, releases, bu
     stable = r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("Expected an exact source commit")
+    match = re.fullmatch(stable, latest["tag_name"])
+    current = None if not match or latest["draft"] or latest["prerelease"] else tuple(map(int, match.groups()))
     require_bundle = False
     if event == "push":
         tag = ref.removeprefix("refs/tags/")
-        if not ref.startswith("refs/tags/") or not re.fullmatch(stable, tag):
+        tag_match = re.fullmatch(stable, tag)
+        if not ref.startswith("refs/tags/") or not tag_match:
             raise ValueError("Tag releases require vMAJOR.MINOR.PATCH")
         # Whoever can push a tag must not publish --latest from an unmerged branch.
         if reachable_from_main is not True:
             raise ValueError("Tag releases require a commit reachable from main")
+        # --latest would make releases/latest serve an older app. An irregular
+        # latest release is left for a newer stable tag to replace.
+        if current is not None and tuple(map(int, tag_match.groups())) <= current:
+            raise ValueError("Tag releases must be newer than the latest release")
         changed = True
         enabled = True
     elif event in ("schedule", "workflow_dispatch"):
         enabled = event == "schedule" or publish == "true"
         if enabled and ref != "refs/heads/main":
             raise ValueError("Automatic/manual publication must run on main")
-        match = re.fullmatch(stable, latest["tag_name"])
-        if not match or latest["draft"] or latest["prerelease"]:
+        if current is None:
             raise ValueError("Latest release must be a regular vMAJOR.MINOR.PATCH release")
-        major, minor, patch = map(int, match.groups())
+        major, minor, patch = current
         tag = f"v{major}.{minor}.{patch + 1}"
         changed = tree != latest_tree
         if changed and tag in tags:

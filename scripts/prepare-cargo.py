@@ -42,7 +42,8 @@ def main():
     dest = root / digest
     if dest.exists():
         raise SystemExit("snapshot already exists; use it or choose a separate application home")
-    env = dict(os.environ, RUSTUP_AUTO_INSTALL="0")
+    # term.quiet (ambient or candidate config) would suppress the source TOML.
+    env = dict(os.environ, RUSTUP_AUTO_INSTALL="0", CARGO_TERM_QUIET="false")
     # Resolve tools outside the candidate (and the caller's cwd). A repository
     # rust-toolchain path must never choose code to run before confinement.
     # PATH and RUSTUP_TOOLCHAIN remain explicit operator-controlled selections.
@@ -74,7 +75,10 @@ def main():
                     runtime_roots.add(str(library.parent))
                     pending.append(library)
     with tempfile.TemporaryDirectory(prefix=".prepare-", dir=root) as temporary:
-        stage = Path(temporary)
+        # Renamed into place below; the temporary directory itself stays for
+        # TemporaryDirectory to remove on every Python 3 version.
+        stage = Path(temporary) / "snapshot"
+        stage.mkdir(mode=0o700)
         cmd = [str(sysroot / "bin" / executable("cargo")), "vendor", "--locked", "--versioned-dirs"]
         if not args.online:
             cmd.append("--offline")
@@ -82,6 +86,9 @@ def main():
         config = subprocess.check_output(cmd, cwd=repo, env=env, text=True)
         if (repo / "Cargo.lock").read_bytes() != lock:
             raise SystemExit("lockfile changed during preparation; refusing snapshot")
+        vendored = stage / "vendor"
+        if not config.strip() and vendored.is_dir() and any(vendored.iterdir()):
+            raise SystemExit("cargo vendor printed no source configuration; refusing an unusable snapshot")
         # Cargo emits TOML quoted paths; rewrite only the generated vendor location.
         old = json.dumps(str(stage / "vendor"), ensure_ascii=False)
         new = json.dumps(str(dest / "vendor"), ensure_ascii=False)
@@ -95,8 +102,10 @@ def main():
             "runtime_roots": sorted(runtime_roots), "sdk_root": sdk_root, "linker": linker,
             "rustc_version": subprocess.check_output([str(sysroot / "bin" / executable("rustc")), "--version"], cwd=tool_cwd, env=env, text=True).strip(),
         }, indent=2) + "\n")
-        # Destination is new and remains outside the candidate clone.
-        shutil.copytree(stage, dest)
+        # Destination is new and remains outside the candidate clone. stage and
+        # dest share root, so publishing is one atomic rename: a killed run
+        # leaves only a .prepare-* directory, never a partial snapshot.
+        os.rename(stage, dest)
     print(f"Prepared {digest}; configure the harness with this application home.")
     print("Verification requires this unchanged lockfile and installed toolchain; it never fetches dependencies.")
 
