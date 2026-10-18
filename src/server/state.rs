@@ -495,10 +495,15 @@ impl AppState {
         if self.cfg.bool_opt("chat.compact_follow_window") == Some(false) {
             return tightened;
         }
+        // The tuning proposed its trigger for the window it measured. The
+        // verified window is never larger: a reload at a smaller one scales that
+        // proposal down with it, and an unknown one keeps the 32768 defaults.
+        let window = self.verified_window(model).unwrap_or(super::model_limits::TUNED_WINDOW);
+        let measured = tuning.window.clamp(1, super::compaction::MAX_WINDOW);
         super::model_limits::window_trigger(
             tightened,
-            tuning.compact_prompt_tokens,
-            tuning.window,
+            tuning.compact_prompt_tokens * window.min(measured) / measured,
+            window,
             self.prompt_cap(model),
             self.chat_max_tokens(model),
             tuning.speed.as_ref(),

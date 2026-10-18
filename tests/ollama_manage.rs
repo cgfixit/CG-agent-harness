@@ -520,6 +520,35 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
 }
 
 #[tokio::test]
+async fn a_reload_at_a_smaller_window_scales_the_lifted_trigger_down_with_it() {
+    let ollama = start_native_ollama().await;
+    *ollama.longctx_window.lock().unwrap() = 131_072;
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default()
+            .with("models.local_llm.auto_tune", "true")
+            .with("api.rate_limit.max_requests", "1000"),
+    )
+    .await;
+    s.post_json("/api/web", json!({"enabled": false})).await;
+    let (status, body) = s.post_json("/api/model", json!({"model": "longctx:q8"})).await;
+    assert_eq!(status, 200, "{body}");
+    // The shipped 24000 trigger lifts to the 96000 proposed for 131072.
+    let body = wait_for_tuning(&s, 131_072).await;
+    assert_eq!(body["in_force"]["prompt_limit"], 96000, "{body}");
+    // Ollama restarted smaller, or unloaded it, while the tuning still says
+    // 131072: the trigger follows the verified window in proportion, below its
+    // prompt cap, and an unknown window keeps the shipped 24000.
+    for (window, cap, trigger) in [(65_536, 60000, 48000), (32_768, 30000, 24000), (0, 30000, 24000)] {
+        *ollama.longctx_window.lock().unwrap() = window;
+        let (_, body) = s.get_json("/api/ollama/profile").await;
+        assert_eq!(body["tuning"]["window"], 131_072, "{body}");
+        assert_eq!(body["in_force"]["prompt_cap"], cap, "{body}");
+        assert_eq!(body["in_force"]["prompt_limit"], trigger, "{body}");
+    }
+}
+
+#[tokio::test]
 async fn a_planner_on_the_tuned_model_budgets_runs_with_its_measured_timeout() {
     let ollama = start_native_ollama().await;
     let planner_url = format!("\"{}\"", ollama.openai_url());
