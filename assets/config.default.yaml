@@ -80,6 +80,8 @@ chat:
   compact_prompt_tokens: 24000 # floor=effective reply reservation + 4096, capped at 30000 (more for a larger window auto_tune measured)
   compact_keep_messages: 8 # 2–40: at most this many recent messages kept verbatim, whole exchanges only
   compact_tail_percent: 25 # 10–50: verbatim tail budget as a percent of the trigger; at least the last exchange
+  compact_follow_window: true # an auto_tune-verified window above 32768 scales the trigger up in proportion; literal false keeps it
+  compact_max_prefill_sec: 120 # 30–1800: that scaled trigger stays within this many seconds of measured prefill, plus one reply
 
 compaction:
   summary_max_tokens: 768 # clamped to 128–2048; existing homes without this key also use 768; sent doubled where the reply is reserved twice

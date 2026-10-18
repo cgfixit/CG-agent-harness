@@ -481,13 +481,33 @@ impl AppState {
             .map_or(configured, |tuning| configured.min(tuning.max_tokens))
     }
 
-    /// `chat.compact_prompt_tokens`, lowered to `model`'s tuning.
+    /// `chat.compact_prompt_tokens`, lowered to `model`'s tuning, then scaled
+    /// up to a larger verified window unless `chat.compact_follow_window` is
+    /// literally false ([`super::model_limits::window_trigger`]).
     pub fn compact_prompt_tokens(&self, model: &str) -> u64 {
         let configured = self
             .cfg
             .u64_or("chat.compact_prompt_tokens", super::compaction::DEFAULT_PROMPT_TOKENS);
-        self.tuning_for(model)
-            .map_or(configured, |tuning| configured.min(tuning.compact_prompt_tokens))
+        let Some(tuning) = self.tuning_for(model) else {
+            return configured;
+        };
+        let tightened = configured.min(tuning.compact_prompt_tokens);
+        if self.cfg.bool_opt("chat.compact_follow_window") == Some(false) {
+            return tightened;
+        }
+        super::model_limits::window_trigger(
+            tightened,
+            tuning.window,
+            self.prompt_cap(model),
+            self.chat_max_tokens(model),
+            tuning.speed.as_ref(),
+            self.cfg
+                .u64_or(
+                    "chat.compact_max_prefill_sec",
+                    super::model_limits::DEFAULT_MAX_PREFILL_SEC,
+                )
+                .clamp(30, 1800),
+        )
     }
 
     /// True when tuning found `model` cannot take web tools (none declared, or
