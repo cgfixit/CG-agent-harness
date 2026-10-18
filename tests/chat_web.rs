@@ -1015,8 +1015,9 @@ async fn web_chat_grounds_a_web_denial_only_when_the_answer_was_offered_tools() 
         "{reply}"
     );
     // Every admitted prompt fits a round now, so tools are withheld only when the
-    // budget cannot fit one at all: a 13,800-token reply reservation leaves no
-    // room for the prompt, the definitions and a minimal result in 16000.
+    // budget cannot fit one at all: a 13,450-token reply reservation leaves room
+    // for the bare prompt but not the definitions and a minimal result in 16000.
+    // Passes from about 13,150 to 13,700; keep it mid-window as the prompt grows.
     let (s, _reads, _base) = {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let router = budget_model(1, None, None, requests);
@@ -1030,7 +1031,7 @@ async fn web_chat_grounds_a_web_denial_only_when_the_answer_was_offered_tools() 
                 web_resolve: Some(("docs.example".into(), address)),
                 ..Default::default()
             }
-            .with("models.local_llm.max_tokens", "13800")
+            .with("models.local_llm.max_tokens", "13450")
             .with("web.total_tokens", "16000"),
         )
         .await;
