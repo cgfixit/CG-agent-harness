@@ -97,7 +97,12 @@ fn extract_until(data: &[u8], deadline: Instant) -> Result<String> {
     for i in 0..archive.len() {
         check_time(deadline)?;
         let part = archive.by_index(i).map_err(|_| invalid("unreadable DOCX part"))?;
-        if !names.insert(part.name().to_owned()) || part.enclosed_name().is_none() {
+        // zip 9 decodes the entry name lazily and can fail; an undecodable name
+        // is as hostile as a duplicate or an escaping one.
+        let Ok(name) = part.name() else {
+            return Err(invalid("ambiguous or unsafe DOCX part name"));
+        };
+        if !names.insert(name.into_owned()) || part.enclosed_name().is_none() {
             return Err(invalid("ambiguous or unsafe DOCX part name"));
         }
         total = total.saturating_add(part.size());
