@@ -287,12 +287,32 @@ impl WebTool {
                 queue.push_back((url, true));
             }
         }
+        let mut cached: Option<Vec<Page>> = None;
         for rule in policy
             .rules
             .iter()
             .filter(|r| starts.is_empty() && group.is_none_or(|g| r.group == g))
         {
-            let seeds = rule.start_urls();
+            let mut seeds = rule.start_urls();
+            if seeds.is_empty() {
+                // A host wildcard names no concrete host and none is invented.
+                // Pages the operator already fetched under it are known-good
+                // starts; without any, the rule still cannot seed a crawl.
+                if cached.is_none() {
+                    cached = Some(self.cached_pages(group)?.0);
+                }
+                seeds = cached
+                    .as_ref()
+                    .map(|pages| {
+                        pages
+                            .iter()
+                            .filter(|p| canonical_url(&p.url).is_ok_and(|u| rule.permits(&u)))
+                            .take(4)
+                            .map(|p| p.url.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+            }
             if seeds.is_empty() {
                 coverage
                     .skipped
@@ -324,21 +344,30 @@ impl WebTool {
                 continue;
             }
             let origin = url.origin().ascii_serialization();
-            // Robots is an ordinary content request: same policy, DNS and budget.
-            // A path-restricted rule does not implicitly authorize /robots.txt.
+            // Robots is an ordinary read for the politeness decision only: any
+            // rule covering the origin, even path-restricted, permits it; the
+            // body is never cached or returned as evidence.
             if !robots.contains_key(&origin) {
                 let robot_url = format!("{origin}/robots.txt");
-                let body = if self.policy()?.authorize(&robot_url, group).is_ok() {
-                    self.crawl_get(
-                        &robot_url,
-                        group,
-                        deadline,
-                        &mut coverage,
-                        &mut site_counts,
-                        &mut site_last,
-                    )
-                    .await
-                    .map(|p| p.text)
+                let body = if self.policy()?.authorize_robots(&robot_url, group).is_ok() {
+                    let page = self
+                        .crawl_get(
+                            &robot_url,
+                            group,
+                            deadline,
+                            &mut coverage,
+                            &mut site_counts,
+                            &mut site_last,
+                            true,
+                        )
+                        .await
+                        .map(|p| p.text);
+                    if page.is_none() && coverage.budget_exhausted.is_none() {
+                        coverage
+                            .skipped
+                            .push(json!({"url":robot_url,"code":"WEB_ROBOTS_UNAVAILABLE"}));
+                    }
+                    page
                 } else {
                     coverage
                         .skipped
@@ -379,6 +408,7 @@ impl WebTool {
                     &mut coverage,
                     &mut site_counts,
                     &mut site_last,
+                    false,
                 )
                 .await
             {
@@ -414,6 +444,7 @@ impl WebTool {
         Ok(coverage)
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn crawl_get(
         &self,
         url: &str,
@@ -422,6 +453,7 @@ impl WebTool {
         coverage: &mut Coverage,
         counts: &mut BTreeMap<String, usize>,
         last: &mut BTreeMap<String, Instant>,
+        quiet: bool,
     ) -> Option<Page> {
         let origin = canonical_url(url).ok()?.origin().ascii_serialization();
         let budget = if coverage.requests >= self.limits.pages {
@@ -468,7 +500,9 @@ impl WebTool {
                     Ok(Err(e)) => e.code,
                     _ => "WEB_TIMEOUT".into(),
                 };
-                coverage.failed.push(json!({"url":url,"code":code}));
+                if !quiet {
+                    coverage.failed.push(json!({"url":url,"code":code}));
+                }
                 None
             }
         }
@@ -509,7 +543,7 @@ impl WebTool {
         let mut pages = Vec::new();
         for (index, target) in targets.iter().enumerate() {
             if let Some(page) = self
-                .crawl_get(target, group, deadline, &mut coverage, &mut counts, &mut last)
+                .crawl_get(target, group, deadline, &mut coverage, &mut counts, &mut last, false)
                 .await
             {
                 self.cache_page(&page, group)?;
@@ -532,6 +566,34 @@ impl WebTool {
         Ok(
             json!({"pages":pages,"coverage":coverage,"complete":pages.len()==targets.len(),
             "notice":"Exact requested URLs only. /web inject selects the first successful page; use /web research to synthesize multiple sources."}),
+        )
+    }
+
+    /// Bounded recursive fetch: the exact start URLs seed a discovery crawl that
+    /// follows only links the policy permits. Same limits, pacing and gates as
+    /// discovery; fetched pages land in the cache for /web pages and research.
+    pub async fn crawl(&self, urls: &[String], group: Option<&str>, enabled: bool, audit: &Audit) -> Result<Value> {
+        let policy = self.require_enabled(enabled)?;
+        if urls.is_empty() || urls.len() > super::web_policy::MAX_BATCH_URLS || group.is_some_and(|g| !valid_group(g)) {
+            return Err(error("WEB_BAD_URL", "invalid batch or group"));
+        }
+        let mut targets = Vec::new();
+        for raw in urls {
+            let url = policy.authorize(raw, group)?.to_string();
+            if !targets.contains(&url) {
+                targets.push(url);
+            }
+        }
+        self.gate_tool("web_fetch", &targets, enabled, audit)?;
+        let _guard = self
+            .search_gate
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| error("WEB_BUSY", "a web read is already running"))?;
+        let coverage = self.discover_from(group, &targets).await?;
+        Ok(
+            json!({"coverage":coverage,"complete":coverage.budget_exhausted.is_none() && coverage.unvisited.is_empty(),
+            "notice":"Recursive fetch cached every permitted page reachable from the starts. Read them with /web pages <query> or /web research <question>."}),
         )
     }
 
@@ -779,6 +841,181 @@ mod tests {
         assert_eq!(page_hits.load(Ordering::SeqCst), 1, "{coverage:?}");
         assert_eq!(other_hits.load(Ordering::SeqCst), 1, "{coverage:?}");
         assert_eq!(coverage.searched, vec![page, format!("{root}docs/other")]);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn host_wildcard_seeds_from_cache_and_robots_follows_origin_coverage() {
+        let fixture = Router::new()
+            .route(
+                "/robots.txt",
+                get(|| async { ([("content-type", "text/plain")], "User-agent: *\nAllow: /\n") }),
+            )
+            .route(
+                "/page",
+                get(|| async {
+                    (
+                        [("content-type", "text/html")],
+                        "<title>Seed</title><a href='/page2'>Two</a>",
+                    )
+                }),
+            )
+            .route(
+                "/page2",
+                get(|| async { ([("content-type", "text/html")], "<title>Two</title><p>second</p>") }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, fixture).await.unwrap();
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig::from_str("web: {pace_ms: 100}", Path::new("config.yaml")).unwrap();
+        crate::common::atomic::write_json_atomic(
+            &dir.path().join("web_allowlist.json"),
+            &json!({"version":1,"rules":[]}),
+        )
+        .unwrap();
+        let mut web = WebTool::new(dir.path(), &cfg).unwrap();
+        web.test_resolve_extra = vec![("www.corpus.invalid".into(), address)];
+        let root = format!("http://www.corpus.invalid:{}/", address.port());
+        web.allow_rule(
+            &format!("http://*.corpus.invalid:{}/*", address.port()),
+            "wild",
+            &[],
+            true,
+        )
+        .unwrap();
+        // No seeds and nothing cached under the wildcard: still skipped.
+        let first = web.discover(Some("wild")).await.unwrap();
+        assert!(first.skipped.iter().any(|s| s["code"] == "WEB_SEED_REQUIRED"));
+        assert!(first.searched.is_empty());
+        // A page already fetched under the wildcard is the known-good start, and
+        // robots.txt is read under the wildcard's origin coverage, with no
+        // explicit robots rule.
+        let text = "seed page the operator read earlier";
+        let page = Page {
+            url: format!("{root}page"),
+            title: "Seed".into(),
+            content_hash: crate::common::sha256_hex(text),
+            chars: text.chars().count(),
+            text: text.into(),
+            links: vec![],
+            status: 200,
+            content_type: "text/html".into(),
+            bytes: 0,
+            transfer_bytes: 0,
+            fetched_at: crate::common::now_ts(),
+            extraction_version: 1,
+            policy_revision: "a".repeat(64),
+            etag: None,
+            last_modified: None,
+        };
+        web.cache_page(&page, Some("wild")).unwrap();
+        let second = web.discover(Some("wild")).await.unwrap();
+        assert!(
+            !second.skipped.iter().any(|s| s["code"] == "WEB_SEED_REQUIRED"),
+            "{:?}",
+            second.skipped
+        );
+        assert!(
+            second.searched.contains(&format!("{root}page")),
+            "{:?}",
+            second.searched
+        );
+        assert!(
+            second.searched.contains(&format!("{root}page2")),
+            "{:?}",
+            second.searched
+        );
+        assert!(
+            !second
+                .skipped
+                .iter()
+                .any(|s| s["code"] == "WEB_ROBOTS_NOT_PERMITTED" || s["code"] == "WEB_ROBOTS_UNAVAILABLE"),
+            "{:?}",
+            second.skipped
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn crawl_follows_only_permitted_links_from_exact_starts() {
+        let fixture = Router::new()
+            .route(
+                "/robots.txt",
+                get(|| async { ([("content-type", "text/plain")], "User-agent: *\nAllow: /\n") }),
+            )
+            .route(
+                "/docs/page",
+                get(|| async {
+                    (
+                        [("content-type", "text/html")],
+                        "<title>One</title><a href='/docs/other'>Other</a><a href='/outside'>Out</a>",
+                    )
+                }),
+            )
+            .route(
+                "/docs/other",
+                get(|| async { ([("content-type", "text/html")], "<title>Other</title><p>second</p>") }),
+            )
+            .route(
+                "/outside",
+                get(|| async {
+                    panic!("policy-disallowed page fetched");
+                    #[allow(unreachable_code)]
+                    ""
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, fixture).await.unwrap();
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig::from_str("web: {pace_ms: 100}", Path::new("config.yaml")).unwrap();
+        crate::common::atomic::write_json_atomic(
+            &dir.path().join("web_allowlist.json"),
+            &json!({"version":1,"rules":[]}),
+        )
+        .unwrap();
+        let mut web = WebTool::new(dir.path(), &cfg).unwrap();
+        web.test_resolve = Some(("corpus.invalid".into(), address));
+        let root = format!("http://corpus.invalid:{}/", address.port());
+        web.allow_rule(&format!("{root}docs/*"), "manuals", &[], true).unwrap();
+        let audit = Audit::new(dir.path().join("audit.jsonl"), &cfg);
+        let result = web
+            .crawl(&[format!("{root}docs/page")], Some("manuals"), true, &audit)
+            .await
+            .unwrap();
+        let coverage = &result["coverage"];
+        assert_eq!(result["complete"], true, "{coverage}");
+        let searched: Vec<_> = coverage["searched"].as_array().unwrap().iter().collect();
+        assert!(
+            searched.iter().any(|u| *u == &format!("{root}docs/page")),
+            "{searched:?}"
+        );
+        assert!(
+            searched.iter().any(|u| *u == &format!("{root}docs/other")),
+            "{coverage:?}"
+        );
+        assert!(coverage["refused"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["url"] == format!("{root}outside") && r["code"] == "WEB_HOST_DENIED"));
+        // Robots was read under origin coverage; no explicit robots rule exists.
+        assert!(coverage["skipped"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["code"] != "WEB_ROBOTS_NOT_PERMITTED"));
+        // The crawl refuses a start the policy does not permit.
+        let denied = web
+            .crawl(&[format!("{root}outside")], Some("manuals"), true, &audit)
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code, "WEB_HOST_DENIED");
         server.abort();
     }
 

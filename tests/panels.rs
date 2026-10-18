@@ -426,6 +426,68 @@ async fn web_search_fetches_each_overlapping_allowlist_entry() {
 }
 
 #[tokio::test]
+async fn web_fetch_crawl_follows_permitted_links_over_http_route() {
+    let model = start_mock_model().await;
+    let fixture = Router::new()
+        .route(
+            "/robots.txt",
+            get(|| async { ([("content-type", "text/plain")], "User-agent: *\nAllow: /\n") }),
+        )
+        .route(
+            "/docs/start",
+            get(|| async {
+                (
+                    [("content-type", "text/html")],
+                    "<title>Start</title><a href='/docs/linked'>Linked</a><a href='/outside'>Out</a>",
+                )
+            }),
+        )
+        .route(
+            "/docs/linked",
+            get(|| async { ([("content-type", "text/html")], "<title>Linked</title><p>followed</p>") }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let page_task = tokio::spawn(async move {
+        axum::serve(listener, fixture).await.unwrap();
+    });
+    let opts = ServerOptions {
+        web_resolve: Some(("docs.example".to_string(), address)),
+        ..ServerOptions::default()
+    };
+    let s = spawn_server(&model.base_url(), opts).await;
+    let root = format!("http://docs.example:{}/", address.port());
+    let (status, body) = s
+        .post_json("/api/web/allow", json!({"url": format!("{root}docs/*")}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let (status, body) = s.post_json("/api/web", json!({"enabled": true})).await;
+    assert_eq!(status, 200, "{body}");
+    let (status, body) = s
+        .post_json(
+            "/api/web/fetch",
+            json!({"urls": [format!("{root}docs/start")], "crawl": true}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let searched = body["coverage"]["searched"].as_array().unwrap();
+    assert!(searched.iter().any(|u| u == &format!("{root}docs/start")), "{body}");
+    assert!(searched.iter().any(|u| u == &format!("{root}docs/linked")), "{body}");
+    assert!(body["coverage"]["refused"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["url"] == format!("{root}outside") && r["code"] == "WEB_HOST_DENIED"));
+    // Without --crawl the same start fetches only the exact URL.
+    let (status, body) = s
+        .post_json("/api/web/fetch", json!({"urls": [format!("{root}docs/start")]}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["pages"].as_array().unwrap().len(), 1, "{body}");
+    page_task.abort();
+}
+
+#[tokio::test]
 async fn web_tool_is_allowlist_only_ssrf_safe_and_bounded() {
     let model = start_mock_model().await;
     let page = start_page_server("<html><head><style>x{}</style><script>evil()</script></head><body><h1>Title</h1><p>Hello &amp; welcome to the docs page</p></body></html>", "text/html; charset=utf-8").await;
