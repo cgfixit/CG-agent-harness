@@ -795,7 +795,7 @@ fn user_quotes_only(line: &str, users: &[String]) -> Option<String> {
 
 /// The deterministic checks, in order: strip echoed framing, drop claims that
 /// something was never said (the summarizer sees only part of the chat), keep
-/// only Corrections lines that quote a summarized user turn, unmarking their
+/// only Corrections bullets that quote a summarized user turn, unmarking their
 /// other quotes, then mask ungrounded identifiers. A line is classified as it
 /// is stored, which is how [`correction_sources`] reads it later.
 fn repair_summary(raw: &str, sources: &[&str], user_sources: &[&str]) -> (String, RepairCounts) {
@@ -838,7 +838,14 @@ fn repair_summary(raw: &str, sources: &[&str], user_sources: &[&str]) -> (String
         if in_corrections && trimmed.eq_ignore_ascii_case("- none") {
             corrections_kept += 1;
         } else if in_corrections && !trimmed.is_empty() {
-            let Some(checked) = user_quotes_only(&rebuilt, &users) else {
+            // Only a bullet is a correction: it is all [`correction_sources`]
+            // carries, and unquoting can never turn it into a heading.
+            let checked = if trimmed.starts_with('-') {
+                user_quotes_only(&rebuilt, &users)
+            } else {
+                None
+            };
+            let Some(checked) = checked else {
                 counts.dropped_corrections += 1;
                 continue;
             };
@@ -1417,6 +1424,35 @@ Corrections (later user changes):\n- \"No\"\n- \"no way\"";
                 assert!(!out.contains("\"keep"), "narration is not user wording: {out}");
                 body = out;
             }
+        }
+    }
+
+    #[test]
+    fn only_bullets_are_corrections_so_every_kept_one_carries() {
+        let middle = [
+            msg("user", "No"),
+            msg("assistant", "OK"),
+            msg("user", "Use port 8080 instead of 8000"),
+        ];
+        let users = correction_sources(&middle);
+        let users: Vec<&str> = users.iter().map(String::as_str).collect();
+        let texts: Vec<&str> = middle.iter().map(|m| m.text.as_str()).collect();
+        let heading = "Corrections (later user changes):\n";
+        for (raw, kept, carried) in [
+            // A checked line that is not a bullet, which no later compaction would carry.
+            ("\"No\"", "- None", vec![]),
+            // Unquoting "the plan:" would leave a heading that hides the bullet below it.
+            (
+                "\"No\" overrides \"the plan:\"\n- \"Use port 8080 instead of 8000\".",
+                "- \"Use port 8080 instead of 8000\".",
+                vec!["Use port 8080 instead of 8000"],
+            ),
+        ] {
+            let (body, counts) = repair_summary(&format!("{heading}{raw}"), &texts, &users);
+            assert_eq!(body, format!("{heading}{kept}"));
+            assert_eq!(counts.dropped_corrections, 1, "{body}");
+            let stored = msg("assistant", &format!("{COMPACT_PREFIX}{body}\n"));
+            assert_eq!(correction_sources(&[stored]), carried, "{body}");
         }
     }
 
