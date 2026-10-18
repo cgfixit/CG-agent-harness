@@ -21,6 +21,7 @@ CG-Agent combines chat, files, memory and selected tools locally.
 | **Cloud chat** | Optional Grok or Claude. Sends only the new message, never local history, memory, skills, attachments, or web context. | Requires provider setup; unavailable for `/loop`. |
 | **MCP integrations** | Declared external tools and a separate read-only memory gateway with dedicated machine credentials. | Both disabled. |
 | **LAN observation** | Netconnect reads in-scope interfaces, routes, and neighbors from local tables. | Disabled with empty scope; no active scans, probes, or device control. |
+| **Self-knowledge** | A bundled harness manual and a live status block as untrusted local-chat context. | On; never sent to cloud chat, `/loop` or `/agent`. |
 
 Open **Memory** to review your pending proposals after completed work; enter a reason to apply or dismiss. **Suggestion activity** explains missing proposals. [Setup](docs/INSTALL.md#memory-setup).
 

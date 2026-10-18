@@ -50,6 +50,7 @@ When prose contradicts code, fix the prose in the same PR.
 | Config reload | Reload changes limits, not authority |
 | Inbound MCP memory server | Private MCP memory server is a separate authority boundary |
 | netconnect | Netconnect is fail-closed and LAN-scoped |
+| Self-manual, live state (`diagnostics.self_knowledge`, `live_state`) | Self-knowledge never widens authority |
 
 ## Traps
 

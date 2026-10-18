@@ -42,3 +42,18 @@ See [setup](../README.md), [models](MODELS.md) and [coding](CODING_PIPELINE.md).
 | `/agent` commands report "Agentic layer disabled" | `agentic.enabled` is still `false` in `config.yaml` | Follow [coding config](CODING_PIPELINE.md#92-edit-the-configuration-file), then restart `serve` |
 | A write action is refused | A current policy gate is closed, reason/confirm is absent, publication has no reviewed body, or the emergency switch is set | Re-read [coding console steps](CODING_PIPELINE.md#93-run-it-from-the-console) and [the kill switch](CODING_PIPELINE.md#95-the-kill-switch); check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` |
 | Managed-key save or legacy migration fails | OS store unavailable, unsafe legacy file, or Windows replacement denied | Keep plaintext opt-in off unless deliberately required. Check [credential privacy and recovery](INSTALL.md#8-persistence-optional-keys-and-recovery); do not broaden file access. Windows sharing locks can block replacement; the existing destination remains intact |
+
+## Read-only host inspection
+
+The harness reads no host file outside its home, and chat cannot call MCP
+tools. To read host files, declare a read-only stdio filesystem MCP server
+([example](MCP_CLIENT.md#read-only-host-files-on-macos)) with explicit
+`read_roots`, empty `write_roots` and `network: deny`, then call its tool
+yourself; each call needs `confirm: true`.
+
+- Roots overlapping the harness home are refused (`MCP_HOME_REFUSED`) by design.
+- Read-only is not secret-safe: never grant `~/`, `~/.ssh`, `~/Library` or any
+  folder holding `.env` or key material. Prefer `/var/log` subpaths or a
+  dedicated folder such as `~/diag-share` that you fill yourself.
+- MCP tools never appear on `/loop`.
+- Model prose cannot approve its own reads; only your `confirm: true` call does.

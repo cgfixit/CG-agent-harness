@@ -289,6 +289,41 @@ fn server_side_never_references_agentic() {
 }
 
 #[test]
+fn self_knowledge_reads_no_file_and_never_reaches_agent_runs() {
+    // The manual is compiled in; the live block renders values the caller holds.
+    for file in ["server/self_manual.rs", "server/live_state.rs"] {
+        let text = strip_comment_lines(&std::fs::read_to_string(root().join(file)).unwrap());
+        let code = &text[..text.find("#[cfg(test)]").unwrap_or(text.len())];
+        for forbidden in [
+            "std::fs",
+            "File::",
+            "OpenOptions",
+            "read_to_string",
+            "Command",
+            "TcpStream",
+            "crate::agentic",
+            "create_in_dir",
+            "open_in_dir",
+            "MmapDirectory",
+        ] {
+            assert!(!code.contains(forbidden), "{file} must not use {forbidden}");
+        }
+    }
+    let manual = std::fs::read_to_string(root().join("server/self_manual.rs")).unwrap();
+    assert!(manual.contains("include_str!(\"../../assets/self/MANUAL.md\")"));
+    assert!(
+        manual.contains("Index::create_in_ram"),
+        "the manual index is never persisted"
+    );
+    let agent = std::fs::read_to_string(root().join("server/routes/agent.rs")).unwrap();
+    for needle in ["self_knowledge", "live_state", "self_manual"] {
+        assert!(!agent.contains(needle), "/agent must not carry {needle}");
+    }
+    let reload = std::fs::read_to_string(root().join("server/config_reload.rs")).unwrap();
+    assert!(!reload.contains("\"diagnostics"), "diagnostics stays restart-only");
+}
+
+#[test]
 fn netconnect_dials_only_through_the_budgeted_dialer() {
     // Sockets and name lookups. Only connect.rs may open a socket, and
     // nothing under src/netconnect may resolve a host name.
@@ -591,6 +626,12 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "agentic.deepagent_github.retrieval.enabled",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
+    }
+    // Context about the harness itself ships on as literal booleans; it grants no tool.
+    let knowledge = cgagentharness::server::self_manual::SelfKnowledgeConfig::from_config(&cfg).unwrap();
+    assert!(knowledge.self_knowledge && knowledge.live_state);
+    for key in ["diagnostics.self_knowledge", "diagnostics.live_state"] {
+        assert!(cfg.flag_is_true(key), "{key} ships as the literal boolean true");
     }
     assert!(
         cfg.str_list("mcp.server.tools").is_empty(),
