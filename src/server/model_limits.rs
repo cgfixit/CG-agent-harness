@@ -7,7 +7,8 @@
 //! then checked by the validators startup and reload use. Shipped values, not
 //! the home's current ones, are scaled, so a home already tuned for a small
 //! window is not halved twice. Applied budgets only ever tighten the configured
-//! ones; the chat timeout follows the measured speed instead.
+//! ones, except the compaction trigger, which a larger verified window scales up
+//! ([`window_trigger`]); the chat timeout follows the measured speed instead.
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,6 +26,37 @@ use crate::llm::profile;
 
 /// The loaded window the shipped budgets were sized for.
 pub const TUNED_WINDOW: u64 = compaction::BASE_WINDOW;
+
+/// Default `chat.compact_max_prefill_sec`: how long the measured prefill may take
+/// to read the input a window-scaled compaction trigger admits.
+pub const DEFAULT_MAX_PREFILL_SEC: u64 = 120;
+
+/// The compaction trigger for a model whose window auto_tune verified. Above
+/// the 32768 the shipped budgets were sized for, `configured` (already
+/// tightened by tuning) rises to `proposed`, the tuning's trigger for this
+/// window (the shipped value scaled to it), capped by `prompt_cap` and by the
+/// input the measured prefill reads in `max_prefill_sec`, plus one `reply`.
+/// A value already sized for the window is not scaled again. It never goes
+/// below `configured`; at or below 32768, or without a speed sample,
+/// `configured` stands.
+pub fn window_trigger(
+    configured: u64,
+    proposed: u64,
+    window: u64,
+    prompt_cap: u64,
+    reply: u64,
+    speed: Option<&Value>,
+    max_prefill_sec: u64,
+) -> u64 {
+    let Some(prefill) = speed.and_then(|s| s["prefill_tps"].as_f64()).filter(|v| *v > 0.0) else {
+        return configured;
+    };
+    if window <= TUNED_WINDOW {
+        return configured;
+    }
+    let readable = (prefill * max_prefill_sec as f64) as u64 + reply;
+    configured.max(proposed.min(prompt_cap).min(readable))
+}
 
 /// Margin over the estimated worst-case turn.
 const TIMEOUT_SAFETY: f64 = 2.0;
@@ -200,7 +232,7 @@ pub fn propose(
     let effective = window.min(compaction::MAX_WINDOW);
     if window > TUNED_WINDOW {
         notes.push(format!(
-            "The loaded window ({window}) is larger than the {TUNED_WINDOW} the shipped budgets were sized for. auto_tune only lowers budgets, so set these larger values in config.yaml; with auto_tune on, the prompt cap ({}) and web.total_tokens cap ({}) follow this window.",
+            "The loaded window ({window}) is larger than the {TUNED_WINDOW} the shipped budgets were sized for. auto_tune only lowers budgets, so set these larger values in config.yaml; with auto_tune on, the prompt cap ({}) and web.total_tokens cap ({}) follow this window, and so does the compaction trigger (chat.compact_follow_window) within chat.compact_max_prefill_sec of measured prefill.",
             compaction::prompt_cap(Some(window)),
             compaction::web_total_cap(Some(window)),
         ));
@@ -798,5 +830,59 @@ mod tests {
         assert!(tuning.tools_off && tuning.web.is_none());
         let cold = json!({"declared": {}, "loaded": null});
         assert!(tuning_from("cold", &cold, &propose(&cold, None, &cfg, &web, &none), None).is_none());
+    }
+
+    #[test]
+    fn a_larger_verified_window_scales_the_trigger_within_measured_prefill() {
+        let qwen = json!({"prefill_tps": 414.0});
+        let gemma = json!({"prefill_tps": 1579.0});
+        // The tuning's proposal: the shipped 24000 scaled to the window.
+        let proposed = |window: u64| 24_000 * window.min(compaction::MAX_WINDOW) / TUNED_WINDOW;
+        let trigger = |window, speed: Option<&Value>| {
+            window_trigger(
+                24_000,
+                proposed(window),
+                window,
+                compaction::prompt_cap(Some(window)),
+                4_096,
+                speed,
+                DEFAULT_MAX_PREFILL_SEC,
+            )
+        };
+        // At or below the window the shipped budgets were sized for, nothing moves.
+        assert_eq!(trigger(32_768, Some(&gemma)), 24_000);
+        assert_eq!(trigger(16_384, Some(&gemma)), 24_000);
+        // A larger window lifts it to the window's proposal while prefill keeps up.
+        assert_eq!(trigger(65_536, Some(&gemma)), 48_000);
+        assert_eq!(trigger(131_072, Some(&gemma)), 96_000);
+        assert_eq!(trigger(65_536, Some(&qwen)), 48_000);
+        // A slow model stops at what it reads in 120 s, plus one reply.
+        assert_eq!(trigger(131_072, Some(&qwen)), 414 * 120 + 4_096);
+        // Past the largest window the caps grow to, it stops growing.
+        assert_eq!(trigger(1 << 20, Some(&gemma)), 96_000);
+        // No speed sample: no raise. Never below what is configured.
+        assert_eq!(trigger(131_072, None), 24_000);
+        assert_eq!(
+            window_trigger(
+                24_000,
+                96_000,
+                131_072,
+                120_000,
+                4_096,
+                Some(&json!({"prefill_tps": 10.0})),
+                120
+            ),
+            24_000
+        );
+        // The prompt cap still binds.
+        assert_eq!(
+            window_trigger(24_000, 48_000, 65_536, 40_000, 4_096, Some(&gemma), 120),
+            40_000
+        );
+        // A value already sized for the window is not scaled again.
+        assert_eq!(
+            window_trigger(48_000, 48_000, 65_536, 60_000, 8_192, Some(&gemma), 120),
+            48_000
+        );
     }
 }

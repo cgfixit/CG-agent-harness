@@ -581,7 +581,9 @@ reply reservation. Above
 `chat.compact_prompt_tokens` (default 24000), it summarizes middle turns,
 keeping the first user message, goal, and whole recent exchanges (at most
 `chat.compact_keep_messages`, 8, and `chat.compact_tail_percent`, 25% of the
-trigger). The summarizer reads goal and first message, keeps the prior summary
+trigger). An `auto_tune`-verified window above 32768 scales the trigger up in
+proportion, within `chat.compact_max_prefill_sec` (120) of measured prefill;
+`chat.compact_follow_window: false` keeps it fixed. The summarizer reads goal and first message, keeps the prior summary
 whole, clips other turns at 800 characters, within 24000 characters and its
 calibrated budget, else history stays. The model gets a lossy note yielding to
 exact messages; unsourced codes become `[unverified]`.
