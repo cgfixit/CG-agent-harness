@@ -262,6 +262,29 @@ async fn profile_reports_declared_and_loaded_facts_without_side_effects() {
     assert_eq!(body["state"], "not_probed", "{body}");
 }
 
+/// The profiled trigger counts one reply, like chat's, on a backend whose
+/// reasoning doubles the reservation only the hard limit keeps.
+#[tokio::test]
+async fn the_profiled_trigger_counts_one_reply_when_reasoning_is_on() {
+    let ollama = start_native_ollama().await;
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default()
+            .with("models.local_llm.reasoning_effort", "high")
+            .with("chat.compact_prompt_tokens", "4096"),
+    )
+    .await;
+    s.post_json("/api/web", json!({"enabled": false})).await;
+    let (status, body) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(status, 200, "{body}");
+    // max_tokens (4096) + 4096 headroom, not the doubled 8192 + 4096.
+    assert_eq!(body["in_force"]["prompt_limit"], 4096 + 4096, "{body}");
+    assert_eq!(
+        body["in_force"]["limit_source"], "models.local_llm.max_tokens",
+        "{body}"
+    );
+}
+
 #[tokio::test]
 async fn auto_tune_measures_the_selection_and_tightens_its_chat_limits() {
     let ollama = start_native_ollama().await;
