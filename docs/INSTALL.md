@@ -550,7 +550,7 @@ on first run. Common operator settings follow:
 | `models.cloud_chat.max_tokens` / `timeout_sec` | 4096 / 90 | Cloud reply ceiling and timeout; boot refuses 0 or >32768 tokens, or a timeout outside 1–720 s |
 | `models.local_llm.max_tokens` | 4096 | Local reply ceiling: 1–25904 with resolved Ollama and explicit reasoning `none`; otherwise 1–12952, with twice the ceiling reserved for completion. Invalid combinations fail startup with `CONFIG_ERROR` |
 | `models.local_llm.reasoning_effort` | `none` | Sent only to resolved Ollama: `none`, `low`, `medium`, `high`, `max`. Missing/empty omits the field and uses the doubled reservation |
-| `chat.compact_prompt_tokens` / `compact_keep_messages` | 24000 / 8 | Calibrated next-prompt trigger and recent messages retained (2–40). Threshold floor/cap and web interaction: [compaction](CONSOLE.md#local-history-compaction) |
+| `chat.compact_prompt_tokens` / `compact_keep_messages` | 24000 / 8 | Calibrated next-prompt trigger and recent messages retained (2–40); the prompt cap is the hard limit past it. Threshold floor/cap and web interaction: [compaction](CONSOLE.md#local-history-compaction) |
 | `chat.compact_tail_percent` | 25 | Verbatim tail budget as a percent of the trigger, 10–50; whole exchanges, at least the last one |
 | `compaction.summary_max_tokens` | 768 | Summary output ceiling, clamped 128–2048; missing in an existing home also uses 768; sent doubled where the reply is reserved twice |
 | `models.local_llm.inventory.*` | 2.0 s / 262144 bytes | Model-list probe timeout and response cap |
