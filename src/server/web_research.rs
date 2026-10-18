@@ -461,6 +461,8 @@ pub async fn run_from(
         .ok_or_else(|| error("WEB_BUSY", "local model already busy"))?;
     let lease = web.research.start(owner)?;
     let start = tokio::time::Instant::now();
+    let discovery_deadline = start + Duration::from_secs(web.limits.research_seconds);
+    let keep_alive = web.limits.research_seconds.saturating_add(web.limits.synthesis_seconds);
     // With the gate held, wake a tuned model whose keep_alive expired and size
     // the run for the window it now serves, not the snapshot's 32768 defaults.
     // The lease is already registered, so /api/web/research/cancel ends a cold
@@ -470,7 +472,8 @@ pub async fn run_from(
     let loaded = tokio::select! {
         biased;
         _ = lease.token.cancelled() => return Err(error("WEB_CANCELLED", "research cancelled")),
-        loaded = state.load_if_absent(&model) => loaded?,
+        loaded = tokio::time::timeout_at(discovery_deadline, state.load_if_absent(&model, keep_alive)) =>
+            loaded.map_err(|_| error("WEB_RESEARCH_TIMEOUT", "research deadline exceeded during model load"))??,
     };
     if loaded {
         // Only the window-dependent caps change; the run's other limits stay.
@@ -568,7 +571,7 @@ pub async fn run_from(
     };
     let gathered = tokio::select! {
         // From the run's start, so a cold load counts against discovery's deadline.
-        result = tokio::time::timeout_at(start + Duration::from_secs(web.limits.research_seconds), gather) => result,
+        result = tokio::time::timeout_at(discovery_deadline, gather) => result,
         _ = lease.token.cancelled() => Ok(Err(error("WEB_CANCELLED", "research cancelled"))),
     };
     let synthesized = match gathered {

@@ -57,7 +57,7 @@ pub struct ConsolidatorCandidate {
     pub source_refs: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoundCandidate {
     pub action: String,
     pub content: Option<String>,
@@ -143,8 +143,8 @@ pub fn bind_candidates(
             max_category_chars,
             min_confidence,
         ) {
-            Ok(item) => bound.push(item),
-            Err(()) => rejected += 1,
+            Ok(item) if !bound.contains(&item) => bound.push(item),
+            _ => rejected += 1,
         }
     }
     (bound, rejected)
@@ -364,7 +364,7 @@ async fn generate_and_finish(
         _ = state.shutdown.cancelled() => {
             return Err(HarnessError::new("interrupted", "the backend is shutting down"));
         }
-        reply = state.chat.chat(SYSTEM_PROMPT, &messages, Some(&model), 1024, 0.0) => reply?,
+        reply = state.chat.chat_json(SYSTEM_PROMPT, &messages, Some(&model), 1024, 0.0) => reply?,
     };
     if store.is_cancel_requested(&run.id) {
         return Err(HarnessError::new("STRUCTURED_MEMORY_CANCELLED", "cancelled").detail("cancelled", true));
@@ -430,6 +430,13 @@ mod tests {
             "```json\n{{\"candidates\":[{{\"action\":\"add\",\"content\":\"Keep tabs\",\"sensitivity\":\"normal\",\"source_refs\":[\"{source}\"]}}]}}\n```"
         );
         assert!(parse_consolidator_output(&raw, 8).is_ok());
+        for suffix in ["`", "</output>", " extra"] {
+            let invalid = format!("{{\"candidates\":[]}}{suffix}");
+            assert_eq!(
+                parse_consolidator_output(&invalid, 8).unwrap_err().code,
+                "STRUCTURED_MEMORY_SCHEMA"
+            );
+        }
     }
 
     #[test]

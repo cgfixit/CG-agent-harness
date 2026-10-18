@@ -967,7 +967,7 @@ async fn chat_inner(
             if cloud_selected {
                 Ok(false)
             } else {
-                state.load_if_absent(&model).await
+                state.load_if_absent(&model, 0).await
             }
         } => loaded,
     };
