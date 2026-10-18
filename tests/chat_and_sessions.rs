@@ -733,14 +733,23 @@ async fn irreducible_prompt_is_rejected_without_rewriting_the_session() {
     let path = s.home.join("sessions").join(format!("{sid}.json"));
     let before = std::fs::read(&path).unwrap();
 
+    // About 9000 tokens: past the trigger, but far under the hard limit, so the
+    // refusal names the trigger at its floor of one reply, headroom and tools.
     let (status, body) = s
-        .post_json("/api/chat", json!({"session_id":sid,"message":"🦀".repeat(32768)}))
+        .post_json("/api/chat", json!({"session_id":sid,"message":"🦀".repeat(9000)}))
         .await;
 
     assert_eq!(status, 422, "{body}");
     assert_eq!(code(&body), "CHAT_PROMPT_TOO_LARGE");
+    assert_eq!(
+        body["detail"]["details"]["limit_source"], "models.local_llm.max_tokens",
+        "{body}"
+    );
     let limit = body["detail"]["details"]["limit_tokens"].as_u64().unwrap();
-    assert!(limit > 8192, "web tool definitions get their own prompt headroom");
+    assert!(
+        limit > 8192,
+        "web tool definitions get their own prompt headroom: {body}"
+    );
     assert!(body["detail"]["details"]["compacted_tokens"].as_u64().unwrap() > limit);
     assert!(model.requests.lock().unwrap().is_empty());
     assert_eq!(std::fs::read(path).unwrap(), before);
