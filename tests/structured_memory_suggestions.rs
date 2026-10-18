@@ -140,6 +140,7 @@ async fn completed_chat_generates_owner_scoped_pending_drafts_until_explicit_app
     assert!(request.get("tools").is_none());
     assert_eq!(request["temperature"], 0.0);
     assert_eq!(request["max_tokens"], 1024);
+    assert_eq!(request["response_format"], json!({"type":"json_object"}));
     assert!(!request.to_string().contains("FOREIGN_FACT_MUST_NOT_BE_PROMPTED"));
     let payload: Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
     assert!(payload.get("facts").is_none());

@@ -246,8 +246,39 @@ impl ChatClient {
         temperature: f64,
         output: Option<super::openai_stream::Output<'_>>,
     ) -> Result<ChatResult> {
-        self.chat_inner(system_prompt, messages, model, max_tokens, temperature, output, None)
-            .await
+        self.chat_inner(
+            system_prompt,
+            messages,
+            model,
+            max_tokens,
+            temperature,
+            output,
+            None,
+            false,
+        )
+        .await
+    }
+
+    /// Request JSON syntax; callers still validate the schema and source bindings.
+    pub async fn chat_json(
+        &self,
+        system_prompt: &str,
+        messages: &[ChatMessage],
+        model: Option<&str>,
+        max_tokens: u64,
+        temperature: f64,
+    ) -> Result<ChatResult> {
+        self.chat_inner(
+            system_prompt,
+            messages,
+            model,
+            max_tokens,
+            temperature,
+            None,
+            None,
+            true,
+        )
+        .await
     }
 
     /// `chat` with a caller-held deadline, for a run that snapshots its model's
@@ -269,6 +300,7 @@ impl ChatClient {
             temperature,
             None,
             Some(deadline_sec),
+            false,
         )
         .await
     }
@@ -283,6 +315,7 @@ impl ChatClient {
         temperature: f64,
         output: Option<super::openai_stream::Output<'_>>,
         deadline: Option<f64>,
+        json_mode: bool,
     ) -> Result<ChatResult> {
         let use_model = model
             .map(|m| m.trim())
@@ -303,6 +336,9 @@ impl ChatClient {
             "temperature": temperature,
             "stream": false,
         });
+        if json_mode {
+            payload["response_format"] = json!({"type": "json_object"});
+        }
         if let Some(effort) = &self.reasoning_effort {
             payload["reasoning_effort"] = Value::String(effort.clone());
         }
@@ -464,6 +500,31 @@ mod tests {
 
     fn reply(content: &str) -> Value {
         json!({"choices":[{"finish_reason":"stop","message":{"content":content}}],"usage":{"prompt_tokens":3,"completion_tokens":2}})
+    }
+
+    #[tokio::test]
+    async fn json_mode_is_requested_only_for_json_calls() {
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(
+                |axum::Json(body): axum::Json<Value>| async move { axum::Json(reply(&body.to_string())) },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only ephemeral loopback.
+        let url = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this fixture uses no credentials and binds only to loopback.
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ChatClient::new(&url, "local", 5.0, "", None).unwrap();
+        let ordinary = client.chat("Return JSON", &[], None, 1024, 0.0).await.unwrap();
+        let structured = client.chat_json("Return JSON", &[], None, 1024, 0.0).await.unwrap();
+        let ordinary: Value = serde_json::from_str(&ordinary.body_text).unwrap();
+        let mut structured: Value = serde_json::from_str(&structured.body_text).unwrap();
+        assert_eq!(
+            structured.as_object_mut().unwrap().remove("response_format"),
+            Some(json!({"type":"json_object"}))
+        );
+        assert_eq!(structured, ordinary);
+        assert!(ordinary.get("response_format").is_none());
+        server.abort();
     }
 
     #[tokio::test]

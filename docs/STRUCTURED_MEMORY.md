@@ -124,28 +124,30 @@ with administrator-only overrides. Both require an open store and episode
 capture; neither requires nor opens consolidation, recall, or retrieval.
 `suggestion_mode` selects `summaries`, `insights`, or `both` (default); invalid
 values disable suggestions.
-The `completion-suggestions-v1` worker reads only bounded redacted current
-completion evidence in RAM, using the initiating account captured by the chat or
-coding route. It does not scan shared archives or attach generated text as a
-human semantic summary. Synchronous and detached coding share the shim hook
-(I6): only `pending_decision` results qualify; exhausted runs do not. Coding input is the
-submitted instruction plus a projection of the child result (repository, status,
+`completion-suggestions-v1` reads bounded, redacted current
+completion evidence in RAM for the initiating account. It neither scans shared
+archives nor writes human semantic summaries. Synchronous and detached coding share the shim hook
+(I6): `pending_decision` qualifies; exhausted runs do not. Coding input contains the
+submitted instruction and projected child result (repository, status,
 run id, changed files, push/PR fields and commit message), not stdout/stderr,
 file bodies or tool logs. Metadata alone cannot prove a coding lesson or
 successful tests.
 
 Strict parsing, source membership, sensitivity, confidence, and fact bindings
 govern idempotent `session_summary` or `insight` proposals. Identical normalized
-candidates in one output count as rejected duplicates; different source bindings
+candidates count as rejected duplicates within each output; different source bindings
 stay distinct. Only valid candidates consume the single-summary limit. Facts
 require Apply with confirmation and reason. Generation uses temperature 0 and
 1024 output tokens, without tools, web, recalled facts, schema changes, or cloud
-egress. Automatic `consolidator-v2` requires human semantic summaries.
+egress. Completion, manual, and idle inference request
+`response_format: {"type":"json_object"}` locally. Backend refusals and malformed
+replies remain visible failures; schema and source validation remain authoritative.
+Automatic `consolidator-v2` requires human semantic summaries.
 
 Chat suggestions retain their turn's local model; coding suggestions snapshot
-the selection at completion. Manual and idle consolidation use the current
+the selection at completion. Manual and idle consolidation use current
 selection. Cloud selections use the configured local backend; memory never calls
-a cloud provider. Failed runs retain the attempted model.
+cloud providers. Failed runs retain their model.
 
 | Setting | Default | Clamp / meaning |
 |---|---|---|
