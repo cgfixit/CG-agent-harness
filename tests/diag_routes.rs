@@ -116,6 +116,8 @@ async fn a_closed_gate_and_wrong_roles_refuse_with_codes() {
     }
 }
 
+// Windows builds refuse every read (`DIAG_UNSUPPORTED`); see the windows test below.
+#[cfg(unix)]
 #[tokio::test]
 async fn reads_name_an_allowlist_entry_and_audit_no_content() {
     let model = start_mock_model().await;
@@ -192,6 +194,20 @@ async fn reads_name_an_allowlist_entry_and_audit_no_content() {
     assert_eq!((status, code(&body).as_str()), (404, "DIAG_NOT_FOUND"), "{body}");
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_refuses_reads_but_still_validates_the_file_name() {
+    let model = start_mock_model().await;
+    let s = server(&model, true).await;
+    let admin = account(&s, "ops-admin", "admin").await;
+    let (status, body) = json_call(&s, &admin, Method::GET, "/api/diag/read?file=audit.jsonl", None).await;
+    assert_eq!((status, code(&body).as_str()), (409, "DIAG_UNSUPPORTED"), "{body}");
+    let (status, body) = json_call(&s, &admin, Method::GET, "/api/diag/read?file=..%2Fconfig.yaml", None).await;
+    assert_eq!((status, code(&body).as_str()), (400, "DIAG_BAD_FILE"), "{body}");
+    let (status, body) = json_call(&s, &admin, Method::GET, "/api/diag", None).await;
+    assert_eq!(status, 200, "{body}");
+}
+
 #[tokio::test]
 async fn inject_and_forget_need_csrf() {
     let model = start_mock_model().await;
@@ -217,10 +233,13 @@ async fn inject_and_forget_need_csrf() {
     assert_eq!(status, 405, "{body}");
 }
 
+#[cfg(unix)]
 fn system_prompt(request: &Value) -> String {
     request["messages"][0]["content"].as_str().unwrap_or("").to_string()
 }
 
+// Windows builds refuse every read (`DIAG_UNSUPPORTED`); see the windows test below.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_staged_excerpt_reaches_one_local_turn_and_is_refused_elsewhere() {
     let model = start_mock_model().await;
