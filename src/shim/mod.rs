@@ -26,9 +26,10 @@ pub const REAL_REPO_RUN_DEFAULT_ITERATIONS: u64 = 3;
 pub const REAL_REPO_RUN_CHECK_SEC: u64 = 120;
 pub const REAL_REPO_RUN_OVERHEAD_SEC: u64 = 300;
 /// `real-repo-run-push` and `real-repo-run-publish`: above the child's own git
-/// and gh bounds, so a slow remote ends in the child's INDETERMINATE record
-/// rather than a shim kill. `tests/shim_and_agent_routes.rs` pins the sum.
-pub const REAL_REPO_RUN_WRITE_SEC: u64 = 300;
+/// (each call preceded by a validating config read) and gh bounds, so a slow
+/// remote ends in the child's INDETERMINATE record rather than a shim kill.
+/// `tests/shim_and_agent_routes.rs` pins the sum.
+pub const REAL_REPO_RUN_WRITE_SEC: u64 = 420;
 /// A ceiling on the ceiling: a synchronous HTTP request held open longer than
 /// this is its own failure mode.
 pub const REAL_REPO_RUN_MAX_TIMEOUT_SEC: u64 = 3600;
