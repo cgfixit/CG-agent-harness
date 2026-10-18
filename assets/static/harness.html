@@ -870,7 +870,7 @@ function historyLine(text) {
   const line = bareCommand(text);
   const words = line.split(/\s+/);
   const root = words[0].replace(/^\//, '').toLowerCase();
-  if (root === 'model' && words.slice(1).some(word => /sk-ant-|xai-|•/.test(word))) return '/model use';
+  if (root === 'model' && words.slice(1).some(word => /sk-ant-[a-zA-Z0-9_-]{20,}|xai-[a-zA-Z0-9]{20,}|•/.test(word))) return '/model use';
   /* Keep only the root, set|clear and an UPPER_CASE key name; a value, or a
      token typed where the key name belongs, is dropped. */
   if (isApiCredentialLine(text)) {

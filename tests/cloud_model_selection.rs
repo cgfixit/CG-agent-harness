@@ -78,12 +78,19 @@ async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secr
     }
     let local = start_mock_model().await;
     let missing = spawn_server(&local.base_url(), ServerOptions::default()).await;
+    for local_tag in ["xai-custom-local", "sk-ant-small-local"] {
+        assert_eq!(switch(&missing, local_tag, false, 200).await["model"], local_tag);
+    }
     for alias in ["ClAuDe", "ANTHROPIC", "grok", "XAI", "claude-sonnet-5", "grok-4.6"] {
         let body = switch(&missing, alias, true, 409).await;
         assert_eq!(code(&body), "MODEL_PROVIDER_NOT_READY");
         assert!(body.to_string().contains("API Keys"));
     }
-    for secret in ["sk-ant-private-do-not-save", "xai-private-do-not-save", "••••private"] {
+    for secret in [
+        "sk-ant-syntheticfixturecredential000000", // gitleaks:allow -- synthetic refusal fixture, never a provider credential.
+        "xai-syntheticfixturecredential000000",
+        "••••private",
+    ] {
         let (status, body) = missing.post_json("/api/model", json!({"model":secret})).await;
         assert_eq!(status, 422);
         assert!(!body.to_string().contains(secret));

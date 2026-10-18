@@ -739,8 +739,6 @@ impl Validate for ModelSelectRequest {
     fn validate(&self) -> Vec<String> {
         if len_ok(&self.model, 1, MAX_TITLE_LEN)
             && !self.model.trim().chars().any(char::is_whitespace)
-            && !self.model.contains("sk-ant-")
-            && !self.model.contains("xai-")
             && !self.model.contains('•')
         {
             vec![]
