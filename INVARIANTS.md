@@ -270,7 +270,8 @@ policy edit and a syscall is claimed.
 
 ## The clone jail
 
-Writes: canonical path -> per-segment `.git` name-equivalence refusal
+Writes: `canonical_repo_relative_path` (the read rule, so the review diff can
+read back every written path) -> per-segment `.git` name-equivalence refusal
 (trailing dot/space, NTFS `git~1`, HFS-ignored codepoints, case folding) ->
 resolve (dangling-leaf aware) -> containment -> landed-path vs the real
 `.git` dir -> report the LANDED path (so a symlink onto a protected file is
