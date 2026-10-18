@@ -857,6 +857,12 @@ fn correction_sources(middle: &[Message]) -> Vec<String> {
     out
 }
 
+/// A reply cut off at the token cap is an unusable summary; transport
+/// failures, timeouts and any other abnormal finish stay errors.
+fn cut_off(e: &HarnessError) -> bool {
+    e.details["truncated"] == true
+}
+
 /// A persisted-ready summary and what producing it cost and changed.
 #[derive(Debug, Clone, Default)]
 pub struct Summary {
@@ -904,10 +910,8 @@ pub async fn summarize_turns(
             0.0,
         )
         .await
-        // A reply that arrived but did not finish normally (cut off at the
-        // token cap) is unusable; transport failures and timeouts stay errors.
         .map_err(|e| {
-            if e.details.get("output_bytes").is_some() {
+            if cut_off(&e) {
                 unusable(&e.message).with_details(e.details)
             } else {
                 e
@@ -946,6 +950,20 @@ mod tests {
             role: role.into(),
             text: text.into(),
             ts: 1.0,
+        }
+    }
+
+    #[test]
+    fn only_a_reply_cut_off_at_the_token_cap_maps_to_unusable() {
+        use crate::llm::openai_chat::parse_chat_response;
+        let refused = |finish: serde_json::Value| {
+            let reply = serde_json::json!({"choices":[{"finish_reason":finish,"message":{"content":"partial"}}]});
+            parse_chat_response(&reply, "m").unwrap_err()
+        };
+        assert!(cut_off(&refused("length".into())));
+        // A filtered, tool-call or unreported finish is a failed call, not a cut-off summary.
+        for finish in ["content_filter".into(), "tool_calls".into(), serde_json::Value::Null] {
+            assert!(!cut_off(&refused(finish.clone())), "{finish}");
         }
     }
 

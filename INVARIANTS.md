@@ -541,7 +541,7 @@ exact messages.
 A failed, empty, cut-off, timed-out or aborted summary leaves the session
 unrewritten. An unusable one (empty, cut off, prior summaries too big), or a middle
 under twice the summary's cost, sends the turn uncompacted within the hard
-limit (audit `chat_compaction_skipped`); transport failures refuse it. A new
+limit (audit `chat_compaction_skipped`); other failures refuse it. A new
 message alone must fit the trigger; a compacted prompt above the hard limit is
 refused. Otherwise the summary persists atomically with the next successful exchange,
 with calibration, via `write_json_atomic_mode` at `0o600`. The system prompt is
