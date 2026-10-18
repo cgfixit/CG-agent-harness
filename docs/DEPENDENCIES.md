@@ -137,7 +137,7 @@ Those dated results describe that audit; they do not replace current checks.
 
 | Dependency | License | Purpose |
 |---|---|---|
-| `zip` 8.6.0 | MIT | In-memory ZIP reader; default features off, deflate only |
+| `zip` 9.0.5 | MIT | In-memory ZIP reader; default features off, deflate only |
 | `quick-xml` 0.42.0 | MIT | Incremental, namespace-aware main-document XML reading |
 
 No PDF reader or parser subprocess is included. The application lockfile

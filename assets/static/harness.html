@@ -858,10 +858,15 @@ let promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false}
 function bareCommand(text) {
   return text.trim().replace(/^[`'"“‘]+/, '').replace(/[`'"”’]+$/, '').trim().replace(/^\/+\s*/, '/');
 }
-/* /api, slashed or quoted (or a slashless "api set"), may carry a credential. */
+/* /api, slashed or quoted, may carry a credential; so may a slashless
+   "api set|clear" followed by a key name (every managed one has an underscore)
+   or a token-like word (12+ characters with a digit). "API set up …" and a
+   quoted "/api/chat" path are ordinary chat. sessions::redacted_prompt agrees. */
 function isApiCredentialLine(text) {
   const line = bareCommand(text);
-  return /^\/api/i.test(line) || /^api\s*(set|clear)\b/i.test(line);
+  if (/^\/api(\s|$)/i.test(line)) return true;
+  const m = line.match(/^api\s*(set|clear)\b(.*)$/i);
+  return !!m && m[2].trim().split(/\s+/).some(w => w.includes('_') || (w.length >= 12 && /\d/.test(w)));
 }
 function historyLine(text) {
   const line = bareCommand(text);
@@ -2980,7 +2985,9 @@ async function runSlash(line, webCommand) {
           if (r.provider === 'ollama') {
             const inv = await api('/api/ollama/inventory').catch(() => null);
             const tags = inv && Array.isArray(inv.models) ? inv.models.map(m => m.name) : [];
-            if (tags.length && !tags.includes(r.model)) {
+            /* Ollama reads a tag without ":" as name:latest. */
+            const installed = t => t === r.model || (!r.model.includes(':') && t === r.model + ':latest');
+            if (tags.length && !tags.some(installed)) {
               const near = tags.map(t => [t, t.replace(/[:.]/g, '') === r.model.replace(/[:.]/g, '') ? 0 : 1]).sort((a, b) => a[1] - b[1])[0];
               sys('warning: ' + r.model + ' is not an installed Ollama tag, so chat will fail. ' + (near && near[1] === 0 ? 'Did you mean /model use ' + near[0] + '? ' : '') + '/model list shows the tags.');
             }
