@@ -583,19 +583,19 @@ one reply. Above
 `chat.compact_prompt_tokens` (default 24000), it summarizes middle turns,
 keeping the first user message, goal, and whole recent exchanges (at most
 `chat.compact_keep_messages`, 8, and `chat.compact_tail_percent`, 25% of the
-trigger). An `auto_tune`-verified window above 32768 scales the trigger up in
+trigger). An `auto_tune`-verified window above 32768 scales the trigger in
 proportion, within `chat.compact_max_prefill_sec` (120) of measured prefill;
 `chat.compact_follow_window: false` keeps it fixed. The summarizer reads goal and first message, keeps the prior summary
-whole, clips other turns at 800 characters, within 24000 characters and its
-calibrated budget, else history stays. The model gets a lossy note yielding to
+whole, clips other turns at 800 characters within its budget, else history
+stays. The model gets a lossy note yielding to
 exact messages; unsourced codes become `[unverified]`.
 
 Reply reservation is `max_tokens` for resolved Ollama with explicit
-`reasoning_effort: "none"`, or twice that otherwise: a conservative harness
-margin, not provider accounting. The compaction trigger counts one reply on every
+`reasoning_effort: "none"`, or twice that otherwise: a conservative
+margin, not provider accounting. The trigger counts one reply on every
 backend; a doubled reservation can still compact sooner, at the hard limit. Startup accepts at most 25904 reply tokens on
 the first path or 12952 on the second for chat and `/loop`. The trigger floor,
-web-chat tightening and the bytes/4 estimate with its per-session calibration
+web-chat tightening and the calibrated bytes/4 estimate
 are specified in
 [INVARIANTS.md](../INVARIANTS.md#local-chat-compaction-preserves-goal-and-the-first-user-turn).
 Calibration cannot predict language shifts or ratios above 3; verify the
