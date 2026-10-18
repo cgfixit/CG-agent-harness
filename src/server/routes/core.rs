@@ -1060,7 +1060,11 @@ async fn chat_inner(
                 ratio,
                 tool_tokens,
             ) + if middle.is_empty() { 0 } else { scaffold };
-            if retained_projected > hard_limit {
+            let fits_uncompacted = projected <= hard_limit;
+            // A middle smaller than the scaffold makes compaction grow the
+            // prompt: refuse only when the uncompacted turn does not fit either
+            // (when it does, that middle is never worth summarizing).
+            if retained_projected > hard_limit && !fits_uncompacted {
                 return Err(too_large(
                     "the next prompt still exceeds, after history compaction,",
                     projected,
@@ -1069,7 +1073,6 @@ async fn chat_inner(
                     hard_source,
                 ));
             }
-            let fits_uncompacted = projected <= hard_limit;
             let mut summary_meta = crate::server::compaction::Summary::default();
             let summary = if fits_uncompacted
                 && !crate::server::compaction::worth_summarizing(middle, summary_send + scaffold, ratio)

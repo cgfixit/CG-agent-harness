@@ -895,6 +895,63 @@ async fn history_compaction_cannot_shrink_below_the_trigger_is_sent_within_the_h
     assert_eq!(requests.lock().unwrap().len(), 2);
 }
 
+/// A turn between the trigger and the hard limit whose removable middle is
+/// smaller than the summary scaffold is sent uncompacted, not refused because
+/// a compaction that frees nothing would not fit.
+#[tokio::test]
+async fn a_middle_smaller_than_the_summary_scaffold_sends_the_turn_uncompacted_within_the_hard_limit() {
+    use cgagentharness::server::{compaction, routes::core::prompt_history};
+    let (url, requests) = summary_model(Some("Facts and constraints from the user:\n- None")).await;
+    // Shipped 32k limits: trigger 24000, hard limit 30000, one 4096-token reply.
+    let s = spawn_server(&url, ServerOptions::default()).await;
+    s.post_json("/api/web", json!({"enabled":false})).await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id":sid})).await;
+    let system = preview["prompt"].as_str().unwrap().to_string();
+    let usage = cgagentharness::server::sessions::TokenTally::default();
+    // Two pastes near the message length cap and a full-length reply: the tail
+    // is the last exchange and the middle only the two-token "Got it.".
+    for (user, reply) in [
+        ("p".repeat(28_000), "Got it.".to_string()),
+        ("q".repeat(32_000), "r".repeat(16_000)),
+    ] {
+        s.state
+            .store
+            .for_owner("local")
+            .record_exchange(sid, &user, &reply, "fixture", &usage, &[])
+            .unwrap();
+    }
+    let history = prompt_history(&s.state.store.for_owner("local").get(sid).unwrap().messages);
+    let base = compaction::projected_prompt_tokens(&system, &history, "", 4096, 1.0, 0);
+    // The next message lands the turn 60 tokens under the hard limit: it fits
+    // uncompacted, but dropping "Got it." and adding the scaffold would not.
+    let message = "m".repeat(4 * (30_000 - 60 - base) as usize);
+    let projected = compaction::projected_prompt_tokens(&system, &history, &message, 4096, 1.0, 0);
+    assert!(
+        projected > 24_000 && projected <= 30_000 && projected - 2 + compaction::scaffold_tokens() > 30_000,
+        "fixture missed the window: {projected}"
+    );
+    let (status, body) = s
+        .post_json("/api/chat", json!({"session_id":sid,"message":message}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["compaction_skipped"], "no_gain");
+    assert!(body["compaction"].is_null(), "{body}");
+    let sent = requests.lock().unwrap().clone();
+    assert_eq!(sent.len(), 1, "no summary call, only the reply");
+    assert!(
+        !sent[0]["messages"].as_array().unwrap().iter().any(|m| m["content"]
+            .as_str()
+            .is_some_and(|t| t.starts_with(compaction::COMPACT_PREFIX))),
+        "the reply is sent uncompacted"
+    );
+    assert_eq!(
+        s.state.store.for_owner("local").get(sid).unwrap().messages[1].text,
+        "Got it."
+    );
+}
+
 #[tokio::test]
 async fn a_long_normal_session_compacts_instead_of_clipping_at_8000_chars() {
     let model = start_mock_model().await;
