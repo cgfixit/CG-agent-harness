@@ -532,7 +532,11 @@ and first message read-only, the prior `[session-compacted]`
 summary intact (else it is unusable), then the newest middle turns clipped to
 800 characters, gaps marked. Ungrounded identifiers become `[unverified]`;
 absence claims and corrections quoting no user turn (a quote under 8 characters
-must be a whole turn) are dropped; identifiers match whole tokens. The tail is whole exchanges
+must be a whole turn) are dropped; identifiers match whole tokens. After repair the
+harness appends, verbatim, compacted user sentences holding a code, host:port,
+URL, path or recall cue (`compaction.fact_ledger_max_bytes`, 0 off), never
+assistant text or a core-scanner match, with its room reserved before the tail
+is sized. The tail is whole exchanges
 within `chat.compact_keep_messages` and `chat.compact_tail_percent` of the
 trigger, at least one; the summary goes as a user-role note ranked below
 exact messages.
@@ -561,7 +565,9 @@ user message are preserved, even at `MAX_MESSAGES`. The audits `chat_session_com
   `tests/chat_and_sessions.rs::a_long_normal_session_compacts_instead_of_clipping_at_8000_chars`,
   `src/server/compaction.rs::projection_uses_next_prompt_not_lifetime_tally`,
   `src/server/compaction.rs::the_sent_history_alternates_roles_for_every_keep_and_ranks_the_summary_below_exact_turns`,
-  `src/server/sessions.rs::the_message_cap_drops_whole_exchanges_after_the_pinned_turn_and_its_summary`.
+  `src/server/sessions.rs::the_message_cap_drops_whole_exchanges_after_the_pinned_turn_and_its_summary`,
+  `src/server/compaction.rs::fact_ledger_quotes_user_turns_past_the_clip_and_never_assistant_or_injected_text`,
+  `src/server/compaction.rs::with_fact_ledger_appends_carries_forward_fits_its_reserve_and_turns_off_at_zero`.
 
 ## Signals weaker than their name
 

@@ -584,7 +584,9 @@ keeping the first user message, goal, and whole recent exchanges (at most
 trigger). The summarizer reads goal and first message, keeps the prior summary
 whole, clips other turns at 800 characters, within 24000 characters and its
 calibrated budget, else history stays. The model gets a lossy note yielding to
-exact messages; unsourced codes become `[unverified]`.
+exact messages; unsourced codes become `[unverified]`. Compacted user sentences
+holding codes, hosts, URLs, paths or recall cues follow verbatim
+([`compaction.fact_ledger_max_bytes`](INSTALL.md#tunables-you-may-want-to-know-about)).
 
 Reply reservation is `max_tokens` for resolved Ollama with explicit
 `reasoning_effort: "none"`, or twice that otherwise: a conservative harness

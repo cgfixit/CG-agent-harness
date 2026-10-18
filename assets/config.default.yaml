@@ -83,6 +83,11 @@ chat:
 
 compaction:
   summary_max_tokens: 768 # clamped to 128–2048; existing homes without this key also use 768; sent doubled where the reply is reserved twice
+  # Sentences with a code, host:port, URL, path or "remember"-style cue, quoted
+  # verbatim from the full compacted user turns (then the first message, if room is
+  # left) after the summary, whose turns are clipped. Reserved before the tail is
+  # sized. 0 turns it off; held at 4000. Restart required.
+  fact_ledger_max_bytes: 1200
 
 # Chat text attachments (/api/chat/attachments). Size, count and quota limits
 # are fixed in src/server/attachments.rs; this bounds how many upload bodies
