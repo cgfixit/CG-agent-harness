@@ -62,6 +62,13 @@ fn code_and_uncertain_paths_run_everything() {
     let packaging =
         std::fs::read_to_string(repo_root().join("scripts/package-desktop.sh")).expect("package-desktop.sh");
     let bundled = bundled_docs(&packaging);
+    // Packaging leaves PR CI, so a moved bundled doc would first fail on main.
+    for path in &bundled {
+        assert!(
+            repo_root().join(path).is_file(),
+            "package-desktop.sh bundles {path}, which does not exist"
+        );
+    }
     assert!(
         bundled.iter().any(|path| path == "docs/DESKTOP.md"),
         "package-desktop.sh must still bundle docs/DESKTOP.md, got {bundled:?}"

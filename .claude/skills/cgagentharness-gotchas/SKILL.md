@@ -15,8 +15,9 @@ not runtime `/api/skills` plugins.
 - **Symptom:** `scripts/verify-local.sh` fails clippy with toolchain/proxy skew;
   rustup's `cargo-clippy` older than Homebrew's.
 - **Wrong fix:** `#allow` the warnings or drop `-D warnings`.
-- **Right fix:** `CLIPPY=/opt/homebrew/bin/cargo-clippy scripts/verify-local.sh`.
-- **Evidence:** `AGENTS.md`.
+- **Right fix:** `CLIPPY="/opt/homebrew/bin/cargo-clippy clippy" scripts/verify-local.sh`;
+  bare `cargo-clippy` skips `--all-targets`.
+- **Evidence:** `scripts/verify-local.sh`.
 
 ## 2. Chrome chat-browser acceptance flakes
 

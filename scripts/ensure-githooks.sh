@@ -20,7 +20,9 @@ set -u
 say() { printf '[githooks] %s\n' "$*"; }
 
 [ "${GITHOOKS_SKIP_INSTALL:-}" = "1" ] && { say "GITHOOKS_SKIP_INSTALL=1; leaving core.hooksPath as is."; exit 0; }
-root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+# The clone this script lives in, not the caller's directory: init.sh calls it
+# by absolute path from wherever the operator started.
+root="$(CDPATH='' cd -- "$(dirname -- "$0")/.." 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 cd "$root" || exit 0
 [ -d .githooks ] || { say "no .githooks/ in this checkout; nothing to install."; exit 0; }
 

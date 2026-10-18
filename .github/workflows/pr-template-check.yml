@@ -71,11 +71,11 @@ jobs:
               /^[ \t\v\f]*<!-- CURSOR_AGENT_PR_BODY_END -->[ \t\v\f]*$/.test(line));
             const body = cursorFooterAt === -1 ? rawBody : rawLines.slice(0, cursorFooterAt).join("\n");
             const required = [
-              ["Proposed changes (or Why/Benefits/Summary)", /^#{1,4}\s*(proposed changes|benefits|why|summary|what)\b/im],
-              ["Types of changes", /^#{1,4}\s*types of changes\b/im],
-              ["Benefits / why", /^#{1,4}\s*(benefits|why)\b/im],
-              ["Risks to monitor", /^#{1,4}\s*risks?(\s*(to\s*monitor|impact))?\b/im],
-              ["Checklist", /^#{1,4}\s*checklist\b/im],
+              ["Proposed changes (or Why/Benefits/Summary)", /^#{1,4}[ \t\v\f\r]*(proposed changes|benefits|why|summary|what)\b/im],
+              ["Types of changes", /^#{1,4}[ \t\v\f\r]*types of changes\b/im],
+              ["Benefits / why", /^#{1,4}[ \t\v\f\r]*(benefits|why)\b/im],
+              ["Risks to monitor", /^#{1,4}[ \t\v\f\r]*risks?([ \t\v\f\r]*(to[ \t\v\f\r]*monitor|impact))?\b/im],
+              ["Checklist", /^#{1,4}[ \t\v\f\r]*checklist\b/im],
               ["Suggested merge order of open PRs", /^##[ \t\v\f\r]+suggested merge order of open prs[ \t\v\f\r]*$/im],
             ];
             const missing = required.filter(([, re]) => !re.test(body)).map(([label]) => label);
