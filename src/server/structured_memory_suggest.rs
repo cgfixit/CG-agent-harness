@@ -554,7 +554,7 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
             _ = state.shutdown.cancelled() => {
                 return Err(HarnessError::new("interrupted", "the backend is shutting down"));
             }
-            reply = state.chat.chat(&system, &messages, Some(&job.model), 1024, 0.0) => reply?,
+            reply = state.chat.chat_json(&system, &messages, Some(&job.model), 1024, 0.0) => reply?,
         };
         if chat_cleared(state, job) {
             return Err(HarnessError::new("source_cleared", "chat cleared"));
