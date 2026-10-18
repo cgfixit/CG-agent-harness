@@ -83,8 +83,10 @@ jobs:
           toolchain: "1.88"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          # Restores ci.yml's test build; only that job saves dev-* (a narrower
+          # save here would win the immutable key and starve the test job).
           shared-key: dev-${{ runner.os }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: false
       - name: Install Linux credential-store build dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
@@ -109,8 +111,10 @@ jobs:
           toolchain: "1.88"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
+          # Restores ci.yml's test build; only that job saves dev-* (a narrower
+          # save here would win the immutable key and starve the test job).
           shared-key: dev-${{ runner.os }}
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: false
       - name: Install Linux credential-store build dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
       - name: Build netconnect CLI
