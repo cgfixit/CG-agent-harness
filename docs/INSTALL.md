@@ -553,6 +553,7 @@ on first run. Common operator settings follow:
 | `chat.compact_prompt_tokens` / `compact_keep_messages` | 24000 / 8 | Calibrated next-prompt trigger and recent messages retained (2–40); the prompt cap is the hard limit past it. Threshold floor/cap and web interaction: [compaction](CONSOLE.md#local-history-compaction) |
 | `chat.compact_tail_percent` | 25 | Verbatim tail budget as a percent of the trigger, 10–50; whole exchanges, at least the last one |
 | `compaction.summary_max_tokens` | 768 | Summary output ceiling, clamped 128–2048; missing in an existing home also uses 768; sent doubled where the reply is reserved twice |
+| `chat.compact_follow_window` / `compact_max_prefill_sec` | true / 120 | A verified window above 32768 scales the trigger up, within this many seconds of measured prefill (30–1800); literal false keeps it fixed |
 | `models.local_llm.inventory.*` | 2.0 s / 262144 bytes | Model-list probe timeout and response cap |
 | `auth.max_concurrent_operations` | 2 | Concurrent scrypt derivations (about 128 MiB each); range 1–4 |
 | `auth.session.idle_timeout_sec` / `absolute_timeout_sec` | 43200 / 604800 | Session expiry without use (recorded at most once a minute), and regardless of use |
