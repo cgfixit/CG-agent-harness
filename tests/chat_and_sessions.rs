@@ -264,6 +264,85 @@ async fn reasoning_and_compatible_backends_enforce_the_effective_reply_reservati
     assert_eq!(body["detail"]["details"]["limit_tokens"], 30000);
 }
 
+/// The compaction trigger counts one reply on every backend, so a backend that
+/// reserves the reply twice (LM Studio/MLX) compacts at the same history size as
+/// Ollama with reasoning off; the hard limit still holds both reservations.
+#[tokio::test]
+async fn every_backend_compacts_at_the_same_history_size() {
+    use cgagentharness::server::{compaction, routes::core::prompt_history};
+    for provider in ["ollama", "lmstudio"] {
+        let model = start_mock_model().await;
+        let s = spawn_server(
+            &model.base_url(),
+            ServerOptions::default()
+                .with("models.local_llm.provider", provider)
+                .with("chat.compact_prompt_tokens", "16000")
+                .with("chat.compact_keep_messages", "2"),
+        )
+        .await;
+        s.post_json("/api/web", json!({"enabled":false})).await;
+        let (_, created) = s.post_json("/api/sessions", json!({})).await;
+        let sid = created["session_id"].as_str().unwrap();
+        let (_, preview) = s.post_json("/api/prompt/preview", json!({"session_id":sid})).await;
+        let system = preview["prompt"].as_str().unwrap().to_string();
+        let usage = cgagentharness::server::sessions::TokenTally::default();
+        let one_reply = |id: &str| {
+            let history = prompt_history(&s.state.store.for_owner("local").get(id).unwrap().messages);
+            compaction::projected_prompt_tokens(&system, &history, "next", 4096, 1.0, 0)
+        };
+        // Grow the history until one reply's projection is past 16000 - 4096:
+        // under the trigger with one reply, over it with two.
+        let mut i = 0;
+        while one_reply(sid) <= 12_500 {
+            s.state
+                .store
+                .for_owner("local")
+                .record_exchange(
+                    sid,
+                    &format!("u{i} {}", "u".repeat(4000)),
+                    &format!("a{i} {}", "a".repeat(4000)),
+                    "fixture",
+                    &usage,
+                    &[],
+                )
+                .unwrap();
+            i += 1;
+        }
+        assert!(one_reply(sid) < 16_000, "{provider}: fixture overshot the trigger");
+        let (status, body) = s
+            .post_json("/api/chat", json!({"session_id":sid,"message":"next"}))
+            .await;
+        assert_eq!(status, 200, "{provider}: {body}");
+        assert!(
+            body["compaction"].is_null(),
+            "{provider} compacted below the one-reply trigger: {body}"
+        );
+        assert_eq!(model.last_request().unwrap()["max_tokens"], 4096);
+        for j in 0..2 {
+            s.state
+                .store
+                .for_owner("local")
+                .record_exchange(
+                    sid,
+                    &format!("v{j} {}", "v".repeat(4000)),
+                    &format!("b{j} {}", "b".repeat(4000)),
+                    "fixture",
+                    &usage,
+                    &[],
+                )
+                .unwrap();
+        }
+        let (status, body) = s
+            .post_json("/api/chat", json!({"session_id":sid,"message":"next"}))
+            .await;
+        assert_eq!(status, 200, "{provider}: {body}");
+        assert!(
+            !body["compaction"].is_null(),
+            "{provider} must compact past the trigger: {body}"
+        );
+    }
+}
+
 /// #212 F8. A backend that reserves the reply twice (LM Studio/MLX, or Ollama with
 /// thinking on) had that doubled reservation charged three times against
 /// `web.total_tokens`, so the shipped 28000 budget refused a 400-character message.

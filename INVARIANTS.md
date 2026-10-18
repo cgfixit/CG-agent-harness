@@ -524,7 +524,8 @@ room left, and returns a failed read to the model as its result (a batch that
 fails entirely ends the turn or, after evidence, the tool rounds). A web turn's
 deadline adds a measured tool-round allowance, at most doubling the chat timeout.
 Startup and reload warn below 4096 remaining input tokens. Ollama with explicit `reasoning_effort: "none"` reserves the reply ceiling
-once; anything else reserves it twice in validation, compaction and dispatch,
+once; anything else reserves it twice in validation, the hard limit and dispatch
+(the trigger counts one reply on every backend),
 and startup caps both reply settings ([CONSOLE.md](docs/CONSOLE.md#local-history-compaction)).
 The incoming user paste is never compacted. One local-model call
 (`compaction.summary_max_tokens`, default 768, clamped 128–2048, sent as its
