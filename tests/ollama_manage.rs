@@ -621,6 +621,36 @@ async fn a_reload_at_a_smaller_window_scales_the_lifted_trigger_down_with_it() {
 }
 
 #[tokio::test]
+async fn a_configured_trigger_sized_for_the_measured_window_follows_a_smaller_reload_down() {
+    let ollama = start_native_ollama().await;
+    *ollama.longctx_window.lock().unwrap() = 131_072;
+    // The operator raised the trigger to the 96000 the profile proposes for 131072.
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default()
+            .with("models.local_llm.auto_tune", "true")
+            .with("chat.compact_prompt_tokens", "96000")
+            .with("api.rate_limit.max_requests", "1000"),
+    )
+    .await;
+    s.post_json("/api/web", json!({"enabled": false})).await;
+    let (status, body) = s.post_json("/api/model", json!({"model": "longctx:q8"})).await;
+    assert_eq!(status, 200, "{body}");
+    let body = wait_for_tuning(&s, 131_072).await;
+    assert_eq!(body["in_force"]["prompt_limit"], 96000, "{body}");
+    // Reloaded at 65536 the configured 96000 would sit above the 60000 hard
+    // limit with no headroom; it scales with the window to the 48000 proposal,
+    // and an unknown window keeps the 24000 the 32768 defaults give.
+    for (window, cap, trigger) in [(65_536, 60000, 48000), (32_768, 30000, 24000), (0, 30000, 24000)] {
+        *ollama.longctx_window.lock().unwrap() = window;
+        let (_, body) = s.get_json("/api/ollama/profile").await;
+        assert_eq!(body["tuning"]["window"], 131_072, "{body}");
+        assert_eq!(body["in_force"]["prompt_cap"], cap, "{body}");
+        assert_eq!(body["in_force"]["prompt_limit"], trigger, "{body}");
+    }
+}
+
+#[tokio::test]
 async fn a_planner_on_the_tuned_model_budgets_runs_with_its_measured_timeout() {
     let ollama = start_native_ollama().await;
     let planner_url = format!("\"{}\"", ollama.openai_url());

@@ -501,9 +501,19 @@ impl AppState {
         // proposal down with it, and an unknown one keeps the 32768 defaults.
         let window = self.verified_window(model).unwrap_or(super::model_limits::TUNED_WINDOW);
         let measured = tuning.window.clamp(1, super::compaction::MAX_WINDOW);
+        let proposed = tuning.compact_prompt_tokens * window.min(measured) / measured;
+        // A configured value that reaches the tuning's own proposal was sized
+        // for the measured window (an operator who raised it as the profile
+        // advises), so it follows a smaller window down too. A value below the
+        // proposal is the operator's own choice and stands.
+        let tightened = if configured >= tuning.compact_prompt_tokens {
+            tightened.min(proposed)
+        } else {
+            tightened
+        };
         super::model_limits::window_trigger(
             tightened,
-            tuning.compact_prompt_tokens * window.min(measured) / measured,
+            proposed,
             window,
             self.prompt_cap(model),
             reply,
