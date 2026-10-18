@@ -923,7 +923,7 @@ async fn chat_inner(
     // The prompt limit this turn was sized for, checked again before the reply.
     let mut turn_prompt_limit = 0u64;
     if !cloud_selected {
-        let configured_threshold = state.compact_prompt_tokens(&model);
+        let configured_threshold = state.compact_prompt_tokens(&model, max_tokens);
         let prompt_cap = state.prompt_cap(&model);
         // The reply budget of this turn: /loop turns reserve their own.
         let reply_setting = if req.loop_turn {

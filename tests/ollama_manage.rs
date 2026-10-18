@@ -519,6 +519,55 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     );
 }
 
+/// The window-scaled trigger bounds the input measured prefill reads in
+/// chat.compact_max_prefill_sec, plus the turn's own reply: a /loop turn
+/// (2048) compacts at the same input as a chat turn (4096).
+#[tokio::test]
+async fn a_loop_turn_compacts_at_the_input_measured_prefill_reads() {
+    let ollama = start_native_ollama().await;
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default()
+            .with("models.local_llm.auto_tune", "true")
+            .with("api.rate_limit.max_requests", "1000"),
+    )
+    .await;
+    s.post_json("/api/web", json!({"enabled": false})).await;
+    wait_for_tuning(&s, 32768).await;
+    let (status, body) = s.post_json("/api/model", json!({"model": "longctx:q8"})).await;
+    assert_eq!(status, 200, "{body}");
+    wait_for_tuning(&s, 65536).await;
+    // A slower prefill: 300 tok/s reads 36000 tokens in 120 s, under the 48000 proposal.
+    let mut tuning = (*s.state.tuning_for("longctx:q8").expect("tuned")).clone();
+    tuning.speed = Some(json!({"prefill_tps": 300.0}));
+    s.state.set_tuning(Some(tuning));
+    let (_, body) = s.get_json("/api/ollama/profile").await;
+    assert_eq!(body["in_force"]["prompt_limit"], 36_000 + 4096, "{body}");
+    let (_, created) = s.post_json("/api/sessions", json!({"title": "t"})).await;
+    let sid = created["session_id"].as_str().unwrap().to_string();
+    s.post_json(&format!("/api/sessions/{sid}/goal"), json!({"goal": "g"}))
+        .await;
+    // About 31000 tokens of history, under what prefill reads.
+    for turn in 0..4 {
+        let long = format!("turn {turn} {}", "x".repeat(31_000));
+        let (status, reply) = s
+            .post_json("/api/chat", json!({"session_id": sid, "message": long}))
+            .await;
+        assert_eq!(status, 200, "{reply}");
+        assert!(reply["compaction"].is_null(), "{reply}");
+    }
+    // A /loop turn of about 37000 input tokens compacts, though with its
+    // 2048-token reply it is still under the 40096 a chat turn counts with 4096.
+    let (status, reply) = s
+        .post_json(
+            "/api/chat",
+            json!({"message": "y".repeat(16_000), "loop": true, "session_id": sid}),
+        )
+        .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["compaction"]["threshold"], 36_000 + 2048, "{reply}");
+}
+
 #[tokio::test]
 async fn a_reload_at_a_smaller_window_scales_the_lifted_trigger_down_with_it() {
     let ollama = start_native_ollama().await;

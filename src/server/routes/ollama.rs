@@ -72,7 +72,7 @@ pub async fn profile(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value
         0
     };
     let (prompt_limit, limit_source) = compaction::turn_prompt_limit(
-        state.compact_prompt_tokens(&model),
+        state.compact_prompt_tokens(&model, state.chat_max_tokens(&model)),
         state.prompt_cap(&model),
         web_chat.then_some(web_total),
         // The trigger counts one reply on every backend.
