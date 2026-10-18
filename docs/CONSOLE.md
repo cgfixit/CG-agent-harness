@@ -125,7 +125,7 @@ consecutive failed turns (auto retries once) stop it. A `GOAL_DONE` line (even `
 too, but is only model advice.
 
 This loop does not edit files, run skills as programs, or perform coding checks.
-`--web` on `/goal` or `/loop` sets the chat tools of every turn while the goal is set; without it the goal takes `web.goal_web_default` (ships `fetch`, restart-only). `fetch` excludes search, `off` excludes web context and tools. URL permissions still apply. Preflight shows the mode. Counters and auto state are page state.
+`--web` on `/goal` or `/loop` sets the chat tools of every turn while the goal is set; without it the goal takes `web.goal_web_default` (ships `all`, restart-only). `fetch` excludes search, `off` excludes web context and tools. Search listings never grant URL permission; URL permissions still apply. Preflight shows the mode. Counters and auto state are page state.
 Refresh/restart does not resume an unattended loop. Goal-to-coding execution is
 an explicit separate workflow in [goal staging](CODING_PIPELINE.md#94-stage-a-session-goal-as-a-coding-task).
 

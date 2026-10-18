@@ -137,7 +137,7 @@ async fn loop_advertises_only_permitted_web_tool_types_when_enabled() {
     s.post_json(
         &format!("/api/sessions/{id}/goal"),
         // Explicit `all`: this test covers the web on/off toggle, not the shipped
-        // goal default (`fetch`), which the goal_web_default tests lock.
+        // goal default (`all`), which the goal_web_default tests lock.
         json!({"goal":format!("Explain arithmetic. {} FINAL_CONSTRAINT: use the operator data only.", "Check each input and assumption. ".repeat(45)), "web_mode":"all"}),
     )
     .await;
@@ -269,8 +269,8 @@ async fn goal_web_modes_persist_filter_definitions_and_reject_mixed_batches_befo
         )
         .await;
     assert_eq!(cleared["goal_web_mode"], "all");
-    // No mode named: the shipped default is fetch, so an unattended loop never
-    // picks search queries unless the operator asked for all.
+    // No mode named: the shipped default is all, so an unattended loop may search;
+    // search listings grant no URL permission, so fetches stay policy-gated.
     let (status, defaulted) = s
         .post_json(
             &format!("/api/sessions/{sid}/goal"),
@@ -278,7 +278,7 @@ async fn goal_web_modes_persist_filter_definitions_and_reject_mixed_batches_befo
         )
         .await;
     assert_eq!(status, 200, "{defaulted}");
-    assert_eq!(defaulted["goal_web_mode"], "fetch");
+    assert_eq!(defaulted["goal_web_mode"], "all");
     let (status, reply) = s
         .post_json("/api/chat", json!({"session_id":sid,"message":"continue","loop":true}))
         .await;
@@ -290,7 +290,7 @@ async fn goal_web_modes_persist_filter_definitions_and_reject_mixed_batches_befo
         .flatten()
         .map(|t| t["function"]["name"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(offered, vec!["web_fetch"]);
+    assert_eq!(offered, vec!["web_search", "web_fetch"]);
     task.abort();
 }
 
@@ -298,7 +298,7 @@ async fn goal_web_modes_persist_filter_definitions_and_reject_mixed_batches_befo
 async fn goal_web_default_is_configurable_and_explicit_modes_still_win() {
     let s = common::spawn_server(
         "http://127.0.0.1:9/v1",
-        common::ServerOptions::default().with("web.goal_web_default", "all"),
+        common::ServerOptions::default().with("web.goal_web_default", "fetch"),
     )
     .await;
     let (_, created) = s.post_json("/api/sessions", json!({})).await;
@@ -307,7 +307,7 @@ async fn goal_web_default_is_configurable_and_explicit_modes_still_win() {
         .post_json(&format!("/api/sessions/{sid}/goal"), json!({"goal":"Search widely"}))
         .await;
     assert_eq!(status, 200, "{set}");
-    assert_eq!(set["goal_web_mode"], "all");
+    assert_eq!(set["goal_web_mode"], "fetch");
     let (_, set) = s
         .post_json(
             &format!("/api/sessions/{sid}/goal"),
