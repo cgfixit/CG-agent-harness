@@ -153,7 +153,7 @@ pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatR
     };
     match first.get("finish_reason").and_then(Value::as_str) {
         Some("stop") => {}
-        Some("length") => return Err(incomplete("model output was truncated; reduce the requested output or adjust the configured token budget before retrying")),
+        Some("length") => return Err(incomplete("model output was truncated; reduce the requested output or adjust the configured token budget before retrying").detail("truncated", true)),
         _ => return Err(incomplete("model response did not report a normal completion (finish_reason=stop required)")),
     }
     Ok(ChatResult {

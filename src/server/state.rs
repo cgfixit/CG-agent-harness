@@ -485,8 +485,9 @@ impl AppState {
 
     /// `chat.compact_prompt_tokens`, lowered to `model`'s tuning, then scaled
     /// up to a larger verified window unless `chat.compact_follow_window` is
-    /// literally false ([`super::model_limits::window_trigger`]).
-    pub fn compact_prompt_tokens(&self, model: &str) -> u64 {
+    /// literally false ([`super::model_limits::window_trigger`]). `reply` is the
+    /// turn's reply budget, which the trigger counts.
+    pub fn compact_prompt_tokens(&self, model: &str, reply: u64) -> u64 {
         let configured = self
             .cfg
             .u64_or("chat.compact_prompt_tokens", super::compaction::DEFAULT_PROMPT_TOKENS);
@@ -497,12 +498,27 @@ impl AppState {
         if self.cfg.bool_opt("chat.compact_follow_window") == Some(false) {
             return tightened;
         }
+        // The tuning proposed its trigger for the window it measured. The
+        // verified window is never larger: a reload at a smaller one scales that
+        // proposal down with it, and an unknown one keeps the 32768 defaults.
+        let window = self.verified_window(model).unwrap_or(super::model_limits::TUNED_WINDOW);
+        let measured = tuning.window.clamp(1, super::compaction::MAX_WINDOW);
+        let proposed = tuning.compact_prompt_tokens * window.min(measured) / measured;
+        // A configured value that reaches the tuning's own proposal was sized
+        // for the measured window (an operator who raised it as the profile
+        // advises), so it follows a smaller window down too. A value below the
+        // proposal is the operator's own choice and stands.
+        let tightened = if configured >= tuning.compact_prompt_tokens {
+            tightened.min(proposed)
+        } else {
+            tightened
+        };
         super::model_limits::window_trigger(
             tightened,
-            tuning.compact_prompt_tokens,
-            tuning.window,
+            proposed,
+            window,
             self.prompt_cap(model),
-            self.chat_max_tokens(model),
+            reply,
             tuning.speed.as_ref(),
             self.cfg
                 .u64_or(

@@ -19,7 +19,7 @@ even after restart. `/tokens` shows its breakdown. Unavailable tallies display
 `—`, not zero. Analytics and `/status` hold all-session aggregates.
 
 Session tallies count committed chat exchanges, including web-tool rounds and
-successful compaction. They are not billing records. Failed-after-billing calls
+compaction attempts. They are not billing records. Failed-after-billing calls
 and independent research or coding operations can enter the ledger without a
 saved exchange. Switching sessions does not change the ledger.
 
