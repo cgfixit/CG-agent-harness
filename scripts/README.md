@@ -21,13 +21,14 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 - [`smoke-ollama.sh`](smoke-ollama.sh): live smoke of the release binary against local Ollama; optional `FINGERPRINT_OUT`.
 - [`qwen3.8-27b-mlx-cg.Modelfile`](qwen3.8-27b-mlx-cg.Modelfile): `ollama create` recipe pinning `num_ctx` 32768 ([MODELS.md](../docs/MODELS.md)).
 - [`live-ollama/`](live-ollama/): pinned Ollama, two checksummed models, baseline and fingerprint for `live-ollama.yml`.
+- [`bakeoff/`](bakeoff/): operator bench; `bakeoff_harness.py --self-test` is the `ci.yml` product gate against its fake Ollama.
 
 ## Verification and CI
 
 - [`verify-local.sh`](verify-local.sh): full local verification: lint, tests, contract scripts, build, smoke.
 - [`check-pr-template.sh`](check-pr-template.sh): local PR-body gate mirroring `pr-template-check.yml`.
 - [`ci-docs-only.sh`](ci-docs-only.sh): classifies a diff as docs-only so `ci.yml` and `bundle.yml` skip compile jobs.
-- [`browser-acceptance.mjs`](browser-acceptance.mjs): native Chrome acceptance against a disposable fixture; CI and skill-run only.
+- [`browser-acceptance.mjs`](browser-acceptance.mjs): native Chrome acceptance against a disposable fixture (CI, skill runs).
 - [`chat-browser-acceptance.mjs`](chat-browser-acceptance.mjs): real-browser slash-command tests against a mock API.
 - [`test-analytics.mjs`](test-analytics.mjs): analytics and spend helpers, logout clearing.
 - [`test-attachment-preview.mjs`](test-attachment-preview.mjs): preview reuses uploads and never leaks across sessions.

@@ -6,7 +6,7 @@ Index: [README.md](../README.md). Set `OLLAMA_CONTEXT_LENGTH=32768` before start
 
 ## 4. Select an installed model and check Ollama
 
-Inspect the full local inventory before choosing a model:
+Inspect the local inventory before choosing a model:
 
 ```bash
 ollama --version
@@ -15,8 +15,8 @@ curl --fail --silent --show-error http://127.0.0.1:11434/v1/models
 ```
 
 If the endpoint is unavailable, start the existing Ollama app or `ollama serve`.
-Keep a terminal-started daemon running; use another terminal for the harness.
-Never start a second daemon on an occupied port.
+Keep a terminal-started daemon running and use another terminal for the harness;
+never start a second daemon on an occupied port.
 
 Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 require a
 **32768-token** window. Chat, pulls and warmup inherit the window Ollama
@@ -61,16 +61,15 @@ with `/model use qwen3.8:27b-mlx-cg`. It is local-only: do not pull it.
 `loaded.context_length`; chat uses the loaded value. Confirm `/api/ps` is 32768.
 
 The recipe does not disable thinking. The harness sends `reasoning_effort:
-none` for provider `ollama` on every tag.
+none` for provider `ollama` on every tag. For a 65536 window on a 48 GB Mac (the
+parent tag already pins it) and the values to set, see the
+[bake-off report](bakeoff/local-model-bakeoff-2026-10-10.md#windows-above-32768-on-a-48-gb-mac).
 `SMOKE_MODEL=qwen3.8:27b-mlx-cg scripts/smoke-ollama.sh` selects it. Pinned
 models under `scripts/live-ollama/` are a separate fingerprint set.
 
-Choose the **exact installed identifier**. The acceptance Mac had `qwen3.8:27b`
-and a separate `qwen3.8:27b-mlx` with a different digest. Neither is assumed
-installed elsewhere. With an empty inventory, deliberately download a model
-suited to your hardware before continuing; allow for network and disk use.
-Preserve working models. An `-mlx` suffix proves no execution backend. Inspect
-the exact inventory tag:
+Choose the **exact installed identifier**. With an empty inventory, download a
+model suited to your hardware first; allow for network and disk use. An `-mlx`
+suffix proves no execution backend. Inspect the exact inventory tag:
 
 ```bash
 ollama show qwen3.8:27b

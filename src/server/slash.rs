@@ -182,7 +182,20 @@ pub fn parse_line(input: &str) -> SlashParse {
     if let Some(other) = second_intent {
         parsed.dispatch = false;
         parsed.kind = SlashKind::Suggest;
-        parsed.notice = Some("second intent was not dispatched; slash parser does not run web search".into());
+        parsed.notice = Some("not dispatched: one command per line — send the /memory consolidate line by itself and run the search separately".into());
+        if let Some(primary) = parsed
+            .canonical
+            .clone()
+            .filter(|c| !parsed.suggestions.iter().any(|s| &s.line == c))
+        {
+            parsed.suggestions.insert(
+                0,
+                SlashSuggestion {
+                    line: primary,
+                    score: 60,
+                },
+            );
+        }
         parsed.suggestions.push(SlashSuggestion { line: other, score: 50 });
     }
     parsed
@@ -201,7 +214,7 @@ fn split_second_intent(line: &str) -> (String, Option<String>) {
             let primary = line[..idx].trim().to_string();
             let rest = line[idx + needle.len()..].trim();
             if !primary.is_empty() && !rest.is_empty() {
-                return (primary, Some(format!("search {rest}")));
+                return (primary, Some(format!("/web search {rest}")));
             }
         }
     }
@@ -223,6 +236,12 @@ fn parse_slash_primary(line: &str) -> SlashParse {
 
     let raw_cmd = tokens[0];
     let cmd_l = raw_cmd.to_ascii_lowercase();
+    if cmd_l == "net"
+        && tokens.len() == 2
+        && matches!(tokens[1].to_ascii_lowercase().as_str(), "help" | "--help" | "-h")
+    {
+        return parse_line("/help net");
+    }
     if !preexisting_slash_names().contains(cmd_l.as_str()) {
         if let Some(intent) = crate::netconnect::slash::interpret(&cmd_l, &tokens[1..], &preexisting_slash_names()) {
             return net_intent(intent);
@@ -235,10 +254,24 @@ fn parse_slash_primary(line: &str) -> SlashParse {
     };
 
     let after_cmd = &tokens[1..];
-    if cmd != "help" && after_cmd.len() == 1 && matches!(after_cmd[0], "help" | "--help" | "-h") {
+    if cmd != "help"
+        && after_cmd.len() == 1
+        && matches!(after_cmd[0].to_ascii_lowercase().as_str(), "help" | "--help" | "-h")
+    {
         return parse_line(&format!("/help {cmd}"));
     }
     let (sub, args, sub_fuzzy) = resolve_sub(cmd, after_cmd);
+    // `/memory search --help` asks for help, not a search for "--help". A note
+    // or fact body (`/memory add --help`) stays literal text.
+    if matches!(cmd, "memory" | "soul" | "agent")
+        && sub
+            .as_deref()
+            .is_some_and(|s| !matches!(s, "add" | "save" | "remember"))
+        && args.len() == 1
+        && matches!(args[0].to_ascii_lowercase().as_str(), "-h" | "--help")
+    {
+        return parse_line(&format!("/help {cmd}"));
+    }
     // Goals and loop counts have a free-form/numeric fallback. Other families
     // can suggest a mistyped subcommand without granting it execution authority.
     if sub.is_none() && !matches!(cmd, "goal" | "loop") {
@@ -262,6 +295,42 @@ fn parse_slash_primary(line: &str) -> SlashParse {
             }
         }
     }
+    if matches!(cmd, "agent" | "soul") && sub.is_none() && !after_cmd.is_empty() {
+        // `/agent schedules` or `/soul enable` would otherwise print a table or
+        // the status and look as if the word had done something.
+        let near: &[(&str, u8)] = if cmd == "agent" {
+            &[("help agent", 60)]
+        } else {
+            &[("soul status", 50), ("help soul", 40)]
+        };
+        return suggest_only(&format!("unknown /{cmd} subcommand; not dispatched"), near);
+    }
+    if cmd == "session" && sub.is_none() && !after_cmd.is_empty() {
+        // `/session delete x` or `/session open x` would otherwise list sessions.
+        return suggest_only(
+            "unknown /session subcommand; not dispatched",
+            &[("session list", 60), ("help session", 50)],
+        );
+    }
+    if cmd == "model" && sub.is_none() && !after_cmd.is_empty() {
+        // `/model qwen3:8b` or `/model pull x` would otherwise show the status table
+        // and drop what was typed. Suggest only; selecting a model stays exact.
+        let mut parsed = suggest_only(
+            "unknown /model subcommand; not dispatched — /model use <exact tag> selects a model",
+            &[],
+        );
+        parsed.suggestions = vec![
+            SlashSuggestion {
+                line: format!("/model use {}", after_cmd.last().unwrap()),
+                score: 60,
+            },
+            SlashSuggestion {
+                line: "/model list".into(),
+                score: 50,
+            },
+        ];
+        return parsed;
+    }
     if matches!(cmd, "memory" | "web") && sub.is_none() && !after_cmd.is_empty() {
         if cmd == "web" && after_cmd == ["--help"] {
             return parse_line("/help web");
@@ -276,7 +345,10 @@ fn parse_slash_primary(line: &str) -> SlashParse {
             }];
             return parsed;
         }
-        return suggest_only("unknown subcommand; not dispatched — use /help", &[]);
+        return suggest_only(
+            "unknown /memory subcommand; not dispatched",
+            &[("memory", 50), ("memory facts", 45), ("help memory", 40)],
+        );
     }
     if let Some(notice) = mutation_argument_refusal(cmd, sub.as_deref(), &args) {
         return suggest_only(notice, &[("help", 100)]);
@@ -322,7 +394,7 @@ fn parse_slash_primary(line: &str) -> SlashParse {
     } else {
         None
     };
-    let mut notice = None;
+    let mut notice = web.as_ref().and_then(|w| w.notice.clone());
     if cmd == "memory" && sub.as_deref() == Some("consolidate") && rest.is_empty() {
         notice = Some(
             "consolidate needs selected episode ids or the Memory panel; no ids were taken from filler text".into(),
@@ -502,6 +574,16 @@ fn resolve_sub<'a>(cmd: &str, tokens: &'a [&'a str]) -> (Option<String>, Vec<&'a
         return (None, Vec::new(), false);
     }
     let first = tokens[0].to_ascii_lowercase();
+    if cmd == "goal" {
+        // Goal text is free-form: "/goal the task is …" or "/goal Task list for …"
+        // is a goal, not a fuzzy subcommand. task and clear take no operands.
+        let sub = subs.iter().any(|s| *s == first) && (first == "stage" || tokens.len() == 1);
+        return if sub {
+            (Some(first), tokens[1..].to_vec(), false)
+        } else {
+            (None, tokens.to_vec(), false)
+        };
+    }
     if subs.iter().any(|s| *s == first) {
         return (Some(first), tokens[1..].to_vec(), false);
     }
@@ -584,6 +666,43 @@ fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Opt
     if cmd == "web" {
         return None;
     }
+    // /loop [--web off|fetch|all] [n]: the documented mode flag, then an optional count.
+    if (cmd, sub) == ("loop", None) {
+        let rest = match args {
+            ["--web", "off" | "fetch" | "all", rest @ ..] => rest,
+            ["--web", ..] => {
+                return Some("usage: /loop [--web off|fetch|all] [n] | /loop auto | /loop stop; not dispatched")
+            }
+            rest => rest,
+        };
+        return match rest {
+            [] => None,
+            [n] if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) && !n.starts_with('0') => None,
+            _ => Some("usage: /loop [--web off|fetch|all] [n] | /loop auto | /loop stop; not dispatched"),
+        };
+    }
+    if (cmd, sub) == ("goal", None) {
+        // `--web=all`, `-web all` or `web all` would otherwise be stored as goal
+        // text. Only a dashed word or a bare `web <mode>` is a flag attempt, so
+        // goal text such as "website redesign" still dispatches.
+        let flag = args.first().and_then(|a| {
+            let bare = a.trim_start_matches(['-', '–', '—']);
+            (bare.len() < a.len()).then(|| bare.to_ascii_lowercase())
+        });
+        let bare_mode = matches!(args, [w, m, ..] if w.eq_ignore_ascii_case("web")
+            && ["off", "fetch", "all"].iter().any(|x| m.eq_ignore_ascii_case(x)));
+        if (bare_mode || flag.is_some_and(|f| f.starts_with("web")))
+            && !matches!(args, ["--web", "off" | "fetch" | "all", ..])
+        {
+            return Some("usage: /goal --web off|fetch|all [text] (a space, not =); not dispatched");
+        }
+    }
+    if (cmd, sub) == ("goal", Some("stage")) && args.len() > 1 {
+        return Some("/goal stage takes one branch name; to set a goal that starts with \"stage\", reword it (for example /goal Plan to stage …); not dispatched");
+    }
+    if cmd == "api" && sub == Some("set") && args.get(1).is_some_and(|a| is_control_flag(a)) {
+        return Some("help or dry-run flags are not a credential value; not dispatched — use /help api");
+    }
     // Validate fixed operands before console dispatch so ignored extra text
     // cannot authorize an action. Keep free-form command payloads intact.
     let max_args = match (cmd, sub) {
@@ -613,7 +732,7 @@ fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Opt
         | ("api", Some("clear"))
         | ("agent", Some("plan" | "iterations" | "pr" | "issue" | "stop" | "discard" | "pr-body"))
         | ("goal", Some("stage"))
-        | ("loop", None) => Some(1),
+        | ("model", Some("use")) => Some(1),
         ("skill", None) if args.first().is_some_and(|arg| arg.starts_with("check:")) => Some(1),
         ("web", Some("allow")) => Some(3),
         _ => None,
@@ -638,20 +757,24 @@ fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Opt
                 .rsplit_once("::")
                 .is_some_and(|(_, reason)| is_help_reason(&reason.split_whitespace().collect::<Vec<_>>())));
     if reason_is_help {
-        return Some("help or dry-run text is not an approval reason; command not dispatched — use /help");
+        return Some("help, dry-run or confirm flags are not an approval reason; command not dispatched — use /help");
     }
     None
 }
 
 fn is_control_flag(token: &str) -> bool {
+    // `--confirm` or `--yes` typed where a reason belongs is not a reason.
     matches!(
         token.to_ascii_lowercase().as_str(),
-        "-h" | "--help" | "--dry-run" | "--dryrun"
+        "-h" | "--help" | "--dry-run" | "--dryrun" | "--confirm" | "--yes" | "-y" | "--force"
     )
 }
 
 fn is_help_reason(tokens: &[&str]) -> bool {
-    tokens.first().is_some_and(|token| is_control_flag(token))
+    // A reason is prose; one that opens with a flag (`--confirm`, `--yes`) is not.
+    tokens
+        .first()
+        .is_some_and(|token| is_control_flag(token) || token.starts_with("--"))
         || (tokens.len() == 1 && matches!(tokens[0].to_ascii_lowercase().as_str(), "help" | "?"))
 }
 
@@ -728,6 +851,123 @@ fn suggest_only(notice: &str, near: &[(&str, u8)]) -> SlashParse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loop_web_mode_goal_text_and_model_payloads_parse_as_documented() {
+        for line in [
+            "/loop --web all",
+            "/loop --web fetch 3",
+            "/loop --web off 12",
+            "/loop 5",
+            "/loop",
+        ] {
+            let p = parse_line(line);
+            assert!(p.dispatch, "{line}: {p:?}");
+            assert_eq!(p.canonical.as_deref(), Some(line), "{line}");
+        }
+        for line in [
+            "/loop --web bogus",
+            "/loop --web all auto",
+            "/loop --web",
+            "/loop 0",
+            "/loop 3 4",
+            "/loop --help --web all",
+        ] {
+            assert!(!parse_line(line).dispatch, "{line}");
+        }
+        for (line, canonical) in [
+            (
+                "/goal the task is to find hvac repair",
+                "/goal the task is to find hvac repair",
+            ),
+            ("/goal Task list for hvac vendors", "/goal Task list for hvac vendors"),
+            (
+                "/goal I want to stage a comparison",
+                "/goal I want to stage a comparison",
+            ),
+            ("/goal clear", "/goal clear"),
+            ("/goal stage claude/hvac", "/goal stage claude/hvac"),
+        ] {
+            let p = parse_line(line);
+            assert!(p.dispatch, "{line}: {p:?}");
+            assert_eq!(p.canonical.as_deref(), Some(canonical));
+        }
+        for line in [
+            "/model use --help",
+            "/model use a b",
+            "/api set SERPAPI_API_KEY --dry-run",
+        ] {
+            assert!(!parse_line(line).dispatch, "{line}");
+        }
+        for line in [
+            "/agent schedules",
+            "/soul enable",
+            "/agent approve 0123456789abcdef0123456789abcdef --confirm",
+            "/agent confirm --yes",
+        ] {
+            assert!(!parse_line(line).dispatch, "{line}");
+        }
+        assert_eq!(parse_line("/net help").canonical.as_deref(), Some("/help net"));
+        assert_eq!(
+            parse_line("/agent checks --help").canonical.as_deref(),
+            Some("/help agent")
+        );
+        let p = parse_line("/memory consolidate 0123456789abcdef0123456789abcdef and search Google for hvac");
+        assert!(
+            !p.dispatch && p.suggestions[0].line.starts_with("/memory consolidate 0123"),
+            "{p:?}"
+        );
+        for line in [
+            "/goal --web=all find hvac",
+            "/goal -web all find hvac",
+            "/goal --web bogus find hvac",
+            "/goal web all find hvac",
+        ] {
+            assert!(!parse_line(line).dispatch, "{line}");
+        }
+        for line in [
+            "/goal --web all find hvac",
+            "/goal website redesign plan",
+            "/goal Webinar series for hvac techs",
+            "/goal web design for the shop",
+        ] {
+            assert!(parse_line(line).dispatch, "{line}");
+        }
+        assert!(parse_line("/goal Stage the rollout").notice.unwrap().contains("reword"));
+        let p = parse_line("/session delete 3f9a1c2b");
+        assert!(
+            !p.dispatch && p.suggestions.iter().any(|s| s.line == "/session list"),
+            "{p:?}"
+        );
+        let p = parse_line("/model qwen3:8b");
+        assert!(!p.dispatch && p.suggestions[0].line == "/model use qwen3:8b", "{p:?}");
+        assert_eq!(parse_line("/model HELP").canonical.as_deref(), Some("/help model"));
+    }
+
+    #[test]
+    fn help_after_a_memory_or_soul_subcommand_opens_help() {
+        for line in ["/memory search --help", "/memory facts -h", "/soul review --help"] {
+            let p = parse_line(line);
+            assert_eq!(
+                p.canonical.as_deref(),
+                Some(if line.starts_with("/soul") {
+                    "/help soul"
+                } else {
+                    "/help memory"
+                }),
+                "{line}"
+            );
+        }
+        assert_eq!(
+            parse_line("/memory add --help").canonical.as_deref(),
+            Some("/memory add --help")
+        );
+        let p = parse_line("/memory list");
+        assert!(
+            !p.dispatch && p.suggestions.iter().any(|s| s.line == "/memory facts"),
+            "{p:?}"
+        );
+    }
 
     #[test]
     fn all_fuzzy_memory_forms_are_suggestions_only() {
@@ -855,12 +1095,19 @@ mod tests {
                 "{line:?}"
             );
         }
+        // Help after a subcommand opens read-only help, never the subcommand.
+        for line in ["/memory retrieve --help", "/memory facts --help"] {
+            let parsed = parse_line(line);
+            assert_eq!(
+                (parsed.command.as_deref(), parsed.canonical.as_deref()),
+                (Some("help"), Some("/help memory")),
+                "{line:?}"
+            );
+        }
         for line in [
             "/memory proposals and then clear",
-            "/memory retrieve --help",
             "/memory retrieve --dry-run private preference",
             "/memory facts clear",
-            "/memory facts --help",
             "/memory status off",
             "/memory please facts",
             "/memory my facts",

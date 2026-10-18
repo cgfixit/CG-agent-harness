@@ -9,6 +9,57 @@ use super::web_policy::{canonical_url, valid_group, Rule, MAX_BATCH_URLS};
 pub struct WebCommand {
     pub action: String,
     pub body: Value,
+    /// Operator-facing note printed before dispatch; never sent to the route.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
+}
+
+/// Operators and models often omit the scheme (`*.example.org`,
+/// `example.org/*`). Only `https://` is supplied, never HTTP, a host or a
+/// path: `example.org` stays the exact root page and `*.example.org` still
+/// excludes the apex, exactly as with the scheme typed out.
+fn with_https(arg: &str) -> String {
+    // A URL copied from rendered markdown or prose can arrive wrapped in
+    // backticks or typographic quotes; no URL starts with one.
+    let arg = [('`', '`'), ('“', '”'), ('‘', '’')]
+        .iter()
+        .find_map(|(open, close)| arg.strip_prefix(*open)?.strip_suffix(*close))
+        .unwrap_or(arg);
+    if arg.contains("://") {
+        arg.to_string()
+    } else {
+        format!("https://{arg}")
+    }
+}
+
+/// Punctuation copied with a host (`example.org,` or `example.org)`) parses as a
+/// different, never-matching host; refuse it instead of saving a dead rule.
+fn host_punctuation(url: &str) -> Option<char> {
+    let authority = url.split_once("://")?.1.split(['/', '?', '#']).next()?;
+    authority
+        .chars()
+        .find(|c| !(c.is_alphanumeric() || matches!(c, '.' | '-' | '_' | '*' | ':' | '[' | ']')))
+}
+
+fn checked(raw: &str) -> Result<String, String> {
+    let url = with_https(raw);
+    match host_punctuation(&url) {
+        Some(c) => Err(pattern_refused(raw, &format!("the host contains '{c}'"))),
+        None => Ok(url),
+    }
+}
+
+/// A refused pattern names itself and the accepted shapes, so the operator
+/// does not have to guess which of several operands failed or why.
+fn pattern_refused(raw: &str, message: &str) -> String {
+    let hint = if raw.starts_with('/') {
+        " Remove the leading / (the command is /web; the pattern starts with the host)."
+    } else {
+        ""
+    };
+    format!(
+        "{raw}: {message}.{hint} Use https://www.example.org/* (one host, all paths), https://*.example.org/* (subdomains, apex excluded) or https://example.org/page (one page)."
+    )
 }
 
 #[derive(Debug)]
@@ -109,6 +160,7 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
         return Ok(WebCommand {
             action: "help".into(),
             body: json!({"topic":"web"}),
+            notice: None,
         });
     }
     let mut positional = Vec::new();
@@ -118,6 +170,7 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
     let mut count = None;
     let mut engine = None;
     let mut literal = false;
+    let mut notice = None;
     let mut i = 0;
     while i < args.len() {
         let word = &args[i];
@@ -149,8 +202,19 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
                 _ => false,
             };
             if !allowed {
+                let accepted = match action {
+                    "allow" => "/web allow accepts --group and --seed",
+                    "check" | "fetch" => "it accepts --group",
+                    "search" => {
+                        "it accepts --count, --engine and --group; put -- before query words that start with --"
+                    }
+                    "pages" => "it accepts --group; put -- before query words that start with --",
+                    "research" => "it accepts --group and --url; put -- before question words that start with --",
+                    "deny" => "deny takes one rule ID or pattern, with no flags",
+                    _ => "it takes no flags",
+                };
                 return Err(format!(
-                    "Unsupported flag {flag} for /web {action}. Put -- before query words that start with --, or use /help web."
+                    "Unsupported flag {flag} for /web {action}: {accepted}. See /help web."
                 ));
             }
             let value = if let Some(value) = inline {
@@ -226,36 +290,61 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
                 return Err("Allow needs 1–32 URL patterns and at most 16 seeds.".into());
             }
             let group = group.unwrap_or_else(|| "default".into());
-            let rules = positional
-                .iter()
-                .map(|p| Rule::new(p, &group, &[]))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.message)?;
+            let (mut patterns, mut rules, mut root_only) = (Vec::new(), Vec::new(), Vec::new());
+            for raw in &positional {
+                let pattern = checked(raw)?;
+                let rule = Rule::new(&pattern, &group, &[]).map_err(|e| pattern_refused(raw, &e.message))?;
+                // A host with no path (`example.org`, `https://*.example.org`) is
+                // each host's root page only, which is rarely what was meant.
+                if !pattern.split_once("://").is_some_and(|(_, rest)| rest.contains('/')) {
+                    root_only.push(format!("{raw} permits only the root page {}", rule.pattern));
+                }
+                patterns.push(pattern);
+                rules.push(rule);
+            }
+            let seeds = seeds.iter().map(|s| checked(s)).collect::<Result<Vec<_>, _>>()?;
             for seed in &seeds {
-                let target = canonical_url(seed).map_err(|e| e.message)?;
+                let target = canonical_url(seed).map_err(|e| pattern_refused(seed, &e.message))?;
                 if !rules.iter().any(|r| r.permits(&target)) {
                     return Err("Each seed must be inside a pattern in this grant.".into());
                 }
             }
-            json!({"urls":positional,"group":group,"seeds":seeds})
+            if !root_only.is_empty() {
+                notice = Some(format!(
+                    "{}; end a pattern with /* (for example https://*.example.org/*) to include every path.",
+                    root_only.join("; ")
+                ));
+            }
+            json!({"urls":patterns,"group":group,"seeds":seeds})
         }
         "fetch" | "check" => {
             if positional.is_empty() || positional.len() > MAX_BATCH_URLS {
                 return Err(format!("/web {action} needs 1–32 exact URLs. For links and site research, use /web research --url URL <question>."));
             }
-            for url in &positional {
-                canonical_url(url).map_err(|_| "Use exact HTTP(S) URLs, not wildcard patterns or prose. For permitted internal links use /web research --url URL <question>.".to_string())?;
+            let urls = positional.iter().map(|u| checked(u)).collect::<Result<Vec<_>, _>>()?;
+            for (raw, url) in positional.iter().zip(&urls) {
+                canonical_url(url).map_err(|e| {
+                    if raw.contains('*') {
+                        format!("{raw}: use exact HTTP(S) URLs, not wildcard patterns or prose. For permitted internal links use /web research --url URL <question>.")
+                    } else {
+                        pattern_refused(raw, &e.message)
+                    }
+                })?;
             }
-            json!({"urls":positional,"group":group})
+            json!({"urls":urls,"group":group})
         }
         "deny" => {
             if positional.len() != 1 {
                 return Err("Use /web deny <rule-id-or-pattern>.".into());
             }
-            let rule = &positional[0];
-            if !(rule.len() == 32 && rule.bytes().all(|c| c.is_ascii_hexdigit())) {
-                Rule::new(rule, "default", &[]).map_err(|e| e.message)?;
-            }
+            let raw = &positional[0];
+            let rule = if raw.len() == 32 && raw.bytes().all(|c| c.is_ascii_hexdigit()) {
+                raw.clone()
+            } else {
+                let pattern = checked(raw)?;
+                Rule::new(&pattern, "default", &[]).map_err(|e| pattern_refused(raw, &e.message))?;
+                pattern
+            };
             json!({"url":rule})
         }
         "search" | "pages" | "research" => {
@@ -268,8 +357,9 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
             if query.trim().is_empty() || query.chars().count() > limit {
                 return Err(format!("Supply a question or query of 1–{limit} characters."));
             }
+            let urls = urls.iter().map(|u| checked(u)).collect::<Result<Vec<_>, _>>()?;
             for url in &urls {
-                canonical_url(url).map_err(|e| e.message)?;
+                canonical_url(url).map_err(|e| pattern_refused(url, &e.message))?;
             }
             if urls.len() > MAX_BATCH_URLS {
                 return Err("Too many research starting URLs.".into());
@@ -298,6 +388,7 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
     Ok(WebCommand {
         action: action.into(),
         body,
+        notice,
     })
 }
 
@@ -419,6 +510,60 @@ mod tests {
             .unwrap_err()
             .contains("google or pages"));
     }
+    #[test]
+    fn scheme_less_operands_get_https_only_and_refusals_name_the_operand() {
+        let c = parse(Some("allow"), "*.google.com google.com/* --group google").unwrap();
+        assert_eq!(c.body["urls"], json!(["https://*.google.com", "https://google.com/*"]));
+        assert!(c
+            .notice
+            .unwrap()
+            .starts_with("*.google.com permits only the root page https://*.google.com/;"));
+        assert!(parse(Some("allow"), "https://www.google.com/*")
+            .unwrap()
+            .notice
+            .is_none());
+        assert!(parse(Some("allow"), "https://*.google.com").unwrap().notice.is_some());
+        // A typed scheme is kept, never upgraded or downgraded; no host is guessed.
+        assert_eq!(
+            parse(Some("allow"), "http://example.org/*").unwrap().body["urls"][0],
+            "http://example.org/*"
+        );
+        assert_eq!(
+            parse(Some("check"), "www.google.com").unwrap().body["urls"][0],
+            "https://www.google.com"
+        );
+        assert_eq!(
+            parse(Some("deny"), "*.google.com/*").unwrap().body["url"],
+            "https://*.google.com/*"
+        );
+        assert_eq!(
+            parse(Some("research"), "--url www.google.com hvac near 30041")
+                .unwrap()
+                .body["urls"][0],
+            "https://www.google.com"
+        );
+        assert_eq!(
+            parse(Some("allow"), "`https://www.google.com/*` “https://example.org/*”")
+                .unwrap()
+                .body["urls"],
+            json!(["https://www.google.com/*", "https://example.org/*"])
+        );
+        let err = parse(Some("allow"), "/*.google.com google.com/* --group google").unwrap_err();
+        assert!(
+            err.starts_with("/*.google.com:") && err.contains("Remove the leading /"),
+            "{err}"
+        );
+        let err = parse(Some("allow"), "https://www.google.com, https://google.com/*").unwrap_err();
+        assert!(
+            err.starts_with("https://www.google.com,: the host contains ','"),
+            "{err}"
+        );
+        assert!(parse(Some("deny"), "https://*.google.com/* --group google")
+            .unwrap_err()
+            .contains("with no flags"));
+        assert!(parse(Some("search"), "--seed x hvac").unwrap_err().contains("put --"));
+    }
+
     #[test]
     fn research_question_limit_is_separate_from_search_queries() {
         for action in ["search", "pages", "research"] {

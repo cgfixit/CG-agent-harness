@@ -348,11 +348,13 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
             .with("api.rate_limit.max_requests", "1000")
     };
     let plain = spawn_server(&ollama.openai_url(), options()).await;
-    // With web on, the web budget binds the prompt, exactly as chat computes it:
-    // 32000 held at the cap, less one 4096-token reply reservation.
+    // With web on, the web budget is checked exactly as chat computes it: 32000
+    // held at the cap, less a 256-token minimal tool result (31744), which no
+    // longer binds below the 30000 prompt cap now that each prompt is charged once.
     let (_, body) = plain.get_json("/api/ollama/profile").await;
-    assert_eq!(body["in_force"]["limit_source"], "web.total_tokens", "{body}");
-    assert_eq!(body["in_force"]["prompt_limit"], 27904, "{body}");
+    assert_eq!(body["in_force"]["limit_source"], "chat.compact_prompt_tokens", "{body}");
+    assert_eq!(body["in_force"]["prompt_limit"], 30000, "{body}");
+    assert_eq!(body["in_force"]["web_total_tokens"], 32000, "{body}");
     plain.post_json("/api/web", json!({"enabled": false})).await;
     let (_, body) = plain.get_json("/api/ollama/profile").await;
     assert_eq!(

@@ -34,17 +34,17 @@ busy while a reply streams.
 
 Fresh chat has no assigned repository or automatic coding skills. When web is
 enabled, local chat can dispatch only the bounded read-only `web_search` and
-`web_fetch` tools, including local `/loop` turns. Chat cannot inspect local files or
-certify live wiring. Use command results as evidence and the coding workflow for
-execution.
+`web_fetch` tools, including local `/loop` turns. Chat cannot inspect local
+files or certify live wiring; use command results as evidence and the coding
+workflow for execution.
 
 Existing homes retain repositories and skill files; chat neither loads nor edits
-legacy coding skills automatically. For an isolated test, start `/session new`,
-use `/skill clear`, inspect `/memory` and `/soul status`, then `/prompt`. A new
+legacy coding skills. For an isolated test, start `/session new`, use
+`/skill clear`, inspect `/memory` and `/soul status`, then `/prompt`. A new
 session still uses enabled shared notes and persona.
 
-Enter slash commands in chat. `/help` lists installed commands. Begin with
-`/status`, `/model`, `/skills all`, and `/tools`; registration is not
+Enter slash commands in chat; `/help` lists them. Begin with `/status`,
+`/model`, `/skills all`, and `/tools`; registration is not
 [readiness](#77-tools-and-connectors-available-versus-catalog-only).
 
 ### 7.1 Sessions and bounded chat continuation
@@ -56,15 +56,15 @@ Enter slash commands in chat. `/help` lists installed commands. Begin with
 ```
 
 Send a question and confirm a reply. `/tokens` and the header's
-**session · tokens** count show the selected session's tally
+**session · tokens** count show the session's tally
 ([interpretation](SPEND_AND_NOTIFICATIONS.md#read-spend-without-mistaking-missing-data-for-zero)).
 
 Creating or switching sessions replaces the visible transcript, stops chat and
-the browser's generation wait, discards delayed replies, and clears staged
-coding or persona reviews. Switching restores retained messages without adding
+the generation wait, discards delayed replies, and clears staged
+coding or persona reviews. Switching restores retained messages without
 duplicates. A new session has no messages, goal, or prompt skills. Persona and
-enabled notes remain shared within the home. Your account's web selection and
-injected context survive session changes. Reset controls have different scopes:
+enabled notes stay shared within the home; your account's web selection and
+injected context survive session changes. Reset controls differ in scope:
 
 | Intent | Control | Retained data |
 |---|---|---|
@@ -77,22 +77,19 @@ Confirmation stops active chat, clears the conversation, and deletes your saved
 sessions, goals, skill selections, and token totals. It retains other accounts,
 unassigned legacy records, and unreadable files. Late replies cannot recreate a
 deleted session. Afterward, send a message or use `/session new`. If storage
-fails, resolve the reported problem before retrying because deletion may be partial.
+fails, resolve the reported problem before retrying; deletion may be partial.
 
-Deletion is not secure erasure. Backups, model-service copies, and text loaded in
-other clients remain; close or refresh those clients separately.
+Deletion is not secure erasure: backups, model-service copies, and text loaded
+in other clients remain.
 
-In the composer, Up recalls older prompts and Down moves forward or restores the
-draft. The active session's local JSON log retains the latest 50 persisted
-prompts across restart. Legacy logs seed the list from user messages, and
-compaction does not erase it. Session switches and logout reset navigation. The
-browser stores nothing persistently. Failed submissions and unsaved slash
-commands do not enter prompt history.
+In the composer, Up recalls older prompts; Down moves forward or restores the draft. Every submitted line enters history, refused commands included; `/api`
+keeps only its key name and `/loop` turns are skipped. The session log keeps the
+latest 50 across restart; legacy logs seed it from user messages and compaction
+keeps it. Session switches and logout reset navigation; the browser stores nothing.
 
 The session store retains at most 500 messages per conversation. Local prompt
-history uses that retained window; [compaction](#local-history-compaction) reduces
-overflow against the configured token budget while preserving the goal and recent messages. There is
-no separate 20-message/8,000-character history clip. Stored token totals can
+history uses that window; [compaction](#local-history-compaction) reduces
+overflow against the configured token budget, preserving the goal and recent messages. Stored token totals can
 therefore exceed the compacted context sent to the model.
 
 Runtime `sessions/` directories, named `.CGagentHarness/` homes and dotenv files
@@ -115,15 +112,15 @@ git ls-files -- ':(glob)**/sessions/**' ':(glob)**/.CGagentHarness/**' '.env' '.
 ```
 
 `/loop 3` runs up to three follow-up turns toward the goal (default three,
-maximum five), each restating the full bounded goal. Manual mode pauses after each
-turn; `/loop` continues. `/loop auto` toggles automatic continuation, before
-starting or to resume. `/loop stop` cancels during generation or cooldown. Goal
-clear, session switching, rate limits, failures, token budgets and a
-90%-identical reply stop it. A `GOAL_DONE` line (even `**GOAL_DONE**`) stops it
+maximum five), each restating the bounded goal. Manual mode pauses after each
+turn; `/loop` continues. `/loop auto` only toggles automatic continuation; it
+starts nothing. `/loop stop` cancels generation or cooldown. Goal
+clear, session switching, token budgets, a 90%-identical reply and two
+consecutive failed turns (auto retries once) stop it. A `GOAL_DONE` line (even `**GOAL_DONE**`) stops it
 too, but is only model advice.
 
 This loop does not edit files, run skills as programs, or perform coding checks.
-Use `/goal --web off|fetch|all <text>` or `/loop --web off|fetch|all [n]` to set the goal's chat tools; without a flag the goal takes `web.goal_web_default` (ships `fetch`, restart-only). `fetch` excludes search, `off` excludes web context and tools. URL permissions still apply. Preflight shows the mode. Counters and auto state are page state.
+`--web` on `/goal` or `/loop` sets the chat tools of every turn while the goal is set; without it the goal takes `web.goal_web_default` (ships `fetch`, restart-only). `fetch` excludes search, `off` excludes web context and tools. URL permissions still apply. Preflight shows the mode. Counters and auto state are page state.
 Refresh/restart does not resume an unattended loop. Goal-to-coding execution is
 an explicit separate workflow in [goal staging](CODING_PIPELINE.md#94-stage-a-session-goal-as-a-coding-task).
 
@@ -401,11 +398,11 @@ confirmation and persistence.
 | `/clear` | Clear visible output, staged coding/review state and chat continuation; saved chats, notes, persona and web context remain |
 | `/connectors` | Connector catalog; does not activate connectors |
 | `/github` | Read-only agentic GitHub status |
-| `/goal`, `/goal <text>`, `/goal clear` | Inspect, set or clear the saved session goal |
+| `/goal`, `/goal [--web off\|fetch\|all] [text]`, `/goal clear` | Inspect, set or clear the saved session goal and its web mode |
 | `/goal stage <branch>`, `/goal task` | Explicitly stage coding from a goal or inspect its task linkage |
 | `/harness` | List retained optimizer runs; does not start optimization |
 | `/help [topic\|search words\|all]` | Searchable topic guide, full command catalog and insertable examples |
-| `/loop [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; `auto` toggles; exact `stop` also cancels a streaming chat turn |
+| `/loop [--web off\|fetch\|all] [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; `auto` toggles; exact `stop` also cancels a streaming chat turn |
 | `/memory`, `status`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Shared pinned notes; [operator memory notes](MEMORY_GUIDE.md#pinned-notes) |
 | `/memory capture\|recall\|retrieval\|auto-retrieve\|consolidation\|auto-consolidate\|auto-suggest-chat\|auto-suggest-coding on\|off` | Administrator-only structured-memory gate overrides; `on` or `off` is required. `/memory on` stays pinned notes |
 | `/memory consolidate <episode-id> [episode-id ...]` | Selected-episode consolidation into pending proposals; does not apply facts |
@@ -502,11 +499,13 @@ BM25-search them and inject matching passages into the attachment fence.
 `.md` and `.txt` notes ingested at `/api/notes-corpus` use a separate home jail
 but share that local prompt budget (`source=notes_corpus`). Local loops include
 these sources; cloud chat and `/agent` refuse attachment IDs or live pins with
-`ATTACHMENT_SURFACE_FORBIDDEN` and never receive notes-corpus bytes. `/session unpin` clears session references, keeping blobs and messages.
-Loop startup reports live pins/web availability and uploads selected files.
-Tool failures stop continuation with the goal incomplete; fix the reported
-permission/provider/budget problem before retrying `/loop`.
-Unsupported formats are refused. Clipped sections explicitly say they are incomplete.
+`ATTACHMENT_SURFACE_FORBIDDEN` and never receive notes-corpus bytes. `/session unpin` clears session references, keeping blobs.
+Loop startup reports live pins, web availability, uploads.
+A repeating refusal (no URL permitted, keyless search, no budget for a round)
+stops continuation; one failed read is reported and the loop continues
+until two turns' reads all failed. A loop rate limit waits out
+`retry_after` (up to 300 s); `/loop stop` ends the wait.
+Unsupported formats are refused; clipped sections say they are incomplete.
 
 The notes corpus has multipart ingest, list, and delete
 [routes](API_ROUTES.md#chat-model-and-chat-sessions), but no console uploader.
@@ -578,24 +577,24 @@ Before local chat or `/loop`, the harness estimates system text, stored messages
 the new message, tool definitions, and reply reservation. Above
 `chat.compact_prompt_tokens` (default 24000), it summarizes middle turns while
 preserving the first user message, goal, and recent tail
-(`chat.compact_keep_messages`, default 8, range 2–40). Prior summaries remain
+(`chat.compact_keep_messages`, default 8, range 2–40). Prior summaries stay
 intact; other middle turns clip at 800 characters. Summary input is at most
-24000 characters and must fit its calibrated call budget. Otherwise compaction
+24000 characters and must fit its calibrated call budget, else compaction
 fails without changing history.
 
 Reply reservation is `max_tokens` for resolved Ollama with explicit
 `reasoning_effort: "none"`, or twice that otherwise: a conservative harness
-margin, not a claim about provider accounting. Startup accepts at most 25904
-reply tokens on the first path or 12952 on the second for chat and `/loop`. The
-trigger floor, web-chat tightening and the bytes/4 estimate with its per-session
-calibration (1–3, reset when model or endpoint changes) are specified in
+margin, not provider accounting. Startup accepts at most 25904 reply tokens on
+the first path or 12952 on the second for chat and `/loop`. The trigger floor,
+web-chat tightening and the bytes/4 estimate with its per-session calibration
+(1–3, reset when model or endpoint changes) are specified in
 [INVARIANTS.md](../INVARIANTS.md#local-chat-compaction-preserves-goal-and-the-first-user-turn).
-Calibration cannot predict language shifts, same-name model replacement, or
-ratios above 3; verify the model window as described in [MODELS.md](MODELS.md).
+Calibration cannot predict language shifts or ratios above 3; verify the
+model window per [MODELS.md](MODELS.md).
 
-`compaction.summary_max_tokens` defaults to 768 and clamps to 128–2048, including
-in older homes. Tune it in home `config.yaml`, then restart. Compaction is inline.
-Empty, failed, truncated, or cancelled output commits neither summary nor
+`compaction.summary_max_tokens` defaults to 768 and clamps to 128–2048, older
+homes included. Tune it in home `config.yaml`, then restart. Compaction is inline;
+empty, failed, truncated, or cancelled output commits neither summary nor
 calibration. A prompt that still exceeds the limit returns
 `CHAT_PROMPT_TOO_LARGE` (422) naming the bounding setting (`details.limit_source`),
 the turn's reply budget (`models.local_llm.max_tokens`, or
