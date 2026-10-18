@@ -990,7 +990,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default contract; file was at 6437.
     // why: operator-approved +150 (2026-10-18), shared by the four compaction follow-up PRs (#513 fixes, hard limit, reply parity, window trigger).
     // why: operator-approved +10 (2026-10-18, #529) for the goal-less /loop and compaction auto-continue sentence; file at 6694.
-    ("INVARIANTS.md", Root, 6700),
+    // why: operator-approved +10 (2026-10-18, #532): the compaction follow-ups add trigger/hard-limit and quote-handling sentences on top of #529; file at 6702.
+    ("INVARIANTS.md", Root, 6710),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     ("README.md", Root, 1500),
