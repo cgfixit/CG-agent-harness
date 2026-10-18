@@ -15,6 +15,7 @@
 #   --yes             never ask; a failed optional step is skipped, a failed required one stops
 #   --model TAG       also pull an Ollama model (multi-GB)   --with-gh  install GitHub CLI
 #   --no-ollama       leave Ollama alone                     --app-dir DIR  app location
+#   --replace-app     replace an installed app with the latest release (quit it first)
 #   --trust-cert      trust the console certificate for your browser (choices 2 and 3 with the app)
 #   --no-profile      do not add Homebrew and Rust PATH lines to your shell profile
 #   --no-allowlist    do not grant the web allowlist
@@ -36,9 +37,9 @@ if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then exec arch -ar
 [ "$(id -u)" != 0 ] || { echo 'init.sh: run as your user, not root (no sudo)' >&2; exit 3; }
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-choice='' interactive=1 trust=0 profile_opt=1 allowlist=1 ollama=1 app_dir=''
+choice='' interactive=1 trust=0 profile_opt=1 allowlist=1 ollama=1 app_dir='' replace=0
 install_args=()
-usage() { sed -n '2,22p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 while [ "$#" -gt 0 ]; do
   case $1 in
     --choice) case ${2:-} in 0 | 1 | 2 | 3) choice=$2; shift ;; *) echo 'init.sh: --choice takes 0, 1, 2 or 3' >&2; exit 3 ;; esac ;;
@@ -48,6 +49,7 @@ while [ "$#" -gt 0 ]; do
     --app-dir) [ "$#" -ge 2 ] && [ -n "$2" ] && [ "${2#-}" = "$2" ] || { echo 'init.sh: --app-dir needs a directory' >&2; exit 3; }; app_dir=$2; install_args+=(--app-dir "$2"); shift ;;
     --with-gh) install_args+=(--with-gh) ;;
     --no-ollama) ollama=0; install_args+=(--no-ollama) ;;
+    --replace-app) replace=1; install_args+=(--replace-app) ;;
     --trust-cert) trust=1 ;;
     --no-profile) profile_opt=0 ;;
     --no-allowlist) allowlist=0 ;;
@@ -284,13 +286,16 @@ step_checkout() {
 
 step_install() {
   local rc
-  bash "$root/scripts/install-macos.sh" --check ${install_args[@]+"${install_args[@]}"}
-  rc=$?
-  case $rc in
-    0) say 'already installed; nothing to do'; return "$SKIP" ;;
-    1) ;;
-    *) return "$rc" ;;
-  esac
+  # --check passes with an app installed, so --replace-app always runs the installer.
+  if [ "$replace" = 0 ]; then
+    bash "$root/scripts/install-macos.sh" --check ${install_args[@]+"${install_args[@]}"}
+    rc=$?
+    case $rc in
+      0) say 'already installed; nothing to do (--replace-app updates the app)'; return "$SKIP" ;;
+      1) ;;
+      *) return "$rc" ;;
+    esac
+  fi
   bash "$root/scripts/install-macos.sh" ${install_args[@]+"${install_args[@]}"}
   rc=$?
   if [ "$rc" != 0 ] && app_running; then
@@ -436,6 +441,8 @@ step_admin_password() {
       ask_secret 'New admin password (12+ characters; Enter to generate one and keep it in Keychain):'
       [ -n "$REPLY" ] || break
       [ "${#REPLY}" -ge 12 ] || { warn 'use at least 12 characters'; continue; }
+      # The server refuses the current credential (the setup code) as the new one.
+      [ "$REPLY" != "$current" ] || { warn 'choose a password other than the current one'; continue; }
       new=$REPLY
       ask_secret 'Type it again:'
       [ "$REPLY" = "$new" ] && break
@@ -456,11 +463,15 @@ step_admin_password() {
   if ! printf '%s\n%s\n' "$current" "$new" | cli account --url "$origin" password >/dev/null 2>"$private/cli.err"; then
     warn "$(cat "$private/cli.err")"
     # The CLI can fail after the server committed the change: ask the server
-    # which password it accepts before touching the only saved copy.
+    # which password it accepts before touching the only saved copy. A refused
+    # change can still sign in with "$new" when it is the current setup code
+    # typed another way, so only an account that no longer must replace counts.
     if login_as_admin "$new"; then
       signed_in=1
-      say 'admin password replaced (the CLI reported an error afterwards) and saved in your login keychain'
-      return 0
+      if ! must_replace; then
+        say 'admin password replaced (the CLI reported an error afterwards) and saved in your login keychain'
+        return 0
+      fi
     fi
     security delete-generic-password -a admin -s "$kc_service" >/dev/null 2>&1
     [ -z "$stored" ] || kc_put "$stored" || true

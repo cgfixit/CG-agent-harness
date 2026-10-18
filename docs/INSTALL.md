@@ -49,6 +49,12 @@ below in order from a fresh clone or download, from zsh or bash:
 cd CG-agent-harness && scripts/init.sh    # or: bash scripts/init.sh
 ```
 
+Or double-click **init.command** in the clone's top folder in Finder: it runs the
+same script in a Terminal window and waits for Return at the end. A git clone opens
+directly. A folder unpacked from a downloaded ZIP is quarantined: Control-click
+the file and choose **Open** (macOS 15 and later: **Open Anyway** in System Settings
+→ Privacy & Security), or run `xattr -dr com.apple.quarantine <folder>` once.
+
 It waits for the Command Line Tools dialog, runs `install-macos.sh` (skipped when
 `--check` passes), adds Homebrew and Rust to your login shell's profile
 (`~/.zprofile` for zsh, `~/.bash_profile` or `~/.profile` for bash), replaces
@@ -64,6 +70,7 @@ skip or quit. A rerun skips finished steps and signs in with the saved password.
 | `--yes` | Asks nothing; generates the admin password (Keychain only) |
 | `--choice 0`–`3` | What opens at the end |
 | `--model TAG`, `--with-gh`, `--no-ollama`, `--app-dir DIR` | Passed to `install-macos.sh` |
+| `--replace-app` | Passed on too, and runs the installer even when `--check` passes: replaces an installed app with the latest release (quit it first) |
 | `--trust-cert`, `--no-profile`, `--no-allowlist` | Trust the console certificate (choices 2 and 3 with the app); skip the profile or allowlist |
 
 Each line is logged with a time to `scripts/logs/install.log` (private, ignored by
