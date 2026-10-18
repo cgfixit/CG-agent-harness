@@ -522,19 +522,23 @@ room left, and returns a failed read to the model as its result (a batch that
 fails entirely ends the turn or, after evidence, the tool rounds). A web turn's
 deadline adds a measured tool-round allowance, at most doubling the chat timeout.
 Startup and reload warn below 4096 remaining input tokens. Ollama with explicit `reasoning_effort: "none"` reserves the reply ceiling
-once; anything else reserves it twice in validation, compaction and dispatch.
-Startup and reload reject `models.local_llm.max_tokens` or
-`api.harness_loop_rate_limit.max_tokens` above 25904 (single reservation) or
-12952 (doubled): a conservative harness margin, not provider accounting.
-The incoming user paste is never compacted. The server builds a candidate summary with one local-model call
-(`compaction.summary_max_tokens`, default 768, clamped 128–2048). Input stays within 24000 characters and the calibrated summary budget. Ordinary middle turns are clipped to 800 characters; prior `[session-compacted]`
-summaries stay intact ahead of recent turns. If the summaries alone cannot fit,
-compaction fails without clipping them.
+once; anything else reserves it twice in validation, compaction and dispatch,
+and startup caps both reply settings ([CONSOLE.md](docs/CONSOLE.md#local-history-compaction)).
+The incoming user paste is never compacted. One local-model call
+(`compaction.summary_max_tokens`, default 768, clamped 128–2048, sent as its
+reservation) summarizes within 24000 characters and the calibrated budget: goal
+and first message read-only, the prior `[session-compacted]`
+summary intact (else compaction fails), then the newest middle turns clipped to
+800 characters, gaps marked. Ungrounded identifiers become `[unverified]`;
+absence claims and unquoted corrections are dropped. The tail is whole exchanges
+within `chat.compact_keep_messages` and `chat.compact_tail_percent` of the
+trigger, at least one; the summary goes as a user-role note ranked below
+exact messages.
 A failed, empty, timed-out or aborted summary, or a prompt compaction cannot
 bring below the trigger, leaves the session unrewritten; the latter refuses the turn. Otherwise the summary persists atomically with the next successful exchange,
 with calibration, via `write_json_atomic_mode` at `0o600`. The system prompt is
 composed each turn, never stored in `messages`; `Session.goal` and the first
-user message are preserved. The audits `chat_session_compacted`, `chat_prompt_too_large` (projected sizes)
+user message are preserved, even at `MAX_MESSAGES`. The audits `chat_session_compacted`, `chat_prompt_too_large` (projected sizes)
 and `chat_busy` store no bodies.
 
 - Locked by: `src/server/compaction.rs`,
@@ -549,7 +553,9 @@ and `chat_busy` store no bodies.
   `tests/chat_and_sessions.rs::irreducible_prompt_is_rejected_without_rewriting_the_session`,
   `tests/chat_and_sessions.rs::cancel_aborts_the_in_flight_turn_and_releases_the_gate`,
   `tests/chat_and_sessions.rs::a_long_normal_session_compacts_instead_of_clipping_at_8000_chars`,
-  `src/server/compaction.rs::projection_uses_next_prompt_not_lifetime_tally`.
+  `src/server/compaction.rs::projection_uses_next_prompt_not_lifetime_tally`,
+  `src/server/compaction.rs::the_sent_history_alternates_roles_for_every_keep_and_ranks_the_summary_below_exact_turns`,
+  `src/server/sessions.rs::the_message_cap_drops_whole_exchanges_after_the_pinned_turn_and_its_summary`.
 
 ## Signals weaker than their name
 

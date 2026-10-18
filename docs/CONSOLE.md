@@ -573,27 +573,28 @@ not the quality or cancellation scheduling of a real model.
 
 ### Local history compaction
 
-Before local chat or `/loop`, the harness estimates system text, stored messages,
-the new message, tool definitions, and reply reservation. Above
-`chat.compact_prompt_tokens` (default 24000), it summarizes middle turns while
-preserving the first user message, goal, and recent tail
-(`chat.compact_keep_messages`, default 8, range 2–40). Prior summaries stay
-intact; other middle turns clip at 800 characters. Summary input is at most
-24000 characters and must fit its calibrated call budget, else compaction
-fails without changing history.
+Before local chat or `/loop`, the harness estimates the next prompt and
+reply reservation. Above
+`chat.compact_prompt_tokens` (default 24000), it summarizes middle turns,
+keeping the first user message, goal, and whole recent exchanges (at most
+`chat.compact_keep_messages`, 8, and `chat.compact_tail_percent`, 25% of the
+trigger). The summarizer reads goal and first message, keeps the prior summary
+whole, clips other turns at 800 characters, within 24000 characters and its
+calibrated budget, else history stays. The model gets a lossy note yielding to
+exact messages; unsourced codes become `[unverified]`.
 
 Reply reservation is `max_tokens` for resolved Ollama with explicit
 `reasoning_effort: "none"`, or twice that otherwise: a conservative harness
 margin, not provider accounting. Startup accepts at most 25904 reply tokens on
 the first path or 12952 on the second for chat and `/loop`. The trigger floor,
 web-chat tightening and the bytes/4 estimate with its per-session calibration
-(1–3, reset when model or endpoint changes) are specified in
+are specified in
 [INVARIANTS.md](../INVARIANTS.md#local-chat-compaction-preserves-goal-and-the-first-user-turn).
 Calibration cannot predict language shifts or ratios above 3; verify the
 model window per [MODELS.md](MODELS.md).
 
-`compaction.summary_max_tokens` defaults to 768 and clamps to 128–2048, older
-homes included. Tune it in home `config.yaml`, then restart. Compaction is inline;
+`compaction.summary_max_tokens` defaults to 768 and clamps to 128–2048. Tune
+these in home `config.yaml`, then restart. Compaction is inline;
 empty, failed, truncated, or cancelled output commits neither summary nor
 calibration. A prompt that still exceeds the limit returns
 `CHAT_PROMPT_TOO_LARGE` (422) naming the bounding setting (`details.limit_source`),

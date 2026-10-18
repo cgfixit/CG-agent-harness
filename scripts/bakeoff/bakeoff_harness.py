@@ -339,7 +339,8 @@ class HLane:
         return {k: v for k, v in t.items() if k != "data"} | {"usage": t["data"].get("usage"),
                                                               "web_tools": t["data"].get("web_tools"),
                                                               "session_id": t["data"].get("session_id"),
-                                                              "context_window": t["data"].get("context_window")}
+                                                              "context_window": t["data"].get("context_window"),
+                                                              "compaction": t["data"].get("compaction")}
 
     def trial(self, name, fn, n=None):
         for i in range(1, (n or self.n) + 1):
@@ -529,8 +530,9 @@ class HLane:
         """One session pushed past chat.compact_prompt_tokens with a needle in turn one.
 
         A chat prompt cannot approach the 32768 window: the harness caps it at compact_prompt_tokens (24000, with
-        max_tokens reserved for the reply) and keeps the last compact_keep_messages (8) verbatim. So the turns are
-        small and many: the needle turn ages out of the verbatim tail and must survive a real compaction summary.
+        max_tokens reserved for the reply) and keeps whole recent exchanges verbatim (at most compact_keep_messages,
+        8, and compact_tail_percent, 25%, of the trigger). So the turns are small and many: the needle stays only in
+        the pinned first turn and must win over a real compaction summary. A turn's response names its compaction.
         A CHAT_PROMPT_TOO_LARGE refusal is recorded as a harness result, not a model miss.
         """
         window = self.window or TARGET
@@ -553,7 +555,9 @@ class HLane:
                     refused = {"http_status": e.status, "code": ((e.body or {}).get("detail") or {}).get("code"), "body": e.body}
                     break
                 turns.append(t)
-                if t["prompt_tokens"] and prev and t["prompt_tokens"] < prev * 0.8:
+                # The harness reports a compaction; older binaries only show a prompt-size drop.
+                if t["data"].get("compaction") or (
+                        "compaction" not in t["data"] and t["prompt_tokens"] and prev and t["prompt_tokens"] < prev * 0.8):
                     compacted = True
                 if compacted:
                     after += 1

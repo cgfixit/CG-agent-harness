@@ -555,17 +555,28 @@ pub async fn model_select(
     ))
 }
 
-/// Prior user/assistant turns for the next prompt. Compaction owns overflow.
+/// One turn's compaction: what was kept and summarized, for persistence,
+/// audit and the response.
+struct Compaction {
+    keep: usize,
+    before: usize,
+    after: usize,
+    summarized: usize,
+    projected: u64,
+    compacted_projected: u64,
+    threshold: u64,
+    summary: String,
+    omitted_turns: usize,
+    clipped_turns: usize,
+    repairs: crate::server::compaction::RepairCounts,
+}
+
+/// Prior user/assistant turns for the next prompt, as the model receives
+/// them: a stored compaction summary is rendered as a labeled harness note
+/// ([`crate::server::compaction::prompt_messages`]). Compaction owns overflow.
 /// The persist cap is `MAX_MESSAGES`. There is no 20-turn or 8000-char clip.
 pub fn prompt_history(messages: &[crate::server::sessions::Message]) -> Vec<ChatMessage> {
-    messages
-        .iter()
-        .filter(|m| m.role == "user" || m.role == "assistant")
-        .map(|m| ChatMessage {
-            role: m.role.clone(),
-            content: m.text.clone(),
-        })
-        .collect()
+    crate::server::compaction::prompt_messages(messages)
 }
 
 fn loop_error(code: &str, message: &str) -> ApiError {
@@ -971,7 +982,7 @@ async fn chat_inner(
                 "reply_reservation_tokens": reservation,
             }))
         };
-        let keep = state
+        let keep_max = state
             .cfg
             .u64_or(
                 "chat.compact_keep_messages",
@@ -1003,8 +1014,30 @@ async fn chat_inner(
                 ));
             }
             let before = session.messages.len();
+            // The verbatim tail is whole exchanges sized in tokens, so the
+            // compacted prompt lands well under the trigger: at most
+            // chat.compact_tail_percent of it, and no more than what is left
+            // after the system prompt, first message, new message, reply and a
+            // full summary. Never less than the last exchange.
+            let summary_tokens = crate::server::compaction::summary_max_tokens(&state.cfg);
+            let summary_send = crate::server::compaction::reply_reservation(&state.backend, summary_tokens);
+            let scaffold =
+                crate::server::compaction::calibrated_tokens(crate::server::compaction::scaffold_tokens(), ratio);
+            let pinned_only: Vec<_> = session.messages.iter().find(|m| m.role == "user").cloned().into_iter().collect();
+            let fixed = crate::server::compaction::projected_prompt_tokens(
+                &system_prompt,
+                &prompt_history(&pinned_only),
+                &req.message,
+                reservation,
+                ratio,
+                tool_tokens,
+            );
+            let room = threshold.saturating_sub(fixed + summary_send + scaffold);
+            let tail_budget = (threshold * crate::server::compaction::tail_percent(&state.cfg) / 100).min(room);
+            let keep = crate::server::compaction::tail_keep(&session.messages, keep_max, tail_budget, ratio);
             let retained = crate::server::compaction::retained_messages(&session.messages, keep);
             let retained_history = prompt_history(&retained);
+            let middle = crate::server::compaction::middle_turns(&session.messages, keep);
             let retained_projected = crate::server::compaction::projected_prompt_tokens(
                 &system_prompt,
                 &retained_history,
@@ -1012,7 +1045,7 @@ async fn chat_inner(
                 reservation,
                 ratio,
                 tool_tokens,
-            );
+            ) + if middle.is_empty() { 0 } else { scaffold };
             if retained_projected > threshold {
                 return Err(too_large(
                     "the next prompt still exceeds, after history compaction,",
@@ -1020,31 +1053,35 @@ async fn chat_inner(
                     retained_projected,
                 ));
             }
-            let middle = crate::server::compaction::middle_turns(&session.messages, keep);
+            let mut summary_meta = crate::server::compaction::Summary::default();
             let summary = if middle.is_empty() {
                 crate::server::compaction::COMPACT_PREFIX.to_string()
             } else {
-                let summary_tokens = crate::server::compaction::summary_max_tokens(&state.cfg);
                 // The summary is a model call too: check the window first and
                 // size its input to the model's cap, not the 32768 default.
                 state
                     .ensure_window_allows(&model, turn_prompt_limit, 0)
                     .await
                     .map_err(|e| ApiError::from_err(llm_status(&e), &e))?;
-                let (text, p, c) = crate::server::compaction::summarize_turns(
+                let pinned = crate::server::compaction::PinnedContext {
+                    goal: &session.goal,
+                    first_user: session.messages.iter().find(|m| m.role == "user").map(|m| m.text.as_str()),
+                };
+                summary_meta = crate::server::compaction::summarize_turns(
                     &state.chat,
                     &model,
+                    pinned,
                     middle,
                     summary_tokens,
-                    crate::server::compaction::reply_reservation(&state.backend, summary_tokens),
+                    summary_send,
                     ratio,
                     state.prompt_cap(&model),
                 )
                 .await
                 .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-                summary_prompt_tokens = p;
-                summary_completion_tokens = c;
-                text
+                summary_prompt_tokens = summary_meta.prompt_tokens;
+                summary_completion_tokens = summary_meta.completion_tokens;
+                std::mem::take(&mut summary_meta.text)
             };
             let compacted = crate::server::compaction::compact_messages(&session.messages, keep, &summary);
             let compacted_history = prompt_history(&compacted);
@@ -1063,8 +1100,19 @@ async fn chat_inner(
                     compacted_projected,
                 ));
             }
-            let after = compacted.len();
-            compaction = Some((keep, before, after, projected, compacted_projected, threshold, summary));
+            compaction = Some(Compaction {
+                keep,
+                before,
+                after: compacted.len(),
+                summarized: middle.len(),
+                projected,
+                compacted_projected,
+                threshold,
+                summary,
+                omitted_turns: summary_meta.omitted_turns,
+                clipped_turns: summary_meta.clipped_turns,
+                repairs: summary_meta.repairs,
+            });
             history = compacted_history;
         }
     }
@@ -1206,9 +1254,10 @@ async fn chat_inner(
             reply.initial_prompt_tokens,
         )
     };
-    // Ollama keeps the newest tokens of an oversized prompt and drops the rest,
-    // system prompt first, without an error. The harness sends no num_ctx, so
-    // compare this turn with the window Ollama actually loaded and say so.
+    // Ollama keeps the system prompt and the newest message of an oversized
+    // prompt and drops whole older messages, this session's first one first,
+    // without an error (its MLX engine does not truncate). The harness sends
+    // no num_ctx, so compare this turn with the window Ollama actually loaded.
     let context_window = if cloud_selected || state.backend.provider != "ollama" {
         None
     } else {
@@ -1231,8 +1280,8 @@ async fn chat_inner(
                     "model":model,"window":window,"projected":projected}));
                 json!({"model":model,"window_tokens":window,"projected_tokens":projected,
                     "message":format!("Ollama loaded {model} with a {window}-token context window, but this turn needed about \
-                        {projected} tokens (prompt plus reply reserve). Ollama silently drops the oldest prompt text, starting \
-                        with the system prompt. Restart Ollama with a larger OLLAMA_CONTEXT_LENGTH (32768 is recommended; see \
+                        {projected} tokens (prompt plus reply reserve). Ollama keeps the system prompt and silently drops whole \
+                        older messages, starting with this session's first message. Restart Ollama with a larger OLLAMA_CONTEXT_LENGTH (32768 is recommended; see \
                         docs/MODELS.md), or start a new session. A Modelfile PARAMETER num_ctx wins over that variable, so \
                         a derived tag needs its own num_ctx raised; the harness sends no num_ctx.")})
             })
@@ -1244,7 +1293,7 @@ async fn chat_inner(
         &reply.model,
         &usage,
         &prompt_skills,
-        compaction.as_ref().map(|(keep, .., summary)| (*keep, summary.clone())),
+        compaction.as_ref().map(|c| (c.keep, c.summary.clone())),
         calibration,
     );
     let updated = recorded.map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
@@ -1256,16 +1305,30 @@ async fn chat_inner(
             .merge_attachment_pins(&session.session_id, &owner, &req.attachment_ids, live)
             .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     }
-    if let Some((_, before, after, projected, compacted_projected, threshold, _)) = compaction {
-        state.audit.log(json!({
-            "event": "chat_session_compacted",
-            "session_id": session.session_id,
-            "before": before,
-            "after": after,
-            "projected": projected,
-            "compacted_projected": compacted_projected,
-            "threshold": threshold,
-        }));
+    // Counts only, never bodies: the audit and the response say what this
+    // turn's compaction kept, summarized and repaired.
+    let compaction_report = compaction.as_ref().map(|c| {
+        json!({
+            "before": c.before,
+            "after": c.after,
+            "kept_messages": c.keep.min(c.before),
+            "summarized_messages": c.summarized,
+            "projected": c.projected,
+            "compacted_projected": c.compacted_projected,
+            "threshold": c.threshold,
+            "omitted_turns": c.omitted_turns,
+            "clipped_turns": c.clipped_turns,
+            "masked_identifiers": c.repairs.masked_identifiers,
+            "dropped_sentences": c.repairs.dropped_sentences,
+            "dropped_corrections": c.repairs.dropped_corrections,
+        })
+    });
+    if let Some(report) = &compaction_report {
+        let mut event = json!({"event": "chat_session_compacted", "session_id": session.session_id});
+        if let (Some(event), Some(report)) = (event.as_object_mut(), report.as_object()) {
+            event.extend(report.clone());
+        }
+        state.audit.log(event);
     }
     let sensitivity = {
         let scanner = crate::common::injection::Scanner::core();
@@ -1308,6 +1371,7 @@ async fn chat_inner(
         "episode": episode,
         "memory_suggestion": memory_suggestion,
         "context_window": context_window,
+        "compaction": compaction_report,
         "structured_facts": {
             "explicit_recall": crate::server::structured_memory::recall_available(
                 &state.cfg,
