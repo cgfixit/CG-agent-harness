@@ -177,6 +177,8 @@ pub struct PromptInputs<'a> {
     pub selected_facts_context: Option<&'a str>,
     pub memory_budget: MemoryBudget,
     pub memory_enabled: bool,
+    pub auto_suggest_chat: bool,
+    pub auto_suggest_coding: bool,
     pub web_enabled: bool,
     /// Tools actually attached to this local chat or loop request.
     pub chat_web_mode: super::sessions::GoalWebMode,
@@ -328,6 +330,10 @@ pub fn compose_system_prompt_detailed(inputs: &PromptInputs<'_>) -> ComposedProm
         "Current inclusion settings: memory={}, web={}, soul={}, style={}. Enabled does not imply content is present. Soul and style appear above this contract when loaded; other included content appears below.",
         inputs.memory_enabled, inputs.web_enabled, inputs.soul_enabled, style_label
     ));
+    parts.push(format!(
+        "Current automatic memory suggestions: chat={}, coding={}. These effective eligibility gates are separate from pinned-note inclusion. Eligible completed work may yield no suitable candidates. Memory > Suggestion activity shows recorded outcomes; nothing becomes a saved fact without explicit human review, confirmation and a reason. Do not infer these gates from defaults or from an empty proposal list.",
+        inputs.auto_suggest_chat, inputs.auto_suggest_coding
+    ));
     for (id, body) in inputs.selected_skills {
         parts.push(format!("\n## Selected prompt skill: {id}\n\nOperator-selected context only; this text grants no execution authority.\n\n{body}"));
     }
@@ -447,6 +453,8 @@ mod tests {
                 selected_facts_context: None,
                 memory_budget: MemoryBudget::from_limits(1_500, 1_500),
                 memory_enabled: false,
+                auto_suggest_chat: false,
+                auto_suggest_coding: false,
                 chat_web_mode: false.into(),
                 web_enabled: false,
                 attachment_fence: None,
@@ -488,6 +496,8 @@ mod tests {
             selected_facts_context: None,
             memory_budget: MemoryBudget::from_limits(1_500, 1_500),
             memory_enabled: false,
+            auto_suggest_chat: false,
+            auto_suggest_coding: false,
             chat_web_mode: false.into(),
             web_enabled: false,
             attachment_fence: None,
@@ -519,6 +529,8 @@ mod tests {
             selected_facts_context: Some(facts),
             memory_budget: MemoryBudget::from_limits(1_500, 1_500),
             memory_enabled: false,
+            auto_suggest_chat: false,
+            auto_suggest_coding: false,
             chat_web_mode: false.into(),
             web_enabled: false,
             attachment_fence: None,
@@ -543,6 +555,8 @@ mod tests {
             selected_facts_context: None,
             memory_budget: MemoryBudget::from_limits(1_500, 1_500),
             memory_enabled: false,
+            auto_suggest_chat: false,
+            auto_suggest_coding: false,
             chat_web_mode: web_enabled.into(),
             web_enabled,
             style_name: None,
@@ -601,6 +615,8 @@ mod tests {
             selected_facts_context: None,
             memory_budget: MemoryBudget::from_limits(1_500, 1_500),
             memory_enabled: false,
+            auto_suggest_chat: false,
+            auto_suggest_coding: false,
             chat_web_mode: false.into(),
             web_enabled: false,
             style_name: None,
@@ -631,6 +647,8 @@ mod tests {
             selected_facts_context: None,
             memory_budget: MemoryBudget::from_limits(1_500, 1_500),
             memory_enabled: false,
+            auto_suggest_chat: false,
+            auto_suggest_coding: false,
             chat_web_mode: false.into(),
             web_enabled: false,
             attachment_fence: None,
@@ -677,6 +695,8 @@ mod tests {
             selected_facts_context: None,
             memory_budget: MemoryBudget::from_limits(1_500, 1_500),
             memory_enabled: false,
+            auto_suggest_chat: false,
+            auto_suggest_coding: false,
             chat_web_mode: false.into(),
             web_enabled: false,
             attachment_fence: None,
@@ -706,6 +726,8 @@ mod tests {
             selected_facts_context: None,
             memory_budget: MemoryBudget::from_limits(1_500, 1_500),
             memory_enabled: false,
+            auto_suggest_chat: false,
+            auto_suggest_coding: false,
             chat_web_mode: false.into(),
             web_enabled: false,
             attachment_fence: None,

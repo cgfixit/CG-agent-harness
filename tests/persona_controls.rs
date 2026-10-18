@@ -4,6 +4,55 @@ use reqwest::Method;
 use serde_json::json;
 
 #[tokio::test]
+async fn chat_and_preview_report_effective_suggestion_gates() {
+    let model = start_mock_model().await;
+    for (store, capture, source, mode, expected_chat, expected_coding) in [
+        ("true", "true", "true", "\"both\"", true, true),
+        ("true", "true", "false", "\"both\"", false, true),
+        ("true", "true", "\"true\"", "\"both\"", false, true),
+        ("true", "false", "true", "\"both\"", false, false),
+        ("false", "true", "true", "\"both\"", false, false),
+        ("true", "true", "true", "\"invalid\"", false, false),
+    ] {
+        let s = spawn_server(
+            &model.base_url(),
+            ServerOptions::default()
+                .with("structured_memory.enabled", store)
+                .with("structured_memory.episode_capture", capture)
+                .with("structured_memory.auto_suggest_chat", source)
+                .with("structured_memory.auto_suggest_coding", "true")
+                .with("structured_memory.suggestion_mode", mode),
+        )
+        .await;
+        let (_, preview) = s.post_json("/api/prompt/preview", json!({})).await;
+        let expected = format!("Current automatic memory suggestions: chat={expected_chat}, coding={expected_coding}.");
+        assert!(preview["prompt"].as_str().unwrap().contains(&expected));
+        let first_request = model.requests.lock().unwrap().len();
+        assert_eq!(s.post_json("/api/chat", json!({"message":"hello"})).await.0, 200);
+        assert_eq!(
+            preview["prompt"],
+            model.requests.lock().unwrap()[first_request]["messages"][0]["content"]
+        );
+        if store == "true" {
+            assert_eq!(
+                s.post_json(
+                    "/api/structured-memory/gates",
+                    json!({"gate":"auto_suggest_coding","enabled":false})
+                )
+                .await
+                .0,
+                200
+            );
+            let (_, preview) = s.post_json("/api/prompt/preview", json!({})).await;
+            assert!(preview["prompt"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("chat={expected_chat}, coding=false.")));
+        }
+    }
+}
+
+#[tokio::test]
 async fn failed_persona_apply_retains_intent_and_recovery_failures_block_later_writes() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
