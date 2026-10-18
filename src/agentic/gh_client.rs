@@ -112,6 +112,12 @@ pub fn check_gh_version(min_version: (u32, u32, u32)) -> Result<(u32, u32, u32)>
     Ok(checked_gh(min_version)?.version)
 }
 
+/// Canonical path of the version-checked `gh`, re-verified against the
+/// identity recorded when it was checked. Executable writes run this path.
+pub fn checked_gh_binary(min_version: (u32, u32, u32)) -> Result<PathBuf> {
+    Ok(checked_gh(min_version)?.binary.clone())
+}
+
 fn executable_identity(binary: &Path) -> Result<ExecutableIdentity> {
     let metadata = std::fs::metadata(binary).map_err(|e| {
         HarnessError::gh_not_installed(format!("Could not inspect GitHub CLI (gh): {e}"))
