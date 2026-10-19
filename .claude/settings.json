@@ -1,5 +1,11 @@
 {
   "permissions": {
+    "deny": [
+      "Workflow"
+    ],
+    "ask": [
+      "Agent"
+    ],
     "allow": [
       "Bash(cargo build:*)",
       "Bash(cargo check:*)",
