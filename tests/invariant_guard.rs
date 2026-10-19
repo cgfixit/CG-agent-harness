@@ -289,6 +289,55 @@ fn server_side_never_references_agentic() {
 }
 
 #[test]
+fn diag_reads_only_named_files_under_home_logs() {
+    // One reader opens files, and only `<home>/logs/<allowlisted name>`; the
+    // routes and prompt code never touch the filesystem or spawn anything.
+    let reader = strip_comment_lines(&std::fs::read_to_string(root().join("server/diag_reader.rs")).unwrap());
+    let code = &reader[..reader.find("#[cfg(test)]").expect("reader tests")];
+    assert_eq!(code.matches(".open(").count(), 1, "diag_reader opens one file kind");
+    assert!(
+        code.contains(".open(logs_dir.join(name))"),
+        "the path is logs_dir plus the allowlisted name"
+    );
+    assert!(
+        code.contains("libc::O_NOFOLLOW"),
+        "the leaf is opened without following links"
+    );
+    assert!(
+        code.contains("file.take(max_bytes)"),
+        "reads stay bounded after the metadata check"
+    );
+    let scan = code.find("scan_normalized").expect("output is scanned");
+    let redact = code.find("redactors.redact(").expect("output is redacted");
+    assert!(redact < scan, "redaction precedes the scanner");
+    for forbidden in [
+        "read_to_string",
+        "File::open",
+        "read_dir",
+        "Command",
+        "TcpStream",
+        "canonicalize",
+        "home.root",
+    ] {
+        assert!(!code.contains(forbidden), "diag_reader must not use {forbidden}");
+    }
+    let routes = strip_comment_lines(&std::fs::read_to_string(root().join("server/routes/diag.rs")).unwrap());
+    for forbidden in ["std::fs", "File::", "OpenOptions", "Command", "Path::new", "PathBuf"] {
+        assert!(!routes.contains(forbidden), "routes/diag.rs must not use {forbidden}");
+    }
+    assert!(
+        routes.contains("state.diag.config.allowed(&file)"),
+        "the file parameter is matched against the allowlist"
+    );
+    let paths = cgagentharness::server::routes::REGISTERED_PATHS;
+    for path in ["/api/diag", "/api/diag/read", "/api/diag/inject", "/api/diag/forget"] {
+        assert!(paths.contains(&path), "{path} must be in REGISTERED_PATHS");
+    }
+    let reload = std::fs::read_to_string(root().join("server/config_reload.rs")).unwrap();
+    assert!(!reload.contains("\"diagnostics"), "diagnostics stays restart-only");
+}
+
+#[test]
 fn netconnect_dials_only_through_the_budgeted_dialer() {
     // Sockets and name lookups. Only connect.rs may open a socket, and
     // nothing under src/netconnect may resolve a host name.
@@ -589,6 +638,8 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "netconnect.home_automation",
         "notifications.enabled",
         "agentic.deepagent_github.retrieval.enabled",
+        "diagnostics.logs_enabled",
+        "diagnostics.model_tool",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
     }
@@ -990,7 +1041,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // plus ~10%, rounded up to the next 50. Lower it to the reported size once those land.
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default contract; file was at 6437.
     // why: operator-approved +150 (2026-10-18), shared by the four compaction follow-up PRs (#513 fixes, hard limit, reply parity, window trigger).
-    ("INVARIANTS.md", Root, 6890),
+    // why: owner-approved (2026-10-18) cap set to the measured count with #546 + #551 together; never trim gate text to fit.
+    ("INVARIANTS.md", Root, 7042),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     ("README.md", Root, 1700),
@@ -1003,7 +1055,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
-    ("docs/CONSOLE.md", Guide, 6157),
+    ("docs/CONSOLE.md", Guide, 6166),
     ("docs/DEPENDENCIES.md", Guide, 1400),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     ("docs/DESKTOP.md", Guide, 2680),

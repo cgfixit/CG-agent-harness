@@ -207,6 +207,9 @@ pub async fn login(
 
 pub async fn logout(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Response> {
     let mgr = manager(&state)?;
+    if let Ok(account) = actor(&state, &req) {
+        state.diag.forget_owner(&account.user_id);
+    }
     if let Some(token) = cookie_value(&req) {
         mgr.logout(&token).map_err(|e| map_auth_error(&e))?;
     }
@@ -245,6 +248,9 @@ pub async fn set_disabled(
     let ValidJson(body) = ValidJson::<AuthDisabledRequest>::from_request(req, &()).await?;
     let mgr = manager(&state)?;
     let owner_id = mgr.get_user(&username).map(|user| user.user_id);
+    if let Some(owner) = &owner_id {
+        state.diag.forget_owner(owner);
+    }
     (if body.disabled {
         mgr.disable_user(&username)
     } else {
@@ -407,7 +413,11 @@ pub async fn set_role(
     let account = actor(&state, &req)?;
     require_user_admin(&account)?;
     let ValidJson(body) = ValidJson::<AuthSetRoleRequest>::from_request(req, &()).await?;
-    manager(&state)?
+    let manager = manager(&state)?;
+    if let Some(user) = manager.get_user(&username) {
+        state.diag.forget_owner(&user.user_id);
+    }
+    manager
         .set_role(&username, &body.role)
         .map_err(|e| map_auth_error(&e))?;
     Ok(Json(json!({"ok": true})))
@@ -424,6 +434,9 @@ pub async fn delete_user(
     // Blobs go only once the account is actually gone: a refused deletion
     // (last enabled admin, persistence failure) must not lose user data.
     let owner = manager.get_user(&username).map(|summary| summary.user_id);
+    if let Some(owner) = &owner {
+        state.diag.forget_owner(owner);
+    }
     manager.delete_user(&username).map_err(|e| map_auth_error(&e))?;
     // Cleanup is reported, never swallowed: a blob whose unlink failed keeps
     // its manifest row (still charged to the quota) and is retried by the
