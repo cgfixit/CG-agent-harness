@@ -122,6 +122,7 @@ fn policy() -> Policy {
         version: 1,
         rules: vec![Rule::new("https://docs.example/*", "docs", &[]).unwrap()],
         revision: "a".repeat(64),
+        ..Policy::empty()
     }
 }
 

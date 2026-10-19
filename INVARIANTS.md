@@ -188,7 +188,11 @@ See [migration and operation](docs/SECURE_RESEARCH.md).
 ## Public web evidence requires current content permission
 
 Fresh web settings are enabled with an empty URL allowlist: content reads need
-an administrator's grant. Existing choices persist; absent/invalid legacy
+an administrator's grant. Only an administrator's confirmed switch
+(`/api/web/mode`, `confirm: true`) selects block-list mode, which reads any
+public URL no blocked rule covers; a named group still narrows to its allow
+rules. Blocked rules cover HTTP and HTTPS and win in both modes; private
+addresses stay refused. Existing choices persist; absent/invalid legacy
 `web_enabled` stays off. `tools/web_allowlist.json` is versioned and bounded by
 restart-only `web.max_rules` (default 64); over-cap, malformed, missing,
 unreadable or partially invalid policy refuses access.

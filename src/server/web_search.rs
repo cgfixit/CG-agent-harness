@@ -15,7 +15,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 use super::web_policy::{
-    canonical_url, error, is_public_ip, Policy, Rule, DEFAULT_MAX_RULES, MAX_BATCH_URLS, MAX_RULES_CEILING,
+    canonical_url, error, is_public_ip, Mode, Policy, Rule, DEFAULT_MAX_RULES, MAX_BATCH_URLS, MAX_RULES_CEILING,
 };
 use crate::common::audit::Audit;
 use crate::common::config::AppConfig;
@@ -484,6 +484,7 @@ impl WebTool {
         Ok(
             json!({"enabled": enabled, "allowlist": policy.rules.iter().map(|r| &r.pattern).collect::<Vec<_>>(),
             "rules": policy.rules, "policy_revision": policy.revision,
+            "mode": policy.mode, "blocked": policy.blocked,
             "policy_scope":"shared_home", "context_scope":"account", "limits":self.limits,
             "search_provider": if self.search_key()?.is_empty() { "public Google (may require JavaScript/CAPTCHA)" } else { "Google via SerpAPI" },
             "injected": enabled && stored, "context_stored": stored,
@@ -639,10 +640,106 @@ impl WebTool {
             return Err(error("WEB_DISABLED", "web access is disabled"));
         }
         let (policy, _) = self.policy_or_empty()?;
-        if policy.rules.is_empty() {
+        if policy.refuses_all() {
             return Err(error("WEB_ALLOWLIST_EMPTY", "empty URL policy refuses all web access"));
         }
         Ok(policy)
+    }
+
+    /// The policy for a mutation: a missing file starts empty, an unreadable or
+    /// invalid one is still an error and is never reset.
+    fn policy_for_change(&self) -> Result<Policy> {
+        match std::fs::symlink_metadata(self.allow_path()) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Policy::empty()),
+            _ => self.policy(),
+        }
+    }
+
+    /// Switch between the allowlist and the denylist. Allow and blocked rules
+    /// are both kept, so switching back restores the earlier allowlist exactly.
+    /// Opening the denylist needs `confirm: true`; returning to the allowlist
+    /// only narrows access and needs none.
+    pub fn set_mode(&self, mode: Mode, confirm: bool, enabled: bool) -> Result<Value> {
+        if mode == Mode::Denylist && !confirm {
+            return Err(error(
+                "WEB_MODE_CONFIRM_REQUIRED",
+                "switching to the denylist permits every public URL that is not blocked; resend with confirm: true",
+            ));
+        }
+        let _guard = self
+            .mutation
+            .lock()
+            .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
+        let mut policy = self.policy_for_change()?;
+        policy.mode = mode;
+        self.save_policy(&policy)?;
+        self.status(enabled, "")
+    }
+
+    /// Add blocked rules, validated together before one write. A pattern with
+    /// no path (`https://example.org`) blocks the whole site: the host and
+    /// every subdomain, each with all paths.
+    pub fn block_rules(&self, patterns: &[String], enabled: bool) -> Result<Value> {
+        if patterns.is_empty() || patterns.len() > MAX_BATCH_URLS {
+            return Err(error("WEB_POLICY_INVALID", "invalid rule count"));
+        }
+        let mut rules: Vec<Rule> = Vec::new();
+        for raw in patterns {
+            for (i, pattern) in site_patterns(raw).iter().enumerate() {
+                // The derived subdomain pattern does not exist for an IP host.
+                let rule = match Policy::block_rule(pattern) {
+                    Ok(rule) => rule,
+                    Err(_) if i > 0 => continue,
+                    Err(e) => return Err(e),
+                };
+                if !rules.iter().any(|r| r.id == rule.id) {
+                    rules.push(rule);
+                }
+            }
+        }
+        let _guard = self
+            .mutation
+            .lock()
+            .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
+        let mut policy = self.policy_for_change()?;
+        for rule in rules {
+            if policy.blocked.iter().any(|r| r.id == rule.id) {
+                continue;
+            }
+            if policy.blocked.len() >= self.limits.max_rules {
+                return Err(error(
+                    "WEB_BLOCKLIST_FULL",
+                    &format!(
+                        "blocked rule cap reached (web.max_rules = {}); /web unblock unused rules, or raise it in config.yaml and restart",
+                        self.limits.max_rules
+                    ),
+                ));
+            }
+            policy.blocked.push(rule);
+        }
+        self.save_policy(&policy)?;
+        self.status(enabled, "")
+    }
+
+    /// Remove one blocked rule by ID or exact pattern. A bare host removes the
+    /// pair `block` added for it.
+    pub fn unblock(&self, raw: &str, enabled: bool) -> Result<Value> {
+        let _guard = self
+            .mutation
+            .lock()
+            .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
+        let mut policy = self.policy()?;
+        let patterns: Vec<String> = site_patterns(raw)
+            .iter()
+            .filter_map(|p| Policy::block_rule(p).ok().map(|r| r.pattern))
+            .collect();
+        let before = policy.blocked.len();
+        policy.blocked.retain(|r| r.id != raw && !patterns.contains(&r.pattern));
+        if policy.blocked.len() == before {
+            return Err(error("WEB_RULE_UNKNOWN", "no blocked rule has that ID or pattern"));
+        }
+        self.save_policy(&policy)?;
+        self.status(enabled, "")
     }
 
     pub(super) fn gate_tool(&self, name: &str, argv: &[String], enabled: bool, audit: &Audit) -> Result<()> {
@@ -867,8 +964,41 @@ impl WebTool {
     }
 }
 
+/// `https://example.org` (no path) names a whole site for blocking: the host
+/// and its subdomains, all paths. Any other pattern is used as written.
+fn site_patterns(raw: &str) -> Vec<String> {
+    let raw = raw.trim();
+    let Some((scheme, rest)) = raw.split_once("://") else {
+        return vec![raw.to_string()];
+    };
+    if rest.contains(['/', '?', '#']) || rest.is_empty() {
+        return vec![raw.to_string()];
+    }
+    match rest.strip_prefix("*.") {
+        Some(host) => vec![format!("{scheme}://*.{host}/*")],
+        None => vec![format!("{scheme}://{rest}/*"), format!("{scheme}://*.{rest}/*")],
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_pathless_block_names_the_site_and_its_subdomains() {
+        assert_eq!(
+            super::site_patterns("https://example.org"),
+            ["https://example.org/*", "https://*.example.org/*"]
+        );
+        assert_eq!(
+            super::site_patterns("https://*.example.org"),
+            ["https://*.example.org/*"]
+        );
+        assert_eq!(
+            super::site_patterns("https://example.org/news/*"),
+            ["https://example.org/news/*"]
+        );
+        assert_eq!(super::site_patterns("https://example.org/"), ["https://example.org/"]);
+    }
     use super::*;
     use crate::common::atomic::write_json_atomic;
     use axum::{extract::State, routing::get, Router};

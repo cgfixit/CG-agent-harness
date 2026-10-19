@@ -604,6 +604,37 @@ impl Validate for WebRuleRequest {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebModeRequest {
+    pub mode: super::web_policy::Mode,
+    /// Required (literal `true`) to open the denylist; never defaulted on.
+    #[serde(default)]
+    pub confirm: bool,
+}
+
+impl Validate for WebModeRequest {
+    fn validate(&self) -> Vec<String> {
+        vec![]
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WebBlockRequest {
+    pub urls: Vec<String>,
+}
+
+impl Validate for WebBlockRequest {
+    fn validate(&self) -> Vec<String> {
+        if valid_web_urls(&None, &self.urls) {
+            vec![]
+        } else {
+            vec!["urls".into()]
+        }
+    }
+}
+
 impl WebRuleRequest {
     pub fn patterns(&self) -> Vec<String> {
         self.url.iter().cloned().chain(self.urls.iter().cloned()).collect()

@@ -1025,6 +1025,7 @@ mod tests {
             version: 1,
             rules: vec![Rule::new("https://docs.example/*", "docs", &[]).unwrap()],
             revision: "a".repeat(64),
+            ..Policy::empty()
         };
         let text = format!(
             "# Heading\n{}\nIdentifier WIDGET_RETRY_COUNT restarts connections.",
@@ -1116,6 +1117,7 @@ mod tests {
             version: 1,
             rules: vec![Rule::new("https://docs.example/*", "docs", &[]).unwrap()],
             revision: "a".repeat(64),
+            ..Policy::empty()
         };
         // Chunk one holds both headings; chunk two holds only Install text.
         let text = format!(

@@ -111,8 +111,8 @@ impl RuntimeLimits {
         }
         Ok(Self {
             revision: 0,
-            api: RateBudget::load(cfg, "api.rate_limit", 60, 60.0)?,
-            loop_rate: RateBudget::load(cfg, "api.harness_loop_rate_limit", 8, 300.0)?,
+            api: RateBudget::load(cfg, "api.rate_limit", 120, 60.0)?,
+            loop_rate: RateBudget::load(cfg, "api.harness_loop_rate_limit", 16, 300.0)?,
             loop_max_tokens: super::validate_reply_budget(key, cap, backend)?,
             web,
         })

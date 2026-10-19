@@ -111,17 +111,22 @@ git ls-files -- ':(glob)**/sessions/**' ':(glob)**/.CGagentHarness/**' '.env' '.
 
 ```text
 /loop 3
-/loop
+/loop 3 compare hvac vendors
+/loop auto --web fetch 2 summarize the release notes
 /loop stop
 /goal clear
 ```
 
 `/loop 3` runs up to three follow-up turns toward the goal (default three,
-maximum five), each restating the bounded goal. With no stored goal, `/loop`
-takes the last prompt as the goal. Manual mode pauses after each turn; `/loop`
-continues. `/loop auto` only toggles automatic continuation; it starts
-nothing. A turn that needed compaction continues the same way automatically.
-`/loop stop` cancels generation or cooldown. Goal clear, session switching, token budgets, a 90%-identical reply and two
+maximum five), each restating the bounded goal. Text after the count sets the
+goal first, so `/loop 3 <text>` is `/goal <text>` then `/loop 3`. With no stored
+goal, `/loop` takes the last prompt as the goal. Manual mode pauses after each
+turn; `/loop` continues. `/loop auto` toggles automatic continuation; turning it
+on with a goal (or last prompt) to follow starts the loop after 5 s, and so does
+`/goal <text>` while auto is on. `/loop auto` with a count, mode or goal turns
+auto on and starts after the same pause, storing nothing until then. A turn
+that needed compaction continues the same way automatically. `/loop stop`
+cancels generation, cooldown or a pending start. Goal clear, session switching, token budgets, a 90%-identical reply and two
 consecutive failed turns (auto retries once) stop it. A `GOAL_DONE` line (even `**GOAL_DONE**`) stops it
 too, but is only model advice.
 
@@ -410,7 +415,7 @@ confirmation and persistence.
 | `/goal stage <branch>`, `/goal task` | Explicitly stage coding from a goal or inspect its task linkage |
 | `/harness` | List retained optimizer runs; does not start optimization |
 | `/help [topic\|search words\|all]` | Searchable topic guide, full command catalog and insertable examples |
-| `/loop [--web off\|fetch\|all] [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; `auto` toggles; exact `stop` also cancels a streaming chat turn |
+| `/loop [auto] [--web off\|fetch\|all] [n] [goal text]`, `/loop stop` | Bounded chat continuation; goal text sets the goal first; `auto` toggles and starts after 5 s; exact `stop` also cancels a streaming chat turn |
 | `/memory`, `status`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Shared pinned notes; [operator memory notes](MEMORY_GUIDE.md#pinned-notes) |
 | `/memory capture\|recall\|retrieval\|auto-retrieve\|consolidation\|auto-consolidate\|auto-suggest-chat\|auto-suggest-coding on\|off` | Administrator-only structured-memory gate overrides; `on` or `off` is required. `/memory on` stays pinned notes |
 | `/memory consolidate <episode-id> [episode-id ...]` | Selected-episode consolidation into pending proposals; does not apply facts |
@@ -435,6 +440,7 @@ confirmation and persistence.
 | `/users` | Administrator account panel; [accounts](SECURE_RESEARCH.md#accounts-and-roles) |
 | `/web [status\|help]`, `/web on`, `/web off` | Inspect shared-home rules; administrators enable/disable web |
 | `/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]`, `/web deny <id-or-pattern>` | Administrator grants are atomic; repeat `--seed` per concrete seed. Every seed must fit a requested rule |
+| `/web mode allowlist\|denylist`, `/web block <pattern-or-host> [...]`, `/web unblock <id-or-pattern>` | Administrator. The header globe (red X) switches modes after a confirmation dialog. `denylist` reads every public URL except blocked rules; a host with no path blocks it and its subdomains. Both lists persist across switches |
 | `/web check <URL> [URL ...] [--group name]` | Exact permission diagnostic, with no network request or grant |
 | `/web cancel`, `/web fetch <URL> [URL ...] [--group name]`, `/web forget`, `/web inject` | Cancel research, batch-read exact permitted URLs, clear or select your last extract |
 | `/web pages [--group name] <query>`, `/web research [--group name] [--url URL ...] <question>` | Permitted-page discovery or local-model research; repeat `--url` per starting point; no new authority |

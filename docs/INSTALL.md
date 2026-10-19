@@ -27,7 +27,7 @@ touches the harness home (`~/.CGagentHarness`) and pulls a model only with `--mo
 
 | Option | Effect |
 |---|---|
-| `--check` | Lists what is present; exits 1 when something required is missing |
+| `--check` | Lists what is present; exits 1 when something required is missing. A working app older than the latest release gets a note, not a failure |
 | `--dry-run` | Prints every command, changing nothing |
 | `--replace-app` | Replaces a working app; keeps the previous one in `~/Library/Caches/CG-agent-harness-installer/previous`. An incomplete or unsigned copy is replaced without it |
 | `--no-ollama`, `--no-build`, `--no-app`, `--app-dir DIR` | Skip a step or choose the app location; outside `/Applications` and `~/Applications`, start with `CGAH_APP`; after `--no-app`, with `--standalone` |
@@ -35,7 +35,7 @@ touches the harness home (`~/.CGagentHarness`) and pulls a model only with `--mo
 The checksum proves integrity, not authorship (both files share one release
 page). `curl` downloads skip Gatekeeper's quarantine prompt; compare
 `Resources/COMMIT` with the release notes ([5.2](#52-macos-app)). Quit the app
-(Cmd-Q) before `--replace-app`.
+(Cmd-Q) before `--replace-app`. A rerun keeps a working app; it only notes a newer release.
 
 [`start-macos.sh`](../scripts/start-macos.sh) is the everyday launcher, described
 in [section 7](#7-open-the-console-in-a-browser).
@@ -551,8 +551,8 @@ on first run. Common operator settings follow:
 | Key | Default | Effect |
 |---|---|---|
 | `app.agent_job_poll_ms` | 1500 | Browser job polling interval, clamped to 1–30 s |
-| `api.rate_limit.max_requests` / `window_seconds` | 60 / 60 | Per-IP sliding-window ceiling on every route |
-| `api.harness_loop_rate_limit.*` | 8 / 300 s / 2048 tokens | Separate `/loop` budget; same backend-dependent ceiling as local chat after the legacy `0` → `2048` fallback |
+| `api.rate_limit.max_requests` / `window_seconds` | 120 / 60 | Per-IP sliding-window ceiling on every route |
+| `api.harness_loop_rate_limit.*` | 16 / 300 s / 2048 tokens | Separate `/loop` budget; same backend-dependent ceiling as local chat after the legacy `0` → `2048` fallback |
 | `models.cloud_chat.enabled` | true | Allows `/model use grok` / `claude`; each provider has its own `enabled` and `model` |
 | `models.cloud_chat.max_tokens` / `timeout_sec` | 4096 / 90 | Cloud reply ceiling and timeout; boot refuses 0 or >32768 tokens, or a timeout outside 1–720 s |
 | `models.local_llm.max_tokens` | 4096 | Local reply ceiling: 1–25904 with resolved Ollama and explicit reasoning `none`; otherwise 1–12952, with twice the ceiling reserved for completion. Invalid combinations fail startup with `CONFIG_ERROR` |
