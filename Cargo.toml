@@ -32,12 +32,12 @@ rcgen = "0.14.10"
 x509-parser = "0.18"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
-rmcp = { version = "=3.5.0", default-features = false, features = ["server", "transport-streamable-http-server"] }
+rmcp = { version = "=3.5.1", default-features = false, features = ["server", "transport-streamable-http-server"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 serde_yaml_ng = "0.10"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "query", "blocking"] }
 clap = { version = "4", features = ["derive"] }
 regex = "1"
 unicode-normalization = "0.1"
@@ -66,10 +66,17 @@ scraper = { version = "0.27", default-features = false }
 # Use the same parser as scraper, with incremental cancellation and state bounds.
 html5ever = "0.39"
 robotstxt = "0.3"
-tantivy = { version = "0.26.2", default-features = false, features = ["mmap", "lz4-compression", "stemmer"] }
-# Pinned to the 3.6 Entry API. Platform stores are explicit features: macOS Keychain,
-# Windows Credential Manager, and Linux Secret Service (dbus). No default features.
-keyring = { version = "=3.6.3", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+tantivy = { version = "0.27.0", default-features = false, features = ["mmap", "lz4-compression", "stemmer"] }
+keyring-core = "=1.0.1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store = "1.1.0"
+
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
+dbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust", "vendored"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

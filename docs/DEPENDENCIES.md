@@ -14,12 +14,11 @@ preparation are separate from the application's offline Cargo verification.
 | `axum-server` 0.8, `rustls` 0.23 | Shared standalone/sidecar HTTPS; explicit ring provider, ordinary certificate verification |
 | `rcgen` 0.14, `x509-parser` 0.18 | Local P-256 certificate generation and validity/key/name checks; no OpenSSL subprocess |
 | `scraper` 0.27, `robotstxt` 0.3 | HTML extraction and permitted robots handling; no browser execution |
-| `tantivy` 0.26 | Embedded BM25 passage retrieval; bounded derived index, no daemon or embeddings |
+| `tantivy` 0.27 | Embedded BM25 passage retrieval; bounded derived index, no daemon or embeddings |
 | `objc2` / Foundation / WebKit / Security bindings | Native authentication-challenge handling for the exact owned loopback certificate |
-| `keyring` 3.6.3 | OS store for managed provider keys. Features: `apple-native`, `windows-native`, `sync-secret-service`, `crypto-rust`. Linux uses Secret Service, not keyutils. A Linux build needs `pkg-config` and `libdbus-1-dev` |
+| Keyring ecosystem 1.x stores | OS store for managed provider keys: macOS Keychain, Windows Credential Manager and the maintained D-Bus Linux Secret Service backend |
 
-Reqwest 0.12 serves both crates; the desktop lock also resolves Reqwest 0.13
-for Tauri's own Apple-target dependencies, a warn-only duplicate. Public fetching disables proxies,
+Reqwest 0.13 serves both crates. Public fetching disables proxies,
 redirects, compression, retries and connection reuse and pins checked DNS
 addresses. Native/CLI certificate pinning applies only to the owned loopback
 service; it never replaces public-web trust. Feature review is manual: cargo-deny
@@ -36,21 +35,16 @@ does not certify safe runtime use of a crate or inspect arbitrary feature names.
 - The backend license allowlist names only identifiers the locked graph uses.
   Add an identifier deliberately, with the crate that needs it, rather than
   keeping unused allowances that would admit a future dependency silently.
-- Desktop Tauri is pinned to `=2.12.0`. Its published `tauri-utils` 2.10.1
+- Desktop Tauri is pinned to `=2.12.4`. Its published `tauri-utils` 2.10.1
   routes `urlpattern` 0.6 through ICU, so no `unic-*` crate remains in the
   desktop lock. The former `[patch.crates-io]` override of `tauri-utils` at
   upstream `dd725f4b13c30a86b398ccc59eb498f151f461c5` carried that correction
   until Tauri 2.12 shipped it; Cargo then reported the patch unused, and it was
   removed on 2026-10-13 without changing the resolved graph. No Git source
   remains in the desktop lock; `cargo tree` must show none.
-- Backend `deny.toml` temporarily ignores `RUSTSEC-2026-0253` for Tantivy 0.26.2's
-  `lru` 0.16 dependency (locked at 0.16.4). The policy records its
-  `StoreReader` call-pattern justification and removal condition, Tantivy 0.27
-  or a fixed dependency path. Owner: `cgfixit`, reviewed during the weekly
-  maintenance pass and Cargo Dependabot PR review. When compatible Tantivy
-  uses fixed `lru` (at least 0.18.2), update
-  the backend lockfile, remove this exception, and run both dependency policies
-  plus affected retrieval checks. Desktop currently has no advisory exception.
+- Tantivy 0.27 resolves `lru` 0.18.2 or newer, so the former
+  `RUSTSEC-2026-0253` exception is no longer needed. Desktop has no advisory
+  exception.
 - Backend `RUSTSEC-2024-0449` waives unmaintained `unsafe-libyaml` via
   `serde_yaml_ng`. Owner: `cgfixit`; review maintained, MSRV-compatible YAML
   replacements weekly and on Cargo Dependabot PRs. Remove the waiver when

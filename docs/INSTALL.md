@@ -495,8 +495,8 @@ Uninstalling/replacing the bundle preserves this external data.
 
 Fresh homes require HTTPS and login; metadata keys grant no account authority.
 **API Keys** manages credentials and distinguishes saved/active masks. Startup
-loads Keychain, Secret Service or Credential Manager; Linux builds need
-`pkg-config` and `libdbus-1-dev`. Inherited values override stored values, including
+loads Keychain, Secret Service or Credential Manager. Linux builds vendor the
+D-Bus client and do not require D-Bus development headers. Inherited values override stored values, including
 after clearing a saved key. Legacy `.env` migrates unless
 `security.allow_plaintext_key_file` is literal true. Restart to reload.
 

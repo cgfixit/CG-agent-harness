@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use subtle::ConstantTimeEq;
 
@@ -119,15 +120,9 @@ pub struct OsCredentialStore {
 
 /// Service string that isolates one harness home.
 ///
-/// keyring 3's `target` is not a namespace. On macOS it must be a keychain
-/// domain (`User`, `System`, `Common`, or `Dynamic`); any other string makes
-/// `Entry::new_with_target` fail before the login keychain is opened. On
-/// Windows that same argument replaces the per-entry target name, so one
-/// shared target would collapse every managed key into a single credential.
-/// Linux uses it as a Secret Service collection label. `Entry::new` keeps
-/// each platform's default (login keychain, `user.service`, default collection)
-/// and the canonical home lives in the service string instead. Backslashes
-/// become slashes so a Windows path is a legal Credential Manager target name.
+/// `Entry::new` uses each platform's default store, and the canonical home
+/// lives in the service string. Backslashes become slashes so a Windows path
+/// is a legal Credential Manager target name.
 pub(crate) fn service_name(home: &str) -> String {
     format!("{SERVICE} ({})", home.replace('\\', "/"))
 }
@@ -140,24 +135,24 @@ impl OsCredentialStore {
             .to_string();
         Self {
             home,
-            unavailable: AtomicBool::new(platform_store_missing()),
+            unavailable: AtomicBool::new(platform_store_missing() || !platform_store_ready()),
         }
     }
 
-    fn entry(&self, name: &str) -> Result<keyring::Entry, StoreError> {
+    fn entry(&self, name: &str) -> Result<keyring_core::Entry, StoreError> {
         if self.unavailable.load(Ordering::Acquire) {
             return Err(StoreError::Unavailable);
         }
-        keyring::Entry::new(&service_name(&self.home), name).map_err(|error| self.classify(error))
+        keyring_core::Entry::new(&service_name(&self.home), name).map_err(|error| self.classify(error))
     }
 
-    fn classify(&self, error: keyring::Error) -> StoreError {
+    fn classify(&self, error: keyring_core::Error) -> StoreError {
         match error {
-            keyring::Error::NoStorageAccess(_) => {
+            keyring_core::Error::NoStorageAccess(_) => {
                 self.unavailable.store(true, Ordering::Release);
                 StoreError::Unavailable
             }
-            keyring::Error::NoEntry => StoreError::ReadFailed,
+            keyring_core::Error::NoEntry => StoreError::ReadFailed,
             _ => StoreError::WriteFailed,
         }
     }
@@ -170,7 +165,7 @@ impl CredentialStore for OsCredentialStore {
         // `get_password`, and drop a non-UTF-8 blob without formatting it.
         match entry.get_secret() {
             Ok(bytes) => String::from_utf8(bytes).map(Some).map_err(|_| StoreError::ReadFailed),
-            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(keyring_core::Error::NoEntry) => Ok(None),
             Err(error) => Err(self.classify(error)),
         }
     }
@@ -183,7 +178,7 @@ impl CredentialStore for OsCredentialStore {
     fn delete(&self, name: &str) -> Result<(), StoreError> {
         let entry = self.entry(name)?;
         match entry.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
             Err(error) => Err(self.classify(error)),
         }
     }
@@ -200,6 +195,25 @@ fn platform_store_missing() -> bool {
     {
         false
     }
+}
+
+fn platform_store_ready() -> bool {
+    static READY: OnceLock<bool> = OnceLock::new();
+    *READY.get_or_init(|| {
+        #[cfg(target_os = "macos")]
+        let store = apple_native_keyring_store::keychain::Store::new();
+        #[cfg(target_os = "windows")]
+        let store = windows_native_keyring_store::Store::new();
+        #[cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))]
+        let store = dbus_secret_service_keyring_store::Store::new();
+        match store {
+            Ok(store) => {
+                keyring_core::set_default_store(store);
+                true
+            }
+            Err(_) => false,
+        }
+    })
 }
 
 const QUOTE_ESCAPE: &str = r"'\''";
@@ -1077,12 +1091,8 @@ export ANTHROPIC_API_KEY='anthropic-secret-value-2222'\n";
         assert!(!name.contains('\\'));
         assert_ne!(name, service_name("/tmp/other-home"));
         // Building the entry does not contact Keychain, Credential Manager, or D-Bus.
-        assert!(keyring::Entry::new(&name, "GROK_API_KEY").is_ok());
-        #[cfg(target_os = "macos")]
-        assert!(
-            keyring::Entry::new_with_target(home, SERVICE, "GROK_API_KEY").is_err(),
-            "a filesystem path is not a macOS keychain domain"
-        );
+        assert!(platform_store_ready());
+        assert!(keyring_core::Entry::new(&name, "GROK_API_KEY").is_ok());
     }
 
     #[test]

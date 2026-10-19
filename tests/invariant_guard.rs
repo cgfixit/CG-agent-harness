@@ -1087,7 +1087,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("INVARIANTS.md", Root, 7170),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
-    ("README.md", Root, 1700),
+    // why: dependency refresh removed five stale Linux prerequisite words; keep the cut.
+    ("README.md", Root, 1695),
     ("SECURITY.md", Root, 690),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
     ("docs/API_ROUTES.md", Guide, 1830),
@@ -1099,7 +1100,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
     ("docs/CONSOLE.md", Guide, 6196),
-    ("docs/DEPENDENCIES.md", Guide, 1400),
+    // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
+    ("docs/DEPENDENCIES.md", Guide, 1330),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     ("docs/DESKTOP.md", Guide, 2680),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
