@@ -499,7 +499,10 @@ async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
     .await;
     assert_eq!(status, 200, "{body}");
     assert!(
-        system_prompt(&model.last_request().unwrap()).contains("<<<LIVE_STATE_DATA>>>"),
+        model.last_request().unwrap()["messages"][0]["content"]
+            .as_str()
+            .unwrap_or("")
+            .contains("<<<LIVE_STATE_DATA>>>"),
         "an admin local turn carries the live state"
     );
     let (status, body) = json_call(
