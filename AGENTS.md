@@ -50,6 +50,7 @@ When prose contradicts code, fix the prose in the same PR.
 | Config reload | Reload changes limits, not authority |
 | Inbound MCP memory server | Private MCP memory server is a separate authority boundary |
 | netconnect | Netconnect is fail-closed and LAN-scoped |
+| Self-manual, live state (`diagnostics.self_knowledge`, `live_state`) | Self-knowledge never widens authority |
 | `/diag` log inspection, `portal_auditor` role | /diag log inspection never widens authority; Account, transport and request boundaries |
 
 ## Traps
@@ -153,26 +154,19 @@ cut stays cut. Weekly, `cgfixit` reviews `git log --since=1.week --stat -- '*.md
 
 ## Project skills
 
-Repository guidance, not `/api/skills` plugins: `.codex/skills/` (Codex),
-`.claude/skills/` (Claude Code, `/<slug>`) and `.github/skills/` (Copilot).
-Read the relevant `SKILL.md` when its task applies:
+Repository guidance is separate from the harness runtime `/api/skills` plugins.
+Start with `cgagentharness-project-guidance`, then read the skill whose task
+applies; loading it does not expand publication, merge or release authority.
 
-- `cgagentharness-project-guidance`: read order and skill routing; start here.
-- `fable-protocol`: evidence-first reasoning before costly code/security/CI claims.
-- `cgagentharness-invariant-guard`: "do the invariants still hold?" gate before
-  merging core-path diffs.
-- `cgagentharness-config-guard`: static fail-closed check of `config.default.yaml`.
-- `cgagentharness-write-policy-redteam`: attack write gates, confirm+reason,
-  clone jail and shim argv.
-- `verification-specialist`: break a *supplied* change without modifying the tree.
-- `cgagentharness-gotchas`: session-tested traps (CI flakes, Seatbelt noise,
-  toolchain fights, review timing).
-- `cgagentharness-optimize`: evidence-backed Rust/runtime/CI improvements; never
-  transplant CyClaw topology or defaults.
-- Codex only: `cgagentharness-release` (macOS packaging, release prep),
-  `cgagentharness-verify` (isolated backend, desktop and local-model checks).
-- Claude only: `cgagentharness-runtime-invariant-check` (report only),
-  `dep-sync` (fixes dependency and CI drift against `origin/main`), `doc-sync` (rewrites stale
-  docs), `run-cg-agent-harness` (fake-model console smoke),
-  `cgagentharness-otel-hardening` (telemetry-kill contract).
-- Copilot only: `repo-optimize` (focused draft PRs from the default branch).
+- Codex: [.codex/skills/README.md](.codex/skills/README.md) indexes contract/config
+  guards, write-policy probes, verification, optimization and macOS release work.
+- Claude: [.claude/skills/README.md](.claude/skills/README.md) lists invocation
+  policies and Claude-only procedures. Preserve operator-only skills;
+  `doc-sync` remains operator-typed in Claude.
+- Copilot: [.github/skills/README.md](.github/skills/README.md) owns its inventory.
+
+Keep shared operating rules here, contracts in `INVARIANTS.md`, and task-specific
+mechanics in skills. Similarly named Claude/Codex skills may differ in scope or
+invocation. When editing skills, check frontmatter, referenced paths/symbols and
+command filters, then run the Markdown-budget check. Static checks cannot prove
+existing chats reload instructions.

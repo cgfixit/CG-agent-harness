@@ -415,6 +415,17 @@ unslop:
 # one excerpt for the next local chat turn of that session only; cloud chat and
 # /agent refuse while one is staged and /loop never receives it. A missing
 # list is empty. Invalid values fail boot. Restart-only; not reloadable.
+#
+# Context about the harness itself for local chat turns and /prompt only; never
+# cloud chat, /loop or /agent. self_knowledge injects the best-matching chunks of
+# the bundled, hash-pinned manual (assets/self/MANUAL.md, built by
+# scripts/build-self-manual.py) as untrusted background; it reads nothing from
+# the home. live_state adds one fixed status block from in-memory state (model,
+# gates, style, session, home path; never keys or the sandbox backend, and never
+# for portal_auditor accounts). Neither grants a tool: chat keeps only
+# web_search and web_fetch. These two switches are not flag_is_true gates: a
+# missing key means on, literal true/false is used as written, and any other
+# value fails boot. Ranges are hard. Restart-only.
 diagnostics:
   logs_enabled: false
   logs_max_lines: 500 # 1–1000 per read
@@ -429,6 +440,11 @@ diagnostics:
   # Reserved. No model-callable diagnostics tool exists in this build; chat
   # still exposes only web_search and web_fetch. Literal true only warns.
   model_tool: false
+  self_knowledge: true
+  self_manual_max_chunks: 4 # 1–8 chunks per turn
+  self_manual_max_chars: 6000 # 512–16000 injected characters per turn
+  self_manual_min_score: 0.0 # finite, >= 0; Tantivy score floor, 0 keeps every hit
+  live_state: true
 
 # Account-private structured facts, governed proposals, and optional episodes.
 # Distinct from harness.json.memory_enabled, which only includes pinned

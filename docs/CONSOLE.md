@@ -302,9 +302,12 @@ selected skills and memory: a “give full detail” instruction can conflict wi
 **Style presets.** `/style <name>` selects a session preset;
 `/style off` is the default and `/style` prints
 the active preset. Shipped: `code-review`, `concise`, `design`,
-`research`, and `technical`
+`research`, `soul`, `technical`, and `troubleshoot`
 ([`data/styles/`](../data/styles/)). An overlay at
 `$CGAGENTHARNESS_HOME/styles/<name>.md` wins. The selector creates a session if needed.
+`troubleshoot` labels claims observed or inferred and ends with one next command.
+Local chat and `/prompt` also carry a live status block and bundled-manual excerpts
+(`diagnostics.self_knowledge`, `live_state`); [contract](../INVARIANTS.md#self-knowledge-never-widens-authority).
 Prompt order is soul, style, then fixed policy, so style cannot
 override the contract. `/prompt` reports load failures and omits an unreadable,
 empty, missing, or scanner-refused overlay.
