@@ -1698,9 +1698,9 @@ async fn chat_inner(
         })
         .await
     };
-    // A /loop turn's input is generated framing; queuing it each turn fills the
-    // bounded suggestion queue with repeats of the same goal.
-    let memory_suggestion = if req.loop_turn {
+    // Intermediate loop turns repeat generated framing. Only the terminal reply
+    // supplies completion evidence, paired with the human goal, never that framing.
+    let memory_suggestion = if req.loop_turn && !reply_has_goal_done(&reply.body_text) {
         json!({"queued": false, "reason": "loop_turn"})
     } else if portal_auditor {
         json!({"queued": false, "reason": "portal_auditor"})
@@ -1710,7 +1710,7 @@ async fn chat_inner(
             &owner,
             crate::server::structured_memory_suggest::Source::Chat,
             episode["id"].as_str(),
-            &req.message,
+            if req.loop_turn { &session.goal } else { &req.message },
             &reply.body_text,
             &model,
         )
@@ -1812,3 +1812,41 @@ pub async fn cancel_chat(
 
 // Account identity comes only from the guarded request extension.
 type Caller = Option<axum::Extension<crate::common::auth_store::UserSummary>>;
+
+// Keep marker recognition aligned with console replyHasGoalDone; this is
+// unverified model advice, never proof of execution or authority to apply facts.
+fn reply_has_goal_done(reply: &str) -> bool {
+    static MARKER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let marker = MARKER.get_or_init(|| {
+        regex::Regex::new(r"^(?:(?:[#>*_`~\-]+|[0-9]+[.)])\s*)*GOAL_DONE(?:\s*[*_`~.!:]+)*$")
+            .expect("valid goal completion marker")
+    });
+    reply.lines().any(|line| marker.is_match(line.trim()))
+}
+
+#[cfg(test)]
+mod loop_completion_tests {
+    #[test]
+    fn completion_marker_matches_console_decorations_not_mentions() {
+        for text in [
+            "GOAL_DONE",
+            "Summary.\n**GOAL_DONE**",
+            "`GOAL_DONE`",
+            "## GOAL_DONE",
+            "1. GOAL_DONE",
+            "> GOAL_DONE.",
+            "  GOAL_DONE  ",
+        ] {
+            assert!(super::reply_has_goal_done(text), "{text}");
+        }
+        for text in [
+            "",
+            "Not GOAL_DONE yet",
+            "GOAL_DONE eventually",
+            "GOAL_DONE?",
+            "goal_done",
+        ] {
+            assert!(!super::reply_has_goal_done(text), "{text}");
+        }
+    }
+}
