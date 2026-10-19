@@ -984,6 +984,11 @@ const shownAgentDiffs = new Map();
 let reviewRevision = 0; // /clear invalidates reviews without changing the selected session.
 let sessionGoal = '';
 let loopAuto = false;
+/* With auto on, a loop starts by itself after this pause (/loop auto, /goal
+   <text>, /loop auto <goal text>), so a mistaken toggle can still be cancelled
+   with /loop stop or /loop auto. Nothing is persisted before it starts. */
+const AUTO_LOOP_START_MS = 5000;
+let autoLoopStart = null;
 const MAX_GOAL_CHARS = 2000;
 const MAX_LOOP_TURNS = 5;
 const DEFAULT_LOOP_TURNS = 3;
@@ -1043,6 +1048,10 @@ function paintGoalLoop() {
   }
   const l = $('sLoop');
   if (!l) return;
+  if (autoLoopStart) {
+    l.textContent = 'auto (starting)';
+    return;
+  }
   if (!loopState) {
     l.textContent = loopAuto ? 'auto' : 'off';
     return;
@@ -1944,7 +1953,7 @@ const COMMANDS = [
   ['/goal task', "inspect the goal's durable task linkage"],
   ['/harness', 'list retained harness optimizer runs; does not start one'],
   ['/help [topic|search words|all]', 'searchable guide, topics, safe command insertion and examples'],
-  ['/loop [--web off|fetch|all] [n]|auto|stop', 'bounded chat continuation; --web sets the goal web mode; auto toggles; stop also cancels streaming chat'],
+  ['/loop [auto] [--web off|fetch|all] [n] [goal]|stop', 'bounded chat continuation; goal text sets the goal first; --web sets its web mode; auto toggles and starts in 5 s; stop also cancels streaming chat'],
   ['/memory [on|off|status]', 'show pinned notes plus structured fact and proposal counts, or toggle notes in chat'],
   ['/memory add <note>', 'save a literal pinned note'],
   ['/memory auto-consolidate|auto-retrieve|auto-suggest-chat|auto-suggest-coding on|off', 'administrator overrides for automatic structured-memory features'],
@@ -2124,7 +2133,7 @@ const COMMAND_MAN = {
   '/goal task': {detail:'Shows the goal’s durable task record. If a request is staged there, it is recovered for review; confirmation is still explicit.'},
   '/harness': {detail:'Lists retained harness optimizer runs. It never starts one.'},
   '/help [topic|search words|all]': {detail:'Alone, an overview with topics. A topic key filters to that family; any other words search every command and summary, so a flag such as --group works; all prints the whole catalog. The Commands pane is this same guide; its ? buttons open these pages.', examples:['/help --group']},
-  '/loop [--web off|fetch|all] [n]|auto|stop': {detail:'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + ', at most ' + MAX_LOOP_TURNS + '), one turn at a time unless auto is on. With no stored goal, your last prompt becomes the goal. A normal turn that needed compaction also continues this way automatically. --web off, fetch or all sets the goal web mode before starting and persists on the goal. auto toggles automatic continuation. stop ends the loop and also cancels a reply that is still streaming.', notes:['Local loops can read attachments and permitted web sources; they never start a coding run.', 'A goal set without --web uses web.goal_web_default (ships all: search and pages).'], args:{n:'turns to run, 1 to ' + MAX_LOOP_TURNS}},
+  '/loop [auto] [--web off|fetch|all] [n] [goal]|stop': {detail:'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + ', at most ' + MAX_LOOP_TURNS + '), one turn at a time unless auto is on. Text after the count sets the session goal first, so /loop 3 compare hvac vendors is /goal then /loop in one command. With no stored goal, your last prompt becomes the goal. A normal turn that needed compaction also continues this way automatically. --web off, fetch or all sets the goal web mode before starting and persists on the goal. auto toggles automatic continuation and, when it turns on with a goal (or a last prompt) to follow, starts the loop after ' + (AUTO_LOOP_START_MS / 1000) + ' s; /goal <text> with auto on does the same. /loop auto with a count or goal turns auto on and starts after the same pause. stop ends the loop, cancels a pending start and also cancels a reply that is still streaming.', notes:['Local loops can read attachments and permitted web sources; they never start a coding run.', 'A goal set without --web uses web.goal_web_default (ships all: search and pages).'], args:{n:'turns to run, 1 to ' + MAX_LOOP_TURNS, goal:'optional goal text stored before the loop starts'}},
   '/memory [on|off|status]': {detail:'Alone or with status, shows the pinned notes, your structured fact and pending proposal counts, and every gate. on or off decides whether pinned notes enter the system prompt. The structured-memory gates are separate; see the capture and auto commands.'},
   '/memory add <note>': {detail:'Pins a literal note shared by this home. Notes are injected only while /memory is on.'},
   '/memory auto-consolidate|auto-retrieve|auto-suggest-chat|auto-suggest-coding on|off': {detail:'Administrator switches for the automatic structured-memory features. Each depends on its prerequisite gate: auto-retrieve needs retrieval, auto-consolidate needs consolidation, the suggest switches need capture. The reply shows every gate.'},
@@ -2187,7 +2196,7 @@ const WORTH_KNOWING = [
   {label:'/model use <exact-installed-tag>', insert:'/model use ', hint:'An exact local tag, local, grok/xai or claude/anthropic; cloud readiness is checked before saving', key:'/model [list|use <name>|profile|status]'},
   {label:'/model status', insert:'/model status', hint:'Read-only: model, key presence and effective profile sources', key:'/model [list|use <name>|profile|status]'},
   {label:'/model profile', insert:'/model profile', hint:'Read-only: model facts, loaded window, proposed limits and any applied tuning', key:'/model [list|use <name>|profile|status]'},
-  {label:'/loop stop', insert:'/loop stop', hint:'Also cancels a reply that is still streaming', key:'/loop [--web off|fetch|all] [n]|auto|stop'},
+  {label:'/loop stop', insert:'/loop stop', hint:'Also cancels a reply that is still streaming', key:'/loop [auto] [--web off|fetch|all] [n] [goal]|stop'},
   {label:'/web check <URL>', insert:'/web check ', hint:'Tests permission without fetching or granting anything', key:'/web check <URL> [URL ...] [--group name]'},
 ];
 function commandRoot(syntax) { return '/' + syntax.slice(1).split(' ')[0]; }
@@ -2577,7 +2586,7 @@ $('sessionClearConfirm').addEventListener('click', async () => {
     });
     clearTranscript();
     retryAttachmentIds = null;
-    currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionGoal = ''; loopAuto = false;
+    currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionGoal = ''; loopAuto = false; cancelAutoLoopStart('');
     currentStyle = 'off'; currentStyleIssue = null; paintStyle();
     input.value = '';
     $('sSession').textContent = 'none';
@@ -2669,7 +2678,7 @@ async function runSlash(line, webCommand) {
             currentSession = s.session_id;
             paintSessionTokens(s.tokens);
             sessionGoal = typeof s.goal === 'string' ? s.goal : '';
-            loopAuto = false;
+            loopAuto = false; cancelAutoLoopStart('');
             paintGoalLoop();
             sys((sub === 'new' ? 'session created: ' : 'switched to session ') + s.session_id + ' — ' + s.title);
             /* The session carries the persisted name; the effective style
@@ -3585,46 +3594,97 @@ async function runSlash(line, webCommand) {
         paintGoalLoop();
         sys('goal set (web: ' + (set.goal_web_mode || 'all') + '):\n' + sessionGoal, goalWebNote(set.goal_web_mode));
         await refreshSessions();
+        if (loopAuto && sessionGoal && !staleReview() && !(loopState && loopState.running)) scheduleAutoLoopStart('/loop', 'loop auto is ON');
         break;
       }
 
       case 'loop': {
-        let loopArgs = rest, loopWebMode = null;
-        if (loopArgs[0] === '--web') {
-          if (!['off', 'fetch', 'all'].includes(loopArgs[1])) { sys('usage: /loop --web off|fetch|all [n]'); break; }
-          loopWebMode = loopArgs[1];
-          loopArgs = loopArgs.slice(2);
-        }
-        const sub = loopArgs[0] || '';
-        if (sub === 'stop') {
+        /* /loop [auto] [--web off|fetch|all] [n] [goal text], the grammar
+           loop_args_ok in src/server/slash.rs accepts. */
+        let i = 0, loopWebMode = null, autoWord = false;
+        const word = function (k) { return (rest[k] || '').toLowerCase(); };
+        if (word(0) === 'stop') {
           requestLoopStop('loop stopped');
           break;
         }
-        if (sub === 'auto') {
-          /* A compaction-started loop runs auto without the page flag: toggle
-             the running loop's own flag so the first /loop auto turns it off. */
-          loopAuto = loopState ? !loopState.auto : !loopAuto;
-          if (loopState) loopState.auto = loopAuto;
-          paintGoalLoop();
-          sys('loop auto-continue is ' + (!loopAuto ? 'OFF (one turn, then wait)'
-            : loopState && loopState.running ? 'ON (continues until GOAL_DONE, stall, budget, or rate limit; still chat-only)'
-            : loopState && loopState.remaining > 0 ? 'ON — type /loop to run the remaining ' + loopState.remaining + ' turn(s)'
-            : 'ON — nothing is running yet; type /loop or /loop <n> to start (with no /goal, your last prompt becomes the goal). auto alone does not start a loop.'));
+        if (word(i) === 'auto') { autoWord = true; i += 1; }
+        if (rest[i] === '--web') {
+          if (!['off', 'fetch', 'all'].includes(rest[i + 1])) { sys('usage: /loop [auto] [--web off|fetch|all] [n] [goal text]'); break; }
+          loopWebMode = rest[i + 1];
+          i += 2;
+        }
+        if (!autoWord && word(i) === 'auto') { autoWord = true; i += 1; }
+        const sub = /^[1-9]\d*$/.test(rest[i] || '') ? rest[i] : '';
+        if (sub) i += 1;
+        const loopGoalText = rest.slice(i).join(' ');
+        /* Validate before anything is persisted: a usage error must not leave
+           a derived goal behind. */
+        if (loopGoalText && (/^[-–—]/.test(rest[i]) || /^\d+$/.test(loopGoalText) || ['auto', 'stop'].includes(word(i)))) {
+          sys('usage: /loop [auto] [--web off|fetch|all] [n] [goal text] | /loop stop');
           break;
         }
+        if (Array.from(loopGoalText).length > MAX_GOAL_CHARS) {
+          sys('goal is too long; keep it under ' + MAX_GOAL_CHARS + ' characters');
+          break;
+        }
+        if (autoWord) {
+          if (i === 1) {
+            /* Bare /loop auto toggles. A compaction-started loop runs auto
+               without the page flag: toggle the running loop's own flag so
+               the first /loop auto turns it off. */
+            loopAuto = loopState ? !loopState.auto : !loopAuto;
+            if (loopState) loopState.auto = loopAuto;
+            if (!loopAuto) cancelAutoLoopStart('');
+            paintGoalLoop();
+            if (!loopAuto) { sys('loop auto-continue is OFF (one turn, then wait)'); break; }
+            if (loopState && loopState.running) { sys('loop auto-continue is ON (continues until GOAL_DONE, stall, budget, or rate limit; still chat-only)'); break; }
+            if (!sessionGoal && !currentSession) { sys('loop auto-continue is ON — it starts ' + AUTO_LOOP_START_MS / 1000 + ' s after you set /goal <text> (or type /loop auto <goal text>)'); break; }
+            scheduleAutoLoopStart('/loop', 'loop auto-continue is ON');
+            break;
+          }
+          /* /loop auto with a count, mode or goal turns auto on (never off)
+             and starts the same /loop after the countdown. Nothing is
+             persisted until it starts, so cancelling leaves no goal behind. */
+          if (loopState && loopState.running) { sys('a loop turn is already in flight — /loop stop to abort after it returns'); break; }
+          loopAuto = true;
+          if (loopState) loopState.auto = true;
+          paintGoalLoop();
+          scheduleAutoLoopStart(['/loop'].concat(loopWebMode ? ['--web', loopWebMode] : [], sub ? [sub] : [], loopGoalText ? [loopGoalText] : []).join(' '), 'loop auto-continue is ON');
+          break;
+        }
+        cancelAutoLoopStart('');
         if (loopState && loopState.running) {
           sys('a loop turn is already in flight — /loop stop to abort after it returns');
-          break;
-        }
-        /* Validate the count before anything is persisted: a usage error must
-           not leave a derived goal behind. */
-        if (sub && (!/^[1-9]\d*$/.test(sub) || parseInt(sub, 10) < 1)) {
-          sys('usage: /loop [--web off|fetch|all] [n] | /loop stop | /loop auto');
           break;
         }
         /* A /loop stop typed while this setup awaits must win, as in maybeAutoLoop. */
         const loopGeneration = loopCancelGeneration;
         const loopSetupStale = function () { return staleReview() || loopCancelGeneration !== loopGeneration; };
+        /* Goal text on the command line: check eligibility, then store it (with
+           the requested web mode in the same write) before the loop reads it. */
+        let goalWritten = false;
+        if (loopGoalText) {
+          const status = await api('/api/status');
+          if (loopSetupStale()) break;
+          if (status.provider !== 'ollama' && status.base_url === null) { sys('Select a local model before /loop; cloud loops are unavailable.'); break; }
+          if (!currentSession) {
+            const created = await api('/api/sessions', 'POST', { title: Array.from(loopGoalText).slice(0, 40).join('') });
+            if (loopSetupStale()) break;
+            adoptPendingHistory(created.session_id);
+            currentSession = created.session_id;
+            paintSessionTokens(created.tokens);
+            $('sSession').textContent = currentSession;
+            currentStyle = 'off'; currentStyleIssue = null; paintStyle();
+          }
+          const set = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', loopWebMode ? { goal: loopGoalText, web_mode: loopWebMode } : { goal: loopGoalText });
+          if (loopSetupStale()) break;
+          sessionGoal = set.goal || loopGoalText;
+          goalWritten = true;
+          /* A new goal starts a fresh loop rather than finishing an old one's turns. */
+          loopState = null;
+          sys('goal set (web: ' + (set.goal_web_mode || 'all') + '):\n' + sessionGoal, goalWebNote(set.goal_web_mode));
+          refreshSessions().catch(function () { /* the sidebar refreshes on the next change */ });
+        }
         /* Reload the stored goal every time: each turn restates it, and another
            tab may have changed it since this page last read it. */
         if (currentSession) {
@@ -3639,7 +3699,7 @@ async function runSlash(line, webCommand) {
           /* No stored goal: continue the last thing the operator asked. The
              requested web mode rides the same write, so no intermediate goal
              ever carries the default mode. */
-          let modeApplied = false;
+          let modeApplied = goalWritten;
           if (!sessionGoal) {
             const derived = loopGoalFromSession(loaded, MAX_GOAL_CHARS);
             if (derived) {
@@ -3660,7 +3720,7 @@ async function runSlash(line, webCommand) {
           paintGoalLoop();
           sys('Loop context: ' + (loaded.live_attachment_pins || 0) + ' live attachment pin(s); goal web mode ' + (loaded.goal_web_mode || 'all') + '; web tools ' + (status.chat_tools_available && loaded.goal_web_mode !== 'off' ? (loaded.goal_web_mode === 'fetch' ? 'fetch only within current URL permissions' : 'available within current URL permissions') : 'off') + '. /session unpin clears pins.');
         }
-        if (!sessionGoal) { sys('set a goal first: /goal <what you want done> — or send any prompt and /loop will continue it'); break; }
+        if (!sessionGoal) { sys('set a goal first: /goal <what you want done>, /loop <what you want done>, or send any prompt and /loop will continue it'); break; }
         if (loopCancelGeneration !== loopGeneration) break;
         if (sub) {
           const n = Math.min(parseInt(sub, 10), MAX_LOOP_TURNS);
@@ -3777,7 +3837,7 @@ async function runSlash(line, webCommand) {
       }
       case 'clear':
         clearTranscript();
-        loopState = null; loopAuto = false;
+        loopState = null; loopAuto = false; cancelAutoLoopStart('');
         paintGoalLoop();
         break;
 
@@ -3905,8 +3965,42 @@ function stopLoop(reason) {
   if (loopState) loopState.stop = true;
   loopState = null;
   loopCancelGeneration++;
+  cancelAutoLoopStart('');
   paintGoalLoop();
   if (reason) sys(reason);
+}
+
+function cancelAutoLoopStart(reason) {
+  if (!autoLoopStart) return;
+  clearTimeout(autoLoopStart.timer);
+  autoLoopStart = null;
+  paintGoalLoop();
+  if (reason) sys(reason);
+}
+
+/* Run an already validated /loop line after AUTO_LOOP_START_MS unless auto
+   is turned off, the loop is stopped, or the session changes first. */
+function scheduleAutoLoopStart(line, lead) {
+  cancelAutoLoopStart('');
+  const pending = {
+    line: line, session: currentSession, revision: sessionRevision,
+    generation: loopCancelGeneration, timer: null,
+  };
+  pending.timer = setTimeout(function () {
+    if (autoLoopStart !== pending) return;
+    autoLoopStart = null;
+    paintGoalLoop();
+    if (!loopAuto || loopCancelGeneration !== pending.generation) return;
+    if (currentSession !== pending.session || sessionRevision !== pending.revision) {
+      sys('auto loop start cancelled — the session changed');
+      return;
+    }
+    if (loopState && loopState.running) return;
+    runSlash(pending.line);
+  }, AUTO_LOOP_START_MS);
+  autoLoopStart = pending;
+  paintGoalLoop();
+  sys(lead + ' — ' + line + ' starts in ' + (AUTO_LOOP_START_MS / 1000) + ' s; /loop stop or /loop auto cancels');
 }
 
 async function runLoopTurns() {
