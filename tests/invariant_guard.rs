@@ -1041,8 +1041,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // plus ~10%, rounded up to the next 50. Lower it to the reported size once those land.
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default contract; file was at 6437.
     // why: operator-approved +150 (2026-10-18), shared by the four compaction follow-up PRs (#513 fixes, hard limit, reply parity, window trigger).
-    // why: operator-approved (2026-10-18) /diag and portal_auditor contracts; 6994 words with #541/#543 on main, set to 7000.
-    ("INVARIANTS.md", Root, 7000),
+    // why: owner-approved (2026-10-18) cap set to the measured count with #546 + #551 together; never trim gate text to fit.
+    ("INVARIANTS.md", Root, 7042),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     ("README.md", Root, 1700),
@@ -1055,7 +1055,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
-    ("docs/CONSOLE.md", Guide, 6157),
+    ("docs/CONSOLE.md", Guide, 6166),
     ("docs/DEPENDENCIES.md", Guide, 1400),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     ("docs/DESKTOP.md", Guide, 2680),
