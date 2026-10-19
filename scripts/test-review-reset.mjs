@@ -20,7 +20,7 @@ const context = vm.createContext({
   currentSession:'fixture-session', sessionGoal:'fixture goal', promptHistory:{},
   input:node('input'), loopAuto:false, retryAttachmentIds:null, stopLoop(){}, paintGoalLoop(){}, resetScheduleReview(){++scheduleClears;}, resetNotificationView(){++notificationClears;},
   currentStyle:'off', currentStyleIssue:null, inflightChat:null, sendBtn:{disabled:false},
-  isLoopStopCommand:()=>false, AGENT_CLI_TIMEOUT_MS:100, sys:text=>messages.push(text), table:rows=>JSON.stringify(rows),
+  isLoopStopCommand:()=>false, AGENT_CLI_TIMEOUT_MS:100, AGENT_WRITE_TIMEOUT_MS:100, sys:text=>messages.push(text), table:rows=>JSON.stringify(rows),
   abortInflightSearch(){}, clearPendingAttachments(){}, clearAnalytics(){++analyticsClears;}, paintStyle(){},
   refreshHeaderFeatures(usable){headerStates.push(usable);},
   refreshStatus:async()=>{}, refreshHarnessAuth:async()=>{},
