@@ -15,7 +15,7 @@ models:
   cloud_chat:
     enabled: true
     max_tokens: 4096
-    timeout_sec: 90
+    timeout_sec: 180
     count_timeout_sec: 2 # 0.1–10; Claude count_tokens deadline, then a labelled heuristic fallback
     max_usd_per_call: null # null/absent: no gate; otherwise a finite positive USD estimate limit
     budget_on_heuristic: false # only literal true applies the cap to bytes/4 estimates (unreliable for CJK)
@@ -26,22 +26,24 @@ models:
       # profile: {context_window: 32768, max_output_tokens: 2048, timeout_sec: 60, count_timeout_sec: 1, tool_support: false, rpm: 60}
     claude:
       enabled: true
-      model: "claude-sonnet-5"
+      model: "claude-opus-5-5"
       # Same optional profile keys as grok; temperature (0–1) is omitted by default.
       # Newer Claude models reject temperatures other than 1; check vendor support.
-  local_llm:
+      # is that true?? ^
+local_llm:
     provider: "ollama"
     base_url: "http://127.0.0.1:11434/v1"  # DevSkim: ignore DS162092 - Ollama loopback only; non-loopback refused at runtime
     model: "qwen3.8:27b-mlx"
     # Sent only for a resolved Ollama backend. none | low | medium | high | max;
     # absent/empty omits the field, an invalid value fails at boot.
     reasoning_effort: "none"
+
     # Server-side Ollama context must be 32768: set OLLAMA_CONTEXT_LENGTH before
     # `ollama serve` and verify context_length on /api/ps (docs/MODELS.md).
     # The harness sends no num_ctx and inherits that window.
     max_tokens: 4096 # 1–25904 with Ollama reasoning=none; otherwise 1–12952 with a 2x reservation
-    temperature: 0.2
-    timeout_sec: 720
+    temperature: 0.0
+    timeout_sec: 1800
     # Explicit local inventory only; no inference, cloud probes or model downloads.
     inventory:
       timeout_sec: 2.0 # finite 0.1–30 seconds
@@ -53,14 +55,14 @@ models:
     warmup:
       enabled: true # flag_is_true; missing in old homes is off. Failure is a logged degrade, never a crash.
       keep_alive_sec: 300 # 1–3600 seconds sent as keep_alive; never num_ctx
-      timeout_sec: 30 # 1–120; bounded background POST /api/generate with an empty prompt
+      timeout_sec: 45 # 1–120; bounded background POST /api/generate with an empty prompt
     # Per-model tuning (flag_is_true; quoted "true" is off; false restores the
     # fixed limits). On /model use and at startup: one short raw /api/generate
     # times this loopback Ollama (no num_ctx; it loads the model like warmup) and
     # /api/ps gives the loaded window. Token budgets only tighten to fit it; the
     # chat timeout follows the measured speed (120–3600 s); a model declaring no
     # tools gets none. Cloud uses config profiles, never this sample. See /model profile.
-    auto_tune: true
+    auto_tune: true # t-pain! lol throwback 
     # Optional loopback failover (LM Studio or any OpenAI-compatible server).
     fallback:
       enabled: false
@@ -82,13 +84,13 @@ models:
 # lifetime TokenTally.total. System prompt and session.goal are never compacted.
 chat:
   compact_prompt_tokens: 24000 # floor=max_tokens + 4096 (hard-limit floor: effective reply reservation + 4096), capped at 30000 (more for a larger window auto_tune measured)
-  compact_keep_messages: 8 # 2–40: at most this many recent messages kept verbatim, whole exchanges only
+  compact_keep_messages: 10 # note for benchmarks so you dont end up a bakeoff lol - 2–40: at most this many recent messages kept verbatim, whole exchanges only
   compact_tail_percent: 25 # 10–50: verbatim tail budget as a percent of the trigger; at least the last exchange
-  compact_follow_window: true # an auto_tune-verified window above 32768 scales the trigger up in proportion; literal false keeps it
-  compact_max_prefill_sec: 120 # 30–1800: that scaled trigger stays within this many seconds of measured prefill, plus one reply
+  compact_follow_window: false # an auto_tune-verified window above 32768 scales the trigger up in proportion; literal false keeps it
+  compact_max_prefill_sec: 1500 # 30–1800: that scaled trigger stays within this many seconds of measured prefill, plus one reply
 
 compaction:
-  summary_max_tokens: 768 # clamped to 128–2048; existing homes without this key also use 768; sent doubled where the reply is reserved twice
+  summary_max_tokens: 2048 # clamped to 128–2048; existing homes without this key also use 768; sent doubled where the reply is reserved twice
 
 # Chat text attachments (/api/chat/attachments). Size, count and quota limits
 # are fixed in src/server/attachments.rs; this bounds how many upload bodies
@@ -97,7 +99,7 @@ attachments:
   max_concurrent_uploads: 2
   # Server-side deadline for receiving one upload body (seconds, 5–600); a
   # stalled client releases its permit when it expires.
-  body_timeout_sec: 120
+  body_timeout_sec: 360
 
 # Home-jail .md/.txt notes for local prompt retrieval.
 # Separate from structured memory. Cloud and /agent never receive these bytes.
@@ -112,42 +114,42 @@ notes_corpus:
 # See docs/CONFIG_RELOAD.md; secrets, authority and other settings require restart.
 api:
   rate_limit:
-    max_requests: 120      # 1–100000; per-IP request ceiling within the window
-    window_seconds: 60     # finite 0.001–86400; sliding-window seconds
+    max_requests: 150      # 1–100000; per-IP request ceiling within the window
+    window_seconds: 240     # finite 0.001–86400; sliding-window seconds
   # /loop turns get their own, tighter budget.
   harness_loop_rate_limit:
-    max_requests: 16
-    window_seconds: 300
+    max_requests: 34
+    window_seconds: 500
     max_tokens: 2048 # same backend-dependent ceiling as local chat; legacy 0 selects 2048
 
 # Bounded public content reads; fresh harness.json enables web with an empty URL allowlist.
 # Missing values in existing homes use these defaults; invalid values fail boot.
 web:
-  chat_tool_calls: 10 # 1–10 read-only calls per chat or local /loop turn
+  chat_tool_calls: 50 # 1–10 read-only calls per chat or local /loop turn
   goal_web_default: all # off|fetch|all; restart-only. The mode a /goal gets without --web.
   # fetch reads permitted URLs only; all also lets unattended /loop turns pick web_search
   # queries. Search listings never grant URL permission. Set fetch to withhold search from
   # unattended turns, or per goal: /goal --web fetch <text>, /loop --web fetch. Invalid values fail boot.
   response_bytes: 262144 # 1024–1048576; compressed bodies refused
   request_seconds: 8 # 1–30, includes queue, DNS, headers, body and extraction
-  html_parser_handles: 512 # 64–4096; bound open-element/formatting state, restart-only
-  concurrency: 2 # 1–4 total fetches; restart-only (shared permits)
+  html_parser_handles: 4096 # 64–4096; bound open-element/formatting state, restart-only
+  concurrency: 4 # 1–4 total fetches; restart-only (shared permits)
   max_rules: 64 # 1–256 allowlist rules (one per pattern; a grant names 1–32); restart-only; file cap 4 KiB per rule, at least 64 KiB
-  pages: 20 # 1–40 per run
+  pages: 40 # 1–40 per run
   run_bytes: 2097152 # 1024–8388608 per run
-  run_seconds: 60 # 1–180
+  run_seconds: 180 # 1–180
   per_site_pages: 10 # 1–20
-  pace_ms: 250 # 100–5000 between requests to an origin
-  cache_pages: 128 # 1–256; derived cache, oldest documents evicted
+  pace_ms: 400 # 100–5000 between requests to an origin
+  cache_pages: 256 # 1–256; derived cache, oldest documents evicted
   cache_bytes: 16777216 # 1048576–33554432 serialized cache bytes
   subqueries: 3 # 1–5 total model-selected subqueries
   rounds: 2 # 1–2 planning/retrieval rounds; one bounded crawl per run
   evidence_tokens: 6000 # 256–6000, estimated when no tokenizer is available
-  model_tokens: 1024 # 256–2048 maximum synthesis completion
+  model_tokens: 2048 # 256–2048 maximum synthesis completion
   total_tokens: 28000 # 2048–128000, held at 32000 unless auto_tune measured a larger window; sized for a verified 32768-token window
   # If /api/ps context_length is smaller or unverified, keep 16000 here and evidence_tokens 3000.
-  research_seconds: 300 # 10–1800 discovery and planning deadline
-  synthesis_seconds: 300 # 10–1800 answer deadline, started after discovery; missing keys use 300
+  research_seconds: 1200 # 10–1800 discovery and planning deadline
+  synthesis_seconds: 1800 # 10–1800 answer deadline, started after discovery; missing keys use 300
   stale_seconds: 604800 # 60–31536000; fetch age, not publication-date verification
 
 # Completion webhooks are explicit operator configuration and restart-only.
@@ -155,7 +157,7 @@ notifications:
   enabled: false
   schema_version: 1
   destinations: [] # max 8: explicit id, owner, enabled, url, events, use_bearer, rate_per_minute
-  webhook_url: "" # legacy global URL must be migrated explicitly; never invent an owner
+  webhook_url: "" # legacy global URL must be migrated explicitly; never invent an owner -??
   private_url_allowlist: [] # exact URLs only; loopback/RFC1918/ULA require this grant
   queue_capacity: 128 # 1–512 retained deliveries; pressure evicts terminal rows before refusing pending work
   batch_size: 16 # 1–32 metadata events per POST
@@ -168,8 +170,10 @@ notifications:
   retention_sec: 604800 # 60–2592000; pending and terminal delivery retention
   max_replays: 3 # 0–10; explicit owner-confirmed replay cycles
   timeout_sec: 5 # 1–30, includes DNS and request
+  # worst case the smtplib or ancient smtp relay method for email alert  
 
-# External MCP tools. Off until an operator declares servers. Never auto-discover.
+
+# External MCP tools. ? <for what tho lol - Off until an operator declares servers. Never auto-discover.
 # SSE loopback is an explicit toggle and ships off. MCP tools never appear on /loop.
 # stdio command[0] must be an absolute path. Calls require confirm: true.
 # Each stdio entry requires capabilities version 1; missing/invalid grants fail
@@ -178,7 +182,7 @@ notifications:
 mcp:
   # Separate inbound gateway: no listener or capabilities until explicitly selected.
   server:
-    enabled: false
+    enabled: false # see if any risk before enabling to verify
     host: 127.0.0.1 # DevSkim: ignore DS162092 because the private gateway contract requires loopback-only binding.
     port: 8791
     tools: []
@@ -192,24 +196,24 @@ mcp:
     requests_per_minute: 120 # 1–120 per key
     global_requests_per_minute: 360 # 1–600
   enabled: false
-  sse_allow_loopback: false
-  timeout_sec: 15 # 1–60
-  max_result_bytes: 65536 # 1024–262144
+  sse_allow_loopback: false # ?
+  timeout_sec: 30 # 1–60
+  max_result_bytes: 85536 # 1024–262144
   servers: []
 
 security:
   # Compatibility setting. Harness keys are optional metadata and never grant
   # account permissions. False is deprecated and does not disable account login.
-  api_key_optional: true
+  api_key_optional: true # temp for now only for cg agent key
   # Literal true keeps managed provider keys in the private 0600 home .env.
   # Default false uses the OS credential store. Quoted "true" stays off.
   # Restart required; this key is not reloadable.
-  allow_plaintext_key_file: false
+  allow_plaintext_key_file: false # lol dafuck
 
 tls:
   enabled: true # newly seeded homes use HTTPS; existing configs are not rewritten
   auto_generate: true # unique local cert/key in a private atomic PEM bundle
-  certificate_days: 90 # 1–365; renew explicitly before expiry
+  certificate_days: 365 # 1–365; renew explicitly before expiry
   cert_file: "" # optional operator PEM chain, relative to home or absolute
   key_file: "" # paired private PEM key; never overwritten by automatic generation
 
@@ -220,7 +224,7 @@ auth:
   # 12 characters, must differ from the code, and revokes old sessions.
   enabled: true
   # scrypt uses about 128 MiB per derivation; bound a burst to 1–4 operations.
-  max_concurrent_operations: 2
+  max_concurrent_operations: 1
   session:
     idle_timeout_sec: 43200
     absolute_timeout_sec: 604800
@@ -301,6 +305,7 @@ policy:
   privacy:
     redact_emails: true
     redact_ips: true
+    # banks, ccs, what else shiykd have at least several of the common things
     redact_secrets_like:
       - 'Bearer\s+[A-Za-z0-9\-_.]+'
       - '[Aa][Pp][Ii][_-]?[Kk][Ee][Yy]["''\s]*[:=]["''\s]*[\w\-.]{4,}'
@@ -336,7 +341,7 @@ agentic:
     enabled: false
     provider: "ollama"
     base_url: "http://127.0.0.1:11434/v1"  # DevSkim: ignore DS162092 - Ollama loopback only; non-loopback refused at runtime
-    model: "qwen3.8:27b-mlx"
+    model: "qwen3.8:27b-mlx-cg"
     planner_timeout_sec: 720
     # ~24k-char planner prompt + planner_max_tokens 3072 now fits comfortably in 32k (previously tight against a 16k window).
     planner_max_tokens: 3072
@@ -383,27 +388,27 @@ agentic:
       - "*.p12"
     max_write_budget_bytes: 100000
     # Local coding planner only; missing/quoted/non-boolean enabled stays off.
-    retrieval:
+    retrieval: # worth re inplementing ?
       enabled: false
       max_files: 256 # Candidate paths examined per step; 1–1024.
       max_index_bytes: 2000000 # UTF-8 content indexed per step; 1–16000000.
       top_k: 3 # At most 1–8 additional files, after operator/model selections.
       excerpt_lines: 40 # Inclusive line window; 1–200, also capped by existing read budgets.
       token_budget: 2048 # 256–8192 conservative UTF-8 byte reservations, including excerpt headers.
-    scan_code_shape: true
+    scan_code_shape: true #?
     max_handoff_chars: 200000
-    workspace_root: "data/agentic/workspaces"
+    workspace_root: "~/-agentWorkspace/temp"
     allow_cloud_providers: true
     providers:
       grok:
         enabled: true
-        model: "grok-4.5"
+        model: "grok-4.6"
       claude:
         enabled: true
-        model: "claude-sonnet-5"
+        model: "claude-opus-5-5"
 
 unslop:
-  enabled: false
+  enabled: true # [check and disable depending on behavior and what logs show
   metrics_path: "logs/unslop.jsonl"
 
 # Read-only /diag log inspection. Off until logs_enabled is the literal boolean
@@ -414,11 +419,22 @@ unslop:
 # one excerpt for the next local chat turn of that session only; cloud chat and
 # /agent refuse while one is staged and /loop never receives it. A missing
 # list is empty. Invalid values fail boot. Restart-only; not reloadable.
+#
+# Context about the harness itself for local chat turns and /prompt only; never
+# cloud chat, /loop or /agent. self_knowledge injects the best-matching chunks of
+# the bundled, hash-pinned manual (assets/self/MANUAL.md, built by
+# scripts/build-self-manual.py) as untrusted background; it reads nothing from
+# the home. live_state adds one fixed status block from in-memory state (model,
+# gates, style, session, home path; never keys or the sandbox backend, and never
+# for portal_auditor accounts). Neither
+# grants a tool: chat keeps only web_search and web_fetch. These two switches are
+# not flag_is_true gates: a missing key means on, literal true/false is used as
+# written, and any other value fails boot. Ranges are hard. Restart-only.
 diagnostics:
-  logs_enabled: false
-  logs_max_lines: 200 # 1–1000 per read
-  logs_max_bytes: 65536 # 4096–262144 per read
-  logs_inject_max_chars: 8000 # 512–24000 staged into one prompt
+  logs_enabled: true
+  logs_max_lines: 500 # 1–1000 per read
+  logs_max_bytes: 69000 # 4096–262144 per read
+  logs_inject_max_chars: 18000 # 512–24000 staged into one prompt
   logs_allowed_files: # bare names [A-Za-z0-9._-]; unslop.metrics_path outside logs/ is not read
     - audit.jsonl
     - audit.jsonl.1
@@ -426,8 +442,13 @@ diagnostics:
     - spend.jsonl.1
     - unslop.jsonl
   # Reserved. No model-callable diagnostics tool exists in this build; chat
-  # still exposes only web_search and web_fetch. Literal true only warns.
-  model_tool: false
+  # still exposes only web_search and web_fetch. <that aint even true lol - need to clean these Literal true only warns.
+  model_tool: false # ???
+  self_knowledge: true
+  self_manual_max_chunks: 4 # 1–8 chunks per turn
+  self_manual_max_chars: 6000 # 512–16000 injected characters per turn
+  self_manual_min_score: 0.0 # finite, >= 0; Tantivy score floor, 0 keeps every hit
+  live_state: true
 
 # Account-private structured facts, governed proposals, and optional episodes.
 # Distinct from harness.json.memory_enabled, which only includes pinned
@@ -469,7 +490,7 @@ structured_memory:
   # Both require enabled + episode_capture. They do not open consolidation/recall.
   auto_suggest_chat: true
   auto_suggest_coding: true
-  suggestion_mode: "both" # summaries | insights | both; invalid values disable suggestions
+  suggestion_mode: both # summaries | insights | both; invalid values disable suggestions
   suggestion_max_input_chars: 8000 # total across input/output, split equally
   suggestion_max_queue: 8 # queued inputs; one additional generation may be running
   suggestion_queue_ttl_secs: 300 # volatile inputs expire; restart drops them
@@ -478,7 +499,7 @@ structured_memory:
   max_facts_per_owner: 64
   max_fact_chars: 1000
   max_category_chars: 64
-  max_proposals_per_owner: 32
+  max_proposals_per_owner: 50
   max_reason_chars: 1000
   max_episodes_per_owner: 128
   max_episode_summary_chars: 500
@@ -499,6 +520,7 @@ structured_memory:
   # Drop lower-confidence candidates; omitted model confidence remains accepted.
   min_consolidation_confidence: 0.40
   auto_consolidation_idle_ms: 2000
+  # hahaha plz trll me thats what i think it means fkf bakeoff7.py 🤣🤣🤣
 
 # LAN observation. Every gate ships false. A tier is effective only when
 # `enabled` and that tier's flag are both the literal boolean true; quoted
