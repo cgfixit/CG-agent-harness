@@ -45,6 +45,9 @@ pub(crate) fn resolve_secret(value: &str) -> Result<String> {
     std::env::var(name).map_err(|_| HarnessError::config("environment secret reference is unavailable"))
 }
 
+/// Switches that read as on when the key is missing (`server::self_manual::SelfKnowledgeConfig`).
+pub const MISSING_MEANS_ON: &[&str] = &["diagnostics.self_knowledge", "diagnostics.live_state"];
+
 impl AppConfig {
     pub fn load(path: &Path) -> Result<Self> {
         let text = super::credential_store::read_private_config(path, MAX_CONFIG_BYTES)
@@ -181,6 +184,7 @@ impl AppConfig {
     }
 
     /// Dotted paths the shipped default turns on that this config omits.
+    /// Switches read as on when missing (`MISSING_MEANS_ON`) are not drift.
     /// `flag_is_true` reads a missing key as off, so a home seeded before a
     /// flag existed silently loses it. A key set to anything, including
     /// `false`, is the operator's choice and is never listed.
@@ -195,7 +199,7 @@ impl AppConfig {
         });
         shipped
             .iter()
-            .filter(|path| self.get(path).is_none())
+            .filter(|path| self.get(path).is_none() && !MISSING_MEANS_ON.contains(&path.as_str()))
             .cloned()
             .collect()
     }

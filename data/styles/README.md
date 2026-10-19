@@ -10,6 +10,7 @@ Operators can overlay their own under the home's `styles/` folder.
 - [`research.md`](research.md): sourced, evidence-first research replies.
 - [`soul.md`](soul.md): concise evidence discipline and candid voice from the original persona.
 - [`technical.md`](technical.md): precise technical register with concrete references.
+- [`troubleshoot.md`](troubleshoot.md): observed versus inferred, one next command.
 
 Related: [docs/CONSOLE.md](../../docs/CONSOLE.md) (`/style`),
 [tests/style_presets.rs](../../tests/style_presets.rs).

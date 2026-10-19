@@ -1,28 +1,18 @@
 # .codex/skills
 
-Codex skills, one `SKILL.md` per folder, read when the task applies. These are
-the short versions; [.claude/skills/](../../.claude/skills/README.md) carries
-longer playbooks for most of them plus Claude-only skills. The index and when to
-load each lives in [AGENTS.md](../../AGENTS.md#project-skills). Loading a skill
-grants no push, merge or release authority.
+Repository guidance for Codex, separate from harness runtime `/api/skills`.
+Start with [project guidance](cgagentharness-project-guidance/SKILL.md) and
+[root operating rules](../../AGENTS.md). Each skill owns its task-specific
+procedure; [.claude/skills](../../.claude/skills/README.md) has a separate inventory.
 
-- [`cgagentharness-config-guard/`](cgagentharness-config-guard/SKILL.md): static
-  fail-closed check of `assets/config.default.yaml`.
-- [`cgagentharness-gotchas/`](cgagentharness-gotchas/SKILL.md): session-tested
-  traps for install, packaging, CI and write-gate debugging.
-- [`cgagentharness-invariant-guard/`](cgagentharness-invariant-guard/SKILL.md):
-  invariant gate before merging core-path diffs.
-- [`cgagentharness-optimize/`](cgagentharness-optimize/SKILL.md): evidence-backed
-  Rust, desktop, runtime and CI improvements.
-- [`cgagentharness-project-guidance/`](cgagentharness-project-guidance/SKILL.md):
-  read order and skill routing; load first.
-- [`cgagentharness-release/`](cgagentharness-release/SKILL.md): **Codex-only.**
-  macOS universal packaging, Bundle provenance, release prep.
-- [`cgagentharness-verify/`](cgagentharness-verify/SKILL.md): **Codex-only.**
-  Isolated backend, desktop and local-model smoke and acceptance checks.
-- [`cgagentharness-write-policy-redteam/`](cgagentharness-write-policy-redteam/SKILL.md):
-  attack write gates, `confirm`+`reason`, clone jail and shim argv.
-- [`fable-protocol/`](fable-protocol/SKILL.md): evidence-first reasoning before
-  costly code, security or CI claims.
-- [`verification-specialist/`](verification-specialist/SKILL.md): try to break a
-  supplied change without modifying the tree.
+- [Config guard](cgagentharness-config-guard/SKILL.md): shipped defaults.
+- [Gotchas](cgagentharness-gotchas/SKILL.md): misleading failures and passes.
+- [Invariant guard](cgagentharness-invariant-guard/SKILL.md): contract/test map.
+- [Optimize](cgagentharness-optimize/SKILL.md): measured, focused improvements.
+- [Release](cgagentharness-release/SKILL.md): macOS artifacts and provenance.
+- [Verify](cgagentharness-verify/SKILL.md): scoped smoke and acceptance.
+- [Write-policy redteam](cgagentharness-write-policy-redteam/SKILL.md): mutation refusals.
+- [Fable protocol](fable-protocol/SKILL.md): evidence-first investigation.
+- [Verification specialist](verification-specialist/SKILL.md): independent patch assessment.
+
+Loading a skill does not grant publication or merge authority.

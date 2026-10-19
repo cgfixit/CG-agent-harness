@@ -11,15 +11,24 @@ use cap_std::fs::Dir;
 use crate::common::injection::Scanner;
 use crate::common::{clip_chars, edit_distance};
 
-pub const BUILTIN_IDS: [&str; 6] = ["code-review", "concise", "design", "research", "soul", "technical"];
+pub const BUILTIN_IDS: [&str; 7] = [
+    "code-review",
+    "concise",
+    "design",
+    "research",
+    "soul",
+    "technical",
+    "troubleshoot",
+];
 
-const BUILTIN_BODIES: [(&str, &str); 6] = [
+const BUILTIN_BODIES: [(&str, &str); 7] = [
     ("code-review", include_str!("../../data/styles/code-review.md")),
     ("concise", include_str!("../../data/styles/concise.md")),
     ("design", include_str!("../../data/styles/design.md")),
     ("research", include_str!("../../data/styles/research.md")),
     ("soul", include_str!("../../data/styles/soul.md")),
     ("technical", include_str!("../../data/styles/technical.md")),
+    ("troubleshoot", include_str!("../../data/styles/troubleshoot.md")),
 ];
 
 /// Same charset as runtime skill ids: `[a-z0-9_-]`, 1..=80 bytes.

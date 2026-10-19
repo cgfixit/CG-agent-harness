@@ -25,6 +25,7 @@ pub mod errors;
 pub mod generation_gate;
 pub mod guards;
 pub mod headers;
+pub mod live_state;
 pub mod mcp;
 pub mod mcp_keys;
 pub mod mcp_server;
@@ -42,6 +43,7 @@ mod retrieval_ranking;
 pub mod routes;
 pub mod schedule_time;
 pub mod schemas;
+pub mod self_manual;
 pub mod session_export;
 pub mod session_search;
 pub mod sessions;
@@ -266,6 +268,7 @@ pub async fn build_app_with_sources(
     let structured_gates = crate::server::structured_memory::OperatorGates::load(&home);
     let attachments = crate::server::attachments::AttachmentStore::open(&home.attachments_dir())?;
     let notes_limits = crate::server::notes_corpus::NotesLimits::from_config(&cfg)?;
+    let self_knowledge = crate::server::self_manual::SelfKnowledge::new(&cfg)?;
     let diag = crate::server::diag_reader::DiagState::new(&cfg)?;
     let notes_ingest_permits = Arc::new(tokio::sync::Semaphore::new(notes_limits.max_concurrent_ingests));
     let notes_corpus = crate::server::notes_corpus::NotesCorpus::open(&home.notes_corpus_dir(), notes_limits)?;
@@ -319,6 +322,7 @@ pub async fn build_app_with_sources(
         store,
         attachments,
         notes_corpus,
+        self_knowledge,
         diag,
         notes_ingest_permits,
         upload_permits,

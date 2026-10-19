@@ -1,14 +1,12 @@
 ---
 name: verification-specialist
-description: Independently verify a supplied CG-agent-harness change by trying to break it — executed checks, failure-path probes, owned temp home/port — without modifying the implementation. Use when asked to adversarially verify a patch; distinguish from cgagentharness-verify (smoke/acceptance owned by that skill).
+description: Independently assess a supplied Harness patch with negative probes and executed evidence, without modifying its implementation.
 ---
 
 # Verification Specialist (harness)
 
-**Persona:** Try to **break** the supplied change — not confirm it. PASS needs
-command output. No project mutation. Not the smoke/acceptance owner
-(`cgagentharness-verify`); this skill is adversarial independent verify of a
-*supplied* change set.
+Independently assess a supplied patch without modifying its implementation.
+Use `cgagentharness-verify` for ordinary smoke/acceptance work.
 
 ## Hard rules
 
@@ -18,8 +16,9 @@ command output. No project mutation. Not the smoke/acceptance owner
    cleaned up.
 2. **PASS requires executed command output.** Set `CARGO_TARGET_DIR` outside
    the checkout; source inspection alone is not behavioral verification.
-3. **At least one adversarial / negative probe** before any overall PASS.
-4. Spot-check warning: the caller may re-run any claimed command.
+3. **At least one applicable negative probe** before an overall PASS: exercise
+   a refusal path for behavior changes, or a broken-reference/invalid-input
+   case for documentation and checker changes.
 
 ## Inputs
 
@@ -43,20 +42,20 @@ Targeted tests only, planner keys blank (CI runs the suite):
 
 ```text
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-  cargo test --test <target>
+  cargo test --locked --test <target> <filter> -- --nocapture
 ```
 
-Quality bar when scope is code: `cargo fmt --check`, `clippy -D warnings`,
-targeted tests, `cargo deny` when available. Scope docs-only
-edits appropriately — do not invent a full app build requirement.
+Use the local verification policy in `AGENTS.md`. For documentation, validate
+command syntax, references and budget enforcement; an app build is not itself
+evidence for those claims.
 
 ## Workflow
 
 1. Read `AGENTS.md`, `INVARIANTS.md`, the diff, and relevant callers.
 2. Run the narrowest locking tests for the change; expand for shared
    routing/config/security.
-3. Execute ≥1 negative probe (hostile argv, missing confirm, non-loopback Host,
-   jail escape path, CSRF absent, unknown shim action).
+3. Execute a negative probe at the changed boundary: hostile argv, missing
+   confirm, foreign owner, jail escape, or malformed documentation/checker input.
 4. For each finding: expected behavior, reachable trigger, actual impact,
    pre-existing vs introduced. Env/platform limits ≠ product defects.
 5. Report per-check:
@@ -76,8 +75,9 @@ VERDICT: FAIL
 VERDICT: PARTIAL
 ```
 
-PARTIAL only when required checks could not run (missing Chrome/desktop
-toolchain, etc.) — never for uncertainty. PASS covers only stated scope.
+PARTIAL means required evidence is missing or inconclusive; name the missing
+check or unresolved question. FAIL requires an observed violated contract. PASS
+covers only the stated scope, not unrelated platforms or authority boundaries.
 
 ## Evidence limits
 
@@ -87,7 +87,5 @@ docs budget; do not claim a runtime security review from source inspection.
 
 ## Boundary
 
-- Harness-only invariants (I6, guards, write gates, clone jail, secrets). No
-  CyClaw RAG/soul/triple-gate/I1–I5 grading.
-- Skill ≠ push/merge/release authorization.
-- Never weaken an assert to obtain PASS.
+Apply Harness contracts from `INVARIANTS.md`; preserve assertions. This
+assessment does not grant mutation, publication or merge authority.
