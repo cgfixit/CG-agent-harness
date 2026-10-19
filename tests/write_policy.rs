@@ -115,6 +115,14 @@ fn each_mutation_reloads_policy_and_refusal_preserves_files_index_head_and_remot
             "policy_scope",
         ),
         ("agentic.deepagent_github.max_write_budget_bytes", "1", "policy_scope"),
+        ("agentic.deepagent_github.scan_code_shape", "false", "policy_scope"),
+        // A retargeted repository or workspace root must not reuse this clone.
+        ("agentic.repo", "fixture/other", "policy_target"),
+        (
+            "agentic.deepagent_github.workspace_root",
+            "data/agentic/other",
+            "policy_target",
+        ),
     ] {
         armed(dir.path(), &[(field, value)]); // same already-open workspace, changed policy
         for (op, error) in production("r", true) {
@@ -270,6 +278,57 @@ fn approved_cli_push_and_publish_refuse_revoked_policy_without_side_effects() {
     }
 }
 
+#[test]
+fn decide_refuses_combined_push_or_publish_before_any_gate_or_record_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let (ctx, dest, bare, rec) = fixture(dir.path());
+    let fakebin = install_fake_gh(dir.path(), &bare);
+    let path = path_with(&fakebin);
+    let log = dir.path().join("gh.log");
+    let record = ctx.runs_dir().join(format!("{}.json", rec.run_id));
+    let before = std::fs::read(&record).unwrap();
+    let head = git(&["rev-parse", "HEAD"], &dest);
+    let env = [
+        ("PATH", path.as_str()),
+        ("GROK_API_KEY", ""),
+        ("ANTHROPIC_API_KEY", ""),
+        ("DEEPAGENT_API_KEY", ""),
+    ];
+    let idarg = format!("--run-id={}", rec.run_id);
+    // Armed first, then with the master gate closed: the refusal must precede
+    // every gate, or a disabled layer would answer with its exit-0 banner.
+    for (policy, extra) in [
+        ("armed", vec![]),
+        ("master gate closed", vec![("agentic.enabled", "false")]),
+    ] {
+        armed(dir.path(), &extra);
+        for flag in ["--push", "--publish"] {
+            let args = [
+                "real-repo-run-decide",
+                &idarg,
+                "--decision=approve",
+                "--reason=reviewed",
+                "--confirm",
+                flag,
+            ];
+            let (code, out, err) = run_agentic(&ctx.config_path, &args, &env, dir.path());
+            assert_eq!(code, 4, "{policy} {flag}: {out} {err}");
+            assert!(
+                format!("{out}{err}").contains("approve only commits locally"),
+                "{policy} {flag}: {out} {err}"
+            );
+            assert_eq!(
+                std::fs::read(&record).unwrap(),
+                before,
+                "{policy} {flag}: record changed"
+            );
+            assert!(!log.exists(), "{policy} {flag}: refusal must precede gh invocation");
+            assert_eq!(git(&["rev-parse", "HEAD"], &dest), head);
+            assert!(git(&["branch", "--list", "codex/*"], &bare).is_empty());
+        }
+    }
+}
+
 #[tokio::test]
 async fn browser_api_requires_explicit_intent_and_shim_rechecks_disk_policy() {
     let model = start_mock_model().await;
@@ -287,6 +346,34 @@ async fn browser_api_requires_explicit_intent_and_shim_rechecks_disk_policy() {
     let (status, response) = s.post_json(&url, json!({"reason":"r"})).await;
     assert_eq!(status, 200);
     assert_eq!(response["exit_code"], 4, "{response}");
+    // Approve is the third mutation boundary: the browser body never supplies
+    // its confirmation either, and the child refuses before touching the clone.
+    let mut pending = RealRepoRunRecord::new(&"b".repeat(32), &ctx.acfg.repo, &rec.dest, "pending_decision");
+    pending.branch_name = Some("codex/write-policy".into());
+    pending.commit_message = Some("fixture".into());
+    pending.changed_files = vec!["target.txt".into()];
+    save_run(&ctx.runs_dir(), &mut pending).unwrap();
+    let clone = Path::new(&rec.dest);
+    let head = git(&["rev-parse", "HEAD"], clone);
+    let (status, response) = s
+        .post_json(
+            &format!("/api/agent/runs/{}/decision", pending.run_id),
+            json!({"decision":"approve", "reason":"reviewed"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{response}");
+    assert_eq!(response["exit_code"], 4, "{response}");
+    assert_eq!(
+        git(&["rev-parse", "HEAD"], clone),
+        head,
+        "approve without confirm committed"
+    );
+    assert_eq!(
+        cgagentharness::agentic::run_store::load_run(&ctx.runs_dir(), &pending.run_id)
+            .unwrap()
+            .status,
+        "pending_decision"
+    );
     armed(&s.home, &[("agentic.mode", "read")]);
     let (status, response) = s.post_json(&url, json!({"reason":"r", "confirm":true})).await;
     assert_eq!(status, 200);
