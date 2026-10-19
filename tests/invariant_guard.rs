@@ -1064,7 +1064,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved headroom for research-job steps 8-12 (#415 review roadmap): ~45 words
     // (gate list, /loop excludes MCP, no job-long gate), plus ~10%, rounded up to the next 50.
     // why: the 2026-10-13 doc-sync cut it to 1441 words; 1490 keeps the ~50-word roadmap allowance above.
-    ("AGENTS.md", Agent, 1450),
+    // why: #550/#552 self-manual and red-team guidance grew it to 1459; standing rule is to raise the cap to the reported count, never trim gate text.
+    ("AGENTS.md", Agent, 1459),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     // why: now `@AGENTS.md` plus Claude-only lines; 183 words, rounded up to the next 100.
     ("CLAUDE.md", Agent, 400),
