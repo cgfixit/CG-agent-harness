@@ -10,6 +10,7 @@ release flow: [docs/RELEASING.md](../../docs/RELEASING.md).
 - [`ci.yml`](ci.yml): push, PR and `workflow_call`: fmt, clippy, tests on Linux, macOS and Windows with planner keys blanked, the required `CGAH_REQUIRE_*` sandbox and lifecycle jobs, deny, invariant guard. Required.
 - [`pr-template-check.yml`](pr-template-check.yml): PRs only (open, edit, sync, reopen, ready for review), never pushes to main: PR-body template and base-is-main gate. Blocking.
 - [`review-gate.yml`](review-gate.yml): review and comment events: reports open threads and running Codex reviews. Advisory, never fails.
+- [`../rulesets/main-protection.json`](../rulesets/main-protection.json): the `main` ruleset, imported at Settings, Rules, Rulesets, New ruleset, Import. Requires the `ci.yml` jobs above, squash merges only, through the merge queue (`ci.yml` runs on `merge_group`; the docs-only skip never applies there), no deletes or force-pushes. Repository admins bypass only from a pull request's bypass button, never by direct push. Turn on *Allow auto-merge* in General settings so *Merge when ready* queues several PRs.
 
 ## Packaging
 
