@@ -594,10 +594,10 @@ Before local chat or `/loop`, the harness estimates the next prompt plus
 one reply. Above
 `chat.compact_prompt_tokens` (default 24000), it summarizes middle turns,
 keeping the first user message, goal, and whole recent exchanges (at most
-`chat.compact_keep_messages`, 8, and `chat.compact_tail_percent`, 25% of the
-trigger). An `auto_tune`-verified window above 32768 scales the trigger in
-proportion, within `chat.compact_max_prefill_sec` (120) of measured prefill;
-`chat.compact_follow_window: false` keeps it fixed. The summarizer reads goal and first message, keeps the prior summary
+`chat.compact_keep_messages`, seeded 10, and `chat.compact_tail_percent`, 25% of the
+trigger). With `chat.compact_follow_window: true`, an `auto_tune`-verified
+window above 32768 scales the trigger within `chat.compact_max_prefill_sec`
+(seeded 1500) of measured prefill; the seed uses false. The summarizer reads goal and first message, keeps the prior summary
 whole, clips other turns at 800 characters within its budget, else history
 stays. The model gets a lossy note yielding to
 exact messages; unsourced codes become `[unverified]`.
@@ -613,8 +613,8 @@ are specified in
 Calibration cannot predict language shifts or ratios above 3; verify the
 model window per [MODELS.md](MODELS.md).
 
-`compaction.summary_max_tokens` defaults to 768 and clamps to 128–2048. Tune
-these in home `config.yaml`, then restart. Compaction is inline;
+`compaction.summary_max_tokens`: seeded 2048, missing-key fallback 768, clamped 128–2048.
+Edit home `config.yaml`, then restart. Compaction is inline;
 empty, failed, truncated, or cancelled output commits neither summary nor
 calibration. Past the trigger a turn may still send up to the hard limit, the
 prompt cap (web chat: the web room): an empty or cut-off summary, or too little

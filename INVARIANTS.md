@@ -551,7 +551,7 @@ once; anything else reserves it twice in validation, the hard limit and dispatch
 (the trigger counts one reply on every backend; exceeding the hard limit also compacts),
 and startup caps both reply settings ([CONSOLE.md](docs/CONSOLE.md#local-history-compaction)).
 The incoming user paste is never compacted. One local-model call
-(`compaction.summary_max_tokens`, default 768, clamped 128–2048, sent as its
+(`compaction.summary_max_tokens`, seed/fallback 2048/768, clamped 128–2048, sent as its
 reservation) summarizes within 24000 characters and the calibrated budget: goal
 and first message read-only, the prior `[session-compacted]`
 summary intact (else it is unusable), then the newest middle turns clipped to

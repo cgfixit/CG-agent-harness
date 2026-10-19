@@ -1342,7 +1342,8 @@ mod tests {
         assert!(cloud.is_cloud_selection("claude"));
         assert!(cloud.is_cloud_selection("aNtHrOpIc"));
         assert!(cloud.is_cloud_selection("XaI"));
-        assert!(cloud.is_cloud_selection("claude-sonnet-5"));
+        assert!(cloud.is_cloud_selection("claude-opus-5-5"));
+        assert!(!cloud.is_cloud_selection("claude-sonnet-5"));
         assert!(!cloud.is_cloud_selection("qwen3.8:27b-mlx"));
     }
 
