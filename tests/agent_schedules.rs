@@ -181,3 +181,60 @@ async fn cron_activation_requires_exact_fresh_single_use_preview_and_retains_fir
     assert!(row.next_fire_at > next);
     assert_ne!(row.last_dispatch.as_deref(), Some("attempted"));
 }
+
+#[tokio::test]
+async fn preview_and_create_refuse_the_shapes_the_run_and_job_routes_refuse() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let staged = staged_request(&s).await;
+    let routes = ["/api/agent/schedules/preview", "/api/agent/schedules"];
+    // The schema refuses a caller-supplied argv nested in the request or beside it.
+    let mut nested_argv = staged.clone();
+    nested_argv["argv"] = json!(["rm", "-rf", "/"]);
+    let mut nested_command = staged.clone();
+    nested_command["command"] = json!("rm -rf /");
+    for (label, body) in [
+        ("nested argv", json!({"interval_secs": 60, "request": nested_argv})),
+        (
+            "nested command",
+            json!({"interval_secs": 60, "request": nested_command}),
+        ),
+        (
+            "top-level argv",
+            json!({"interval_secs": 60, "argv": ["rm", "-rf", "/"], "request": staged.clone()}),
+        ),
+    ] {
+        for route in routes {
+            let (status, resp) = s.post_json(route, body.clone()).await;
+            assert_eq!(status, 422, "{label} {route}: {resp}");
+            assert_eq!(code(&resp), "VALIDATION_ERROR", "{label} {route}");
+            assert!(!resp.to_string().contains("rm"), "{label} {route}: {resp}");
+        }
+    }
+    // An unknown profile and an over-budget shape are refused before anything is
+    // stored, with the same status and code POST /api/agent/run returns.
+    let mut unknown = staged.clone();
+    unknown["checks"] = json!(["nope"]);
+    let mut over_budget = staged.clone();
+    over_budget["max_iterations"] = json!(10);
+    over_budget["checks"] = json!(["cargo-test", "cargo-clippy", "cargo-fmt", "pytest", "ruff"]);
+    for (req, expected_status, expected_code) in [
+        (unknown, 400, "UNKNOWN_CHECK_PROFILE"),
+        (over_budget, 422, "AGENTIC_BUDGET_EXCEEDED"),
+    ] {
+        for route in routes {
+            let (status, resp) = s
+                .post_json(route, json!({"interval_secs": 60, "request": req.clone()}))
+                .await;
+            assert_eq!(status, expected_status, "{route}: {resp}");
+            assert_eq!(code(&resp), expected_code, "{route}: {resp}");
+        }
+    }
+    assert!(s.state.schedules.list("local").is_empty());
+    assert!(!s.audit_log().contains("agent_schedule_created"));
+    // Control: the staged shape still previews and creates.
+    let (status, created) = s
+        .post_json("/api/agent/schedules", preview_body(&s, staged).await)
+        .await;
+    assert_eq!(status, 201, "{created}");
+}
