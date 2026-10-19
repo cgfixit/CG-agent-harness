@@ -231,7 +231,7 @@ Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 assume
 [Model setup](MODELS.md) is the set-and-verify step. The harness sends no `num_ctx`.
 A Modelfile `num_ctx` beats that variable; pin 32768 with the
 [local derived tag](MODELS.md#pin-32768-with-a-local-derived-tag). The shipped
-default stays `qwen3.8:27b-mlx`.
+chat and planner default is that tag, `qwen3.8:27b-mlx-cg`.
 
 ### 2.6 (Optional, for the coding pipeline only) GitHub CLI
 
@@ -376,7 +376,8 @@ CGagentHarness console on https://127.0.0.1:8790/ (home /Users/you/.CGagentHarne
 ```
 
 First run seeds the application home. Chat uses the configured loopback service's
-`qwen3.8:27b-mlx` tag by default. Inspect installed tags with `/model list` and
+`qwen3.8:27b-mlx-cg` tag by default, a [derived tag](MODELS.md#pin-32768-with-a-local-derived-tag)
+that exists only after `ollama create`. Inspect installed tags with `/model list` and
 select one with `/model use <exact-tag>`. The harness never downloads missing tags.
 
 To change the endpoint or configure the coding planner, quit with Cmd-Q or stop
@@ -386,11 +387,14 @@ To change the endpoint or configure the coding planner, quit with Cmd-Q or stop
 ```yaml
 models:
   local_llm:
-    model: "qwen3.8:27b-mlx"   # chat default; use the exact installed tag
+    model: "qwen3.8:27b-mlx-cg"   # chat default; use the exact installed tag
 agentic:
   deepagent_github:
-    model: "qwen3.8:27b-mlx"   # optional planner; writes remain disarmed
+    model: "qwen3.8:27b-mlx-cg"   # optional planner; writes remain disarmed
 ```
+
+Both shipped defaults are that derived tag; if you skip `ollama create`, set an
+installed tag in each.
 
 Restart only after editing configuration; `/model use` applies to chat without
 a restart and does not change the coding planner. Existing homes are not

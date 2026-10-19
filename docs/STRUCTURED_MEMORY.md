@@ -163,7 +163,7 @@ cloud providers. Failed runs retain their model.
 | `status_poll_ms` | 30000 | 250–30000 ms; halved while generating |
 | `min_consolidation_confidence` | 0.40 | 0–1, shared by both generators; supplied lower values drop, omitted confidence remains accepted |
 | `max_consolidation_candidates` | 8 | Existing candidate bound, also used for completion suggestions |
-| `max_proposals_per_owner` | 32 | Pending proposal capacity |
+| `max_proposals_per_owner` | 50 (32 if absent) | Pending proposal capacity |
 
 Accepted inputs receive durable metadata-only `idle` receipts, then transition
 to `running`. Expiry, disabled gates, source clear, cancellation and inference

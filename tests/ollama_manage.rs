@@ -54,11 +54,11 @@ async fn start_native_ollama() -> NativeOllama {
     let app = Router::new()
         .route(
             "/v1/models",
-            get(|| async { Json(json!({"data": [{"id": "qwen3.8:27b-mlx"}]})) }),
+            get(|| async { Json(json!({"data": [{"id": "qwen3.8:27b-mlx-cg"}]})) }),
         )
         .route(
             "/api/tags",
-            get(|| async { Json(json!({"models": [{"name": "qwen3.8:27b-mlx", "size": 1}, {"name": "tinyllama:latest", "size": 2}]})) }),
+            get(|| async { Json(json!({"models": [{"name": "qwen3.8:27b-mlx-cg", "size": 1}, {"name": "tinyllama:latest", "size": 2}]})) }),
         )
         .route(
             "/api/pull",
@@ -103,7 +103,7 @@ async fn start_native_ollama() -> NativeOllama {
                         })),
                     );
                 }
-                if body.get("num_ctx").is_some() || body["model"] != "qwen3.8:27b-mlx" {
+                if body.get("num_ctx").is_some() || body["model"] != "qwen3.8:27b-mlx-cg" {
                     return (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": "fixture-private-missing"})));
                 }
                 (
@@ -124,7 +124,7 @@ async fn start_native_ollama() -> NativeOllama {
                 let window = *w2.lock().unwrap();
                 async move {
                     let mut models = vec![
-                        json!({"name": "qwen3.8:27b-mlx", "context_length": 32768, "size": 20, "size_vram": 20}),
+                        json!({"name": "qwen3.8:27b-mlx-cg", "context_length": 32768, "size": 20, "size_vram": 20}),
                         json!({"name": "humanizer:q8", "context_length": 16384, "size": 13, "size_vram": 13}),
                     ];
                     if window > 0 {
@@ -153,7 +153,7 @@ async fn start_native_ollama() -> NativeOllama {
                     }
                     let timed = body["raw"] == true;
                     let ms = *s.lock().unwrap();
-                    if timed && ms > 0 && body["model"] == "qwen3.8:27b-mlx" {
+                    if timed && ms > 0 && body["model"] == "qwen3.8:27b-mlx-cg" {
                         tokio::time::sleep(Duration::from_millis(ms)).await;
                     }
                     // Warmup sends an empty prompt; the auto_tune sample is raw and
@@ -798,12 +798,12 @@ async fn a_planner_on_the_tuned_model_budgets_runs_with_its_measured_timeout() {
             .with("models.local_llm.auto_tune", "true")
             .with("agentic.enabled", "true")
             .with("agentic.deepagent_github.enabled", "true")
-            .with("agentic.deepagent_github.model", "\"qwen3.8:27b-mlx\"")
+            .with("agentic.deepagent_github.model", "\"qwen3.8:27b-mlx-cg\"")
             .with("api.rate_limit.max_requests", "1000")
             .with("agentic.deepagent_github.base_url", &planner_url),
     )
     .await;
-    // The startup tune measures qwen3.8:27b-mlx, which is also the planner model.
+    // The startup tune measures qwen3.8:27b-mlx-cg, which is also the planner model.
     let body = wait_for_tuning(&s, 32768).await;
     assert_eq!(body["tuning"]["planner_timeout_sec"], 180, "{body}");
     let run = json!({"instruction": "fix the parser", "branch": "claude/parser-fix",
@@ -869,7 +869,7 @@ async fn planner_endpoint_defaults_and_aliases_keep_sync_and_job_budgets_consist
                 .with("models.local_llm.auto_tune", "true")
                 .with("api.rate_limit.max_requests", "1000")
                 .with("agentic.repo", "fixture/repository")
-                .with("agentic.deepagent_github.model", "\"qwen3.8:27b-mlx\"")
+                .with("agentic.deepagent_github.model", "\"qwen3.8:27b-mlx-cg\"")
                 .with("agentic.deepagent_github.planner_timeout_sec", "720"),
         )
         .await;
@@ -1011,12 +1011,12 @@ async fn startup_reconciles_saved_selection_before_warmup_and_tuning() {
     // Changed config wins; unchanged config retains an explicit selection.
     // A legacy mismatch is reset, while a legacy matching tag is migrated.
     for (saved, previous, expected) in [
-        ("longctx:q8", Some("old:q8"), "qwen3.8:27b-mlx"),
-        ("longctx:q8", Some("qwen3.8:27b-mlx"), "longctx:q8"),
-        ("longctx:q8", None, "qwen3.8:27b-mlx"),
-        ("qwen3.8:27b-mlx", None, "qwen3.8:27b-mlx"),
-        ("", None, "qwen3.8:27b-mlx"),
-        ("grok", Some("qwen3.8:27b-mlx"), "qwen3.8:27b-mlx"),
+        ("longctx:q8", Some("old:q8"), "qwen3.8:27b-mlx-cg"),
+        ("longctx:q8", Some("qwen3.8:27b-mlx-cg"), "longctx:q8"),
+        ("longctx:q8", None, "qwen3.8:27b-mlx-cg"),
+        ("qwen3.8:27b-mlx-cg", None, "qwen3.8:27b-mlx-cg"),
+        ("", None, "qwen3.8:27b-mlx-cg"),
+        ("grok", Some("qwen3.8:27b-mlx-cg"), "qwen3.8:27b-mlx-cg"),
     ] {
         let ollama = start_native_ollama().await;
         let prepared = prepare_server(
@@ -1053,7 +1053,7 @@ async fn startup_reconciles_saved_selection_before_warmup_and_tuning() {
             .all(|g| g["model"] == expected && !g.to_string().contains("num_ctx")));
         let persisted: Value =
             serde_json::from_str(&std::fs::read_to_string(s.home.join("harness.json")).unwrap()).unwrap();
-        assert_eq!(persisted["selected_model_config"], "qwen3.8:27b-mlx");
+        assert_eq!(persisted["selected_model_config"], "qwen3.8:27b-mlx-cg");
         let status: Value = s
             .req(Method::GET, "/api/status")
             .send()
@@ -1062,13 +1062,13 @@ async fn startup_reconciles_saved_selection_before_warmup_and_tuning() {
             .json()
             .await
             .unwrap();
-        assert_eq!(status["configured_model"], "qwen3.8:27b-mlx");
-        assert_eq!(status["selection_overrides_config"], expected != "qwen3.8:27b-mlx");
+        assert_eq!(status["configured_model"], "qwen3.8:27b-mlx-cg");
+        assert_eq!(status["selection_overrides_config"], expected != "qwen3.8:27b-mlx-cg");
         let (code, body) = s.post_json("/api/model", json!({"model": "longctx:q8"})).await;
         assert_eq!(code, 200, "{body}");
         let saved = cgagentharness::common::home::HarnessSettings::load(&s.state.home).unwrap();
         assert_eq!(saved.selected_model, "longctx:q8");
-        assert_eq!(saved.selected_model_config.as_deref(), Some("qwen3.8:27b-mlx"));
+        assert_eq!(saved.selected_model_config.as_deref(), Some("qwen3.8:27b-mlx-cg"));
     }
 }
 
@@ -1085,13 +1085,13 @@ async fn status_distinguishes_automatic_fallback_from_a_saved_model_override() {
                 "models.local_llm.fallback.base_url",
                 &format!("\"{}\"", ollama.openai_url()),
             )
-            .with("models.local_llm.fallback.model", "qwen3.8:27b-mlx"),
+            .with("models.local_llm.fallback.model", "qwen3.8:27b-mlx-cg"),
     )
     .await;
     assert_eq!(s.state.backend.source, "fallback");
     let (code, status) = s.get_json("/api/status").await;
     assert_eq!(code, 200);
-    assert_eq!(status["model"], "qwen3.8:27b-mlx");
+    assert_eq!(status["model"], "qwen3.8:27b-mlx-cg");
     assert_eq!(status["configured_model"], "missing-primary:fixture");
     assert_eq!(status["selection_overrides_config"], false);
     assert!(s.state.settings.lock().unwrap().selected_model.is_empty());
