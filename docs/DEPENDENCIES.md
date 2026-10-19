@@ -36,7 +36,7 @@ does not certify safe runtime use of a crate or inspect arbitrary feature names.
 - The backend license allowlist names only identifiers the locked graph uses.
   Add an identifier deliberately, with the crate that needs it, rather than
   keeping unused allowances that would admit a future dependency silently.
-- Desktop Tauri is pinned to `=2.12.0`. Its published `tauri-utils` 2.10.1
+- Desktop Tauri is pinned to `=2.12.0`. Its published `tauri-utils` 2.10.2
   routes `urlpattern` 0.6 through ICU, so no `unic-*` crate remains in the
   desktop lock. The former `[patch.crates-io]` override of `tauri-utils` at
   upstream `dd725f4b13c30a86b398ccc59eb498f151f461c5` carried that correction
