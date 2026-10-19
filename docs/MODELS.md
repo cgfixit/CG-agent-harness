@@ -45,8 +45,8 @@ a turn exceeds it. Otherwise keep `web.total_tokens: 16000` and
 
 A Modelfile `PARAMETER num_ctx` wins over `OLLAMA_CONTEXT_LENGTH` and over a
 `/v1` request. The harness sends no `num_ctx`, so a tag can load a window
-other than the 32768 the seeded budgets assume. The shipped default stays
-`qwen3.8:27b-mlx`. A derived tag exists only after `ollama create`.
+other than the 32768 the seeded budgets assume. The shipped chat default stays
+`qwen3.8:27b-mlx`; the coding planner ships as the derived tag below. A derived tag exists only after `ollama create`.
 
 ```bash
 ollama create qwen3.8:27b-mlx-cg -f scripts/qwen3.8-27b-mlx-cg.Modelfile

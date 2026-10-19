@@ -231,7 +231,7 @@ Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 assume
 [Model setup](MODELS.md) is the set-and-verify step. The harness sends no `num_ctx`.
 A Modelfile `num_ctx` beats that variable; pin 32768 with the
 [local derived tag](MODELS.md#pin-32768-with-a-local-derived-tag). The shipped
-default stays `qwen3.8:27b-mlx`.
+chat default stays `qwen3.8:27b-mlx`.
 
 ### 2.6 (Optional, for the coding pipeline only) GitHub CLI
 
@@ -389,8 +389,12 @@ models:
     model: "qwen3.8:27b-mlx"   # chat default; use the exact installed tag
 agentic:
   deepagent_github:
-    model: "qwen3.8:27b-mlx"   # optional planner; writes remain disarmed
+    model: "qwen3.8:27b-mlx-cg"   # shipped planner tag; writes remain disarmed
 ```
+
+The shipped coding planner is the [derived tag](MODELS.md#pin-32768-with-a-local-derived-tag)
+`qwen3.8:27b-mlx-cg`, which exists only after `ollama create`; set an installed
+tag there if you skip that step.
 
 Restart only after editing configuration; `/model use` applies to chat without
 a restart and does not change the coding planner. Existing homes are not
