@@ -112,11 +112,11 @@ notes_corpus:
 # See docs/CONFIG_RELOAD.md; secrets, authority and other settings require restart.
 api:
   rate_limit:
-    max_requests: 60       # 1–100000; per-IP request ceiling within the window
+    max_requests: 120      # 1–100000; per-IP request ceiling within the window
     window_seconds: 60     # finite 0.001–86400; sliding-window seconds
   # /loop turns get their own, tighter budget.
   harness_loop_rate_limit:
-    max_requests: 8
+    max_requests: 16
     window_seconds: 300
     max_tokens: 2048 # same backend-dependent ceiling as local chat; legacy 0 selects 2048
 
@@ -189,8 +189,8 @@ mcp:
     max_query_chars: 256
     request_timeout_sec: 5
     concurrency: 2
-    requests_per_minute: 60
-    global_requests_per_minute: 180
+    requests_per_minute: 120 # 1–120 per key
+    global_requests_per_minute: 360 # 1–600
   enabled: false
   sse_allow_loopback: false
   timeout_sec: 15 # 1–60
@@ -504,7 +504,7 @@ netconnect:
   allowed_cidrs: []
   port_allowlist: []
   host_cap: 32
-  rate_limit_per_min: 30
+  rate_limit_per_min: 60
   connect_timeout_ms: 1000
   read_timeout_ms: 2000
   max_dials: 256
