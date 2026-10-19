@@ -1100,6 +1100,31 @@ async fn chat_inner(
         )
         .map_err(|e| attachments::upload_error(&e))?
     };
+    // The bundled manual and live state reach local chat turns only: never
+    // cloud chat (which sends only the new message) and never /loop.
+    // portal_auditor gets the manual but not live state (home path, soul state).
+    let local_turn = !cloud_selected && !req.loop_turn;
+    let live_block = (local_turn && !portal_auditor)
+        .then(|| {
+            state.live_state_block(
+                &model,
+                settings.web_enabled,
+                chat_web_mode,
+                session.style.as_deref(),
+                settings.soul_enabled,
+                Some(&session.session_id),
+            )
+        })
+        .flatten();
+    let manual = local_turn.then(|| state.self_knowledge.select(&req.message)).flatten();
+    if let (Some(selection), Some(index)) = (&manual, state.self_knowledge.manual.as_ref()) {
+        state.audit.log(json!({
+            "event": "self_manual_injected",
+            "chunks": selection.ids,
+            "chars": selection.chars,
+            "manual_sha256": index.sha256,
+        }));
+    }
     // Fact recall and retrieval read SQLite: run them off the async worker.
     let (pinned, facts, memory_budget, recalled, retrieval_error) = {
         let (state, owner, selections) = (state.clone(), owner.clone(), selections.clone());
@@ -1152,6 +1177,8 @@ async fn chat_inner(
             chat_web_mode,
             web_enabled: settings.web_enabled,
             attachment_fence: Some(attachment_fence.as_str()),
+            live_state: live_block.as_deref(),
+            self_manual: manual.as_ref().map(|selection| selection.block.as_str()),
             diag_context: diag.as_ref().map(|staged| staged.block.as_str()),
         })
     };

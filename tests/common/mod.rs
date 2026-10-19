@@ -156,6 +156,9 @@ impl Default for ServerOptions {
                 ("structured_memory.auto_suggest_chat".into(), "false".into()),
                 ("structured_memory.auto_suggest_coding".into(), "false".into()),
                 ("models.local_llm.warmup.enabled".into(), "false".into()),
+                // Prompt-shape fixtures compare exact prompts; tests/self_manual.rs opts in.
+                ("diagnostics.self_knowledge".into(), "false".into()),
+                ("diagnostics.live_state".into(), "false".into()),
             ],
             api_key: Some("test-api-key-0123456789".to_string()),
             deny_all_tools: false,

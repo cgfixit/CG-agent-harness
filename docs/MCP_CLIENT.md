@@ -83,6 +83,28 @@ aggregate resource limits nor cleanup after runner death or detached descendant
 escape. `/tools mcp` displays the exception. Do not describe it as strict
 containment. See [lifecycle details and acceptance](PROCESS_LIFECYCLE.md).
 
+### Read-only host files on macOS
+
+A placeholder read-only filesystem server under `darwin-seatbelt`. Strict
+containment refuses on macOS, so it uses `process_group` without `limits`:
+
+```yaml
+    - name: host-files
+      transport: stdio
+      command: [/opt/mcp/fs-server, /Users/me/diag-share]
+      tools: [read_file]
+      capabilities:
+        version: 1
+        filesystem: confined
+        read_roots: [/opt/mcp/fs-server, /Users/me/diag-share]
+        write_roots: []
+        network: deny
+        containment: process_group
+```
+
+Each call still needs `confirm: true`. Limits are in
+[read-only host inspection](TROUBLESHOOTING.md#read-only-host-inspection).
+
 ## Explicit Windows trusted-server exception
 
 Windows cannot enforce this client's filesystem/network sandbox policy. Only

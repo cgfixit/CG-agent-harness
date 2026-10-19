@@ -338,6 +338,41 @@ fn diag_reads_only_named_files_under_home_logs() {
 }
 
 #[test]
+fn self_knowledge_reads_no_file_and_never_reaches_agent_runs() {
+    // The manual is compiled in; the live block renders values the caller holds.
+    for file in ["server/self_manual.rs", "server/live_state.rs"] {
+        let text = strip_comment_lines(&std::fs::read_to_string(root().join(file)).unwrap());
+        let code = &text[..text.find("#[cfg(test)]").unwrap_or(text.len())];
+        for forbidden in [
+            "std::fs",
+            "File::",
+            "OpenOptions",
+            "read_to_string",
+            "Command",
+            "TcpStream",
+            "crate::agentic",
+            "create_in_dir",
+            "open_in_dir",
+            "MmapDirectory",
+        ] {
+            assert!(!code.contains(forbidden), "{file} must not use {forbidden}");
+        }
+    }
+    let manual = std::fs::read_to_string(root().join("server/self_manual.rs")).unwrap();
+    assert!(manual.contains("include_str!(\"../../assets/self/MANUAL.md\")"));
+    assert!(
+        manual.contains("Index::create_in_ram"),
+        "the manual index is never persisted"
+    );
+    let agent = std::fs::read_to_string(root().join("server/routes/agent.rs")).unwrap();
+    for needle in ["self_knowledge", "live_state", "self_manual"] {
+        assert!(!agent.contains(needle), "/agent must not carry {needle}");
+    }
+    let reload = std::fs::read_to_string(root().join("server/config_reload.rs")).unwrap();
+    assert!(!reload.contains("\"diagnostics"), "diagnostics stays restart-only");
+}
+
+#[test]
 fn netconnect_dials_only_through_the_budgeted_dialer() {
     // Sockets and name lookups. Only connect.rs may open a socket, and
     // nothing under src/netconnect may resolve a host name.
@@ -642,6 +677,12 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "diagnostics.model_tool",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
+    }
+    // Context about the harness itself ships on as literal booleans; it grants no tool.
+    let knowledge = cgagentharness::server::self_manual::SelfKnowledgeConfig::from_config(&cfg).unwrap();
+    assert!(knowledge.self_knowledge && knowledge.live_state);
+    for key in ["diagnostics.self_knowledge", "diagnostics.live_state"] {
+        assert!(cfg.flag_is_true(key), "{key} ships as the literal boolean true");
     }
     assert!(
         cfg.str_list("mcp.server.tools").is_empty(),
@@ -1042,7 +1083,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default contract; file was at 6437.
     // why: operator-approved +150 (2026-10-18), shared by the four compaction follow-up PRs (#513 fixes, hard limit, reply parity, window trigger).
     // why: owner-approved (2026-10-18) cap set to the measured count with #546 + #551 together; never trim gate text to fit.
-    ("INVARIANTS.md", Root, 7042),
+    // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
+    ("INVARIANTS.md", Root, 7170),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     ("README.md", Root, 1700),
@@ -1055,7 +1097,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
-    ("docs/CONSOLE.md", Guide, 6166),
+    // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
+    ("docs/CONSOLE.md", Guide, 6196),
     ("docs/DEPENDENCIES.md", Guide, 1400),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     ("docs/DESKTOP.md", Guide, 2680),
@@ -1085,7 +1128,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #244 made this the one memory contract: a gate table, and the #87
     // closeout facts it lacked.
     ("docs/STRUCTURED_MEMORY.md", Guide, 3640),
-    ("docs/TROUBLESHOOTING.md", Guide, 1500),
+    // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
+    ("docs/TROUBLESHOOTING.md", Guide, 1555),
     // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
     ("docs/netconnect.md", Guide, 3500),
     ("docs/screenshots/README.md", Evidence, 400),
