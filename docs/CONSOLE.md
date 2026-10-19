@@ -357,7 +357,7 @@ are ready. The registry's tools array is not a replacement for `/tools`.
 | Local file context for coding | Stage `/agent read <repo-relative-path[#Lx-Ly]>` before confirmation | Bounded reads from the governed repository clone; no general Mac filesystem mount |
 | `fsconnect` | Not implemented in this app | No slash command, datasource picker, filesystem indexing or YAML enable switch |
 | `netconnect` | CLI `status`, `devices`, and budgeted `diag`; `/net` aliases; gates ship false | LAN panel is GET `/api/netconnect` (scope, passive devices, tier state). No scan button. `/net diag` calls GET `/api/netconnect/diag`. Empty scope refuses armed tiers. `/web` still applies |
-| Log diagnostics | `/diag`; `diagnostics.logs_enabled` ships false; admin or `portal_auditor` | Redacted tails of allowlisted `<home>/logs/` files ([diagnostics](TROUBLESHOOTING.md#diagnostics)) |
+| Log diagnostics | `/diag`; `diagnostics.logs_enabled` ships false; admin or `portal_auditor` | Bounded, redacted tails of allowlisted `<home>/logs/` files; one excerpt staged for the next local turn ([diagnostics](TROUBLESHOOTING.md#diagnostics)) |
 | `sqlconnect` | Not implemented in this app | No database connection configuration, query tool or ingestion workflow |
 | `github-public` catalog entry | Inventory only | Does not provide an independent public-repository connector |
 | `openai-compatible` catalog entry | Inventory only as a connector | Separately configured local compatible model/fallback paths exist; the row is not an activation control |
