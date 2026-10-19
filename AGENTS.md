@@ -51,6 +51,7 @@ When prose contradicts code, fix the prose in the same PR.
 | Inbound MCP memory server | Private MCP memory server is a separate authority boundary |
 | netconnect | Netconnect is fail-closed and LAN-scoped |
 | Self-manual, live state (`diagnostics.self_knowledge`, `live_state`) | Self-knowledge never widens authority |
+| `/diag` log inspection, `portal_auditor` role | /diag log inspection never widens authority; Account, transport and request boundaries |
 
 ## Traps
 

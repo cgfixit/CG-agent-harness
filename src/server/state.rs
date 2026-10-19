@@ -102,6 +102,8 @@ pub struct AppState {
     pub notes_corpus: crate::server::notes_corpus::NotesCorpus,
     /// Bundled manual index and live-state settings (restart-only).
     pub self_knowledge: crate::server::self_manual::SelfKnowledge,
+    /// `/diag` config, last reads and staged excerpts (restart-only config).
+    pub diag: crate::server::diag_reader::DiagState,
     pub notes_ingest_permits: Arc<tokio::sync::Semaphore>,
     pub backend: ResolvedLocalBackend,
     pub chat: ChatClient,

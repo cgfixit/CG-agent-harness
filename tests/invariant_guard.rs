@@ -289,6 +289,55 @@ fn server_side_never_references_agentic() {
 }
 
 #[test]
+fn diag_reads_only_named_files_under_home_logs() {
+    // One reader opens files, and only `<home>/logs/<allowlisted name>`; the
+    // routes and prompt code never touch the filesystem or spawn anything.
+    let reader = strip_comment_lines(&std::fs::read_to_string(root().join("server/diag_reader.rs")).unwrap());
+    let code = &reader[..reader.find("#[cfg(test)]").expect("reader tests")];
+    assert_eq!(code.matches(".open(").count(), 1, "diag_reader opens one file kind");
+    assert!(
+        code.contains(".open(logs_dir.join(name))"),
+        "the path is logs_dir plus the allowlisted name"
+    );
+    assert!(
+        code.contains("libc::O_NOFOLLOW"),
+        "the leaf is opened without following links"
+    );
+    assert!(
+        code.contains("file.take(max_bytes)"),
+        "reads stay bounded after the metadata check"
+    );
+    let scan = code.find("scan_normalized").expect("output is scanned");
+    let redact = code.find("redactors.redact(").expect("output is redacted");
+    assert!(redact < scan, "redaction precedes the scanner");
+    for forbidden in [
+        "read_to_string",
+        "File::open",
+        "read_dir",
+        "Command",
+        "TcpStream",
+        "canonicalize",
+        "home.root",
+    ] {
+        assert!(!code.contains(forbidden), "diag_reader must not use {forbidden}");
+    }
+    let routes = strip_comment_lines(&std::fs::read_to_string(root().join("server/routes/diag.rs")).unwrap());
+    for forbidden in ["std::fs", "File::", "OpenOptions", "Command", "Path::new", "PathBuf"] {
+        assert!(!routes.contains(forbidden), "routes/diag.rs must not use {forbidden}");
+    }
+    assert!(
+        routes.contains("state.diag.config.allowed(&file)"),
+        "the file parameter is matched against the allowlist"
+    );
+    let paths = cgagentharness::server::routes::REGISTERED_PATHS;
+    for path in ["/api/diag", "/api/diag/read", "/api/diag/inject", "/api/diag/forget"] {
+        assert!(paths.contains(&path), "{path} must be in REGISTERED_PATHS");
+    }
+    let reload = std::fs::read_to_string(root().join("server/config_reload.rs")).unwrap();
+    assert!(!reload.contains("\"diagnostics"), "diagnostics stays restart-only");
+}
+
+#[test]
 fn self_knowledge_reads_no_file_and_never_reaches_agent_runs() {
     // The manual is compiled in; the live block renders values the caller holds.
     for file in ["server/self_manual.rs", "server/live_state.rs"] {
@@ -624,6 +673,8 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "netconnect.home_automation",
         "notifications.enabled",
         "agentic.deepagent_github.retrieval.enabled",
+        "diagnostics.logs_enabled",
+        "diagnostics.model_tool",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
     }
@@ -1031,9 +1082,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // plus ~10%, rounded up to the next 50. Lower it to the reported size once those land.
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default contract; file was at 6437.
     // why: operator-approved +150 (2026-10-18), shared by the four compaction follow-up PRs (#513 fixes, hard limit, reply parity, window trigger).
-    // why: operator-approved (2026-10-18) "Self-knowledge never widens authority" section; 6907 words with #541/#543 on main, set to 6910.
-    // why: operator-approved (2026-10-19) measured count after #551's text merged, instead of trimming the section.
-    ("INVARIANTS.md", Root, 6953),
+    // why: owner-approved (2026-10-18) cap set to the measured count with #546 + #551 together; never trim gate text to fit.
+    // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
+    ("INVARIANTS.md", Root, 7170),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     ("README.md", Root, 1700),
@@ -1046,7 +1097,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
-    ("docs/CONSOLE.md", Guide, 6157),
+    // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
+    ("docs/CONSOLE.md", Guide, 6196),
     ("docs/DEPENDENCIES.md", Guide, 1400),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     ("docs/DESKTOP.md", Guide, 2680),
@@ -1076,7 +1128,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #244 made this the one memory contract: a gate table, and the #87
     // closeout facts it lacked.
     ("docs/STRUCTURED_MEMORY.md", Guide, 3640),
-    ("docs/TROUBLESHOOTING.md", Guide, 1500),
+    // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
+    ("docs/TROUBLESHOOTING.md", Guide, 1555),
     // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
     ("docs/netconnect.md", Guide, 3500),
     ("docs/screenshots/README.md", Evidence, 400),

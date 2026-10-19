@@ -57,3 +57,19 @@ yourself; each call needs `confirm: true`.
   dedicated folder such as `~/diag-share` that you fill yourself.
 - MCP tools never appear on `/loop`.
 - Model prose cannot approve its own reads; only your `confirm: true` call does.
+
+## Diagnostics
+
+`/diag` reads allowlisted logs under `<home>/logs/` for an admin or `portal_auditor`
+account once `diagnostics.logs_enabled` is the literal boolean `true` (restart).
+Output is redacted, then refused whole on an injection-scanner hit. It stays
+untrusted text; `/diag inject` stages it for one local chat turn. Contract:
+[INVARIANTS.md](../INVARIANTS.md).
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `/diag` says `DIAG_DISABLED` | `diagnostics.logs_enabled` is missing, quoted or false | Set it to `true` in `config.yaml`, then restart `serve` |
+| `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` | The account is `operator` or `audit` | Use an admin or `portal_auditor` account |
+| A read or `/diag inject` says `DIAG_SCANNER_REFUSED` | The redacted excerpt matched the injection scanner | Narrow with `--event`, `--since` or `--last`; nothing from it is shown or staged |
+| Chat says `DIAG_SURFACE_FORBIDDEN` | An excerpt is staged and the turn is cloud chat or `/agent` | Send a local turn first, or `/diag forget` |
+| `/diag unslop` says `DIAG_NOT_FOUND` | Nothing written yet, or `unslop.metrics_path` is outside `logs/` | `/diag` reads only `<home>/logs/unslop.jsonl` |

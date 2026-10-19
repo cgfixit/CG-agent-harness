@@ -360,6 +360,7 @@ are ready. The registry's tools array is not a replacement for `/tools`.
 | Local file context for coding | Stage `/agent read <repo-relative-path[#Lx-Ly]>` before confirmation | Bounded reads from the governed repository clone; no general Mac filesystem mount |
 | `fsconnect` | Not implemented in this app | No slash command, datasource picker, filesystem indexing or YAML enable switch |
 | `netconnect` | CLI `status`, `devices`, and budgeted `diag`; `/net` aliases; gates ship false | LAN panel is GET `/api/netconnect` (scope, passive devices, tier state). No scan button. `/net diag` calls GET `/api/netconnect/diag`. Empty scope refuses armed tiers. `/web` still applies |
+| Log diagnostics | `/diag`; `diagnostics.logs_enabled` ships false; admin or `portal_auditor` | Bounded, redacted tails of allowlisted `<home>/logs/` files; one excerpt staged for the next local turn ([diagnostics](TROUBLESHOOTING.md#diagnostics)) |
 | `sqlconnect` | Not implemented in this app | No database connection configuration, query tool or ingestion workflow |
 | `github-public` catalog entry | Inventory only | Does not provide an independent public-repository connector |
 | `openai-compatible` catalog entry | Inventory only as a connector | Separately configured local compatible model/fallback paths exist; the row is not an activation control |
@@ -411,6 +412,7 @@ confirmation and persistence.
 | `/api`, `/api set <KEY> <value>`, `/api clear <KEY>` | Inspect, save or clear a managed credential; prefer the API Keys password fields; [persistence](INSTALL.md#8-persistence-optional-keys-and-recovery) |
 | `/clear` | Clear visible output, staged coding/review state and chat continuation; saved chats, notes, persona and web context remain |
 | `/connectors` | Connector catalog; does not activate connectors |
+| `/diag [status]`, `/diag audit\|spend\|unslop\|errors [flags]`, `/diag inject\|forget` | Read allowlisted logs or stage one excerpt; aliases `/diagnostics`, `/logs`; [diagnostics](TROUBLESHOOTING.md#diagnostics) |
 | `/github` | Read-only agentic GitHub status |
 | `/goal`, `/goal [--web off\|fetch\|all] [text]`, `/goal clear` | Inspect, set or clear the saved session goal and its web mode |
 | `/goal stage <branch>`, `/goal task` | Explicitly stage coding from a goal or inspect its task linkage |
