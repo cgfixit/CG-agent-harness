@@ -113,7 +113,7 @@ notes_corpus:
 # See docs/CONFIG_RELOAD.md; secrets, authority and other settings require restart.
 api:
   rate_limit:
-    max_requests: 150      # 1–100000; per-IP request ceiling within the window
+    max_requests: 300      # 1–100000; per-IP request ceiling within the window
     window_seconds: 240     # finite 0.001–86400; sliding-window seconds
   # /loop turns get their own, tighter budget.
   harness_loop_rate_limit:
