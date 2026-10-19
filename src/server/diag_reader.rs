@@ -601,11 +601,15 @@ mod tests {
         assert!(!shipped.logs_enabled);
         assert_eq!(
             (shipped.max_lines, shipped.max_bytes, shipped.inject_max_chars),
-            (200, 65_536, 8000)
+            (500, 69_000, 18_000)
         );
         assert_eq!(shipped.allowed_files.len(), 5);
         let missing = cfg_from("{}\n").unwrap();
         assert!(!missing.logs_enabled && missing.allowed_files.is_empty());
+        assert_eq!(
+            (missing.max_lines, missing.max_bytes, missing.inject_max_chars),
+            (200, 65_536, 8000)
+        );
         assert!(
             !cfg_from("diagnostics:\n  logs_enabled: \"true\"\n")
                 .unwrap()

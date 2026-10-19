@@ -74,6 +74,11 @@ impl AppConfig {
         if !raw.is_mapping() {
             return Err(HarnessError::config("config file must contain a YAML mapping"));
         }
+        if raw.get("local_llm").is_some() {
+            return Err(HarnessError::config(
+                "local_llm must be nested under models (models.local_llm), not at the config root",
+            ));
+        }
         let config = Self {
             raw,
             path: path.to_path_buf(),
@@ -221,6 +226,24 @@ fn collect_true_flags(node: &Value, prefix: String, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn misplaced_local_model_block_is_not_silently_ignored() {
+        let error = AppConfig::from_str(
+            "models: {}\nlocal_llm:\n  reasoning_effort: none\n  auto_tune: true\n",
+            std::path::Path::new("config.yaml"),
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "CONFIG_ERROR");
+        assert!(error.message.contains("models.local_llm"));
+        let config = AppConfig::from_str(
+            "models:\n  local_llm:\n    reasoning_effort: none\n    auto_tune: true\n",
+            std::path::Path::new("config.yaml"),
+        )
+        .unwrap();
+        assert_eq!(config.str_or("models.local_llm.reasoning_effort", ""), "none");
+        assert!(config.flag_is_true("models.local_llm.auto_tune"));
+    }
 
     #[test]
     fn planner_identity_ignores_reloadable_limits_but_binds_reasoning() {
