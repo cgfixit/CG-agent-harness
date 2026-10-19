@@ -132,7 +132,11 @@ archives nor writes human semantic summaries. Synchronous and detached coding sh
 submitted instruction and projected child result (repository, status,
 run id, changed files, push/PR fields and commit message), not stdout/stderr,
 file bodies or tool logs. Metadata alone cannot prove a coding lesson or
-successful tests.
+successful tests. Local `/loop` queues only replies containing the console's
+standalone `GOAL_DONE` marker, including Markdown decoration, paired with the
+stored human goal instead of generated turn framing. Intermediate, stopped, and
+budget-exhausted turns without that marker remain skipped. The marker is
+unverified model advice, not evidence that the goal was achieved.
 
 Strict parsing, source membership, sensitivity, confidence, and fact bindings
 govern idempotent `session_summary` or `insight` proposals. Identical normalized
