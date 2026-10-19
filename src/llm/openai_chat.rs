@@ -509,17 +509,20 @@ mod tests {
 
     #[test]
     fn a_base_url_with_credentials_query_or_fragment_is_refused_without_echo() {
-        let secret = "synthetic-url-secret";
-        for url in [
-            format!("http://user:{secret}@127.0.0.1:9/v1"), // DevSkim: ignore DS162092,DS137138 because this refusal fixture never connects.
-            format!("http://{secret}@127.0.0.1:9/v1"), // DevSkim: ignore DS162092,DS137138 because this refusal fixture never connects.
-            format!("http://127.0.0.1:9/v1?token={secret}"), // DevSkim: ignore DS162092,DS137138 because this refusal fixture never connects.
-            format!("http://127.0.0.1:9/v1#{secret}"), // DevSkim: ignore DS162092,DS137138 because this refusal fixture never connects.
+        // A synthetic marker, not a credential: the assertions only check that
+        // no error surface repeats what sat in the userinfo, query or fragment,
+        // and a failure names the URL shape rather than printing the URL.
+        let marker = "synthetic-url-marker";
+        for (shape, url) in [
+            ("userinfo", format!("http://user:{marker}@127.0.0.1:9/v1")), // DevSkim: ignore DS162092,DS137138 because this refusal fixture never connects.
+            ("username only", format!("http://{marker}@127.0.0.1:9/v1")), // DevSkim: ignore DS162092,DS137138 because this refusal fixture never connects.
+            ("query", format!("http://127.0.0.1:9/v1?q={marker}")), // DevSkim: ignore DS162092,DS137138 because this refusal fixture never connects.
+            ("fragment", format!("http://127.0.0.1:9/v1#{marker}")), // DevSkim: ignore DS162092,DS137138 because this refusal fixture never connects.
         ] {
             let err = ChatClient::new(&url, "local", 5.0, "", None).unwrap_err();
             let shown = format!("{err:?} {}", err.to_json());
-            assert!(!shown.contains(secret), "{url}: {shown}");
-            assert_eq!(err.to_json()["details"]["key"], "models.local_llm.base_url");
+            assert!(!shown.contains(marker), "{shape}: the refusal echoed the URL");
+            assert_eq!(err.to_json()["details"]["key"], "models.local_llm.base_url", "{shape}");
         }
         // The constructor never connects, so a plain loopback URL still builds.
         let plain = "http://127.0.0.1:9/v1"; // DevSkim: ignore DS162092,DS137138 because the control fixture binds nothing.
