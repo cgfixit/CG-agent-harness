@@ -42,3 +42,19 @@ See [setup](../README.md), [models](MODELS.md) and [coding](CODING_PIPELINE.md).
 | `/agent` commands report "Agentic layer disabled" | `agentic.enabled` is still `false` in `config.yaml` | Follow [coding config](CODING_PIPELINE.md#92-edit-the-configuration-file), then restart `serve` |
 | A write action is refused | A current policy gate is closed, reason/confirm is absent, publication has no reviewed body, or the emergency switch is set | Re-read [coding console steps](CODING_PIPELINE.md#93-run-it-from-the-console) and [the kill switch](CODING_PIPELINE.md#95-the-kill-switch); check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` |
 | Managed-key save or legacy migration fails | OS store unavailable, unsafe legacy file, or Windows replacement denied | Keep plaintext opt-in off unless deliberately required. Check [credential privacy and recovery](INSTALL.md#8-persistence-optional-keys-and-recovery); do not broaden file access. Windows sharing locks can block replacement; the existing destination remains intact |
+
+## Diagnostics
+
+`/diag` reads allowlisted logs under `<home>/logs/` for an admin or `portal_auditor`
+account once `diagnostics.logs_enabled` is the literal boolean `true` (restart).
+Output is redacted, then refused whole on an injection-scanner hit. It stays
+untrusted text; `/diag inject` stages it for one local chat turn. Contract:
+[INVARIANTS.md](../INVARIANTS.md).
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `/diag` says `DIAG_DISABLED` | `diagnostics.logs_enabled` is missing, quoted or false | Set it to `true` in `config.yaml`, then restart `serve` |
+| `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` | The account is `operator` or `audit` | Use an admin or `portal_auditor` account |
+| A read or `/diag inject` says `DIAG_SCANNER_REFUSED` | The redacted excerpt matched the injection scanner | Narrow with `--event`, `--since` or `--last`; nothing from it is shown or staged |
+| Chat says `DIAG_SURFACE_FORBIDDEN` | An excerpt is staged and the turn is cloud chat or `/agent` | Send a local turn first, or `/diag forget` |
+| `/diag unslop` says `DIAG_NOT_FOUND` | Nothing written yet, or `unslop.metrics_path` is outside `logs/` | `/diag` reads only `<home>/logs/unslop.jsonl` |

@@ -274,6 +274,11 @@ fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recur
 }
 
 fn refuse_bound_session_pins(state: &AppState, owner: &str, req: &AgentRunRequest) -> ApiResult<()> {
+    // A staged /diag excerpt is local-chat-only context: refuse rather than drop it.
+    state
+        .diag
+        .for_turn(owner, "", crate::server::diag_reader::Surface::Agent)
+        .map_err(|e| super::diag::diag_error(&e))?;
     let Some(binding) = &req.goal_stage else {
         return Ok(());
     };

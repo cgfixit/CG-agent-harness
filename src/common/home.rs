@@ -146,7 +146,6 @@ impl Home {
     pub fn data_dir(&self) -> PathBuf {
         self.root.join("data")
     }
-    #[cfg(any(test, feature = "test-support"))]
     pub fn logs_dir(&self) -> PathBuf {
         self.root.join("logs")
     }

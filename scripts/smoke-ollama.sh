@@ -121,7 +121,7 @@ AGENTIC_STATUS=$("$BIN" agentic --config "$CGAGENTHARNESS_HOME/config.yaml" stat
 has "Agentic layer disabled" "$AGENTIC_STATUS"
 
 echo "== open panels"
-TOOLS=$(curl_account -fsS "$BASE/api/tools"); has '"wired":70[,}]' "$TOOLS"
+TOOLS=$(curl_account -fsS "$BASE/api/tools"); has '"wired":71[,}]' "$TOOLS"
 SKILLS=$(curl_account -fsS "$BASE/api/skills"); has 'ponytail' "$SKILLS"
 CHECKS=$(curl_account -fsS "$BASE/api/agent/checks"); has 'cargo-test' "$CHECKS"
 

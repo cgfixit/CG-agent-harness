@@ -22,6 +22,9 @@ check-profile names and run IDs, never browser-supplied commands.
 | GET | `/api/netconnect/diag` | Budgeted TCP probe of configured diagnostics targets; 409 unless the tier may run (see [netconnect.md](netconnect.md#diagnostics)) |
 | GET | `/api/registry` | Skill/persona registry listing |
 | GET | `/api/audit` | Audit events (any role) |
+| GET | `/api/diag` | `/diag` gate, allowlisted log files, last read and staged excerpt (admin or `portal_auditor`; 409 `DIAG_DISABLED` while off) |
+| GET | `/api/diag/read` | Bounded, redacted tail of one allowlisted log: `file`, optional `last`, `event`, `since`, `errors` |
+| POST | `/api/diag/inject`, `/api/diag/forget` | Stage the last read for the next local chat turn of `session_id`, or drop it |
 | GET | `/api/harness/runs` | Retained harness-optimizer runs (`/harness`) |
 | GET | `/api/analytics/summary` | Owned sessions plus shared spend/coding analytics (`/analytics`; [details](SPEND_AND_NOTIFICATIONS.md#analytics-sessions-tokens-and-coding-runs)) |
 | POST | `/api/config/reload` | Reload the non-secret limits allowlist (administrator, CSRF-guarded; see [CONFIG_RELOAD.md](CONFIG_RELOAD.md)) |

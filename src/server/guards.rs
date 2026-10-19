@@ -216,6 +216,9 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
                 .into_response();
             }
             if (!own && account.role == "audit" && !(path == "/api/audit" && req.method() == axum::http::Method::GET))
+                || (!own
+                    && account.role == crate::common::authn::PORTAL_AUDITOR_ROLE
+                    && !portal_auditor_may(req.method(), &path))
                 || (admin && account.role != "admin")
             {
                 return ApiError::new(StatusCode::FORBIDDEN, "AUTH_PERMISSION_DENIED", "denied").into_response();
@@ -239,6 +242,27 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
     let response = next.run(req).await;
     state.audit.log(json!({"event":"portal.request","actor":actor_name,"method":method,"route":route,"status":response.status().as_u16()}));
     response
+}
+
+/// The whole `portal_auditor` surface: local chat in its own sessions, the
+/// redacted audit read and `/diag`. Everything else, including memory,
+/// attachments, keys, deletion, web policy, models, persona, MCP and coding,
+/// is denied here before any handler runs; handlers add the chat limits.
+pub fn portal_auditor_may(method: &axum::http::Method, path: &str) -> bool {
+    use axum::http::Method;
+    let get = method == Method::GET;
+    let post = method == Method::POST;
+    match path {
+        "/api/audit" | "/api/diag" | "/api/diag/read" => get,
+        "/api/diag/inject" | "/api/diag/forget" | "/api/chat" | "/api/chat/cancel" => post,
+        "/api/prompt/preview" | "/api/slash/parse" => post,
+        "/api/sessions" => get || post,
+        _ => {
+            get && path
+                .strip_prefix("/api/sessions/")
+                .is_some_and(|id| !id.is_empty() && !id.contains('/') && !matches!(id, "search" | "legacy" | "clear"))
+        }
+    }
 }
 
 pub fn enforce_csrf(state: &AppState, req: &Request<Body>) -> Result<(), ApiError> {
@@ -278,6 +302,54 @@ mod tests {
             b = b.header("sec-fetch-site", s);
         }
         b.body(Body::empty()).unwrap()
+    }
+
+    #[test]
+    fn portal_auditor_reaches_only_chat_audit_and_diag() {
+        use axum::http::Method;
+        let allowed = [
+            (Method::GET, "/api/audit"),
+            (Method::GET, "/api/diag"),
+            (Method::GET, "/api/diag/read"),
+            (Method::POST, "/api/diag/inject"),
+            (Method::POST, "/api/diag/forget"),
+            (Method::POST, "/api/chat"),
+            (Method::POST, "/api/chat/cancel"),
+            (Method::POST, "/api/prompt/preview"),
+            (Method::POST, "/api/slash/parse"),
+            (Method::GET, "/api/sessions"),
+            (Method::POST, "/api/sessions"),
+            (Method::GET, "/api/sessions/abc123"),
+        ];
+        for (method, path) in &allowed {
+            assert!(portal_auditor_may(method, path), "{method} {path}");
+        }
+        let denied = [
+            (Method::DELETE, "/api/sessions/abc123"),
+            (Method::POST, "/api/sessions/clear"),
+            (Method::GET, "/api/sessions/search"),
+            (Method::GET, "/api/sessions/legacy"),
+            (Method::GET, "/api/sessions/abc123/export"),
+            (Method::POST, "/api/sessions/abc123/rename"),
+            (Method::POST, "/api/chat/attachments"),
+            (Method::GET, "/api/memory"),
+            (Method::POST, "/api/memory/add"),
+            (Method::GET, "/api/structured-memory"),
+            (Method::GET, "/api/keys"),
+            (Method::POST, "/api/model"),
+            (Method::POST, "/api/web/inject"),
+            (Method::GET, "/api/web"),
+            (Method::POST, "/api/agent/run"),
+            (Method::POST, "/api/mcp/call"),
+            (Method::GET, "/api/notes-corpus"),
+            (Method::POST, "/api/soul/document"),
+            (Method::POST, "/api/diag/read"),
+            (Method::GET, "/api/diag/inject"),
+            (Method::GET, "/api/auth/users"),
+        ];
+        for (method, path) in &denied {
+            assert!(!portal_auditor_may(method, path), "{method} {path}");
+        }
     }
 
     #[test]

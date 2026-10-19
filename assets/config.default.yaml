@@ -406,6 +406,29 @@ unslop:
   enabled: false
   metrics_path: "logs/unslop.jsonl"
 
+# Read-only /diag log inspection. Off until logs_enabled is the literal boolean
+# true (quoted "true" is off), and then only for admin and portal_auditor
+# accounts. Reads only the exact names below from <home>/logs/: no globs, paths
+# or folding, no symlinks, at most logs_max_bytes from the tail. Output is
+# redacted, then refused whole on an injection-scanner hit. /diag inject stages
+# one excerpt for the next local chat turn of that session only; cloud chat and
+# /agent refuse while one is staged and /loop never receives it. A missing
+# list is empty. Invalid values fail boot. Restart-only; not reloadable.
+diagnostics:
+  logs_enabled: false
+  logs_max_lines: 200 # 1–1000 per read
+  logs_max_bytes: 65536 # 4096–262144 per read
+  logs_inject_max_chars: 8000 # 512–24000 staged into one prompt
+  logs_allowed_files: # bare names [A-Za-z0-9._-]; unslop.metrics_path outside logs/ is not read
+    - audit.jsonl
+    - audit.jsonl.1
+    - spend.jsonl
+    - spend.jsonl.1
+    - unslop.jsonl
+  # Reserved. No model-callable diagnostics tool exists in this build; chat
+  # still exposes only web_search and web_fetch. Literal true only warns.
+  model_tool: false
+
 # Account-private structured facts, governed proposals, and optional episodes.
 # Distinct from harness.json.memory_enabled, which only includes pinned
 # /memory notes in the chat prompt. Missing, quoted, or non-boolean values
