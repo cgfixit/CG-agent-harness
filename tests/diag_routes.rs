@@ -484,6 +484,24 @@ async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
     assert!(!body.to_string().contains("SHARED-PERSONA-MARKER"), "{body}");
     assert_eq!(body["live_state"], false, "{body}");
     assert!(!body["prompt"].as_str().unwrap_or("").contains("LIVE_STATE"), "{body}");
+    // Control: an admin's local turn on the same server carries the block, so the
+    // absence checks above can fail.
+    let admin = account(&s, "ops-admin", "admin").await;
+    let (status, asession) = json_call(&s, &admin, Method::POST, "/api/sessions", Some(json!({"title":"a"}))).await;
+    assert_eq!(status, 201, "{asession}");
+    let (status, body) = json_call(
+        &s,
+        &admin,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"session_id": asession["session_id"], "message": "hello"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        system_prompt(&model.last_request().unwrap()).contains("<<<LIVE_STATE_DATA>>>"),
+        "an admin local turn carries the live state"
+    );
     let (status, body) = json_call(
         &s,
         &portal,
