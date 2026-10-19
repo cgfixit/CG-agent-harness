@@ -45,7 +45,8 @@ episodes referenced by pending proposals.
     starts no worker, chat wins the generation gate, and output remains pending.
 11. A synthetic evaluation corpus covers preferences, temporary statements,
     negation, corrections, secrets, injection, conflicts, and owner isolation.
-    Fixture metrics are provisional; live quality and latency remain unmeasured.
+    Fixture metrics are provisional; live results require exact model tags,
+    modes, timings and candidate/proposal/rejection counts.
 
 ## What does not ship
 
@@ -424,3 +425,15 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
 ```
 
 The phase-7 corpus run is under [Evaluation corpus](#evaluation-corpus).
+
+For an already packaged backend, verify selected-model completion proposals,
+review refusals, Apply/Dismiss and restart persistence with:
+
+```sh
+CGAH_TEST_BINARY=dist/'CG Agent Harness.app'/Contents/MacOS/cgagentharness \
+  python3 scripts/test-desktop-backend.py \
+  DesktopBoundary.test_completion_memory_uses_selected_model_and_requires_review
+```
+
+This is fixture-backed sidecar evidence. Native UI freshness, every producer,
+and repeated real-model quality still need packaged-app acceptance.

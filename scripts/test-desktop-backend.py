@@ -108,7 +108,7 @@ def seed_home(home):
 
 class ModelFixture:
     """Exercise the real HTTP client without model downloads or cloud credentials."""
-    def __init__(self):
+    def __init__(self, memory=False):
         self.requests = []
         self.paths = []  # every (method, path), including the unrecorded 404s
         requests = self.requests
@@ -137,10 +137,17 @@ class ModelFixture:
                     return
                 request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
                 requests.append(request)
+                content = 'fixture reply'
+                if memory and request.get('response_format') == {'type': 'json_object'}:
+                    evidence = json.loads(request['messages'][-1]['content'])
+                    content = json.dumps({'candidates': [{
+                        'action': 'add', 'category': category, 'content': 'The fixture user prefers metric units.',
+                        'sensitivity': 'normal', 'confidence': .9, 'source_refs': [evidence['episode_id']]
+                    } for category in ('session_summary', 'insight')]})
                 body = json.dumps({
                     "model": request["model"],
                     "choices": [{"finish_reason": "stop", "message": {
-                        "role": "assistant", "content": "fixture reply"}}],
+                        "role": "assistant", "content": content}}],
                     "usage": {"prompt_tokens": 10, "completion_tokens": 2}
                 }).encode()
                 self.send_response(200)
@@ -639,6 +646,62 @@ class DesktopBoundary(unittest.TestCase):
         self.assertEqual(summary['days'][0]['input_tokens'], 30)
         self.assertEqual(summary['days'][0]['output_tokens'], 6)
         self.assertTrue(ledger.read_bytes().startswith(ledger_before_restart))
+
+    def test_completion_memory_uses_selected_model_and_requires_review(self):
+        model = ModelFixture(memory=True)
+        self.addCleanup(model.close)
+        seed_home(self.home)
+        config = self.home / 'config.yaml'
+        config.write_text(config.read_text().replace(
+            'base_url: "http://127.0.0.1:11434/v1"', f'base_url: "{model.base}"', 1
+        ).replace('suggestion_idle_ms: 2000', 'suggestion_idle_ms: 10'))
+        child = self.start()
+        headers = child.authorize()
+
+        def call(path, body=None, expected=200):
+            status, payload, _ = child.request(path, headers, body)
+            self.assertEqual(status, expected, payload)
+            return json.loads(payload)
+
+        selected = 'fixture-memory-local'
+        call('/api/model', {'model': selected})
+        chat = call('/api/chat', {'message': 'I always prefer metric units.'})
+        self.assertTrue(chat['memory_suggestion']['queued'], chat)
+        deadline = time.monotonic() + 10
+        while True:
+            proposals = call('/api/structured-memory/proposals?status=pending')['proposals']
+            if len(proposals) == 2 or time.monotonic() >= deadline:
+                break
+            time.sleep(.05)
+        self.assertEqual(len(proposals), 2)
+        self.assertEqual(call('/api/structured-memory/facts')['facts'], [])
+        inference = [r for r in model.requests if r.get('response_format') == {'type': 'json_object'}]
+        self.assertEqual(len(inference), 1)
+        self.assertEqual(inference[0]['model'], selected)
+        self.assertEqual(inference[0]['max_tokens'], 1024)
+        self.assertNotIn('tools', inference[0])
+        self.assertEqual({p['source_episode_ids'][0] for p in proposals}, {chat['episode']['id']})
+        run = call('/api/structured-memory/consolidation')['runs'][0]
+        self.assertEqual((run['state'], run['model_id'], run['proposal_count']), ('done', selected, 2))
+        proposal = proposals[0]
+        path = '/api/structured-memory/proposals/' + proposal['id']
+        decision = {'revision': proposal['revision'], 'apply': True, 'reason': 'Reviewed synthetic preference'}
+        call(path, decision, expected=400)
+        call(path, {**decision, 'confirm': True, 'reason': ' '}, expected=400)
+        call(path, {**decision, 'confirm': True, 'revision': '0' * 64}, expected=409)
+        self.assertEqual(call('/api/structured-memory/facts')['facts'], [])
+        call(path, {**decision, 'confirm': True})
+        self.assertEqual(len(call('/api/structured-memory/facts')['facts']), 1)
+        rejected = proposals[1]
+        call('/api/structured-memory/proposals/' + rejected['id'], {
+            'revision': rejected['revision'], 'apply': False, 'confirm': True, 'reason': 'Duplicate summary reviewed'
+        })
+        self.assertEqual(call('/api/structured-memory/proposals?status=pending')['proposals'], [])
+        child.close()
+        child = self.start()
+        headers = child.authorize()
+        self.assertEqual(len(call('/api/structured-memory/facts')['facts']), 1)
+        self.assertEqual(call('/api/structured-memory/proposals?status=pending')['proposals'], [])
 
     def test_home_lock_prevents_second_writer_and_releases_after_eof(self):
         first = self.start()
