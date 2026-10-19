@@ -797,18 +797,14 @@ here opens a LAN/public service or tunnel.
 ## /diag log inspection never widens authority
 
 `diagnostics.logs_enabled` is literal-true, default-off and restart-only. Routes
-need it and an `admin` or `portal_auditor` account: `DIAG_DISABLED` or
-`DIAG_REFUSED`, never empty success. A request names a `logs_allowed_files` entry
-byte for byte (bare names, distinct after case folding, checked at boot); the
-server joins that entry to `<home>/logs/`. Reads refuse linked or non-private
-leaves, stay within `logs_max_bytes` of the tail, drop partial lines, count
-malformed ones, redact, then refuse the whole result on a scanner hit. Windows
-refuses. `/diag inject` stages the last read in memory for the next local chat
-turn of that session, fenced as untrusted; cloud chat and `/agent` refuse while
-staged (`DIAG_SURFACE_FORBIDDEN`), `/loop` never receives it, and clear, logout
-or account changes drop it. Audits hold names, counts, hashes and codes, never
-log text. Chat still exposes exactly two model tools; `diagnostics.model_tool`
-registers nothing.
+need it and an `admin` or `portal_auditor` account (`DIAG_DISABLED`,
+`DIAG_REFUSED`). A request names a boot-checked `logs_allowed_files` entry byte
+for byte, joined under `<home>/logs/`. Reads refuse linked or shared files, take
+at most `logs_max_bytes` from the tail, redact, then refuse a scanner hit;
+Windows refuses. `/diag inject` stages the last read, fenced as untrusted, for
+that session's next local turn only: cloud chat and `/agent` refuse while
+staged, `/loop` never receives it, and clear, logout or account changes drop it.
+Audits hold no log text; `diagnostics.model_tool` registers nothing.
 
 - Locked by: `server::diag_reader` and `server::slash` tests, `tests/diag_routes.rs`,
   `invariant_guard::diag_reads_only_named_files_under_home_logs` and
