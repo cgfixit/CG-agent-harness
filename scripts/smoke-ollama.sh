@@ -39,7 +39,7 @@ esac
 
 # The refused bind seeded the fresh configuration. Set the explicitly selected
 # local endpoint before server startup, without requiring a YAML dependency.
-# Temperature 0 makes the "pong" turn greedy: at the shipped 0.2 a 0.5B model
+# Temperature 0 makes the "pong" turn greedy: at the former 0.2 a 0.5B model
 # sometimes sampled "péng!", so the check failed by chance, not by regression.
 python3 - "$CGAGENTHARNESS_HOME/config.yaml" "$MODEL_URL" <<'PYMODEL'
 import json,sys
@@ -48,7 +48,7 @@ from urllib.parse import urlsplit
 url=sys.argv[2].rstrip('/')
 assert urlsplit(url).hostname in ('127.0.0.1','localhost','::1')  # DevSkim: ignore DS162092 because this refuses any non-loopback model URL.
 p=Path(sys.argv[1]);text=p.read_text()
-for old,new in (('base_url: "http://127.0.0.1:11434/v1"','base_url: '+json.dumps(url+'/v1')),('    temperature: 0.2\n','    temperature: 0\n')):  # DevSkim: ignore DS162092,DS137138 because these are the seeded loopback Ollama URL and the operator's loopback URL.
+for old,new in (('base_url: "http://127.0.0.1:11434/v1"','base_url: '+json.dumps(url+'/v1')),('    temperature: 0.0\n','    temperature: 0\n')):  # DevSkim: ignore DS162092,DS137138 because these are the seeded loopback Ollama URL and the operator's loopback URL.
     # The first match is models.local_llm (agentic.deepagent_github repeats base_url later).
     assert old in text,'seeded config changed; update smoke-ollama.sh: '+old.strip()
     text=text.replace(old,new,1)
