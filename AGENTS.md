@@ -160,13 +160,14 @@ applies; loading it does not expand publication, merge or release authority.
 
 - Codex: [.codex/skills/README.md](.codex/skills/README.md) indexes contract/config
   guards, write-policy probes, verification, optimization and macOS release work.
-- Claude: [.claude/skills/README.md](.claude/skills/README.md) lists invocation
-  policies and Claude-only procedures. Preserve operator-only skills;
+- Claude: [.claude/skills/README.md](.claude/skills/README.md) includes its separate
+  invocation policies and Claude-only procedures. Preserve operator-only skills;
   `doc-sync` remains operator-typed in Claude.
 - Copilot: [.github/skills/README.md](.github/skills/README.md) owns its inventory.
 
 Keep shared operating rules here, contracts in `INVARIANTS.md`, and task-specific
-mechanics in skills. Similarly named Claude/Codex skills may differ in scope or
-invocation. When editing skills, check frontmatter, referenced paths/symbols and
-command filters, then run the Markdown-budget check. Static checks cannot prove
-existing chats reload instructions.
+mechanics in their skill. Verify inventories independently; similarly named
+Claude/Codex skills may differ in scope or invocation policy. When
+editing skills, check frontmatter, referenced paths/symbols and command filters,
+then run the focused Markdown-budget check. Static checks cannot prove
+runtime discovery or instruction reload in existing chats.
