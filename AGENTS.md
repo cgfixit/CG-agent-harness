@@ -165,8 +165,8 @@ applies; loading it does not expand publication, merge or release authority.
 - Copilot: [.github/skills/README.md](.github/skills/README.md) owns its inventory.
 
 Keep shared operating rules here, contracts in `INVARIANTS.md`, and task-specific
-mechanics in their skill. Verify each inventory independently; similarly named
-Claude/Codex skills need not have identical scope or invocation policy. When
+mechanics in their skill. Verify inventories independently; similarly named
+Claude/Codex skills may differ in scope or invocation policy. When
 editing skills, check frontmatter, referenced paths/symbols and command filters,
-then run the focused Markdown-budget check. Static validation does not prove
-runtime discovery or that an existing chat reloaded the edited instructions.
+then run the focused Markdown-budget check. Static checks cannot prove
+runtime discovery or instruction reload in existing chats.
