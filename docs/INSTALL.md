@@ -231,7 +231,7 @@ Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 assume
 [Model setup](MODELS.md) is the set-and-verify step. The harness sends no `num_ctx`.
 A Modelfile `num_ctx` beats that variable; pin 32768 with the
 [local derived tag](MODELS.md#pin-32768-with-a-local-derived-tag). The shipped
-default stays `qwen3.8:27b-mlx`.
+chat and planner default is that tag, `qwen3.8:27b-mlx-cg`.
 
 ### 2.6 (Optional, for the coding pipeline only) GitHub CLI
 
@@ -376,7 +376,8 @@ CGagentHarness console on https://127.0.0.1:8790/ (home /Users/you/.CGagentHarne
 ```
 
 First run seeds the application home. Chat uses the configured loopback service's
-`qwen3.8:27b-mlx` tag by default. Inspect installed tags with `/model list` and
+`qwen3.8:27b-mlx-cg` tag by default, a [derived tag](MODELS.md#pin-32768-with-a-local-derived-tag)
+that exists only after `ollama create`. Inspect installed tags with `/model list` and
 select one with `/model use <exact-tag>`. The harness never downloads missing tags.
 
 To change the endpoint or configure the coding planner, quit with Cmd-Q or stop
@@ -386,11 +387,14 @@ To change the endpoint or configure the coding planner, quit with Cmd-Q or stop
 ```yaml
 models:
   local_llm:
-    model: "qwen3.8:27b-mlx"   # chat default; use the exact installed tag
+    model: "qwen3.8:27b-mlx-cg"   # chat default; use the exact installed tag
 agentic:
   deepagent_github:
-    model: "qwen3.8:27b-mlx"   # optional planner; writes remain disarmed
+    model: "qwen3.8:27b-mlx-cg"   # optional planner; writes remain disarmed
 ```
+
+Both shipped defaults are that derived tag; if you skip `ollama create`, set an
+installed tag in each.
 
 Restart only after editing configuration; `/model use` applies to chat without
 a restart and does not change the coding planner. Existing homes are not
@@ -554,7 +558,7 @@ on first run. Common operator settings follow:
 | Key | Default | Effect |
 |---|---|---|
 | `app.agent_job_poll_ms` | 1500 | Browser job polling interval, clamped to 1–30 s |
-| `api.rate_limit.max_requests` / `window_seconds` | 150 / 240 | Per-IP sliding-window ceiling on every route |
+| `api.rate_limit.max_requests` / `window_seconds` | 300 / 240 | Per-IP sliding-window ceiling on every route: 75 a minute sustained, above the 44 a minute a console polls while an `/agent` job runs |
 | `api.harness_loop_rate_limit.*` | 34 / 500 s / 2048 tokens | Separate `/loop` budget; same backend-dependent ceiling as local chat after the legacy `0` → `2048` fallback |
 | `models.cloud_chat.enabled` | true | Allows `/model use grok` / `claude`; each provider has its own `enabled` and `model` |
 | `models.cloud_chat.max_tokens` / `timeout_sec` | 4096 / 180 | Cloud reply ceiling and timeout; boot refuses 0 or >32768 tokens, or a timeout outside 1–720 s |

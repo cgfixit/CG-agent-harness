@@ -1026,10 +1026,10 @@ const LOOP_AUTO_ON_COMPACT = true;
    loop limit ships 16 turns per 300 s (api.harness_loop_rate_limit), so a fast
    model's auto loop hits it within minutes. /loop stop still ends the wait. */
 const LOOP_RETRY_CAP_SEC = 300;
-/* Status/decision/push/discard/publish and GitHub-status calls spawn a CLI
-   bounded at 120s. Job submission returns immediately; polling uses short calls. */
+/* Status/discard and GitHub-status calls spawn a CLI bounded at 120s. Job
+   submission returns immediately; polling uses short calls. */
 const AGENT_CLI_TIMEOUT_MS = 130000;   /* 120s ops_runner._TIMEOUT_SEC + 10s margin */
-/* Push and publish: shim::REAL_REPO_RUN_WRITE_SEC (420s) + 10s margin. */
+/* Decision, push and publish: shim::REAL_REPO_RUN_WRITE_SEC (420s) + 10s margin. */
 const AGENT_WRITE_TIMEOUT_MS = 430000;
 /* Active human-gated /loop. Never starts a real-repo run. Cleared on
    /loop stop, /clear, session switch, budget exhaust, or GOAL_DONE. */
@@ -3529,7 +3529,7 @@ async function runSlash(line, webCommand) {
             if (sub === 'status') {
               r = await api('/api/agent/runs/' + encodeURIComponent(id), 'GET', undefined, AGENT_CLI_TIMEOUT_MS);
             } else {
-              r = await api('/api/agent/runs/' + encodeURIComponent(id) + '/decision', 'POST', { decision: sub, reason: rest.slice(2).join(' ').trim(), confirm: sub === 'approve' }, AGENT_CLI_TIMEOUT_MS);
+              r = await api('/api/agent/runs/' + encodeURIComponent(id) + '/decision', 'POST', { decision: sub, reason: rest.slice(2).join(' ').trim(), confirm: sub === 'approve' }, AGENT_WRITE_TIMEOUT_MS);
             }
             if (staleReview()) break;
             const rec = agentRecord(r);

@@ -12,7 +12,7 @@ auth:
 tls:
   enabled: true
   auto_generate: true
-  certificate_days: 90
+  certificate_days: 365
   cert_file: ""
   key_file: ""
 security:
@@ -228,7 +228,7 @@ inferred from the other. Scheme-relative discovered links resolve against the
 source and still require current permission.
 
 HTML page/listing extraction shares the request deadline and stops cooperatively on cancellation.
-`web.html_parser_handles` (default 512, range 64–4096, restart-only) bounds live
+`web.html_parser_handles` (seeded 4096, 512 if absent, range 64–4096, restart-only) bounds live
 open-element and formatting state; excessive nesting returns `WEB_HTML_COMPLEXITY`
 without saving partial evidence. Byte and link limits still apply.
 
@@ -377,9 +377,10 @@ The HTML parser removes executable/hidden/navigation content and retains heading
 paragraphs, tables, lists and code. Extracts keep canonical URLs, hashes, fetch
 age, validators, extraction version and original passage offsets.
 
-Defaults: 20 page requests, 2 MiB charged bytes, 60 seconds per crawl; 8 seconds
-and 256 KiB per response; 2 concurrent fetches, 250 ms per-origin pacing, 10
-requests per origin; 128 cached pages/16 MiB. `web.*` fields in the shipped YAML
+Seeded: 40 page requests, 2 MiB charged bytes, 180 seconds per crawl; 8 seconds
+and 256 KiB per response; 4 concurrent fetches, 400 ms per-origin pacing, 10
+requests per origin; 256 cached pages/16 MiB. A home missing these keys uses 20
+pages, 60 seconds, 2 fetches, 250 ms and 128 pages. `web.*` fields in the shipped YAML
 list validated bounds; [configuration reload](CONFIG_RELOAD.md) lists the ones an
 administrator can reload without a restart. Failed requests can conservatively
 charge the full response allowance. Reports expose partial coverage, failures and
@@ -402,7 +403,7 @@ Conditional refresh repeats network checks. Validators reduce bytes, not request
 
 Research asks the local model for at most 3 subqueries in 2 rounds, runs at most
 one bounded crawl, and synthesizes about 6,000 evidence tokens. Defaults:
-28,000 total model tokens, 300s discovery including cold load, then 300s answering.
+28,000 total model tokens, 1200s discovery including cold load, then 1800s answering (300s each if the keys are absent).
 Preload residency covers both budgets, capped at one hour; cancellation covers
 loading too. Smaller windows: [MODELS.md](MODELS.md#4-select-an-installed-model-and-check-ollama). Provider
 usage wins; otherwise bytes/4 plus overhead is estimated, charging incomplete

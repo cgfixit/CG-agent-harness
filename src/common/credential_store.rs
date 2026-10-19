@@ -197,23 +197,26 @@ fn platform_store_missing() -> bool {
     }
 }
 
+/// Cache only a successful initialization so a store that was briefly
+/// unavailable (for example Secret Service still starting) is retried later.
 fn platform_store_ready() -> bool {
-    static READY: OnceLock<bool> = OnceLock::new();
-    *READY.get_or_init(|| {
-        #[cfg(target_os = "macos")]
-        let store = apple_native_keyring_store::keychain::Store::new();
-        #[cfg(target_os = "windows")]
-        let store = windows_native_keyring_store::Store::new();
-        #[cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))]
-        let store = dbus_secret_service_keyring_store::Store::new();
-        match store {
-            Ok(store) => {
-                keyring_core::set_default_store(store);
-                true
-            }
-            Err(_) => false,
+    static READY: OnceLock<()> = OnceLock::new();
+    if READY.get().is_some() {
+        return true;
+    }
+    #[cfg(target_os = "macos")]
+    let store = apple_native_keyring_store::keychain::Store::new();
+    #[cfg(target_os = "windows")]
+    let store = windows_native_keyring_store::Store::new();
+    #[cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))]
+    let store = dbus_secret_service_keyring_store::Store::new();
+    match store {
+        Ok(store) => {
+            READY.get_or_init(|| keyring_core::set_default_store(store));
+            true
         }
-    })
+        Err(_) => false,
+    }
 }
 
 const QUOTE_ESCAPE: &str = r"'\''";

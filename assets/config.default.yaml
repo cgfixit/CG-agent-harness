@@ -32,7 +32,7 @@ models:
   local_llm:
     provider: "ollama"
     base_url: "http://127.0.0.1:11434/v1"  # DevSkim: ignore DS162092 - Ollama loopback only; non-loopback refused at runtime
-    model: "qwen3.8:27b-mlx"
+    model: "qwen3.8:27b-mlx-cg"
     # Sent only for a resolved Ollama backend. none | low | medium | high | max;
     # absent/empty omits the field, an invalid value fails at boot.
     reasoning_effort: "none"
@@ -113,7 +113,7 @@ notes_corpus:
 # See docs/CONFIG_RELOAD.md; secrets, authority and other settings require restart.
 api:
   rate_limit:
-    max_requests: 150      # 1–100000; per-IP request ceiling within the window
+    max_requests: 300      # 1–100000; per-IP request ceiling within the window
     window_seconds: 240     # finite 0.001–86400; sliding-window seconds
   # /loop turns get their own, tighter budget.
   harness_loop_rate_limit:

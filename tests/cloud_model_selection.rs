@@ -356,6 +356,109 @@ async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secr
         !context.state.spend_file.exists(),
         "cancelled prediction cannot create spend"
     );
+
+    // A completed cloud turn may stage an episode, but its memory inference
+    // must return to the configured local model. The cloud fixture sees only
+    // the newly typed message; it never receives history or memory prompts.
+    let memory_options = ServerOptions::default()
+        .with("structured_memory.enabled", "true")
+        .with("structured_memory.episode_capture", "true")
+        .with("structured_memory.consolidation", "true")
+        .with("structured_memory.auto_suggest_chat", "true")
+        .with("structured_memory.suggestion_idle_ms", "500")
+        .with("models.local_llm.model", "mock-model")
+        .with("models.local_llm.max_tokens", "1024");
+    let mut prepared = prepare_server(&local.base_url(), memory_options).await;
+    let memory_config = prepared.app_opts.config.as_mut().unwrap();
+    for provider in ["grok", "claude"] {
+        memory_config.raw["models"]["cloud_chat"][provider]["profile"] = serde_yaml_ng::from_str(
+            "{context_window: 128, max_output_tokens: 16, timeout_sec: 1, count_timeout_sec: 1, temperature: 1, tool_support: true, rpm: 60}",
+        )
+        .unwrap();
+    }
+    AppConfig::write_private(
+        &memory_config.path,
+        &serde_yaml_ng::to_string(&memory_config.raw).unwrap(),
+    )
+    .unwrap();
+    let (memory_app, memory_state) = build_app(prepared.app_opts).await.unwrap();
+    let memory_server = start_test_server(
+        prepared.tmp,
+        prepared.home_dir,
+        prepared.api_key,
+        memory_app,
+        memory_state,
+    )
+    .await;
+    switch(&memory_server, "xai", true, 200).await;
+    let cloud_before = requests.lock().unwrap().len();
+    let (status, cloud_body) = memory_server
+        .post_json("/api/chat", json!({"message":"Remember that I prefer metric units."}))
+        .await;
+    assert_eq!(status, 200, "{cloud_body}");
+    let episode_id = cloud_body["episode"]["id"].as_str().unwrap();
+    let run_id = cloud_body["memory_suggestion"]["run_id"].as_str().unwrap();
+    assert_eq!(cloud_body["memory_suggestion"]["queued"], true);
+    local.set_reply(ok_reply(
+        &json!({"candidates":[{
+            "action":"add",
+            "category":"insight",
+            "content":"The synthetic cloud user prefers metric units.",
+            "confidence":0.95,
+            "uncertainty":"",
+            "sensitivity":"normal",
+            "source_refs":[episode_id]
+        }]})
+        .to_string(),
+        20,
+        12,
+    ));
+    let cloud_sent = requests.lock().unwrap()[cloud_before].clone();
+    assert_eq!(cloud_sent["input"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        cloud_sent["input"][0]["content"],
+        "Remember that I prefer metric units."
+    );
+    for field in ["messages", "tools", "system", "response_format"] {
+        assert!(cloud_sent.get(field).is_none(), "cloud request contained {field}");
+    }
+    let run = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let (_, run) = memory_server
+                .get_json(&format!("/api/structured-memory/consolidation/{run_id}"))
+                .await;
+            if run["state"] != "idle" && run["state"] != "running" {
+                break run;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(run["state"], "done", "{run}");
+    assert_eq!(run["proposal_count"], 1);
+    let local_sent = local.last_request().unwrap();
+    assert_eq!(local_sent["model"], "mock-model");
+    assert_eq!(local_sent["max_tokens"], 1024);
+    assert_eq!(local_sent["response_format"], json!({"type":"json_object"}));
+    let local_input: Value = serde_json::from_str(
+        local_sent["messages"].as_array().unwrap().last().unwrap()["content"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(local_input["episode_id"], episode_id);
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        cloud_before + 1,
+        "memory inference reached cloud fixture"
+    );
+    let (_, proposals) = memory_server.get_json("/api/structured-memory/proposals").await;
+    assert_eq!(proposals["proposals"].as_array().unwrap().len(), 1);
+    assert_eq!(proposals["proposals"][0]["source_episode_ids"], json!([episode_id]));
+    assert_eq!(proposals["proposals"][0]["status"], "pending");
+    let (_, facts) = memory_server.get_json("/api/structured-memory/facts").await;
+    assert!(facts["facts"].as_array().unwrap().is_empty());
     budget.state.audit.flush_async().await;
     s.state.audit.flush_async().await;
     for server in [&s, &budget] {

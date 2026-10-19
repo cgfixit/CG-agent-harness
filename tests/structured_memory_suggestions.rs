@@ -15,15 +15,17 @@ struct Model {
     requests: Arc<Mutex<Vec<Value>>>,
     bad: Arc<AtomicBool>,
     delay: Arc<AtomicU64>,
+    reply: Arc<Mutex<String>>,
 }
 
 async fn model() -> Model {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let bad = Arc::new(AtomicBool::new(false));
     let delay = Arc::new(AtomicU64::new(0));
-    let (seen, invalid, latency) = (requests.clone(), bad.clone(), delay.clone());
+    let reply = Arc::new(Mutex::new("Acknowledged the operator's metric preference.".to_string()));
+    let (seen, invalid, latency, response) = (requests.clone(), bad.clone(), delay.clone(), reply.clone());
     let app = axum::Router::new().route("/v1/chat/completions", axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
-        let (seen, invalid, latency) = (seen.clone(), invalid.clone(), latency.clone());
+        let (seen, invalid, latency, response) = (seen.clone(), invalid.clone(), latency.clone(), response.clone());
         async move {
             if body["messages"][0]["content"].as_str().unwrap_or("").contains("local structured-memory consolidator") {
                 let input: Value = serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
@@ -34,7 +36,7 @@ async fn model() -> Model {
                 }]}).to_string(), 10, 5));
             }
             if !body["messages"][0]["content"].as_str().is_some_and(|s| s.starts_with("You propose memories for human review")) {
-                return axum::Json(ok_reply("Acknowledged the operator's metric preference.", 10, 5));
+                return axum::Json(ok_reply(&response.lock().unwrap(), 10, 5));
             }
             seen.lock().unwrap().push(body.clone());
             tokio::time::sleep(Duration::from_millis(latency.load(Ordering::SeqCst))).await;
@@ -64,6 +66,7 @@ async fn model() -> Model {
         requests,
         bad,
         delay,
+        reply,
     }
 }
 
@@ -1420,4 +1423,55 @@ async fn shipped_defaults_capture_suggest_consolidate_and_retrieve_reviewed_fact
     assert!(
         !cgagentharness::server::structured_memory::OperatorGates::load(&s.state.home).resolve("auto_retrieval", true)
     );
+}
+
+#[tokio::test]
+async fn terminal_loop_suggests_from_human_goal_without_queuing_intermediate_framing() {
+    let model = model().await;
+    let s = spawn_server(&model.base, options("both")).await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let goal = "Explain my preference for metric units.";
+    *model.reply.lock().unwrap() = "Still working; GOAL_DONE will be reported when finished.".into();
+    assert_eq!(
+        s.post_json(&format!("/api/sessions/{sid}/goal"), json!({"goal":goal}))
+            .await
+            .0,
+        200
+    );
+    let mut terminal_episode = String::new();
+    for terminal in [false, true] {
+        if terminal {
+            *model.reply.lock().unwrap() = "The operator requested metric units.\n**GOAL_DONE**".into();
+        }
+        let (status, chat) = s
+            .post_json(
+                "/api/chat",
+                json!({
+                    "message":"Loop turn 1. Session goal: GENERATED_FRAMING_MUST_NOT_BE_RETAINED",
+                    "session_id":sid, "loop":true
+                }),
+            )
+            .await;
+        assert_eq!(status, 200, "{chat}");
+        assert_eq!(chat["memory_suggestion"]["queued"], terminal, "{chat}");
+        if terminal {
+            terminal_episode = chat["episode"]["id"].as_str().unwrap().to_owned();
+        }
+        settled(&s, "local").await;
+        assert_eq!(model.requests.lock().unwrap().len(), usize::from(terminal));
+    }
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let runs = store.list_consolidation_runs("local").unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].episode_ids, [terminal_episode]);
+    assert_eq!(runs[0].owner_id, "local");
+    assert_eq!(runs[0].model_id, "mock-model");
+    assert_eq!(store.list_pending_proposals("local").unwrap().len(), 2);
+    assert!(store.list_facts("local").unwrap().is_empty());
+    let request = &model.requests.lock().unwrap()[0];
+    let payload: Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(payload["input"], goal);
+    assert_eq!(payload["output"], "The operator requested metric units.\n**GOAL_DONE**");
+    assert!(!request.to_string().contains("GENERATED_FRAMING"));
 }

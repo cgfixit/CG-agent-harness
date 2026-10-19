@@ -45,7 +45,8 @@ episodes referenced by pending proposals.
     starts no worker, chat wins the generation gate, and output remains pending.
 11. A synthetic evaluation corpus covers preferences, temporary statements,
     negation, corrections, secrets, injection, conflicts, and owner isolation.
-    Fixture metrics are provisional; live quality and latency remain unmeasured.
+    Fixture metrics are provisional; live results require exact model tags,
+    modes, timings and candidate/proposal/rejection counts.
 
 ## What does not ship
 
@@ -131,7 +132,11 @@ archives nor writes human semantic summaries. Synchronous and detached coding sh
 submitted instruction and projected child result (repository, status,
 run id, changed files, push/PR fields and commit message), not stdout/stderr,
 file bodies or tool logs. Metadata alone cannot prove a coding lesson or
-successful tests.
+successful tests. Local `/loop` queues only replies containing the console's
+standalone `GOAL_DONE` marker, including Markdown decoration, paired with the
+stored human goal instead of generated turn framing. Intermediate, stopped, and
+budget-exhausted turns without that marker remain skipped. The marker is
+unverified model advice, not evidence that the goal was achieved.
 
 Strict parsing, source membership, sensitivity, confidence, and fact bindings
 govern idempotent `session_summary` or `insight` proposals. Identical normalized
@@ -158,7 +163,7 @@ cloud providers. Failed runs retain their model.
 | `status_poll_ms` | 30000 | 250–30000 ms; halved while generating |
 | `min_consolidation_confidence` | 0.40 | 0–1, shared by both generators; supplied lower values drop, omitted confidence remains accepted |
 | `max_consolidation_candidates` | 8 | Existing candidate bound, also used for completion suggestions |
-| `max_proposals_per_owner` | 32 | Pending proposal capacity |
+| `max_proposals_per_owner` | 50 (32 if absent) | Pending proposal capacity |
 
 Accepted inputs receive durable metadata-only `idle` receipts, then transition
 to `running`. Expiry, disabled gates, source clear, cancellation and inference
@@ -424,3 +429,15 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
 ```
 
 The phase-7 corpus run is under [Evaluation corpus](#evaluation-corpus).
+
+For an already packaged backend, verify selected-model completion proposals,
+review refusals, Apply/Dismiss and restart persistence with:
+
+```sh
+CGAH_TEST_BINARY=dist/'CG Agent Harness.app'/Contents/MacOS/cgagentharness \
+  python3 scripts/test-desktop-backend.py \
+  DesktopBoundary.test_completion_memory_uses_selected_model_and_requires_review
+```
+
+This is fixture-backed sidecar evidence. Native UI freshness, every producer,
+and repeated real-model quality still need packaged-app acceptance.

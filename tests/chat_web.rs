@@ -1006,7 +1006,8 @@ async fn web_chat_reserves_a_long_urls_minimal_result_before_the_read() {
 /// fits, and then the statement is true.
 #[tokio::test]
 async fn web_chat_grounds_a_web_denial_only_when_the_answer_was_offered_tools() {
-    let (s, _reads, _base) = budget_server(budget_model(1, None, None, Arc::default()), 1).await;
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let (s, _reads, _base) = budget_server(budget_model(1, None, None, requests.clone()), 1).await;
     let (status, body) = s.post_json("/api/chat", json!({"message": "search the web"})).await;
     assert_eq!(status, 200, "{body}");
     let reply = body["reply"].as_str().unwrap();
@@ -1014,30 +1015,41 @@ async fn web_chat_grounds_a_web_denial_only_when_the_answer_was_offered_tools() 
         reply.starts_with("This turn includes web_fetch, web_search."),
         "{reply}"
     );
-    // Every admitted prompt fits a round now, so tools are withheld only when the
-    // budget cannot fit one at all: a 13,500-token reply reservation leaves no
-    // room for the prompt, the definitions and a minimal result in 16000. The
-    // bare prompt (about 2,300 tokens, growing with every system-prompt line)
-    // must still fit: 13,800 left two tokens of room and broke when the prompt
-    // gained a sentence.
-    let (s, _reads, _base) = {
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let router = budget_model(1, None, None, requests);
-        let reads = Arc::new(AtomicUsize::new(0));
+    // Match the web budget's estimate of the captured fresh-session prompt.
+    // Reserve midway between fitting the bare prompt and fitting a tool round.
+    let (prompt, round) = {
+        let requests = requests.lock().unwrap();
+        let request = requests.last().unwrap();
+        let messages = request["messages"].as_array().unwrap();
+        let sent = messages[0]["content"].as_str().unwrap().len() + serde_json::to_vec(&messages[1..]).unwrap().len();
+        let definitions = request["tools"].as_array().unwrap();
+        let with_tools = sent + serde_json::to_vec(definitions).unwrap().len();
+        (
+            (sent as u64).div_ceil(4),
+            (with_tools as u64).div_ceil(4) + cgagentharness::server::web_search::MIN_EVIDENCE_TOKENS,
+        )
+    };
+    let total = 16_000;
+    let reservation = total - prompt - (round - prompt) / 2;
+    assert!(
+        prompt + reservation < total && round + reservation > total,
+        "reservation {reservation} must fit the bare prompt ({prompt}) but not a tool round ({round}) in {total}"
+    );
+    let s = {
+        let router = budget_model(1, None, None, Arc::default());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let s = common::spawn_server(
+        common::spawn_server(
             &format!("http://{address}/v1"),
             common::ServerOptions {
                 web_resolve: Some(("docs.example".into(), address)),
                 ..Default::default()
             }
-            .with("models.local_llm.max_tokens", "13500")
-            .with("web.total_tokens", "16000"),
+            .with("models.local_llm.max_tokens", &reservation.to_string())
+            .with("web.total_tokens", &total.to_string()),
         )
-        .await;
-        (s, reads, 0u64)
+        .await
     };
     let (status, body) = s.post_json("/api/chat", json!({"message": "search the web"})).await;
     assert_eq!(status, 200, "{body}");

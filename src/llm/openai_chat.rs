@@ -9,7 +9,6 @@ use std::collections::BTreeMap;
 use tokio_util::sync::CancellationToken;
 
 use crate::common::errors::{HarnessError, Result};
-use crate::llm::backend::is_loopback_url;
 
 pub const DEFAULT_CHAT_TIMEOUT_SEC: f64 = 720.0;
 pub const LLM_ERROR_CODE: &str = "HARNESS_LLM_ERROR";
@@ -181,8 +180,14 @@ impl ChatClient {
         api_key: &str,
         reasoning_effort: Option<String>,
     ) -> Result<Self> {
-        if !is_loopback_url(base_url) {
-            return Err(llm_err("harness chat only targets loopback model servers").detail("base_url", base_url));
+        // The same shape the inventory probe accepts: a plain loopback URL. A
+        // userinfo, query or fragment is refused here so no later error detail
+        // or log line can echo a credential embedded in the URL.
+        if !super::inventory::local_endpoint(base_url) {
+            return Err(llm_err(
+                "harness chat only targets a plain loopback model URL: http or https, no credentials, query or fragment",
+            )
+            .detail("key", "models.local_llm.base_url"));
         }
         let http = reqwest::Client::builder()
             .no_proxy()
@@ -500,6 +505,28 @@ mod tests {
 
     fn reply(content: &str) -> Value {
         json!({"choices":[{"finish_reason":"stop","message":{"content":content}}],"usage":{"prompt_tokens":3,"completion_tokens":2}})
+    }
+
+    #[test]
+    fn a_base_url_with_credentials_query_or_fragment_is_refused_without_echo() {
+        // A synthetic marker, not a credential: the assertions only check that
+        // no error surface repeats what sat in the userinfo, query or fragment,
+        // and a failure names the URL shape rather than printing the URL.
+        let marker = "synthetic-url-marker";
+        for (shape, url) in [
+            ("userinfo", format!("http://user:{marker}@127.0.0.1:9/v1")), // DevSkim: ignore DS162092,DS137138 because this refusal fixture never connects.
+            ("username only", format!("http://{marker}@127.0.0.1:9/v1")), // DevSkim: ignore DS162092,DS137138 because this refusal fixture never connects.
+            ("query", format!("http://127.0.0.1:9/v1?q={marker}")), // DevSkim: ignore DS162092,DS137138 because this refusal fixture never connects.
+            ("fragment", format!("http://127.0.0.1:9/v1#{marker}")), // DevSkim: ignore DS162092,DS137138 because this refusal fixture never connects.
+        ] {
+            let err = ChatClient::new(&url, "local", 5.0, "", None).unwrap_err();
+            let shown = format!("{err:?} {}", err.to_json());
+            assert!(!shown.contains(marker), "{shape}: the refusal echoed the URL");
+            assert_eq!(err.to_json()["details"]["key"], "models.local_llm.base_url", "{shape}");
+        }
+        // The constructor never connects, so a plain loopback URL still builds.
+        let plain = "http://127.0.0.1:9/v1"; // DevSkim: ignore DS162092,DS137138 because the control fixture binds nothing.
+        assert!(ChatClient::new(plain, "local", 5.0, "", None).is_ok());
     }
 
     #[tokio::test]

@@ -23,8 +23,8 @@ pub const STALE_AFTER_DAYS: i64 = 30;
 pub const DEFAULT_SPEND_FILE: &str = "logs/spend.jsonl";
 const MAX_SUMMARY_BYTES: u64 = 16 * 1024 * 1024;
 
-/// USD per 1M tokens. Re-verified 2026-09-19 against
-/// https://docs.x.ai/developers/pricing and
+/// USD per 1M tokens. Grok rows verified 2026-09-19 against
+/// https://docs.x.ai/developers/pricing; Claude rows verified 2026-10-19 against
 /// https://platform.claude.com/docs/en/about-claude/pricing
 struct RateRow {
     input: f64,
@@ -88,11 +88,26 @@ const CLAUDE_SONNET_5: RateRow = RateRow {
     cache_read: Some(0.20),
 };
 
+// Claude Opus 5.5 reads cache hits at 0.05x base input, not the 0.1x of Sonnet 5.
+const CLAUDE_OPUS_5_5: RateRow = RateRow {
+    input: 4.00,
+    output: 20.00,
+    cached_input: None,
+    long_input: None,
+    long_cached_input: None,
+    long_output: None,
+    long_prompt_threshold: None,
+    cache_creation: Some(5.00),
+    cache_creation_1h: Some(8.00),
+    cache_read: Some(0.20),
+};
+
 const RATE_VERIFIED: &[(&str, &str)] = &[
     ("grok-4.6", "2026-09-19"),
     ("grok-4.5", "2026-09-19"),
     ("grok-4.3", "2026-09-19"),
-    ("claude-sonnet-5", "2026-09-19"),
+    ("claude-sonnet-5", "2026-10-19"),
+    ("claude-opus-5-5", "2026-10-19"),
 ];
 
 fn rate_for(model: &str) -> Option<&'static RateRow> {
@@ -101,6 +116,7 @@ fn rate_for(model: &str) -> Option<&'static RateRow> {
         "grok-4.5" => Some(&GROK_45),
         "grok-4.3" => Some(&GROK_43),
         "claude-sonnet-5" => Some(&CLAUDE_SONNET_5),
+        "claude-opus-5-5" => Some(&CLAUDE_OPUS_5_5),
         _ => None,
     }
 }
@@ -738,6 +754,36 @@ mod tests {
         let est = estimate_usd("claude-sonnet-5", &tokens, "claude");
         let expected = 100.0 * 2.0 / 1e6 + 10.0 * 2.50 / 1e6 + 20.0 * 4.00 / 1e6 + 5.0 * 0.20 / 1e6 + 50.0 * 10.0 / 1e6;
         assert_eq!(est.usd_source, "rate_table");
+        assert!((est.usd.unwrap() - expected).abs() < 1e-15, "{}", est.usd.unwrap());
+    }
+
+    #[test]
+    fn shipped_cloud_models_are_priced() {
+        let cfg = AppConfig::from_str(AppConfig::embedded_default(), Path::new("config.yaml")).unwrap();
+        for (key, provider) in [
+            ("models.cloud_chat.grok.model", "grok"),
+            ("models.cloud_chat.claude.model", "claude"),
+            ("agentic.deepagent_github.providers.grok.model", "grok"),
+            ("agentic.deepagent_github.providers.claude.model", "claude"),
+        ] {
+            let model = cfg.str_or(key, "");
+            let tokens = UsageTokens {
+                input_tokens: Some(1_000_000),
+                output_tokens: Some(1_000_000),
+                ..UsageTokens::default()
+            };
+            let est = estimate_usd(&model, &tokens, provider);
+            assert_eq!(est.usd_source, "rate_table", "{key} = {model} is unpriced");
+        }
+        let usage = json!({
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "cache_read_input_tokens": 5,
+            "cache_creation_input_tokens": 30,
+            "cache_creation": {"ephemeral_5m_input_tokens": 10, "ephemeral_1h_input_tokens": 20}
+        });
+        let est = estimate_usd("claude-opus-5-5", &parse_claude_usage(Some(&usage)), "claude");
+        let expected = 100.0 * 4.0 / 1e6 + 10.0 * 5.0 / 1e6 + 20.0 * 8.0 / 1e6 + 5.0 * 0.20 / 1e6 + 50.0 * 20.0 / 1e6;
         assert!((est.usd.unwrap() - expected).abs() < 1e-15, "{}", est.usd.unwrap());
     }
 

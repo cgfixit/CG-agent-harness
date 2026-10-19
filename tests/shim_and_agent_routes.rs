@@ -100,6 +100,13 @@ fn argv_builder_uses_single_element_form_for_dash_leading_values() {
             "{action}: {budget}s <= child bounds {child_bounds}s"
         );
     }
+    // Approve is the third mutation boundary: it copies the tree for the
+    // disposable-copy proof and commits through the same validated git calls,
+    // so a decide call shares the write budget rather than the 120 s default.
+    assert_eq!(
+        shim::timeout_for(&c, &OpsRequest::new("real-repo-run-decide")).as_secs(),
+        shim::REAL_REPO_RUN_WRITE_SEC
+    );
     let console =
         std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/static/harness.html"))
             .unwrap();
@@ -107,6 +114,14 @@ fn argv_builder_uses_single_element_form_for_dash_leading_values() {
     assert!(
         console.contains(&format!("const AGENT_WRITE_TIMEOUT_MS = {wait_ms};")),
         "the console must wait out the push/publish budget"
+    );
+    let decision_call = console
+        .lines()
+        .find(|line| line.contains("'/decision'"))
+        .expect("the console posts decisions");
+    assert!(
+        decision_call.contains("AGENT_WRITE_TIMEOUT_MS"),
+        "the console must wait out the approve budget: {decision_call}"
     );
     assert_eq!(temps.len(), 2, "checks file + plan file");
     let checks_idx = argv.iter().position(|a| a == "--checks-file").unwrap();

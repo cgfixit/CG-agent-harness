@@ -163,16 +163,12 @@ struct PreparedRun {
     _chat_gate: Option<crate::server::generation_gate::GateGuard>,
 }
 
-fn prepare_run(state: &AppState, req: &AgentRunRequest, owner: &str) -> ApiResult<PreparedRun> {
-    prepare_run_inner(state, req, owner, false)
-}
-
-fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recurring: bool) -> ApiResult<PreparedRun> {
-    if recurring {
-        super::goals::validate_binding_recurring(state, req, owner)?;
-    } else {
-        super::goals::validate_binding(state, req, owner)?;
-    }
+/// Resolve the check profiles and size the run budget: the shape checks every
+/// entry point shares. `/api/agent/run` and `/api/agent/jobs` reach it through
+/// `prepare_run_inner`; schedule preview and create call it before storing a
+/// request, so a shape the run route refuses is refused at creation rather than
+/// at every occurrence. Returns the check manifest and the tuned planner timeout.
+fn resolve_run_shape(state: &AppState, req: &AgentRunRequest) -> ApiResult<(Vec<Value>, Option<u64>)> {
     let requested: Vec<String> = req
         .checks
         .clone()
@@ -216,6 +212,20 @@ fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recur
             "max_iterations_that_fit": max_fitting,
         })));
     }
+    Ok((checks, tuned_planner))
+}
+
+fn prepare_run(state: &AppState, req: &AgentRunRequest, owner: &str) -> ApiResult<PreparedRun> {
+    prepare_run_inner(state, req, owner, false)
+}
+
+fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recurring: bool) -> ApiResult<PreparedRun> {
+    if recurring {
+        super::goals::validate_binding_recurring(state, req, owner)?;
+    } else {
+        super::goals::validate_binding(state, req, owner)?;
+    }
+    let (checks, tuned_planner) = resolve_run_shape(state, req)?;
     assert_allowed(
         AGENT_RUN_TOOL,
         &["real-repo-run".into()],
@@ -439,6 +449,7 @@ pub async fn schedule_preview(
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
     super::goals::validate_binding(&state, &body.request, &owner)?;
+    resolve_run_shape(&state, &body.request)?;
     let spec = body
         .spec()
         .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
@@ -458,6 +469,7 @@ pub async fn schedule_create(
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let owner = super::auth::context_owner(user);
     super::goals::validate_binding(&state, &body.request, &owner)?;
+    resolve_run_shape(&state, &body.request)?;
     let spec = body
         .spec()
         .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
