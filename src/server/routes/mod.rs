@@ -4,6 +4,7 @@
 pub mod agent;
 pub mod auth;
 pub mod core;
+pub mod diag;
 pub mod goals;
 pub mod notes_corpus;
 pub mod notifications;
@@ -26,7 +27,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 104] = [
+pub const REGISTERED_PATHS: [&str; 111] = [
     "/api/analytics/summary",
     "/api/config/reload",
     "/",
@@ -36,6 +37,10 @@ pub const REGISTERED_PATHS: [&str; 104] = [
     "/api/tools",
     "/api/netconnect",
     "/api/netconnect/diag",
+    "/api/diag",
+    "/api/diag/read",
+    "/api/diag/inject",
+    "/api/diag/forget",
     "/api/skills",
     "/api/skills/check",
     "/api/sessions/{session_id}/skills",
@@ -43,6 +48,9 @@ pub const REGISTERED_PATHS: [&str; 104] = [
     "/api/web",
     "/api/web/allow",
     "/api/web/deny",
+    "/api/web/mode",
+    "/api/web/block",
+    "/api/web/unblock",
     "/api/web/fetch",
     "/api/web/check",
     "/api/web/search",
@@ -202,6 +210,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     let guarded = Router::new()
         .route("/api/netconnect", get(panels::netconnect_panel))
         .route("/api/netconnect/diag", get(panels::netconnect_diag))
+        .route("/api/diag", get(diag::status))
+        .route("/api/diag/read", get(diag::read))
+        .route("/api/diag/inject", post(diag::inject))
+        .route("/api/diag/forget", post(diag::forget))
         .route("/api/config/reload", post(core::reload_config))
         .route(
             "/api/sessions/{session_id}/goal-stage",
@@ -224,6 +236,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/web", post(panels::web_toggle))
         .route("/api/web/allow", post(panels::web_allow))
         .route("/api/web/deny", post(panels::web_deny))
+        .route("/api/web/mode", post(panels::web_mode))
+        .route("/api/web/block", post(panels::web_block))
+        .route("/api/web/unblock", post(panels::web_unblock))
         .route("/api/web/fetch", post(panels::web_fetch))
         .route("/api/web/check", post(panels::web_check))
         .route("/api/web/search", post(panels::web_search))
@@ -424,7 +439,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 104);
+        assert_eq!(REGISTERED_PATHS.len(), 111);
 
         let all = registered_paths();
         assert!(

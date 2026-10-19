@@ -82,6 +82,34 @@ CREATE TABLE sessions (
 ) STRICT;
 PRAGMA user_version=1;";
 
+/// Version 2 only widens the role check for `portal_auditor`. It is installed
+/// by the first commit that stores that role, on an emptied users table inside
+/// the same transaction, so a home that never assigns it stays on version 1
+/// and an older binary can still open it. Older binaries refuse version 2.
+const USERS_V2: &str = "
+DROP TABLE users;
+CREATE TABLE users (
+ username TEXT PRIMARY KEY NOT NULL, password_hash TEXT NOT NULL,
+ created_ts REAL NOT NULL, disabled INTEGER NOT NULL CHECK(disabled IN(0,1)),
+ last_login_ts REAL, failed_count INTEGER NOT NULL CHECK(failed_count>=0), locked_until_ts REAL,
+ role TEXT NOT NULL CHECK(role IN('admin','operator','audit','portal_auditor')),
+ must_change_password INTEGER NOT NULL CHECK(must_change_password IN(0,1)),
+ user_id TEXT UNIQUE NOT NULL
+) STRICT;
+PRAGMA user_version=2;";
+
+fn schema_version(conn: &Connection) -> rusqlite::Result<i64> {
+    conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+}
+
+/// Call with sessions and users already emptied: the drop then cascades nothing.
+fn widen_roles_if_needed(conn: &Connection, db: &AuthDb) -> rusqlite::Result<()> {
+    if schema_version(conn)? == 1 && db.users.values().any(|u| u.role == authn::PORTAL_AUDITOR_ROLE) {
+        conn.execute_batch(USERS_V2)?;
+    }
+    Ok(())
+}
+
 fn insert(conn: &Connection, db: &AuthDb) -> rusqlite::Result<()> {
     let mut users = conn.prepare("INSERT INTO users VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)")?;
     for (name, u) in &db.users {
@@ -114,10 +142,7 @@ fn insert(conn: &Connection, db: &AuthDb) -> rusqlite::Result<()> {
 }
 
 fn load(conn: &Connection) -> Result<AuthDb> {
-    if conn
-        .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
-        .map_err(sql)?
-        != 1
+    if !matches!(schema_version(conn).map_err(sql)?, 1 | 2)
         || conn
             .query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))
             .map_err(sql)?
@@ -256,6 +281,7 @@ pub(super) fn open(legacy: &Path) -> Result<(Connection, AuthDb, bool)> {
     let mut conn = connect(staged.path())?;
     let tx = conn.transaction().map_err(sql)?;
     tx.execute_batch(SCHEMA).map_err(sql)?;
+    widen_roles_if_needed(&tx, &db).map_err(sql)?;
     insert(&tx, &db).map_err(sql)?;
     tx.commit().map_err(sql)?;
     load(&conn)?;
@@ -277,6 +303,7 @@ pub(super) fn persist(conn: &mut Connection, db: &AuthDb) -> Result<()> {
         .map_err(sql)?;
     tx.execute_batch("DELETE FROM sessions; DELETE FROM users;")
         .map_err(sql)?;
+    widen_roles_if_needed(&tx, db).map_err(sql)?;
     insert(&tx, db).map_err(sql)?;
     tx.commit().map_err(sql)
 }
@@ -362,6 +389,31 @@ mod tests {
             std::os::unix::fs::symlink(other.path().join("missing"), &legacy).unwrap();
             assert!(AuthManager::open(&legacy, &cfg).is_err());
         }
+    }
+
+    #[test]
+    fn portal_auditor_widens_the_schema_only_when_first_stored() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        let cfg = AppConfig::from_str(AppConfig::embedded_default(), &dir.path().join("config.yaml")).unwrap();
+        let mgr = AuthManager::open(&path, &cfg).unwrap();
+        let database = path.with_extension("sqlite3");
+        let version = || schema_version(&connect(&database).unwrap()).unwrap();
+        let password = crate::common::random_urlsafe(24);
+        mgr.create_user("reader", &password, "operator").unwrap();
+        assert_eq!(version(), 1, "a home that never stores the role stays downgradeable");
+        let session = mgr.login("reader", &password).unwrap();
+        mgr.set_role("reader", "portal_auditor").unwrap();
+        assert_eq!(version(), 2);
+        drop(mgr);
+        let reopened = AuthManager::open(&path, &cfg).unwrap();
+        assert_eq!(reopened.get_user("reader").unwrap().role, "portal_auditor");
+        assert!(
+            reopened.validate_session(&session.session_id).is_none(),
+            "role change revokes sessions"
+        );
+        assert!(reopened.login("reader", &password).is_ok());
+        assert!(reopened.create_user("other", &password, "auditor").is_err());
     }
 
     #[test]

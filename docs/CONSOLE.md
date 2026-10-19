@@ -111,17 +111,22 @@ git ls-files -- ':(glob)**/sessions/**' ':(glob)**/.CGagentHarness/**' '.env' '.
 
 ```text
 /loop 3
-/loop
+/loop 3 compare hvac vendors
+/loop auto --web fetch 2 summarize the release notes
 /loop stop
 /goal clear
 ```
 
 `/loop 3` runs up to three follow-up turns toward the goal (default three,
-maximum five), each restating the bounded goal. With no stored goal, `/loop`
-takes the last prompt as the goal. Manual mode pauses after each turn; `/loop`
-continues. `/loop auto` only toggles automatic continuation; it starts
-nothing. A turn that needed compaction continues the same way automatically.
-`/loop stop` cancels generation or cooldown. Goal clear, session switching, token budgets, a 90%-identical reply and two
+maximum five), each restating the bounded goal. Text after the count sets the
+goal first, so `/loop 3 <text>` is `/goal <text>` then `/loop 3`. With no stored
+goal, `/loop` takes the last prompt as the goal. Manual mode pauses after each
+turn; `/loop` continues. `/loop auto` toggles automatic continuation; turning it
+on with a goal (or last prompt) to follow starts the loop after 5 s, and so does
+`/goal <text>` while auto is on. `/loop auto` with a count, mode or goal turns
+auto on and starts after the same pause, storing nothing until then. A turn
+that needed compaction continues the same way automatically. `/loop stop`
+cancels generation, cooldown or a pending start. Goal clear, session switching, token budgets, a 90%-identical reply and two
 consecutive failed turns (auto retries once) stop it. A `GOAL_DONE` line (even `**GOAL_DONE**`) stops it
 too, but is only model advice.
 
@@ -352,6 +357,7 @@ are ready. The registry's tools array is not a replacement for `/tools`.
 | Local file context for coding | Stage `/agent read <repo-relative-path[#Lx-Ly]>` before confirmation | Bounded reads from the governed repository clone; no general Mac filesystem mount |
 | `fsconnect` | Not implemented in this app | No slash command, datasource picker, filesystem indexing or YAML enable switch |
 | `netconnect` | CLI `status`, `devices`, and budgeted `diag`; `/net` aliases; gates ship false | LAN panel is GET `/api/netconnect` (scope, passive devices, tier state). No scan button. `/net diag` calls GET `/api/netconnect/diag`. Empty scope refuses armed tiers. `/web` still applies |
+| Log diagnostics | `/diag`; `diagnostics.logs_enabled` ships false; admin or `portal_auditor` | Bounded, redacted tails of allowlisted `<home>/logs/` files; one excerpt staged for the next local turn ([diagnostics](TROUBLESHOOTING.md#diagnostics)) |
 | `sqlconnect` | Not implemented in this app | No database connection configuration, query tool or ingestion workflow |
 | `github-public` catalog entry | Inventory only | Does not provide an independent public-repository connector |
 | `openai-compatible` catalog entry | Inventory only as a connector | Separately configured local compatible model/fallback paths exist; the row is not an activation control |
@@ -403,12 +409,13 @@ confirmation and persistence.
 | `/api`, `/api set <KEY> <value>`, `/api clear <KEY>` | Inspect, save or clear a managed credential; prefer the API Keys password fields; [persistence](INSTALL.md#8-persistence-optional-keys-and-recovery) |
 | `/clear` | Clear visible output, staged coding/review state and chat continuation; saved chats, notes, persona and web context remain |
 | `/connectors` | Connector catalog; does not activate connectors |
+| `/diag [status]`, `/diag audit\|spend\|unslop\|errors [flags]`, `/diag inject\|forget` | Read allowlisted logs or stage one excerpt; aliases `/diagnostics`, `/logs`; [diagnostics](TROUBLESHOOTING.md#diagnostics) |
 | `/github` | Read-only agentic GitHub status |
 | `/goal`, `/goal [--web off\|fetch\|all] [text]`, `/goal clear` | Inspect, set or clear the saved session goal and its web mode |
 | `/goal stage <branch>`, `/goal task` | Explicitly stage coding from a goal or inspect its task linkage |
 | `/harness` | List retained optimizer runs; does not start optimization |
 | `/help [topic\|search words\|all]` | Searchable topic guide, full command catalog and insertable examples |
-| `/loop [--web off\|fetch\|all] [n]`, `/loop auto`, `/loop stop` | Bounded chat continuation; `auto` toggles; exact `stop` also cancels a streaming chat turn |
+| `/loop [auto] [--web off\|fetch\|all] [n] [goal text]`, `/loop stop` | Bounded chat continuation; goal text sets the goal first; `auto` toggles and starts after 5 s; exact `stop` also cancels a streaming chat turn |
 | `/memory`, `status`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Shared pinned notes; [operator memory notes](MEMORY_GUIDE.md#pinned-notes) |
 | `/memory capture\|recall\|retrieval\|auto-retrieve\|consolidation\|auto-consolidate\|auto-suggest-chat\|auto-suggest-coding on\|off` | Administrator-only structured-memory gate overrides; `on` or `off` is required. `/memory on` stays pinned notes |
 | `/memory consolidate <episode-id> [episode-id ...]` | Selected-episode consolidation into pending proposals; does not apply facts |
@@ -433,6 +440,7 @@ confirmation and persistence.
 | `/users` | Administrator account panel; [accounts](SECURE_RESEARCH.md#accounts-and-roles) |
 | `/web [status\|help]`, `/web on`, `/web off` | Inspect shared-home rules; administrators enable/disable web |
 | `/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]`, `/web deny <id-or-pattern>` | Administrator grants are atomic; repeat `--seed` per concrete seed. Every seed must fit a requested rule |
+| `/web mode allowlist\|denylist`, `/web block <pattern-or-host> [...]`, `/web unblock <id-or-pattern>` | Administrator. The header globe (red X) switches modes after a confirmation dialog. `denylist` reads every public URL except blocked rules; a host with no path blocks it and its subdomains. Both lists persist across switches |
 | `/web check <URL> [URL ...] [--group name]` | Exact permission diagnostic, with no network request or grant |
 | `/web cancel`, `/web fetch <URL> [URL ...] [--group name]`, `/web forget`, `/web inject` | Cancel research, batch-read exact permitted URLs, clear or select your last extract |
 | `/web pages [--group name] <query>`, `/web research [--group name] [--url URL ...] <question>` | Permitted-page discovery or local-model research; repeat `--url` per starting point; no new authority |
@@ -583,10 +591,10 @@ Before local chat or `/loop`, the harness estimates the next prompt plus
 one reply. Above
 `chat.compact_prompt_tokens` (default 24000), it summarizes middle turns,
 keeping the first user message, goal, and whole recent exchanges (at most
-`chat.compact_keep_messages`, 8, and `chat.compact_tail_percent`, 25% of the
-trigger). An `auto_tune`-verified window above 32768 scales the trigger in
-proportion, within `chat.compact_max_prefill_sec` (120) of measured prefill;
-`chat.compact_follow_window: false` keeps it fixed. The summarizer reads goal and first message, keeps the prior summary
+`chat.compact_keep_messages`, seeded 10, and `chat.compact_tail_percent`, 25% of the
+trigger). With `chat.compact_follow_window: true`, an `auto_tune`-verified
+window above 32768 scales the trigger within `chat.compact_max_prefill_sec`
+(seeded 1500) of measured prefill; the seed uses false. The summarizer reads goal and first message, keeps the prior summary
 whole, clips other turns at 800 characters within its budget, else history
 stays. The model gets a lossy note yielding to
 exact messages; unsourced codes become `[unverified]`.
@@ -602,8 +610,8 @@ are specified in
 Calibration cannot predict language shifts or ratios above 3; verify the
 model window per [MODELS.md](MODELS.md).
 
-`compaction.summary_max_tokens` defaults to 768 and clamps to 128–2048. Tune
-these in home `config.yaml`, then restart. Compaction is inline;
+`compaction.summary_max_tokens`: seeded 2048, missing-key fallback 768, clamped 128–2048.
+Edit home `config.yaml`, then restart. Compaction is inline;
 empty, failed, truncated, or cancelled output commits neither summary nor
 calibration. Past the trigger a turn may still send up to the hard limit, the
 prompt cap (web chat: the web room): an empty or cut-off summary, or too little

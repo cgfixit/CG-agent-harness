@@ -104,7 +104,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 70] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 71] = [
     ("analytics", "/analytics", "GET", "/api/analytics/summary", "retained session, token and coding-run analytics"),
     ("config-reload", "(Reload limits button)", "POST", "/api/config/reload", "administrator-only atomic reload of supported non-secret limits"),
     (
@@ -141,6 +141,13 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 70] = [
         "POST",
         "/api/prompt/preview",
         "guarded next-chat prompt snapshot",
+    ),
+    (
+        "diag",
+        "/diag",
+        "GET",
+        "/api/diag/read",
+        "bounded redacted reads of allowlisted home logs; admin or portal_auditor; off until diagnostics.logs_enabled",
     ),
     (
         "soul-document",
@@ -508,7 +515,7 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 70] = [
         "/web",
         "GET",
         "/api/web",
-        "allowlist-only web fetch; explicit URL permission required",
+        "URL-policy web fetch: allowlist by default, or an administrator-confirmed block list",
     ),
     (
         "web-fetch",
@@ -835,7 +842,7 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 70);
+        assert_eq!(HARNESS_SURFACES.len(), 71);
         let report = list_wired_tools(&registered);
         assert_eq!(report["total"], HARNESS_SURFACES.len());
         assert_eq!(report["wired"], HARNESS_SURFACES.len(), "a catalog surface is unwired");

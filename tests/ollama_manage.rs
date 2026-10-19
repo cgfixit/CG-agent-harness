@@ -798,6 +798,7 @@ async fn a_planner_on_the_tuned_model_budgets_runs_with_its_measured_timeout() {
             .with("models.local_llm.auto_tune", "true")
             .with("agentic.enabled", "true")
             .with("agentic.deepagent_github.enabled", "true")
+            .with("agentic.deepagent_github.model", "\"qwen3.8:27b-mlx\"")
             .with("api.rate_limit.max_requests", "1000")
             .with("agentic.deepagent_github.base_url", &planner_url),
     )
@@ -868,6 +869,7 @@ async fn planner_endpoint_defaults_and_aliases_keep_sync_and_job_budgets_consist
                 .with("models.local_llm.auto_tune", "true")
                 .with("api.rate_limit.max_requests", "1000")
                 .with("agentic.repo", "fixture/repository")
+                .with("agentic.deepagent_github.model", "\"qwen3.8:27b-mlx\"")
                 .with("agentic.deepagent_github.planner_timeout_sec", "720"),
         )
         .await;

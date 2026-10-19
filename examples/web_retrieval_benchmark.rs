@@ -16,6 +16,7 @@ fn main() -> anyhow::Result<()> {
         version: 1,
         rules: vec![Rule::new("https://docs.example/*", "docs", &[])?],
         revision: "a".repeat(64),
+        ..Policy::empty()
     };
     let pages: Vec<_> = (0..64)
         .map(|i| {

@@ -477,7 +477,7 @@ mod tests {
         )
         .unwrap();
         let budget = Budget::from_config(&shipped);
-        assert_eq!(budget.dial_ceiling(), 30);
-        assert_eq!(budget.deadline(), Duration::from_secs(30));
+        assert_eq!(budget.dial_ceiling(), 60);
+        assert_eq!(budget.deadline(), Duration::from_secs(60));
     }
 }

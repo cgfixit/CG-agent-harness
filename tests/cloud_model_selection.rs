@@ -58,6 +58,8 @@ async fn profiled_server(model: &str, budget: bool) -> TestServer {
     }
     if budget {
         cfg.raw["models"]["cloud_chat"]["max_usd_per_call"] = serde_yaml_ng::from_str("0.0000001").unwrap();
+        // Exercise the budget gate with a priced fixture, independently of the seed's model.
+        cfg.raw["models"]["cloud_chat"]["claude"]["model"] = serde_yaml_ng::Value::String("claude-sonnet-5".into());
     }
     AppConfig::write_private(&cfg.path, &serde_yaml_ng::to_string(&cfg.raw).unwrap()).unwrap();
     let (app, state) = build_app(p.app_opts).await.unwrap();
@@ -86,7 +88,7 @@ async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secr
     for local_tag in ["xai-custom-local", "sk-ant-small-local"] {
         assert_eq!(switch(&missing, local_tag, false, 200).await["model"], local_tag);
     }
-    for alias in ["ClAuDe", "ANTHROPIC", "grok", "XAI", "claude-sonnet-5", "grok-4.6"] {
+    for alias in ["ClAuDe", "ANTHROPIC", "grok", "XAI", "claude-opus-5-5", "grok-4.6"] {
         let body = switch(&missing, alias, true, 409).await;
         assert_eq!(code(&body), "MODEL_PROVIDER_NOT_READY");
         assert!(body.to_string().contains("API Keys"));

@@ -30,6 +30,22 @@ pub enum WebCommand {
     },
     /// Administrator: remove a rule ID or matching pattern across groups.
     Deny { rule: String },
+    /// Administrator: allowlist (only allowed URLs) or denylist (every public URL
+    /// that is not blocked). Opening the denylist needs --confirm.
+    Mode {
+        #[arg(value_parser = ["allowlist", "denylist"])]
+        mode: String,
+        #[arg(long)]
+        confirm: bool,
+    },
+    /// Administrator: block URL patterns; one with no path (https://example.org) blocks
+    /// that host and its subdomains.
+    Block {
+        #[arg(required = true, num_args = 1..)]
+        urls: Vec<String>,
+    },
+    /// Administrator: remove a blocked rule ID, pattern or host.
+    Unblock { rule: String },
     /// Read one or more exact permitted URLs under a shared budget; no crawl.
     Fetch {
         #[arg(required = true, num_args = 1..)]
@@ -362,6 +378,9 @@ pub fn web(command: WebCommand, origin: Option<String>) -> anyhow::Result<()> {
             Some(json!({"urls":urls,"group":group,"seeds":seed})),
         ),
         WebCommand::Deny { rule } => ("POST", "/api/web/deny", Some(json!({"url":rule}))),
+        WebCommand::Mode { mode, confirm } => ("POST", "/api/web/mode", Some(json!({"mode":mode,"confirm":confirm}))),
+        WebCommand::Block { urls } => ("POST", "/api/web/block", Some(json!({"urls":urls}))),
+        WebCommand::Unblock { rule } => ("POST", "/api/web/unblock", Some(json!({"url":rule}))),
         WebCommand::Fetch { urls, group } => ("POST", "/api/web/fetch", Some(json!({"urls":urls,"group":group}))),
         WebCommand::Check { urls, group } => ("POST", "/api/web/check", Some(json!({"urls":urls,"group":group}))),
         WebCommand::Search {

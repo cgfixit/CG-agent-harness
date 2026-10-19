@@ -50,6 +50,7 @@ When prose contradicts code, fix the prose in the same PR.
 | Config reload | Reload changes limits, not authority |
 | Inbound MCP memory server | Private MCP memory server is a separate authority boundary |
 | netconnect | Netconnect is fail-closed and LAN-scoped |
+| `/diag` log inspection, `portal_auditor` role | /diag log inspection never widens authority; Account, transport and request boundaries |
 
 ## Traps
 
