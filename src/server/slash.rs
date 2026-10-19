@@ -537,8 +537,8 @@ fn known_subs(cmd: &str) -> &'static [&'static str] {
         "model" => &["list", "use", "profile", "status"],
         "skill" => &["use", "clear", "status"],
         "web" => &[
-            "help", "status", "check", "on", "off", "allow", "deny", "fetch", "search", "pages", "research", "cancel",
-            "inject", "forget",
+            "help", "status", "check", "on", "off", "allow", "deny", "block", "unblock", "mode", "fetch", "search",
+            "pages", "research", "cancel", "inject", "forget",
         ],
         "agent" => &[
             "run",
@@ -635,7 +635,10 @@ fn is_mutation(cmd: &str, sub: Option<&str>) -> bool {
     match (cmd, sub) {
         ("agent", Some("status" | "runs" | "jobs" | "job")) => false,
         ("agent", _) => true,
-        ("web", Some("allow" | "deny" | "on" | "off" | "inject" | "forget" | "cancel")) => true,
+        (
+            "web",
+            Some("allow" | "deny" | "block" | "unblock" | "mode" | "on" | "off" | "inject" | "forget" | "cancel"),
+        ) => true,
         ("api", _) => true,
         ("soul", Some("apply" | "reject" | "edit" | "propose")) => true,
         ("soul", Some("on" | "off")) => true,
@@ -666,20 +669,11 @@ fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Opt
     if cmd == "web" {
         return None;
     }
-    // /loop [--web off|fetch|all] [n]: the documented mode flag, then an optional count.
-    if (cmd, sub) == ("loop", None) {
-        let rest = match args {
-            ["--web", "off" | "fetch" | "all", rest @ ..] => rest,
-            ["--web", ..] => {
-                return Some("usage: /loop [--web off|fetch|all] [n] | /loop auto | /loop stop; not dispatched")
-            }
-            rest => rest,
-        };
-        return match rest {
-            [] => None,
-            [n] if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) && !n.starts_with('0') => None,
-            _ => Some("usage: /loop [--web off|fetch|all] [n] | /loop auto | /loop stop; not dispatched"),
-        };
+    // /loop [auto] [--web off|fetch|all] [n] [goal text]: the documented mode
+    // flag, then an optional count, then optional goal text set before the loop.
+    if (cmd, sub) == ("loop", None) || (cmd, sub) == ("loop", Some("auto")) {
+        return (!loop_args_ok(args, sub.is_none()))
+            .then_some("usage: /loop [auto] [--web off|fetch|all] [n] [goal text] | /loop stop; not dispatched");
     }
     if (cmd, sub) == ("goal", None) {
         // `--web=all`, `-web all` or `web all` would otherwise be stored as goal
@@ -711,7 +705,7 @@ fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Opt
         | ("skill", Some("clear"))
         | ("web", Some("on" | "off" | "inject" | "forget" | "cancel"))
         | ("agent", Some("cancel"))
-        | ("loop", Some("auto" | "stop"))
+        | ("loop", Some("stop"))
         | ("model", Some("list" | "profile" | "status"))
         | ("clear", None) => Some(0),
         (
@@ -760,6 +754,35 @@ fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Opt
         return Some("help, dry-run or confirm flags are not an approval reason; command not dispatched — use /help");
     }
     None
+}
+
+/// The `/loop` tail after an optional `auto` subcommand. `auto` may also follow
+/// the web flag when it was not the first word. Goal text never opens with a
+/// dash (`--help`, `--web=all`) or a subcommand word (`/loop auto auto`), and
+/// is never a lone number (`/loop 3 4`, `/loop 0`).
+fn loop_args_ok(args: &[&str], auto_allowed: bool) -> bool {
+    let mut rest = match args {
+        ["--web", "off" | "fetch" | "all", rest @ ..] => rest,
+        ["--web", ..] => return false,
+        rest => rest,
+    };
+    if let [word, tail @ ..] = rest {
+        if auto_allowed && word.eq_ignore_ascii_case("auto") {
+            rest = tail;
+        }
+    }
+    if let [n, tail @ ..] = rest {
+        if n.bytes().all(|b| b.is_ascii_digit()) && !n.starts_with('0') {
+            rest = tail;
+        }
+    }
+    match rest {
+        [] => true,
+        [n] if n.bytes().all(|b| b.is_ascii_digit()) => false,
+        [first, ..] => {
+            !first.starts_with(['-', '–', '—']) && !["auto", "stop"].iter().any(|w| first.eq_ignore_ascii_case(w))
+        }
+    }
 }
 
 fn is_control_flag(token: &str) -> bool {
@@ -870,6 +893,13 @@ mod tests {
             "/loop --web off 12",
             "/loop 5",
             "/loop",
+            "/loop --web all auto",
+            "/loop auto",
+            "/loop auto 3",
+            "/loop auto --web fetch 2 compare hvac vendors",
+            "/loop 3 compare hvac vendors",
+            "/loop --web off summarize the attached notes",
+            "/loop find the best hvac repair shop",
         ] {
             let p = parse_line(line);
             assert!(p.dispatch, "{line}: {p:?}");
@@ -877,11 +907,15 @@ mod tests {
         }
         for line in [
             "/loop --web bogus",
-            "/loop --web all auto",
             "/loop --web",
             "/loop 0",
             "/loop 3 4",
             "/loop --help --web all",
+            "/loop auto auto",
+            "/loop auto 2 --help",
+            "/loop 2 --web all find hvac",
+            "/loop --web=all find hvac",
+            "/loop auto auto find hvac",
         ] {
             assert!(!parse_line(line).dispatch, "{line}");
         }

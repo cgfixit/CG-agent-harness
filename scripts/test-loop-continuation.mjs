@@ -94,8 +94,14 @@ console.log('Unattended loop retries a verdict-less turn up to MAX_LOOP_FAILURES
 
 // Execute the actual slash branch too: preflight must use its own session guard.
 const loopCase=html.slice(html.indexOf("      case 'loop': {"),html.indexOf("      case 'tokens': {"));
+/* Run the shipped /loop branch; fixtures that do not care get inert auto-start helpers. */
+function runLoopCase(c){
+  for(const [k,v] of Object.entries({MAX_GOAL_CHARS:2000,DEFAULT_LOOP_TURNS:3,AUTO_LOOP_START_MS:5000,cancelAutoLoopStart(){},goalWebNote:()=>'',refreshSessions:async()=>{},
+    scheduleAutoLoopStart(line,lead){(c.scheduled||(c.scheduled=[])).push(line);}})) if(!(k in c)) c[k]=v;
+  return vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',c);
+}
 const command=vm.createContext({rest:['2'],loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,api:async(path)=>path==='/api/status'?{provider:'ollama',chat_tools_available:true}:{goal:'stored goal',live_attachment_pins:1},paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{command.ran=true;}});
-await vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',command);
+await runLoopCase(command);
 assert.equal(command.ran,true);
 assert.equal(command.sessionGoal,'stored goal');
 assert.equal(command.loopState.remaining,2);
@@ -123,7 +129,7 @@ console.log('Loop goal derivation takes the last own prompt and stays bounded.')
       if(method==='POST')return{goal:body.goal,goal_web_mode:'all'};
       return {goal:'',messages:[{role:'user',content:'Loop turn 1 of 3. Session goal: x'},{role:'assistant',content:'ack'},{role:'user',content:'fix the parser'}],live_attachment_pins:0};},
     paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{derive.ran=true;}});
-  await vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',derive);
+  await runLoopCase(derive);
   const set=calls.find(c=>c.method==='POST');
   assert.equal(set.path,'/api/sessions/owned/goal');
   assert.equal(set.body.goal,'fix the parser','the last own prompt becomes the goal');
@@ -131,7 +137,7 @@ console.log('Loop goal derivation takes the last own prompt and stays bounded.')
   const bare=vm.createContext({rest:['2'],loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,MAX_GOAL_CHARS:2000,loopGoalFromSession,
     api:async(path)=>path==='/api/status'?{provider:'ollama',chat_tools_available:true}:{goal:'',messages:[],live_attachment_pins:0},
     paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{bare.ran=true;}});
-  await vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',bare);
+  await runLoopCase(bare);
   assert.equal(bare.ran,false,'no goal and no prompt history never starts a loop');
   const cloudCalls=[];
   const cloud=vm.createContext({rest:['--web','fetch'],loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,MAX_GOAL_CHARS:2000,loopGoalFromSession,
@@ -140,7 +146,7 @@ console.log('Loop goal derivation takes the last own prompt and stays bounded.')
       if(method==='POST')return{goal:body.goal,goal_web_mode:body.web_mode||'all'};
       return {goal:'',messages:[{role:'user',content:'fix the parser'}],live_attachment_pins:0};},
     paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{cloud.ran=true;}});
-  await vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',cloud);
+  await runLoopCase(cloud);
   assert.equal(cloud.ran,false,'cloud /loop is refused');
   assert.equal(cloudCalls.some(c=>c.method==='POST'),false,'a refused cloud /loop persists neither a derived goal nor a web mode');
   function loopFixture(rest,extra){
@@ -152,9 +158,9 @@ console.log('Loop goal derivation takes the last own prompt and stays bounded.')
         return {goal:'',messages:[{role:'user',content:'fix the parser'}],live_attachment_pins:0};}},extra||{});
     return vm.createContext(box);
   }
-  const run=c=>vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',c);
-  const invalid=loopFixture(['nope']); await run(invalid);
-  assert.equal(invalid.calls.length,0,'an invalid turn count persists nothing');
+  const run=runLoopCase;
+  const invalid=loopFixture(['--nope']); await run(invalid);
+  assert.equal(invalid.calls.length,0,'an invalid flag persists nothing');
   assert.equal(invalid.ran,false);
   const zero=loopFixture(['0']); await run(zero);
   assert.equal(zero.calls.length,0,'/loop 0 persists nothing');
@@ -217,7 +223,7 @@ console.log('Loop goal derivation takes the last own prompt and stays bounded.')
   assert.equal(stopped.loopState,null);
   // /loop auto during a compaction-started loop turns it off on the first toggle.
   const toggle=vm.createContext({rest:['auto'],loopState:{auto:true,running:true,remaining:2},loopAuto:false,sys(){},paintGoalLoop(){}});
-  await vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',toggle);
+  await runLoopCase(toggle);
   assert.equal(toggle.loopState.auto,false,'one /loop auto stops automatic continuation of an auto-started loop');
   assert.equal(toggle.loopAuto,false);
   console.log('Auto-loop on compaction: local only, goal-derived, never overlaps.');
@@ -227,9 +233,16 @@ console.log('Loop goal derivation takes the last own prompt and stays bounded.')
 const goalCase=html.slice(html.indexOf("      case 'goal': {"),html.indexOf("      case 'loop': {"));
 for (const [arg, mode, goal] of [['--web off use attachment only','off','use attachment only'],['--web fetch read supplied URL','fetch','read supplied URL'],['ordinary goal',undefined,'ordinary goal'],['--web all '+ '界'.repeat(2000),'all','界'.repeat(2000)],['--web nope test',null,null]]) {
   const calls=[];
-  const command=vm.createContext({arg,rest:arg.split(/\s+/),currentSession:'owned',sessionGoal:'',MAX_GOAL_CHARS:2000,goalWebNote:()=>'',adoptPendingHistory(){},staleReview:()=>false,api:async(path,method,body)=>{calls.push({path,body});return {goal:body.goal,goal_web_mode:body.web_mode};},paintGoalLoop(){},sys(){},refreshSessions:async()=>{}});
+  const command=vm.createContext({arg,rest:arg.split(/\s+/),loopAuto:false,loopState:null,currentSession:'owned',sessionGoal:'',MAX_GOAL_CHARS:2000,goalWebNote:()=>'',adoptPendingHistory(){},staleReview:()=>false,api:async(path,method,body)=>{calls.push({path,body});return {goal:body.goal,goal_web_mode:body.web_mode};},paintGoalLoop(){},sys(){},refreshSessions:async()=>{}});
   await vm.runInContext('(async()=>{switch("goal"){'+goalCase+'}})()',command);
   if(mode===null) assert.equal(calls.length,0); else {assert.equal(calls[0].body.web_mode,mode);assert.equal(calls[0].body.goal,goal);}
+}
+{
+  const scheduled=[];
+  const auto=vm.createContext({arg:'compare vendors',rest:['compare','vendors'],loopAuto:true,loopState:null,currentSession:'owned',sessionGoal:'',MAX_GOAL_CHARS:2000,goalWebNote:()=>'',adoptPendingHistory(){},staleReview:()=>false,
+    api:async(path,method,body)=>({goal:body.goal,goal_web_mode:'all'}),paintGoalLoop(){},sys(){},refreshSessions:async()=>{},scheduleAutoLoopStart:line=>scheduled.push(line)});
+  await vm.runInContext('(async()=>{switch("goal"){'+goalCase+'}})()',auto);
+  assert.deepEqual(scheduled,['/loop'],'/goal with loop auto on starts the loop after the countdown');
 }
 console.log('Goal command persists explicit web modes, omits the mode otherwise, and keeps the Unicode goal limit.');
 
@@ -237,7 +250,7 @@ console.log('Goal command persists explicit web modes, omits the mode otherwise,
 {
   const calls=[];
   const command=vm.createContext({rest:['--web','all','2'],loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,api:async(path,method,body)=>{calls.push({path,method,body});return path==='/api/status'?{provider:'ollama',chat_tools_available:true}:method==='POST'?{goal:body.goal,goal_web_mode:body.web_mode}:{goal:'stored goal',goal_web_mode:'fetch',live_attachment_pins:0};},paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{command.ran=true;}});
-  await vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',command);
+  await runLoopCase(command);
   const set=calls.find(c=>c.method==='POST');
   assert.equal(set.path,'/api/sessions/owned/goal');
   assert.equal(set.body.goal,'stored goal');
@@ -245,9 +258,77 @@ console.log('Goal command persists explicit web modes, omits the mode otherwise,
   assert.equal(command.ran,true);
   assert.equal(command.loopState.remaining,2);
   const bad=vm.createContext({rest:['--web','nope'],loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,api:async()=>{throw Error('no request on a bad mode');},paintGoalLoop(){},sys(){},MAX_LOOP_TURNS:8,ran:false,runLoopTurns:async()=>{bad.ran=true;}});
-  await vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',bad);
+  await runLoopCase(bad);
   assert.equal(bad.ran,false);
   console.log('Loop --web persists the mode on the goal and refuses unknown modes.');
+}
+
+// One command sets the goal and loops; auto waits AUTO_LOOP_START_MS before starting.
+{
+  function fixture(rest,extra){
+    const box=Object.assign({rest,loopState:null,loopAuto:false,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,loopGoalFromSession,
+      calls:[],notes:[],paintGoalLoop(){},sys:m=>box.notes.push(m),MAX_LOOP_TURNS:5,ran:false,runLoopTurns:async()=>{box.ran=true;},
+      api:async(path,method,body)=>{box.calls.push({path,method,body});
+        if(path==='/api/status')return{provider:'ollama',chat_tools_available:true};
+        if(method==='POST')return{goal:body.goal,goal_web_mode:body.web_mode||'all'};
+        return {goal:box.calls.filter(c=>c.method==='POST').map(c=>c.body.goal).pop()||'',messages:[],live_attachment_pins:0};}},extra||{});
+    return vm.createContext(box);
+  }
+  const combined=fixture(['--web','fetch','3','compare','hvac','vendors']); await runLoopCase(combined);
+  const posts=combined.calls.filter(c=>c.method==='POST');
+  assert.equal(posts.length,1,'goal text and web mode land in one write');
+  assert.equal(JSON.stringify(posts[0].body),JSON.stringify({goal:'compare hvac vendors',web_mode:'fetch'}));
+  assert.ok(combined.calls.findIndex(c=>c.path==='/api/status')<combined.calls.findIndex(c=>c.method==='POST'),'eligibility before the goal is stored');
+  assert.equal(combined.ran,true); assert.equal(combined.loopState.remaining,3); assert.equal(combined.sessionGoal,'compare hvac vendors');
+  const fresh=fixture(['find','hvac'],{currentSession:null,adoptPendingHistory(){},paintSessionTokens(){},paintStyle(){},$:()=>({}),
+    api:async(path,method,body)=>{fresh.calls.push({path,method,body});
+      if(path==='/api/status')return{provider:'ollama'};
+      if(path==='/api/sessions')return{session_id:'new',tokens:{}};
+      if(method==='POST')return{goal:body.goal,goal_web_mode:'all'};
+      return {goal:'find hvac',live_attachment_pins:0};}});
+  await runLoopCase(fresh);
+  assert.equal(fresh.currentSession,'new','a goal with no session creates one'); assert.equal(fresh.ran,true); assert.equal(fresh.loopState.remaining,3);
+  const cloud=fixture(['2','find','hvac'],{api:async(path,method,body)=>{cloud.calls.push({path,method,body});return path==='/api/status'?{provider:'grok',base_url:null}:{};}});
+  await runLoopCase(cloud);
+  assert.equal(cloud.calls.some(c=>c.method==='POST'),false,'a refused cloud /loop stores no goal text'); assert.equal(cloud.ran,false);
+  for(const rest of [['3','--help'],['2','4'],['auto','auto'],['auto','2','--web','all','x'],['--web','all','stop'],['--web=all','x']]){
+    const bad=fixture(rest); await runLoopCase(bad);
+    assert.equal(bad.calls.length,0,rest.join(' ')); assert.equal(bad.ran,false,rest.join(' ')); assert.equal(bad.scheduled,undefined,rest.join(' '));
+  }
+  const toggle=fixture(['auto']); await runLoopCase(toggle);
+  assert.equal(toggle.loopAuto,true); assert.deepEqual(Array.from(toggle.scheduled),['/loop'],'auto on with a session schedules /loop');
+  assert.equal(toggle.calls.length,0,'nothing is persisted before the countdown ends');
+  const noSession=fixture(['auto'],{currentSession:null}); await runLoopCase(noSession);
+  assert.equal(noSession.loopAuto,true); assert.equal(noSession.scheduled,undefined,'nothing to follow yet: no countdown');
+  const off=fixture(['auto'],{loopAuto:true,cancelled:0,cancelAutoLoopStart(){off.cancelled++;}}); await runLoopCase(off);
+  assert.equal(off.loopAuto,false); assert.equal(off.cancelled,1,'auto off cancels a pending start'); assert.equal(off.scheduled,undefined);
+  const withGoal=fixture(['auto','--web','fetch','2','compare','vendors']); await runLoopCase(withGoal);
+  assert.equal(withGoal.loopAuto,true,'auto with a goal turns auto on, never off');
+  assert.deepEqual(Array.from(withGoal.scheduled),['/loop --web fetch 2 compare vendors']);
+  assert.equal(withGoal.calls.length,0,'the goal is stored only when the countdown ends');
+  const flagFirst=fixture(['--web','all','auto']); await runLoopCase(flagFirst);
+  assert.deepEqual(Array.from(flagFirst.scheduled),['/loop --web all']);
+  console.log('/loop sets goal text in one command; /loop auto starts after a countdown and persists nothing before it.');
+
+  // The countdown itself: fires the validated line once, and loses to stop, auto off or a session switch.
+  const src=html.slice(html.indexOf('function cancelAutoLoopStart('),html.indexOf('async function runLoopTurns()'));
+  function timerBox(){
+    const box={timers:[],notes:[],ran:[],autoLoopStart:null,loopAuto:true,loopState:null,currentSession:'s',sessionRevision:0,loopCancelGeneration:0,AUTO_LOOP_START_MS:5000,
+      setTimeout(fn,ms){box.timers.push({fn,ms,cleared:false});return box.timers.length-1;},clearTimeout(id){box.timers[id].cleared=true;},
+      paintGoalLoop(){},sys:m=>box.notes.push(m),runSlash:line=>{box.ran.push(line);}};
+    const c=vm.createContext(box); vm.runInContext(src,c); return c;
+  }
+  const fire=c=>c.timers.filter(t=>!t.cleared).forEach(t=>t.fn());
+  const go=timerBox(); go.scheduleAutoLoopStart('/loop 2 x','loop auto is ON');
+  assert.equal(go.timers[0].ms,5000); assert.ok(go.notes[0].includes('starts in 5 s'),go.notes[0]);
+  fire(go); assert.deepEqual(Array.from(go.ran),['/loop 2 x']); assert.equal(go.autoLoopStart,null);
+  const stop=timerBox(); stop.scheduleAutoLoopStart('/loop','on'); stop.loopCancelGeneration++; fire(stop); assert.equal(stop.ran.length,0,'a stop during the countdown wins');
+  const offed=timerBox(); offed.scheduleAutoLoopStart('/loop','on'); offed.cancelAutoLoopStart(''); fire(offed); assert.equal(offed.ran.length,0,'cancel clears the timer');
+  const moved=timerBox(); moved.scheduleAutoLoopStart('/loop','on'); moved.currentSession='other'; fire(moved);
+  assert.equal(moved.ran.length,0); assert.match(moved.notes.at(-1),/session changed/);
+  const again=timerBox(); again.scheduleAutoLoopStart('/loop','on'); again.scheduleAutoLoopStart('/loop 3','on'); fire(again);
+  assert.deepEqual(Array.from(again.ran),['/loop 3'],'a newer countdown replaces the older one');
+  console.log('Auto-start countdown runs once and yields to stop, auto off, a session switch or a newer countdown.');
 }
 
 const notices=[];

@@ -202,7 +202,10 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
                 || path == "/api/config/reload"
                 || path == "/api/keys"
                 || path == "/api/structured-memory/gates"
-                || matches!(path.as_str(), "/api/web/allow" | "/api/web/deny")
+                || matches!(
+                    path.as_str(),
+                    "/api/web/allow" | "/api/web/deny" | "/api/web/mode" | "/api/web/block" | "/api/web/unblock"
+                )
                 || (path == "/api/web" && req.method() != axum::http::Method::GET);
             if account.must_change_password && !own {
                 return ApiError::new(

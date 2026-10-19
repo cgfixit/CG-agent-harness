@@ -101,8 +101,8 @@ untrusted data, not tool authority or instructions.
 | `max_query_chars` | 256 | 1–512 |
 | `request_timeout_sec` | 5 | 1–30 |
 | `concurrency` | 2 | 1–8 |
-| `requests_per_minute` | 60 | 1–120 per key |
-| `global_requests_per_minute` | 180 | 1–600 total, including invalid keys |
+| `requests_per_minute` | 120 | 1–120 per key |
+| `global_requests_per_minute` | 360 | 1–600 total, including invalid keys |
 
 Limits are under `mcp.server`. Rates use fixed one-minute windows. Authentication,
 body read and response collection share the request deadline. Synchronous store

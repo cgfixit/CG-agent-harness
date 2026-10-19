@@ -56,7 +56,7 @@ These values are checked at load and printed by `status`. `diag` enforces `host_
 |---|---|---|
 | `port_allowlist` | `[]` | Up to 128 integers, each 1–65535, no duplicates. |
 | `host_cap` | `32` | Integer 1–4096. |
-| `rate_limit_per_min` | `30` | Integer 1–10000. |
+| `rate_limit_per_min` | `60` | Integer 1–10000. |
 | `connect_timeout_ms` | `1000` | Integer 100–60000. |
 | `read_timeout_ms` | `2000` | Integer 100–60000. |
 | `max_dials` | `256` | Integer 1–65536. Per-run dial ceiling; a run also stops at `rate_limit_per_min`. |

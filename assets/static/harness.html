@@ -446,6 +446,14 @@
   .toggle { cursor: pointer; background: none; border: none; font: inherit; color: inherit; padding: 0; }
   .toggle .v.on { color: var(--accent-green); }
   .toggle .v.off { color: var(--accent-red); }
+  /* Web policy mode: a globe with a red X (allowlist; click to open the block-list
+     mode) or a red-outlined globe while every unblocked public URL is readable. */
+  #webModeToggle { display: inline-flex; align-items: center; padding: 3px; border: 1px solid transparent; border-radius: 6px; color: var(--text-secondary); }
+  #webModeToggle:hover { color: var(--text-primary); border-color: var(--border); }
+  #webModeToggle:focus-visible { outline: 2px solid var(--accent-amber); outline-offset: 2px; }
+  #webModeToggle .x { stroke: var(--accent-red); }
+  #webModeToggle[data-mode="denylist"] { border-color: var(--accent-red); color: var(--accent-red); }
+  #webModeToggle[data-mode="denylist"] .x { display: none; }
   .statusbar select {
     font: inherit; color: var(--text-primary); background: var(--bg-input);
     border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; max-width: 132px;
@@ -469,19 +477,19 @@ dialog { margin:auto; width:min(560px,calc(100% - 32px)); max-height:88dvh; over
 dialog::backdrop { background:#0009; }
 dialog h2 { font-size:var(--fs-lg, 18px); margin-bottom:12px; }
 dialog p { margin-bottom:12px; }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor) label { display:block; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) label { display:block; }
 :is(#passwordDialog, #soulEditor) input:not([type=checkbox]), #soulContent { display:block; width:100%; margin-top:6px; padding:8px 10px; background:var(--bg-input); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; }
 :is(#passwordDialog, #soulEditor) input:not([type=checkbox]):focus, #soulContent:focus { outline:none; border-color:var(--border-focus); box-shadow:0 0 0 2px rgba(212,146,11,.18); }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor) input[type=checkbox] { margin-right:6px; accent-color:var(--accent-amber); }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor) button { padding:8px 14px; margin:4px 8px 8px 0; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; cursor:pointer; }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor) button:hover { background:var(--border); }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) input[type=checkbox] { margin-right:6px; accent-color:var(--accent-amber); }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button { padding:8px 14px; margin:4px 8px 8px 0; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; cursor:pointer; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button:hover { background:var(--border); }
 /* One primary action per dialog; a destructive one is red, not amber. */
-:is(#passwordDialog, #sessionClearDialog, #soulEditor) button.primary { background:var(--accent-amber); border-color:var(--accent-amber); color:#000; font-weight:700; }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor) button.primary:hover { background:#e8a31c; border-color:#e8a31c; }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor) button.danger { background:transparent; border-color:var(--accent-red); color:var(--accent-red); font-weight:700; }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor) button.danger:hover { background:var(--accent-red); color:#000; }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor) button:disabled { opacity:.45; cursor:default; }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor) :focus-visible { outline:2px solid var(--accent-amber); outline-offset:2px; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button.primary { background:var(--accent-amber); border-color:var(--accent-amber); color:#000; font-weight:700; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button.primary:hover { background:#e8a31c; border-color:#e8a31c; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button.danger { background:transparent; border-color:var(--accent-red); color:var(--accent-red); font-weight:700; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button.danger:hover { background:var(--accent-red); color:#000; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button:disabled { opacity:.45; cursor:default; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) :focus-visible { outline:2px solid var(--accent-amber); outline-offset:2px; }
 #passwordFeedback:empty, #sessionClearFeedback:empty { display:none; }
 #passwordFeedback, #sessionClearFeedback { color:var(--accent-red); }
 #soulEditor { width:min(950px,calc(100% - 32px)); }
@@ -604,6 +612,9 @@ dialog p { margin-bottom:12px; }
       <button class="toggle" id="openAnalytics" type="button" hidden>Analytics</button>
       <button class="toggle" id="openDeliveries" type="button" hidden title="Outgoing, metadata-only notices sent to your configured URL when a coding job finishes">Job webhooks</button>
       <button class="toggle" id="openSchedules" type="button" hidden>Schedules</button>
+      <button class="toggle" id="webModeToggle" type="button" hidden data-mode="allowlist" aria-haspopup="dialog" aria-label="Web policy: allowlist. Switch to block-list mode" title="Web policy: allowlist (only allowed URLs). Click to switch to block-list mode">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/><path class="x" stroke-width="2.4" stroke-linecap="round" d="M15 15l7 7M22 15l-7 7"/></svg>
+      </button>
       <button class="toggle" id="reloadLimits" type="button" hidden title="Apply supported web and API limits from config.yaml; other changes require restart">Reload limits</button>
       <div class="chips" role="group" aria-label="Readiness">
         <span class="chip" id="hConsole" data-state="unknown" title="Whether this page can reach the harness API">Console <b id="hConsoleV">checking</b></span>
@@ -786,6 +797,14 @@ dialog p { margin-bottom:12px; }
   <button id="sessionClearCancel" autofocus>Cancel</button>
   <button id="sessionClearConfirm" class="danger">Delete my session history</button>
   <p id="sessionClearFeedback" role="status"></p>
+</dialog>
+
+<dialog id="webModeDialog" aria-labelledby="webModeTitle" aria-describedby="webModeDescription">
+  <h2 id="webModeTitle">Switch web policy to block-list mode?</h2>
+  <p id="webModeDescription">Chat, /loop, fetch and research will read any public URL that is not on the block list, instead of only the URLs you have allowed. Private and local addresses stay refused. After this, you add entries to block (/web block example.com) instead of entries to allow. Your allow rules are kept and come back if you switch again. This applies to every account in this home.</p>
+  <button id="webModeCancel" autofocus>Cancel</button>
+  <button id="webModeConfirm" class="danger">Switch to block list</button>
+  <p id="webModeFeedback" role="status"></p>
 </dialog>
 
 <dialog id="soulEditor" aria-labelledby="soulTitle">
@@ -984,6 +1003,11 @@ const shownAgentDiffs = new Map();
 let reviewRevision = 0; // /clear invalidates reviews without changing the selected session.
 let sessionGoal = '';
 let loopAuto = false;
+/* With auto on, a loop starts by itself after this pause (/loop auto, /goal
+   <text>, /loop auto <goal text>), so a mistaken toggle can still be cancelled
+   with /loop stop or /loop auto. Nothing is persisted before it starts. */
+const AUTO_LOOP_START_MS = 5000;
+let autoLoopStart = null;
 const MAX_GOAL_CHARS = 2000;
 const MAX_LOOP_TURNS = 5;
 const DEFAULT_LOOP_TURNS = 3;
@@ -999,7 +1023,7 @@ const MAX_LOOP_FAILURES = 2;
    Loop turns themselves are excluded; runLoopTurns owns their continuation. */
 const LOOP_AUTO_ON_COMPACT = true;
 /* An unattended loop waits out a rate-limit window instead of stopping: the
-   loop limit ships 8 turns per 300 s (api.harness_loop_rate_limit), so a fast
+   loop limit ships 16 turns per 300 s (api.harness_loop_rate_limit), so a fast
    model's auto loop hits it within minutes. /loop stop still ends the wait. */
 const LOOP_RETRY_CAP_SEC = 300;
 /* Status/decision/push/discard/publish and GitHub-status calls spawn a CLI
@@ -1043,6 +1067,10 @@ function paintGoalLoop() {
   }
   const l = $('sLoop');
   if (!l) return;
+  if (autoLoopStart) {
+    l.textContent = 'auto (starting)';
+    return;
+  }
   if (!loopState) {
     l.textContent = loopAuto ? 'auto' : 'off';
     return;
@@ -1308,6 +1336,7 @@ function renderChatWebTools(events) {
 const WEB_TOOL_NEXT_STEP = {
   WEB_ALLOWLIST_EMPTY: 'No URL is permitted yet. An administrator grants sites with /web allow https://www.example.org/* (check one with /web check URL).',
   WEB_HOST_DENIED: 'That URL is outside the permitted patterns. /web status lists them; an administrator can add one with /web allow.',
+  WEB_BLOCKED: 'That URL is on the web block list. /web status lists blocked rules; an administrator can remove one with /web unblock.',
   WEB_GOOGLE_PERMISSION: 'Keyless Google search needs /web allow https://www.google.com/*, or add a SerpAPI key in API Keys.',
   WEB_TOKEN_BUDGET: 'The turn ran out of web token budget (web.total_tokens); ask a narrower question or start a new session.',
 };
@@ -1316,8 +1345,11 @@ function renderWebStatus(data) {
   const intro = document.createElement('p');
   intro.textContent = 'URL permissions and web on/off are shared by this home, not per session. Saved web context belongs to your account. Check an exact URL with /web check; every destination still needs permission.';
   box.appendChild(intro);
+  const deny = data.mode === 'denylist';
   const rows = [
     ['enabled', data.enabled ? 'yes' : 'no (fail-closed)'],
+    ['policy mode', deny ? 'block list — every public URL except blocked rules; /web block adds one' : 'allowlist — only permitted URLs; the globe button or /web mode denylist switches'],
+    ['blocked rules', String((data.blocked || []).length)],
     ['permission rules', (data.allowlist || []).length + (Number.isInteger(data.max_allow) ? ' of ' + data.max_allow + ' (web.max_rules)' : '') + ' — see groups below; empty denies content reads' + (data.policy_missing ? ' (no policy file yet; the first /web allow creates it)' : '')],
     ['keyword search', (data.search_provider || 'Google; /web pages for permitted-page passages') + (/serpapi/i.test(data.search_provider || '')
       ? ' — /web search needs no URL rule; reading a listed page does'
@@ -1328,7 +1360,8 @@ function renderWebStatus(data) {
     ['last extract', data.has_last ? (data.enabled ? 'yes — /web inject to put it in chat' : 'yes — /web on before injecting') : 'none'],
   ];
   box.appendChild(table(rows, ['field', 'value']));
-  box.appendChild(table((data.rules || []).map(r => [r.group, r.pattern, (r.seeds || []).join('\n') || (r.pattern.includes('://*.') ? 'pages fetched under it' : 'literal URL/path prefix'), r.id]), ['group', 'permitted pattern', 'research starts', 'rule ID']));
+  if ((data.blocked || []).length || deny) box.appendChild(table((data.blocked || []).map(r => [r.pattern, r.id]), ['blocked pattern (HTTP and HTTPS)', 'rule ID — /web unblock <ID>']));
+  box.appendChild(table((data.rules || []).map(r => [r.group, r.pattern, (r.seeds || []).join('\n') || (r.pattern.includes('://*.') ? 'pages fetched under it' : 'literal URL/path prefix'), r.id]), ['group', deny ? 'allow pattern (kept for groups and the allowlist)' : 'permitted pattern', 'research starts', 'rule ID']));
   box.appendChild(commandButton('/help web', 'Web syntax and examples'));
   return box;
 }
@@ -1618,6 +1651,7 @@ async function refreshReadiness(s) {
       paintChip('hModelChip', 'warn', 'not installed', 'The model service is running but has no ' + s.model + '. Pull it, or choose another with /model use <tag>.');
     }
   }
+  if (web) paintWebMode(web.mode);
   if (!web) {
     paintChip('hWeb', 'unknown', 'not checked', 'Web status is unavailable for this account.');
   } else if (web.enabled !== true) {
@@ -1625,6 +1659,9 @@ async function refreshReadiness(s) {
   } else if (s.chat_tools_available === false) {
     // Cloud chat never receives web tools or web context (/api/status says so).
     paintChip('hWeb', 'unknown', 'not used by this model', 'Web is on, but the selected cloud model gets no web tools. /web commands still work.');
+  } else if (web.mode === 'denylist') {
+    const blocked = Array.isArray(web.blocked) ? web.blocked.length : 0;
+    paintChip('hWeb', 'warn', 'block list' + (blocked ? ' (' + blocked + ')' : ''), 'Every public URL is readable except ' + blocked + ' blocked rule(s). /web status lists them; the globe button returns to the allowlist.');
   } else {
     const rules = Array.isArray(web.allowlist) ? web.allowlist.length : 0;
     if (rules) paintChip('hWeb', 'ok', rules + (rules === 1 ? ' URL rule' : ' URL rules'), 'Search is on; pages matching the permitted URL rules can be read.');
@@ -1944,7 +1981,7 @@ const COMMANDS = [
   ['/goal task', "inspect the goal's durable task linkage"],
   ['/harness', 'list retained harness optimizer runs; does not start one'],
   ['/help [topic|search words|all]', 'searchable guide, topics, safe command insertion and examples'],
-  ['/loop [--web off|fetch|all] [n]|auto|stop', 'bounded chat continuation; --web sets the goal web mode; auto toggles; stop also cancels streaming chat'],
+  ['/loop [auto] [--web off|fetch|all] [n] [goal]|stop', 'bounded chat continuation; goal text sets the goal first; --web sets its web mode; auto toggles and starts in 5 s; stop also cancels streaming chat'],
   ['/memory [on|off|status]', 'show pinned notes plus structured fact and proposal counts, or toggle notes in chat'],
   ['/memory add <note>', 'save a literal pinned note'],
   ['/memory auto-consolidate|auto-retrieve|auto-suggest-chat|auto-suggest-coding on|off', 'administrator overrides for automatic structured-memory features'],
@@ -1985,23 +2022,26 @@ const COMMANDS = [
   ['/users', 'administer local harness accounts'],
   ['/web [status|help]', 'show shared-home rules, groups and your account-selected context'],
   ['/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]', 'administrator: atomically grant exact URLs or explicit wildcards; repeat --seed for each seed'],
+  ['/web block <pattern-or-host> [...]', 'administrator: add block-list entries; a host blocks the site and its subdomains'],
   ['/web cancel', 'cancel your bounded research request'],
   ['/web check <URL> [URL ...] [--group name]', 'check exact URL permissions without fetching, DNS lookup or granting access'],
   ['/web deny <id-or-pattern>', 'administrator removal of a URL permission rule'],
   ['/web fetch <URL> [URL ...] [--group name] [--crawl]', 'bounded batch of exact permitted URLs, not wildcard patterns or prose; --crawl also follows permitted links recursively'],
   ['/web forget', 'clear your injected web context'],
   ['/web inject', 'include your last fetched/page-search selection in chat'],
+  ['/web mode allowlist|denylist', 'administrator: only allowed URLs, or every public URL except blocked ones (asks to confirm)'],
   ['/web off', 'administrator: disable web for this home; preserve rules and stored context'],
   ['/web on', 'administrator: enable web for this home; URL permission remains required'],
   ['/web pages [--group name] <query>', 'discover permitted links and search page passages'],
   ['/web research [--group name] [--url URL ...] <question>', 'multi-page local research with checked citations; repeat --url for each starting URL'],
   ['/web search [--count 1..10] [--engine google|pages] [--group name] <query>', 'Google listings by default; a group selects permitted-page search'],
+  ['/web unblock <id-or-pattern>', 'administrator: remove a block-list entry'],
 ];
 
 const HELP_TOPICS = {
   chat: {title:'Chat & models', roots:['model','style','prompt','tokens','loop','clear'], note:'Type normally to chat. Slash commands are operator actions; printing one in a model response does not run it.', examples:['/model','/style concise','/prompt','/loop stop']},
   session: {title:'Sessions & goals', roots:['session','goal'], note:'Saved sessions belong to your account. /clear resets the visible conversation, not saved session files. Staging a goal does not authorize execution.', examples:['/session new Research notes','/session list','/session info','/goal Compare backup approaches']},
-  web: {title:'Web research', roots:['web'], note:'Allowlist and on/off are shared-home settings; only an administrator changes them. Saved selections are account-private. Exact URLs do not include other pages. A path wildcard https://www.veeam.com/* includes that host’s paths; https://*.example.org/* covers subdomain paths, not the apex; without /* a pattern is one page. https:// may be omitted. /web search needs no URL rule with a SerpAPI key; keyless Google needs https://www.google.com/*. No www rewriting, private addresses or redirects. Search listings never grant permission. Research follows only permitted links within page, time and byte limits; coverage is not exhaustive. A host wildcard starts research from pages already fetched under it, /web fetch URL --crawl follows permitted links recursively, and robots.txt is checked automatically on permitted origins.', examples:['/web status','/web check https://www.veeam.com/','/web allow https://www.veeam.com/* https://example.org/* --group vendors','/web allow https://*.example.org/* --group docs --seed https://docs.example.org/','/web research --group vendors Compare the backup approaches','/web research --url https://www.veeam.com/ Summarize products and permitted internal links','/web fetch https://www.veeam.com/ --crawl','/web search --count 3 backup security']},
+  web: {title:'Web research', roots:['web'], note:'Allowlist, block list, mode and on/off are shared-home settings; only an administrator changes them. The default allowlist mode reads only allowed URLs; block-list mode (header globe or /web mode denylist, confirmed) reads every public URL except blocked ones. Saved selections are account-private. Exact URLs do not include other pages. A path wildcard https://www.veeam.com/* includes that host’s paths; https://*.example.org/* covers subdomain paths, not the apex; without /* a pattern is one page. https:// may be omitted. /web search needs no URL rule with a SerpAPI key; keyless Google needs https://www.google.com/*. No www rewriting, private addresses or redirects. Search listings never grant permission. Research follows only permitted links within page, time and byte limits; coverage is not exhaustive. A host wildcard starts research from pages already fetched under it, /web fetch URL --crawl follows permitted links recursively, and robots.txt is checked automatically on permitted origins.', examples:['/web status','/web check https://www.veeam.com/','/web allow https://www.veeam.com/* https://example.org/* --group vendors','/web allow https://*.example.org/* --group docs --seed https://docs.example.org/','/web research --group vendors Compare the backup approaches','/web research --url https://www.veeam.com/ Summarize products and permitted internal links','/web fetch https://www.veeam.com/ --crawl','/web search --count 3 backup security']},
   memory: {title:'Memory & persona', roots:['memory','soul'], note:'Pinned notes, structured facts and persona have separate controls. Fuzzy memory commands only suggest. Writes and proposal decisions need exact intent; Apply/Reject require review and a reason.', examples:['/memory','/memory facts','/memory search backup preferences','/memory proposals','/soul status']},
   agent: {title:'Governed coding', roots:['agent','github','harness'], note:'Stage, review, then explicitly authorize each write. A suggested command is never approval. Commit, push and draft publication are separate gates.', examples:['/agent help','/agent checks','/agent jobs','/github']},
   tools: {title:'Tools & skills', roots:['tools','skills','skill','connectors','registry'], note:'Registration is not readiness or authority. Selected prompt skills are context, not executable tools.', examples:['/tools','/skills','/skill status','/registry']},
@@ -2124,7 +2164,7 @@ const COMMAND_MAN = {
   '/goal task': {detail:'Shows the goal’s durable task record. If a request is staged there, it is recovered for review; confirmation is still explicit.'},
   '/harness': {detail:'Lists retained harness optimizer runs. It never starts one.'},
   '/help [topic|search words|all]': {detail:'Alone, an overview with topics. A topic key filters to that family; any other words search every command and summary, so a flag such as --group works; all prints the whole catalog. The Commands pane is this same guide; its ? buttons open these pages.', examples:['/help --group']},
-  '/loop [--web off|fetch|all] [n]|auto|stop': {detail:'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + ', at most ' + MAX_LOOP_TURNS + '), one turn at a time unless auto is on. With no stored goal, your last prompt becomes the goal. A normal turn that needed compaction also continues this way automatically. --web off, fetch or all sets the goal web mode before starting and persists on the goal. auto toggles automatic continuation. stop ends the loop and also cancels a reply that is still streaming.', notes:['Local loops can read attachments and permitted web sources; they never start a coding run.', 'A goal set without --web uses web.goal_web_default (ships all: search and pages).'], args:{n:'turns to run, 1 to ' + MAX_LOOP_TURNS}},
+  '/loop [auto] [--web off|fetch|all] [n] [goal]|stop': {detail:'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + ', at most ' + MAX_LOOP_TURNS + '), one turn at a time unless auto is on. Text after the count sets the session goal first, so /loop 3 compare hvac vendors is /goal then /loop in one command. With no stored goal, your last prompt becomes the goal. A normal turn that needed compaction also continues this way automatically. --web off, fetch or all sets the goal web mode before starting and persists on the goal. auto toggles automatic continuation and, when it turns on with a goal (or a last prompt) to follow, starts the loop after ' + (AUTO_LOOP_START_MS / 1000) + ' s; /goal <text> with auto on does the same. /loop auto with a count or goal turns auto on and starts after the same pause. stop ends the loop, cancels a pending start and also cancels a reply that is still streaming.', notes:['Local loops can read attachments and permitted web sources; they never start a coding run.', 'A goal set without --web uses web.goal_web_default (ships all: search and pages).'], args:{n:'turns to run, 1 to ' + MAX_LOOP_TURNS, goal:'optional goal text stored before the loop starts'}},
   '/memory [on|off|status]': {detail:'Alone or with status, shows the pinned notes, your structured fact and pending proposal counts, and every gate. on or off decides whether pinned notes enter the system prompt. The structured-memory gates are separate; see the capture and auto commands.'},
   '/memory add <note>': {detail:'Pins a literal note shared by this home. Notes are injected only while /memory is on.'},
   '/memory auto-consolidate|auto-retrieve|auto-suggest-chat|auto-suggest-coding on|off': {detail:'Administrator switches for the automatic structured-memory features. Each depends on its prerequisite gate: auto-retrieve needs retrieval, auto-consolidate needs consolidation, the suggest switches need capture. The reply shows every gate.'},
@@ -2164,16 +2204,19 @@ const COMMAND_MAN = {
   '/users': {detail:'Opens the Users pane for local accounts. Administrator only.'},
   '/web [status|help]': {detail:'Shows web state: on or off, URL rules, groups and your selected context. help opens the web topic of this guide.'},
   '/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]': {detail:'Grants URL patterns in one step, optionally into a named group with seed URLs. An exact URL covers only that page; https://host/* covers that host’s paths; *.example.org excludes the apex. Search listings never grant access.'},
+  '/web block <pattern-or-host> [...]': {detail:'Adds block-list entries. A host or pattern with no path (example.com) blocks that host and every subdomain, all paths; a pattern with a path blocks only that. Blocks cover HTTP and HTTPS and win over allow rules in both modes. Administrator only.'},
   '/web cancel': {detail:'Cancels your running research request.'},
   '/web check <URL> [URL ...] [--group name]': {detail:'Reports whether each exact URL is permitted and by which rule. Nothing is fetched, resolved or granted.'},
   '/web deny <id-or-pattern>': {detail:'Removes a rule by ID (one rule), or by pattern (that pattern in every group). A pattern without https:// gets it added. Administrator only.'},
   '/web fetch <URL> [URL ...] [--group name]': {detail:'Fetches exact permitted URLs and shows a 2,000-character preview of each with coverage. Patterns and prose are refused.'},
   '/web forget': {detail:'Clears the web extract you selected for chat.'},
   '/web inject': {detail:'Selects your last fetch or page-search extract for later chat; /prompt previews it. It does not summarize, and it does not select a research answer.'},
+  '/web mode allowlist|denylist': {detail:'allowlist (the default) reads only URLs an allow rule permits. denylist reads every public URL that is not blocked, after a confirmation dialog; private and local addresses stay refused, and a named --group still narrows to its allow rules. Allow and block rules are both kept across switches. Administrator only; the globe button in the header does the same.'},
   '/web off': {detail:'Disables web for this home; rules and stored context are kept. Administrator only.'},
   '/web on': {detail:'Enables web for this home; URLs still need permission rules. Administrator only.'},
   '/web pages [--group name] <query>': {detail:'Finds permitted links and searches passages inside permitted pages. This is not Google; /web search gives listings.'},
   '/web research [--group name] [--url URL ...] <question>': {detail:'Bounded multi-page research over permitted pages with checked citations, starting from the group or the --url seeds. Shows supported claims, conflicts, inferences, gaps and the sources. Not an exhaustive crawl; /web cancel stops it.'},
+  '/web unblock <id-or-pattern>': {detail:'Removes a block-list entry by ID or pattern; a host removes the pair /web block added for it. Administrator only.'},
   '/web search [--count 1..10] [--engine google|pages] [--group name] <query>': {detail:'Google result listings by default; --engine pages or a group searches permitted pages instead. Listings grant no permission to read a page. Words starting with a single dash (-tokio) are query text; put -- before query words that start with --.'},
 };
 /* Exact forms that are easy to get wrong. insert is what the composer gets;
@@ -2187,7 +2230,7 @@ const WORTH_KNOWING = [
   {label:'/model use <exact-installed-tag>', insert:'/model use ', hint:'An exact local tag, local, grok/xai or claude/anthropic; cloud readiness is checked before saving', key:'/model [list|use <name>|profile|status]'},
   {label:'/model status', insert:'/model status', hint:'Read-only: model, key presence and effective profile sources', key:'/model [list|use <name>|profile|status]'},
   {label:'/model profile', insert:'/model profile', hint:'Read-only: model facts, loaded window, proposed limits and any applied tuning', key:'/model [list|use <name>|profile|status]'},
-  {label:'/loop stop', insert:'/loop stop', hint:'Also cancels a reply that is still streaming', key:'/loop [--web off|fetch|all] [n]|auto|stop'},
+  {label:'/loop stop', insert:'/loop stop', hint:'Also cancels a reply that is still streaming', key:'/loop [auto] [--web off|fetch|all] [n] [goal]|stop'},
   {label:'/web check <URL>', insert:'/web check ', hint:'Tests permission without fetching or granting anything', key:'/web check <URL> [URL ...] [--group name]'},
 ];
 function commandRoot(syntax) { return '/' + syntax.slice(1).split(' ')[0]; }
@@ -2577,7 +2620,7 @@ $('sessionClearConfirm').addEventListener('click', async () => {
     });
     clearTranscript();
     retryAttachmentIds = null;
-    currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionGoal = ''; loopAuto = false;
+    currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionGoal = ''; loopAuto = false; cancelAutoLoopStart('');
     currentStyle = 'off'; currentStyleIssue = null; paintStyle();
     input.value = '';
     $('sSession').textContent = 'none';
@@ -2669,7 +2712,7 @@ async function runSlash(line, webCommand) {
             currentSession = s.session_id;
             paintSessionTokens(s.tokens);
             sessionGoal = typeof s.goal === 'string' ? s.goal : '';
-            loopAuto = false;
+            loopAuto = false; cancelAutoLoopStart('');
             paintGoalLoop();
             sys((sub === 'new' ? 'session created: ' : 'switched to session ') + s.session_id + ' — ' + s.title);
             /* The session carries the persisted name; the effective style
@@ -3209,6 +3252,18 @@ async function runSlash(line, webCommand) {
           webCommand = parsed.web;
         }
         const sub = webCommand.action, body = webCommand.body;
+        if (sub === 'mode') {
+          /* Opening the block list is confirmed in the dialog, never from a typed line. */
+          if (body.mode === 'denylist') openWebModeDialog('denylist');
+          else await applyWebMode('allowlist');
+          break;
+        }
+        if (sub === 'block' || sub === 'unblock') {
+          const changed = sub === 'block' ? await api('/api/web/block', 'POST', body) : await api('/api/web/unblock', 'POST', body);
+          sys(renderWebStatus(changed));
+          if (lastStatus) refreshReadiness(lastStatus);
+          break;
+        }
         if (sub === 'on' || sub === 'off' || sub === 'allow' || sub === 'deny') {
           /* Literal paths keep each route visible to the console contract readers. */
           const changed = sub === 'allow' ? await api('/api/web/allow', 'POST', body)
@@ -3585,46 +3640,97 @@ async function runSlash(line, webCommand) {
         paintGoalLoop();
         sys('goal set (web: ' + (set.goal_web_mode || 'all') + '):\n' + sessionGoal, goalWebNote(set.goal_web_mode));
         await refreshSessions();
+        if (loopAuto && sessionGoal && !staleReview() && !(loopState && loopState.running)) scheduleAutoLoopStart('/loop', 'loop auto is ON');
         break;
       }
 
       case 'loop': {
-        let loopArgs = rest, loopWebMode = null;
-        if (loopArgs[0] === '--web') {
-          if (!['off', 'fetch', 'all'].includes(loopArgs[1])) { sys('usage: /loop --web off|fetch|all [n]'); break; }
-          loopWebMode = loopArgs[1];
-          loopArgs = loopArgs.slice(2);
-        }
-        const sub = loopArgs[0] || '';
-        if (sub === 'stop') {
+        /* /loop [auto] [--web off|fetch|all] [n] [goal text], the grammar
+           loop_args_ok in src/server/slash.rs accepts. */
+        let i = 0, loopWebMode = null, autoWord = false;
+        const word = function (k) { return (rest[k] || '').toLowerCase(); };
+        if (word(0) === 'stop') {
           requestLoopStop('loop stopped');
           break;
         }
-        if (sub === 'auto') {
-          /* A compaction-started loop runs auto without the page flag: toggle
-             the running loop's own flag so the first /loop auto turns it off. */
-          loopAuto = loopState ? !loopState.auto : !loopAuto;
-          if (loopState) loopState.auto = loopAuto;
-          paintGoalLoop();
-          sys('loop auto-continue is ' + (!loopAuto ? 'OFF (one turn, then wait)'
-            : loopState && loopState.running ? 'ON (continues until GOAL_DONE, stall, budget, or rate limit; still chat-only)'
-            : loopState && loopState.remaining > 0 ? 'ON — type /loop to run the remaining ' + loopState.remaining + ' turn(s)'
-            : 'ON — nothing is running yet; type /loop or /loop <n> to start (with no /goal, your last prompt becomes the goal). auto alone does not start a loop.'));
+        if (word(i) === 'auto') { autoWord = true; i += 1; }
+        if (rest[i] === '--web') {
+          if (!['off', 'fetch', 'all'].includes(rest[i + 1])) { sys('usage: /loop [auto] [--web off|fetch|all] [n] [goal text]'); break; }
+          loopWebMode = rest[i + 1];
+          i += 2;
+        }
+        if (!autoWord && word(i) === 'auto') { autoWord = true; i += 1; }
+        const sub = /^[1-9]\d*$/.test(rest[i] || '') ? rest[i] : '';
+        if (sub) i += 1;
+        const loopGoalText = rest.slice(i).join(' ');
+        /* Validate before anything is persisted: a usage error must not leave
+           a derived goal behind. */
+        if (loopGoalText && (/^[-–—]/.test(rest[i]) || /^\d+$/.test(loopGoalText) || ['auto', 'stop'].includes(word(i)))) {
+          sys('usage: /loop [auto] [--web off|fetch|all] [n] [goal text] | /loop stop');
           break;
         }
+        if (Array.from(loopGoalText).length > MAX_GOAL_CHARS) {
+          sys('goal is too long; keep it under ' + MAX_GOAL_CHARS + ' characters');
+          break;
+        }
+        if (autoWord) {
+          if (i === 1) {
+            /* Bare /loop auto toggles. A compaction-started loop runs auto
+               without the page flag: toggle the running loop's own flag so
+               the first /loop auto turns it off. */
+            loopAuto = loopState ? !loopState.auto : !loopAuto;
+            if (loopState) loopState.auto = loopAuto;
+            if (!loopAuto) cancelAutoLoopStart('');
+            paintGoalLoop();
+            if (!loopAuto) { sys('loop auto-continue is OFF (one turn, then wait)'); break; }
+            if (loopState && loopState.running) { sys('loop auto-continue is ON (continues until GOAL_DONE, stall, budget, or rate limit; still chat-only)'); break; }
+            if (!sessionGoal && !currentSession) { sys('loop auto-continue is ON — it starts ' + AUTO_LOOP_START_MS / 1000 + ' s after you set /goal <text> (or type /loop auto <goal text>)'); break; }
+            scheduleAutoLoopStart('/loop', 'loop auto-continue is ON');
+            break;
+          }
+          /* /loop auto with a count, mode or goal turns auto on (never off)
+             and starts the same /loop after the countdown. Nothing is
+             persisted until it starts, so cancelling leaves no goal behind. */
+          if (loopState && loopState.running) { sys('a loop turn is already in flight — /loop stop to abort after it returns'); break; }
+          loopAuto = true;
+          if (loopState) loopState.auto = true;
+          paintGoalLoop();
+          scheduleAutoLoopStart(['/loop'].concat(loopWebMode ? ['--web', loopWebMode] : [], sub ? [sub] : [], loopGoalText ? [loopGoalText] : []).join(' '), 'loop auto-continue is ON');
+          break;
+        }
+        cancelAutoLoopStart('');
         if (loopState && loopState.running) {
           sys('a loop turn is already in flight — /loop stop to abort after it returns');
-          break;
-        }
-        /* Validate the count before anything is persisted: a usage error must
-           not leave a derived goal behind. */
-        if (sub && (!/^[1-9]\d*$/.test(sub) || parseInt(sub, 10) < 1)) {
-          sys('usage: /loop [--web off|fetch|all] [n] | /loop stop | /loop auto');
           break;
         }
         /* A /loop stop typed while this setup awaits must win, as in maybeAutoLoop. */
         const loopGeneration = loopCancelGeneration;
         const loopSetupStale = function () { return staleReview() || loopCancelGeneration !== loopGeneration; };
+        /* Goal text on the command line: check eligibility, then store it (with
+           the requested web mode in the same write) before the loop reads it. */
+        let goalWritten = false;
+        if (loopGoalText) {
+          const status = await api('/api/status');
+          if (loopSetupStale()) break;
+          if (status.provider !== 'ollama' && status.base_url === null) { sys('Select a local model before /loop; cloud loops are unavailable.'); break; }
+          if (!currentSession) {
+            const created = await api('/api/sessions', 'POST', { title: Array.from(loopGoalText).slice(0, 40).join('') });
+            if (loopSetupStale()) break;
+            adoptPendingHistory(created.session_id);
+            currentSession = created.session_id;
+            paintSessionTokens(created.tokens);
+            $('sSession').textContent = currentSession;
+            currentStyle = 'off'; currentStyleIssue = null; paintStyle();
+          }
+          const set = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal', 'POST', loopWebMode ? { goal: loopGoalText, web_mode: loopWebMode } : { goal: loopGoalText });
+          if (loopSetupStale()) break;
+          sessionGoal = set.goal || loopGoalText;
+          goalWritten = true;
+          /* A new goal starts a fresh loop rather than finishing an old one's turns. */
+          loopState = null;
+          sys('goal set (web: ' + (set.goal_web_mode || 'all') + '):\n' + sessionGoal, goalWebNote(set.goal_web_mode));
+          refreshSessions().catch(function () { /* the sidebar refreshes on the next change */ });
+        }
         /* Reload the stored goal every time: each turn restates it, and another
            tab may have changed it since this page last read it. */
         if (currentSession) {
@@ -3639,7 +3745,7 @@ async function runSlash(line, webCommand) {
           /* No stored goal: continue the last thing the operator asked. The
              requested web mode rides the same write, so no intermediate goal
              ever carries the default mode. */
-          let modeApplied = false;
+          let modeApplied = goalWritten;
           if (!sessionGoal) {
             const derived = loopGoalFromSession(loaded, MAX_GOAL_CHARS);
             if (derived) {
@@ -3660,7 +3766,7 @@ async function runSlash(line, webCommand) {
           paintGoalLoop();
           sys('Loop context: ' + (loaded.live_attachment_pins || 0) + ' live attachment pin(s); goal web mode ' + (loaded.goal_web_mode || 'all') + '; web tools ' + (status.chat_tools_available && loaded.goal_web_mode !== 'off' ? (loaded.goal_web_mode === 'fetch' ? 'fetch only within current URL permissions' : 'available within current URL permissions') : 'off') + '. /session unpin clears pins.');
         }
-        if (!sessionGoal) { sys('set a goal first: /goal <what you want done> — or send any prompt and /loop will continue it'); break; }
+        if (!sessionGoal) { sys('set a goal first: /goal <what you want done>, /loop <what you want done>, or send any prompt and /loop will continue it'); break; }
         if (loopCancelGeneration !== loopGeneration) break;
         if (sub) {
           const n = Math.min(parseInt(sub, 10), MAX_LOOP_TURNS);
@@ -3777,7 +3883,7 @@ async function runSlash(line, webCommand) {
       }
       case 'clear':
         clearTranscript();
-        loopState = null; loopAuto = false;
+        loopState = null; loopAuto = false; cancelAutoLoopStart('');
         paintGoalLoop();
         break;
 
@@ -3905,8 +4011,42 @@ function stopLoop(reason) {
   if (loopState) loopState.stop = true;
   loopState = null;
   loopCancelGeneration++;
+  cancelAutoLoopStart('');
   paintGoalLoop();
   if (reason) sys(reason);
+}
+
+function cancelAutoLoopStart(reason) {
+  if (!autoLoopStart) return;
+  clearTimeout(autoLoopStart.timer);
+  autoLoopStart = null;
+  paintGoalLoop();
+  if (reason) sys(reason);
+}
+
+/* Run an already validated /loop line after AUTO_LOOP_START_MS unless auto
+   is turned off, the loop is stopped, or the session changes first. */
+function scheduleAutoLoopStart(line, lead) {
+  cancelAutoLoopStart('');
+  const pending = {
+    line: line, session: currentSession, revision: sessionRevision,
+    generation: loopCancelGeneration, timer: null,
+  };
+  pending.timer = setTimeout(function () {
+    if (autoLoopStart !== pending) return;
+    autoLoopStart = null;
+    paintGoalLoop();
+    if (!loopAuto || loopCancelGeneration !== pending.generation) return;
+    if (currentSession !== pending.session || sessionRevision !== pending.revision) {
+      sys('auto loop start cancelled — the session changed');
+      return;
+    }
+    if (loopState && loopState.running) return;
+    runSlash(pending.line);
+  }, AUTO_LOOP_START_MS);
+  autoLoopStart = pending;
+  paintGoalLoop();
+  sys(lead + ' — ' + line + ' starts in ' + (AUTO_LOOP_START_MS / 1000) + ' s; /loop stop or /loop auto cancels');
 }
 
 async function runLoopTurns() {
@@ -4863,6 +5003,54 @@ $('reloadLimits').addEventListener('click', async () => {
   } catch (e) { sys('Reload refused: ' + e.message); }
   finally { button.disabled = false; }
 });
+/* Web policy mode. Opening the block list always goes through this dialog;
+   the confirm flag is sent only from its button. Returning to the allowlist
+   narrows access and needs no dialog. */
+let webModeTarget = 'denylist';
+function paintWebMode(mode) {
+  const button = $('webModeToggle');
+  const deny = mode === 'denylist';
+  button.dataset.mode = deny ? 'denylist' : 'allowlist';
+  button.title = deny ? 'Web policy: block list (every public URL except blocked ones). Click to return to the allowlist'
+    : 'Web policy: allowlist (only allowed URLs). Click to switch to block-list mode';
+  button.setAttribute('aria-label', deny ? 'Web policy: block list. Return to allowlist' : 'Web policy: allowlist. Switch to block-list mode');
+}
+function openWebModeDialog(target) {
+  webModeTarget = target;
+  const deny = target === 'denylist';
+  $('webModeTitle').textContent = deny ? 'Switch web policy to block-list mode?' : 'Return web policy to the allowlist?';
+  $('webModeDescription').textContent = deny
+    ? 'Chat, /loop, fetch and research will read any public URL that is not on the block list, instead of only the URLs you have allowed. Private and local addresses stay refused. After this, you add entries to block (/web block example.com) instead of entries to allow. Your allow rules are kept and come back if you switch again. This applies to every account in this home.'
+    : 'Only URLs your allow rules permit will be readable again. Your block list is kept and still applies. This applies to every account in this home.';
+  $('webModeConfirm').textContent = deny ? 'Switch to block list' : 'Return to allowlist';
+  $('webModeConfirm').className = deny ? 'danger' : 'primary';
+  $('webModeFeedback').textContent = '';
+  $('webModeDialog').showModal();
+}
+async function applyWebMode(target) {
+  const changed = await api('/api/web/mode', 'POST', target === 'denylist' ? {mode: 'denylist', confirm: true} : {mode: 'allowlist'});
+  paintWebMode(changed.mode);
+  sys(renderWebStatus(changed));
+  if (lastStatus) refreshReadiness(lastStatus);
+  return changed;
+}
+$('webModeToggle').addEventListener('click', async () => {
+  let mode = $('webModeToggle').dataset.mode;
+  try { mode = (await api('/api/web')).mode || mode; paintWebMode(mode); } catch (_) { /* the dialog still asks; the server decides */ }
+  openWebModeDialog(mode === 'denylist' ? 'allowlist' : 'denylist');
+});
+$('webModeCancel').addEventListener('click', () => $('webModeDialog').close());
+$('webModeConfirm').addEventListener('click', async () => {
+  $('webModeConfirm').disabled = true; $('webModeCancel').disabled = true;
+  try {
+    await applyWebMode(webModeTarget);
+    $('webModeDialog').close();
+  } catch (e) {
+    $('webModeFeedback').textContent = 'Not changed: ' + e.message;
+  } finally {
+    $('webModeConfirm').disabled = false; $('webModeCancel').disabled = false;
+  }
+});
 /* Analytics: retained portal data and an explicit draft estimate; no inference or write controls. */
 let analyticsRequest = 0, analyticsData = null, analyticsSection = 'Tokens', analyticsOpener = null;
 const analyticsSections = ['Tokens', 'Sessions', 'Code'];
@@ -5168,6 +5356,7 @@ function setHarnessLogoutVisible(on) {
   if (hAuthLogout) hAuthLogout.hidden = !on;
   document.getElementById('hAuthPassword').hidden = !on;
   $('reloadLimits').hidden = !on || window.__cyclawRole !== 'admin' || passwordRequired;
+  $('webModeToggle').hidden = $('reloadLimits').hidden;
 }
 /* True while the signed-in account must replace its setup code. The server
    allows such a session only password, whoami and logout, so the lock card
@@ -5177,7 +5366,7 @@ function setPasswordRequired(on) {
   passwordRequired = on === true;
   document.body.classList.toggle('password-required', passwordRequired);
   $('passwordLockScreen').hidden = !passwordRequired;
-  if (passwordRequired) $('reloadLimits').hidden = true;
+  if (passwordRequired) { $('reloadLimits').hidden = true; $('webModeToggle').hidden = true; }
 }
 /* Local reset for leaving an account: transcript, account panes and the
    active session, style and prompt history. A successful logout runs it, and
@@ -5273,6 +5462,7 @@ async function refreshHarnessAuth() {
       setHarnessLogoutVisible(true);
       refreshHeaderFeatures(!data.must_change_password);
       $('reloadLimits').hidden = data.role !== 'admin' || data.must_change_password;
+      $('webModeToggle').hidden = $('reloadLimits').hidden;
       if (who) who.textContent = accountLabel(data);
       if (data.must_change_password) openPasswordChange(true);
       return;

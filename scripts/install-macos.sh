@@ -172,6 +172,20 @@ app_ok() {
     && [ "$(defaults read "$1/Contents/Info" CFBundleExecutable 2>/dev/null)" = cg-agent-harness-desktop ] \
     && sidecar_ok "$1" && codesign --verify --deep --strict "$1" >/dev/null 2>&1
 }
+# Compare a working app's version with the latest release tag and say when it is
+# older. A note only: --replace-app stays the one way a working app is swapped.
+# Offline, or an unrecognized tag, prints nothing. Releases through v0.1.52
+# all report 0.1.0, so they always read as older.
+app_update_note() {
+  local have latest
+  have=$(defaults read "$1/Contents/Info" CFBundleShortVersionString 2>/dev/null) || have=''
+  latest=$(curl --fail --silent --location --max-time 10 -o /dev/null -w '%{url_effective}' "${release%/download}" 2>/dev/null) || return 0
+  latest=${latest##*/tag/}
+  latest=${latest#v}
+  if [[ "$latest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] && [ "$have" != "$latest" ]; then
+    say "app: version ${have:-unknown} is installed; the latest release is $latest. Quit the app, then rerun with --replace-app to update it"
+  fi
+}
 # A launchable Ollama.app: Info.plist names an executable that is present,
 # and the bundle signature verifies. An interrupted copy fails this.
 ollama_bundle_ok() {
@@ -301,7 +315,7 @@ inventory() {
   elif have gh; then say "GitHub CLI: $(command -v gh) does not run (a rerun reinstalls it)"; missing=1
   else say 'GitHub CLI: MISSING'; missing=1; fi
   if [ "$app" = 1 ]; then
-    if app_ok "$app_path"; then say "app: $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"; elif [ -e "$app_path" ] || [ -L "$app_path" ]; then say "app: $app_path is incomplete, not built for this Mac, has a mismatched backend, or fails codesign (a rerun replaces it)"; missing=1; else say "app: not installed at $app_path"; missing=1; fi
+    if app_ok "$app_path"; then say "app: $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown))"; app_update_note "$app_path"; elif [ -e "$app_path" ] || [ -L "$app_path" ]; then say "app: $app_path is incomplete, not built for this Mac, has a mismatched backend, or fails codesign (a rerun replaces it)"; missing=1; else say "app: not installed at $app_path"; missing=1; fi
   fi
   return "$missing"
 }
@@ -441,6 +455,7 @@ fi
 if [ "$app" = 1 ]; then
   if [ "$replace" = 0 ] && app_ok "$app_path"; then
     say "keeping $app_path (commit $(cat "$app_path/Contents/Resources/COMMIT" 2>/dev/null || echo unknown)); --replace-app updates it"
+    app_update_note "$app_path"
   else
     [ ! -d "$app_path" ] || [ "$replace" = 1 ] || say "$app_path is incomplete or fails codesign; replacing it"
     # The shell can stay open on its recovery screen with no backend child.
