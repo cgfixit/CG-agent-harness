@@ -27,7 +27,7 @@ touches the harness home (`~/.CGagentHarness`) and pulls a model only with `--mo
 
 | Option | Effect |
 |---|---|
-| `--check` | Lists what is present; exits 1 when something required is missing |
+| `--check` | Lists what is present; exits 1 when something required is missing. A working app older than the latest release gets a note, not a failure |
 | `--dry-run` | Prints every command, changing nothing |
 | `--replace-app` | Replaces a working app; keeps the previous one in `~/Library/Caches/CG-agent-harness-installer/previous`. An incomplete or unsigned copy is replaced without it |
 | `--no-ollama`, `--no-build`, `--no-app`, `--app-dir DIR` | Skip a step or choose the app location; outside `/Applications` and `~/Applications`, start with `CGAH_APP`; after `--no-app`, with `--standalone` |
@@ -35,7 +35,7 @@ touches the harness home (`~/.CGagentHarness`) and pulls a model only with `--mo
 The checksum proves integrity, not authorship (both files share one release
 page). `curl` downloads skip Gatekeeper's quarantine prompt; compare
 `Resources/COMMIT` with the release notes ([5.2](#52-macos-app)). Quit the app
-(Cmd-Q) before `--replace-app`.
+(Cmd-Q) before `--replace-app`. A rerun keeps a working app; it only notes a newer release.
 
 [`start-macos.sh`](../scripts/start-macos.sh) is the everyday launcher, described
 in [section 7](#7-open-the-console-in-a-browser).
