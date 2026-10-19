@@ -1,8 +1,8 @@
 # AGENTS.md — CGagentHarness operating manual
 
 Every coding agent (Claude Code, Codex, Grok, Kimi, Copilot, others) follows this
-file literally. "Never" rules require explicit operator approval for exceptions.
-Read `INVARIANTS.md` before touching a core path:
+file literally. Where a rule says "never", there is no exception without explicit
+operator approval. Read `INVARIANTS.md` before touching a core path:
 `src/shim/`, `src/server/{guards,headers}.rs`, `src/agentic/{writer,workspace}.rs`,
 `src/agentic/executor/sandbox.rs`, `assets/config.default.yaml`.
 
@@ -154,9 +154,9 @@ cut stays cut. Weekly, `cgfixit` reviews `git log --since=1.week --stat -- '*.md
 
 ## Project skills
 
-Repository guidance is separate from runtime `/api/skills` plugins.
-Start with `cgagentharness-project-guidance`, then read applicable task skills;
-loading them does not expand publication, merge or release authority.
+Repository guidance is separate from the harness runtime `/api/skills` plugins.
+Start with `cgagentharness-project-guidance`, then read the skill whose task
+applies; loading it does not expand publication, merge or release authority.
 
 - Codex: [.codex/skills/README.md](.codex/skills/README.md) indexes contract/config
   guards, write-policy probes, verification, optimization and macOS release work.
