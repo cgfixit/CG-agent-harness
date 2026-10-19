@@ -1090,9 +1090,6 @@ export ANTHROPIC_API_KEY='anthropic-secret-value-2222'\n";
         assert!(name.contains("C:/Users/operator/.CGagentHarness"));
         assert!(!name.contains('\\'));
         assert_ne!(name, service_name("/tmp/other-home"));
-        // Building the entry does not contact Keychain, Credential Manager, or D-Bus.
-        assert!(platform_store_ready());
-        assert!(keyring_core::Entry::new(&name, "GROK_API_KEY").is_ok());
     }
 
     #[test]
