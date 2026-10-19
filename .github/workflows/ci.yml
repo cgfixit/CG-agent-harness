@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
 
 permissions: {}
 
@@ -24,7 +25,8 @@ jobs:
   # `if`: a skipped check passes branch protection, where `paths-ignore` would
   # leave a required check pending. A skipped matrix job reports once, under
   # its unexpanded name. invariant-guard always runs. Every other event,
-  # including release.yml's workflow_call, runs all jobs.
+  # including merge_group (the merge queue) and release.yml's workflow_call,
+  # runs all jobs.
   changes:
     name: classify changed paths
     runs-on: ubuntu-latest
