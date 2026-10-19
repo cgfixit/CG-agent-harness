@@ -12,6 +12,9 @@ to Claude Code.
   `cargo run -- serve`, `scripts/verify-local.sh`, `scripts/check-pr-template.sh` and
   `python3 scripts/test-desktop-backend.py`. Anything else prompts; do not work
   around a prompt.
+- Agent fan-out is capped (operator decision, 2026-10-19): settings deny the
+  `Workflow` tool and put every `Agent` spawn behind an approval prompt. Ask before
+  using more than 2 subagents on one task; never route around the cap.
 - A `SessionStart` hook runs `.claude/hooks/session-start.sh` (toolchain, libdbus,
   build cache). If a build fails right after start, read its output before debugging.
 - `.claude/skills/<slug>/SKILL.md` runs as `/<slug>`. Four are operator-only
