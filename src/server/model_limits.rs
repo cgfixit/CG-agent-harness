@@ -609,7 +609,7 @@ mod tests {
         assert_eq!(value(&proposal, "chat.compact_prompt_tokens"), 12_000);
         assert_eq!(value(&proposal, "web.total_tokens"), 14_000);
         assert_eq!(value(&proposal, "web.evidence_tokens"), 3_000);
-        assert_eq!(value(&proposal, "web.model_tokens"), 512);
+        assert_eq!(value(&proposal, "web.model_tokens"), 1024);
         assert_eq!(value(&proposal, "web.chat_tool_calls"), 5);
     }
 
@@ -686,13 +686,14 @@ mod tests {
         let cfg = shipped().expect("embedded default parses");
         let web = Limits::load(&cfg).expect("shipped web limits are valid");
         let speed = json!({"prefill_tps": 1500.0, "decode_tps": 50.0, "load_seconds": 0.0});
+        let planner_model = cfg.str_or("agentic.deepagent_github.model", "");
         let mut profile = loaded(TUNED_WINDOW);
-        profile["model"] = json!("qwen3.8:27b-mlx");
+        profile["model"] = json!(planner_model);
         let proposal = propose(&profile, Some(&speed), &cfg, &web, &backend(Some("none")));
         // The window's 30000-token prompt cap: 30000/1500 + 3072/50 = 81.4 s;
         // doubled and rounded up to 180.
         assert_eq!(value(&proposal, "agentic.deepagent_github.planner_timeout_sec"), 180);
-        let tuning = tuning_from("qwen3.8:27b-mlx", &profile, &proposal, Some(speed.clone())).unwrap();
+        let tuning = tuning_from(&planner_model, &profile, &proposal, Some(speed.clone())).unwrap();
         assert_eq!(tuning.planner_timeout_sec, Some(180));
         // An untagged planner name is the same model as its :latest tag.
         let mut aliased = cfg.clone();
@@ -705,7 +706,7 @@ mod tests {
         profile["model"] = json!("humanizer:q8");
         let other = propose(&profile, Some(&speed), &cfg, &web, &backend(Some("none")));
         assert!(!other.to_string().contains("planner_timeout_sec"), "{other}");
-        profile["model"] = json!("qwen3.8:27b-mlx");
+        profile["model"] = json!(planner_model);
         // A crawling model is held where one iteration with one check fits.
         let crawl = json!({"prefill_tps": 1.0, "decode_tps": 1.0});
         let slow = propose(&profile, Some(&crawl), &cfg, &web, &backend(Some("none")));
@@ -807,12 +808,12 @@ mod tests {
         let mut live = web.clone();
         tuning.apply_web(&mut live);
         assert_eq!(live.synthesis_seconds, 240);
-        // A reload raises both budgets; the tuned ceilings (3000/512) now bound them.
+        // A reload raises both budgets; the tuned ceilings (3000/1024) now bound them.
         let mut reloaded = Limits::load(&cfg).unwrap();
         tuning.apply_web(&mut reloaded);
-        assert_eq!((reloaded.evidence_tokens, reloaded.model_tokens), (3_000, 512));
-        // (3000 + 1000)/50 = 80 s read, 512/3 = 170.7 s written; x2 rounded up is 510.
-        assert_eq!(reloaded.synthesis_seconds, 510);
+        assert_eq!((reloaded.evidence_tokens, reloaded.model_tokens), (3_000, 1024));
+        // (3000 + 1000)/50 = 80 s read, 1024/3 = 341.3 s written; x2 rounded up is 870.
+        assert_eq!(reloaded.synthesis_seconds, 870);
     }
 
     #[test]

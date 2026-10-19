@@ -282,7 +282,9 @@ class DesktopBoundary(unittest.TestCase):
             config = self.home / 'config.yaml'
             config.write_text(config.read_text()
                 .replace('http://127.0.0.1:11434/v1', fixture.base)
-                .replace('qwen3.8:27b-mlx', 'fixture-chat'))
+                # Match complete tags; a prefix replacement invents fixture-chat-cg.
+                .replace('"qwen3.8:27b-mlx"', '"fixture-chat"')
+                .replace('"qwen3.8:27b-mlx-cg"', '"fixture-chat"'))
             child = self.start()
             child.send({'command': 'models'})
             result = child.read()

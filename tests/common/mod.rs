@@ -47,6 +47,20 @@ pub fn config_with(dir: &Path, overrides: &[(&str, &str)]) -> AppConfig {
     if !overrides.iter().any(|(k, _)| *k == "models.local_llm.auto_tune") {
         text = override_yaml(&text, "models.local_llm.auto_tune", "false");
     }
+    // Protocol fixtures opt in to the historical compaction shape; a user's
+    // shipped tuning choices must not silently change what these tests exercise.
+    // Dedicated shipped-config tests validate the seed without these overrides.
+    for (key, value) in [
+        ("chat.compact_keep_messages", "8"),
+        ("chat.compact_follow_window", "true"),
+        ("chat.compact_max_prefill_sec", "120"),
+        ("compaction.summary_max_tokens", "768"),
+        ("web.model_tokens", "1024"),
+    ] {
+        if !overrides.iter().any(|(k, _)| *k == key) {
+            text = override_yaml(&text, key, value);
+        }
+    }
     for (dotted, value) in overrides {
         text = override_yaml(&text, dotted, value);
     }

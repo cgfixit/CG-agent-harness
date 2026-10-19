@@ -518,6 +518,9 @@ Forwarded or proxy requests are unsupported. See [secure setup](SECURE_RESEARCH.
 
 Edit the **active home's** `config.yaml`. Merge existing mappings; duplicate YAML
 keys are invalid. Only literal `true` enables gates.
+Nest `local_llm` under `models`; a root-level block is rejected rather than
+silently ignored. `workspace_root` must stay beneath the active home's `data/`;
+the harness creates `data/agentic/workspaces` automatically.
 Use **Reload limits** or Unix SIGHUP for [reloadable limits](CONFIG_RELOAD.md).
 Other settings require quit/relaunch or `serve` restart; closing the window only
 hides it. Coding-policy checks reread disk at mutation boundaries.
@@ -551,25 +554,26 @@ on first run. Common operator settings follow:
 | Key | Default | Effect |
 |---|---|---|
 | `app.agent_job_poll_ms` | 1500 | Browser job polling interval, clamped to 1–30 s |
-| `api.rate_limit.max_requests` / `window_seconds` | 120 / 60 | Per-IP sliding-window ceiling on every route |
-| `api.harness_loop_rate_limit.*` | 16 / 300 s / 2048 tokens | Separate `/loop` budget; same backend-dependent ceiling as local chat after the legacy `0` → `2048` fallback |
+| `api.rate_limit.max_requests` / `window_seconds` | 150 / 240 | Per-IP sliding-window ceiling on every route |
+| `api.harness_loop_rate_limit.*` | 34 / 500 s / 2048 tokens | Separate `/loop` budget; same backend-dependent ceiling as local chat after the legacy `0` → `2048` fallback |
 | `models.cloud_chat.enabled` | true | Allows `/model use grok` / `claude`; each provider has its own `enabled` and `model` |
-| `models.cloud_chat.max_tokens` / `timeout_sec` | 4096 / 90 | Cloud reply ceiling and timeout; boot refuses 0 or >32768 tokens, or a timeout outside 1–720 s |
+| `models.cloud_chat.max_tokens` / `timeout_sec` | 4096 / 180 | Cloud reply ceiling and timeout; boot refuses 0 or >32768 tokens, or a timeout outside 1–720 s |
 | `models.local_llm.max_tokens` | 4096 | Local reply ceiling: 1–25904 with resolved Ollama and explicit reasoning `none`; otherwise 1–12952, with twice the ceiling reserved for completion. Invalid combinations fail startup with `CONFIG_ERROR` |
 | `models.local_llm.reasoning_effort` | `none` | Sent only to resolved Ollama: `none`, `low`, `medium`, `high`, `max`. Missing/empty omits the field and uses the doubled reservation |
-| `chat.compact_prompt_tokens` / `compact_keep_messages` | 24000 / 8 | Calibrated next-prompt trigger and recent messages retained (2–40); the prompt cap is the hard limit past it. Threshold floor/cap and web interaction: [compaction](CONSOLE.md#local-history-compaction) |
+| `models.local_llm.timeout_sec` | 1800 | Local fallback deadline; missing uses 720 s; auto-tune replaces it when a speed sample is available |
+| `chat.compact_prompt_tokens` / `compact_keep_messages` | 24000 / 10 | Calibrated next-prompt trigger and recent messages retained (2–40); the prompt cap is the hard limit past it. Threshold floor/cap and web interaction: [compaction](CONSOLE.md#local-history-compaction) |
 | `chat.compact_tail_percent` | 25 | Verbatim tail budget as a percent of the trigger, 10–50; whole exchanges, at least the last one |
-| `compaction.summary_max_tokens` | 768 | Summary output ceiling, clamped 128–2048; missing in an existing home also uses 768; sent doubled where the reply is reserved twice |
-| `chat.compact_follow_window` / `compact_max_prefill_sec` | true / 120 | A verified window above 32768 scales the trigger up, within this many seconds of measured prefill (30–1800); literal false keeps it fixed |
+| `compaction.summary_max_tokens` | 2048 | Summary output ceiling, clamped 128–2048; missing in an existing home uses 768; sent doubled where the reply is reserved twice |
+| `chat.compact_follow_window` / `compact_max_prefill_sec` | false / 1500 | When enabled, a verified window above 32768 scales the trigger up within this many seconds of measured prefill (30–1800); false keeps it fixed |
 | `models.local_llm.inventory.*` | 2.0 s / 262144 bytes | Model-list probe timeout and response cap |
-| `auth.max_concurrent_operations` | 2 | Concurrent scrypt derivations (about 128 MiB each); range 1–4 |
+| `auth.max_concurrent_operations` | 1 | Concurrent scrypt derivations (about 128 MiB each); range 1–4 |
 | `auth.session.idle_timeout_sec` / `absolute_timeout_sec` | 43200 / 604800 | Session expiry without use (recorded at most once a minute), and regardless of use |
 | `auth.session.password_change_idle_timeout_sec` / `password_change_absolute_timeout_sec` | 600 / 1800 | The same limits while the account must still replace its password (setup code); capped at the normal ones |
 | `attachments.max_concurrent_uploads` | 2 | Attachment upload bodies (up to ~45 MiB each) buffered at once; range 1–8, excess requests get 503 `ATTACHMENT_BUSY` |
-| `attachments.body_timeout_sec` | 120 | Deadline for receiving one upload body; range 5–600, expiry gives 408 `ATTACHMENT_TIMEOUT` and frees the permit |
+| `attachments.body_timeout_sec` | 360 | Deadline for receiving one upload body; range 5–600, expiry gives 408 `ATTACHMENT_TIMEOUT` and frees the permit |
 | `structured_memory.*` | see file | Per-owner caps (facts, proposals, episodes, bytes), search/retrieval limits, suggestion queue and consolidation thresholds |
 | `web.evidence_tokens` | 6000 | Evidence budget when no tokenizer is available, clamped 256–6000. Keep 3000 if the Ollama window is smaller than 32768 or unverified |
-| `web.model_tokens` | 1024 | Maximum synthesis completion, clamped 256–2048 |
+| `web.model_tokens` | 2048 | Maximum synthesis completion, clamped 256–2048 |
 | `web.total_tokens` | 28000 | Planning and synthesis budget, 2048–128000 (32000 without a larger measured window); sized for a **verified** 32768-token Ollama window ([model setup](MODELS.md)). Keep 16000 if `/api/ps` shows a smaller `context_length` |
 
 Upgrades preserve `config.yaml`; missing settings use documented fallbacks.

@@ -1392,12 +1392,12 @@ mod tests {
                 assert!(parsed.is_err(), "{value}");
             }
         }
-        for yaml in ["{}", include_str!("../../assets/config.default.yaml")] {
+        for (yaml, expected) in [("{}", 512), (include_str!("../../assets/config.default.yaml"), 4096)] {
             assert_eq!(
                 Limits::load(&AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap())
                     .unwrap()
                     .html_parser_handles,
-                512
+                expected
             );
         }
     }

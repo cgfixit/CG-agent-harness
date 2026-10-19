@@ -876,7 +876,7 @@ fn cloud_proposer_gates_sanitizes_and_retries() {
     // Gates 3/4 via settings_for; gate 5 via key presence.
     assert!(settings_for(&acfg.deepagent, "nope").is_err());
     let grok = settings_for(&acfg.deepagent, "grok").unwrap();
-    assert_eq!(grok.model, "grok-4.5");
+    assert_eq!(grok.model, "grok-4.6");
     // Handoff: injection refused, cap enforced, redaction applied, egress audited.
     assert_eq!(
         sanitize_handoff(
