@@ -322,11 +322,38 @@ impl Rule {
     }
 }
 
+/// `Allowlist` (the shipped default) reads only URLs an allow rule permits.
+/// `Denylist`, set only by an administrator's confirmed switch, reads any
+/// public URL no blocked rule covers; allow rules are kept for groups, research
+/// starts and a later switch back. Neither mode admits private addresses:
+/// `canonical_url` and the fetcher's DNS checks refuse them in both.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Mode {
+    #[default]
+    Allowlist,
+    Denylist,
+}
+
+impl Mode {
+    fn is_allowlist(&self) -> bool {
+        *self == Mode::Allowlist
+    }
+}
+
+/// Group name every blocked rule carries; it is never an allow group.
+pub const BLOCKED_GROUP: &str = "blocked";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Policy {
     pub version: u32,
     pub rules: Vec<Rule>,
+    /// Absent in an allowlist file, so its bytes and revision are unchanged.
+    #[serde(default, skip_serializing_if = "Mode::is_allowlist")]
+    pub mode: Mode,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked: Vec<Rule>,
     #[serde(skip)]
     pub revision: String,
 }
@@ -336,8 +363,36 @@ impl Policy {
         Self {
             version: 1,
             rules: Vec::new(),
+            mode: Mode::Allowlist,
+            blocked: Vec::new(),
             revision: String::new(),
         }
+    }
+
+    /// Nothing is readable: an allowlist with no rules. A denylist with no
+    /// blocked rules reads every public URL.
+    pub fn refuses_all(&self) -> bool {
+        self.mode == Mode::Allowlist && self.rules.is_empty()
+    }
+
+    /// A blocked rule covers the target over HTTP or HTTPS alike, so blocking
+    /// `https://example.org/*` also blocks `http://example.org/`.
+    pub fn blocks(&self, target: &Url) -> bool {
+        let mut other = target.clone();
+        let swapped = match target.scheme() {
+            "https" => other.set_scheme("http").is_ok(),
+            "http" => other.set_scheme("https").is_ok(),
+            _ => false,
+        };
+        self.blocked
+            .iter()
+            .any(|r| r.permits(target) || swapped && r.permits(&other))
+    }
+
+    /// Blocked rules use the same pattern grammar as allow rules, scheme aside:
+    /// `blocks` checks both schemes. One entry per pattern; the ID ignores group.
+    pub fn block_rule(pattern: &str) -> Result<Rule> {
+        Rule::new(pattern, BLOCKED_GROUP, &[])
     }
 
     /// `max_rules` is the configured `web.max_rules`; it also sizes the byte cap.
@@ -363,10 +418,19 @@ impl Policy {
         if policy.rules.len() > max_rules {
             return Err(over_cap(policy.rules.len(), max_rules));
         }
+        if policy.blocked.len() > max_rules {
+            return Err(over_cap(policy.blocked.len(), max_rules));
+        }
         let mut ids = BTreeSet::new();
         for rule in &policy.rules {
             rule.validate()?;
             if !ids.insert(&rule.id) {
+                return Err(bad());
+            }
+        }
+        for rule in &policy.blocked {
+            rule.validate()?;
+            if rule.group != BLOCKED_GROUP || !rule.seeds.is_empty() || !ids.insert(&rule.id) {
                 return Err(bad());
             }
         }
@@ -463,7 +527,16 @@ impl Policy {
         Self::parse(&bytes, max_rules)
     }
 
+    /// A named group always narrows to that group's allow rules, in either
+    /// mode. Without one, a denylist permits whatever no blocked rule covers.
+    /// Blocked rules win over allow rules in both modes.
     pub fn permits(&self, target: &Url, group: Option<&str>) -> bool {
+        if self.blocks(target) {
+            return false;
+        }
+        if self.mode == Mode::Denylist && group.is_none() {
+            return true;
+        }
         self.rules
             .iter()
             .any(|r| group.is_none_or(|g| r.group == g) && r.permits(target))
@@ -471,6 +544,9 @@ impl Policy {
 
     pub fn authorize(&self, raw: &str, group: Option<&str>) -> Result<Url> {
         let target = canonical_url(raw)?;
+        if self.blocks(&target) {
+            return Err(error("WEB_BLOCKED", "URL is blocked by the web block list"));
+        }
         if !self.permits(&target, group) {
             return Err(error("WEB_HOST_DENIED", "URL is not permitted by current policy"));
         }
@@ -485,9 +561,12 @@ impl Policy {
         let target = canonical_url(raw)?;
         let covered = target.path() == "/robots.txt"
             && target.query().is_none()
-            && self.rules.iter().any(|r| {
-                group.is_none_or(|g| r.group == g) && Pattern::parse(&r.pattern).is_ok_and(|p| p.permits_host(&target))
-            });
+            && !self.blocks(&target)
+            && (self.mode == Mode::Denylist && group.is_none()
+                || self.rules.iter().any(|r| {
+                    group.is_none_or(|g| r.group == g)
+                        && Pattern::parse(&r.pattern).is_ok_and(|p| p.permits_host(&target))
+                }));
         if !covered {
             return Err(error("WEB_HOST_DENIED", "URL is not permitted by current policy"));
         }
@@ -690,5 +769,116 @@ mod tests {
         let padded = [bytes.as_slice(), &vec![b' '; 70_000]].concat();
         assert!(Policy::parse(&padded, 3).is_err());
         assert_eq!(Policy::parse(&padded, DEFAULT_MAX_RULES).unwrap().rules.len(), 3);
+    }
+
+    #[test]
+    fn denylist_reads_unblocked_public_urls_and_blocks_win_in_both_modes() {
+        let mut policy = Policy::empty();
+        policy
+            .rules
+            .push(Rule::new("https://docs.example.org/*", "docs", &[]).unwrap());
+        assert!(!policy.refuses_all() && Policy::empty().refuses_all());
+        // The allowlist is unchanged by the new fields.
+        assert!(policy.authorize("https://docs.example.org/a", None).is_ok());
+        assert_eq!(
+            policy.authorize("https://news.example.net/", None).unwrap_err().code,
+            "WEB_HOST_DENIED"
+        );
+        policy.mode = Mode::Denylist;
+        assert!(!Policy {
+            mode: Mode::Denylist,
+            ..Policy::empty()
+        }
+        .refuses_all());
+        assert!(policy.authorize("https://news.example.net/story?id=1", None).is_ok());
+        // A named group still narrows to its allow rules.
+        assert!(policy.authorize("https://docs.example.org/a", Some("docs")).is_ok());
+        assert_eq!(
+            policy
+                .authorize("https://news.example.net/", Some("docs"))
+                .unwrap_err()
+                .code,
+            "WEB_HOST_DENIED"
+        );
+        // Private, local and metadata hosts stay refused before any policy check.
+        for raw in [
+            "http://127.0.0.1/",
+            "http://192.168.1.10/",
+            "http://localhost/",
+            "http://metadata.goog/",
+        ] {
+            assert_eq!(
+                policy.authorize(raw, None).unwrap_err().code,
+                "WEB_SSRF_DENIED",
+                "{raw}"
+            );
+        }
+        // A blocked HTTPS pattern also covers HTTP, and wins over an allow rule.
+        policy
+            .blocked
+            .push(Policy::block_rule("https://*.example.net/*").unwrap());
+        policy
+            .blocked
+            .push(Policy::block_rule("https://docs.example.org/private/*").unwrap());
+        for raw in [
+            "https://news.example.net/",
+            "http://news.example.net/x",
+            "https://docs.example.org/private/k",
+        ] {
+            assert_eq!(policy.authorize(raw, None).unwrap_err().code, "WEB_BLOCKED", "{raw}");
+        }
+        assert!(
+            policy.authorize("https://example.net/", None).is_ok(),
+            "a subdomain block excludes the apex"
+        );
+        assert!(policy
+            .authorize_robots("https://other.example.com/robots.txt", None)
+            .is_ok());
+        assert!(policy
+            .authorize_robots("https://news.example.net/robots.txt", None)
+            .is_err());
+        policy.mode = Mode::Allowlist;
+        assert_eq!(
+            policy
+                .authorize("https://docs.example.org/private/k", None)
+                .unwrap_err()
+                .code,
+            "WEB_BLOCKED",
+            "kept blocks still apply after returning to the allowlist"
+        );
+        assert!(policy.authorize("https://docs.example.org/public", None).is_ok());
+    }
+
+    #[test]
+    fn mode_and_blocked_rules_round_trip_and_an_allowlist_file_is_unchanged() {
+        let mut policy = Policy::empty();
+        policy
+            .rules
+            .push(Rule::new("https://docs.example.org/*", "docs", &[]).unwrap());
+        let allow = serde_json::to_string(&policy).unwrap();
+        assert!(!allow.contains("mode") && !allow.contains("blocked"), "{allow}");
+        assert_eq!(Policy::parse(allow.as_bytes(), 8).unwrap().mode, Mode::Allowlist);
+        policy.mode = Mode::Denylist;
+        policy
+            .blocked
+            .push(Policy::block_rule("https://*.example.net/*").unwrap());
+        let deny = serde_json::to_vec(&policy).unwrap();
+        let back = Policy::parse(&deny, 8).unwrap();
+        assert_eq!((back.mode, back.blocked.len()), (Mode::Denylist, 1));
+        // A blocked rule must carry the blocked group, no seeds, and fit the cap.
+        let mut value: serde_json::Value = serde_json::from_slice(&deny).unwrap();
+        value["blocked"][0]["group"] = "docs".into();
+        assert!(Policy::parse(&serde_json::to_vec(&value).unwrap(), 8).is_err());
+        let mut value: serde_json::Value = serde_json::from_slice(&deny).unwrap();
+        value["mode"] = "open".into();
+        assert!(Policy::parse(&serde_json::to_vec(&value).unwrap(), 8).is_err());
+        policy
+            .blocked
+            .push(Policy::block_rule("https://example.net/*").unwrap());
+        let two = serde_json::to_vec(&policy).unwrap();
+        assert!(Policy::parse(&two, 1)
+            .unwrap_err()
+            .message
+            .contains("web.max_rules is 1"));
     }
 }
