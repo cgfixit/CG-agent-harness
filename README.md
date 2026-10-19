@@ -1,9 +1,9 @@
-# CG-Agent
+# CG Agent Harness
 
 [![CI](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml)
 [![Bundle](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml)
 
-CG-Agent combines chat, files, memory and selected tools locally. 
+CG Agent Harness combines chat, files, memory and selected tools locally.
 
 ![CG Agent Harness console, signed in, with a local model reply and the Console, Model and Web status chips](docs/screenshots/console-chat-signed-in-2026-10-05.png)
 
@@ -15,7 +15,7 @@ CG-Agent combines chat, files, memory and selected tools locally.
 |---|---|---|
 | **Local chat** | Streaming sessions, attachments, skills, prompt inspection, and bounded goal continuation with owned attachments and permitted web tools through `/loop`. | Loopback model service; Ollama by default. |
 | **Memory** | Shared pinned notes plus account-private structured facts, recall, and proposed summaries or insights. | Capture, retrieval, and suggestions on; applying proposed facts requires review. |
-| **Web research** | Google listings, permitted page fetches, and research with request, time, byte, and token budgets. | Web tools on with an empty content allowlist; search results never authorize page reads. |
+| **Web research** | Google listings, permitted page fetches, and research with request, time, byte, and token budgets. | Web tools on in allowlist mode with an empty content allowlist; search results never authorize page reads. |
 | **Reviewed coding** | A planner/executor loop, isolated repository clones, checks, complete diff review, and separate Git decisions. | Disabled until configured for a selected repository. |
 | **Jobs and schedules** | Detached coding jobs and reviewed interval or cron schedules. | Same coding permissions and owner-bound review. |
 | **Cloud chat** | Optional Grok or Claude. Sends only the new message, never local history, memory, skills, attachments, or web context. | Requires provider setup; unavailable for `/loop`. |
@@ -102,7 +102,7 @@ To build the macOS app from source (Apple Silicon host, Rust 1.88 and 1.90), see
 
 1. Sign in as `admin` with the one-time **setup code**. In the focused app or browser console, press **Cmd and +** (Cmd, Shift, =): the app's **Setup and recovery** window shows it; a browser names its file (`<home>/setup-code`). Then set a **new password**.
 2. List installed local tags with `/model list`, then select one with `/model use <exact-installed-tag>`. With `models.local_llm.auto_tune` (on by default) this also measures the model and sets per-model limits; `/model profile` shows them.
-3. Read the header chips: **Console** (API reachable), **Model** (selected tag installed at the loopback Ollama endpoint; other providers read *not checked*), and **Web** (*off*, *search only*, or URL rules). Then run `/status`, send a message, and inspect the assembled context with `/prompt`.
+3. Read the header chips: **Console** (API reachable), **Model** (selected tag installed at the loopback Ollama endpoint; other providers read *not checked*), and **Web** (*off*, *not configured*, *search only*, or URL rules; administrators also see a globe beside it that shows and switches the policy mode). Then run `/status`, send a message, and inspect the assembled context with `/prompt`.
 4. Run `/help` for topics, `/help web` for research, or `/help all` for the command catalog.
 
 Start coding only after the separate [coding setup](docs/CODING_PIPELINE.md).
@@ -111,6 +111,7 @@ Start coding only after the separate [coding setup](docs/CODING_PIPELINE.md).
 
 - **Local access:** fresh homes require HTTPS and account login. The optional harness API key does not replace account authentication.
 - **Repository changes:** `agentic.enabled`, `agentic.deepagent_github.enabled`, and `allow_git_write_tools` ship false; some write-mode and provider settings do not, so review the combined policy before enabling execution.
+- **Web policy mode:** homes ship in allowlist mode. An administrator can switch the whole home to block-list mode after a confirmation dialog; chat, `/loop`, fetch, and research then read any public URL no block rule covers. Private and local addresses stay refused in both modes.
 - **Network boundaries:** loopback binding limits incoming access only; research, cloud providers, subprocesses, and external model runtimes still reach the network.
 - **Cloud coding:** six gates end in per-run `--confirm-online`. Requests can send repository excerpts and task context before diff review; redaction does not remove proprietary code.
 - **Sandbox differences:** macOS uses Seatbelt. Linux prefers bubblewrap; its `unshare --net` fallback isolates networking without equivalent filesystem confinement.
@@ -134,7 +135,7 @@ Each command supports `--help`.
 
 ## Configuration and verification
 
-First launch seeds the home's `config.yaml` from [the defaults](assets/config.default.yaml); edit that copy. Permission gates require literal YAML `true`; quoted `"true"` or a missing key does not enable them. Startup logs any setting that ships `true` but is absent from your `config.yaml`, and `/memory` lists them. Most settings require restart; selected web/API limits support [live reload](docs/CONFIG_RELOAD.md).
+First launch seeds the home's `config.yaml` from [the defaults](assets/config.default.yaml); edit that copy. Permission gates require literal YAML `true`; quoted `"true"` or a missing key does not enable them. Startup logs any setting that ships `true` but is absent from your `config.yaml`, and `/memory` lists the structured-memory ones. Most settings require restart; selected web/API limits support [live reload](docs/CONFIG_RELOAD.md).
 
 Run the local quality bar (fmt, clippy, tests, and `cargo deny` when installed; see [AGENTS.md](AGENTS.md)):
 
