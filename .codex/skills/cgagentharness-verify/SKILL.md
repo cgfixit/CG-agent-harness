@@ -1,6 +1,6 @@
 ---
 name: cgagentharness-verify
-description: Verify CG-agent-harness backend, native desktop and local model behavior using isolated fixtures and evidence tied to the tested source and binary. Use for smoke tests, regression checks or release acceptance.
+description: Verify changed Harness backend, desktop or local-model behavior with scoped checks and isolated fixtures.
 ---
 
 # Verify the harness
@@ -10,15 +10,16 @@ checkout, source SHA, dirty state, binary and architecture. Preserve operator
 homes/services. Inspect fixtures and current test assertions.
 
 Choose checks by the changed contract:
-- Backend quality: root-toolchain fmt, Clippy with warnings denied, all-target
-  tests and cargo-deny, as documented in `AGENTS.md`.
+- Backend: run the changed command, route or function and inspect its effects;
+  use the scoped local checks in `AGENTS.md`. Broad regression tests belong in CI.
 - Contracts: use `cgagentharness-invariant-guard` for current test mapping,
   including ownership, memory, MCP, web, reload, schedules and notifications.
-  Documentation edits still run `invariant_guard` for the Markdown budget.
+  Documentation edits select `invariant_guard::markdown_stays_on_the_docs_budget`.
 - Native execution: `tests/macos_cargo.rs` and process lifecycle tests need real
   macOS Seatbelt; sandbox permission errors are not application regressions.
-- Desktop: package before compiling the shell, then desktop-toolchain fmt,
-  Clippy/tests and `scripts/test-desktop-backend.py` against the packaged backend.
+- Desktop: use `cgagentharness-release` for packaging order and provenance;
+  select desktop checks and `scripts/test-desktop-backend.py` cases that exercise
+  the changed boundary against the packaged backend.
 - Model/runtime: inspect actual inventory and exact configured model tag; do not
   equate similarly named GGUF/MLX variants or turn on cloud fallback for a smoke test.
 
@@ -28,8 +29,7 @@ Fake model/provider tests prove protocol behavior,
 not availability or live quality. App launch alone is not UI acceptance.
 Record only native UI interactions actually observed, in the PR body.
 
-Run a failing-case reproducer when correcting behavior. Never delete assertions or
-weaken guards to make tests pass. Baseline failures must be diagnosed before further
-implementation. Keep source changes out of runtime fixtures and close only processes
-started by this verification. Report commands, exit statuses, tested SHA/architecture,
-artifact hashes, skips and remaining limits without including credentials or home data.
+Keep a failing-case reproducer for corrections; diagnose baseline failures before
+attributing them to the candidate. Report commands, exit statuses, tested
+SHA/architecture, artifact hashes and remaining limits. A zero-test selection is
+NOT RUN. Follow `AGENTS.md` for preserving assertions and operator data/services.

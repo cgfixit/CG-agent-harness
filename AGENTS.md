@@ -154,26 +154,20 @@ cut stays cut. Weekly, `cgfixit` reviews `git log --since=1.week --stat -- '*.md
 
 ## Project skills
 
-Repository guidance, not `/api/skills` plugins: `.codex/skills/` (Codex),
-`.claude/skills/` (Claude Code, `/<slug>`) and `.github/skills/` (Copilot).
-Read the relevant `SKILL.md` when its task applies:
+Repository guidance is separate from the harness runtime `/api/skills` plugins.
+Start with `cgagentharness-project-guidance`, then read the skill whose task
+applies; loading it does not expand publication, merge or release authority.
 
-- `cgagentharness-project-guidance`: read order and skill routing; start here.
-- `fable-protocol`: evidence-first reasoning before costly code/security/CI claims.
-- `cgagentharness-invariant-guard`: "do the invariants still hold?" gate before
-  merging core-path diffs.
-- `cgagentharness-config-guard`: static fail-closed check of `config.default.yaml`.
-- `cgagentharness-write-policy-redteam`: attack write gates, confirm+reason,
-  clone jail and shim argv.
-- `verification-specialist`: break a *supplied* change without modifying the tree.
-- `cgagentharness-gotchas`: session-tested traps (CI flakes, Seatbelt noise,
-  toolchain fights, review timing).
-- `cgagentharness-optimize`: evidence-backed Rust/runtime/CI improvements; never
-  transplant CyClaw topology or defaults.
-- Codex only: `cgagentharness-release` (macOS packaging, release prep),
-  `cgagentharness-verify` (isolated backend, desktop and local-model checks).
-- Claude only: `cgagentharness-runtime-invariant-check` (report only),
-  `dep-sync` (fixes dependency and CI drift against `origin/main`), `doc-sync` (rewrites stale
-  docs), `run-cg-agent-harness` (fake-model console smoke),
-  `cgagentharness-otel-hardening` (telemetry-kill contract).
-- Copilot only: `repo-optimize` (focused draft PRs from the default branch).
+- Codex: [.codex/skills/README.md](.codex/skills/README.md) indexes contract/config
+  guards, write-policy probes, verification, optimization and macOS release work.
+- Claude: [.claude/skills/README.md](.claude/skills/README.md) includes its separate
+  invocation policies and Claude-only procedures. Preserve operator-only skills;
+  `doc-sync` remains operator-typed in Claude.
+- Copilot: [.github/skills/README.md](.github/skills/README.md) owns its inventory.
+
+Keep shared operating rules here, contracts in `INVARIANTS.md`, and task-specific
+mechanics in their skill. Verify inventories independently; similarly named
+Claude/Codex skills may differ in scope or invocation policy. When
+editing skills, check frontmatter, referenced paths/symbols and command filters,
+then run the focused Markdown-budget check. Static checks cannot prove
+runtime discovery or instruction reload in existing chats.

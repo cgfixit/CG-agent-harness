@@ -1,15 +1,13 @@
 ---
 name: cgagentharness-write-policy-redteam
-description: Adversarially exercise CG-agent-harness write/git approval, confirm+reason, clone jail, and shim argv boundaries ("browser never supplies a command"). Use when hardening or changing writer, write gates, git approval, shim argv encoding, or clone jail; do not silently close known gaps or loosen asserts to green.
+description: Adversarially exercise Harness write policy, approval binding, clone jail and hostile argv when those boundaries change or an audit is requested.
 ---
 
 # Write-policy Redteam
 
-The browser never supplies a command; repository writes are gated; the clone
-jail contains landed paths;
-`confirm` is never defaulted; `reason` is required; kill switch
-`CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` is AND-only. Exit code `4` = write
-refused.
+Read the write, approval and clone-jail contracts in `INVARIANTS.md` and the
+shared rules in `AGENTS.md`. Preserve disable-only kill-switch semantics and
+separate run, approval, push and publication intent.
 
 Use the Rust suites below. Inspect fresh-policy, approval and rollback
 assertions before selecting probes; an old end-to-end success test alone does
@@ -31,31 +29,25 @@ newly closed bypasses, without weakening existing checks.
 
 ## The loop
 
-### Step 1 — Run the write-policy corpus
+### Step 1 — Select the affected refusal paths
 
-```text
-GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-  cargo test --test real_repo_loop -- --nocapture
+Inspect assertions and callers in the table before choosing filters. For example:
 
-GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-  cargo test --test agentic_foundations -- --nocapture
-
-GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-  cargo test --test shim_and_agent_routes -- --nocapture
-
-GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-  cargo test --test invariant_guard --test write_policy --test write_kill_switch \
-    --test git_approval --test exact_edits -- --nocapture
+```sh
+GROK_API_KEY='' ANTHROPIC_API_KEY='' DEEPAGENT_API_KEY='' \
+  cargo test --locked --test real_repo_loop writer_gates_in_order_and_plan_integrity -- --exact --nocapture
 ```
 
-Narrow filters only after checking that they select the intended tests.
+Verify the output names the intended test. Run the other affected refusal cases;
+a request for a full write-policy audit requires every applicable table row.
+Follow `AGENTS.md` for local scope rather than running unrelated targets.
 
 ### Step 2 — Classify results into buckets
 
 | Bucket | Meaning | Action |
 |---|---|---|
 | **new_bypasses** | Attack that should refuse (exit 4 / 422 / jail) now succeeds or assert was deleted | **Regression.** Fix before anything else. Never loosen the assert. |
-| **known_gaps** | Documented residual / weaker-than-name signal already called out in `INVARIANTS.md` | Work list only with explicit owner decision; do not silently "close" by relaxing policy. |
+| **known_gaps** | Documented residual / weaker-than-name signal already called out in `INVARIANTS.md` | Fix within the authorized scope; otherwise report the remaining decision. Preserve policy. |
 | **fixed_findings** | Prior gap now refuses with evidence | Bank a durable regression test; keep the assert. |
 | **false_greens** | Suite green because confirm was defaulted, kill switch OR-ed, Seatbelt skipped, or shared listener used | Treat as FAIL of the verification method — reproduce with owned temp `CGAGENTHARNESS_HOME` + unique port. |
 
@@ -89,11 +81,10 @@ module:
 
 ### Step 5 — Report
 
-End with FACT vs INFERENCE, buckets counts, commands + exit codes, and whether
-exit-4 paths still hold. Skill completion ≠ publish authorization.
+Report observed versus inferred results, affected findings, commands/exit codes,
+tested SHA and remaining gaps. State which exit-4 paths were actually exercised.
 
 ## Guardrails
 
-- Apply current harness contracts from `INVARIANTS.md`.
 - Retain rollback recovery backups after quarantine; do not claim crash atomicity.
 - Pair with `cgagentharness-invariant-guard` before merging core-path diffs.

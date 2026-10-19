@@ -1,18 +1,17 @@
 ---
 name: cgagentharness-invariant-guard
-description: Assert CG-agent-harness security invariants still hold against the current tree or a diff. Use before merging changes to src/shim, guards/headers, writer, sandbox, workspace, or assets/config.default.yaml; when asked to check invariants; or as the first gate of a harness security review.
+description: Assess Harness security contracts against a tree or diff, including core-path merge checks and requested invariant audits.
 ---
 
 # CG-agent-harness invariant guard
 
-Check the current contracts against the supplied diff. Read `INVARIANTS.md`
-end-to-end, then `AGENTS.md`, affected code and tests. Core paths listed in
-`AGENTS.md` always require this check; other authority changes also qualify.
-Code wins over stale prose. Never weaken an assertion to obtain a pass.
+Check the supplied diff against `AGENTS.md` and the affected sections of
+`INVARIANTS.md`, then trace code and callers. For a full invariant audit, cover
+every section. Core paths and PR invariant statements are listed in `AGENTS.md`.
 
 ## Select evidence
 
-Run the structural suite first:
+Select affected structural checks first; a full invariant audit runs this target:
 
 ```sh
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
@@ -36,19 +35,20 @@ suite alone does not establish behavioral coverage.
 | Sync/jobs/schedules share preparation, owner checks, reviewed goals, at-most-once occurrences | `shim_and_agent_routes`, `agent_schedules`, `owner_isolation` |
 | Owned sessions/export/adoption, memory gates, pending-only proposals, recall revalidation | `owner_isolation`, `session_export`, `structured_memory`, `structured_memory_phase7`, `structured_memory_suggestions` |
 | Web authority, DNS pinning, revocation, listings grant no page access | `web_research`, `web_phase2_redteam`, `chat_web`; `src/server/web_policy.rs` |
-| Outbound MCP capabilities, broker confirmation, platform containment, tool-free loop | `mcp_client`, `mcp_lifecycle`, `mcp_windows`; `docs/MCP_CLIENT.md` |
+| Outbound MCP capabilities, broker confirmation, platform containment, MCP excluded from loops | `mcp_client`, `mcp_lifecycle`, `mcp_windows`; `src/common/mcp.rs` |
 | Inbound MCP machine-key authority, owner-only reads, empty grants, revocation | `mcp_server`; `src/server/mcp_keys.rs` |
 | Atomic limit reload, unchanged authority/rate history, restart-only settings | `secure_portal`; `src/server/config_reload.rs::RELOADABLE` |
 | Compaction preserves history on failure, reply reservations, bounded web calls | `chat_and_sessions`, `chat_web`; `src/server/compaction.rs` |
 | Incomplete billed replies, prediction versus usage, private notification retries | `spend_ledger`, `notifications`; `src/llm/cloud_chat.rs` |
 | Loopback Ollama pull/warmup, no num_ctx, native sidecar identity | `ollama_manage`, `scripts/test-desktop-backend.py`; `docs/DESKTOP.md` |
+| Provider-key storage, plaintext opt-in, private Windows credentials | `src/common/credential_store.rs`, `src/server/env_keys.rs`; `windows_private_credentials` |
+| LAN scope, closed netconnect gates, bounded dialing, passive status | `netconnect_flags`, `netconnect_scope`, `netconnect_cli`, `netconnect_syscall`; `src/netconnect/connect.rs` |
+| Guidance and Markdown limits | `invariant_guard::markdown_stays_on_the_docs_budget`; inspect `DOCS_BUDGET` and group caps |
 
 ## Inspect boundaries and report
 
-Only the shim dispatches the agentic child. Declared MCP children use
-`src/common/mcp.rs`; do not mistake that separate boundary for an I6 violation.
-Inspect new routes in `REGISTERED_PATHS` and new actions in shim, CLI and tests.
-Check shipped defaults with `cgagentharness-config-guard`.
+Check new routes/actions against the registration requirements in `AGENTS.md`
+and shipped defaults with `cgagentharness-config-guard`.
 
 Respect documented limits: process-global CSRF is not session-bound;
 process-group cleanup is not strict containment; private storage is not
@@ -56,5 +56,5 @@ encryption; external policy edits and syscalls are not one transaction.
 
 Report each applicable contract as PASS, FAIL or NOT RUN with commands,
 results and tested SHA. Identify uncovered assertions and platform gaps.
-Check every current invariant section for applicability, including sections
-added after this map. Skill completion grants no publication authority.
+Check for applicable sections added after this map. A zero-test filter is NOT
+RUN; structural coverage alone is not a behavioral security verdict.
