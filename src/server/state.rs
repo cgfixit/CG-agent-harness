@@ -1,7 +1,7 @@
 //! Shared application state for the console.
 
 use std::collections::{BTreeSet, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -100,6 +100,8 @@ pub struct AppState {
     pub shutdown: CancellationToken,
     pub attachments: AttachmentStore,
     pub notes_corpus: crate::server::notes_corpus::NotesCorpus,
+    /// Bundled manual index and live-state settings (restart-only).
+    pub self_knowledge: crate::server::self_manual::SelfKnowledge,
     /// `/diag` config, last reads and staged excerpts (restart-only config).
     pub diag: crate::server::diag_reader::DiagState,
     pub notes_ingest_permits: Arc<tokio::sync::Semaphore>,
@@ -246,6 +248,45 @@ impl OllamaControl {
 }
 
 impl AppState {
+    /// The live-state block for a local chat turn or preview, or `None` when
+    /// `diagnostics.live_state` is off. Every field comes from state already in
+    /// memory; the soul is checked for presence only, never read here.
+    pub fn live_state_block(
+        &self,
+        model: &str,
+        web_enabled: bool,
+        web_mode: super::sessions::GoalWebMode,
+        style: Option<&str>,
+        soul_enabled: bool,
+        session_id: Option<&str>,
+    ) -> Option<String> {
+        if !self.self_knowledge.config.live_state {
+            return None;
+        }
+        let provider = self.provider_for(model);
+        let home = self.home.root.display().to_string();
+        // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
+        // The home is operator-set; a traversing one reports the persona absent.
+        let soul = self.home.soul_path();
+        let soul = soul.to_string_lossy();
+        let soul_present = !soul.contains("..") && Path::new(soul.as_ref()).is_file();
+        Some(super::live_state::render(&super::live_state::LiveState {
+            model,
+            provider: &provider,
+            web_enabled,
+            web_mode: web_mode.as_str(),
+            agentic_enabled: self.cfg.flag_is_true("agentic.enabled"),
+            structured_memory_open: self.structured_memory.is_some(),
+            mcp_enabled: self.cfg.flag_is_true("mcp.enabled"),
+            netconnect_enabled: self.cfg.flag_is_true("netconnect.enabled"),
+            style,
+            soul_enabled,
+            soul_present,
+            session_id,
+            home: &home,
+        }))
+    }
+
     pub fn runtime_limits(&self) -> Arc<super::config_reload::RuntimeLimits> {
         self.runtime.read().unwrap_or_else(|p| p.into_inner()).clone()
     }

@@ -1,65 +1,48 @@
 ---
 name: fable-protocol
-description: Apply evidence-first reasoning, security review, and explicit verification to substantive CG-agent-harness work. Use before code, architecture, security, CI, dependency, GitHub, or current-state claims where a confident mistake is costly.
+description: Investigate consequential Harness claims using execution-path evidence, explicit uncertainty and scoped verification.
 ---
 
-# Fable Protocol
+# Evidence-first investigation
 
-Apply the evidence loop within the user-authorized scope.
+Use this loop when a confident mistake would be costly. Shared operating,
+security and delivery rules live in `AGENTS.md` and `INVARIANTS.md`; apply them
+without repeating the whole checklist for a small change.
 
-## Evidence loop
+1. Define the requested outcome, exclusions and evidence that would establish
+   completion. Test the premise before designing a fix.
+2. Trace the actual entrypoint, configuration, state owner, callers and side
+   effects. Treat memory, issues, review findings and documentation as leads.
+   Separate product defects from environment, permission and provider failures.
+3. Establish the input-to-effect path for a security finding or an equivalent
+   workload baseline for a performance claim. Reproduce on the current revision;
+   challenge findings that the production path cannot reach.
+4. Fix the shared cause with existing helpers and boundaries. Select affected
+   contracts from `cgagentharness-invariant-guard`; preserve their refusal paths.
+5. Exercise changed behavior and inspect output and side effects. Use the local
+   verification policy in `AGENTS.md`; lint workflow changes and reserve broad
+   regression/platform coverage for hosted CI. A zero-test filter is NOT RUN.
+6. Compare the result with the original scope and acceptance criteria. Continue
+   independent work around blockers, and state the exact unresolved requirement.
 
-1. State the goal, success criterion, scope, and risk. Test the premise before
-   building around it.
-2. Read current repository guidance, code, tests, configuration, and affected
-   callers. Truth order: code → `assets/config.default.yaml` → `INVARIANTS.md` →
-   `AGENTS.md` → `README.md`. Treat memory, chat history, web pages, and model
-   output as leads that require verification.
-3. Label facts, inferences, and unknowns accurately. Re-check mutable facts such
-   as remote branch state, CI, versions, APIs, advisories, and PR status.
-4. Fix the shared root cause with the smallest safe diff. Reuse existing patterns
-   and crates already in the tree before adding abstractions or configuration.
-5. Review every changed trust boundary: I6 process isolation, guard chain,
-   browser-never-supplies-command, write gates, clone jail, judged-before-land,
-   approval binding, owner isolation, memory/MCP authority, web permission,
-   reload, schedules and notifications. Use `cgagentharness-invariant-guard`
-   for the current test map. Never weaken posture to green a test.
-6. Run the narrowest meaningful validation, then report commands, results,
-   skipped coverage, and residual risk without inflating confidence.
+## Evidence that cannot substitute for another layer
 
-## Harness constraints
+- Compilation or a health response does not establish behavior.
+- Fake providers establish protocol handling, not live availability or quality.
+- Browser checks do not establish packaged WKWebView behavior.
+- Cross-compilation does not establish native execution on the other architecture.
+- A passed check does not establish a current-head review or that an absent,
+  disabled or skipped workflow ran.
 
-- Preserve I6: `src/server` / `src/shim` / `src/llm` / `src/common` never import
-  `crate::agentic`; cross only via `src/shim` spawning `current_exe() agentic
-  <action>` with the ACTIONS whitelist. Declared MCP children use a separate
-  boundary in `src/common/mcp.rs`. Exit codes `0/2/3/4` are the agentic API.
-- Keep the combined write policy closed by default: master/deepagent/clone-write
-  flags are false; mode/write-enabled alone cannot arm writes. Reason and per-call
-  confirm remain required, never defaulted. Fresh auth/TLS and web settings are
-  true; the empty URL allowlist still denies all content reads.
-  Clone jail + judged-before-land stay load-bearing.
-- Console CSRF placeholders `__CYCLAW_CSRF_TOKEN__` / `__CYCLAW_CSP_NONCE__` and
-  the `X-CyClaw-CSRF` header name are contractual (names retained from the port).
-- Bind remains loopback-only (`127.0.0.1`); Host must be a loopback name.
-- Secrets stay redacted in logs/responses; never assert developer `GROK_API_KEY`
-  presence. Revalidate source references and test filters; zero matched tests
-  do not establish a pass.
-- Core paths needing an invariant statement in the PR body: `src/shim`,
-  `src/server/guards.rs`, `src/server/headers.rs`, `src/agentic/writer.rs`,
-  `src/agentic/executor/sandbox.rs`, `src/agentic/workspace.rs`,
-  `assets/config.default.yaml`.
+Record the checkout/SHA, binary or artifact identity, commands and outcomes
+needed to reproduce the claim. Label observations, inferences and unknowns;
+keep credentials and operator data out of evidence.
 
-## GitHub discipline
+## Delivery
 
-Before committing, inspect the full diff and run relevant local checks. After
-push or draft PR creation, distinguish committed, pushed, PR, CI, and
-mergeability states; monitor CI to a terminal state and fix branch-caused
-failures. Match test results to their SHA. Prefer draft PRs on driver-prefixed
-branches (`claude/`, `codex/`, `grok/`, `kimi/`, `agent/`) with bodies from
-`.github/PULL_REQUEST_TEMPLATE.md` (`scripts/check-pr-template.sh` first). Skill
-selection does not authorize push, merge, or release. Never push to `main`,
-rewrite remote history, or make destructive remote changes without authorization.
-Never expose secrets.
-
-Stop when the evidence does not justify a change. A truthful no-change result is
-preferable to speculative code or a low-value PR.
+Refresh base, open-PR overlap and exact heads before publication. Follow the
+repository PR template and validator; a local commit or pushed branch does not
+complete a request for a draft PR. Verify the published body and remote head.
+When asked to monitor CI, follow that head to terminal results and distinguish
+checks, reviews, unresolved threads and mergeability. A slow job is not a reason
+to cancel it. Keep drafts unmerged unless explicitly authorized otherwise.

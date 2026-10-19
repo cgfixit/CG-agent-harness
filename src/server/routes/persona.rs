@@ -448,6 +448,38 @@ pub async fn preview(
             .map_err(|e| super::diag::diag_error(&e))?,
         None => None,
     };
+    let chat_web_mode = if portal_auditor {
+        crate::server::sessions::GoalWebMode::Off
+    } else {
+        session
+            .as_ref()
+            .map_or(settings.web_enabled.into(), |s| s.chat_web_mode(settings.web_enabled))
+    };
+    // portal_auditor gets the manual but not live state (home path, soul state).
+    let live_block = if portal_auditor {
+        None
+    } else {
+        state.live_state_block(
+            &state.current_model(),
+            settings.web_enabled,
+            chat_web_mode,
+            session.as_ref().and_then(|s| s.style.as_deref()),
+            settings.soul_enabled,
+            session.as_ref().map(|s| s.session_id.as_str()),
+        )
+    };
+    // The preview has no new message: match the manual against the retrieval
+    // query, else the session's last user turn.
+    let manual_query = req.retrieve_query.clone().or_else(|| {
+        session.as_ref().and_then(|s| {
+            s.messages
+                .iter()
+                .rev()
+                .find(|m| m.role == "user")
+                .map(|m| m.text.clone())
+        })
+    });
+    let manual = manual_query.and_then(|query| state.self_knowledge.select(&query));
     let inputs = PromptInputs {
         selected_skills: &selected,
         soul_enabled: settings.soul_enabled && !portal_auditor,
@@ -471,15 +503,11 @@ pub async fn preview(
                 &state,
                 crate::server::structured_memory_suggest::Source::Coding,
             ),
-        chat_web_mode: if portal_auditor {
-            crate::server::sessions::GoalWebMode::Off
-        } else {
-            session
-                .as_ref()
-                .map_or(settings.web_enabled.into(), |s| s.chat_web_mode(settings.web_enabled))
-        },
+        chat_web_mode,
         web_enabled: settings.web_enabled,
         attachment_fence: Some(attachment_fence.as_str()),
+        live_state: live_block.as_deref(),
+        self_manual: manual.as_ref().map(|selection| selection.block.as_str()),
         diag_context: diag.as_ref().map(|staged| staged.block.as_str()),
     };
     let composed = crate::server::prompts::compose_system_prompt_detailed(&inputs);
@@ -509,6 +537,12 @@ pub async fn preview(
             "unavailable_reason": style_load.as_ref().and_then(|load| load.unavailable_reason),
         },
         "candidate":req.soul_content.is_some(),
+        "self_manual": manual.as_ref().map(|selection| json!({
+            "chunks": selection.ids,
+            "chars": selection.chars,
+            "sha256": state.self_knowledge.manual.as_ref().map(|index| index.sha256.clone()),
+        })),
+        "live_state": live_block.is_some(),
         "diag": diag.as_ref().map(|staged| json!({"source":"diag","file":staged.file,"chars":staged.chars,"sha256":staged.sha256})),
         "limits":{"goal":2000,"web":4000,"memory":3000,"pinned_reserved":memory_budget.pinned_reserved,"facts_reserved":memory_budget.facts_reserved,"soul":max_chars(&state)},
         "structured_facts":{

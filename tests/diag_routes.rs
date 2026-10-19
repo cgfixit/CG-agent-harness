@@ -396,7 +396,15 @@ async fn a_staged_excerpt_reaches_one_local_turn_and_is_refused_elsewhere() {
 #[tokio::test]
 async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
     let model = start_mock_model().await;
-    let s = server(&model, true).await;
+    // Live state on, so its absence below is the role's doing, not the fixture's.
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("diagnostics.logs_enabled", "true")
+            .with("diagnostics.live_state", "true"),
+    )
+    .await;
     let portal = account(&s, "ops-portal", "portal_auditor").await;
     let (status, session) = json_call(&s, &portal, Method::POST, "/api/sessions", Some(json!({"title":"p"}))).await;
     assert_eq!(status, 201, "{session}");
@@ -422,6 +430,10 @@ async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
         .as_str()
         .unwrap_or("")
         .contains("SHARED-PERSONA-MARKER"));
+    assert!(!request["messages"][0]["content"]
+        .as_str()
+        .unwrap_or("")
+        .contains("LIVE_STATE"));
     assert!(request
         .get("tools")
         .is_none_or(|t| t.as_array().is_some_and(|a| a.is_empty())));
@@ -470,6 +482,29 @@ async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
     .await;
     assert_eq!(status, 200, "{body}");
     assert!(!body.to_string().contains("SHARED-PERSONA-MARKER"), "{body}");
+    assert_eq!(body["live_state"], false, "{body}");
+    assert!(!body["prompt"].as_str().unwrap_or("").contains("LIVE_STATE"), "{body}");
+    // Control: an admin's local turn on the same server carries the block, so the
+    // absence checks above can fail.
+    let admin = account(&s, "ops-admin", "admin").await;
+    let (status, asession) = json_call(&s, &admin, Method::POST, "/api/sessions", Some(json!({"title":"a"}))).await;
+    assert_eq!(status, 201, "{asession}");
+    let (status, body) = json_call(
+        &s,
+        &admin,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"session_id": asession["session_id"], "message": "hello"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        model.last_request().unwrap()["messages"][0]["content"]
+            .as_str()
+            .unwrap_or("")
+            .contains("<<<LIVE_STATE_DATA>>>"),
+        "an admin local turn carries the live state"
+    );
     let (status, body) = json_call(
         &s,
         &portal,
