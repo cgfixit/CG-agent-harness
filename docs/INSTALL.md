@@ -74,7 +74,7 @@ skip or quit. A rerun skips finished steps and signs in with the saved password.
 | `--trust-cert`, `--no-profile`, `--no-allowlist` | Trust the console certificate (choices 2 and 3 with the app); skip the profile or allowlist |
 
 Each line is logged with a time to `scripts/logs/install.log` (private, ignored by
-git); passwords and setup codes never are. Read the saved password with
+git); passwords never are. Read the saved password with
 `security find-generic-password -a admin -s 'CGagentHarness admin (<home>)' -w`.
 
 ### Step by step in Terminal

@@ -35,8 +35,8 @@ For ordinary operation:
 ./target/release/cgagentharness serve
 ```
 
-Use an unused port and one server per home. A fresh installation signs in as
-`admin` with the one-time code in `<home>/setup-code` and requires password replacement. Native app trust and external
+Use an unused port and one server per home. A fresh installation opens
+**Set your password** for `admin` (CLI: restricted `admin` / `admin`, then `account password`); nothing else works until replaced. Native app trust and external
 browser trust differ; follow `docs/SECURE_RESEARCH.md` rather than bypassing
 certificate checks. Use its authenticated `account` and `web` CLI examples for
 terminal operations. Preserve existing home/config/model state and never set a
