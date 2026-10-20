@@ -35,8 +35,7 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 - [`test-attachment-preview.mjs`](test-attachment-preview.mjs): preview reuses uploads and never leaks across sessions.
 - [`test-auth-deadlines.mjs`](test-auth-deadlines.mjs): console fetch helpers against headers-first replies.
 - [`test-delivery-review.mjs`](test-delivery-review.mjs): delivery UI handlers across logout and late replay.
-- [`test-desktop-setup.mjs`](test-desktop-setup.mjs): Setup status, action errors and stale replies; status never shows a bootstrap credential.
-- [`test-first-run-password.mjs`](test-first-run-password.mjs): the first-run **Set your password** form against a restricted-account fixture: setup-status probe, restricted login, CSRF-protected replacement.
+- [`test-desktop-setup.mjs`](test-desktop-setup.mjs): Setup status, action errors, stale replies and setup-code guidance.
 - [`test-header-buttons.mjs`](test-header-buttons.mjs): header automation buttons hide until account state is known.
 - [`test-loop-continuation.mjs`](test-loop-continuation.mjs): `/loop` turn prompt, `GOAL_DONE` marker, stall checks.
 - [`test-nl-search-routing.mjs`](test-nl-search-routing.mjs): natural-language search predicate against server phrasings.
