@@ -104,6 +104,7 @@ fn validate(worktree: &Path) -> Result<()> {
     }
     for file in [
         "config",
+        "commondir",
         "info/attributes",
         "config.worktree",
         "objects/info/alternates",
