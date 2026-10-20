@@ -486,17 +486,56 @@ impl<'a> RepoWorkspace<'a> {
 
     /// Read one UTF-8 text file from the clone (bounded).
     ///
-    /// Resolution happens inside the capability `Dir`: each path component is
-    /// opened relative to the previous one, and a symlink that points outside
-    /// the clone fails to resolve rather than being followed. The leaf is opened
-    /// with `O_NOFOLLOW` on unix so a leaf symlink is refused outright.
+    /// Resolve directory aliases inside the clone, refuse landed Git metadata,
+    /// then retain parent capabilities without following further aliases.
+    /// Unix parent and leaf opens use `O_NOFOLLOW`.
     pub fn read_file(&self, target: &str) -> Result<String> {
         let rel = self.read_target(target).inspect_err(|e| {
             self.audit.log(json!({"event": "agentic_repo_workspace_denied", "op": "read_file", "target": target, "reason": e.message}));
         })?;
-        let meta = self
+        let (parent_path, leaf) = rel.rsplit_once('/').unwrap_or((".", &rel));
+        let resolved = self
             .dir
-            .symlink_metadata(&rel)
+            .canonicalize(parent_path)
+            .map_err(|_| self.read_denied(target, "escape or missing"))?;
+        let mut parent = self.dir.try_clone()?;
+        for component in resolved.components() {
+            let std::path::Component::Normal(part) = component else {
+                continue;
+            };
+            if is_dotgit_name(&part.to_string_lossy()) {
+                return Err(self.read_denied(target, "git path may not touch the clone's .git directory"));
+            }
+            // Never follow a replacement alias after checking the landed path.
+            #[cfg(unix)]
+            {
+                use cap_std::fs::OpenOptionsExt;
+                let mut options = cap_std::fs::OpenOptions::new();
+                options.read(true).custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW);
+                parent = cap_std::fs::Dir::from_std_file(
+                    parent
+                        .open_with(part, &options)
+                        .map_err(|_| self.read_denied(target, "escape or missing"))?
+                        .into_std(),
+                );
+            }
+            #[cfg(not(unix))]
+            {
+                if parent
+                    .symlink_metadata(part)
+                    .map_err(|_| self.read_denied(target, "escape or missing"))?
+                    .file_type()
+                    .is_symlink()
+                {
+                    return Err(self.read_denied(target, "symlink parent refused"));
+                }
+                parent = parent
+                    .open_dir(part)
+                    .map_err(|_| self.read_denied(target, "escape or missing"))?;
+            }
+        }
+        let meta = parent
+            .symlink_metadata(leaf)
             .map_err(|_| self.read_denied(target, "escape or missing"))?;
         if !meta.is_file() {
             return Err(self.read_denied(target, "not a regular file"));
@@ -504,7 +543,7 @@ impl<'a> RepoWorkspace<'a> {
         if meta.len() > self.max_read_bytes {
             return Err(self.read_denied(target, "exceeds max_read_bytes"));
         }
-        let data = open_nofollow(&self.dir, &rel, self.max_read_bytes.saturating_add(1))
+        let data = open_nofollow(&parent, leaf, self.max_read_bytes.saturating_add(1))
             .map_err(|_| self.read_denied(target, "escape or missing"))?;
         if data.len() as u64 > self.max_read_bytes {
             return Err(self.read_denied(target, "exceeds max_read_bytes"));
