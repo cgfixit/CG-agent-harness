@@ -13,8 +13,10 @@ preparation are separate from the application's offline Cargo verification.
 | `rusqlite` 0.40 | Transactional account store; bundled SQLite avoids a machine-specific SQLite dependency |
 | `axum-server` 0.8, `rustls` 0.23 | Shared standalone/sidecar HTTPS; explicit ring provider, ordinary certificate verification |
 | `rcgen` 0.14, `x509-parser` 0.18 | Local P-256 certificate generation and validity/key/name checks; no OpenSSL subprocess |
-| `scraper` 0.27, `robotstxt` 0.3 | HTML extraction and permitted robots handling; no browser execution |
+| `scraper` 0.27, `html5ever` 0.39, `robotstxt` 0.3 | HTML extraction and permitted robots handling; no browser execution |
 | `tantivy` 0.27 | Embedded BM25 passage retrieval; bounded derived index, no daemon or embeddings |
+| `rmcp = "=3.5.1"` | Inbound MCP memory server (streamable HTTP); exact pin, bumped deliberately |
+| `zip` 9.0.5, `quick-xml` 0.42 | DOCX attachment reader: in-memory ZIP, deflate only; namespace-aware XML. No PDF reader or parser subprocess; limits in [CONSOLE.md](CONSOLE.md#docx-attachments) |
 | `objc2` / Foundation / WebKit / Security bindings | Native authentication-challenge handling for the exact owned loopback certificate |
 | Keyring ecosystem 1.x stores | OS store for managed provider keys: macOS Keychain, Windows Credential Manager and the maintained D-Bus Linux Secret Service backend |
 
@@ -36,7 +38,13 @@ build dependency does not itself require a CMake executable. See
   `.cargo/config.toml` sets `resolver.incompatible-rust-versions = "fallback"`
   for both crates: plain `cargo update` prefers releases within each crate's
   `rust-version`, and `--ignore-rust-version` or `--precise` remain explicit
-  overrides.
+  overrides. `uuid` 1.26 stays for the same reason (1.28 needs Rust 1.89).
+- Incompatible major lines are separate API migrations, not drift: backend
+  `base64` 0.22, `rand` 0.8, `scrypt` 0.11, `html5ever` 0.39, `windows-sys`
+  0.59 and the `rmcp` pin; desktop `toml` 0.8.2 and `brotli-decompressor` 6.0,
+  held by upstream constraints with `generic-array` and `matchit`. Newer
+  available versions alone do not make a valid lockfile stale or justify
+  expanding a security refresh into a framework/toolchain migration.
 - The backend license allowlist names only identifiers the locked graph uses.
   Add an identifier deliberately, with the crate that needs it, rather than
   keeping unused allowances that would admit a future dependency silently.
@@ -46,7 +54,7 @@ build dependency does not itself require a CMake executable. See
   upstream `dd725f4b13c30a86b398ccc59eb498f151f461c5` carried that correction
   until Tauri 2.12 shipped it; Cargo then reported the patch unused, and it was
   removed on 2026-10-13 without changing the resolved graph. No Git source
-  remains in the desktop lock; `cargo tree` must show none.
+  remains in either lock; `cargo tree` must show none.
 - Tantivy 0.27 resolves `lru` 0.18.2 or newer, so the former
   `RUSTSEC-2026-0253` exception is no longer needed. Desktop has no advisory
   exception.
@@ -56,15 +64,14 @@ build dependency does not itself require a CMake executable. See
   `unsafe-libyaml` leaves the backend lockfile, after both dependency policies
   and configuration parsing checks pass. Unused-ignore warnings do not detect
   available replacements.
-- Major-version updates to existing libraries are separate API migrations.
-  Newer available versions alone do not make a valid lockfile stale or justify
-  expanding this security feature into a framework/toolchain migration.
 - Duplicate versions are warnings under the existing policy. Advisories,
   unapproved licenses, wildcard requirements and unknown sources remain blocking.
 - Both `deny.toml` files ban push-telemetry and analytics SDK crates
   (OpenTelemetry, Sentry, PostHog, Segment, Mixpanel, Amplitude, Datadog,
   Honeycomb, Bugsnag, RudderStack, Statsig, LaunchDarkly, minitrace) by exact
   name, the CI half of the otel-hardening skill's T5 pattern sweep.
+- Optional runtime services (Google, SerpAPI, Ollama, cloud providers) are not
+  Cargo dependencies; a live-service check is not a dependency or test pass.
 
 ## Check and synchronize
 
@@ -88,59 +95,20 @@ setting is committed in `.cargo/config.toml`), inspect the manifest/lock diff,
 and rerun both crates' formatting,
 Clippy, tests, dependency policy, release builds and applicable native/package
 acceptance. Do not change global rustup overrides to satisfy a dependency.
+The `dep-sync` skill scripts this pass against `origin/main`.
 
 Exact versions are authoritative in the lockfiles. Consult
 the [RustSec advisory database](https://rustsec.org/advisories/) and upstream
 [Cargo resolver documentation](https://doc.rust-lang.org/cargo/reference/resolver.html#rust-version)
 when investigating newly reported drift. A clean dependency-policy result is a
 point-in-time advisory/license/source check, not proof of vulnerability absence.
+Workflow action pins live in `.github/workflows/` and move with those files,
+not with the lockfiles.
 
-## Chat Google-search follow-up (2026-09-12)
+## Last synchronization (2026-10-20)
 
-The chat web tools and Google result parsers reuse Reqwest, Scraper, Serde and
-Tokio already in the lockfiles. No crate, feature, lockfile, toolchain or advisory
-exception was added. Google/SerpAPI are
-optional runtime search services, distinct from Cargo dependencies and local
-model inference. A public-Google challenge is not a dependency or test pass.
-
-## Compatibility audit (2026-09-16)
-
-Both crates resolve independently under their pinned Rust versions and do not
-exchange Rust types across an ABI. Duplicate transitive versions in `cargo tree
--d` are warnings, not resolution failures. `ordered-float` 5.5 still exceeds the
-backend MSRV; incompatible major lines require separate API migrations. The
-Tauri patch was still required at that audit; it was removed on 2026-10-13 (see
-Retained constraints). No dependency update was part of that refresh.
-
-The September 16 audit applied all compatible updates within the manifest and
-Rust-version constraints: 13 backend and 12 desktop lock entries changed. Shared
-updates included `cc` 1.4.6, `cfg-if` 1.0.5, `lru-slab` 0.1.3, `quinn` 0.11.12,
-`quinn-proto` 0.11.18, `tinyvec` 1.13.3, `yoke-derive` 0.8.3, and
-`zerofrom-derive` 0.1.8. The backend moved to Clap 4.6.7. Desktop moved to
-`camino` 1.2.6, `redox_users` 0.5.3, and `zlib-rs` 0.6.8. Cargo added
-`synstructure` 0.14 and removed `tinyvec_macros` through those upstream changes.
-
-The audit retained incompatible lines of base64, rand, reqwest, scrypt, sha2,
-and windows-sys for separate migrations. Upstream constraints retain
-generic-array, matchit, and desktop TOML compatibility lines. The Serde sandbox
-fixture lock remains reproducibility data, not part of the product dependency
-graph.
-
-At that audit, CodeQL moved to v4.38.0, zizmor-action to v0.6.4 with zizmor
-1.30.1, and actionlint to v1.7.12. Verification covered both crates' formatting,
-all-target/all-feature Clippy, all-target tests, cargo-deny policies, compatible
-update previews, release packaging, and isolated native/backend acceptance.
-Those dated results describe that audit; they do not replace current checks.
-
-## DOCX attachment reader (issue #148)
-
-| Dependency | License | Purpose |
-|---|---|---|
-| `zip` 9.0.5 | MIT | In-memory ZIP reader; default features off, deflate only |
-| `quick-xml` 0.42.0 | MIT | Incremental, namespace-aware main-document XML reading |
-
-No PDF reader or parser subprocess is included. The application lockfile
-SHA-256 `530a6ac90fc335589ac494f7a60936b882b71760c185d119a98c60e900ba6148`
-was audited with `cargo deny check` and prepared with `scripts/prepare-cargo.py`
-for offline verification. The DOCX limits and deliberate format exclusions are
-in [CONSOLE.md](CONSOLE.md#docx-attachments).
+Both crates took every compatible release the MSRV-aware resolver offered:
+shared `crc32fast` 1.5.3, `rustls-webpki` 0.103.16 and `tokio` 1.54.0; backend
+`typed-path` 0.12.4; desktop `plist` 1.10.2 and `tauri-winres` 0.3.7. No
+manifest, feature, toolchain or advisory exception changed. Dated results
+describe that pass only; rerun the checks above before trusting them.

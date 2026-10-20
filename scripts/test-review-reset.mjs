@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 const html = readFileSync(process.env.CGAH_CONSOLE || new URL('../assets/static/harness.html', import.meta.url), 'utf8');
-const source = (start, end) => html.slice(html.indexOf(start), html.indexOf(end));
+const source = (start, end) => {
+  const from = html.indexOf(start), to = html.indexOf(end, from);
+  assert.ok(from >= 0 && to > from, 'missing source boundaries: ' + start + ' … ' + end);
+  return html.slice(from, to);
+};
 const nodes = new Map(), messages = [], calls = [];
 let analyticsClears = 0, scheduleClears = 0, notificationClears = 0;
 const headerStates = [], clearedTimers = []; let headersAtLogoutRequest = null;
@@ -35,7 +39,7 @@ vm.runInContext([
   source('async function runSlashMaybeFuzzy(', '/* ── wiring ── */'),
   source('async function watchAgentJob(', 'function showPendingAgentRun('),
   source('function showPendingAgentRun(', "agentPlanInput.addEventListener('change'"),
-  source('function resetAccountView(', "/* mode is 'login' or null"),
+  source('function resetAccountView(', 'function showSignIn('),
   source('if (hAuthLogout) {', 'function openPasswordChange('),
 ].join('\n'), context);
 const run = code => vm.runInContext(code, context);

@@ -103,7 +103,7 @@ To build the macOS app from source (Apple Silicon host, Rust 1.88 and 1.90), see
 
 ### 3. Sign in and try a conversation
 
-1. Sign in as `admin` with the one-time **setup code**. In the focused app or browser console, press **Cmd and +** (Cmd, Shift, =): the app's **Setup and recovery** window shows it; a browser names its file (`<home>/setup-code`). Then set a **new password**.
+1. Fresh homes open **Set your password**. Enter the private **setup code** and a new password. In the app, **Cmd and +** (Cmd, Shift, =) opens **Setup and recovery**, which shows the code; terminal users read `<home>/setup-code`.
 2. List installed local tags with `/model list`, then select one with `/model use <exact-installed-tag>`. With `models.local_llm.auto_tune` (on by default) this also measures the model and sets per-model limits; `/model profile` shows them.
 3. Read the header chips: **Console** (API reachable), **Model** (selected tag installed at the loopback Ollama endpoint; other providers read *not checked*), and **Web** (*off*, *not configured*, *search only*, or URL rules; administrators also see a globe beside it that shows and switches the policy mode). Then run `/status`, send a message, and inspect the assembled context with `/prompt`.
 4. Run `/help` for topics, `/help web` for research, or `/help all` for the command catalog.

@@ -52,12 +52,7 @@ vm.runInContext([
   between('const hAuthLogin = document.getElementById(', 'if (hAuthLogin) {'),
   between('if (hAuthLogin) {', 'if (hAuthLogout) {'),
   between('if (hAuthLogout) {', 'function openPasswordChange('),
-  between("document.addEventListener('keydown'", 'refreshHarnessAuth();\nlet memoryRefreshTimer'),
 ].join('\n'), context);
-// Cmd/Ctrl and "+" on the sign-in card; returns whether the browser default was kept.
-const plus = (mods = {metaKey:true}) => { let kept = true;
-  page.listeners.keydown({key:'+', code:'Equal', shiftKey:true, altKey:false, metaKey:false, ctrlKey:false, ...mods, preventDefault() { kept = false; }});
-  return kept; };
 // Await every probe the real handlers start, without timers.
 const started = [], original = context.refreshHeaderFeatures;
 context.refreshHeaderFeatures = usable => { const probe = original(usable); started.push(probe); return probe; };
@@ -99,28 +94,22 @@ probes = []; auth.whoami = reply(401);
 await context.refreshHarnessAuth(); await settle();
 assert.deepEqual(shown(), []);
 assert.deepEqual(probes, [], 'signed-out consoles send no feature probes');
-// Signed out, the sign-in card replaces the console; the setup-code note needs the server's word.
+// Fresh setup goes straight to the locked password form without logging in.
 assert.ok(page.body.classList.contains('signed-out'));
 assert.equal(node('hAuthLoginBox').hidden, false);
-assert.equal(node('hAuthHint').hidden, true, 'no note unless setup-status reports setup_code');
 auth.setup = reply(200, {setup_code:true});
 await context.refreshHarnessAuth(); await settle();
-assert.equal(node('hAuthHint').hidden, false, 'note shown while the setup code is active');
-node('hAuthHint').hidden = true;
-assert.equal(plus(), false, 'Cmd and + is taken on the sign-in card');
-assert.equal(node('hAuthHint').hidden, false, 'Cmd and + shows where the setup code is');
-assert.equal(node('hAuthError').textContent, '');
-node('hAuthHint').hidden = true;
-assert.equal(plus({ctrlKey:true}), false, 'Ctrl and + works off macOS too');
-assert.equal(node('hAuthHint').hidden, false);
-assert.equal(plus({metaKey:false}), true, 'a bare + is typing, not the shortcut');
+assert.equal(node('hAuthLoginBox').hidden, true);
+assert.equal(node('passwordLockScreen').hidden, false);
+assert.ok(page.body.classList.contains('password-required'));
+assert.deepEqual(passwordPrompts, [true]);
+assert.deepEqual(probes, [], 'first-run setup probes no operational features');
 auth.setup = reply(200, {setup_code:false});
 await context.refreshHarnessAuth(); await settle();
-assert.equal(node('hAuthHint').hidden, true, 'note hidden once it changed');
-assert.equal(plus(), false);
-assert.match(node('hAuthError').textContent, /No setup code is pending/, 'without a code the shortcut says so');
-node('hAuthHint').hidden = true; node('hAuthError').textContent = '';
+assert.equal(node('hAuthLoginBox').hidden, false, 'completed setup returns to ordinary login');
 assert.ok(!page.documentElement.classList.contains('auth-pending'));
+assert.ok(!html.includes('id="hAuthHint"'), 'retired setup-code guidance cannot be revived by a shortcut');
+passwordPrompts.length = 0;
 
 // Signed in: the account's features are probed; a pending password change shows nothing yet.
 replies = enabled; auth.whoami = reply(200, {username:'admin', role:'admin', must_change_password:true});
@@ -130,12 +119,11 @@ assert.deepEqual(probes, []);
 assert.deepEqual(passwordPrompts, [true]);
 assert.ok(page.body.classList.contains('password-required'), 'a pending replacement locks the console, dialog or not');
 assert.equal(node('passwordLockScreen').hidden, false);
-assert.equal(node('reloadLimits').hidden, true, 'Reload limits is not offered before the setup code is replaced');
+assert.equal(node('reloadLimits').hidden, true, 'Reload limits is not offered before the initial password is replaced');
 auth.whoami = reply(200, {username:'operator', role:'operator', must_change_password:false});
 await context.refreshHarnessAuth(); await settle();
 assert.deepEqual(shown(), buttons);
 assert.ok(!page.body.classList.contains('signed-out'), 'a session removes the sign-in card');
-assert.equal(plus(), true, 'signed in, Cmd and + keeps its browser meaning (zoom)');
 assert.ok(!page.body.classList.contains('password-required'), 'a replaced password unlocks the console');
 assert.equal(node('passwordLockScreen').hidden, true);
 
@@ -151,13 +139,13 @@ assert.deepEqual(shown(), buttons);
 assert.equal(memoryRefreshes, 1, 'successful login refreshes the retained Memory pane');
 assert.equal(node('hAuthError').textContent, '', 'successful login completes without a swallowed fixture error');
 context.refreshHeaderFeatures(false); await settle();
-// The login form path locks too, and keeps Reload limits hidden for a setup-code admin.
+// The login form path locks too, and keeps Reload limits hidden for an initial-password admin.
 auth.login = reply(200, {username:'admin', role:'admin', must_change_password:true});
 node('hAuthUser').value = 'admin'; node('hAuthPass').value = 'setup-code-fixture';
 await node('hAuthLogin').listeners.click(); await settle();
 assert.deepEqual(shown(), []);
 assert.ok(page.body.classList.contains('password-required'));
-assert.equal(node('reloadLimits').hidden, true, 'a setup-code login never offers Reload limits');
+assert.equal(node('reloadLimits').hidden, true, 'an initial-password login never offers Reload limits');
 assert.equal(passwordPrompts.at(-1), true);
 // Signing out (or any return to the sign-in card) ends the lock.
 auth.whoami = reply(401);
@@ -198,4 +186,4 @@ vm.runInContext("currentSession = 'second-session'", context);
 auth.logout = reply(401); auth.whoami = () => { throw new TypeError('Failed to fetch'); };
 await node('hAuthLogout').listeners.click(); await settle();
 assert.equal(context.currentSession, null, 'a 401 logout resets even when the probe fails');
-console.log('header buttons: hidden until auth is known, signed-out and failed probes stay hidden, enabled features shown, login/setup/logout re-evaluate, stale probes discarded, sign-in card, setup-code note and Cmd+ shortcut, and the setup-code lock passed');
+console.log('header buttons: hidden until auth is known, signed-out and failed probes stay hidden, enabled features shown, login/setup/logout re-evaluate, stale probes discarded, sign-in card, direct first-run password prompt, and the initial-password lock passed');

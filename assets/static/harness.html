@@ -125,7 +125,7 @@
      until a session exists. ── */
   body.signed-out .main,
   body.signed-out .header-right > :not(#harnessAuth) { display: none; }
-  /* A session still on its setup code has no other authority: the server
+  /* An account still on its initial password has no other authority: the server
      answers everything but password, whoami and logout with
      AUTH_PASSWORD_CHANGE_REQUIRED. The lock card replaces the console the
      same way, so closing the password dialog never reveals panels. */
@@ -156,10 +156,6 @@
   .signin :focus-visible { outline: 2px solid var(--accent-amber); outline-offset: 2px; }
   .signin-error { color: var(--accent-red); font-size: var(--fs-body, 12.5px); margin-top: 8px; }
   .signin-error:empty { display: none; }
-  .signin-hint {
-    margin-top: 14px; padding: 10px 12px; font-size: var(--fs-small, 12px); color: var(--text-primary);
-    background: rgba(212, 146, 11, .08); border: 1px solid rgba(212, 146, 11, .35); border-radius: 6px;
-  }
 
   /* ── LAYOUT ── */
   .main { display: flex; flex: 1; min-height: 0; }
@@ -635,15 +631,14 @@ dialog p { margin-bottom:12px; }
       <input id="hAuthPass" name="password" type="password" autocomplete="current-password" maxlength="1024">
       <p id="hAuthError" class="signin-error" role="alert"></p>
       <button id="hAuthLogin" type="submit">Sign in</button>
-      <p id="hAuthHint" class="signin-hint" hidden>First run: sign in as <strong>admin</strong> with the setup code. In the app, press <kbd>Cmd</kbd>+<kbd>+</kbd> (Cmd, Shift and =) to open <strong>Harness → Setup and recovery</strong>, which shows it; for a terminal server it is in the <code>setup-code</code> file in the harness home. You'll set a new password next.</p>
     </form>
   </section>
   <section class="signin" id="passwordLockScreen" hidden>
     <form id="passwordLockCard" aria-labelledby="passwordLockTitle">
-      <h1 id="passwordLockTitle">Replace the setup code</h1>
-      <p class="signin-lede">This account still signs in with its one-time setup code. Until you set a password, this session can only change its password, show who is signed in, or log out; the rest of the harness stays locked.</p>
+      <h1 id="passwordLockTitle">Set your password</h1>
+      <p class="signin-lede">Choose a password before using the harness. Until then, account access is limited to changing the password, checking who is signed in, and signing out.</p>
       <button id="passwordLockOpen" type="submit">Set a new password</button>
-      <p class="signin-hint">The setup code is the current password. In the app, <kbd>Cmd</kbd>+<kbd>+</kbd> (Cmd, Shift and =) opens <strong>Harness → Setup and recovery</strong>, which shows it; for a terminal server it is in the <code>setup-code</code> file in the harness home.</p>
+      <button id="passwordSignIn" type="button">Sign in to another account</button>
     </form>
   </section>
 
@@ -782,10 +777,10 @@ dialog p { margin-bottom:12px; }
   <h2 id="passwordTitle">Change your password</h2>
   <p id="passwordHelp">Enter your current password and a new password of at least 12 characters.</p>
   <form id="passwordForm">
-    <p><label>Current password <input id="passwordCurrent" type="password" autocomplete="current-password" required maxlength="1024"></label></p>
+    <p id="passwordCurrentField"><label><span id="passwordCurrentLabel">Current password</span> <input id="passwordCurrent" type="password" autocomplete="current-password" required maxlength="1024"></label></p>
     <p><label>New password <input id="passwordNew" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"></label></p>
     <p><label>Confirm new password <input id="passwordConfirm" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"></label></p>
-    <button type="submit" class="primary">Save password</button><button type="button" id="passwordClose">Close</button>
+    <button id="passwordSave" type="submit" class="primary">Save password</button><button type="button" id="passwordClose">Close</button>
     <p id="passwordFeedback" role="status"></p>
   </form>
 </dialog>
@@ -5407,7 +5402,7 @@ function setHarnessLogoutVisible(on) {
   $('reloadLimits').hidden = !on || window.__cyclawRole !== 'admin' || passwordRequired;
   $('webModeToggle').hidden = $('reloadLimits').hidden;
 }
-/* True while the signed-in account must replace its setup code. The server
+/* True while the account must choose its own password. The server
    allows such a session only password, whoami and logout, so the lock card
    replaces the console until then; closing the dialog cannot unlock it. */
 let passwordRequired = false;
@@ -5432,22 +5427,22 @@ function resetAccountView() {
   promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false};
   currentStyle = 'off'; currentStyleIssue = null; paintStyle(); sessionRevision++;
 }
-/* mode is 'login' or null (signed in, or authentication disabled).
-   The setup-code note shows only while setup-status reports that the one-time
-   code is still in effect. Signing out ends any password lock. */
-let setupCodePending = false;
-function showSignIn(mode, setupCode) {
-  setupCodePending = mode === 'login' && setupCode === true;
-  const out = mode === 'login';
+/* Fresh setup uses the password dialog over the same locked account screen.
+   Opening the page never signs in; only submitting a new password does. */
+let firstRunPassword = false;
+function showSignIn(mode, initialPassword = false) {
+  firstRunPassword = initialPassword === true;
+  const out = mode === 'login' || mode === 'setup';
   const wasOut = document.body.classList.contains('signed-out');
   document.body.classList.toggle('signed-out', out);
-  $('signInScreen').hidden = !out;
+  $('signInScreen').hidden = mode !== 'login';
   hAuthLoginBox.hidden = mode !== 'login';
-  $('hAuthHint').hidden = !(mode === 'login' && setupCode === true);
-  if (out) setPasswordRequired(false);
+  if (out) setPasswordRequired(mode === 'setup');
   /* Clearing also disconnects any Memory listing still in flight, so it
      stops. The first probe has shown nothing yet, so it resets nothing. */
   if (out && !wasOut && !document.documentElement.classList.contains('auth-pending')) resetAccountView();
+  if (mode === 'setup') { openPasswordChange(true); return; }
+  if (mode === 'login' && $('passwordDialog').open) $('passwordDialog').close();
   if (!out) { $('hAuthError').textContent = ''; return; }
   if (!wasOut || !$('signInScreen').contains(document.activeElement)) $('hAuthUser').focus();
 }
@@ -5506,7 +5501,14 @@ async function refreshHarnessAuth() {
     if (me.ok) {
       const data = await me.json();
       window.__cyclawRole = data.role;
-      showSignIn(null);
+      let initialPassword = false;
+      if (data.username === 'admin' && data.must_change_password) {
+        const setup = await fetchWithTimeout('/api/auth/setup-status', {}, 5000);
+        initialPassword = setup.ok && (await setup.json()).setup_code === true;
+      }
+      const completedElsewhere = firstRunPassword && !data.must_change_password;
+      if (completedElsewhere) $('passwordDialog').close();
+      showSignIn(null, initialPassword);
       setPasswordRequired(data.must_change_password === true);
       setHarnessLogoutVisible(true);
       refreshHeaderFeatures(!data.must_change_password);
@@ -5514,6 +5516,10 @@ async function refreshHarnessAuth() {
       $('webModeToggle').hidden = $('reloadLimits').hidden;
       if (who) who.textContent = accountLabel(data);
       if (data.must_change_password) openPasswordChange(true);
+      if (completedElsewhere) {
+        await refreshStatus(); await refreshSessions(); await refreshMemoryProposals();
+        sys('Initial setup was completed in another window.');
+      }
       return;
     }
     clearAnalytics();
@@ -5523,7 +5529,7 @@ async function refreshHarnessAuth() {
     window.__cyclawRole = null;
     if (who) who.textContent = '';
     setHarnessLogoutVisible(false);
-    showSignIn('login', status.setup_code);
+    showSignIn(status.setup_code === true ? 'setup' : 'login', status.setup_code);
   } catch (e) {
     /* Keep the last UI, except on the first probe: there is no last UI yet,
        and revealing the console would show it as usable. */
@@ -5549,6 +5555,7 @@ if (hAuthLogin) {
     if (!user.value.trim() || !pass.value) { error.textContent = 'Enter your username and password.'; return; }
     clearAnalytics();
     hAuthLogin.disabled = true;
+    const initialPassword = firstRunPassword;
     try {
       const r = await fetchWithTimeout('/api/auth/login', {
         method: 'POST',
@@ -5564,7 +5571,7 @@ if (hAuthLogin) {
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setPasswordRequired(data.must_change_password === true);
       setHarnessLogoutVisible(true);
-      showSignIn(null);
+      showSignIn(null, initialPassword && data.must_change_password === true);
       refreshHeaderFeatures(!data.must_change_password);
       if (data.must_change_password) openPasswordChange(true);
       else { await refreshMemoryProposals(); await refreshStatus(); await refreshSessions(); }
@@ -5624,7 +5631,9 @@ if (hAuthLogout) {
   });
 }
 function openPasswordChange(required) {
-  $('passwordHelp').textContent = required ? 'Replace the setup code with your own password before using the harness. Until you do, this session can only change its password or log out. Use at least 12 characters.' : 'Changing your password signs out other sessions. Use at least 12 characters.';
+  $('passwordTitle').textContent = required ? 'Set your password' : 'Change your password';
+  $('passwordHelp').textContent = firstRunPassword ? 'Enter your private setup code and choose a password of at least 12 characters. In the app, Harness → Setup and recovery shows the code; for a terminal server, read the setup-code file in the harness home.' : required ? 'Enter your current or temporary password and choose a new password of at least 12 characters to unlock the harness.' : 'Changing your password signs out other sessions. Use at least 12 characters.';
+  $('passwordCurrentLabel').textContent = firstRunPassword ? 'Setup code' : 'Current password';
   $('passwordFeedback').textContent = '';
   if (!$('passwordDialog').open) $('passwordDialog').showModal();
   $('passwordCurrent').focus();
@@ -5632,36 +5641,59 @@ function openPasswordChange(required) {
 $('hAuthPassword').addEventListener('click', () => openPasswordChange(passwordRequired));
 $('passwordLockCard').addEventListener('submit', event => { event.preventDefault(); openPasswordChange(true); });
 $('passwordClose').addEventListener('click', () => $('passwordDialog').close());
-/* Close, Escape or any other dismissal of a required replacement lands on the
-   lock card, never on the console. */
+$('passwordSignIn').addEventListener('click', () => showSignIn('login'));
+/* Dismissing a required replacement lands on the lock card, never the console. */
 $('passwordDialog').addEventListener('close', () => {
   $('passwordForm').reset();
   if (passwordRequired) $('passwordLockOpen').focus();
 });
 $('passwordForm').addEventListener('submit', async event => {
   event.preventDefault();
+  if ($('passwordSave').disabled) return;
   if ($('passwordNew').value !== $('passwordConfirm').value) { $('passwordFeedback').textContent = 'Passwords do not match.'; return; }
   const body = { current_password: $('passwordCurrent').value, password: $('passwordNew').value };
   $('passwordForm').reset();
+  $('passwordFeedback').textContent = '';
+  $('passwordSave').disabled = true;
   try {
+    if (firstRunPassword && window.__cyclawRole !== 'admin') {
+      const response = await fetchWithTimeout('/api/auth/login', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: body.current_password }),
+      }, 15000);
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        await refreshHarnessAuth();
+        if (response.status === 401 && !firstRunPassword && window.__cyclawRole) return;
+        const message = response.status === 401 && !firstRunPassword
+          ? 'Initial setup is complete. Sign in with your password.' : signInFailure(response.status, data);
+        $(firstRunPassword ? 'passwordFeedback' : 'hAuthError').textContent = message;
+        return;
+      }
+      // The supplied code must authenticate a restricted bootstrap account.
+      if (data?.username !== 'admin' || data.role !== 'admin' || data.must_change_password !== true) {
+        await refreshHarnessAuth();
+        $('passwordFeedback').textContent = 'Account state changed. Reload the page and try again.';
+        return;
+      }
+      window.__cyclawRole = data.role;
+      $('hAuthWho').textContent = accountLabel(data);
+      setPasswordRequired(true);
+      setHarnessLogoutVisible(true);
+    }
     await api('/api/auth/password', 'POST', body);
+    firstRunPassword = false;
     $('passwordDialog').close();
     await refreshHarnessAuth(); await refreshStatus(); await refreshSessions();
     sys('Password changed. Your other sessions were signed out.');
-  } catch (error) { $('passwordFeedback').textContent = error.message; }
-});
-/* Cmd/Ctrl and "+" (Shift and =) points at the setup code from the sign-in
-   card. The desktop app's menu takes the same keys first and opens Setup and
-   recovery; a browser gets the hint, which names where the code lives and
-   never contains it. Elsewhere the keys keep their browser meaning (zoom). */
-document.addEventListener('keydown', event => {
-  if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
-  if (event.key !== '+' && !(event.shiftKey && event.code === 'Equal')) return;
-  if (!document.body.classList.contains('signed-out') || hAuthLoginBox.hidden) return;
-  event.preventDefault();
-  $('hAuthHint').hidden = false;
-  if (!setupCodePending) $('hAuthError').textContent = 'No setup code is pending on this harness; sign in with your password.';
-  $('hAuthHint').scrollIntoView({ block: 'nearest' });
+  } catch (error) {
+    if (firstRunPassword && error.status === 401) {
+      window.__cyclawRole = null;
+      await refreshHarnessAuth();
+      if (!firstRunPassword && window.__cyclawRole) return;
+    }
+    $(firstRunPassword || $('passwordDialog').open ? 'passwordFeedback' : 'hAuthError').textContent = error.message;
+  } finally { $('passwordSave').disabled = false; }
 });
 refreshHarnessAuth();
 let memoryRefreshTimer = null, memoryRefreshBusy = false, memoryViewRevision = 0, memoryFactsRevision = 0;

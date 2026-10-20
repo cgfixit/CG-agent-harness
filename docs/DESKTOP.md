@@ -9,10 +9,8 @@ checks need their configured tools. Native acceptance evidence lives in PR bodie
 1. Unzip the universal archive and move **CG Agent Harness.app** to Applications
    (or a directory you own). Quit an existing copy before replacing it.
 2. Open it from Finder or the Dock. The app installs no login item or service.
-3. Fresh homes enable HTTPS, accounts, roles and web controls. Sign in as
-   `admin` with the setup code from **Harness → Setup and recovery**: with the app
-   in focus press **Cmd and +** (Cmd, Shift, =). Sign-in opens password
-   replacement; closing it leaves a lock card. Use at least 12 characters.
+3. Fresh homes enable HTTPS, accounts, roles and web controls. Enter your setup code and new password in **Set your password**. Get the code from **Harness → Setup and recovery**: with the app
+   in focus press **Cmd and +** (Cmd, Shift, =). Closing the password form leaves a lock card. Use at least 12 characters.
    The native webview verifies its owned certificate without system trust changes.
    Existing configuration is preserved. That window also shows diagnostics.
 4. Administrators manage provider credentials in **API Keys**. SerpAPI saves

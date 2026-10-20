@@ -100,12 +100,10 @@ using Rosetta** unchecked. Run every command from the clone, as your user.
    32768-token window, opens the app, and opens its console in your browser.
    `--trust-cert` asks for your password once so the browser trusts this home's
    certificate. Note the printed `CGagentHarness console: https://127.0.0.1:<port>/`.
-8. **Sign in:** user `admin` with the one-time setup code. To find it, put the
-   app window or the browser's console (`harness.html`) in focus and press
-   **Cmd and +** (technically Cmd, Shift and =). The app opens **Harness → Setup
-   and recovery**, which shows the code; the browser's sign-in card says where
-   the code is (the `setup-code` file in the harness home, read with
-   `cat ~/.CGagentHarness/setup-code`). Then choose a new password of at least 12
+8. **Set your password:** fresh homes open a form for the private setup code
+   and new password. In the focused app, **Cmd and +** (Cmd, Shift and =)
+   opens **Harness → Setup and recovery**, which shows the code. For a terminal
+   server, read `cat ~/.CGagentHarness/setup-code`. Use at least 12
    characters. Until you do, that session can only change its password or log
    out: closing the password dialog leaves a lock card, and the CLI and API
    answer `AUTH_PASSWORD_CHANGE_REQUIRED`. The browser needs its own sign-in.

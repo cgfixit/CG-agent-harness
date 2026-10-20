@@ -4,7 +4,8 @@ Operator and CI helpers. Only `verify-local.sh`, `check-pr-template.sh` and
 `python3 test-desktop-backend.py` are pre-approved for Claude in
 [.claude/settings.json](../.claude/settings.json). The `test-*.mjs` files are
 Node `vm` contract tests for `harness.html` slices and the desktop Setup script,
-run by the `ci.yml` chat-browser job and `verify-local.sh`.
+run by the `ci.yml` chat-browser job and `verify-local.sh`; `zizmor.yml` also runs
+`test-review-gate.mjs`.
 
 ## Operator
 
@@ -38,6 +39,7 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 - [`test-header-buttons.mjs`](test-header-buttons.mjs): header automation buttons hide until account state is known.
 - [`test-loop-continuation.mjs`](test-loop-continuation.mjs): `/loop` turn prompt, `GOAL_DONE` marker, stall checks.
 - [`test-nl-search-routing.mjs`](test-nl-search-routing.mjs): natural-language search predicate against server phrasings.
+- [`test-review-gate.mjs`](test-review-gate.mjs): the review-gate workflows' inline scripts against GitHub API fixtures.
 - [`test-review-reset.mjs`](test-review-reset.mjs): console review handlers without jobs or publishing.
 - [`test-schedule-review.mjs`](test-schedule-review.mjs): stale schedule responses cannot activate.
 - [`test-session-tokens.mjs`](test-session-tokens.mjs): header token refresh with out-of-order replies.
