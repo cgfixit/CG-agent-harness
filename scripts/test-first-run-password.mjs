@@ -27,10 +27,11 @@ const classes = () => { const values = new Set(); return {
 }; };
 const page = {getElementById:node, body:{classList:classes()}, documentElement:{classList:classes()}, activeElement:null};
 page.documentElement.classList.add('auth-pending');
+let accountUsername = 'admin';
 let pending = true, session = null, savedPassword = setupCode, failProbe = false;
 const requests = [];
 const response = (status, body) => new Response(JSON.stringify(body), {status, headers:{'Content-Type':'application/json'}});
-const account = () => ({username:'admin', role:'admin', must_change_password:pending});
+const account = () => ({username:accountUsername, role:'admin', must_change_password:pending});
 async function request(path, options = {}) {
   const body = options.body ? JSON.parse(options.body) : undefined;
   requests.push({path, method:options.method || 'GET', body, headers:options.headers});
@@ -168,6 +169,14 @@ assert.ok(!node('passwordCurrentField').hidden && !node('passwordCurrent').disab
 node('passwordCurrent').value = savedPassword;
 await submit('second-password-123');
 assert.equal(savedPassword, 'second-password-123');
+
+// Forced replacement on another account uses its current password, not a setup code.
+accountUsername = 'existing-admin'; pending = true; session = 'restricted';
+await context.refreshHarnessAuth(); await settle();
+assert.equal(node('passwordCurrentLabel').textContent, 'Current password');
+assert.match(node('passwordHelp').textContent, /current or temporary password/);
+assert.ok(!node('passwordHelp').textContent.includes('setup code'));
+accountUsername = 'admin';
 
 // Existing accounts retain an ordinary sign-in path while admin setup is pending.
 pending = true; savedPassword = setupCode; session = null;

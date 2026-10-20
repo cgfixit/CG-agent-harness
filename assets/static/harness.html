@@ -5632,7 +5632,7 @@ if (hAuthLogout) {
 }
 function openPasswordChange(required) {
   $('passwordTitle').textContent = required ? 'Set your password' : 'Change your password';
-  $('passwordHelp').textContent = required ? 'Enter your private setup code and choose a password of at least 12 characters. In the app, Harness → Setup and recovery shows the code; for a terminal server, read the setup-code file in the harness home.' : 'Changing your password signs out other sessions. Use at least 12 characters.';
+  $('passwordHelp').textContent = firstRunPassword ? 'Enter your private setup code and choose a password of at least 12 characters. In the app, Harness → Setup and recovery shows the code; for a terminal server, read the setup-code file in the harness home.' : required ? 'Enter your current or temporary password and choose a new password of at least 12 characters to unlock the harness.' : 'Changing your password signs out other sessions. Use at least 12 characters.';
   $('passwordCurrentLabel').textContent = firstRunPassword ? 'Setup code' : 'Current password';
   $('passwordFeedback').textContent = '';
   if (!$('passwordDialog').open) $('passwordDialog').showModal();
