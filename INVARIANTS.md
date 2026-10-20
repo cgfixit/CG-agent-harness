@@ -305,8 +305,8 @@ with `O_NOFOLLOW` (unix). 256 000-byte cap, UTF-8 required.
   (the loop's only file write), `workspace_reads_and_inspection_stay_inside_the_clone`,
   `read_jail_refuses_symlink_escapes_without_following_the_leaf`,
   `read_jail_refuses_dotgit_metadata`.
-- Capability-based resolution closes the canonicalize-then-open TOCTOU window:
-  no bare path is handed to the OS a second time.
+- Capability-relative opens stay inside the clone; checked parents and leaves
+  refuse replacement symlinks on Unix without ambient-path reopening.
 
 Clone jail ≠ secrets. After a selector canonicalizes inside the jail, local
 planner `=== READ ===` requests and operator `--read-file` values are refused

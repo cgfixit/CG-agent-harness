@@ -336,6 +336,26 @@ fn read_jail_refuses_symlink_escapes_without_following_the_leaf() {
     assert!(!std::fs::read_to_string(&outside).unwrap().is_empty());
 }
 
+#[cfg(unix)]
+#[test]
+fn read_jail_refuses_intermediate_symlinks_into_dotgit() {
+    let dir = tempfile::tempdir().unwrap();
+    let clone = seeded_clone(dir.path());
+    let ctx = enabled_ctx(dir.path(), &[]);
+    let ws = RepoWorkspace::open_existing(&ctx, &clone).unwrap();
+    std::os::unix::fs::symlink(".git", clone.join("metadata")).unwrap();
+    std::os::unix::fs::symlink("metadata", clone.join("chained")).unwrap();
+    std::fs::create_dir(clone.join("docs")).unwrap();
+    std::os::unix::fs::symlink("../.git", clone.join("docs/metadata")).unwrap();
+    for target in ["metadata/config", "chained/config", "docs/metadata/config"] {
+        assert!(clone.join(target).is_file(), "{target}");
+        assert!(ws.read_file(target).is_err(), "Git metadata alias: {target}");
+    }
+    std::fs::write(clone.join("docs/notes.txt"), "safe alias\n").unwrap();
+    std::os::unix::fs::symlink("docs", clone.join("safe")).unwrap();
+    assert_eq!(ws.read_file("safe/notes.txt").unwrap(), "safe alias\n");
+}
+
 #[test]
 fn read_jail_refuses_dotgit_metadata() {
     let dir = tempfile::tempdir().unwrap();
