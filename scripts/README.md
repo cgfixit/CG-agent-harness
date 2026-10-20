@@ -36,6 +36,7 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 - [`test-auth-deadlines.mjs`](test-auth-deadlines.mjs): console fetch helpers against headers-first replies.
 - [`test-delivery-review.mjs`](test-delivery-review.mjs): delivery UI handlers across logout and late replay.
 - [`test-desktop-setup.mjs`](test-desktop-setup.mjs): Setup status, action errors, stale replies and setup-code guidance.
+- [`test-first-run-password.mjs`](test-first-run-password.mjs): one-form first-run setup: private setup code plus new password through restricted login and CSRF-protected replacement; cross-tab completion, expired restricted sessions, wrong codes, other-account sign-in.
 - [`test-header-buttons.mjs`](test-header-buttons.mjs): header automation buttons hide until account state is known.
 - [`test-loop-continuation.mjs`](test-loop-continuation.mjs): `/loop` turn prompt, `GOAL_DONE` marker, stall checks.
 - [`test-nl-search-routing.mjs`](test-nl-search-routing.mjs): natural-language search predicate against server phrasings.
