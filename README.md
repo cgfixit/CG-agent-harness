@@ -5,7 +5,9 @@
 
 CG Agent Harness combines chat, files, memory and selected tools locally.
 
-![CG Agent Harness console, signed in, with a local model reply and the Console, Model and Web status chips](docs/screenshots/console-chat-signed-in-2026-10-05.png)
+[![Native macOS and web demo: an Aurora release handoff](docs/screenshots/demo/poster.jpg)](docs/screenshots/demo/CG-Agent-Harness-60-second-demo.mp4)
+
+[Watch the silent 60-second demo](docs/screenshots/demo/CG-Agent-Harness-60-second-demo.mp4) · [Voiceover cues and recording notes](docs/screenshots/demo/voiceover-cues.txt). A synthetic release review in separate native and web sessions; edited for pacing.
 
 [Quick start](#quick-start) · [Engineering choices](#engineering-choices) · [Security and defaults](#security-and-defaults) · [Documentation](#documentation)
 

@@ -1,0 +1,70 @@
+CG AGENT HARNESS — NATIVE + WEB
+60.000 seconds · 1920×1080 · H.264 · 30 fps · no audio track
+
+Optional voiceover cues
+
+00:00–00:07 | A local release review
+Picture: Freshly built native macOS app, local model ready, Aurora session.
+Voice: "A fresh macOS build, a local model, and a synthetic release review."
+Quiet hold: 00:03–00:07.
+
+00:07–00:23 | Check the release gates
+Picture: Submit the native question; the real response says HOLD. A detail
+crop makes the latency and observation-window checks readable.
+Voice: "Aurora's canary is too slow, and the observation window is incomplete.
+The harness checks both gates before recommending expansion."
+Quiet hold: 00:20–00:23.
+
+00:23–00:32 | Inspect the source note
+Picture: Run /memory and inspect the actual operator-pinned Aurora note.
+Voice: "Inspect the pinned context behind that decision: thresholds, owners,
+rollback conditions, and the boundary on authorized work."
+Quiet hold: 00:29–00:32.
+
+00:32–00:40 | Open the web harness
+Picture: Isolated browser, independently created Aurora operator-handoff session.
+Voice: "The web harness runs the same revision, with a separate home and session."
+Quiet hold: 00:37–00:40.
+
+00:40–00:54 | Prepare the operator handoff
+Picture: Submit the complementary question and show the real model response.
+Voice: "Using its own copy of the brief, the web harness turns the release
+decision into a handoff for Maya and Rowan."
+Quiet holds: 00:49–00:51 and 00:52–00:54.
+
+00:54–01:00 | Ready for human review
+Picture: A readable detail crop of the complete web handoff.
+Voice: "The decision, next check, rollback trigger, and evidence to retain."
+Quiet closing hold: 00:55–01:00.
+
+Recording and editing notes
+
+- Both surfaces were operated through Computer Use and captured as continuous,
+  window-only screen recordings. This is not a sampled-screenshot animation.
+- Application output is authentic and unchanged. Detail crops occur at
+  00:17, 00:26 and 00:54; labels and framing are editorial overlays.
+- Model warmup, authentication, session creation, and pinning the synthetic
+  brief happened before the selected takes. Text was entered directly in
+  the composer. An earlier native answer was excluded after its loose
+  "healthy" wording prompted a more precise numeric-gate question.
+- Idle time and model waiting were cut. Selected action/streaming footage
+  remains at normal speed; still tails were extended for voiceover. This
+  video is not a latency benchmark.
+- Native and web sessions are independent. The same synthetic note was
+  entered separately in each home. No session synchronization is claimed.
+- The workspace brief contains fictional services, owners and metrics.
+  It is supplied as pinned text, not through repository retrieval.
+- The native file chooser did not complete through Computer Use during
+  preparation; attachment behavior is not demonstrated or verified here.
+- The browser shows a local self-signed HTTPS certificate as "Not Secure."
+  This is a disposable loopback demo, not evidence of public TLS trust.
+- No coding, deployment, repository write approval, web research, or automatic
+  memory approval is demonstrated. The "Web not configured" chip refers to
+  outbound research tools, not the browser console.
+
+Recorded source: 3a32ae57ee62eeb3d1983c6c4899cbb613a6d107
+Model: qwen3.8:27b-mlx-cg, local Ollama MLX runner, 32768 loaded context.
+Both effective profiles: temperature 0, maximum output 4096 tokens.
+Native bundle: fresh universal arm64/x86_64 build, ad-hoc signed, not notarized.
+Raw recordings, build hashes, process identities, runtime checks, and the exact
+edit timeline are retained outside these publishable assets.
