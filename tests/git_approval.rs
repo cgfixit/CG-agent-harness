@@ -113,6 +113,57 @@ fn approved_glob_filename_does_not_stage_its_neighbors() {
     assert_eq!(git(&["show", "HEAD:literal[ab].txt"], &dest), "approved");
 }
 
+#[test]
+fn approval_refuses_redirected_common_directory_without_mutating_another_repository() {
+    let temp = tempfile::tempdir().unwrap();
+    let (ctx, dest) = fixture(temp.path());
+    let other = temp.path().join("other");
+    git(
+        &["clone", "-q", dest.to_str().unwrap(), other.to_str().unwrap()],
+        temp.path(),
+    );
+    std::fs::write(dest.join("target.txt"), "approved\n").unwrap();
+    let ws = RepoWorkspace::attach(&ctx, &dest).unwrap();
+    let head = manifest::git_head(&dest).unwrap();
+    let paths = ["target.txt".into()];
+    let (_, digest) = manifest::build_manifest(&dest, &paths, "fixture", &head).unwrap();
+    let index = std::fs::read(dest.join(".git/index")).unwrap();
+    let other_index = std::fs::read(other.join(".git/index")).unwrap();
+    let objects = git(&["count-objects", "-v"], &other);
+    std::fs::write(
+        dest.join(".git/commondir"),
+        format!("{}\n", other.join(".git").display()),
+    )
+    .unwrap();
+
+    let result = ws.commit_accepted(&FinalizeParams {
+        reason: "reviewed fixture",
+        confirm: true,
+        branch_name: "codex/exact-tree",
+        commit_message: "test: exact tree",
+        changed_files: &paths,
+        decision: "approve",
+        protected_write_paths: &[],
+        run_id: "fixture",
+        acceptance_digest: Some(&digest),
+        acceptance_base_head: Some(&head),
+    });
+    assert_eq!(
+        git(&["branch", "--list", "codex/exact-tree"], &other),
+        "",
+        "approval must not create a branch in the other repository: {result:?}"
+    );
+    let error = result.unwrap_err();
+    assert_eq!(error.code, "AGENTIC_WRITE_REFUSED");
+    assert!(error.message.contains("unsupported Git metadata"));
+    assert_eq!(std::fs::read(dest.join(".git/index")).unwrap(), index);
+    assert!(!dest.join(".git/index.lock").exists());
+    assert_eq!(std::fs::read(other.join(".git/index")).unwrap(), other_index);
+    assert_eq!(git(&["rev-parse", "HEAD"], &other), head);
+    assert_eq!(git(&["count-objects", "-v"], &other), objects);
+    assert!(ws.diff(false).is_err(), "inspection must refuse the same metadata");
+}
+
 #[cfg(unix)]
 #[test]
 fn hooks_and_filters_do_not_execute_during_inspection_or_approval() {
