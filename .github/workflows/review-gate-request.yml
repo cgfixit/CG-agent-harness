@@ -1,0 +1,26 @@
+# Fork and Dependabot events run with no write permissions or secrets.
+# This workflow cannot authorize a verdict; it only wakes the trusted gate.
+name: review gate request
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+  pull_request_review_comment:
+    types: [created, deleted]
+
+permissions: {}
+
+concurrency:
+  group: review-gate-request-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  request:
+    if: github.event.pull_request.state == 'open'
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Request a trusted review-gate evaluation
+        run: 'true'
