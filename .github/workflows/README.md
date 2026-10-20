@@ -9,7 +9,9 @@ release flow: [docs/RELEASING.md](../../docs/RELEASING.md).
 
 - [`ci.yml`](ci.yml): push, PR and `workflow_call`: fmt, clippy, tests on Linux, macOS and Windows with planner keys blanked, the required `CGAH_REQUIRE_*` sandbox and lifecycle jobs, deny, invariant guard. Required.
 - [`pr-template-check.yml`](pr-template-check.yml): PRs only (open, edit, sync, reopen, ready for review), never pushes to main: PR-body template and base-is-main gate. Blocking.
-- [`review-gate.yml`](review-gate.yml): review and comment events: reports open threads and running Codex reviews. Advisory, never fails.
+- [`review-gate-request.yml`](review-gate-request.yml): PR, review and review-comment events, fork and Dependabot PRs included, with no permissions or secrets: a wake-up signal that cannot write a verdict.
+- [`review-gate.yml`](review-gate.yml): `workflow_run` of that request, plus Codex summary comments: the base-branch dispatcher. It checks the source run's identity through the API, never downloads its artifacts or runs PR code, then calls the evaluator.
+- [`review-gate-evaluate.yml`](review-gate-evaluate.yml): `workflow_call` only: marks the `review gate` check in progress, polls open threads and running Codex reviews with a read-only token, then publishes the check. Open threads are neutral; only an evaluation error closes the check as failed. Resolving a thread alone fires no event: re-run the dispatcher after the poll window. Advisory, never a merge blocker.
 - [`../rulesets/main-protection.json`](../rulesets/main-protection.json): the `main` ruleset, imported at Settings, Rules, Rulesets, New ruleset, Import. Requires the `ci.yml` jobs above, squash merges only, through the merge queue (`ci.yml` runs on `merge_group`; the docs-only skip never applies there), no deletes or force-pushes. Repository admins bypass only from a pull request's bypass button, never by direct push. Turn on *Allow auto-merge* in General settings so *Merge when ready* queues several PRs.
 
 ## Packaging
@@ -20,7 +22,7 @@ release flow: [docs/RELEASING.md](../../docs/RELEASING.md).
 
 ## Lint and scanners
 
-- [`zizmor.yml`](zizmor.yml): path-filtered: zizmor and pinned actionlint on workflows, plus `test-release-plan.py`.
+- [`zizmor.yml`](zizmor.yml): path-filtered: zizmor and pinned actionlint on workflows, plus `test-release-plan.py` and `test-review-gate.mjs`.
 - [`script-lint.yml`](script-lint.yml): path-filtered: shellcheck, Python compile, `node --check` on scripts and hooks.
 - [`rust-clippy.yml`](rust-clippy.yml): push, PR, weekly: the `ci.yml` clippy invocation published as SARIF; not the gate.
 - [`codeql.yml`](codeql.yml): push, PR, weekly: CodeQL for Rust and Actions.
