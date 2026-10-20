@@ -35,6 +35,7 @@ struct Desktop {
 struct Status {
     message: String,
     details: String,
+    setup_code: Option<String>,
 }
 
 fn show(app: &tauri::AppHandle, label: &str) {
@@ -121,10 +122,12 @@ fn desktop_status(state: tauri::State<'_, Desktop>) -> Status {
         Ok(owner) => Status {
             message: owner.message.clone(),
             details: owner.details.clone(),
+            setup_code: owner.backend.as_ref().and_then(|_| backend::home().ok()).and_then(|home| setup_code(&home)),
         },
         Err(_) => Status {
             message: "Waiting for the owned backend…".into(),
             details: "If this persists, check for a macOS file-access prompt. Move the app to Applications and retry; do not change global security settings.".into(),
+            setup_code: None,
         },
     }
 }
@@ -212,12 +215,7 @@ fn launch(app: &tauri::AppHandle, initialize_key: Option<String>) -> Result<(), 
             window
                 .navigate(origin.parse().map_err(|_| "Invalid origin.")?)
                 .map_err(|_| "Cannot navigate to owned backend.")?;
-            owner.message = match setup_code(&home) {
-                Some(code) => format!(
-                    "Backend ready. First sign-in: user admin, setup code {code}. You then choose a new password."
-                ),
-                None => "Backend ready. Sign in to the harness.".into(),
-            };
+            owner.message = "Backend ready. Sign in to the harness.".into();
             let tools: Vec<_> = ["git", "gh", "cargo", "rustc", "python3", "xcrun"]
                 .into_iter()
                 .map(|name| {
@@ -409,7 +407,7 @@ fn main() {
                 if let Ok(mut owner) = state.owner.try_lock() {
                     if let Some(backend) = owner.backend.as_mut() {
                         if let Err(message) = backend.status() {
-                            owner.message = message; owner.backend.take();
+                            owner.message = message; owner.details.clear(); owner.backend.take();
                             if let Some(window) = handle.get_webview_window("harness") { let _ = window.destroy(); }
                             show(&handle, "setup");
                         }
@@ -437,5 +435,22 @@ fn main() {
             _ => (),
         }),
         Err(_) => eprintln!("CG Agent Harness could not initialize its native window."),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn setup_code_tracks_the_current_file() {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("setup-code");
+        assert_eq!(super::setup_code(home.path()), None);
+        std::fs::write(&path, "fixture-code\n").unwrap();
+        assert_eq!(super::setup_code(home.path()).as_deref(), Some("fixture-code"));
+        std::fs::write(&path, "invalid code").unwrap();
+        assert_eq!(super::setup_code(home.path()), None);
+        std::fs::write(&path, "fixture-code\n").unwrap();
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(super::setup_code(home.path()), None);
     }
 }

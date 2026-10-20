@@ -86,7 +86,7 @@ The universal app (Apple Silicon and Intel) runs its backend on an ephemeral loo
 
 #### Standalone server: macOS or Linux
 
-Source builds use **Rust 1.88**. macOS requires Xcode Command Line Tools; Linux requires a C toolchain, `pkg-config`, and D-Bus development headers ([Install](docs/INSTALL.md)).
+Source builds use **Rust 1.88**. macOS requires Xcode Command Line Tools; Linux requires a C toolchain ([Install](docs/INSTALL.md)).
 
 ```bash
 git clone https://github.com/cgfixit/CG-agent-harness.git
