@@ -150,7 +150,7 @@ links resolve. Truth order for every claim is code, then
   Owns: `src/server/{guards,headers,transport,env_keys,web_policy,web_search,
   web_research,chat_web}.rs`, `src/common/{authn,auth_store,local_tls,credential_store}.rs`.
   Tests: `tests/auth_guards.rs`, `tests/secure_portal.rs`, `tests/security_headers.rs`,
-  `tests/owner_isolation.rs`, `tests/chat_web.rs`, `tests/web_research.rs`,
+  `scripts/test-first-run-password.mjs`, `tests/owner_isolation.rs`, `tests/chat_web.rs`, `tests/web_research.rs`,
   `tests/web_phase2_redteam.rs`.
 - [DESKTOP.md](DESKTOP.md): the universal macOS app that owns its bundled
   backend in a WKWebView. Install and launch, notifications, home and
