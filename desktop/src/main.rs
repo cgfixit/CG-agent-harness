@@ -35,7 +35,6 @@ struct Desktop {
 struct Status {
     message: String,
     details: String,
-    setup_code: Option<String>,
 }
 
 fn show(app: &tauri::AppHandle, label: &str) {
@@ -122,23 +121,12 @@ fn desktop_status(state: tauri::State<'_, Desktop>) -> Status {
         Ok(owner) => Status {
             message: owner.message.clone(),
             details: owner.details.clone(),
-            setup_code: owner.backend.as_ref().and_then(|_| backend::home().ok()).and_then(|home| setup_code(&home)),
         },
         Err(_) => Status {
             message: "Waiting for the owned backend…".into(),
             details: "If this persists, check for a macOS file-access prompt. Move the app to Applications and retry; do not change global security settings.".into(),
-            setup_code: None,
         },
     }
-}
-
-/// The backend's one-time first sign-in code, shown only in this native window,
-/// never in page content. The file exists only until `admin` has a real password.
-fn setup_code(home: &std::path::Path) -> Option<String> {
-    let text = std::fs::read_to_string(home.join("setup-code")).ok()?;
-    let code = text.trim();
-    (code.len() <= 32 && !code.is_empty() && code.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
-        .then(|| code.to_string())
 }
 
 fn launch(app: &tauri::AppHandle, initialize_key: Option<String>) -> Result<(), String> {
@@ -376,8 +364,8 @@ fn main() {
                 .on_navigation(|url| url.scheme() == "tauri" && url.host_str() == Some("localhost"))
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny).devtools(false).build()?;
             let menu = tauri::menu::Menu::default(app.handle())?;
-            // Cmd and "+" (Shift and =) brings back the setup window, which shows
-            // the one-time setup code. Keep the physical form: Tauri drops an
+            // Cmd and "+" (Shift and =) brings back Setup and recovery.
+            // Keep the physical form: Tauri drops an
             // accelerator it cannot parse, and "CmdOrCtrl++" is one of those.
             let recovery = tauri::menu::Submenu::with_items(app, "Harness", true, &[
                 &tauri::menu::MenuItem::with_id(app, "setup", "Setup and recovery", true, Some("CmdOrCtrl+Shift+Equal"))?
@@ -435,22 +423,5 @@ fn main() {
             _ => (),
         }),
         Err(_) => eprintln!("CG Agent Harness could not initialize its native window."),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn setup_code_tracks_the_current_file() {
-        let home = tempfile::tempdir().unwrap();
-        let path = home.path().join("setup-code");
-        assert_eq!(super::setup_code(home.path()), None);
-        std::fs::write(&path, "fixture-code\n").unwrap();
-        assert_eq!(super::setup_code(home.path()).as_deref(), Some("fixture-code"));
-        std::fs::write(&path, "invalid code").unwrap();
-        assert_eq!(super::setup_code(home.path()), None);
-        std::fs::write(&path, "fixture-code\n").unwrap();
-        std::fs::remove_file(path).unwrap();
-        assert_eq!(super::setup_code(home.path()), None);
     }
 }

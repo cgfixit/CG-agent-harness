@@ -215,16 +215,16 @@ tls:
 
 auth:
   # New homes require login on operational routes. Existing configs are retained.
-  # Fresh admin signs in with the one-time code in <home>/setup-code and can only
+  # Fresh admin/admin is restricted to password setup and can only
   # inspect its identity, change its password or log out. The replacement needs
-  # 12 characters, must differ from the code, and revokes old sessions.
+  # 12 characters, must differ from the initial password, and revokes old sessions.
   enabled: true
   # scrypt uses about 128 MiB per derivation; bound a burst to 1–4 operations.
   max_concurrent_operations: 1
   session:
     idle_timeout_sec: 43200
     absolute_timeout_sec: 604800
-    # A session that must still replace its password (setup code, forced
+    # A session that must still replace its password (initial password, forced
     # change). Capped at the limits above. Restart required.
     password_change_idle_timeout_sec: 600
     password_change_absolute_timeout_sec: 1800

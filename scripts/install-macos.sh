@@ -517,4 +517,4 @@ else
     *) say "done. Next: CGAH_APP=$(printf %q "$app_path") scripts/start-macos.sh (the launcher searches only /Applications and ~/Applications)" ;;
   esac
 fi
-say 'First sign-in is user admin; docs/INSTALL.md (First run) says where its first credential comes from. A new password is required next.'
+say 'A fresh home opens Set your password for admin. Choose at least 12 characters before using the harness (docs/INSTALL.md).'

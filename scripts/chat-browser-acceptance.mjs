@@ -10,10 +10,8 @@ import {join} from 'node:path';
 const html = await readFile(new URL('../assets/static/harness.html', import.meta.url), 'utf8');
 const slashSource = await readFile(new URL('../src/server/slash.rs', import.meta.url), 'utf8');
 const canonicalCommands = [...slashSource.match(/const COMMANDS: &[\s\S]*?= &\[([\s\S]*?)\];/)[1].matchAll(/"([a-z]+)"/g)].map(match=>'/'+match[1]).sort();
-// The mock's fresh-home admin signs in with a one-time setup code, as the real store does;
-// a password change replaces it and the code stops working (auth_store.rs change_password).
-const FIXTURE_SETUP_CODE='fx2a-b3cd-e4fg-h5jk';
-let adminPassword=FIXTURE_SETUP_CODE;
+// The fresh-home credential is restricted until the password route replaces it.
+let adminPassword='admin';
 const userIds={admin:'1'.repeat(32),'audit-fixture':'2'.repeat(32),'memory-second':'3'.repeat(32)}; // random_hex(16) owner ids
 let persona=''; let clearFails=false, slashMode='dispatch';
 let authFixture=false, signedIn=false, logoutStatus=200, whoamiDrop=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
@@ -53,6 +51,7 @@ const server=createServer(async(req,res)=>{
  // Mirrors account_gate (src/server/guards.rs): an audit account reaches only the public
  // routes, its own whoami/password/logout and GET /api/audit.
  const route=path.split('?')[0];
+ if(authFixture&&signedIn&&mustChange&&route.startsWith('/api/')&&!['/api/status','/api/auth/setup-status','/api/auth/login','/api/auth/whoami','/api/auth/password','/api/auth/logout'].includes(route)){reply({detail:{code:'AUTH_PASSWORD_CHANGE_REQUIRED',message:'replace the bootstrap password before using the harness'}},403);return;}
  if(authFixture&&signedIn&&authRole==='audit'&&route.startsWith('/api/')&&!['/api/status','/api/auth/setup-status','/api/auth/login','/api/auth/whoami','/api/auth/password','/api/auth/logout'].includes(route)&&!(route==='/api/audit'&&req.method==='GET')){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
  // Browser dispatch contract fixture; actual grammar is covered by Rust slash tests.
  if(path==='/api/slash/parse'){
@@ -75,7 +74,7 @@ const server=createServer(async(req,res)=>{
   reply({kind:'dispatch',dispatch:true,canonical:body.line});return;
  }
  if(path==='/api/auth/whoami'){if(whoamiDrop){req.socket.destroy();return;}reply(authFixture&&signedIn?{username:authUsername,role:authRole,user_id:userIds[authUsername],must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
- if(path==='/api/auth/setup-status'){reply({enabled:true,setup_code:authFixture&&adminPassword===FIXTURE_SETUP_CODE});return;}
+ if(path==='/api/auth/setup-status'){reply({enabled:true,default_password:authFixture&&adminPassword==='admin',setup_code:false});return;}
  if(path==='/api/auth/login'){
   const auditor=body.username==='audit-fixture'&&body.password==='browser-auditor-password';
   const secondOwner=body.username==='memory-second'&&body.password==='browser-memory-password';
@@ -326,7 +325,8 @@ try {
  await until('typeof onSend === "function"');
  await until('document.getElementById("sSoulV").textContent === "unset"');
  await until('document.getElementById("hAuthWho").textContent.includes("authentication disabled")');
- assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true,'disabled-auth homes must not advertise a login');
+ assert.equal(await evaluate('document.getElementById("signInScreen").hidden'),true,'disabled-auth homes must not advertise a login');
+ assert.equal(await evaluate('document.getElementById("passwordDialog").open'),false,'disabled-auth homes must not offer setup');
  {
   await call('Emulation.setDeviceMetricsOverride',{width:1200,height:900,deviceScaleFactor:1,mobile:false});
   const width=()=>evaluate('document.querySelector(".sidebar").getBoundingClientRect().width');
@@ -854,30 +854,30 @@ try {
  // The real browser must execute the minimal-status login and key editor flows.
  const signedOutMark=requests.length;
  authFixture=true;automationFixture={notifications:true,agentic:true};await afterLoad(()=>call('Page.reload',{ignoreCache:true}));
- await until('!document.getElementById("hAuthLoginBox").hidden');
+ await until('document.getElementById("passwordDialog").open');
  assert.equal(await evaluate(headerState),'','signed-out consoles show no header automation buttons');
  assert.equal(requests.slice(signedOutMark).some(r=>['/api/notifications','/api/tools'].includes(r[1])),false,'signed-out consoles send no feature probes');
- assert.equal(await evaluate('document.getElementById("hAuthHint")?.hidden'),false,'show the fresh-install note while the setup code is active');
- assert.match(await evaluate('document.getElementById("hAuthHint").innerText'),/sign in as admin with the setup code/);
- assert.ok(await evaluate('document.getElementById("signInScreen").contains(document.getElementById("hAuthHint"))'),'the note lives on the sign-in card');
+ assert.equal(await evaluate('document.getElementById("passwordTitle").textContent'),'Set your password');
+ assert.equal(await evaluate('document.getElementById("passwordCurrentField").hidden'),true,'fresh setup asks only for the new password');
+ assert.equal(await evaluate('document.getElementById("passwordCurrent").disabled'),true);
+ assert.equal(requests.slice(signedOutMark).some(r=>r[0]==='POST'&&r[1].startsWith('/api/auth/')),false,'opening setup must not create a session');
+ assert.equal(await evaluate('document.getElementById("hAuthHint")'),null,'the old setup-code instructions are absent');
  assert.equal(await evaluate('document.querySelector(".main").offsetParent'),null,'signed out, the console is not drawn');
  assert.equal(await evaluate('document.querySelector("label[for=hAuthUser]").textContent'),'Username');
- await until('document.getElementById("sProvider").textContent === "sign in"');
  assert.equal(await evaluate('document.querySelector("[data-pane=registry]")'),null);
- await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value='+JSON.stringify(FIXTURE_SETUP_CODE)+';document.getElementById("hAuthLogin").click()');
- await until('document.getElementById("passwordDialog").open');
- assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true,'hide bootstrap guidance after login');
  assert.equal(await evaluate(headerState),'','a pending password replacement shows no header automation buttons');
- assert.match(await evaluate('document.getElementById("passwordHelp").innerText'),/Replace the setup code/);
  // Closing the required dialog lands on the lock card, never on the console; the card reopens it.
  await evaluate('document.getElementById("passwordClose").click()');
  await until('!document.getElementById("passwordDialog").open && !document.getElementById("passwordLockScreen").hidden');
  assert.equal(await evaluate('document.querySelector(".main").offsetParent'),null,'a closed password dialog does not reveal the console');
- assert.equal(await evaluate('document.body.textContent.includes('+JSON.stringify(FIXTURE_SETUP_CODE)+')'),false,'the lock card never shows the setup code');
  await evaluate('document.getElementById("passwordLockOpen").click()');
  await until('document.getElementById("passwordDialog").open');
- await evaluate('document.getElementById("passwordCurrent").value='+JSON.stringify(FIXTURE_SETUP_CODE)+';document.getElementById("passwordNew").value="browser-fixture-password";document.getElementById("passwordConfirm").value="browser-fixture-password";document.getElementById("passwordForm").requestSubmit()');
+ await evaluate('document.getElementById("passwordNew").value="browser-fixture-password";document.getElementById("passwordConfirm").value="browser-fixture-password";document.getElementById("passwordForm").requestSubmit()');
  await until('!document.getElementById("passwordDialog").open');assert.equal(mustChange,false);
+ assert.deepEqual(requests.slice(signedOutMark).filter(r=>r[0]==='POST'&&r[1].startsWith('/api/auth/')).map(r=>[r[1],r[2]]),[
+  ['/api/auth/login',{username:'admin',password:'admin'}],
+  ['/api/auth/password',{current_password:'admin',password:'browser-fixture-password'}]
+ ],'one explicit save performs the restricted login and protected password replacement');
  await until(headerState+'==="openAnalytics,openDeliveries,openSchedules"');
  assert.match(await evaluate('document.getElementById("openDeliveries").title'),/metadata-only.*coding job finishes/);
  await evaluate('document.querySelector("[data-pane=api-keys]").click()');
@@ -966,7 +966,7 @@ try {
  assert.equal(await evaluate('pendingAgentRun'),null);assert.equal(await evaluate('shownAgentDiffs.size'),0);
  assert.equal(await evaluate('reviewedSoulProposal'),null);assert.equal(await evaluate('reviewedPRBodies.size'),0);
  assert.equal(await evaluate('prBodyTarget'),'');
- assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true,'no setup-code note after the password changed');
+ assert.equal(await evaluate('document.getElementById("passwordDialog").open'),false,'setup stays closed after logout');
  assert.equal(await evaluate('document.getElementById("signInScreen").hidden'),false,'logout returns to the sign-in card');
  // Authentication succeeds for an auditor even though the server denies operational sessions.
  await evaluate('document.getElementById("hAuthUser").value="audit-fixture";document.getElementById("hAuthPass").value="browser-auditor-password";document.getElementById("hAuthLogin").click()');
@@ -975,7 +975,7 @@ try {
  assert.equal(await evaluate('document.getElementById("sStyle").disabled'),true,'auditors cannot select a session style');
  assert.equal(await evaluate('document.querySelectorAll("#pane-sessions button").length'),0,'auditors must not see New Session or Clear History controls');
  assert.equal(await evaluate('refreshHeaderFeatures(true).then(()=>["openDeliveries","openSchedules"].every(id=>document.getElementById(id).hidden))'),true,'refused (403) probes keep automation hidden');
- assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true);
+ assert.equal(await evaluate('document.getElementById("passwordDialog").open'),false);
  // account_gate denies an auditor /api/slash/parse, so a typed /status is refused unsent;
  // drive the reduced status view through the dispatcher instead.
  await evaluate('document.getElementById("stream").replaceChildren()');await evaluate('runSlash("/status")');
@@ -985,10 +985,10 @@ try {
  await evaluate('document.getElementById("hAuthLogout").click()');
  await until('!document.getElementById("hAuthLoginBox").hidden');assert.equal(signedIn,false);
  assert.equal(await evaluate(headerState),'');
- assert.equal(await evaluate('document.getElementById("hAuthHint").hidden'),true);
+ assert.equal(await evaluate('document.getElementById("passwordDialog").open'),false);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','forced password change','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','unset persona diagnostics','first session','goal set/show/clear','manual continuation','goal text in /loop','auto start after a 5 s countdown and its cancellation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout resets the transcript, Memory pane and active session like a successful logout, even when the follow-up probe fails','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
+ console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','direct first-run password setup without implicit login; protected replacement and lock/reopen','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','unset persona diagnostics','first session','goal set/show/clear','manual continuation','goal text in /loop','auto start after a 5 s countdown and its cancellation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout resets the transcript, Memory pane and active session like a successful logout, even when the follow-up probe fails','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
  }
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});

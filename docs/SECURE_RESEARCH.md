@@ -28,13 +28,13 @@ A stale harness key neither blocks a valid account nor grants access.
 
 ### First login and passwords
 
-A fresh store's `admin` password is a random one-time code in owner-only
-`<home>/setup-code`, deleted once replaced; other local accounts cannot claim
-it. Homes still on `admin` / `admin` rotate at startup. Sign in and replace it with at
-least 12 characters. Until then, the account can inspect its identity, change
-its password, or log out, but cannot use chat, research, coding, administration,
-or keys. Replacement checks the current password and CSRF token, then invalidates
-old sessions. Administrative resets retain the ordinary password policy.
+A fresh store opens **Set your password** for `admin`. Saving signs in with
+restricted `admin` / `admin` and replaces it with at least 12 characters through
+the authenticated, CSRF-protected password route. Until then, the account can
+only inspect its identity, change its password, or log out. Chat, research,
+coding, administration and keys remain blocked. Any local process reaching
+loopback can complete unfinished setup; finish it before sharing the machine.
+Replacement revokes old sessions. No setup code is generated or displayed.
 
 Every role can use **change password** with its current password. An administrator
 uses **USERS** (`/users`) to create users or reset passwords. Password reset,
@@ -42,8 +42,8 @@ role change, disable, and deletion revoke that account's sessions. The last
 enabled administrator cannot be deleted, disabled, or demoted. **logout** revokes
 the session and clears private displayed state.
 
-Console authentication probes have a five-second deadline; login, legacy
-bootstrap, logout, and Users panel requests have a fifteen-second deadline.
+Authentication probes have a five-second deadline; login, password setup,
+logout, and Users requests have fifteen seconds.
 These cover the complete response body as well as headers, so a stalled JSON
 reply cannot leave the operation waiting indefinitely. A timeout does not prove
 that a submitted account change was rejected; refresh before retrying it.
@@ -84,8 +84,8 @@ from becoming a fresh default-password bootstrap.
 A valid legacy `auth.json` migrates its user hashes, roles, disabled state,
 lockouts, and timestamps; `auth.json.pre-sqlite` preserves the exact private
 recovery copy. Legacy sessions require a new login. The original JSON remains a
-recovery artifact, not the live store. A legacy pending-password account retains
-its existing setup flow. Corrupt, empty, unsafe, or unsupported initialized stores
+recovery artifact, not the live store. Unfinished setup-code accounts migrate once
+to restricted `admin` / `admin`; completed passwords remain unchanged. Corrupt, empty, unsafe, or unsupported initialized stores
 refuse startup; no automatic reset occurs. Failed writes do not publish successful
 in-memory account changes. Stop the server before an operator-controlled backup
 or recovery; preserve the database and initialization marker together, and do

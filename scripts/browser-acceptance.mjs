@@ -36,12 +36,11 @@ try {
  const until=async (expression,timeout=15000)=>{const start=Date.now();while(Date.now()-start<timeout){const value=await evaluate(expression);if(value)return value;await pause(100);}throw Error('Browser expectation timed out: '+expression);};
  const send=async command=>{await until('!document.getElementById("send").disabled');await evaluate('document.getElementById("input").value='+JSON.stringify(command)+';onSend()');await until('!document.getElementById("send").disabled');};
  await call('Page.enable');await call('Network.enable');await call('Page.navigate',{url:base+'/'});await until('!!document.getElementById("apiKey")');
- await until('!document.getElementById("hAuthLoginBox").hidden');
- // A fresh home has no shipped password: sign in with its one-time setup code.
- const setupCode=(await readFile(join(home,'setup-code'),'utf8')).trim();
- await evaluate('document.getElementById("hAuthUser").value="admin";document.getElementById("hAuthPass").value='+JSON.stringify(setupCode)+';document.getElementById("hAuthLogin").click()');
  await until('document.getElementById("passwordDialog").open');
- await evaluate('document.getElementById("passwordCurrent").value='+JSON.stringify(setupCode)+';document.getElementById("passwordNew").value="arithmetic-fixture-password";document.getElementById("passwordConfirm").value="arithmetic-fixture-password";document.getElementById("passwordForm").requestSubmit()');
+ assert.equal(await evaluate('document.getElementById("passwordTitle").textContent'),'Set your password');
+ assert.equal(await evaluate('document.getElementById("passwordCurrentField").hidden'),true);
+ assert.equal(requests.some(r=>r.url.endsWith('/api/auth/login')&&r.method==='POST'),false,'loading setup never logs in');
+ await evaluate('document.getElementById("passwordNew").value="arithmetic-fixture-password";document.getElementById("passwordConfirm").value="arithmetic-fixture-password";document.getElementById("passwordForm").requestSubmit()');
  await until('!document.getElementById("passwordDialog").open');
  assert.equal(await evaluate('api("/api/status").then(s=>s.home)'),home);
  assert.equal(await evaluate('fetch("/api/agent/jobs").then(r=>r.status)'),403);

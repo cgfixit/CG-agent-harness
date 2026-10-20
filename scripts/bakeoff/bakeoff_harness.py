@@ -255,22 +255,18 @@ class Disposable:
                     break
             except Exception:
                 time.sleep(0.2)
-        # Since harness #496 (2026-10-14) a fresh home has no shipped password: admin's
-        # first credential is the one-time setup code the server writes to <home>/setup-code,
-        # and the first sign-in must replace it (scripts/smoke-ollama.sh does the same).
-        setup_code_file = Path(self.home) / "setup-code"
-        for _ in range(50):
-            if setup_code_file.exists() and setup_code_file.read_text().strip():
-                break
-            time.sleep(0.2)
-        else:
-            raise SystemExit(f"harness wrote no setup code at {setup_code_file}; see {Path(self.home) / 'serve.log'}")
-        setup_code = setup_code_file.read_text().strip()
-        r = self.run("account", "--url", self.base, "login", "admin", stdin=f"{setup_code}\n")
+        # Only this fresh disposable home's restricted bootstrap uses admin/admin.
+        with opener.open(self.base + "/api/auth/setup-status", timeout=5) as response:
+            setup = json.load(response)
+        if setup.get("default_password") is not True or setup.get("setup_code") is not False:
+            raise SystemExit("fresh harness did not offer restricted password setup")
+        if (Path(self.home) / "setup-code").exists():
+            raise SystemExit("fresh harness unexpectedly wrote a setup code")
+        r = self.run("account", "--url", self.base, "login", "admin", stdin="admin\n")
         if r.returncode:
-            raise SystemExit(f"admin login with the setup code failed: {r.stderr[-300:]}")
+            raise SystemExit(f"restricted admin login failed: {r.stderr[-300:]}")
         pw = secrets.token_urlsafe(18)
-        r = self.run("account", "--url", self.base, "password", stdin=f"{setup_code}\n{pw}\n")
+        r = self.run("account", "--url", self.base, "password", stdin=f"admin\n{pw}\n")
         if r.returncode:
             raise SystemExit(f"password replacement failed: {r.stderr[-300:]}")
         cookie = json.loads((Path(self.home) / "cli-session.json").read_text())["cookie"]

@@ -114,11 +114,11 @@ withhold persona, memory, attachments, notes, skills, web tools, cloud,
 loops and model choice, including earlier-role data;
 `/api/status` names only the model. Storing that role first moves the
 account database to schema 2, which older binaries refuse. A fresh
-`admin` signs in with a one-time code in the owner-only `<home>/setup-code`
-(never shipped, never page content); older `admin`/`admin` and pending-password
-homes rotate to one at startup. Until replaced, any client (console, HTTP, CLI)
+`admin` starts with restricted `admin`/`admin`; the console opens password setup
+directly and submits credentials only on Save. Unfinished code-based setup
+migrates once; completed passwords stay unchanged. Until replaced, any client (console, HTTP, CLI)
 may only change the password, read whoami or log out, under shorter session
-limits. The replacement must differ from the code and revokes old sessions. The
+limits. The replacement must differ from the current password and revokes old sessions. The
 last enabled administrator is protected.
 
 SQLite is authoritative after transactional legacy migration; corrupt, empty or
@@ -784,7 +784,7 @@ Machine credentials use their own STRICT schema/version/initialized marker and
 private no-follow database. Only hashes of random 256-bit secrets persist; keys
 are not users or cookie sessions. The CLI mints/revokes with explicit confirm and
 reason using local filesystem authority, never for an owner that is missing,
-disabled or still on its setup code. Table/rate/concurrency/body/result/time
+disabled or still requiring password replacement. Table/rate/concurrency/body/result/time
 ceilings are finite; revocation is rechecked before reads. In-flight reads may
 finish. Disabling or deleting an account sets `disabled=1` on that owner's
 machine keys and retires that owner's schedules and completion notifications.

@@ -9,7 +9,7 @@ const node = id => {
     addEventListener(event, handler) { this.listeners[event] = handler; }});
   return nodes.get(id);
 };
-let snapshot = {message: 'Local model inventory checked.', details: '{"chat":"installed"}', setup_code: null};
+let snapshot = {message: 'Local model inventory checked.', details: '{"chat":"installed"}'};
 let rejectModels, statusUnavailable = false, poll;
 const context = vm.createContext({
   document: {getElementById: node, querySelectorAll: () => ['retry', 'models', 'prepare'].map(node)},
@@ -38,12 +38,11 @@ assert.ok(!node('models').disabled);
 await poll();
 assert.match(node('status').textContent, /timed out/, 'polling must preserve the action error');
 
-// A successful retry clears the action error; subsequent polls read current account state.
+// A successful retry clears the action error; status never presents a bootstrap credential.
 snapshot = {message: 'Backend ready. Sign in to the harness.', details: 'Owned endpoint: https://127.0.0.1:12345', setup_code: 'fixture-code'};
 await node('retry').listeners.click();
 await settle();
-assert.match(node('status').textContent, /user admin, setup code fixture-code/);
-snapshot = {...snapshot, setup_code: null};
+assert.equal(node('status').textContent, snapshot.message, 'stale credential fields cannot restore setup-code guidance');
 await poll();
 assert.equal(node('status').textContent, snapshot.message, 'retired first-sign-in guidance must disappear on refresh');
 
