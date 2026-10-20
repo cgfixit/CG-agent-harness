@@ -1,0 +1,301 @@
+# Called only by the default-branch dispatcher. No checkout, artifacts,
+# caches, PR code, secrets, or PR-controlled verdicts enter this workflow.
+# The evaluator reads live GitHub state with a read-only token. Only mark
+# and publish can write the Checks API. The exact check name stays "review gate".
+# Open threads / running Codex reviews are advisory (neutral); evaluation
+# failure/cancellation closes this run's marker as failure. Resolving a thread
+# alone emits no webhook: re-run the dispatcher after the poll window expires.
+name: review gate evaluation
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: number
+      head_sha:
+        required: true
+        type: string
+      wait_for_bot:
+        default: false
+        type: boolean
+
+permissions: {}
+
+# Normalize PR identity before entering this group. Human comments never call
+# this workflow, and cannot cancel a polling evaluation. Superseded runs close
+# only their own check, including when both runs target the same head SHA.
+concurrency:
+  group: review-gate-${{ github.repository }}-${{ inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  mark-in-progress:
+    name: mark review gate in progress
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      checks: write
+      pull-requests: read
+    outputs:
+      marked: ${{ steps.mark.outputs.marked }}
+      head_sha: ${{ steps.mark.outputs.head_sha }}
+      check_run_id: ${{ steps.mark.outputs.check_run_id }}
+    env:
+      PR_NUMBER: ${{ inputs.pr_number }}
+      EXPECTED_HEAD_SHA: ${{ inputs.head_sha }}
+      CHECK_NAME: review gate
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        id: mark
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            core.setOutput("marked", "false");
+            const number = Number(process.env.PR_NUMBER);
+            const sha = process.env.EXPECTED_HEAD_SHA;
+            if (!Number.isSafeInteger(number) || number <= 0 || !/^[0-9a-f]{40}$/.test(sha || "")) {
+              throw new Error("invalid PR identity");
+            }
+            const pr = (await github.rest.pulls.get({ owner, repo, pull_number: number })).data;
+            if (pr.state !== "open" || pr.base.repo.full_name !== `${owner}/${repo}` || pr.head.sha !== sha) {
+              core.info("PR closed or head changed before marking; ignoring stale request");
+              return;
+            }
+            const created = await github.rest.checks.create({
+              owner, repo, name: process.env.CHECK_NAME, head_sha: sha, status: "in_progress",
+              external_id: `review-gate:${context.runId}:${process.env.GITHUB_RUN_ATTEMPT}`,
+              output: {
+                title: "Evaluating review threads and bot reviews",
+                summary: `Run started for #${number} @ ${sha.slice(0, 7)}`,
+              },
+            });
+            core.setOutput("head_sha", sha);
+            core.setOutput("check_run_id", String(created.data.id));
+            core.setOutput("marked", "true");
+
+  evaluate:
+    name: evaluate
+    needs: mark-in-progress
+    if: needs.mark-in-progress.outputs.marked == 'true'
+    runs-on: ubuntu-latest
+    # Poll is 12 minutes plus a 45 second grace. 30 minutes lets that finish
+    # and record outputs before the job is killed.
+    timeout-minutes: 30
+    permissions:
+      pull-requests: read
+    outputs:
+      head_sha: ${{ steps.gate.outputs.head_sha }}
+      conclusion: ${{ steps.gate.outputs.conclusion }}
+      thread_count: ${{ steps.gate.outputs.thread_count }}
+      running_count: ${{ steps.gate.outputs.running_count }}
+      finished: ${{ steps.gate.outputs.finished }}
+    env:
+      # Logins whose review-summary comment marks an in-progress review
+      # (keep in sync with the dispatcher's issue_comment guard).
+      REVIEW_BOTS: chatgpt-codex-connector[bot]
+      POLL_MINUTES: "12"
+      # The relay does not pass PR-controlled action/output data. Apply the
+      # existing bot-start grace to every pull_request event, including pushes.
+      GRACE_SECONDS: "45"
+      PR_NUMBER: ${{ inputs.pr_number }}
+      WAIT_FOR_BOT: ${{ inputs.wait_for_bot }}
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        id: gate
+        env:
+          MARKED_HEAD_SHA: ${{ needs.mark-in-progress.outputs.head_sha }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const bots = new Set(process.env.REVIEW_BOTS.split(",").map(s => s.trim()).filter(Boolean));
+            const deadline = Date.now() + Number(process.env.POLL_MINUTES) * 60_000;
+            const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+            const pr = (await github.rest.pulls.get({
+              owner, repo, pull_number: Number(process.env.PR_NUMBER),
+            })).data;
+            if (pr.state !== "open") {
+              core.setFailed(`PR #${pr.number} is ${pr.state}; nothing to evaluate`);
+              return;
+            }
+
+            const markedSha = process.env.MARKED_HEAD_SHA || "";
+            const liveSha = (pr.head && pr.head.sha) || "";
+            if (markedSha !== liveSha) {
+              core.setFailed(`head sha changed between mark and evaluate: marker ${markedSha}, evaluate ${liveSha}`);
+              return;
+            }
+
+            async function unresolvedThreads() {
+              const out = [];
+              let after = null;
+              for (;;) {
+                const q = await github.graphql(`
+                  query($owner: String!, $repo: String!, $num: Int!, $after: String) {
+                    repository(owner: $owner, name: $repo) {
+                      pullRequest(number: $num) {
+                        reviewThreads(first: 100, after: $after) {
+                          pageInfo { hasNextPage endCursor }
+                          nodes {
+                            isResolved isOutdated path line
+                            comments(first: 1) { nodes { author { login } url body } }
+                          }
+                        }
+                      }
+                    }
+                  }`, { owner, repo, num: pr.number, after });
+                const t = q.repository.pullRequest.reviewThreads;
+                for (const n of t.nodes) {
+                  if (n.isResolved) continue;
+                  const c = n.comments.nodes[0] || {};
+                  const title = (c.body || "").split("\n").find(l => l.trim()) || "";
+                  out.push({ path: n.path, line: n.line, outdated: n.isOutdated, author: c.author && c.author.login, url: c.url, title: title.replace(/<[^>]+>/g, "").replace(/[*_`]/g, "").trim().slice(0, 120) });
+                }
+                if (!t.pageInfo.hasNextPage) break;
+                after = t.pageInfo.endCursor;
+              }
+              return out;
+            }
+
+            // Codex edits one summary comment in place: "🔄 **Running**" while a
+            // review is in flight, "✅ **Completed**" afterwards. Any listed bot
+            // whose summary still says Running blocks the merge.
+            async function runningReviews() {
+              const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 });
+              return comments
+                .filter(c => c.user && bots.has(c.user.login) && /<!--\s*codex-pull-request-review-summary\s*-->/.test(c.body || ""))
+                .filter(c => /\*\*Running\*\*/.test(c.body))
+                .map(c => ({ login: c.user.login, url: c.html_url }));
+            }
+
+            if (bots.size && process.env.WAIT_FOR_BOT === "true") {
+              const grace = Number(process.env.GRACE_SECONDS) * 1000;
+              core.info(`waiting ${grace / 1000}s for a bot review to announce itself before the first look`);
+              await sleep(grace);
+            }
+
+            let threads, running, attempt = 0;
+            for (;;) {
+              attempt += 1;
+              [threads, running] = await Promise.all([unresolvedThreads(), runningReviews()]);
+              if (threads.length === 0 && running.length === 0) break;
+              if (Date.now() >= deadline) break;
+              core.info(`attempt ${attempt}: ${threads.length} unresolved thread(s), ${running.length} review(s) running; polling again in 20s`);
+              await sleep(20_000);
+            }
+
+            const lines = [`## Review gate for #${pr.number} @ \`${pr.head.sha.slice(0, 7)}\``, ""];
+            if (running.length) {
+              lines.push(`### Review still running`, "");
+              for (const r of running) lines.push(`- ${r.login}: ${r.url}`);
+              lines.push("");
+            }
+            if (threads.length) {
+              lines.push(`### Unresolved review threads (${threads.length})`, "");
+              for (const t of threads) lines.push(`- \`${t.path}${t.line ? ":" + t.line : ""}\`${t.outdated ? " (outdated)" : ""} by ${t.author || "unknown"}: ${t.title} ${t.url}`);
+              lines.push("", "Apply the fix and push, or reply with why not, then resolve the thread. Re-run this job if the last thread was resolved without a push.");
+            }
+            const ok = !running.length && !threads.length;
+            if (ok) lines.push("✅ No unresolved review threads and no review in progress.");
+            const summary = lines.join("\n");
+            await core.summary.addRaw(summary).write();
+
+            core.setOutput("head_sha", pr.head.sha);
+            core.setOutput("conclusion", ok ? "success" : "neutral");
+            core.setOutput("thread_count", String(threads.length));
+            core.setOutput("running_count", String(running.length));
+            core.setOutput("finished", "true");
+
+  publish:
+    name: publish review gate
+    needs: [mark-in-progress, evaluate]
+    # always() so a timed-out or concurrency-cancelled evaluate (result
+    # cancelled) still closes the check. !cancelled() would be false when the
+    # workflow itself was canceled and would leave that check in progress.
+    # The result list excludes skipped: a skipped marker or a skipped
+    # evaluate does not run this job, and the script refuses the failure
+    # path unless the marker result is success and evaluate failed or was
+    # cancelled.
+    # https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
+    if: ${{ always() && needs.mark-in-progress.outputs.marked == 'true' && needs.mark-in-progress.result == 'success' && (needs.evaluate.result == 'failure' || needs.evaluate.result == 'cancelled' || needs.evaluate.result == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    permissions:
+      checks: write
+      pull-requests: read
+    steps:
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          MARKED_HEAD_SHA: ${{ needs.mark-in-progress.outputs.head_sha }}
+          CHECK_RUN_ID: ${{ needs.mark-in-progress.outputs.check_run_id }}
+          MARKER_RESULT: ${{ needs.mark-in-progress.result }}
+          EVAL_RESULT: ${{ needs.evaluate.result }}
+          FINISHED: ${{ needs.evaluate.outputs.finished }}
+          CONCLUSION: ${{ needs.evaluate.outputs.conclusion }}
+          THREAD_COUNT: ${{ needs.evaluate.outputs.thread_count }}
+          RUNNING_COUNT: ${{ needs.evaluate.outputs.running_count }}
+          CHECK_NAME: review gate
+        with:
+          script: |
+            const checkRunId = process.env.CHECK_RUN_ID || "";
+            const markerResult = process.env.MARKER_RESULT || "";
+            const evalResult = process.env.EVAL_RESULT || "";
+            const finished = process.env.FINISHED || "";
+            const conclusion = process.env.CONCLUSION || "";
+            const threads = process.env.THREAD_COUNT || "";
+            const running = process.env.RUNNING_COUNT || "";
+            if (markerResult !== "success" || markerResult === "skipped" || evalResult === "skipped") {
+              core.info("marker or evaluate was skipped; not changing the check");
+              return;
+            }
+            const markFailed = evalResult === "failure" || evalResult === "cancelled";
+            const countsOk = /^(0|[1-9][0-9]*)$/.test(threads) && /^(0|[1-9][0-9]*)$/.test(running) &&
+              Number.isSafeInteger(Number(threads)) && Number.isSafeInteger(Number(running));
+            const expectedConclusion = countsOk && Number(threads) === 0 && Number(running) === 0 ? "success" : "neutral";
+            let verdictOk = evalResult === "success" && finished === "true" && countsOk && conclusion === expectedConclusion;
+            if (!markFailed && evalResult !== "success") {
+              core.info(`evaluate result was '${evalResult}'; not changing the check`);
+              return;
+            }
+            if (!/^[1-9][0-9]*$/.test(checkRunId) || !Number.isSafeInteger(Number(checkRunId))) {
+              core.setFailed("check run id was not recorded");
+              return;
+            }
+            const threadCount = countsOk ? Number(threads) : 0;
+            const runningCount = countsOk ? Number(running) : 0;
+            let title = verdictOk
+              ? (runningCount
+                ? `${runningCount} bot review(s) still running on this head`
+                : threadCount ? `${threadCount} unresolved review thread(s)` : "All review threads resolved; no review running")
+              : "Review gate evaluation did not finish";
+            let summary = verdictOk
+              ? (runningCount
+                ? `${runningCount} bot review(s) still running.`
+                : threadCount ? `${threadCount} unresolved review thread(s).` : "No unresolved review threads and no review in progress.")
+              : `evaluate result was '${evalResult}'. Evaluation failed, was cancelled, or returned an invalid verdict.`;
+            const { owner, repo } = context.repo;
+            const markedSha = process.env.MARKED_HEAD_SHA;
+            const check = (await github.rest.checks.get({ owner, repo, check_run_id: Number(checkRunId) })).data;
+            if (check.name !== process.env.CHECK_NAME || check.head_sha !== markedSha ||
+                check.external_id !== `review-gate:${context.runId}:${process.env.GITHUB_RUN_ATTEMPT}`) {
+              throw new Error("refusing to update a check not owned by this evaluation");
+            }
+            const pr = (await github.rest.pulls.get({ owner, repo, pull_number: Number(process.env.PR_NUMBER) })).data;
+            if (pr.state !== "open" || pr.head.sha !== markedSha) {
+              verdictOk = false;
+              title = "PR closed or head changed during evaluation";
+              summary = "This evaluation is stale. Only its original head's check is closed as failure.";
+            }
+            try {
+              await github.rest.checks.update({
+                owner, repo, check_run_id: Number(checkRunId), status: "completed",
+                conclusion: verdictOk ? conclusion : "failure",
+                output: { title, summary },
+              });
+            } catch (e) {
+              core.setFailed(`could not publish the "${process.env.CHECK_NAME}" check run ${checkRunId}: ${e.message} (check the base-repository workflow token permissions)`);
+              throw e;
+            }
