@@ -80,7 +80,7 @@ jobs:
     needs: resolve
     if: needs.resolve.outputs.pr_number != ''
     # Local reusable workflows use the same trusted revision as this dispatcher.
-    uses: ./.github/workflows/review-gate-evaluate.yml
+    uses: ./.github/workflows/review-gate-evaluate.yml # zizmor: ignore[self-repository] reusable call is commit-bound without checkout; current actionlint 1.7.12 cannot parse $/
     permissions:
       checks: write
       pull-requests: read
