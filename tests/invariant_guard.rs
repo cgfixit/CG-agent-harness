@@ -1089,7 +1089,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     // why: dependency refresh removed five stale Linux prerequisite words; keep the cut.
-    ("README.md", Root, 1695),
+    ("README.md", Root, 1689),
     ("SECURITY.md", Root, 690),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
     ("docs/API_ROUTES.md", Guide, 1830),
@@ -1100,7 +1100,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
-    ("docs/CONSOLE.md", Guide, 6196),
+    ("docs/CONSOLE.md", Guide, 6189),
     // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
     // why: the 2026-10-20 dep-sync folded the dated 2026-09 audit notes into Retained constraints; 944 words, keep the cut.
     ("docs/DEPENDENCIES.md", Guide, 950),
@@ -1112,7 +1112,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // Setup memory guidance replaces repeated setup/verification prose; keep the cut.
     // why: operator-approved (2026-10-14) automated macOS install (section 1) and browser access (section 7); 5188 words plus about 1%, rounded up to the next 50.
     // why: operator-approved (2026-10-14) raise to 7500 for room to grow the install guide after #491 and #496 together hit 5250; the Guide group cap still bounds it.
-    ("docs/INSTALL.md", Guide, 7500),
+    ("docs/INSTALL.md", Guide, 7474),
     ("docs/MCP_CLIENT.md", Guide, 1090),
     ("docs/MCP_SERVER.md", Guide, 1230),
     // why: #244 folded MEMORY_SETUP.md and the user manual's memory sections in here.
