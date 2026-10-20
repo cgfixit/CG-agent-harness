@@ -246,6 +246,9 @@ impl Backend {
                 return Err("Backend control response exceeded its bound.".into());
             }
             if Instant::now() >= deadline {
+                // Without request IDs, a late reply makes this channel unusable.
+                self.buffer.clear();
+                self.input.take();
                 return Err("Backend response timed out. Retry from setup.".into());
             }
             let mut buf = [0u8; 2048];
@@ -269,9 +272,7 @@ impl Backend {
     }
 
     pub fn stop(&mut self) {
-        if self.input.is_none() {
-            return;
-        }
+        // A timed-out channel still owns a child that must be stopped and reaped.
         let _ = self.send(json!({"command":"shutdown"}));
         self.input.take();
         let deadline = Instant::now() + Duration::from_secs(12);
@@ -302,6 +303,62 @@ pub fn allowed_navigation(url: &tauri::Url, origin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::fd::AsFd;
+
+    fn pipe_backend(command: &mut Command) -> Backend {
+        let mut child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let input = child.stdin.take();
+        let output = child.stdout.take().unwrap();
+        // SAFETY: output is an owned live pipe, only this owner reads it.
+        let flags = unsafe { libc::fcntl(output.as_raw_fd(), libc::F_GETFL) };
+        assert!(flags >= 0);
+        assert!(unsafe { libc::fcntl(output.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) } >= 0);
+        Backend {
+            child,
+            input,
+            output,
+            buffer: Vec::new(),
+            origin: String::new(),
+            hello: Value::Null,
+            certificate_der: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_timed_out_read_fails_closed() {
+        let mut backend = pipe_backend(&mut Command::new("/bin/cat"));
+        let mut late_reply = std::fs::File::from(backend.input.as_ref().unwrap().as_fd().try_clone_to_owned().unwrap());
+        // Deliver the rest of this reply only after the deadline, without a scheduling race.
+        backend.buffer.extend_from_slice(b"{\"chat\":");
+        assert_eq!(
+            backend.read(Duration::ZERO),
+            Err("Backend response timed out. Retry from setup.".into())
+        );
+        late_reply.write_all(b"\"late models\"}\n").unwrap();
+        assert_eq!(backend.status(), Err("Backend is stopping.".into()));
+        assert_eq!(backend.models(), Err("Backend is stopping.".into()));
+        assert!(backend.buffer.is_empty());
+        assert!(backend.input.is_none());
+        drop(late_reply);
+        backend.stop();
+        assert!(backend.child.try_wait().unwrap().is_some());
+        backend.stop();
+    }
+
+    #[test]
+    fn a_timed_out_backend_still_reaps_an_unresponsive_child() {
+        let mut backend = pipe_backend(Command::new("/bin/sleep").arg("30"));
+        assert!(backend.read(Duration::ZERO).is_err());
+        backend.stop();
+        assert!(backend.child.try_wait().unwrap().is_some());
+        backend.stop();
+    }
+
     #[test]
     fn navigation_rejects_other_ports_remote_content_and_custom_schemes() {
         let origin = "http://127.0.0.1:54321";
