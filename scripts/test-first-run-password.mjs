@@ -169,6 +169,14 @@ node('passwordCurrent').value = savedPassword;
 await submit('second-password-123');
 assert.equal(savedPassword, 'second-password-123');
 
+// Existing accounts retain an ordinary sign-in path while admin setup is pending.
+pending = true; savedPassword = setupCode; session = null;
+await context.refreshHarnessAuth(); await settle();
+node('passwordDialog').close();
+node('passwordSignIn').listeners.click();
+assert.ok(!node('hAuthLoginBox').hidden && !node('passwordDialog').open);
+assert.ok(page.body.classList.contains('signed-out'));
+
 // Knowing the account name is insufficient: a wrong setup code cannot claim it.
 pending = true; savedPassword = setupCode; session = null;
 await context.refreshHarnessAuth(); await settle();

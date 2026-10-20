@@ -638,6 +638,7 @@ dialog p { margin-bottom:12px; }
       <h1 id="passwordLockTitle">Set your password</h1>
       <p class="signin-lede">Choose a password before using the harness. Until then, account access is limited to changing the password, checking who is signed in, and signing out.</p>
       <button id="passwordLockOpen" type="submit">Set a new password</button>
+      <button id="passwordSignIn" type="button">Sign in to another account</button>
     </form>
   </section>
 
@@ -5640,6 +5641,7 @@ function openPasswordChange(required) {
 $('hAuthPassword').addEventListener('click', () => openPasswordChange(passwordRequired));
 $('passwordLockCard').addEventListener('submit', event => { event.preventDefault(); openPasswordChange(true); });
 $('passwordClose').addEventListener('click', () => $('passwordDialog').close());
+$('passwordSignIn').addEventListener('click', () => showSignIn('login'));
 /* Dismissing a required replacement lands on the lock card, never the console. */
 $('passwordDialog').addEventListener('close', () => {
   $('passwordForm').reset();
