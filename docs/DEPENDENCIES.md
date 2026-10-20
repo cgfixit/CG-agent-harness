@@ -24,6 +24,11 @@ addresses. Native/CLI certificate pinning applies only to the owned loopback
 service; it never replaces public-web trust. Feature review is manual: cargo-deny
 does not certify safe runtime use of a crate or inspect arbitrary feature names.
 
+Reqwest's `rustls` feature enables AWS-LC alongside the explicit ring provider.
+Locked `aws-lc-sys` 0.46.0 normally builds with a C compiler; its Rust `cmake`
+build dependency does not itself require a CMake executable. See
+[source-build prerequisites](INSTALL.md#51-standalone-backend) for alternate builds.
+
 ## Retained constraints
 
 - Backend `ordered-float` remains locked at 5.4: 5.5 requires Rust 1.90.

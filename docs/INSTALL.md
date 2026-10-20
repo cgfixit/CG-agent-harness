@@ -275,6 +275,13 @@ Source-build commands assume the `CG-agent-harness` directory.
 
 From inside the `CG-agent-harness` folder:
 
+Source builds need the pinned Rust toolchain and a C compiler (Xcode Command
+Line Tools on macOS; for example, `build-essential` on Debian/Ubuntu). Reqwest's
+locked AWS-LC dependency normally uses that compiler directly, without CMake.
+If an alternate AWS-LC build selects CMake (for example,
+`AWS_LC_SYS_CMAKE_BUILDER=1`), install it first with `brew install cmake` on
+macOS or `sudo apt-get install cmake` on Debian/Ubuntu; confirm `cmake --version`.
+
 ```bash
 cargo build --release --locked
 ```
