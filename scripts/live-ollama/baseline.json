@@ -28,7 +28,7 @@
         "web": {
           "chat_tool_calls": 3,
           "evidence_tokens": 1500,
-          "model_tokens": 256,
+          "model_tokens": 512,
           "total_tokens": 7000
         },
         "window": 8192,
@@ -61,7 +61,7 @@
         "web": {
           "chat_tool_calls": 3,
           "evidence_tokens": 1500,
-          "model_tokens": 256,
+          "model_tokens": 512,
           "total_tokens": 7000
         },
         "window": 8192,
