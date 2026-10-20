@@ -10,11 +10,15 @@ const node = id => {
   return nodes.get(id);
 };
 let snapshot = {message: 'Local model inventory checked.', details: '{"chat":"installed"}'};
-let rejectModels, statusUnavailable = false, poll;
+let rejectModels, statusResponse, statusUnavailable = false, poll;
 const context = vm.createContext({
   document: {getElementById: node, querySelectorAll: () => ['retry', 'models', 'prepare'].map(node)},
   window: {__TAURI_INTERNALS__: {invoke(command, args) {
-    if (command === 'desktop_status') return statusUnavailable ? Promise.reject('unavailable') : Promise.resolve(snapshot);
+    if (command === 'desktop_status') {
+      const response = statusResponse;
+      statusResponse = undefined;
+      return response ?? (statusUnavailable ? Promise.reject('unavailable') : Promise.resolve(snapshot));
+    }
     if (command === 'retry_backend') { assert.equal(args.initializeKey, null); return Promise.resolve(); }
     assert.equal(command, 'check_models');
     return new Promise((_, reject) => { rejectModels = reject; });
@@ -46,6 +50,29 @@ assert.equal(node('status').textContent, snapshot.message, 'stale credential fie
 await poll();
 assert.equal(node('status').textContent, snapshot.message, 'retired first-sign-in guidance must disappear on refresh');
 
+// Status requests started before an action cannot overwrite its pending or failed state.
+for (const duringAction of [true, false]) {
+  for (const rejected of [false, true]) {
+    await node('retry').listeners.click();
+    await settle();
+    let finishStatus;
+    statusResponse = new Promise((resolve, reject) => {
+      finishStatus = () => rejected ? reject('unavailable') : resolve(snapshot);
+    });
+    const staleRefresh = poll();
+    const pendingAction = node('models').listeners.click();
+    const error = 'Backend response timed out. Retry from setup.';
+    if (!duringAction) { rejectModels(error); await pendingAction; }
+    finishStatus();
+    await staleRefresh;
+    assert.equal(node('status').textContent, duringAction ? 'Working…' : error,
+      'a stale status response must not overwrite the current action');
+    assert.equal(node('details').textContent, '', 'a stale status response must not restore old details');
+    if (duringAction) { rejectModels(error); await pendingAction; }
+  }
+}
+await node('retry').listeners.click();
+await settle();
 statusUnavailable = true;
 await poll();
 assert.equal(node('status').textContent, 'Setup connection unavailable. Quit and reopen the app.');
