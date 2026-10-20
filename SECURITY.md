@@ -33,9 +33,9 @@ reproduction steps.
 The enforcement contracts live in [INVARIANTS.md](INVARIANTS.md):
 
 - Bind is loopback-only; a non-loopback host is refused at startup.
-- Fresh homes require HTTPS and accounts. SQLite persists accounts and hashed
-  sessions. Restricted `admin` / `admin` permits only password replacement,
-  which any loopback client can complete. Roles guard reads/writes afterward.
+- Fresh homes require HTTPS and account authentication. Accounts and hashed
+  sessions persist in SQLite. Bootstrap `admin` (one-time setup code) may only
+  replace its password; roles guard reads and writes.
 - Harness API keys are optional metadata and never bypass accounts or coding
   gates. Forwarded/proxy requests are refused.
 - Content URLs require current whole-policy permission and DNS-pinned public

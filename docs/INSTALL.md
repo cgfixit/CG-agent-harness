@@ -58,7 +58,8 @@ the file and choose **Open** (macOS 15 and later: **Open Anyway** in System Sett
 It waits for the Command Line Tools dialog, runs `install-macos.sh` (skipped when
 `--check` passes), adds Homebrew and Rust to your login shell's profile
 (`~/.zprofile` for zsh, `~/.bash_profile` or `~/.profile` for bash), replaces
-admin's restricted initial password with a new password and saves it in your login keychain as **CG Agent Harness
+admin's one-time setup code (it reads the code itself; in the app, **Cmd and +**
+shows it) with a new password and saves that in your login keychain as **CG Agent Harness
 admin password**, and grants the web allowlist. It then asks what to open:
 **1** the app, **2** the console in your browser (served from that Terminal until
 Ctrl-C, or the open app's console), **3** both, **0** nothing. A failed step offers retry,
@@ -99,10 +100,13 @@ using Rosetta** unchecked. Run every command from the clone, as your user.
    32768-token window, opens the app, and opens its console in your browser.
    `--trust-cert` asks for your password once so the browser trusts this home's
    certificate. Note the printed `CGagentHarness console: https://127.0.0.1:<port>/`.
-8. **Set your password:** a fresh app or browser console opens this form directly
-   for `admin`. Choose at least 12 characters. Closing it leaves a lock card;
-   the CLI and API refuse operational access with `AUTH_PASSWORD_CHANGE_REQUIRED`
-   until saved. Later visits and separate browsers sign in with your chosen password.
+8. **Set your password:** fresh homes open a form for the private setup code
+   and new password. In the focused app, **Cmd and +** (Cmd, Shift and =)
+   opens **Harness → Setup and recovery**, which shows the code. For a terminal
+   server, read `cat ~/.CGagentHarness/setup-code`. Use at least 12
+   characters. Until you do, that session can only change its password or log
+   out: closing the password dialog leaves a lock card, and the CLI and API
+   answer `AUTH_PASSWORD_CHANGE_REQUIRED`. The browser needs its own sign-in.
 9. **Optional web allowlist:** with that console origin, sign the CLI in and grant
    the technical-docs starter list:
 
@@ -269,6 +273,13 @@ Source-build commands assume the `CG-agent-harness` directory.
 
 From inside the `CG-agent-harness` folder:
 
+Source builds need the pinned Rust toolchain and a C compiler (Xcode Command
+Line Tools on macOS; for example, `build-essential` on Debian/Ubuntu). Reqwest's
+locked AWS-LC dependency normally uses that compiler directly, without CMake.
+If an alternate AWS-LC build selects CMake (for example,
+`AWS_LC_SYS_CMAKE_BUILDER=1`), install it first with `brew install cmake` on
+macOS or `sudo apt-get install cmake` on Debian/Ubuntu; confirm `cmake --version`.
+
 ```bash
 cargo build --release --locked
 ```
@@ -357,9 +368,10 @@ Finder, or start the standalone server:
 
 Upgrades keep existing settings; to adopt the boundaries, merge
 `auth.enabled: true` and `tls.enabled: true` into the active configuration.
-A fresh console opens **Set your password** for `admin`. CLI users sign in with
-restricted `admin` / `admin`, then run `account password`; no MCP machine key or
-operational access is available until replacement. See
+A fresh home's `admin` signs in once with the code in private
+`<home>/setup-code` (the app's **Cmd and +** window and `start-web.sh` show it),
+then must replace the password. No MCP machine key can be minted for an account
+that has not. See
 [TLS trust, migration and recovery](SECURE_RESEARCH.md).
 
 The standalone server prints its address, for example:
@@ -396,7 +408,7 @@ Fresh homes seed the bundled default `soul.md`; [soul](CONSOLE.md#72-default-sou
 and existing-home behavior.
 
 In the app, the console opens automatically. **Harness → Setup and recovery**
-(**Cmd and +**, that is Cmd, Shift and =) shows its owned endpoint and model/tool diagnostics. Use **Check installed
+(**Cmd and +**, that is Cmd, Shift and =) shows the setup code and its owned endpoint and model/tool diagnostics. Use **Check installed
 chat and planner models** to check configured tag availability without downloading.
 For the standalone server, leave its terminal open and visit:
 
@@ -565,7 +577,7 @@ on first run. Common operator settings follow:
 | `models.local_llm.inventory.*` | 2.0 s / 262144 bytes | Model-list probe timeout and response cap |
 | `auth.max_concurrent_operations` | 1 | Concurrent scrypt derivations (about 128 MiB each); range 1–4 |
 | `auth.session.idle_timeout_sec` / `absolute_timeout_sec` | 43200 / 604800 | Session expiry without use (recorded at most once a minute), and regardless of use |
-| `auth.session.password_change_idle_timeout_sec` / `password_change_absolute_timeout_sec` | 600 / 1800 | The same limits while password replacement is required; capped at the normal ones |
+| `auth.session.password_change_idle_timeout_sec` / `password_change_absolute_timeout_sec` | 600 / 1800 | The same limits while the account must still replace its password (setup code); capped at the normal ones |
 | `attachments.max_concurrent_uploads` | 2 | Attachment upload bodies (up to ~45 MiB each) buffered at once; range 1–8, excess requests get 503 `ATTACHMENT_BUSY` |
 | `attachments.body_timeout_sec` | 360 | Deadline for receiving one upload body; range 5–600, expiry gives 408 `ATTACHMENT_TIMEOUT` and frees the permit |
 | `structured_memory.*` | see file | Per-owner caps (facts, proposals, episodes, bytes), search/retrieval limits, suggestion queue and consolidation thresholds |

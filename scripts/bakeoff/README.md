@@ -8,7 +8,7 @@ holds the measured results and the window guidance.
   long context, the `/v1` wire check) plus the scripted fake Ollama and the
   probe corpus the harness lane imports. Pulls nothing, picks no winner.
 - [`bakeoff_harness.py`](bakeoff_harness.py): the product gate through a
-  disposable `cgagentharness serve`: restricted bootstrap and password replacement, `auto_tune` at a pinned
+  disposable `cgagentharness serve`: setup-code login, `auto_tune` at a pinned
   32768 window, a long session that must compact and keep its needle, web
   injection, HVAC research. `--self-test` runs it against the fake Ollama; the
   `bakeoff-self-test` job in `ci.yml` does that on every code change.

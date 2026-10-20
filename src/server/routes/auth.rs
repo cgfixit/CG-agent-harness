@@ -163,13 +163,13 @@ fn account_identity(account: &UserSummary) -> Value {
     })
 }
 
-/// Public first-run state; the temporary account can only replace its password.
+/// Public, so the sign-in screen can name the setup code before any session
+/// exists. It reports only whether that code still works, never the code.
 pub async fn setup_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
     let mgr = manager(&state)?;
     Ok(Json(json!({
         "enabled": true,
-        "default_password": mgr.default_password_active(),
-        "setup_code": false,
+        "setup_code": mgr.setup_code_active(),
     })))
 }
 

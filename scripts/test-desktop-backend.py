@@ -54,11 +54,11 @@ def await_headless(child, http, base):
     return None
 
 
-def fixture_password(http, base):
-    """Choose the disposable account credential from state, without failed guesses."""
-    with http.open(base + '/api/auth/setup-status', timeout=4) as response:
-        setup = json.load(response)
-    return 'admin' if setup.get('default_password') else 'desktop-fixture-password'
+def fixture_passwords(home):
+    """The fixture password, then a fresh home's one-time setup code. There is
+    no shipped password to fall back to."""
+    code = Path(home) / 'setup-code'
+    return ('desktop-fixture-password',) + ((code.read_text().strip(),) if code.is_file() else ())
 
 
 def serve_expecting_refusal(home):
@@ -230,15 +230,16 @@ class Sidecar:
         html = self.request('/')[1]
         csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
         headers = {'X-CyClaw-CSRF': csrf, 'Origin': self.base}
-        password = fixture_password(self.http, self.base)
-        status, body, response_headers = self.request('/api/auth/login', headers, {'username':'admin','password':password})
-        assert status == 200, 'fixture account login failed'
-        headers['Cookie'] = response_headers['Set-Cookie'].split(';')[0]
-        if json.loads(body)['must_change_password']:
-            status, _, response_headers = self.request('/api/auth/password', headers, {'current_password':password,'password':'desktop-fixture-password'})
-            assert status == 200
-            headers['Cookie'] = response_headers['Set-Cookie'].split(';')[0]
-        return headers
+        for password in fixture_passwords(self.home):
+            status, body, response_headers = self.request('/api/auth/login', headers, {'username':'admin','password':password})
+            if status == 200:
+                headers['Cookie'] = response_headers['Set-Cookie'].split(';')[0]
+                if json.loads(body)['must_change_password']:
+                    status, _, response_headers = self.request('/api/auth/password', headers, {'current_password':password,'password':'desktop-fixture-password'})
+                    assert status == 200
+                    headers['Cookie'] = response_headers['Set-Cookie'].split(';')[0]
+                return headers
+        raise AssertionError('fixture account login failed')
 
     def close(self):
         if self.process.poll() is None:
@@ -280,55 +281,6 @@ class DesktopBoundary(unittest.TestCase):
         if needle not in text:
             raise AssertionError('shipped config lost allow_plaintext_key_file: false')
         config.write_text(text.replace(needle, 'allow_plaintext_key_file: true', 1))
-
-    def test_first_run_password_setup_stays_retired_after_restart(self):
-        child = self.start()
-        setup = json.loads(child.request('/api/auth/setup-status')[1])
-        self.assertEqual(setup, {'enabled': True, 'default_password': True, 'setup_code': False})
-        self.assertFalse((self.home / 'setup-code').exists())
-        csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', child.request('/')[1]).group(1).decode()
-        headers = {'X-CyClaw-CSRF': csrf, 'Origin': child.base}
-        credentials = {'username': 'admin', 'password': 'admin'}
-        replacement = {'current_password': 'admin', 'password': 'desktop-fixture-password'}
-        self.assertEqual(child.request('/api/auth/password', headers, replacement)[0], 401)
-        self.assertEqual(child.request('/api/auth/login', {**headers, 'Origin': 'https://example.invalid'}, credentials)[0], 403)
-        # Login is public but origin-protected; only password replacement requires CSRF.
-        status, body, reply = child.request('/api/auth/login', {'Origin': child.base}, credentials)
-        self.assertEqual(status, 200)
-        self.assertTrue(json.loads(body)['must_change_password'])
-        restricted = {**headers, 'Cookie': reply['Set-Cookie'].split(';')[0]}
-        self.assertIn('Secure', reply['Set-Cookie'])
-        self.assertIn('HttpOnly', reply['Set-Cookie'])
-        self.assertEqual(child.request('/api/auth/whoami', restricted)[0], 200)
-        self.assertNotIn('home', json.loads(child.request('/api/status', restricted)[1]))
-        for path, payload in (('/api/sessions', None), ('/api/keys', None), ('/api/auth/users', None),
-                              ('/api/chat', {'message': 'must not run'}), ('/api/config/reload', {})):
-            with self.subTest(path=path):
-                status, body, _ = child.request(path, restricted, payload)
-                self.assertEqual(status, 403)
-                self.assertEqual(json.loads(body)['detail']['code'], 'AUTH_PASSWORD_CHANGE_REQUIRED')
-        self.assertEqual(child.request('/api/auth/password', restricted, {**replacement, 'password': 'admin'})[0], 422)
-        self.assertEqual(child.request('/api/auth/password', {'Cookie': restricted['Cookie'], 'Origin': child.base}, replacement)[0], 403)
-        status, body, reply = child.request('/api/auth/password', restricted, replacement)
-        self.assertEqual(status, 200)
-        self.assertFalse(json.loads(body)['must_change_password'])
-        authorized = {**headers, 'Cookie': reply['Set-Cookie'].split(';')[0]}
-        self.assertNotEqual(authorized['Cookie'], restricted['Cookie'])
-        self.assertEqual(child.request('/api/auth/whoami', restricted)[0], 401)
-        self.assertEqual(child.request('/api/auth/login', headers, credentials)[0], 401)
-        self.assertEqual(child.request('/api/sessions', authorized)[0], 200)
-        self.assertFalse(json.loads(child.request('/api/auth/setup-status')[1])['default_password'])
-        self.assertFalse((self.home / 'setup-code').exists())
-        child.close()
-        restarted = self.start()
-        self.assertEqual(json.loads(restarted.request('/api/auth/setup-status')[1]),
-                         {'enabled': True, 'default_password': False, 'setup_code': False})
-        self.assertFalse((self.home / 'setup-code').exists())
-        self.assertEqual(restarted.request('/api/auth/whoami', {'Cookie': restricted['Cookie']})[0], 401)
-        csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', restarted.request('/')[1]).group(1).decode()
-        self.assertEqual(restarted.request('/api/auth/login',
-                         {'X-CyClaw-CSRF': csrf, 'Origin': restarted.base}, credentials)[0], 401)
-        self.assertEqual(restarted.request('/api/sessions', restarted.authorize())[0], 200)
 
     def test_private_models_command_distinguishes_chat_and_planner_tags(self):
         self.start().close()
@@ -418,8 +370,9 @@ class DesktopBoundary(unittest.TestCase):
                             with response: return response.status, response.read(), response.headers
                         headers={'X-CyClaw-CSRF':csrf,'Origin':base}
                         self.assertEqual(request('/api/keys',{**headers,'Authorization':'Bearer '+(override or file_key)})[0],401)
-                        password = fixture_password(http, base)
-                        status,body,reply=request('/api/auth/login',headers,{'username':'admin','password':password})
+                        for password in fixture_passwords(self.home):
+                            status,body,reply=request('/api/auth/login',headers,{'username':'admin','password':password})
+                            if status==200: break
                         self.assertEqual(status,200)
                         headers['Cookie']=reply['Set-Cookie'].split(';')[0]
                         if json.loads(body)['must_change_password']:
@@ -469,15 +422,18 @@ class DesktopBoundary(unittest.TestCase):
             try:
                 csrf = re.search(rb'<meta name="csrf-token" content="([^"]+)"', html).group(1).decode()
                 headers = {'X-CyClaw-CSRF': csrf, 'Origin': base}
-                password = fixture_password(http, base)
-                req = urllib.request.Request(base + '/api/auth/login', headers={**headers, 'Content-Type': 'application/json'},
-                    data=json.dumps({'username': 'admin', 'password': password}).encode())
-                try:
-                    response = http.open(req, timeout=5)
-                except urllib.error.HTTPError as error:
-                    response = error
-                with response:
-                    status, body, reply = response.status, response.read(), response.headers
+                status, body, reply = None, None, None
+                for password in fixture_passwords(self.home):
+                    req = urllib.request.Request(base + '/api/auth/login', headers={**headers, 'Content-Type': 'application/json'},
+                        data=json.dumps({'username': 'admin', 'password': password}).encode())
+                    try:
+                        response = http.open(req, timeout=5)
+                    except urllib.error.HTTPError as error:
+                        response = error
+                    with response:
+                        status, body, reply = response.status, response.read(), response.headers
+                    if status == 200:
+                        break
                 self.assertEqual(status, 200)
                 headers['Cookie'] = reply['Set-Cookie'].split(';')[0]
                 if json.loads(body)['must_change_password']:

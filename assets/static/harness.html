@@ -776,7 +776,7 @@ dialog p { margin-bottom:12px; }
   <h2 id="passwordTitle">Change your password</h2>
   <p id="passwordHelp">Enter your current password and a new password of at least 12 characters.</p>
   <form id="passwordForm">
-    <p id="passwordCurrentField"><label>Current password <input id="passwordCurrent" type="password" autocomplete="current-password" required maxlength="1024"></label></p>
+    <p id="passwordCurrentField"><label><span id="passwordCurrentLabel">Current password</span> <input id="passwordCurrent" type="password" autocomplete="current-password" required maxlength="1024"></label></p>
     <p><label>New password <input id="passwordNew" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"></label></p>
     <p><label>Confirm new password <input id="passwordConfirm" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"></label></p>
     <button id="passwordSave" type="submit" class="primary">Save password</button><button type="button" id="passwordClose">Close</button>
@@ -5503,7 +5503,7 @@ async function refreshHarnessAuth() {
       let initialPassword = false;
       if (data.username === 'admin' && data.must_change_password) {
         const setup = await fetchWithTimeout('/api/auth/setup-status', {}, 5000);
-        initialPassword = setup.ok && (await setup.json()).default_password === true;
+        initialPassword = setup.ok && (await setup.json()).setup_code === true;
       }
       const completedElsewhere = firstRunPassword && !data.must_change_password;
       if (completedElsewhere) $('passwordDialog').close();
@@ -5528,7 +5528,7 @@ async function refreshHarnessAuth() {
     window.__cyclawRole = null;
     if (who) who.textContent = '';
     setHarnessLogoutVisible(false);
-    showSignIn(status.default_password === true ? 'setup' : 'login', status.default_password);
+    showSignIn(status.setup_code === true ? 'setup' : 'login', status.setup_code);
   } catch (e) {
     /* Keep the last UI, except on the first probe: there is no last UI yet,
        and revealing the console would show it as usable. */
@@ -5554,7 +5554,7 @@ if (hAuthLogin) {
     if (!user.value.trim() || !pass.value) { error.textContent = 'Enter your username and password.'; return; }
     clearAnalytics();
     hAuthLogin.disabled = true;
-    const initialPassword = user.value.trim() === 'admin' && pass.value === 'admin';
+    const initialPassword = firstRunPassword;
     try {
       const r = await fetchWithTimeout('/api/auth/login', {
         method: 'POST',
@@ -5631,12 +5631,11 @@ if (hAuthLogout) {
 }
 function openPasswordChange(required) {
   $('passwordTitle').textContent = required ? 'Set your password' : 'Change your password';
-  $('passwordHelp').textContent = required ? 'Choose a password of at least 12 characters to unlock the harness.' : 'Changing your password signs out other sessions. Use at least 12 characters.';
-  $('passwordCurrentField').hidden = firstRunPassword;
-  $('passwordCurrent').disabled = firstRunPassword;
+  $('passwordHelp').textContent = required ? 'Enter your private setup code and choose a password of at least 12 characters. In the app, Harness → Setup and recovery shows the code; for a terminal server, read the setup-code file in the harness home.' : 'Changing your password signs out other sessions. Use at least 12 characters.';
+  $('passwordCurrentLabel').textContent = firstRunPassword ? 'Setup code' : 'Current password';
   $('passwordFeedback').textContent = '';
   if (!$('passwordDialog').open) $('passwordDialog').showModal();
-  $(firstRunPassword ? 'passwordNew' : 'passwordCurrent').focus();
+  $('passwordCurrent').focus();
 }
 $('hAuthPassword').addEventListener('click', () => openPasswordChange(passwordRequired));
 $('passwordLockCard').addEventListener('submit', event => { event.preventDefault(); openPasswordChange(true); });
@@ -5650,7 +5649,7 @@ $('passwordForm').addEventListener('submit', async event => {
   event.preventDefault();
   if ($('passwordSave').disabled) return;
   if ($('passwordNew').value !== $('passwordConfirm').value) { $('passwordFeedback').textContent = 'Passwords do not match.'; return; }
-  const body = { current_password: firstRunPassword ? 'admin' : $('passwordCurrent').value, password: $('passwordNew').value };
+  const body = { current_password: $('passwordCurrent').value, password: $('passwordNew').value };
   $('passwordForm').reset();
   $('passwordFeedback').textContent = '';
   $('passwordSave').disabled = true;
@@ -5658,7 +5657,7 @@ $('passwordForm').addEventListener('submit', async event => {
     if (firstRunPassword && window.__cyclawRole !== 'admin') {
       const response = await fetchWithTimeout('/api/auth/login', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'admin', password: 'admin' }),
+        body: JSON.stringify({ username: 'admin', password: body.current_password }),
       }, 15000);
       const data = await response.json().catch(() => null);
       if (!response.ok) {
@@ -5669,7 +5668,7 @@ $('passwordForm').addEventListener('submit', async event => {
         $(firstRunPassword ? 'passwordFeedback' : 'hAuthError').textContent = message;
         return;
       }
-      // Only a restricted bootstrap account may use the implicit current password.
+      // The supplied code must authenticate a restricted bootstrap account.
       if (data?.username !== 'admin' || data.role !== 'admin' || data.must_change_password !== true) {
         await refreshHarnessAuth();
         $('passwordFeedback').textContent = 'Account state changed. Reload the page and try again.';

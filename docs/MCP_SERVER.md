@@ -76,7 +76,7 @@ cgagentharness mcp-key revoke KEY_ID --confirm --reason 'Retire workstation acce
 ```
 
 Listing returns metadata only. `mcp-key create` refuses a missing or disabled
-owner, or one still requiring password replacement. With account authentication off, it accepts only `local`. Disabling or
+owner, or one still signing in with its setup code. With account authentication off, it accepts only `local`. Disabling or
 deleting an account disables that owner's machine keys. Revoking one key does
 not affect another owner's keys. Each later request observes revocation and
 rechecks it before a memory read, but an executing read may finish. Owner binding

@@ -11,7 +11,8 @@ const html = await readFile(new URL('../assets/static/harness.html', import.meta
 const slashSource = await readFile(new URL('../src/server/slash.rs', import.meta.url), 'utf8');
 const canonicalCommands = [...slashSource.match(/const COMMANDS: &[\s\S]*?= &\[([\s\S]*?)\];/)[1].matchAll(/"([a-z]+)"/g)].map(match=>'/'+match[1]).sort();
 // The fresh-home credential is restricted until the password route replaces it.
-let adminPassword='admin';
+const FIXTURE_SETUP_CODE='fx2a-b3cd-e4fg-h5jk';
+let adminPassword=FIXTURE_SETUP_CODE;
 const userIds={admin:'1'.repeat(32),'audit-fixture':'2'.repeat(32),'memory-second':'3'.repeat(32)}; // random_hex(16) owner ids
 let persona=''; let clearFails=false, slashMode='dispatch';
 let authFixture=false, signedIn=false, logoutStatus=200, whoamiDrop=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
@@ -74,7 +75,7 @@ const server=createServer(async(req,res)=>{
   reply({kind:'dispatch',dispatch:true,canonical:body.line});return;
  }
  if(path==='/api/auth/whoami'){if(whoamiDrop){req.socket.destroy();return;}reply(authFixture&&signedIn?{username:authUsername,role:authRole,user_id:userIds[authUsername],must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
- if(path==='/api/auth/setup-status'){reply({enabled:true,default_password:authFixture&&adminPassword==='admin',setup_code:false});return;}
+ if(path==='/api/auth/setup-status'){reply({enabled:true,default_password:false,setup_code:authFixture&&adminPassword===FIXTURE_SETUP_CODE});return;}
  if(path==='/api/auth/login'){
   const auditor=body.username==='audit-fixture'&&body.password==='browser-auditor-password';
   const secondOwner=body.username==='memory-second'&&body.password==='browser-memory-password';
@@ -858,8 +859,8 @@ try {
  assert.equal(await evaluate(headerState),'','signed-out consoles show no header automation buttons');
  assert.equal(requests.slice(signedOutMark).some(r=>['/api/notifications','/api/tools'].includes(r[1])),false,'signed-out consoles send no feature probes');
  assert.equal(await evaluate('document.getElementById("passwordTitle").textContent'),'Set your password');
- assert.equal(await evaluate('document.getElementById("passwordCurrentField").hidden'),true,'fresh setup asks only for the new password');
- assert.equal(await evaluate('document.getElementById("passwordCurrent").disabled'),true);
+ assert.equal(await evaluate('document.getElementById("passwordCurrentLabel").textContent'),'Setup code','fresh setup requires the private code');
+ assert.equal(await evaluate('document.getElementById("passwordCurrent").disabled'),false);
  assert.equal(requests.slice(signedOutMark).some(r=>r[0]==='POST'&&r[1].startsWith('/api/auth/')),false,'opening setup must not create a session');
  assert.equal(await evaluate('document.getElementById("hAuthHint")'),null,'the old setup-code instructions are absent');
  assert.equal(await evaluate('document.querySelector(".main").offsetParent'),null,'signed out, the console is not drawn');
@@ -872,11 +873,11 @@ try {
  assert.equal(await evaluate('document.querySelector(".main").offsetParent'),null,'a closed password dialog does not reveal the console');
  await evaluate('document.getElementById("passwordLockOpen").click()');
  await until('document.getElementById("passwordDialog").open');
- await evaluate('document.getElementById("passwordNew").value="browser-fixture-password";document.getElementById("passwordConfirm").value="browser-fixture-password";document.getElementById("passwordForm").requestSubmit()');
+ await evaluate('document.getElementById("passwordCurrent").value='+JSON.stringify(FIXTURE_SETUP_CODE)+';document.getElementById("passwordNew").value="browser-fixture-password";document.getElementById("passwordConfirm").value="browser-fixture-password";document.getElementById("passwordForm").requestSubmit()');
  await until('!document.getElementById("passwordDialog").open');assert.equal(mustChange,false);
  assert.deepEqual(requests.slice(signedOutMark).filter(r=>r[0]==='POST'&&r[1].startsWith('/api/auth/')).map(r=>[r[1],r[2]]),[
-  ['/api/auth/login',{username:'admin',password:'admin'}],
-  ['/api/auth/password',{current_password:'admin',password:'browser-fixture-password'}]
+  ['/api/auth/login',{username:'admin',password:FIXTURE_SETUP_CODE}],
+  ['/api/auth/password',{current_password:FIXTURE_SETUP_CODE,password:'browser-fixture-password'}]
  ],'one explicit save performs the restricted login and protected password replacement');
  await until(headerState+'==="openAnalytics,openDeliveries,openSchedules"');
  assert.match(await evaluate('document.getElementById("openDeliveries").title'),/metadata-only.*coding job finishes/);

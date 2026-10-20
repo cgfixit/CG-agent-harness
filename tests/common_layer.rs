@@ -353,35 +353,56 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
     assert!(mgr.bootstrap_if_empty().unwrap());
     assert!(!mgr.bootstrap_if_empty().unwrap());
     assert!(mgr.get_user("admin").unwrap().must_change_password);
+    // A fresh store has no shipped password: `admin` signs in only with the
+    // one-time code in the private `<home>/setup-code` file.
     let code_file = dir.path().join("setup-code");
-    assert!(!code_file.exists(), "first-run setup never writes a code");
-    assert!(mgr.default_password_active());
+    let code = std::fs::read_to_string(&code_file).unwrap().trim().to_string();
+    assert_eq!(code.len(), 19, "four groups of four: {code}");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&code_file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
+    // Reported until it changes, across a reopen, without hashing again.
+    assert!(mgr.setup_code_active());
     assert!(AuthManager::open(&dir.path().join("auth.json"), &cfg)
         .unwrap()
-        .default_password_active());
-    let initial = mgr.get_user(BOOTSTRAP_USERNAME).unwrap().username;
+        .setup_code_active());
+    // Passwords come from runtime values so no literal reaches a password
+    // sink (CodeQL rust/hard-coded-cryptographic-value). The retired shipped
+    // password was the bootstrap username itself, read back from the store.
+    let shipped = mgr.get_user(BOOTSTRAP_USERNAME).unwrap().username;
     let first_password = random_urlsafe(24);
     assert_eq!(
         mgr.login(BOOTSTRAP_USERNAME, &random_urlsafe(24)).unwrap_err().code,
         "AUTH_LOGIN_FAILED"
     );
-    mgr.login(BOOTSTRAP_USERNAME, &initial).unwrap();
-    assert!(mgr.default_password_active(), "sign-in alone cannot complete setup");
     assert_eq!(
-        mgr.change_password(BOOTSTRAP_USERNAME, &initial, &initial)
-            .unwrap_err()
-            .code,
+        mgr.login(BOOTSTRAP_USERNAME, &shipped).unwrap_err().code,
+        "AUTH_LOGIN_FAILED",
+        "the formerly shipped password must not work"
+    );
+    mgr.login("admin", &code).unwrap();
+    assert!(
+        mgr.setup_code_active(),
+        "a sign-in that skips the change keeps the code"
+    );
+    assert_eq!(
+        mgr.change_password("admin", &code, &code).unwrap_err().code,
         "PASSWORD_POLICY",
-        "the default password cannot become the permanent password"
+        "the setup code cannot become the password"
     );
     // The restricted session lives 10 min idle / 30 min absolute, not 12 h / 7 d.
-    let idle = mgr.login("admin", &initial).unwrap();
+    let idle = mgr.login("admin", &code).unwrap();
     *now.lock().unwrap() += 600.0;
     assert!(
         mgr.validate_session(&idle.session_id).is_none(),
         "restricted idle limit"
     );
-    let busy = mgr.login("admin", &initial).unwrap();
+    let busy = mgr.login("admin", &code).unwrap();
     for _ in 0..5 {
         *now.lock().unwrap() += 300.0;
         assert!(mgr.validate_session(&busy.session_id).is_some());
@@ -391,13 +412,13 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
         mgr.validate_session(&busy.session_id).is_none(),
         "restricted absolute limit"
     );
-    let restricted = mgr.login("admin", &initial).unwrap();
-    let first = mgr.change_password("admin", &initial, &first_password).unwrap();
-    assert!(!mgr.default_password_active());
-    assert!(!code_file.exists(), "setup does not create a code file");
+    let restricted = mgr.login("admin", &code).unwrap();
+    let first = mgr.change_password("admin", &code, &first_password).unwrap();
+    assert!(!mgr.setup_code_active());
+    assert!(!code_file.exists(), "the code file goes once admin has a real password");
     assert!(!AuthManager::open(&dir.path().join("auth.json"), &cfg)
         .unwrap()
-        .default_password_active());
+        .setup_code_active());
     assert!(mgr.validate_session(&restricted.session_id).is_none());
     assert!(!mgr.get_user("admin").unwrap().must_change_password);
     assert_eq!(mgr.validate_session(&first.session_id).unwrap().username, "admin");

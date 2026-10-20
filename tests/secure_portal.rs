@@ -74,9 +74,11 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
     .with("api.rate_limit.max_requests", "1000")
     .with("web.response_bytes", "4096");
     let server = spawn_server(&model.base_url(), options).await;
-    assert!(!server.home.join("setup-code").exists());
-    let initial = "admin";
-    let bootstrap = login(&server, "admin", initial).await;
+    let setup_code = std::fs::read_to_string(server.home.join("setup-code"))
+        .unwrap()
+        .trim()
+        .to_string();
+    let bootstrap = login(&server, "admin", &setup_code).await;
     assert_eq!(
         request(&server, &bootstrap, Method::GET, "/api/analytics/summary", json!({}))
             .await
@@ -94,7 +96,7 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
         &bootstrap,
         Method::POST,
         "/api/auth/password",
-        json!({"current_password":initial, "password":"reload-fixture-password"}),
+        json!({"current_password":setup_code, "password":"reload-fixture-password"}),
     )
     .await;
     assert_eq!(changed.status(), 200);
@@ -525,12 +527,14 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             .unwrap();
         assert_eq!(response.status(), 401, "unprotected API {path}");
     }
-    assert!(!server.home.join("setup-code").exists());
-    let initial = "admin";
+    let setup_code = std::fs::read_to_string(server.home.join("setup-code"))
+        .unwrap()
+        .trim()
+        .to_string();
     let response = server
         .client
         .post(server.url("/api/auth/login"))
-        .json(&json!({"username":"admin","password":initial}))
+        .json(&json!({"username":"admin","password":setup_code}))
         .send()
         .await
         .unwrap();
@@ -590,7 +594,7 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             );
         }
     }
-    let body = json!({"current_password":initial,"password":"replacement-admin-password"});
+    let body = json!({"current_password":setup_code,"password":"replacement-admin-password"});
     assert_eq!(
         server
             .client
@@ -633,7 +637,7 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             &bootstrap,
             Method::POST,
             "/api/auth/password",
-            json!({"current_password":initial,"password":"short"})
+            json!({"current_password":setup_code,"password":"short"})
         )
         .await
         .status(),
@@ -954,8 +958,10 @@ async fn cli_bootstrap_session_can_only_replace_the_password_and_gets_no_machine
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&server.home, std::fs::Permissions::from_mode(0o700)).unwrap();
     }
-    assert!(!server.home.join("setup-code").exists());
-    let initial = "admin";
+    let setup_code = std::fs::read_to_string(server.home.join("setup-code"))
+        .unwrap()
+        .trim()
+        .to_string();
     let admin_id = server.state.auth.as_ref().unwrap().get_user("admin").unwrap().user_id;
     let mint = [
         "mcp-key",
@@ -969,7 +975,7 @@ async fn cli_bootstrap_session_can_only_replace_the_password_and_gets_no_machine
         "fixture",
     ];
     // Local file authority still refuses a machine key to an owner that has
-    // not replaced its initial password.
+    // not replaced its setup code.
     let refused = cli(&server, &mint, "").await;
     assert!(!refused.status.success());
     assert!(
@@ -982,7 +988,7 @@ async fn cli_bootstrap_session_can_only_replace_the_password_and_gets_no_machine
     let result = cli(
         &server,
         &["account", "--url", &server.base, "login", "admin"],
-        &format!("{initial}\n"),
+        &format!("{setup_code}\n"),
     )
     .await;
     assert!(result.status.success(), "{}", stderr(&result));
@@ -1011,7 +1017,7 @@ async fn cli_bootstrap_session_can_only_replace_the_password_and_gets_no_machine
     let result = cli(
         &server,
         &["account", "--url", &server.base, "password"],
-        &format!("{initial}\nreplacement-cli-password\n"),
+        &format!("{setup_code}\nreplacement-cli-password\n"),
     )
     .await;
     assert!(result.status.success(), "{}", stderr(&result));

@@ -4,16 +4,23 @@ const status = document.getElementById('status');
 const details = document.getElementById('details');
 let busy = false;
 let failure = '';
+let actionVersion = 0;
 async function refresh() {
   if (busy || failure) return;
+  const version = actionVersion;
   try {
     const data = await invoke('desktop_status');
-    status.textContent = data.message;
+    if (version !== actionVersion) return;
+    status.textContent = data.setup_code ? `${data.message} First sign-in: user admin, setup code ${data.setup_code}. You then choose a new password.` : data.message;
     details.textContent = data.details;
   }
-  catch (_) { status.textContent = 'Setup connection unavailable. Quit and reopen the app.'; details.textContent = ''; }
+  catch (_) {
+    if (version !== actionVersion) return;
+    status.textContent = 'Setup connection unavailable. Quit and reopen the app.'; details.textContent = '';
+  }
 }
 async function action(command, args) {
+  actionVersion++;
   busy = true; failure = ''; details.textContent = '';
   for (const b of document.querySelectorAll('button')) b.disabled = true;
   try { status.textContent = 'Working…'; await invoke(command, args); }

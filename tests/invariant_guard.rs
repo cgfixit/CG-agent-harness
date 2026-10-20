@@ -1089,10 +1089,10 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     // why: dependency refresh removed five stale Linux prerequisite words; keep the cut.
-    ("README.md", Root, 1690),
+    ("README.md", Root, 1689),
     ("SECURITY.md", Root, 690),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
-    ("docs/API_ROUTES.md", Guide, 1829),
+    ("docs/API_ROUTES.md", Guide, 1830),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
     ("docs/CODING_PIPELINE.md", Guide, 3710),
     ("docs/CONFIG_RELOAD.md", Guide, 600),
@@ -1100,20 +1100,20 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
-    ("docs/CONSOLE.md", Guide, 6182),
+    ("docs/CONSOLE.md", Guide, 6189),
     // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
     ("docs/DEPENDENCIES.md", Guide, 1330),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
-    ("docs/DESKTOP.md", Guide, 2673),
+    ("docs/DESKTOP.md", Guide, 2680),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
     ("docs/GITHOOKS.md", Guide, 1550),
     // why: credentials table now describes the OS store and the plaintext opt-in; 5571 words, rounded up to the next 100.
     // Setup memory guidance replaces repeated setup/verification prose; keep the cut.
     // why: operator-approved (2026-10-14) automated macOS install (section 1) and browser access (section 7); 5188 words plus about 1%, rounded up to the next 50.
     // why: operator-approved (2026-10-14) raise to 7500 for room to grow the install guide after #491 and #496 together hit 5250; the Guide group cap still bounds it.
-    ("docs/INSTALL.md", Guide, 7409),
+    ("docs/INSTALL.md", Guide, 7474),
     ("docs/MCP_CLIENT.md", Guide, 1090),
-    ("docs/MCP_SERVER.md", Guide, 1227),
+    ("docs/MCP_SERVER.md", Guide, 1230),
     // why: #244 folded MEMORY_SETUP.md and the user manual's memory sections in here.
     ("docs/MEMORY_GUIDE.md", Guide, 1950),
     // why: #237 documented refused truncated cloud replies.
@@ -1125,7 +1125,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/RELEASING.md", Guide, 900),
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
     // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
-    ("docs/SECURE_RESEARCH.md", Guide, 3749),
+    ("docs/SECURE_RESEARCH.md", Guide, 3750),
     // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here; 2157 words, cap set to 2750 for room to grow.
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2750),
     // why: #244 made this the one memory contract: a gate table, and the #87

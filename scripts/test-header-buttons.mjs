@@ -25,7 +25,7 @@ const reply = (status, body = {}) => ({status, ok:status >= 200 && status < 300,
 const refused = status => Object.assign(new Error('HTTP ' + status), {status});
 const shipped = {'/api/notifications':{enabled:false,destinations:[],deliveries:[]}, '/api/tools':{tools:[{path:'/api/agent/checks',enabled:null},{path:'/api/agent/schedules',enabled:false}]}};
 const enabled = {'/api/notifications':{enabled:true,destinations:[],deliveries:[]}, '/api/tools':{tools:[{path:'/api/agent/checks',enabled:null},{path:'/api/agent/schedules',enabled:true}]}};
-let replies = shipped, auth = {whoami:reply(503), setup:reply(200, {default_password:false})}, probes = [];
+let replies = shipped, auth = {whoami:reply(503), setup:reply(200, {setup_code:false})}, probes = [];
 const classes = () => { const set = new Set(); return {add:n => set.add(n), remove:n => set.delete(n), contains:n => set.has(n),
   toggle:(n, on) => { if (on) set.add(n); else set.delete(n); return on; }}; };
 const page = {getElementById:node, body:{classList:classes()}, documentElement:{classList:classes()}, activeElement:null, listeners:{},
@@ -97,14 +97,14 @@ assert.deepEqual(probes, [], 'signed-out consoles send no feature probes');
 // Fresh setup goes straight to the locked password form without logging in.
 assert.ok(page.body.classList.contains('signed-out'));
 assert.equal(node('hAuthLoginBox').hidden, false);
-auth.setup = reply(200, {default_password:true});
+auth.setup = reply(200, {setup_code:true});
 await context.refreshHarnessAuth(); await settle();
 assert.equal(node('hAuthLoginBox').hidden, true);
 assert.equal(node('passwordLockScreen').hidden, false);
 assert.ok(page.body.classList.contains('password-required'));
 assert.deepEqual(passwordPrompts, [true]);
 assert.deepEqual(probes, [], 'first-run setup probes no operational features');
-auth.setup = reply(200, {default_password:false});
+auth.setup = reply(200, {setup_code:false});
 await context.refreshHarnessAuth(); await settle();
 assert.equal(node('hAuthLoginBox').hidden, false, 'completed setup returns to ordinary login');
 assert.ok(!page.documentElement.classList.contains('auth-pending'));
@@ -141,7 +141,7 @@ assert.equal(node('hAuthError').textContent, '', 'successful login completes wit
 context.refreshHeaderFeatures(false); await settle();
 // The login form path locks too, and keeps Reload limits hidden for an initial-password admin.
 auth.login = reply(200, {username:'admin', role:'admin', must_change_password:true});
-node('hAuthUser').value = 'admin'; node('hAuthPass').value = 'admin';
+node('hAuthUser').value = 'admin'; node('hAuthPass').value = 'setup-code-fixture';
 await node('hAuthLogin').listeners.click(); await settle();
 assert.deepEqual(shown(), []);
 assert.ok(page.body.classList.contains('password-required'));

@@ -3,8 +3,8 @@
 Operator and CI helpers. Only `verify-local.sh`, `check-pr-template.sh` and
 `python3 test-desktop-backend.py` are pre-approved for Claude in
 [.claude/settings.json](../.claude/settings.json). The `test-*.mjs` files are
-Node `vm` contract tests over slices of `harness.html`, run by the `ci.yml`
-chat-browser job and `verify-local.sh`.
+Node `vm` contract tests for `harness.html` slices and the desktop Setup script,
+run by the `ci.yml` chat-browser job and `verify-local.sh`.
 
 ## Operator
 
@@ -34,6 +34,7 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 - [`test-attachment-preview.mjs`](test-attachment-preview.mjs): preview reuses uploads and never leaks across sessions.
 - [`test-auth-deadlines.mjs`](test-auth-deadlines.mjs): console fetch helpers against headers-first replies.
 - [`test-delivery-review.mjs`](test-delivery-review.mjs): delivery UI handlers across logout and late replay.
+- [`test-desktop-setup.mjs`](test-desktop-setup.mjs): Setup status, action errors, stale replies and setup-code guidance.
 - [`test-header-buttons.mjs`](test-header-buttons.mjs): header automation buttons hide until account state is known.
 - [`test-loop-continuation.mjs`](test-loop-continuation.mjs): `/loop` turn prompt, `GOAL_DONE` marker, stall checks.
 - [`test-nl-search-routing.mjs`](test-nl-search-routing.mjs): natural-language search predicate against server phrasings.

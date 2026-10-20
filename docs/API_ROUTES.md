@@ -33,7 +33,7 @@ check-profile names and run IDs, never browser-supplied commands.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/auth/setup-status` | Public `default_password`; compatibility `setup_code` stays false |
+| GET | `/api/auth/setup-status` | `setup_code` while the one-time code works; public |
 | POST | `/api/auth/login` | Login; public with early guards |
 | POST | `/api/auth/logout` | Revoke the current session |
 | GET | `/api/auth/whoami` | Current account, role, and `user_id` |

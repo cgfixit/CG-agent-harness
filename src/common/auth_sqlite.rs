@@ -223,11 +223,19 @@ pub(super) fn open(legacy: &Path) -> Result<(Connection, AuthDb, bool)> {
     let fresh = !present(legacy)?;
     let parent = path.parent().ok_or_else(|| invalid("missing account directory"))?;
     let db = if fresh {
+        // The code reaches disk before the database that accepts it, so a
+        // crash between the two never leaves an admin with an unknown password.
+        let code = authn::new_setup_code();
+        write_atomic(
+            &parent.join(authn::SETUP_CODE_FILE),
+            format!("{code}\n").as_bytes(),
+            Some(0o600),
+        )?;
         let mut db = AuthDb::default();
         db.users.insert(
             super::BOOTSTRAP_USERNAME.into(),
             UserRow {
-                password_hash: authn::hash_bootstrap_password(super::BOOTSTRAP_USERNAME)?,
+                password_hash: authn::hash_bootstrap_password(&code)?,
                 created_ts: crate::common::now_ts(),
                 disabled: false,
                 last_login_ts: None,
@@ -498,177 +506,47 @@ mod tests {
     }
 
     #[test]
-    fn unfinished_setup_migrates_once_without_losing_identity_lockout_or_other_sessions() {
-        for old_state in ["code", "missing", "stale", "pending"] {
+    fn a_home_still_on_the_shipped_password_is_rotated_to_a_setup_code() {
+        let open_with = |admin_hash: String, must_change: bool| {
             let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("auth.json");
+            let legacy = dir.path().join("auth.json");
             let cfg = AppConfig::from_str(AppConfig::embedded_default(), &dir.path().join("config.yaml")).unwrap();
-            let mgr = AuthManager::open(&path, &cfg).unwrap();
-            let initial = mgr.get_user(BOOTSTRAP_USERNAME).unwrap();
-            let old_session = mgr.login(BOOTSTRAP_USERNAME, &initial.username).unwrap();
-            let password = crate::common::random_urlsafe(24);
-            mgr.create_user("operator", &password, "operator").unwrap();
-            let operator_session = mgr.login("operator", &password).unwrap();
-            let code = crate::common::random_urlsafe(19);
-            let code_hash = authn::hash_password(&code).unwrap();
-            let locked_until = crate::common::now_ts() + 900.0;
-            let database = path.with_extension("sqlite3");
-            connect(&database).unwrap().execute(
-                "UPDATE users SET password_hash=?1, failed_count=7, locked_until_ts=?2, must_change_password=?3 WHERE username='admin'",
-                params![if old_state == "pending" { format!("pending${code_hash}") } else { code_hash }, locked_until, old_state != "pending"],
-            ).unwrap();
-            drop(mgr);
-            let code_path = dir.path().join(authn::SETUP_CODE_FILE);
-            if matches!(old_state, "code" | "stale") {
-                write_atomic(
-                    &code_path,
-                    if old_state == "code" {
-                        code.as_bytes()
-                    } else {
-                        b"stale-code"
-                    },
-                    Some(0o600),
-                )
-                .unwrap();
-            }
-            let mut migrated = AuthManager::open(&path, &cfg).unwrap();
-            let user = migrated.get_user(BOOTSTRAP_USERNAME).unwrap();
-            assert_eq!(user.user_id, initial.user_id, "{old_state}");
-            assert_eq!(user.created_ts, initial.created_ts);
-            assert_eq!(user.failed_count, 7);
-            assert_eq!(user.locked_until_ts, Some(locked_until));
-            assert!(user.must_change_password);
-            assert!(migrated.default_password_active());
-            assert!(!code_path.exists());
-            assert!(migrated.validate_session(&old_session.session_id).is_none());
-            assert!(migrated.validate_session(&operator_session.session_id).is_some());
-            assert_eq!(
-                migrated.login(BOOTSTRAP_USERNAME, &initial.username).unwrap_err().code,
-                "AUTH_ACCOUNT_LOCKED"
-            );
-            migrated.set_clock(Box::new(move || locked_until + 1.0));
-            let restricted = migrated.login(BOOTSTRAP_USERNAME, &initial.username).unwrap();
-            let record = || {
-                connect(&database)
-                    .unwrap()
-                    .query_row("SELECT password_hash FROM users WHERE username='admin'", [], |r| {
-                        r.get::<_, String>(0)
-                    })
-                    .unwrap()
-            };
-            let migrated_hash = record();
-            assert!(migrated_hash.starts_with("scrypt$131072$8$1$"));
-            assert!(!authn::verify_password(&code, &migrated_hash).0);
-            drop(migrated);
-            let mut reopened = AuthManager::open(&path, &cfg).unwrap();
-            reopened.set_clock(Box::new(move || locked_until + 1.0));
-            assert_eq!(
-                record(),
-                migrated_hash,
-                "restarts must not rehash or revoke setup sessions"
-            );
-            assert!(reopened.validate_session(&restricted.session_id).is_some());
-            let completed = reopened
-                .change_password(BOOTSTRAP_USERNAME, &initial.username, &password)
-                .unwrap();
-            assert!(!reopened.default_password_active());
-            assert!(reopened.validate_session(&restricted.session_id).is_none());
-            drop(reopened);
-            let mut completed_store = AuthManager::open(&path, &cfg).unwrap();
-            completed_store.set_clock(Box::new(move || locked_until + 1.0));
-            assert!(!completed_store.default_password_active());
-            assert!(completed_store.validate_session(&completed.session_id).is_some());
-            assert_eq!(
-                completed_store
-                    .login(BOOTSTRAP_USERNAME, &initial.username)
-                    .unwrap_err()
-                    .code,
-                "AUTH_LOGIN_FAILED"
-            );
-            assert!(completed_store.login(BOOTSTRAP_USERNAME, &password).is_ok());
+            let raw = serde_json::to_vec(&serde_json::json!({"users":{"admin":{"password_hash":admin_hash,"created_ts":1.0,"role":"admin","must_change_password":must_change}},"sessions":{}})).unwrap();
+            write_atomic(&legacy, &raw, Some(0o600)).unwrap();
+            let mgr = AuthManager::open(&legacy, &cfg).unwrap();
+            (dir, mgr)
+        };
+        // Passwords come from runtime values so no literal reaches the hasher
+        // (CodeQL rust/hard-coded-cryptographic-value). The retired shipped
+        // password was the bootstrap username itself; read it back from a store.
+        let temporary = crate::common::random_urlsafe(24);
+        let shipped = open_with(authn::hash_password(&temporary).unwrap(), false)
+            .1
+            .get_user(BOOTSTRAP_USERNAME)
+            .unwrap()
+            .username;
+        // Still on the shipped password and never replaced: rotated on open.
+        let (dir, mgr) = open_with(authn::hash_bootstrap_password(&shipped).unwrap(), true);
+        let code = std::fs::read_to_string(dir.path().join(authn::SETUP_CODE_FILE)).unwrap();
+        assert_eq!(
+            mgr.login(BOOTSTRAP_USERNAME, &shipped).unwrap_err().code,
+            "AUTH_LOGIN_FAILED"
+        );
+        mgr.login(BOOTSTRAP_USERNAME, code.trim()).unwrap();
+        assert!(mgr.setup_code_active());
+        // A real temporary password, or a replaced one, is left alone.
+        for must_change in [true, false] {
+            let (dir, mgr) = open_with(authn::hash_password(&temporary).unwrap(), must_change);
+            assert!(!dir.path().join(authn::SETUP_CODE_FILE).exists());
+            assert!(!mgr.setup_code_active());
+            mgr.login(BOOTSTRAP_USERNAME, &temporary).unwrap();
         }
-    }
-
-    #[test]
-    fn completed_disabled_and_non_admin_accounts_never_regain_the_default_password() {
-        for state in ["completed", "disabled", "non-admin"] {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("auth.json");
-            let cfg = AppConfig::from_str(AppConfig::embedded_default(), &dir.path().join("config.yaml")).unwrap();
-            let mgr = AuthManager::open(&path, &cfg).unwrap();
-            let password = crate::common::random_urlsafe(24);
-            mgr.create_user("owner", &password, "admin").unwrap();
-            mgr.set_password(BOOTSTRAP_USERNAME, &password).unwrap();
-            let user = mgr.get_user(BOOTSTRAP_USERNAME).unwrap();
-            let session = mgr.login(BOOTSTRAP_USERNAME, &password).unwrap();
-            let database = path.with_extension("sqlite3");
-            if state != "completed" {
-                connect(&database)
-                    .unwrap()
-                    .execute(
-                        "UPDATE users SET must_change_password=1, disabled=?1, role=?2 WHERE username='admin'",
-                        params![
-                            state == "disabled",
-                            if state == "non-admin" { "operator" } else { "admin" }
-                        ],
-                    )
-                    .unwrap();
-            }
-            drop(mgr);
-            let stale_file = dir.path().join(authn::SETUP_CODE_FILE);
-            write_atomic(&stale_file, password.as_bytes(), Some(0o600)).unwrap();
-            let reopened = AuthManager::open(&path, &cfg).unwrap();
-            assert_eq!(reopened.get_user(BOOTSTRAP_USERNAME).unwrap().user_id, user.user_id);
-            assert!(!reopened.default_password_active(), "{state}");
-            if state == "disabled" {
-                reopened.enable_user(BOOTSTRAP_USERNAME).unwrap();
-            } else if state == "non-admin" {
-                reopened.set_role(BOOTSTRAP_USERNAME, "admin").unwrap();
-            }
-            assert!(
-                !reopened.default_password_active(),
-                "activation cannot advertise an unrelated password: {state}"
-            );
-            assert!(!stale_file.exists());
-            assert_eq!(
-                reopened.login(BOOTSTRAP_USERNAME, BOOTSTRAP_USERNAME).unwrap_err().code,
-                "AUTH_LOGIN_FAILED"
-            );
-            if state == "completed" {
-                assert!(reopened.validate_session(&session.session_id).is_some(), "{state}");
-            }
-            assert!(reopened.login(BOOTSTRAP_USERNAME, &password).is_ok());
-        }
-    }
-
-    #[test]
-    fn failed_unfinished_setup_migration_preserves_the_old_credentials_and_code_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("auth.json");
-        let cfg = AppConfig::from_str(AppConfig::embedded_default(), &dir.path().join("config.yaml")).unwrap();
-        let mgr = AuthManager::open(&path, &cfg).unwrap();
-        let code = crate::common::random_urlsafe(19);
-        let record = authn::hash_password(&code).unwrap();
-        let database = path.with_extension("sqlite3");
-        let conn = connect(&database).unwrap();
-        conn.execute("UPDATE users SET password_hash=?1 WHERE username='admin'", [&record])
-            .unwrap();
-        conn.execute_batch(
-            "CREATE TRIGGER refuse_bootstrap BEFORE INSERT ON users BEGIN SELECT RAISE(ABORT, 'fixture refusal'); END",
-        )
-        .unwrap();
-        drop(mgr);
-        let code_file = dir.path().join(authn::SETUP_CODE_FILE);
-        write_atomic(&code_file, code.as_bytes(), Some(0o600)).unwrap();
-        assert!(AuthManager::open(&path, &cfg).is_err());
-        assert_eq!(std::fs::read_to_string(&code_file).unwrap(), code);
-        let stored: String = conn
-            .query_row("SELECT password_hash FROM users WHERE username='admin'", [], |r| {
-                r.get(0)
-            })
-            .unwrap();
-        assert_eq!(stored, record);
-        assert!(authn::verify_password(&code, &stored).0);
-        assert!(!authn::verify_password(BOOTSTRAP_USERNAME, &stored).0);
+        // A `pending$` admin only the retired public bootstrap route could set
+        // now signs in with a setup code and must replace it.
+        let (dir, mgr) = open_with(format!("pending${}", authn::hash_password(&temporary).unwrap()), false);
+        let code = std::fs::read_to_string(dir.path().join(authn::SETUP_CODE_FILE)).unwrap();
+        assert!(mgr.get_user(BOOTSTRAP_USERNAME).unwrap().must_change_password);
+        assert!(mgr.setup_code_active());
+        mgr.login(BOOTSTRAP_USERNAME, code.trim()).unwrap();
     }
 }

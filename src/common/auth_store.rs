@@ -116,7 +116,6 @@ pub struct AuthManager {
     restricted_absolute_timeout_sec: f64,
     state: Mutex<(rusqlite::Connection, AuthDb)>,
     fresh_bootstrap: std::sync::atomic::AtomicBool,
-    default_password_hash: Option<String>,
     clock: Box<dyn Fn() -> f64 + Send + Sync>,
 }
 
@@ -129,38 +128,33 @@ impl std::fmt::Debug for AuthManager {
 impl AuthManager {
     pub fn open(path: &Path, cfg: &AppConfig) -> Result<Self> {
         let (mut connection, mut db, fresh) = sqlite::open(path)?;
-        // Cache the verified record: status stays cheap and enabling/promoting
-        // an unrelated restricted account cannot advertise the wrong password.
-        let mut default_password_hash = db
-            .users
-            .get(BOOTSTRAP_USERNAME)
-            .filter(|u| {
-                u.must_change_password && (fresh || authn::verify_password(BOOTSTRAP_USERNAME, &u.password_hash).0)
-            })
-            .map(|u| u.password_hash.clone());
-        let unfinished = default_password_hash.is_none()
-            && db.users.get(BOOTSTRAP_USERNAME).is_some_and(|u| {
+        // Two older first-run states move to a setup code. Homes created before
+        // setup codes shipped `admin` / `admin`: while that account still must
+        // replace its password and its username still verifies, anyone on this
+        // machine could take it (one scrypt check, only in that state). Older
+        // homes migrated from auth.json may hold a `pending$` admin record that
+        // only the retired public bootstrap route could set; it now signs in
+        // with a code and must replace it like a fresh home.
+        if !fresh {
+            let shipped = db.users.get_key_value(BOOTSTRAP_USERNAME).is_some_and(|(name, u)| {
                 !u.disabled
-                    && u.role == "admin"
-                    && (u.must_change_password || authn::is_pending_password_record(&u.password_hash))
+                    && (authn::is_pending_password_record(&u.password_hash)
+                        || (u.must_change_password && authn::verify_password(name, &u.password_hash).0))
             });
-        if unfinished {
-            let mut migrated = db.clone();
-            let user = migrated
-                .users
-                .get_mut(BOOTSTRAP_USERNAME)
-                .expect("existing bootstrap account");
-            user.password_hash = authn::hash_bootstrap_password(BOOTSTRAP_USERNAME)?;
-            user.must_change_password = true;
-            default_password_hash = Some(user.password_hash.clone());
-            revoke_sessions_for(&mut migrated, BOOTSTRAP_USERNAME);
-            sqlite::persist(&mut connection, &migrated)?;
-            db = migrated;
-        }
-        match std::fs::remove_file(setup_code_path(path)) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e.into()),
+            if shipped {
+                let code = authn::new_setup_code();
+                super::atomic::write_atomic(&setup_code_path(path), format!("{code}\n").as_bytes(), Some(0o600))?;
+                let mut rotated = db.clone();
+                if let Some(u) = rotated.users.get_mut(BOOTSTRAP_USERNAME) {
+                    u.password_hash = authn::hash_bootstrap_password(&code)?;
+                    u.must_change_password = true;
+                    u.failed_count = 0;
+                    u.locked_until_ts = None;
+                }
+                revoke_sessions_for(&mut rotated, BOOTSTRAP_USERNAME);
+                sqlite::persist(&mut connection, &rotated)?;
+                db = rotated;
+            }
         }
         let idle_timeout_sec = cfg.f64_or("auth.session.idle_timeout_sec", DEFAULT_IDLE_TIMEOUT_SEC);
         let absolute_timeout_sec = cfg.f64_or("auth.session.absolute_timeout_sec", DEFAULT_ABSOLUTE_TIMEOUT_SEC);
@@ -182,7 +176,6 @@ impl AuthManager {
                 .min(absolute_timeout_sec),
             state: Mutex::new((connection, db)),
             fresh_bootstrap: std::sync::atomic::AtomicBool::new(fresh),
-            default_password_hash,
             clock: Box::new(super::now_ts),
         };
         // Warm the timing-equalization dummy before any login can arrive.
@@ -246,15 +239,37 @@ impl AuthManager {
         Ok(self.fresh_bootstrap.swap(false, std::sync::atomic::Ordering::SeqCst))
     }
 
-    /// Whether the restricted initial password still matches its verified record.
-    pub fn default_password_active(&self) -> bool {
+    /// True while the enabled `admin` account still signs in with its setup
+    /// code: it must replace its password and the private code file exists.
+    /// The sign-in screen then names the code, never shows it. Answers without
+    /// hashing, so the public setup-status route stays cheap.
+    pub fn setup_code_active(&self) -> bool {
         let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        stored.1.users.get(BOOTSTRAP_USERNAME).is_some_and(|u| {
-            !u.disabled
-                && u.role == "admin"
-                && u.must_change_password
-                && self.default_password_hash.as_ref() == Some(&u.password_hash)
-        })
+        stored
+            .1
+            .users
+            .get(BOOTSTRAP_USERNAME)
+            .is_some_and(|u| !u.disabled && u.must_change_password)
+            && setup_code_path(&self.path).is_file()
+    }
+
+    /// What to verify for `username`: while `admin` still signs in with its
+    /// setup code, a code-shaped entry is checked in canonical form, so a
+    /// pasted trailing period or capitals do not reject the right code.
+    fn credential<'a>(username: &str, row: &UserRow, password: &'a str) -> std::borrow::Cow<'a, str> {
+        if username == BOOTSTRAP_USERNAME && row.must_change_password {
+            if let Some(code) = authn::normalize_setup_code(password) {
+                return code.into();
+            }
+        }
+        password.into()
+    }
+
+    /// The code file outlives its use only until `admin` gets a real password.
+    fn forget_setup_code(&self, username: &str) {
+        if username == BOOTSTRAP_USERNAME {
+            let _ = std::fs::remove_file(setup_code_path(&self.path));
+        }
     }
 
     pub fn create_user(&self, username: &str, password: &str, role: &str) -> Result<String> {
@@ -408,6 +423,7 @@ impl AuthManager {
         u.locked_until_ts = None;
         revoke_sessions_for(&mut db, &canonical);
         self.persist(&mut stored, &db)?;
+        self.forget_setup_code(&canonical);
         Ok(())
     }
 
@@ -421,11 +437,13 @@ impl AuthManager {
             .users
             .get_mut(&canonical)
             .ok_or_else(HarnessError::auth_login_failed)?;
-        if user.disabled || !authn::verify_password(current, &user.password_hash).0 {
+        let current = Self::credential(&canonical, user, current);
+        if user.disabled || !authn::verify_password(&current, &user.password_hash).0 {
             return Err(HarnessError::auth_login_failed());
         }
-        // A password replacement must actually change the credential.
-        if password == current {
+        // A forced change must actually change the credential: the setup code
+        // has been on screen and in a file, so it may not become the password.
+        if Self::credential(&canonical, user, password) == current {
             return Err(HarnessError::password_policy(
                 "the new password must differ from the current one",
             ));
@@ -437,6 +455,7 @@ impl AuthManager {
         revoke_sessions_for(&mut db, &canonical);
         let result = self.create_session(&mut db, &canonical, now)?;
         self.persist(&mut stored, &db)?;
+        self.forget_setup_code(&canonical);
         Ok(result)
     }
 
@@ -486,7 +505,8 @@ impl AuthManager {
             let retry_after = (row.locked_until_ts.unwrap_or(now) - now).max(0.0);
             return Err(HarnessError::auth_locked(retry_after, &canonical));
         }
-        let (ok, needs_rehash) = authn::verify_password(password, &row.password_hash);
+        let (ok, needs_rehash) =
+            authn::verify_password(&Self::credential(&canonical, &row, password), &row.password_hash);
         if row.disabled || !ok {
             let new_count = row.failed_count.saturating_add(1);
             if let Some(u) = db.users.get_mut(&canonical) {
@@ -574,7 +594,7 @@ impl AuthManager {
     }
 }
 
-/// Retired credential file, removed only after account loading and migration succeed.
+/// `<home>/setup-code`, beside the account store.
 fn setup_code_path(store: &Path) -> PathBuf {
     store
         .parent()

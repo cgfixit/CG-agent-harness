@@ -183,7 +183,8 @@ free_port() {
 app_backends() { pgrep -u "$(id -u)" -f '/Contents/MacOS/cgagentharness desktop$' || true; }
 # The shell or its backend, the same test install-macos.sh uses before replacing the app.
 app_running() { pgrep -u "$(id -u)" -f '/Contents/MacOS/(cgagentharness desktop$|cg-agent-harness-desktop( |$))' >/dev/null 2>&1; }
-# Read setup state before trying credentials; completed accounts never get an admin guess.
+# What the public setup-status route says admin's first credential is: code,
+# default, none, or unknown (an old curl without TLS 1.3, or no reply).
 first_credential() {
   local status
   set --
@@ -192,10 +193,8 @@ first_credential() {
   esac
   status=$(curl --noproxy '*' --silent --max-time 5 "$@" "$origin/api/auth/setup-status" 2>/dev/null) || status=''
   case $status in
-    *'"default_password":true'*) echo default ;;
-    # Compatibility with an older installed app, only when its server reports a code.
     *'"setup_code":true'*) echo code ;;
-    *'"default_password":false'*) echo none ;;
+    *'"default_password":true'*) echo default ;;
     *'"setup_code":false'*) echo none ;;
     *) echo unknown ;;
   esac
@@ -359,7 +358,7 @@ open_server() {
     return 1
   fi
   port=$(free_port 8790) || { warn 'no free loopback port in 8790-8889'; return 1; }
-  # Older installed binaries may print setup-code information; keep output private.
+  # Its output can name the setup code file; keep it out of the log.
   CGAGENTHARNESS_HOME=$home "$bin" serve --port "$port" >"$private/serve.out" 2>&1 3>&- 4>&- &
   server_pid=$!
   for _ in $(seq 1 120); do
@@ -401,13 +400,15 @@ step_admin_password() {
   note "first credential reported by setup-status: $kind"
   # Five failed sign-ins lock the account, so ask the server first and try
   # only the credential it names; automatic guesses run once per init.sh run.
-  if [ "$kind" = default ] && login_as_admin admin; then
-    current='admin'
-  elif [ "$kind" = code ] && [ -s "$code_file" ] && login_as_admin "$(cat "$code_file")"; then
+  if [ "$kind" = code ] && [ -s "$code_file" ] && login_as_admin "$(cat "$code_file")"; then
     current=$(cat "$code_file")
+  elif [ "$kind" = default ] && login_as_admin admin; then
+    current='admin'
   elif [ "$kind" != code ] && [ "$kind" != default ] && [ -n "$stored" ] && [ "$guessed" = 0 ] && login_as_admin "$stored"; then
     current=$stored
     say 'signed in with the admin password from your login keychain'
+  elif [ "$kind" = unknown ] && [ "$guessed" = 0 ] && [ -s "$code_file" ] && login_as_admin "$(cat "$code_file")"; then
+    current=$(cat "$code_file")
   else
     [ "$kind" = code ] || [ "$kind" = default ] || [ -z "$stored" ] || [ "$guessed" = 1 ] || warn 'the admin password saved in your login keychain no longer works'
     guessed=1
@@ -441,7 +442,7 @@ step_admin_password() {
       ask_secret 'New admin password (12+ characters; Enter to generate one and keep it in Keychain):'
       [ -n "$REPLY" ] || break
       [ "${#REPLY}" -ge 12 ] || { warn 'use at least 12 characters'; continue; }
-      # The server refuses the current credential as the new one.
+      # The server refuses the current credential (the setup code) as the new one.
       [ "$REPLY" != "$current" ] || { warn 'choose a password other than the current one'; continue; }
       new=$REPLY
       ask_secret 'Type it again:'
@@ -464,7 +465,7 @@ step_admin_password() {
     warn "$(cat "$private/cli.err")"
     # The CLI can fail after the server committed the change: ask the server
     # which password it accepts before touching the only saved copy. A refused
-    # change can still sign in with "$new" when it is the current credential
+    # change can still sign in with "$new" when it is the current setup code
     # typed another way, so only an account that no longer must replace counts.
     if login_as_admin "$new"; then
       signed_in=1
