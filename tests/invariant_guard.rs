@@ -1103,7 +1103,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/CONSOLE.md", Guide, 6189),
     // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
     // why: the 2026-10-20 dep-sync folded the dated 2026-09 audit notes into Retained constraints; 944 words, keep the cut.
-    ("docs/DEPENDENCIES.md", Guide, 950),
+    // why: operator-approved +200 (2026-10-22) so dated advisory notes such as RUSTSEC-2026-0384 fit without trimming history.
+    ("docs/DEPENDENCIES.md", Guide, 1150),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     ("docs/DESKTOP.md", Guide, 2680),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
