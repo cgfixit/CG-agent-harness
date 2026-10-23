@@ -510,7 +510,9 @@ async fn loop_prompt_refusals_name_the_loop_reply_budget() {
     let model = start_mock_model().await;
     let s = spawn_server(
         &model.base_url(),
-        ServerOptions::default().with("chat.compact_prompt_tokens", "8000"),
+        ServerOptions::default()
+            .with("chat.compact_prompt_tokens", "8000")
+            .with("api.harness_loop_rate_limit.max_tokens", "2048"),
     )
     .await;
     let (_, created) = s.post_json("/api/sessions", json!({"title": "t"})).await;
@@ -1237,7 +1239,11 @@ async fn cancel_aborts_the_in_flight_turn_and_releases_the_gate() {
 #[tokio::test]
 async fn loop_turns_need_a_session_a_goal_and_the_tool_allowlist() {
     let model = start_mock_model().await;
-    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("api.harness_loop_rate_limit.max_tokens", "2048"),
+    )
+    .await;
     let (status, body) = s.post_json("/api/chat", json!({"message": "x", "loop": true})).await;
     assert_eq!(status, 400);
     assert_eq!(code(&body), "LOOP_REQUIRES_SESSION");

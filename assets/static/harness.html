@@ -827,8 +827,8 @@ const MAX_AGENT_PLAN_BYTES = 25000;
 const MAX_AGENT_READ_FILES = 8;
 const MAX_AGENT_READ_FILE_LEN = 1024;
 const MAX_AGENT_ITERATIONS = 10;
-/* Session goal + human-gated loop. Caps match harness.schemas._MAX_GOAL_LEN
-   and the locked /loop budget (default 3, hard max 5). */
+/* Session goal + human-gated loop. Caps match harness.schemas._MAX_GOAL_LEN;
+   the /loop budget itself is configurable (loop.*, applied from /api/status). */
 function isSafeRepoRelativePath(raw) {
   if (typeof raw !== 'string' || !raw || raw.length > MAX_AGENT_READ_FILE_LEN || raw.indexOf('\0') !== -1) return false;
   const normalized = raw.replace(/\\/g, '/');
@@ -1004,15 +1004,38 @@ let loopAuto = false;
 const AUTO_LOOP_START_MS = 5000;
 let autoLoopStart = null;
 const MAX_GOAL_CHARS = 2000;
-const MAX_LOOP_TURNS = 5;
+/* Loop limits ship here and are raised only through config (loop.*, Reload
+   limits/SIGHUP): refreshStatus applies the server's /api/status values over
+   these fallbacks. 0 means unlimited for the turn and token budgets; the
+   browser fallback path then runs until another stop condition lands. */
+const LOOP_LIMITS_FALLBACK = {max_turns: 0, max_total_completion_tokens: 0, max_failures: 2, cooldown_ms: 2000};
+let MAX_LOOP_TURNS = LOOP_LIMITS_FALLBACK.max_turns;
 const DEFAULT_LOOP_TURNS = 3;
 /* Local 27b (qwen3.8:27b-mlx on Apple Silicon) needs a breath between auto
    turns so /loop stop can land and Metal is not hammered. */
-const LOOP_COOLDOWN_MS = 2000;
+let LOOP_COOLDOWN_MS = LOOP_LIMITS_FALLBACK.cooldown_ms;
 /* Aggregate reported completion usage across turns, checked after each reply.
    The server separately controls each turn's generation budget. */
-const MAX_LOOP_TOTAL_COMPLETION_TOKENS = 12000;
-const MAX_LOOP_FAILURES = 2;
+let MAX_LOOP_TOTAL_COMPLETION_TOKENS = LOOP_LIMITS_FALLBACK.max_total_completion_tokens;
+let MAX_LOOP_FAILURES = LOOP_LIMITS_FALLBACK.max_failures;
+/* The server-side /loop runner keeps turns running after this tab closes.
+   Set from /api/status (server_loop); absent on older servers, which keeps
+   the browser-driven runLoopTurns path below as the fallback. */
+let serverLoopSupported = false;
+function applyLoopConfig(status) {
+  const c = status && status.loop;
+  serverLoopSupported = !!(status && status.server_loop);
+  if (!c) return;
+  for (const key of ['max_turns', 'max_total_completion_tokens', 'max_failures', 'cooldown_ms']) {
+    const value = Number(c[key]);
+    if (Number.isFinite(value) && value >= 0) {
+      if (key === 'max_turns') MAX_LOOP_TURNS = value;
+      else if (key === 'max_total_completion_tokens') MAX_LOOP_TOTAL_COMPLETION_TOKENS = value;
+      else if (key === 'max_failures') MAX_LOOP_FAILURES = Math.max(1, value);
+      else LOOP_COOLDOWN_MS = value;
+    }
+  }
+}
 /* A turn that needed compaction has outgrown the context window, so the chat
    continues toward the goal automatically instead of stopping at one reply.
    Loop turns themselves are excluded; runLoopTurns owns their continuation. */
@@ -1673,6 +1696,7 @@ async function refreshStatus() {
   try {
     const [s] = await Promise.all([api('/api/status'), refreshSessionTokens()]);
     lastStatus = s;
+    applyLoopConfig(s);
     $('hModel').textContent = s.model || (s.provider ? '(unset)' : '—');
     $('sProvider').textContent = s.provider || (window.__cyclawRole === 'audit' ? 'read-only' : 'sign in');
     if (apiKeyInput) {
@@ -2172,7 +2196,7 @@ const COMMAND_MAN = {
   '/goal task': {detail:'Shows the goal’s durable task record. If a request is staged there, it is recovered for review; confirmation is still explicit.'},
   '/harness': {detail:'Lists retained harness optimizer runs. It never starts one.'},
   '/help [topic|search words|all]': {detail:'Alone, an overview with topics. A topic key filters to that family; any other words search every command and summary, so a flag such as --group works; all prints the whole catalog. The Commands pane is this same guide; its ? buttons open these pages.', examples:['/help --group']},
-  '/loop [auto] [--web off|fetch|all] [n] [goal]|stop': {detail:'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + ', at most ' + MAX_LOOP_TURNS + '), one turn at a time unless auto is on. Text after the count sets the session goal first, so /loop 3 compare hvac vendors is /goal then /loop in one command. With no stored goal, your last prompt becomes the goal. A normal turn that needed compaction also continues this way automatically. --web off, fetch or all sets the goal web mode before starting and persists on the goal. auto toggles automatic continuation and, when it turns on with a goal (or a last prompt) to follow, starts the loop after ' + (AUTO_LOOP_START_MS / 1000) + ' s; /goal <text> with auto on does the same. /loop auto with a count or goal turns auto on and starts after the same pause. stop ends the loop, cancels a pending start and also cancels a reply that is still streaming.', notes:['Local loops can read attachments and permitted web sources; they never start a coding run.', 'A goal set without --web uses web.goal_web_default (ships all: search and pages).'], args:{n:'turns to run, 1 to ' + MAX_LOOP_TURNS, goal:'optional goal text stored before the loop starts'}},
+  '/loop [auto] [--web off|fetch|all] [n] [goal]|stop': {detail:'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + (MAX_LOOP_TURNS > 0 ? ', at most ' + MAX_LOOP_TURNS : ', unlimited turns') + '), one turn at a time unless auto is on. Turn, token, failure and cooldown limits are configurable (loop.* in config.yaml; Reload limits/SIGHUP applies them at runtime). Text after the count sets the session goal first, so /loop 3 compare hvac vendors is /goal then /loop in one command. With no stored goal, your last prompt becomes the goal. A normal turn that needed compaction also continues this way automatically. --web off, fetch or all sets the goal web mode before starting and persists on the goal. auto toggles automatic continuation and, when it turns on with a goal (or a last prompt) to follow, starts the loop after ' + (AUTO_LOOP_START_MS / 1000) + ' s; /goal <text> with auto on does the same. /loop auto with a count or goal turns auto on and starts after the same pause. When the server supports it the loop runs server-side: closing this tab does not stop it. stop ends the loop, cancels a pending start and also cancels a reply that is still streaming.', notes:['Local loops can read attachments and permitted web sources; they never start a coding run.', 'A goal set without --web uses web.goal_web_default (ships all: search and pages).'], args:{n:'turns to run, 1 to ' + (MAX_LOOP_TURNS > 0 ? MAX_LOOP_TURNS : '∞ (until another stop condition)'), goal:'optional goal text stored before the loop starts'}},
   '/memory [on|off|status]': {detail:'Alone or with status, shows the pinned notes, your structured fact and pending proposal counts, and every gate. on or off decides whether pinned notes enter the system prompt. The structured-memory gates are separate; see the capture and auto commands.'},
   '/memory add <note>': {detail:'Pins a literal note shared by this home. Notes are injected only while /memory is on.'},
   '/memory auto-consolidate|auto-retrieve|auto-suggest-chat|auto-suggest-coding on|off': {detail:'Administrator switches for the automatic structured-memory features. Each depends on its prerequisite gate: auto-retrieve needs retrieval, auto-consolidate needs consolidation, the suggest switches need capture. The reply shows every gate.'},
@@ -3777,22 +3801,24 @@ async function runSlash(line, webCommand) {
         if (!sessionGoal) { sys('set a goal first: /goal <what you want done>, /loop <what you want done>, or send any prompt and /loop will continue it'); break; }
         if (loopCancelGeneration !== loopGeneration) break;
         if (sub) {
-          const n = Math.min(parseInt(sub, 10), MAX_LOOP_TURNS);
+          const n = Math.min(parseInt(sub, 10), MAX_LOOP_TURNS > 0 ? MAX_LOOP_TURNS : Number.MAX_SAFE_INTEGER);
           loopState = {
             remaining: n, total: n, auto: loopAuto, stop: false,
             running: false, failures: 0, lastReply: '', completionTokens: 0,
+            server: typeof serverLoopSupported !== "undefined" && serverLoopSupported,
           };
           sys('loop ' + n + ' turn(s) toward the session goal. Chat only — never starts a real-repo run.');
         } else if (!loopState || loopState.remaining <= 0) {
           loopState = {
             remaining: DEFAULT_LOOP_TURNS, total: DEFAULT_LOOP_TURNS,
             auto: loopAuto, stop: false, running: false, failures: 0,
-            lastReply: '', completionTokens: 0,
+            lastReply: '', completionTokens: 0, server: typeof serverLoopSupported !== "undefined" && serverLoopSupported,
           };
           sys('loop ' + DEFAULT_LOOP_TURNS + ' turn(s) toward the session goal. Chat only — never starts a real-repo run.');
         }
         paintGoalLoop();
-        await runLoopTurns();
+        if (loopState.server) await runServerLoop();
+        else await runLoopTurns();
         break;
       }
 
@@ -4199,7 +4225,107 @@ async function runLoopTurns() {
   }
 }
 
+/* Server-side /loop: the server owns the turns, so a run keeps going when
+   this tab closes. The page tracks it over the /api/loop/events stream and
+   can halt it with /api/loop/stop. The run's own stop conditions (turn and
+   token budgets, consecutive failures, GOAL_DONE, a repeated reply, blocking
+   web codes) live in src/server/loop_runner.rs. */
+let serverLoopEventsAbort = null;
+async function runServerLoop() {
+  const activeLoop = loopState;
+  if (!activeLoop || activeLoop.running) return;
+  activeLoop.running = true;
+  paintGoalLoop();
+  try {
+    const started = await api('/api/loop/start', 'POST', {
+      session_id: currentSession,
+      max_turns: activeLoop.total,
+    });
+    if (loopState !== activeLoop) {
+      /* A /loop stop or session switch won while the run was created: halt it. */
+      api('/api/loop/stop', 'POST', { run_id: started.run.run_id }).catch(function () {});
+      return;
+    }
+    activeLoop.runId = started.run.run_id;
+    sys('server loop ' + started.run.run_id.slice(0, 8) + ' started — turns keep running if this tab closes; /loop stop to halt');
+    await streamServerLoopEvents(started.run.run_id, activeLoop);
+  } finally {
+    if (loopState === activeLoop) loopState.running = false;
+    paintGoalLoop();
+  }
+}
+
+async function streamServerLoopEvents(runId, activeLoop) {
+  const controller = new AbortController();
+  serverLoopEventsAbort = controller;
+  try {
+    const headers = { 'Accept': 'text/event-stream' };
+    const key = apiKeyInput ? apiKeyInput.value.trim() : '';
+    if (key) headers['Authorization'] = 'Bearer ' + key;
+    if (CSRF_TOKEN) headers['X-CyClaw-CSRF'] = CSRF_TOKEN;
+    const resp = await fetch('/api/loop/events/' + encodeURIComponent(runId), {
+      headers: headers, credentials: 'same-origin', signal: controller.signal,
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status + ' from /api/loop/events');
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder('utf-8', { fatal: true });
+    let pending = '';
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      pending += decoder.decode(chunk.value, { stream: true });
+      let end;
+      while ((end = pending.indexOf('\n\n')) !== -1) {
+        const frame = pending.slice(0, end);
+        pending = pending.slice(end + 2);
+        const data = frame.split('\n').filter(function (l) { return l.startsWith('data:'); }).map(function (l) { return l.slice(5).trimStart(); }).join('\n');
+        if (!data) continue;
+        onServerLoopEvent(JSON.parse(data), activeLoop);
+        if (loopState !== activeLoop) return;
+      }
+    }
+  } finally {
+    if (serverLoopEventsAbort === controller) serverLoopEventsAbort = null;
+    controller.abort();
+  }
+}
+
+function onServerLoopEvent(event, activeLoop) {
+  const run = event.run || {};
+  const stats = run.stats || {};
+  if (loopState === activeLoop) {
+    activeLoop.completionTokens = stats.total_completion_tokens || 0;
+    activeLoop.failures = stats.consecutive_failures || 0;
+    activeLoop.remaining = Math.max(0, activeLoop.total - (stats.turns_completed || 0));
+  }
+  if (event.type === 'turn') {
+    if (loopState === activeLoop) {
+      sys('loop turn ' + (stats.turns_completed || '?') + '/' + activeLoop.total + ' done — ' + (stats.total_completion_tokens || 0) + ' completion tokens so far; /loop stop to halt');
+      paintGoalLoop();
+    }
+    return;
+  }
+  if (event.type === 'state') {
+    if (['stopped', 'failed', 'done'].includes(run.state)) {
+      stopLoop('loop ' + run.state + (run.reason ? ' — ' + run.reason : ''));
+    } else if (loopState === activeLoop) {
+      paintGoalLoop();
+    }
+  }
+}
+
 function requestLoopStop(reason) {
+  if (loopState && loopState.runId) {
+    /* A server-side run: ask the runner to stop and drop its event stream. The
+      in-flight model turn finishes; the run records 'stopped' after it. */
+    const runId = loopState.runId;
+    const stopped = api('/api/loop/stop', 'POST', { run_id: runId }).catch(function () { /* the run may already be terminal */ });
+    if (serverLoopEventsAbort) {
+      try { serverLoopEventsAbort.abort(); } catch (e) { /* already finished */ }
+    }
+    stopLoop(reason);
+    return stopped;
+  }
   if (loopState) loopState.stop = true;
   if (inflightChat) {
     try { inflightChat.abort(); } catch (e) { /* already finished */ }

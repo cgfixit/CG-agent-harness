@@ -104,7 +104,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 71] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 75] = [
     ("analytics", "/analytics", "GET", "/api/analytics/summary", "retained session, token and coding-run analytics"),
     ("config-reload", "(Reload limits button)", "POST", "/api/config/reload", "administrator-only atomic reload of supported non-secret limits"),
     (
@@ -205,6 +205,34 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 71] = [
         "POST",
         "/api/chat/cancel",
         "abort the in-flight model request",
+    ),
+    (
+        "loop-start",
+        "/loop",
+        "POST",
+        "/api/loop/start",
+        "start a server-side /loop run that survives a closed tab",
+    ),
+    (
+        "loop-stop",
+        "/loop stop",
+        "POST",
+        "/api/loop/stop",
+        "stop a server-side /loop run",
+    ),
+    (
+        "loop-status",
+        "/loop",
+        "GET",
+        "/api/loop/status",
+        "read one server-side /loop run's state and stats",
+    ),
+    (
+        "loop-events",
+        "/loop",
+        "GET",
+        "/api/loop/events/{run_id}",
+        "SSE stream of a server-side /loop run's per-turn progress",
     ),
     (
         "ollama-inventory",
@@ -842,7 +870,7 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 71);
+        assert_eq!(HARNESS_SURFACES.len(), 75);
         let report = list_wired_tools(&registered);
         assert_eq!(report["total"], HARNESS_SURFACES.len());
         assert_eq!(report["wired"], HARNESS_SURFACES.len(), "a catalog surface is unwired");
