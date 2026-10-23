@@ -100,6 +100,26 @@ fn raw(
     })
 }
 
+/// Git `-c` arguments, placed before the subcommand, that make one network
+/// operation authenticate through the identity-checked `gh` binary instead of
+/// whichever `gh` is first on PATH (`raw`'s default helper). The empty value
+/// resets Git's multi-valued helper list before the pinned helper is added.
+pub fn pinned_credential_helper(gh: &Path) -> Result<[String; 4]> {
+    let path = gh.display().to_string();
+    // Git runs `!` helpers through the shell; single quotes keep the path literal.
+    if !gh.is_absolute() || path.contains('\'') {
+        return Err(HarnessError::agentic(
+            "GitHub CLI path cannot be pinned as a Git credential helper",
+        ));
+    }
+    Ok([
+        "-c".into(),
+        "credential.helper=".into(),
+        "-c".into(),
+        format!("credential.helper=!'{path}' auth git-credential"),
+    ])
+}
+
 /// Fail closed on metadata capable of redirecting Git or executing programs.
 /// Values are deliberately never included in errors or audit records.
 fn validate(worktree: &Path) -> Result<()> {
@@ -243,6 +263,75 @@ pub fn isolate_clone_environment(env: &mut BTreeMap<String, String>, template: &
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pinned_helper_requires_an_absolute_quotable_path() {
+        let args = super::pinned_credential_helper(std::path::Path::new("/opt/gh dir/gh")).unwrap();
+        assert_eq!(args[..3], ["-c", "credential.helper=", "-c"]);
+        assert_eq!(args[3], "credential.helper=!'/opt/gh dir/gh' auth git-credential");
+        for refused in ["gh", "relative/gh", "/opt/it's/gh"] {
+            assert!(
+                super::pinned_credential_helper(std::path::Path::new(refused)).is_err(),
+                "{refused}"
+            );
+        }
+    }
+
+    /// Real `git credential fill`: without the pinned arguments Git asks the
+    /// `gh` on PATH; with them it asks only the pinned binary.
+    #[cfg(unix)]
+    #[test]
+    fn pinned_helper_replaces_the_path_gh_for_one_operation() {
+        use std::os::unix::fs::PermissionsExt;
+        if super::process::which("git").is_none() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let fake = |folder: &str, name: &str| {
+            let folder = dir.path().join(folder);
+            std::fs::create_dir_all(&folder).unwrap();
+            let gh = folder.join("gh");
+            let marker = dir.path().join(name);
+            let script = format!(
+                "#!/bin/sh\ntouch '{}'\nprintf 'username=x-access-token\\npassword={name}\\n'\n",
+                marker.display()
+            );
+            std::fs::write(&gh, script).unwrap();
+            std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o700)).unwrap();
+            (gh, marker)
+        };
+        let (_, decoy) = fake("on path", "decoy");
+        let (pinned, pinned_marker) = fake("pinned gh", "pinned");
+        let path = format!("{}:/usr/bin:/bin", dir.path().join("on path").display());
+        let fill = |args: &[&str]| {
+            let mut argv: Vec<&str> = args.to_vec();
+            argv.extend(["credential", "fill"]);
+            super::raw(
+                dir.path(),
+                &argv,
+                std::time::Duration::from_secs(30),
+                &[("PATH", &path)],
+                Some(b"protocol=https\nhost=github.com\n\n"),
+            )
+            .unwrap()
+        };
+        let default = fill(&[]);
+        assert!(default.stdout.contains("password=decoy"), "{}", default.stderr);
+        std::fs::remove_file(&decoy).unwrap();
+        let helper = super::pinned_credential_helper(&pinned).unwrap();
+        let args: Vec<&str> = helper.iter().map(String::as_str).collect();
+        let pinned_output = fill(&args);
+        assert!(
+            pinned_output.stdout.contains("password=pinned"),
+            "{}",
+            pinned_output.stderr
+        );
+        assert!(pinned_marker.exists());
+        assert!(
+            !decoy.exists(),
+            "the PATH gh must not be asked once the helper is pinned"
+        );
+    }
+
     #[test]
     fn credential_helper_receives_only_supported_tokens_and_no_git_overrides() {
         let env = super::environment(&[]);
