@@ -3,7 +3,7 @@
 # and `node --check` on every .mjs script. Hook behavior runs in disposable
 # repositories; application contract tests live in ci.yml. Lists use `git ls-files`
 # so a new script is linted without editing this workflow.
-name: script lint
+name: Scripts - Shell, Python and Node lint
 
 on:
   push:
