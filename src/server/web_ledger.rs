@@ -73,10 +73,10 @@ pub struct TurnSummary {
 }
 
 impl TurnSummary {
-    pub fn audit(&self, session_id: &str, turn: u64, loop_turn: bool, compactions: u64) -> Value {
+    /// The audit fields; the caller adds the event name and session, as it
+    /// does for `chat_session_compacted`.
+    pub fn audit_fields(&self, turn: u64, loop_turn: bool, compactions: u64) -> Value {
         json!({
-            "event": "chat_web_turn",
-            "session_id": session_id,
             "turn": turn,
             "loop_turn": loop_turn,
             "compactions": compactions,

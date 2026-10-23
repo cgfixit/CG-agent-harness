@@ -1692,12 +1692,12 @@ pub(crate) async fn chat_inner(
     }
     // Counts and codes only; the targets stay in the owner's session ledger.
     if let Some(turn) = &web_turn {
-        state.audit.log(turn.audit(
-            &session.session_id,
-            updated.tally.exchanges,
-            req.loop_turn,
-            updated.compactions,
-        ));
+        let mut event = json!({"event": "chat_web_turn", "session_id": session.session_id});
+        let fields = turn.audit_fields(updated.tally.exchanges, req.loop_turn, updated.compactions);
+        if let (Some(event), Some(fields)) = (event.as_object_mut(), fields.as_object()) {
+            event.extend(fields.clone());
+        }
+        state.audit.log(event);
     }
     let sensitivity = {
         let scanner = crate::common::injection::Scanner::core();
