@@ -19,6 +19,9 @@
 #   --trust-cert      trust the console certificate for your browser (choices 2 and 3 with the app)
 #   --no-profile      do not add Homebrew and Rust PATH lines to your shell profile
 #   --no-allowlist    do not grant the web allowlist
+#   --no-auto-memory  do not list the local model for automatic memory suggestions
+#   --reset-home      with --yes, delete the previous install's home and Keychain
+#                     entries first (scripts/reset-macos.sh); asked otherwise, default no
 # Full guide: docs/INSTALL.md ("One command: init.sh").
 
 # Started from zsh or sh (`zsh scripts/init.sh`): rerun under bash. POSIX syntax until then.
@@ -38,8 +41,9 @@ if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then exec arch -ar
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 choice='' interactive=1 trust=0 profile_opt=1 allowlist=1 ollama=1 app_dir='' replace=0
+auto_memory=1 reset_home=0
 install_args=()
-usage() { sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 while [ "$#" -gt 0 ]; do
   case $1 in
     --choice) case ${2:-} in 0 | 1 | 2 | 3) choice=$2; shift ;; *) echo 'init.sh: --choice takes 0, 1, 2 or 3' >&2; exit 3 ;; esac ;;
@@ -53,6 +57,8 @@ while [ "$#" -gt 0 ]; do
     --trust-cert) trust=1 ;;
     --no-profile) profile_opt=0 ;;
     --no-allowlist) allowlist=0 ;;
+    --no-auto-memory) auto_memory=0 ;;
+    --reset-home) reset_home=1 ;;
     -h | --help) usage; exit 0 ;;
     *) echo "init.sh: unknown option: $1 (see --help)" >&2; exit 3 ;;
   esac
@@ -135,7 +141,9 @@ ask_secret() {
 }
 
 # -------------------------------------------------------------- step runner
-SKIP=99
+# A step returns PRESENT when its work was already done (summary "ok") and SKIP
+# when it did not apply or an option turned it off (summary "skipped").
+PRESENT=98 SKIP=99
 step_names=() step_states=()
 record() { step_names+=("$1"); step_states+=("$2"); }
 # step NAME required|optional FUNCTION: run it; on failure retry, skip or stop.
@@ -149,12 +157,13 @@ step() {
     rc=$?
     case $rc in
       0) say "[$name] done ($((SECONDS - started))s)"; record "$name" 'done'; return 0 ;;
+      "$PRESENT") record "$name" ok; return 0 ;;
       "$SKIP") record "$name" skipped; return 0 ;;
     esac
     warn "[$name] failed (exit $rc); the lines above say why, and $log keeps them"
     if [ "$interactive" = 1 ]; then
       ask "Retry, skip or quit? [r/s/q]" r
-      case $REPLY in [Rr]*) continue ;; [Ss]*) record "$name" skipped; return 0 ;; *) record "$name" FAILED; exit "$rc" ;; esac
+      case $REPLY in [Rr]*) continue ;; [Ss]*) record "$name" SKIPPED; return 0 ;; *) record "$name" FAILED; exit "$rc" ;; esac
     fi
     record "$name" FAILED
     [ "$kind" = optional ] && return 0
@@ -164,7 +173,7 @@ step() {
 summary() {
   local i
   printf '\n'
-  say 'Summary'
+  say 'Summary (ok: already set up; skipped: not needed or turned off; SKIPPED: failed, then skipped at the prompt)'
   for i in "${!step_names[@]}"; do printf '    %-8s %s\n' "${step_states[$i]}" "${step_names[$i]}"; done
   say "log: $log"
 }
@@ -262,7 +271,7 @@ step_preflight() {
 
 step_developer_tools() {
   local waited=0
-  if clt_ok; then say "Command Line Tools: $(xcode-select -p)"; return "$SKIP"; fi
+  if clt_ok; then say "Command Line Tools: $(xcode-select -p)"; return "$PRESENT"; fi
   if xcode-select -p >/dev/null 2>&1; then
     warn "developer tools at $(xcode-select -p) are selected but clang does not run; scripts/install-macos.sh prints the fix"
     return 1
@@ -286,18 +295,28 @@ step_checkout() {
 }
 
 step_install() {
-  local rc
+  local rc args=(${install_args[@]+"${install_args[@]}"})
   # --check passes with an app installed, so --replace-app always runs the installer.
   if [ "$replace" = 0 ]; then
-    bash "$root/scripts/install-macos.sh" --check ${install_args[@]+"${install_args[@]}"}
-    rc=$?
+    # Keep a copy of the inventory: it names a newer release when there is one.
+    bash "$root/scripts/install-macos.sh" --check ${install_args[@]+"${install_args[@]}"} | tee "$private/check.out"
+    rc=${PIPESTATUS[0]}
     case $rc in
-      0) say 'already installed; nothing to do (--replace-app updates the app)'; return "$SKIP" ;;
+      0)
+        # A working app is only swapped on request: offer it here, never under --yes.
+        if [ "$interactive" = 0 ] || ! grep -q 'the latest release is' "$private/check.out"; then
+          say 'already installed; nothing to do (--replace-app updates the app)'
+          return "$PRESENT"
+        fi
+        ask 'Update the app to the latest release now? Its home and data are kept. [Y/n]' y
+        case $REPLY in [Nn]*) say 'keeping the installed app (--replace-app updates it later)'; return "$PRESENT" ;; esac
+        # The tools and backend just passed --check; only the app changes.
+        args+=(--replace-app --no-build) ;;
       1) ;;
       *) return "$rc" ;;
     esac
   fi
-  bash "$root/scripts/install-macos.sh" ${install_args[@]+"${install_args[@]}"}
+  bash "$root/scripts/install-macos.sh" ${args[@]+"${args[@]}"}
   rc=$?
   if [ "$rc" != 0 ] && app_running; then
     # The installer never replaces a running app. Offer to quit it, then retry once.
@@ -308,7 +327,7 @@ step_install() {
     # Its backend flushes and stops after the window closes; wait for both.
     for _ in $(seq 1 60); do app_running || break; sleep 0.5; done
     if app_running; then warn 'the app is still running; quit it and choose retry'; return "$rc"; fi
-    bash "$root/scripts/install-macos.sh" ${install_args[@]+"${install_args[@]}"} || return $?
+    bash "$root/scripts/install-macos.sh" ${args[@]+"${args[@]}"} || return $?
   elif [ "$rc" != 0 ]; then
     return "$rc"
   fi
@@ -337,14 +356,33 @@ step_shell_profile() {
     # shellcheck disable=SC2016
     [ "$has" = 1 ] || { add_line "$profile" '. "$HOME/.cargo/env"'; added=1; }
   fi
-  if [ "$added" = 0 ]; then say "Homebrew and Rust are already on your login shell's PATH"; return "$SKIP"; fi
+  if [ "$added" = 0 ]; then say "Homebrew and Rust are already on your login shell's PATH"; return "$PRESENT"; fi
   say 'open a new Terminal window to pick these up'
 }
 
-# The app's backend when it runs; otherwise a private server on a free port,
-# stopped again when setup is done. Sets origin.
+# The console origin a server process listens on, the same classification as
+# start-macos.sh: one plain-HTTP request per loopback listener; 200 is a
+# legacy-HTTP console, a reply that is not HTTP is the TLS console, anything
+# else is the private MCP gateway. curl reports no status (000) for a refused
+# connection (exit 7) or a stalled one (exit 28) too; those ports are skipped.
+listener_origin() {
+  local p code rc
+  for p in $(lsof -nP -a -p "$1" -iTCP@127.0.0.1 -sTCP:LISTEN -Fn 2>/dev/null | sed -n 's/^n127\.0\.0\.1:\([0-9]*\)$/\1/p' || true); do # DevSkim: ignore DS162092 because only loopback listeners of the home-owning pid are read.
+    rc=0
+    code=$(curl --noproxy '*' --silent --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$p/api/status") || rc=$? # DevSkim: ignore DS137138,DS162092 because this only classifies a loopback listener.
+    case $code:$rc in
+      200:*) echo "http://127.0.0.1:$p"; return 0 ;; # DevSkim: ignore DS137138,DS162092 because a legacy-HTTP home serves plain HTTP on loopback.
+      000:7 | 000:28) ;;
+      000:*) echo "https://127.0.0.1:$p"; return 0 ;; # DevSkim: ignore DS162092 because the console listens on loopback only.
+    esac
+  done
+  return 1
+}
+# The app's backend when it runs; a `serve` of yours that already owns the home
+# (it keeps running); otherwise a private server on a free port, stopped again
+# when setup is done. Sets origin.
 open_server() {
-  local holder port code
+  local holder holder_cmd port code
   [ -z "$origin" ] || return 0
   if [ -n "$(app_backends)" ]; then
     origin=$(start_macos --no-ollama --no-browser 2>&1 | sed -n 's|^CGagentHarness console: \(.*\)/$|\1|p' | tail -n1)
@@ -354,7 +392,17 @@ open_server() {
   fi
   holder=$(lsof -t -- "$home/.server.lock" 2>/dev/null | head -n1 || true)
   if [ -n "$holder" ]; then
-    warn "$home is owned by pid $holder ($(ps -o command= -p "$holder" 2>/dev/null)); quit it, then retry"
+    holder_cmd=$(ps -o command= -p "$holder" 2>/dev/null || true)
+    # Only your own console server: a certificate renew or another user's process is not one.
+    case $holder_cmd in
+      *cgagentharness\ serve | *cgagentharness\ serve\ *)
+        if [ "$(ps -o uid= -p "$holder" 2>/dev/null | tr -d ' ')" = "$(id -u)" ] && origin=$(listener_origin "$holder"); then
+          say "using the server pid $holder already runs on this home at $origin; it keeps running afterwards"
+          return 0
+        fi
+        origin='' ;;
+    esac
+    warn "$home is owned by pid $holder (${holder_cmd:-unknown}), and it is not a console server of yours that answers; quit it, then retry"
     return 1
   fi
   port=$(free_port 8790) || { warn 'no free loopback port in 8790-8889'; return 1; }
@@ -496,6 +544,83 @@ step_web_allowlist() {
   return "$rc"
 }
 
+# A previous install's home (accounts, sessions, memory, logs) and its Keychain
+# entries go only on request, through scripts/reset-macos.sh: it shows what it
+# would remove and refuses while the app or a server holds the home. Never under
+# --yes without --reset-home. The app itself stays; ~/.CyClaw is another project.
+step_previous_install() {
+  local target=${CGAGENTHARNESS_HOME:-$HOME/.CGagentHarness}
+  if [ ! -f "$target/config.yaml" ] && [ ! -f "$target/harness.json" ]; then
+    say "no previous install at $target"
+    return "$SKIP"
+  fi
+  if [ "$interactive" = 0 ]; then
+    [ "$reset_home" = 1 ] || { say "keeping the previous install at $target (--reset-home deletes it)"; return "$SKIP"; }
+  else
+    ask "A previous install's home is at $target. Delete it and its Keychain entries for a fresh start? Accounts, sessions, memory and logs go with it. [y/N]" n
+    case $REPLY in [Yy]*) ;; *) say "keeping $target"; return "$SKIP" ;; esac
+  fi
+  CGAGENTHARNESS_HOME=$target bash "$root/scripts/reset-macos.sh" || return 1
+  if [ "$interactive" = 1 ]; then
+    ask 'Type DELETE to remove everything listed above (anything else keeps it):' ''
+    [ "$REPLY" = DELETE ] || { say "keeping $target"; return "$SKIP"; }
+  fi
+  CGAGENTHARNESS_HOME=$target bash "$root/scripts/reset-macos.sh" --yes
+}
+
+# Automatic memory drafts proposals (each still needs your approval) only for
+# model/mode pairs in structured_memory.suggestion_supported; a missing list
+# allows none. A home seeded before that key existed has no list, so offer the
+# local model: models.local_llm.model, plus the selected model when Ollama has it
+# (the memory model is the selected local model, else the configured one). One
+# line goes under structured_memory: after a backup, so comments stay.
+valid_tag() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$ ]]; }
+step_auto_memory() {
+  local cfg configured selected models=() m entries='' indent line mode tmp n
+  [ "$auto_memory" = 1 ] || { say 'skipped (--no-auto-memory)'; return "$SKIP"; }
+  cfg=${home:-${CGAGENTHARNESS_HOME:-$HOME/.CGagentHarness}}/config.yaml
+  if [ ! -f "$cfg" ] || [ -L "$cfg" ]; then warn "no regular config.yaml at $cfg yet: start the app or console once, then rerun"; return 1; fi
+  if grep -Eq '^[[:space:]]+suggestion_supported:' "$cfg"; then
+    say 'automatic memory already lists its models (structured_memory.suggestion_supported)'
+    return "$PRESENT"
+  fi
+  n=$(grep -Ec '^structured_memory:[[:space:]]*(#.*)?$' "$cfg")
+  configured=$(awk '
+    /^[^[:space:]#]/ { top = ($0 ~ /^models:/); inlocal = 0 }
+    top && /^  local_llm:/ { inlocal = 1; next }
+    top && inlocal && /^  [^[:space:]#]/ { inlocal = 0 }
+    top && inlocal && /^    model:/ {
+      v = $0; sub(/^    model:[[:space:]]*/, "", v); sub(/[[:space:]]+#.*$/, "", v)
+      gsub(/^["\047]|["\047]$/, "", v); print v; exit
+    }' "$cfg")
+  if [ "$n" != 1 ] || ! valid_tag "$configured"; then
+    warn "could not place the line automatically; add it under structured_memory: in $cfg yourself:"
+    warn '  suggestion_supported: [{ model: "<your local model tag>", modes: [summaries, insights, both] }]'
+    return 1
+  fi
+  models=("$configured")
+  selected=$(sed -n 's/.*"selected_model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${cfg%/config.yaml}/harness.json" 2>/dev/null | head -n 1)
+  if [ -n "$selected" ] && [ "$selected" != "$configured" ] && valid_tag "$selected" && command -v ollama >/dev/null 2>&1 &&
+    ollama list 2>/dev/null | awk 'NR > 1 { print $1 }' | grep -Fxq -e "$selected" -e "$selected:latest"; then
+    models+=("$selected")
+  fi
+  for m in "${models[@]}"; do entries="$entries${entries:+, }{ model: \"$m\", modes: [summaries, insights, both] }"; done
+  ask "Let automatic memory draft proposals with ${models[*]}? You still approve each one. This adds structured_memory.suggestion_supported to $cfg and keeps a backup. [Y/n]" y
+  case $REPLY in [Nn]*) say 'automatic memory stays off until a model is listed (docs/STRUCTURED_MEMORY.md)'; return "$SKIP" ;; esac
+  indent=$(awk '/^structured_memory:/ { in_block = 1; next } in_block && /^[^[:space:]]/ { exit } in_block && /^[[:space:]]+[^[:space:]#]/ { match($0, /^[[:space:]]+/); print substr($0, 1, RLENGTH); exit }' "$cfg")
+  line="${indent:-  }suggestion_supported: [$entries]"
+  mode=$(stat -f %Lp "$cfg") || return 1
+  cp -p "$cfg" "$cfg.bak-$(date +%Y%m%d%H%M%S)" || return 1
+  tmp=$(mktemp "$cfg.XXXXXX") || return 1
+  if ! awk -v line="$line" '{ print } !done && /^structured_memory:/ { print line; done = 1 }' "$cfg" >"$tmp" || ! chmod "$mode" "$tmp" || ! mv -f "$tmp" "$cfg"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  say "listed for automatic memory: ${models[*]} (backup next to $cfg)"
+  # Restart-only key: a server or app that is already running reads it at its next start.
+  if [ -n "$(app_backends)" ] || { [ -n "$origin" ] && [ -z "$server_pid" ]; }; then warn 'restart the app or your server so it reads the new list'; fi
+}
+
 launch() {
   local c=$choice ollama_flag=() trust_flag=() port
   [ "$ollama" = 1 ] || ollama_flag=(--no-ollama)
@@ -527,6 +652,10 @@ launch() {
       if [ -n "$(app_backends)" ]; then
         say 'the app already owns the home; opening its console in your browser'
         start_macos ${ollama_flag[@]+"${ollama_flag[@]}"} ${trust_flag[@]+"${trust_flag[@]}"}
+      elif [ -n "$origin" ]; then
+        # Setup used a server of yours that owns the home (open_server); open it, do not compete.
+        say "your server already serves this home; opening $origin/"
+        open "$origin/" 3>&- 4>&-
       else
         port=$(free_port 8790) || { warn 'no free loopback port in 8790-8889'; return 1; }
         say "serving the console from this terminal on port $port; press Ctrl-C to stop it"
@@ -540,12 +669,14 @@ launch() {
 note "=== init.sh started $(date '+%Y-%m-%d %H:%M:%S %Z'); args: ${install_args[*]:-none}; choice ${choice:-ask}; interactive $interactive"
 profile='' env_files='' home='' kc_service=''
 step 'Check this Mac' required step_preflight
+step 'Previous install (scripts/reset-macos.sh, asked)' optional step_previous_install
 step 'Command Line Tools' required step_developer_tools
 step 'Git hooks' optional step_checkout
 step 'Install tools, backend and app (install-macos.sh)' required step_install
 step 'Shell PATH for zsh or bash' optional step_shell_profile
 step 'Admin password (replaced, kept in Keychain)' optional step_admin_password
 step 'Web allowlist (web-allowlist-bootstrap.sh)' optional step_web_allowlist
+step 'Automatic memory model (structured_memory.suggestion_supported)' optional step_auto_memory
 close_server
 summary
 failed=0
