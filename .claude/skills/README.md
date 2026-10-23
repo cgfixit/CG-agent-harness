@@ -4,9 +4,9 @@ Claude Code skills, one `SKILL.md` per folder, invoked as `/<folder>`. Skills
 marked **operator-only** carry `disable-model-invocation: true` and run only when
 the operator types them; the rest may be model-loaded. Loading a skill grants no
 push, merge or release authority. Start with `cgagentharness-project-guidance`;
-the routing table lives in [AGENTS.md](../../AGENTS.md#project-skills). Most
-mirror [.codex/skills/](../../.codex/skills/README.md); the Claude-only ones
-are marked.
+the routing table lives in [AGENTS.md](../../AGENTS.md#project-skills). Compare
+[Codex skills](../../.codex/skills/README.md) independently: invocation policies
+and procedures can differ. Claude-only entries are marked.
 
 - [`cgagentharness-config-guard/`](cgagentharness-config-guard/SKILL.md): static
   fail-closed check of `assets/config.default.yaml` (gates, `confirm`, loopback).

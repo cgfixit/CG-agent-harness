@@ -1,21 +1,21 @@
 # docs
 
-Operator and contributor guides, one topic per file. The root
-[README.md](../README.md#documentation) table is the short entry point; this
-page describes every file, the feature it maps to, the code that owns it and
-the tests that lock it. Agents open a file here only when a root file links it
-and the task needs it; `learning/` is never read unless the operator asks.
+Operator and contributor guides, indexed by feature, implementation and checks.
+Start with the root [README.md](../README.md#documentation).
+Agents open a guide only when a root file links it and the task needs it;
+`learning/` requires an explicit operator request.
 
 ## Start here
 
 - **New operator, fresh machine:** [INSTALL.md](INSTALL.md), then
   [MODELS.md](MODELS.md) and [CONSOLE.md](CONSOLE.md).
   Keep [TROUBLESHOOTING.md](TROUBLESHOOTING.md) open.
-- **Turning on an optional feature** (each ships off): [MEMORY_GUIDE.md](MEMORY_GUIDE.md),
+- **Memory and optional features:** [MEMORY_GUIDE.md](MEMORY_GUIDE.md),
   [CODING_PIPELINE.md](CODING_PIPELINE.md), [MCP_CLIENT.md](MCP_CLIENT.md),
   [MCP_SERVER.md](MCP_SERVER.md), [netconnect.md](netconnect.md). Read the
   owning [INVARIANTS.md](../INVARIANTS.md) section first; [AGENTS.md](../AGENTS.md#the-map)
-  maps features to sections.
+  maps features to sections. Fresh homes enable structured-memory gates;
+  coding, MCP and netconnect remain off. Existing homes retain their settings.
 - **Contributor or agent:** [AGENTS.md](../AGENTS.md) and [INVARIANTS.md](../INVARIANTS.md)
   at the root, then [API_ROUTES.md](API_ROUTES.md), [PROCESS_LIFECYCLE.md](PROCESS_LIFECYCLE.md),
   [DEPENDENCIES.md](DEPENDENCIES.md), [GITHOOKS.md](GITHOOKS.md) and
@@ -29,7 +29,8 @@ links resolve. Truth order for every claim is code, then
 
 ## Setup, models and recovery
 
-- [INSTALL.md](INSTALL.md): the automated macOS installer and launcher,
+- [INSTALL.md](INSTALL.md): the macOS `init.command`/`scripts/init.sh` setup wizard,
+  installer and launcher,
   prerequisites (hardware, Xcode tools, Rust, Ollama, optional GitHub CLI),
   getting the code, building the standalone backend or the macOS app, the first
   run and browser access to the app's server. Covers where the home and optional credentials
@@ -37,22 +38,23 @@ links resolve. Truth order for every claim is code, then
   and runs, and update, backup, rollback and uninstall. Use it to take a fresh
   machine to a verified console.
   Owns: `src/main.rs`, `src/common/{home,config,credential_store}.rs`,
-  `src/server/env_keys.rs`, `scripts/verify-local.sh`, `scripts/{install,start}-macos.sh`,
+  `src/server/env_keys.rs`, `scripts/{init,install-macos,start-macos,verify-local}.sh`,
   `.github/workflows/ci.yml`.
   Tests: `tests/common_layer.rs`, `tests/contract_locks.rs`, `tests/windows_private_credentials.rs`.
-- [MODELS.md](MODELS.md): inventory the local Ollama install and select an
-  installed tag for chat and web research. Explains the 32768-token window the
-  seeded web budgets need, how to pin it with a derived local tag, and the
-  exact-model diagnostics and optional fallback. Read it before the first chat.
+- [MODELS.md](MODELS.md): local inventory, model selection, the 32768-token
+  window seeded web budgets need, derived tags, warmup/tuning and fallback.
+  Also covers consented cloud chat, profile limits and the separate coding
+  planner. Read it before the first chat.
   Owns: `src/llm/{ollama,inventory,profile,backend,cloud_chat}.rs`, `src/server/model_limits.rs`,
   `scripts/qwen3.8-27b-mlx-cg.Modelfile`, `scripts/smoke-ollama.sh`. Tests: `tests/ollama_manage.rs`,
-  `tests/model_readiness.rs`, `tests/model_completion.rs`.
+  `tests/model_readiness.rs`, `tests/model_completion.rs`, `tests/cloud_model_selection.rs`.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md): one symptom, likely cause and fix
   table. Rows cover missing spend or analytics, webhooks that never arrive,
   bounded MCP diagnostics, slash commands unknown to older builds, coding-loop
-  file reads, session isolation and memory gates. Many fixes start by checking
-  the installed build's `Resources/COMMIT`. Owns nothing; each row links the
-  guide that does.
+  file reads, session isolation and memory gates. Includes read-only host
+  inspection through declared MCP servers and bounded `/diag` logs.
+  Check the installed build's `Resources/COMMIT` before comparing behavior.
+  Owns: `src/server/diag_reader.rs`, `src/server/routes/diag.rs`.
 
 ## Console and daily use
 
@@ -60,10 +62,11 @@ links resolve. Truth order for every claim is code, then
   Sessions and bounded continuation (`/goal`, `/loop`), transcript search and
   export, soul and persona editing, runtime skills, response styles, tool and
   connector visibility, text and DOCX attachments, streaming and cancellation,
-  and local history compaction. Holds the slash-command quick reference and
-  keyboard, zoom and screen-reader behavior.
+  local history compaction, bundled-manual context and live status. Holds the
+  slash-command reference and keyboard, zoom and screen-reader behavior.
   Owns: `assets/static/harness.html`, `src/server/{slash,sessions,prompts,
-  compaction,attachments,style,routes/core}.rs`. Tests: `tests/chat_and_sessions.rs`,
+  compaction,attachments,style,self_manual,live_state,routes/core}.rs`.
+  Tests: `tests/chat_and_sessions.rs`, `tests/self_manual.rs`,
   `tests/chat_stream.rs`, `tests/chat_attachments.rs`, `tests/persona_controls.rs`,
   `scripts/test-review-reset.mjs`, `scripts/test-header-buttons.mjs`, the other
   `scripts/test-*.mjs` contract tests.
@@ -94,7 +97,7 @@ links resolve. Truth order for every claim is code, then
   how-to. Defines what ships and what does not, gates, prompt budget, write-time
   injection checks, suggestion and episode and proposal contracts, FTS retrieval,
   consolidation, the at-rest threat model, HTTP surfaces, the evaluation corpus,
-  enable order, rollback and verification. Read it before changing memory code.
+  enable order, rollback and verification.
   Owns: `src/server/structured_memory{,_auto,_consolidate,_fts,_suggest}.rs`,
   `src/server/routes/structured_memory.rs`, `src/common/private_sqlite.rs`.
   Tests: `tests/structured_memory.rs`, `tests/structured_memory_phase7.rs`,
@@ -107,7 +110,7 @@ links resolve. Truth order for every claim is code, then
   push and draft PR. Covers arming it (GitHub CLI, config, console, staging a
   session goal, the kill switch), bounded edits, repository retrieval, cloud
   planner egress, offline Cargo verification, git approval and the isolation
-  check. Every write gate ships closed.
+  check. Master, GitHub and git-write gates ship closed.
   Owns: `src/agentic/` (see its [README](../src/agentic/README.md)), `src/shim/mod.rs`,
   `src/server/{agent_jobs,agent_policy,agent_schedules,schemas}.rs`, `src/server/routes/agent.rs`.
   Tests: `tests/write_policy.rs`, `tests/git_approval.rs`, `tests/real_repo_loop.rs`,
@@ -153,7 +156,8 @@ links resolve. Truth order for every claim is code, then
   `scripts/test-first-run-password.mjs`, `tests/owner_isolation.rs`, `tests/chat_web.rs`, `tests/web_research.rs`,
   `tests/web_phase2_redteam.rs`.
 - [DESKTOP.md](DESKTOP.md): the universal macOS app that owns its bundled
-  backend in a WKWebView. Install and launch, notifications, home and
+  backend in a WKWebView. Install and launch, native-confirmed browser opening,
+  notifications, home and
   credentials, ownership, ports and security boundaries, Finder setup, closing
   and recovery, rebuild and verify, and update or uninstall. Shipped inside the
   app's `Resources/`.
@@ -212,16 +216,15 @@ links resolve. Truth order for every claim is code, then
   belongs in PR bodies.
 - [`learning/`](learning/README.md): operator reading material (Rust and AI
   design PDFs). Agents never open it unless the operator asks.
-- [`screenshots/`](screenshots/README.md): flat captures indexed by series in
-  their own README. Record hashes, platform and fixture-versus-live in the
-  adding PR; add no Markdown there.
+- [`screenshots/`](screenshots/README.md): captures indexed by series, plus
+  `demo/` and `demos/` recordings. Record hashes, platform and fixture-versus-live
+  in the adding PR; add no Markdown there.
 
 ## How these docs are kept
 
-Every file has a word cap in `tests/invariant_guard.rs` (`DOCS_BUDGET`); the
-guard also caps each group and refuses a cap that leaves room to regrow. Edit
-the section that owns a topic rather than adding a file; when a file goes,
-delete every link to it in the same PR. Folder `README.md` files index their
-folder and link here for the full doc. The `doc-sync` and `dep-sync` skills
-(see [AGENTS.md](../AGENTS.md#docs-policy)) rewrite stale sections against the
-code; a sync that only adds words is not done.
+`tests/invariant_guard.rs` enforces `DOCS_BUDGET`, group caps and a 150-word
+default for unlisted folder READMEs; the bake-off report has an explicit exemption.
+Edit the owning section; delete references alongside removed files. Folder
+READMEs index their folder and link to full guides. The `doc-sync` and `dep-sync`
+workflows in [AGENTS.md](../AGENTS.md#docs-policy) reconcile prose with code;
+lower explicit caps when files shrink.

@@ -1,9 +1,9 @@
 # assets/static
 
-The console served by `cgagentharness serve`. The asset is served verbatim: the
-placeholders `__CYCLAW_CSRF_TOKEN__` and `__CYCLAW_CSP_NONCE__` and the
-`X-CyClaw-CSRF` header name are contractual (`src/server/console.rs`,
-`src/server/headers.rs`).
+The console embedded by `cgagentharness serve`. Keep the contractual
+`__CYCLAW_CSRF_TOKEN__`, `__CYCLAW_CSP_NONCE__` and `X-CyClaw-CSRF` names:
+`src/server/mod.rs` substitutes the process CSRF token, and
+`src/server/console.rs` inserts a fresh CSP nonce per response.
 
 - [`harness.html`](harness.html): the single-page console (chat, panels, slash
   commands, settings), including Memory outcome polling and retained proposal-review

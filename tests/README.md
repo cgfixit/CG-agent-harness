@@ -1,15 +1,15 @@
 # tests
 
-Integration tests, one file per surface or contract, run by CI with
-`GROK_API_KEY`, `ANTHROPIC_API_KEY` and `DEEPAGENT_API_KEY` blanked. Never run
-the whole suite locally; CI does. Files that need a platform capability skip
-when it is missing unless the named `CGAH_REQUIRE_*` variable is set; a
-dedicated [`ci.yml`](../.github/workflows/ci.yml) job sets each one, so every
-file runs unskipped somewhere. CI expectations: [docs/INSTALL.md](../docs/INSTALL.md#tests-and-cicd).
+Integration tests by surface or contract. [`ci.yml`](../.github/workflows/ci.yml)
+blanks `GROK_API_KEY`, `ANTHROPIC_API_KEY` and `DEEPAGENT_API_KEY`. Use focused
+local checks; CI owns broad coverage. Capability-dependent tests may skip unless
+their `CGAH_REQUIRE_*` gate is set; required platform jobs enforce those gates.
+Docs-only classification can skip compile jobs. CI expectations: [docs/INSTALL.md](../docs/INSTALL.md#tests-and-cicd).
 
 ## Structure and contracts
 
-- [`invariant_guard.rs`](invariant_guard.rs): I6 source boundary, shim whitelist, duplicated constants, shipped defaults, console asset, `DOCS_BUDGET`. Run alone after structural or doc edits.
+- [`invariant_guard.rs`](invariant_guard.rs): I6 source boundary, shim whitelist, duplicated constants, shipped defaults, console asset, `DOCS_BUDGET`; includes the focused Markdown-budget check.
+- [`shipped_config.rs`](shipped_config.rs): validates actual seeded model, web, workspace and tuning settings without protocol-fixture overrides.
 - [`contract_locks.rs`](contract_locks.rs): binary exit codes, confirm and reason flags, kill switch, shim redaction, raw listener authority.
 - [`common_layer.rs`](common_layer.rs): `src/common` primitives (not this folder's `common/`): atomic write, rate limit, auth records, redaction, `flag_is_true`.
 - [`child_env.rs`](child_env.rs): `gh` and shim children never inherit provider keys; credentials are action-scoped.
@@ -17,15 +17,16 @@ file runs unskipped somewhere. CI expectations: [docs/INSTALL.md](../docs/INSTAL
 
 ## Server, accounts and console
 
-- [`auth_guards.rs`](auth_guards.rs): guard chain order (rate limit, Host and origin, key, CSRF) and account-session refusals.
+- [`auth_guards.rs`](auth_guards.rs): rate, Host/origin, CSRF and account-session refusals; the optional key grants no authority.
 - [`security_headers.rs`](security_headers.rs): hardening headers, no-store on `/api`, per-response CSP nonce.
 - [`secure_portal.rs`](secure_portal.rs): real HTTPS/HTTP account boundary, config reload (admin, CSRF, SIGHUP), shutdown.
 - [`owner_isolation.rs`](owner_isolation.rs): two accounts cannot read, mutate, export or schedule each other's sessions.
 - [`panels.rs`](panels.rs): `/api/keys`, `/web`, `/memory`, views, `/api/auth/*` and `/net` panel routes.
+- [`diag_routes.rs`](diag_routes.rs): log allowlist, roles, CSRF, private reads and session-bound staging; restricted `portal_auditor` chat.
 - [`persona_controls.rs`](persona_controls.rs): `/api/soul` document, proposals and prompt preview; confirm, backups, interrupted apply.
 - [`style_presets.rs`](style_presets.rs), [`runtime_skills.rs`](runtime_skills.rs): `/api/style` presets and per-session skill selection; neither executes anything.
 - [`analytics.rs`](analytics.rs), [`spend_ledger.rs`](spend_ledger.rs): analytics summary composition and the spend ledger on the chat path; shim failure reads unavailable, never empty.
-- [`notifications.rs`](notifications.rs): completion webhooks: local-only delivery, retries, revocation, bearer file permissions.
+- [`notifications.rs`](notifications.rs): completion webhooks: owner-bound delivery, crash recovery, retries, replay, revocation and bearer permissions.
 
 ## Chat, sessions and web
 
@@ -35,6 +36,8 @@ file runs unskipped somewhere. CI expectations: [docs/INSTALL.md](../docs/INSTAL
 - [`chat_web.rs`](chat_web.rs): chat `web_fetch`/`web_search` rounds: URL permission, token budgets, cancel, revoked sources.
 - [`web_commands.rs`](web_commands.rs), [`web_research.rs`](web_research.rs), [`web_phase2_redteam.rs`](web_phase2_redteam.rs): `/web` grammar, the deterministic research controller, and the non-empty allowlist red-team.
 - [`session_export.rs`](session_export.rs), [`retrieval_ranking.rs`](retrieval_ranking.rs): export is CSRF-guarded and 0600; golden BM25 ranking order.
+- [`self_manual.rs`](self_manual.rs): generator drift, scanner cleanliness and local-only manual/live-state prompt context.
+- [`cloud_model_selection.rs`](cloud_model_selection.rs): guarded cloud switching, profiles, budgets, cancellation and restart reset with synthetic loopback providers.
 - [`model_completion.rs`](model_completion.rs), [`model_readiness.rs`](model_readiness.rs), [`ollama_manage.rs`](ollama_manage.rs): truncated replies never accepted; readiness probing; native Ollama inventory, pull and warmup on loopback.
 
 ## Memory

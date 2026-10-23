@@ -1,7 +1,7 @@
 # data/styles
 
-Reply style presets embedded by name in `src/server/style.rs` (`BUILTIN_IDS`).
-Adding a preset means adding it to that table; a file alone is not catalogued.
+Reply style presets embedded by `src/server/style.rs` (`BUILTIN_IDS` and
+`BUILTIN_BODIES`). Add a built-in to both tables; a file alone is not embedded.
 Operators can overlay their own under the home's `styles/` folder.
 
 - [`code-review.md`](code-review.md): review-shaped replies: findings, severity, evidence.

@@ -2,8 +2,8 @@
 
 The coding pipeline, run only as a child process; it never references the
 server or shim. [`writer.rs`](writer.rs) and [`workspace.rs`](workspace.rs) are
-core paths: every write needs `confirm` and `reason`, stays inside the clone
-jail, and honours the gates in [`config.rs`](config.rs). Doc:
+core paths for approved GitHub writes and clone-jailed repository mutations;
+[`config.rs`](config.rs) owns their configuration gates. Doc:
 [docs/CODING_PIPELINE.md](../../docs/CODING_PIPELINE.md); contracts:
 [INVARIANTS.md](../../INVARIANTS.md).
 
@@ -26,7 +26,7 @@ jail, and honours the gates in [`config.rs`](config.rs). Doc:
 - [`run_store.rs`](run_store.rs): JSON run records and lifecycle gates; `RUN_ID_PATTERN` duplicated with server `agent_policy`.
 - [`unslop.rs`](unslop.rs): optional banned-phrase prose nudge (`unslop.enabled` ships false); feedback, never a gate.
 - [`workspace.rs`](workspace.rs): **core path.** Clone jail reads, path-validated writes, fixed git subcommands, approved push.
-- [`writer.rs`](writer.rs): **core path.** GitHub write gate; one op (`pr_create --draft`) behind four gates.
+- [`writer.rs`](writer.rs): **core path.** GitHub write gate; only executes `pr_create --draft`; master, write-mode, writes-enabled, reason and confirmation gates.
 
 Tests: [tests/write_policy.rs](../../tests/write_policy.rs), [tests/git_approval.rs](../../tests/git_approval.rs),
 [tests/exact_edits.rs](../../tests/exact_edits.rs), [tests/real_repo_loop.rs](../../tests/real_repo_loop.rs),

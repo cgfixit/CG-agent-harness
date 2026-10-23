@@ -12,24 +12,26 @@ The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs) and
 - [`attachment_index.rs`](attachment_index.rs): query-ranked passage fence over owner-verified attachments.
 - [`attachments.rs`](attachments.rs): chat upload `AttachmentStore`: cap-std jail, UUID blobs, multipart parse.
 - [`chat_web.rs`](chat_web.rs): chat-model `web_search`/`web_fetch` tool loop with bounded reads and SSE.
-- [`client.rs`](client.rs): the `account`, `web` and `tls` CLI commands as an HTTP client of the console.
+- [`client.rs`](client.rs): `account`/`web` portal clients; `tls` inspects or renews home-owned certificates.
 - [`compaction.rs`](compaction.rs): prompt-window estimation, reply reservation, web budgets, summary compaction.
 - [`config_reload.rs`](config_reload.rs): hot reload of `RELOADABLE` (23 keys) into `RuntimeLimits`; SIGHUP installer.
-- [`console.rs`](console.rs): `GET /` and `/static/{name}`; substitutes the CSRF token and CSP nonce placeholders.
+- [`console.rs`](console.rs): `GET /` and `/static/{name}`; inserts response CSP nonces after `mod.rs` substitutes the CSRF token.
 - [`desktop.rs`](desktop.rs): Unix-only parent/sidecar stdio protocol; carries ownership, no API authority.
+- [`diag_reader.rs`](diag_reader.rs): allowlisted private log tails, bounded reads, redaction and injection scanning.
 - [`docx.rs`](docx.rs): bounded DOCX main-document text extraction; no relationships, macros or disk.
 - [`env_keys.rs`](env_keys.rs): `MANAGED_KEYS` allowlist for `/api/keys`: masked status, credential-store writes.
 - [`errors.rs`](errors.rs): `ApiError` JSON `detail` envelope the console's `api()` helper reads.
 - [`generation_gate.rs`](generation_gate.rs): single-holder local-LLM gate; busy claim returns 409; bounded preemption.
 - [`guards.rs`](guards.rs): **core path.** Loopback, rate limit, same-origin, `account_gate` RBAC, `CSRF_HEADER`.
 - [`headers.rs`](headers.rs): **core path.** Outermost security headers (`DEFAULT_CSP`, no-store), loopback `trusted_host`.
+- [`live_state.rs`](live_state.rs): bounded in-memory status for local chat and prompt preview; no credential disclosure.
 - [`mcp.rs`](mcp.rs): outbound MCP client `McpRuntime`: declared servers only, pinned DNS, stdio or SSE.
 - [`mcp_keys.rs`](mcp_keys.rs): SQLite machine-key store for inbound MCP; the `mcp-key` CLI, local file authority.
 - [`mcp_server.rs`](mcp_server.rs): default-off loopback inbound MCP memory gateway, own bearer auth and rates.
 - [`mcp_server_config.rs`](mcp_server_config.rs): restart-only inbound MCP settings; fixed `TOOLS` list of three memory tools.
 - [`memory_notes.rs`](memory_notes.rs): `/memory` pinned notes in `memory/notes.json`; injected only when on.
 - [`mod.rs`](mod.rs): module tree, `build_app` test boundary, `serve_blocking` loopback bind and shutdown.
-- [`model_limits.rs`](model_limits.rs): per-model budget proposals for `/model profile` and opt-in `auto_tune`.
+- [`model_limits.rs`](model_limits.rs): per-model budget proposals for `/model profile` and gated `auto_tune`.
 - [`notes_corpus.rs`](notes_corpus.rs): owner-jailed `.md`/`.txt` corpus for local chat retrieval.
 - [`notification_outbox.rs`](notification_outbox.rs): bounded outbox of delivery metadata persisted before any network attempt.
 - [`notifications.rs`](notifications.rs): owner-bound completion webhooks, bearer tokens, pinned addresses, replay.
@@ -40,6 +42,7 @@ The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs) and
 - [`retrieval_ranking.rs`](retrieval_ranking.rs): private chunker, Tantivy query builder and diverse-selection ranking.
 - [`schedule_time.rs`](schedule_time.rs): `ScheduleSpec` parsing and next-occurrence math; no dispatch.
 - [`schemas.rs`](schemas.rs): request body structs with `validate()`, length caps, the 422 `ValidJson` extractor.
+- [`self_manual.rs`](self_manual.rs): compiled manual chunks in a RAM index; local prompt context, never authority.
 - [`session_export.rs`](session_export.rs): session Markdown export render/parse and `0o600` file write.
 - [`session_search.rs`](session_search.rs): request-local Tantivy search over an owner's transcripts.
 - [`sessions.rs`](sessions.rs): JSON `SessionStore`: owned sessions, messages, pins, token tallies, quarantine.

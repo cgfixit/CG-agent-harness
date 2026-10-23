@@ -22,7 +22,7 @@ CG Agent Harness combines chat, files, memory and selected tools locally.
 | **Jobs and schedules** | Detached coding jobs and reviewed interval or cron schedules. | Same coding permissions and owner-bound review. |
 | **Cloud chat** | Optional Grok or Claude. Sends only the new message, never local history, memory, skills, attachments, or web context. | Requires provider setup; unavailable for `/loop`. |
 | **MCP integrations** | Declared external tools and a separate read-only memory gateway with dedicated machine credentials. | Both disabled. |
-| **LAN observation** | Netconnect reads in-scope interfaces, routes, and neighbors from local tables. | Disabled with empty scope; no active scans, probes, or device control. |
+| **LAN observation and diagnostics** | Netconnect reads local interface, route, and neighbor tables; `diag` performs explicitly configured, budgeted TCP connects. | Disabled; empty scope, target list, and port allowlist. |
 | **Self-knowledge** | A bundled harness manual and a live status block as untrusted local-chat context. | On; never sent to cloud chat, `/loop` or `/agent`. |
 | **Log diagnostics** | `/diag` shows bounded, redacted tails of allowlisted home logs. | Disabled; admin or `portal_auditor` only. |
 
@@ -140,7 +140,9 @@ Each command supports `--help`.
 
 First launch seeds the home's `config.yaml` from [the defaults](assets/config.default.yaml); edit that copy. Permission gates require literal YAML `true`; quoted `"true"` or a missing key does not enable them. Startup logs any setting that ships `true` but is absent from your `config.yaml`, and `/memory` lists the structured-memory ones. Most settings require restart; selected web/API limits support [live reload](docs/CONFIG_RELOAD.md).
 
-Run the local quality bar (fmt, clippy, tests, and `cargo deny` when installed; see [AGENTS.md](AGENTS.md)):
+Before contributing, run `bash scripts/ensure-githooks.sh` and inspect its output
+([hook guide](docs/GITHOOKS.md)). Follow [AGENTS.md](AGENTS.md) for focused local
+verification. For broader checks:
 
 ```bash
 SKIP_LIVE=1 scripts/verify-local.sh
@@ -160,9 +162,11 @@ CI adds invariant guards, browser acceptance, sandbox and MCP lifecycle, and sec
 | Memory behavior and ownership | [Memory](docs/MEMORY_GUIDE.md), [Structured memory](docs/STRUCTURED_MEMORY.md) |
 | Coding, jobs, schedules | [Coding pipeline](docs/CODING_PIPELINE.md) |
 | External tools and private memory access | [MCP client](docs/MCP_CLIENT.md), [MCP server](docs/MCP_SERVER.md) |
-| Passive LAN observation | [Netconnect](docs/netconnect.md) |
+| LAN observation and TCP diagnostics | [Netconnect](docs/netconnect.md) |
 | Usage, costs, completion webhooks | [Analytics, spend and notifications](docs/SPEND_AND_NOTIFICATIONS.md) |
 | API, dependencies, releases | [Routes](docs/API_ROUTES.md), [Dependencies](docs/DEPENDENCIES.md), [Releasing](docs/RELEASING.md) |
+
+[Full documentation index](docs/README.md).
 
 ## License
 

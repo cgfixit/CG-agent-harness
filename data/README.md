@@ -1,7 +1,8 @@
 # data
 
-Compile-time data. Runtime data (sessions, workspaces, the skills registry)
-lives under the harness home, `~/.CGagentHarness`, never here.
+Compile-time data. Runtime sessions, workspaces and the skills registry live
+under the harness home (`CGAGENTHARNESS_HOME`, default `~/.CGagentHarness`),
+not this source folder.
 
 - [`styles/`](styles/README.md): the seven reply style presets `src/server/style.rs`
   embeds by name.

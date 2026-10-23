@@ -1,11 +1,11 @@
 # .githooks
 
-Agent-neutral git hooks. Install once per clone with
-`bash scripts/ensure-githooks.sh`, which points `core.hooksPath` here.
-Explainer: [docs/GITHOOKS.md](../docs/GITHOOKS.md). A speed bump; CI secret
-scanning and the `main` ruleset are the controls.
+Agent-neutral Git hooks. Run `bash scripts/ensure-githooks.sh` once per clone;
+it preserves an existing hook manager, so inspect its output. Local checks
+are bypassable; CI scans and separately configured branch protection remain
+necessary. Full behavior and overrides: [GITHOOKS.md](../docs/GITHOOKS.md).
 
-- [`pre-commit`](pre-commit): every commit: secret and filename scan, protected control files, core-path reminder, `cargo fmt`.
-- [`pre-push`](pre-push): every push: refuses pushes to `main` and non-fast-forward pushes; scans every pushed commit.
-- [`_security.sh`](_security.sh): the sourced gate both hooks share: scans, protected files, branch and force-push guards.
-- [`security.conf`](security.conf): repository values for `_security.sh`: blocked globs, protected files, core paths, allow regex.
+- [`pre-commit`](pre-commit): staged secrets, filenames, protected controls, identity, new-file size/metadata and conditional Rust formatting.
+- [`pre-push`](pre-push): protected-branch/ref-rewrite guards; scans newly published commits, tag annotations and blob/tree targets.
+- [`_security.sh`](_security.sh): shared scanning, policy loading and refusal/reminder logic; Bash 3.2 compatible.
+- [`security.conf`](security.conf): harness state-file blocks, fixture exceptions, video limits, core-path reminders and formatting callback.
