@@ -22,6 +22,12 @@ const ctx = vm.createContext({$, Number, currentSession:'new', sessionRevision:0
 const helperStart = html.indexOf('let sessionTokenRevision =');
 if (helperStart !== -1) vm.runInContext(html.slice(helperStart, html.indexOf('async function refreshStatus()', helperStart)), ctx);
 vm.runInContext(html.slice(html.indexOf('async function refreshStatus()'), html.indexOf('function scheduleStatusRefresh()')), ctx);
+// The harness HTML now refreshes style/readiness/loop-config as part of status;
+// this test is about token tallying, so stub the parts we are not exercising.
+ctx.applyLoopConfig = () => {};
+ctx.refreshStyle = async () => {};
+ctx.paintStyle = () => {};
+ctx.refreshReadiness = async () => {};
 await ctx.refreshStatus();
 assert.equal($('hTokens').textContent, '0', 'new session must not display the all-session aggregate');
 assert.equal($('hConsole').dataset.state, 'ok', 'a status reply marks the console chip reachable');

@@ -103,6 +103,7 @@ pub async fn status(
     };
     let cloud = state.cloud_chat.is_cloud_selection(&model);
     let model_status = model_status(&state, &owner, &model);
+    let loop_limits = state.runtime_limits().loop_limits;
     Json(json!({
         "version": crate::VERSION,
         "model": model_status["model"],
@@ -120,6 +121,13 @@ pub async fn status(
         "repo_root": Value::Null,
         "chat_mode": "conversation",
         "chat_tools_available": settings.web_enabled && !cloud && !state.chat_tools_unsupported(&model),
+        "loop": {
+            "max_turns": loop_limits.max_turns,
+            "max_total_completion_tokens": loop_limits.max_total_completion_tokens,
+            "max_failures": loop_limits.max_failures,
+            "cooldown_ms": loop_limits.cooldown_ms,
+        },
+        "server_loop": true,
         "sessions": sessions.len(),
         "total_tokens": total_tokens,
         "layout": {
@@ -853,7 +861,7 @@ fn busy_label(owner: &str) -> &str {
     }
 }
 
-async fn chat_inner(
+pub(crate) async fn chat_inner(
     state: Arc<AppState>,
     peer: SocketAddr,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
@@ -1815,7 +1823,7 @@ type Caller = Option<axum::Extension<crate::common::auth_store::UserSummary>>;
 
 // Keep marker recognition aligned with console replyHasGoalDone; this is
 // unverified model advice, never proof of execution or authority to apply facts.
-fn reply_has_goal_done(reply: &str) -> bool {
+pub(crate) fn reply_has_goal_done(reply: &str) -> bool {
     static MARKER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let marker = MARKER.get_or_init(|| {
         regex::Regex::new(r"^(?:(?:[#>*_`~\-]+|[0-9]+[.)])\s*)*GOAL_DONE(?:\s*[*_`~.!:]+)*$")

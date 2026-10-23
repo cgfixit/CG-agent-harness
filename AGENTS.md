@@ -84,7 +84,7 @@ When prose contradicts code, fix the prose in the same PR.
   workers; requests never wait on a file.
 - scrypt at n=2^17 is slow unoptimized; `[profile.dev.package."*"] opt-level=3`
   is load-bearing for test time.
-- `RELOADABLE` in `src/server/config_reload.rs` (23 keys) is the only
+- `RELOADABLE` in `src/server/config_reload.rs` (27 keys) is the only
   hot-reload allowlist; everything else, including `web.concurrency`, is
   restart-only.
 

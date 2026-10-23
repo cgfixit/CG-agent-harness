@@ -2,25 +2,24 @@
 
 Edit the active home's `config.yaml`, then choose **Reload limits** as an
 administrator who replaced the bootstrap password. The button sends `{}` to
-authenticated, CSRF-guarded `POST /api/config/reload`. Operators, auditors and
+authenticated, CSRF-guarded `POST /api/config/reload`; operators, auditors and
 auth-disabled homes cannot call it. Unix SIGHUP to the owned **backend** PID
-(the native sidecar, not desktop parent) invokes the same implementation.
+(the native sidecar, not the desktop parent) runs the same implementation.
 
 Success returns `changed`, `limits.revision`, the applied snapshot and
-`reloadable`. A no-op preserves revision. New operations use the new snapshot;
+`reloadable`; a no-op preserves revision. New operations use the new snapshot;
 running web fetch/research/chat-tool operations retain theirs. Reload preserves
 rate-limit hits, shared fetch capacity, locks and cancellation. Tightening a ceiling can immediately produce HTTP 429;
 SIGHUP can recover an HTTP ceiling that currently blocks the reload route.
-`Retry-After` waits for enough retained hits to expire under the new ceiling.
-Increasing a rate window cannot restore hits already expired under its former
-window. Reload allocates no fresh quota.
+`Retry-After` waits for enough retained hits to expire under the new ceiling;
+increasing a rate window cannot restore hits already expired under its former
+one.
 
 ## Supported settings
 
-Only these 23 keys reload. Values are integers except finite `window_seconds`
-numbers. Bounds also apply at startup. Defaults live in
-`assets/config.default.yaml`; removing a key selects its potentially different
-code fallback.
+Only these 27 keys reload; values are integers except finite `window_seconds`.
+Bounds also apply at startup. Defaults live in `assets/config.default.yaml`;
+removing a key selects its code fallback.
 
 | Key | Accepted range |
 |---|---|
@@ -28,7 +27,11 @@ code fallback.
 | `api.rate_limit.window_seconds` | 0.001–86,400 seconds |
 | `api.harness_loop_rate_limit.max_requests` | 1–100,000 |
 | `api.harness_loop_rate_limit.window_seconds` | 0.001–86,400 seconds |
-| `api.harness_loop_rate_limit.max_tokens` | 1–25,904 for Ollama reasoning `none`; otherwise 1–12,952; legacy 0 selects 2,048 |
+| `api.harness_loop_rate_limit.max_tokens` | 1–25,904 for Ollama reasoning `none`; otherwise 1–12,952; legacy 0 selects 2,048; ships 8,192 |
+| `loop.max_turns` | 0 (unlimited) or 1–1,000,000 |
+| `loop.max_total_completion_tokens` | 0 (unlimited) or 1–100,000,000 |
+| `loop.max_failures` | 1–100 |
+| `loop.cooldown_ms` | 0–300,000 |
 | `web.response_bytes` | 1,024–1,048,576 |
 | `web.request_seconds` | 1–30 |
 | `web.pages` | 1–40 |
@@ -48,23 +51,25 @@ code fallback.
 | `web.stale_seconds` | 60–31,536,000 |
 | `web.chat_tool_calls` | 1–10 |
 
-`web.concurrency` is **restart-only** because it sizes shared fetch permits, and so is `web.goal_web_default`.
+The `loop.*` keys bound the server-side `/loop` runner (turns and aggregate
+tokens per run, 0 = unlimited; consecutive failures before abort; pause between
+turns), which the console reads from `/api/status`.
+
+`web.concurrency` is **restart-only** (it sizes shared fetch permits), and so is `web.goal_web_default`.
 `web.max_rules` (default 64, 1–256) is restart-only too: a cap below the saved
-rule count refuses the policy until it is raised and extras are denied.
+rule count refuses the policy until it is raised.
 TLS, authentication, credentials, `security.allow_plaintext_key_file` (default
-false), models (including `models.cloud_chat.<provider>.profile`), sandbox, coding
-policy, notifications and unknown keys require restart. Cloud profiles are config-owned:
+false), models (including cloud profiles), sandbox, coding policy, notifications
+and unknown keys require restart. Cloud profiles are config-owned:
 `context_window` (positive, above output), `max_output_tokens` (1–32768),
 `temperature` (optional 0–1), `timeout_sec` (1–720), `count_timeout_sec` (0.1–10),
-`tool_support` (informational boolean), and `rpm` (1–100000 chat/prediction calls/minute;
-a generation’s token count shares that call). Output and timeouts clamp and only tighten shared limits.
-Absent profiles retain shared settings; context/RPM stay unset and temperature is
-omitted. Invalid profiles refuse startup without echoing values. No proposed vendor
-limits ship. [Anthropic](https://platform.claude.com/docs/en/api/messages/create)
+`tool_support` (informational boolean), and `rpm` (1–100000 chat/prediction calls/minute).
+Absent profiles keep shared settings; context/RPM stay unset and temperature is
+omitted. Invalid profiles refuse startup without echoing values. [Anthropic](https://platform.claude.com/docs/en/api/messages/create)
 deprecates temperature for newer models; [xAI](https://docs.x.ai/developers/model-capabilities/text/best-practices)
 supports it. Set it only for a compatible configured model.
 This route never writes YAML or changes permissions. Use [normal restart and
-settings guidance](INSTALL.md#which-settings-take-effect-where) for those fields.
+settings guidance](INSTALL.md#which-settings-take-effect-where).
 
 ## Refusal and recovery
 
@@ -72,13 +77,13 @@ An unreadable or [non-private](INSTALL.md#home-and-optional-credentials) file,
 symlink on Unix, non-regular file, invalid UTF-8/YAML, more than 1 MiB of
 config, or an invalid limit returns `CONFIG_RELOAD_INVALID`. A mixed
 candidate changing anything outside the allowlist returns
-`CONFIG_RESTART_REQUIRED`. Both preserve **all** running limits. Restore invalid or unsupported edits and
-retry, or restart with a valid complete configuration. Error messages and audit never
+`CONFIG_RESTART_REQUIRED`. Both preserve **all** running limits. Restore the edits and retry, or restart
+with a valid configuration. Error messages and audit never
 include raw YAML or secret values.
 
 Audit `config_reloaded` reports source (`http`/`sighup`), revision and whether
 anything changed; `config_reload_refused` reports the source and coarse code.
-Refusal leaves the edited file on disk. Independent disk readers, including
-coding write-policy revalidation, still see it and can refuse operations.
-Smaller cache bounds govern subsequent operations without promising immediate
-background eviction.
+Refusal leaves the edited file on disk; independent disk readers, including
+coding write-policy revalidation, still see it.
+Smaller cache bounds govern later operations without promising immediate
+eviction.

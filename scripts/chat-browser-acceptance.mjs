@@ -719,7 +719,7 @@ try {
  await send('/loop');assert.equal(chatCount(),before+2);assert.equal(await evaluate('loopState'),null);
  mode='repeat';await send('/loop 3');await send('/loop');assert.equal(await evaluate('loopState'),null);
  mode='done';await send('/loop');assert.equal(await evaluate('loopState'),null);assert.ok(await evaluate('document.getElementById("stream").innerText.includes("unverified")'));
- mode='normal';tokens=999999;await send('/loop');assert.equal(await evaluate('loopState'),null);tokens=2;
+ mode='normal';tokens=999999;await evaluate('MAX_LOOP_TOTAL_COMPLETION_TOKENS = 1000');await send('/loop');assert.equal(await evaluate('loopState'),null);await evaluate('MAX_LOOP_TOTAL_COMPLETION_TOKENS = 0');tokens=2;
  mode='rate';await send('/loop');assert.equal(await evaluate('loopState'),null);
  mode='failure';await send('/loop');await send('/loop');assert.equal(await evaluate('loopState'),null);
  mode='delay';const generation=send('/loop');await until('!!inflightChat');

@@ -901,6 +901,7 @@ async fn budget_server(router: Router, calls: usize) -> (common::TestServer, Arc
             ..Default::default()
         }
         .with("models.local_llm.max_tokens", "2048")
+        .with("api.harness_loop_rate_limit.max_tokens", "2048")
         .with("web.total_tokens", "9000")
         .with("web.chat_tool_calls", &calls.to_string()),
     )

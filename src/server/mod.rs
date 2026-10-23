@@ -26,6 +26,7 @@ pub mod generation_gate;
 pub mod guards;
 pub mod headers;
 pub mod live_state;
+pub mod loop_runner;
 pub mod mcp;
 pub mod mcp_keys;
 pub mod mcp_server;
@@ -307,6 +308,7 @@ pub async fn build_app_with_sources(
             })),
         }
     }
+    let loops = crate::server::loop_runner::LoopManager::new(&home.root);
     let state = Arc::new(AppState {
         notes: MemoryNotes::new(&home.memory_dir()),
         structured_memory,
@@ -357,6 +359,7 @@ pub async fn build_app_with_sources(
         memory_suggestions: crate::server::structured_memory_suggest::Suggestions::default(),
         ollama: state::OllamaControl::new(),
         tuning: std::sync::Mutex::new(None),
+        loops,
         netconnect_sources,
         netconnect_rate: crate::netconnect::RateBucket::new(),
     });
