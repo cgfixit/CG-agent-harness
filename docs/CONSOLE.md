@@ -124,7 +124,7 @@ aggregate-token, failure and cooldown limits are the other `loop.*` keys
 `api.harness_loop_rate_limit.max_tokens`. Text after the count sets the
 goal first, so `/loop 3 <text>` is `/goal <text>` then `/loop 3`. With no stored
 goal, `/loop` takes the last prompt as the goal. Manual mode pauses after each
-turn (browser-driven path only); `/loop` continues. `/loop auto` toggles automatic continuation; turning it
+turn; `/loop` continues. `/loop auto` toggles automatic continuation; turning it
 on with a goal (or last prompt) to follow starts the loop after 5 s, and so does
 `/goal <text>` while auto is on. `/loop auto` with a count, mode or goal turns
 auto on and starts after the same pause, storing nothing until then. A turn
@@ -133,17 +133,19 @@ cancels generation, cooldown or a pending start. Goal clear, session switching, 
 consecutive failed turns (auto retries once) stop it. A `GOAL_DONE` line (even `**GOAL_DONE**`) stops it
 too, but is only model advice.
 
-On a supporting server (`server_loop` in `/api/status`) the loop runs
-server-side and survives a closed tab: the console tracks
-`GET /api/loop/events/<run_id>` and `/loop stop` posts `/api/loop/stop`.
+With `server_loop` in `/api/status`, auto loops run server-side,
+outliving the tab: the console renders turns from
+`GET /api/loop/events/<run_id>`, reattaches on `/session use`
+(`/api/loop/status?session_id=`), and `/loop stop` or auto off posts
+`/api/loop/stop`. Runs are owner-bound; each turn rechecks the account.
 `POST /api/loop/start` takes `session_id`, optional `goal`/`web_mode`, and
-per-run limit overrides; state is written under `$CGAGENTHARNESS_HOME/loops/`
-per turn. Older servers and compaction-started
-loops keep the browser-driven path; staged attachments ride only that path.
+limit overrides; each turn persists to `$CGAGENTHARNESS_HOME/loops/`.
+Manual, older-server and compaction-started loops stay browser-driven, as do
+staged attachments.
 
 This loop does not edit files, run skills as programs, or run coding checks.
 `--web` on `/goal` or `/loop` sets the chat tools of every turn while the goal is set; without it the goal takes `web.goal_web_default` (ships `all`, restart-only). `fetch` excludes search, `off` excludes web context and tools. Search listings never grant URL permission; URL permissions still apply. Preflight shows the mode.
-Refresh/restart does not resume an unattended loop; goal-to-coding execution
+A server restart does not resume a loop; goal-to-coding execution
 is the separate [goal staging](CODING_PIPELINE.md#94-stage-a-session-goal-as-a-coding-task) workflow.
 
 #### Search and export session transcripts

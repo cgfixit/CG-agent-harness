@@ -4,6 +4,9 @@
 //! through the same [`crate::server::routes::core::chat_inner`] path the
 //! console's loop turns use (`loop_turn: true`), with the same guards
 //! (`claim_loop_inflight`, `loop_rate_limiter`, `loop_tool_allowlist`).
+//! Every lookup, stream and stop is bound to the starting owner, and each turn
+//! re-reads that account first, so a detached run never keeps authority its
+//! owner has lost.
 //! Stop conditions mirror the console's `runLoopTurns`: the configured turn
 //! budget, the aggregate completion-token budget, consecutive failures,
 //! `GOAL_DONE`, a repeated reply, and web codes that refuse the same way on
@@ -186,7 +189,12 @@ struct LoopEntry {
     cancel: CancellationToken,
     /// Per-turn progress; every SSE subscriber gets its own receiver.
     events: tokio::sync::broadcast::Sender<Value>,
-    /// The account that started the run; its turns carry its owner context.
+    /// The session owner that started the run (`local` without accounts).
+    /// Every lookup, stream and stop is bound to it; a foreign run reads as
+    /// not found.
+    owner: String,
+    /// The account that started the run; its turns carry its owner context
+    /// after [`current_authority`] re-reads it before each turn.
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
 }
 
@@ -208,19 +216,21 @@ impl LoopManager {
         &self.dir
     }
 
-    /// A live (non-terminal) run for `session_id`, when one exists.
-    pub fn active_for_session(&self, session_id: &str) -> Option<LoopRun> {
+    /// The owner's live (non-terminal) run for `session_id`, when one exists.
+    /// A console that reopens the session uses it to reattach.
+    pub fn active_for_session(&self, owner: &str, session_id: &str) -> Option<LoopRun> {
         let runs = self.runs.lock().unwrap_or_else(|p| p.into_inner());
         runs.values()
-            .find(|entry| entry.run.session_id == session_id && !entry.run.state.terminal())
+            .find(|entry| entry.owner == owner && entry.run.session_id == session_id && !entry.run.state.terminal())
             .map(|entry| entry.run.clone())
     }
 
-    pub fn get(&self, run_id: &str) -> Option<LoopRun> {
+    pub fn get(&self, owner: &str, run_id: &str) -> Option<LoopRun> {
         self.runs
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .get(run_id)
+            .filter(|entry| entry.owner == owner)
             .map(|entry| entry.run.clone())
     }
 
@@ -230,19 +240,15 @@ impl LoopManager {
         &self,
         state: Arc<crate::server::state::AppState>,
         run: LoopRun,
+        owner: String,
         user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ) -> Result<LoopRun> {
-        if self.active_for_session(&run.session_id).is_some() {
-            return Err(HarnessError::new(
-                "LOOP_IN_FLIGHT",
-                "a loop run is already active for this session",
-            ));
-        }
         let (events, _) = tokio::sync::broadcast::channel(64);
         let entry = LoopEntry {
             run: run.clone(),
             cancel: CancellationToken::new(),
             events,
+            owner,
             user,
         };
         let cancel = entry.cancel.clone();
@@ -250,7 +256,7 @@ impl LoopManager {
         let run_id = run.run_id.clone();
         {
             let mut runs = self.runs.lock().unwrap_or_else(|p| p.into_inner());
-            // Re-check under the write lock: two starts raced.
+            // Checked under the write lock so two racing starts cannot both win.
             if runs
                 .values()
                 .any(|e| e.run.session_id == run.session_id && !e.run.state.terminal())
@@ -270,20 +276,56 @@ impl LoopManager {
     }
 
     /// Ask the turn task to stop; it records `Stopped` and emits the terminal event.
-    pub fn stop(&self, run_id: &str) -> Option<LoopRun> {
+    pub fn stop(&self, owner: &str, run_id: &str) -> Option<LoopRun> {
         let runs = self.runs.lock().unwrap_or_else(|p| p.into_inner());
-        let entry = runs.get(run_id)?;
+        let entry = runs.get(run_id).filter(|entry| entry.owner == owner)?;
         entry.cancel.cancel();
         Some(entry.run.clone())
     }
 
-    pub fn subscribe(&self, run_id: &str) -> Option<tokio::sync::broadcast::Receiver<Value>> {
+    /// The owner's run snapshot and a receiver for its later events, taken
+    /// under one lock so no event falls between them.
+    pub fn subscribe(&self, owner: &str, run_id: &str) -> Option<(LoopRun, tokio::sync::broadcast::Receiver<Value>)> {
         self.runs
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .get(run_id)
-            .map(|entry| entry.events.subscribe())
+            .filter(|entry| entry.owner == owner)
+            .map(|entry| (entry.run.clone(), entry.events.subscribe()))
     }
+}
+
+/// Re-read the starting account before a turn: a detached run never keeps
+/// more authority than its owner holds now. The account must still exist with
+/// the same id, be enabled, need no password change, and hold a role that may
+/// start a loop (`operator` or `admin`). Without accounts there is nothing to
+/// revoke.
+fn current_authority(
+    state: &crate::server::state::AppState,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+) -> std::result::Result<Option<axum::Extension<crate::common::auth_store::UserSummary>>, String> {
+    let (Some(auth), Some(started)) = (state.auth.as_ref(), user.as_ref()) else {
+        return Ok(user);
+    };
+    let Some(current) = auth.get_user(&started.username) else {
+        return Err("the account that started this loop no longer exists".into());
+    };
+    if current.user_id != started.user_id {
+        return Err("the account that started this loop no longer exists".into());
+    }
+    if current.disabled {
+        return Err("the account that started this loop was disabled".into());
+    }
+    if current.must_change_password {
+        return Err("the account that started this loop must change its password".into());
+    }
+    if !matches!(current.role.as_str(), "operator" | "admin") {
+        return Err(format!(
+            "the account that started this loop now has role {} and cannot run loop turns",
+            current.role
+        ));
+    }
+    Ok(Some(axum::Extension(current)))
 }
 
 fn persist(dir: &std::path::Path, run: &LoopRun) {
@@ -345,6 +387,21 @@ async fn run_turns(
             finish(&state, &run_id, run, LoopRunState::Done, reason, &events, &dir);
             return;
         }
+        let user = match current_authority(&state, user) {
+            Ok(user) => user,
+            Err(reason) => {
+                finish(
+                    &state,
+                    &run_id,
+                    run,
+                    LoopRunState::Failed,
+                    format!("loop aborted — {reason}"),
+                    &events,
+                    &dir,
+                );
+                return;
+            }
+        };
         turn += 1;
         let framed = loop_turn_prompt(
             turn,
@@ -352,7 +409,7 @@ async fn run_turns(
             &run.goal,
         );
         let req = ChatRequest {
-            message: framed,
+            message: framed.clone(),
             session_id: Some(run.session_id.clone()),
             model: None,
             loop_turn: true,
@@ -366,6 +423,18 @@ async fn run_turns(
         match result {
             Ok(axum::Json(value)) => {
                 let reply = value["reply"].as_str().unwrap_or_default().to_string();
+                // The turn's own prompt and reply, so a watching console renders
+                // the transcript as the browser-driven loop does. Subscribers
+                // are bound to the run's owner (see LoopManager::subscribe).
+                let _ = events.send(json!({
+                    "type": "exchange",
+                    "prompt": framed,
+                    "reply": reply,
+                    "model": value["model"],
+                    "usage": value["usage"],
+                    "tally": value["tally"],
+                    "web_tools": value["web_tools"],
+                }));
                 let completion = value["usage"]["completion_tokens"].as_u64().unwrap_or(0);
                 let web_events: Vec<Value> = value["web_tools"].as_array().cloned().unwrap_or_default();
                 run.stats.turns_completed += 1;

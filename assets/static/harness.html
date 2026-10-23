@@ -1020,8 +1020,11 @@ let MAX_LOOP_TOTAL_COMPLETION_TOKENS = LOOP_LIMITS_FALLBACK.max_total_completion
 let MAX_LOOP_FAILURES = LOOP_LIMITS_FALLBACK.max_failures;
 /* The server-side /loop runner keeps turns running after this tab closes.
    Set from /api/status (server_loop); absent on older servers, which keeps
-   the browser-driven runLoopTurns path below as the fallback. */
+   the browser-driven runLoopTurns path below as the fallback. Only automatic
+   loops run there: with auto off, runLoopTurns still pauses after each turn. */
 let serverLoopSupported = false;
+/* The open /api/loop/events stream, aborted when the page detaches from a run. */
+let serverLoopEventsAbort = null;
 function applyLoopConfig(status) {
   const c = status && status.loop;
   serverLoopSupported = !!(status && status.server_loop);
@@ -1093,6 +1096,10 @@ function paintGoalLoop() {
   }
   if (!loopState) {
     l.textContent = loopAuto ? 'auto' : 'off';
+    return;
+  }
+  if (loopState.server && !(loopState.total > 0)) {
+    l.textContent = 'auto server';
     return;
   }
   const done = loopState.total - loopState.remaining;
@@ -2765,6 +2772,8 @@ async function runSlash(line, webCommand) {
             } finally { msgTarget = null; }
             stream.appendChild(history);
             stream.scrollTop = stream.scrollHeight;
+            /* Not awaited: the stream lives as long as the run, and the send gate must reopen. */
+            if (typeof reattachServerLoop === 'function') reattachServerLoop(s.session_id, revision);
           } catch (e) {
             if (revision === sessionRevision) throw e;
           } finally {
@@ -3714,6 +3723,11 @@ async function runSlash(line, webCommand) {
             if (loopState) loopState.auto = loopAuto;
             if (!loopAuto) cancelAutoLoopStart('');
             paintGoalLoop();
+            if (!loopAuto && loopState && loopState.runId) {
+              /* A server run has no attended pause: auto off ends it after its current turn. */
+              requestLoopStop('loop auto-continue is OFF — the server loop stops after its current turn');
+              break;
+            }
             if (!loopAuto) { sys('loop auto-continue is OFF (one turn, then wait)'); break; }
             if (loopState && loopState.running) { sys('loop auto-continue is ON (continues until GOAL_DONE, stall, budget, or rate limit; still chat-only)'); break; }
             if (!sessionGoal && !currentSession) { sys('loop auto-continue is ON — it starts ' + AUTO_LOOP_START_MS / 1000 + ' s after you set /goal <text> (or type /loop auto <goal text>)'); break; }
@@ -3805,14 +3819,14 @@ async function runSlash(line, webCommand) {
           loopState = {
             remaining: n, total: n, auto: loopAuto, stop: false,
             running: false, failures: 0, lastReply: '', completionTokens: 0,
-            server: typeof serverLoopSupported !== "undefined" && serverLoopSupported,
+            server: typeof serverLoopSupported !== 'undefined' && serverLoopSupported && loopAuto,
           };
           sys('loop ' + n + ' turn(s) toward the session goal. Chat only — never starts a real-repo run.');
         } else if (!loopState || loopState.remaining <= 0) {
           loopState = {
             remaining: DEFAULT_LOOP_TURNS, total: DEFAULT_LOOP_TURNS,
             auto: loopAuto, stop: false, running: false, failures: 0,
-            lastReply: '', completionTokens: 0, server: typeof serverLoopSupported !== "undefined" && serverLoopSupported,
+            lastReply: '', completionTokens: 0, server: typeof serverLoopSupported !== 'undefined' && serverLoopSupported && loopAuto,
           };
           sys('loop ' + DEFAULT_LOOP_TURNS + ' turn(s) toward the session goal. Chat only — never starts a real-repo run.');
         }
@@ -4082,6 +4096,10 @@ async function sleepUnlessStopped(ms, state) {
 function stopLoop(reason) {
   if (loopState) loopState.stop = true;
   loopState = null;
+  /* Detach from a server run's event stream; only requestLoopStop halts the run. */
+  if (typeof serverLoopEventsAbort !== 'undefined' && serverLoopEventsAbort) {
+    try { serverLoopEventsAbort.abort(); } catch (e) { /* already finished */ }
+  }
   loopCancelGeneration++;
   cancelAutoLoopStart('');
   paintGoalLoop();
@@ -4230,11 +4248,12 @@ async function runLoopTurns() {
    can halt it with /api/loop/stop. The run's own stop conditions (turn and
    token budgets, consecutive failures, GOAL_DONE, a repeated reply, blocking
    web codes) live in src/server/loop_runner.rs. */
-let serverLoopEventsAbort = null;
 async function runServerLoop() {
   const activeLoop = loopState;
   if (!activeLoop || activeLoop.running) return;
   activeLoop.running = true;
+  activeLoop.session = currentSession;
+  activeLoop.revision = sessionRevision;
   paintGoalLoop();
   try {
     const started = await api('/api/loop/start', 'POST', {
@@ -4284,30 +4303,80 @@ async function streamServerLoopEvents(runId, activeLoop) {
         if (loopState !== activeLoop) return;
       }
     }
+  } catch (e) {
+    /* stopLoop or a session switch detached this stream; the run is unaffected. */
+    if (e && e.name === 'AbortError') return;
+    throw e;
   } finally {
     if (serverLoopEventsAbort === controller) serverLoopEventsAbort = null;
     controller.abort();
   }
 }
 
+/* Re-attach to the caller's live server run for a session just opened (the
+   tab that started it may have closed), so /loop stop and progress work. */
+async function reattachServerLoop(sessionId, revision) {
+  if (!serverLoopSupported || loopState) return;
+  let found = null;
+  try {
+    found = await api('/api/loop/status?session_id=' + encodeURIComponent(sessionId));
+  } catch (_) { return; }
+  const run = found && found.run;
+  if (!run || !run.run_id || loopState || currentSession !== sessionId || sessionRevision !== revision) return;
+  const total = (run.config && run.config.max_turns) || 0;
+  const done = (run.stats && run.stats.turns_completed) || 0;
+  const activeLoop = {
+    remaining: total > 0 ? Math.max(0, total - done) : 0, total: total, auto: true, stop: false,
+    running: true, failures: 0, lastReply: '', completionTokens: 0, server: true,
+    runId: run.run_id, session: sessionId, revision: revision,
+  };
+  loopState = activeLoop;
+  loopAuto = true;
+  paintGoalLoop();
+  sys('reattached to server loop ' + run.run_id.slice(0, 8) + ' (' + done + ' turn(s) done) — /loop stop to halt');
+  try {
+    await streamServerLoopEvents(run.run_id, activeLoop);
+  } catch (e) {
+    showError(e);
+  } finally {
+    if (loopState === activeLoop) loopState.running = false;
+    paintGoalLoop();
+  }
+}
+
 function onServerLoopEvent(event, activeLoop) {
+  if (event.type === 'exchange') {
+    /* Render the turn as the browser-driven loop does, unless the page moved
+       to another session since the run started. */
+    if (currentSession === activeLoop.session && sessionRevision === activeLoop.revision) {
+      const usage = event.usage || {};
+      const tally = event.tally || {};
+      user(event.prompt || '');
+      renderChatWebTools(event.web_tools);
+      agent(event.reply || '', (event.model || 'model') + ' · +' + (usage.prompt_tokens || 0) + '/' + (usage.completion_tokens || 0) +
+            ' tok · session total ' + (tally.total || 0));
+      paintSessionTokens(tally);
+      stream.scrollTop = stream.scrollHeight;
+    }
+    return;
+  }
   const run = event.run || {};
   const stats = run.stats || {};
   if (loopState === activeLoop) {
     activeLoop.completionTokens = stats.total_completion_tokens || 0;
     activeLoop.failures = stats.consecutive_failures || 0;
-    activeLoop.remaining = Math.max(0, activeLoop.total - (stats.turns_completed || 0));
+    activeLoop.remaining = activeLoop.total > 0 ? Math.max(0, activeLoop.total - (stats.turns_completed || 0)) : 0;
   }
   if (event.type === 'turn') {
     if (loopState === activeLoop) {
-      sys('loop turn ' + (stats.turns_completed || '?') + '/' + activeLoop.total + ' done — ' + (stats.total_completion_tokens || 0) + ' completion tokens so far; /loop stop to halt');
+      sys('loop turn ' + (stats.turns_completed || '?') + '/' + (activeLoop.total > 0 ? activeLoop.total : '∞') + ' done — ' + (stats.total_completion_tokens || 0) + ' completion tokens so far; /loop stop to halt');
       paintGoalLoop();
     }
     return;
   }
   if (event.type === 'state') {
     if (['stopped', 'failed', 'done'].includes(run.state)) {
-      stopLoop('loop ' + run.state + (run.reason ? ' — ' + run.reason : ''));
+      if (loopState === activeLoop) stopLoop('loop ' + run.state + (run.reason ? ' — ' + run.reason : ''));
     } else if (loopState === activeLoop) {
       paintGoalLoop();
     }

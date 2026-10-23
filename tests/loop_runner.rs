@@ -1,5 +1,6 @@
 //! Server-side `/loop` runner: config exposure, start/status/stop round-trip,
-//! unlimited-turn behavior, and validation refusals.
+//! unlimited-turn behavior, validation refusals, owner binding and per-turn
+//! account revalidation.
 
 mod common;
 
@@ -243,4 +244,128 @@ async fn loop_start_validates_goal_config_and_run_ids() {
     let (status, body) = s.post_json("/api/loop/stop", json!({"run_id": "nope"})).await;
     assert_eq!(status, 404);
     assert_eq!(code(&body), "LOOP_RUN_NOT_FOUND");
+}
+
+async fn account(s: &common::TestServer, name: &str, role: &str) -> (String, String) {
+    let auth = s.state.auth.as_ref().unwrap();
+    let password = cgagentharness::common::random_hex(24);
+    auth.create_user(name, &password, role).unwrap();
+    let owner = auth.get_user(name).unwrap().user_id;
+    let response = s
+        .client
+        .post(s.url("/api/auth/login"))
+        .json(&json!({"username": name, "password": password}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let cookie = response.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    (owner, cookie)
+}
+
+async fn as_account(
+    s: &common::TestServer,
+    cookie: &str,
+    method: reqwest::Method,
+    path: &str,
+    body: Value,
+) -> (u16, Value) {
+    let response = s
+        .req(method, path)
+        .header("cookie", cookie)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    (status, response.json().await.unwrap_or(Value::Null))
+}
+
+#[tokio::test]
+async fn runs_are_owner_bound_and_end_when_the_account_is_disabled() {
+    use reqwest::Method;
+    let (model_url, _count) = start_counting_mock().await;
+    let s = spawn_server(
+        &model_url,
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("loop.cooldown_ms", "200")
+            .with("api.harness_loop_rate_limit.max_requests", "1000"),
+    )
+    .await;
+    let (alice_id, alice) = account(&s, "alice", "operator").await;
+    let (_, bob) = account(&s, "bob", "operator").await;
+    let (status, created) = as_account(&s, &alice, Method::POST, "/api/sessions", json!({"title": "loop"})).await;
+    assert_eq!(status, 201, "{created}");
+    let sid = created["session_id"].as_str().unwrap().to_string();
+    let (status, started) = as_account(
+        &s,
+        &alice,
+        Method::POST,
+        "/api/loop/start",
+        json!({"session_id": sid, "goal": "ship it", "max_turns": 1000}),
+    )
+    .await;
+    assert_eq!(status, 200, "{started}");
+    let run_id = started["run"]["run_id"].as_str().unwrap().to_string();
+
+    // Another account cannot read, stream, discover or stop the run.
+    let (status, body) = as_account(
+        &s,
+        &bob,
+        Method::GET,
+        &format!("/api/loop/status?run_id={run_id}"),
+        json!({}),
+    )
+    .await;
+    assert_eq!((status, code(&body).as_str()), (404, "LOOP_RUN_NOT_FOUND"));
+    let (status, body) = as_account(&s, &bob, Method::GET, &format!("/api/loop/events/{run_id}"), json!({})).await;
+    assert_eq!((status, code(&body).as_str()), (404, "LOOP_RUN_NOT_FOUND"));
+    let (status, body) = as_account(&s, &bob, Method::POST, "/api/loop/stop", json!({"run_id": run_id})).await;
+    assert_eq!((status, code(&body).as_str()), (404, "LOOP_RUN_NOT_FOUND"));
+    let (status, body) = as_account(
+        &s,
+        &bob,
+        Method::GET,
+        &format!("/api/loop/status?session_id={sid}"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        body["run"].is_null(),
+        "a foreign session's run is not discoverable: {body}"
+    );
+
+    // The owner discovers the live run by session, as a reopened console does.
+    let (status, body) = as_account(
+        &s,
+        &alice,
+        Method::GET,
+        &format!("/api/loop/status?session_id={sid}"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["run"]["run_id"], run_id.as_str());
+    assert_eq!(s.state.loops.get(&alice_id, &run_id).unwrap().state.as_str(), "running");
+
+    // Disabling the starting account ends the run before its next turn.
+    s.state.auth.as_ref().unwrap().disable_user("alice").unwrap();
+    for _ in 0..200 {
+        let run = s.state.loops.get(&alice_id, &run_id).unwrap();
+        if run.state.terminal() {
+            assert_eq!(run.state.as_str(), "failed", "{}", run.reason);
+            assert!(run.reason.contains("disabled"), "{}", run.reason);
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("a disabled account's loop kept running");
 }

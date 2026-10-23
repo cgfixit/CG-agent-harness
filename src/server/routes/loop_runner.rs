@@ -159,7 +159,7 @@ pub async fn start(
     };
     let run = state
         .loops
-        .start(state.clone(), run, user)
+        .start(state.clone(), run, owner.clone(), user)
         .map_err(|e| ApiError::from_err(StatusCode::CONFLICT, &e))?;
     state.audit.log(json!({
         "event": "loop_run_started",
@@ -172,68 +172,73 @@ pub async fn start(
     Ok(Json(json!({"ok": true, "run": run})))
 }
 
+fn run_not_found() -> ApiError {
+    ApiError::new(
+        StatusCode::NOT_FOUND,
+        "LOOP_RUN_NOT_FOUND",
+        "no loop run with that run_id",
+    )
+}
+
+/// Stop, status and events are bound to the caller's owner, like sessions: a
+/// run another account started reads as not found, never as forbidden.
 pub async fn stop(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
     ValidJson(req): ValidJson<StopLoopRequest>,
 ) -> ApiResult<Json<Value>> {
-    let run = state.loops.stop(&req.run_id).ok_or_else(|| {
-        ApiError::new(
-            StatusCode::NOT_FOUND,
-            "LOOP_RUN_NOT_FOUND",
-            "no loop run with that run_id",
-        )
-    })?;
+    let owner = super::auth::context_owner(user);
+    let run = state.loops.stop(&owner, &req.run_id).ok_or_else(run_not_found)?;
     Ok(Json(json!({"ok": true, "run": run})))
 }
 
+/// `?run_id=` reads one of the caller's runs; `?session_id=` reports the
+/// caller's live run for that session (`run: null` when there is none), so a
+/// console that reopens the session can reattach to a run it did not start.
 pub async fn status(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
     axum::extract::RawQuery(query): axum::extract::RawQuery,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
     // Parsed by hand so a query-less probe (the catalog smoke test sends `{}`
     // with no query string) gets a typed 404 JSON instead of axum's plain-text
-    // query rejection.
-    let run_id = query
-        .as_deref()
-        .unwrap_or("")
-        .split('&')
-        .filter_map(|pair| pair.split_once('='))
-        .find(|(key, _)| *key == "run_id")
-        .map(|(_, value)| value.to_string());
-    let run_id = match run_id {
-        Some(id) if !id.is_empty() => id,
-        _ => {
-            return Err(ApiError::new(
-                StatusCode::NOT_FOUND,
-                "LOOP_RUN_NOT_FOUND",
-                "no loop run with that run_id",
-            ))
-        }
+    // query rejection. Run and session ids are plain hex/uuid text, so no
+    // percent-decoding is needed.
+    let param = |name: &str| {
+        query
+            .as_deref()
+            .unwrap_or("")
+            .split('&')
+            .filter_map(|pair| pair.split_once('='))
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value.to_string())
+            .filter(|value| !value.is_empty())
     };
-    let run = state.loops.get(&run_id).ok_or_else(|| {
-        ApiError::new(
-            StatusCode::NOT_FOUND,
-            "LOOP_RUN_NOT_FOUND",
-            "no loop run with that run_id",
-        )
-    })?;
-    Ok(Json(json!({"ok": true, "run": run})))
+    if let Some(run_id) = param("run_id") {
+        let run = state.loops.get(&owner, &run_id).ok_or_else(run_not_found)?;
+        return Ok(Json(json!({"ok": true, "run": run})));
+    }
+    if let Some(session_id) = param("session_id") {
+        let run = state.loops.active_for_session(&owner, &session_id);
+        return Ok(Json(json!({"ok": true, "run": run})));
+    }
+    Err(run_not_found())
 }
 
 /// Per-turn progress. The stream sends the run's current snapshot first, then
 /// every broadcast event, and ends after the run reaches a terminal state (so
 /// the connection does not outlive the run it watches).
-pub async fn events(State(state): State<Arc<AppState>>, Path(run_id): Path<String>) -> ApiResult<Response> {
+pub async fn events(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<UserSummary>>,
+    Path(run_id): Path<String>,
+) -> ApiResult<Response> {
     use axum::response::sse::{Event, KeepAlive, Sse};
 
-    let receiver = state.loops.subscribe(&run_id).ok_or_else(|| {
-        ApiError::new(
-            StatusCode::NOT_FOUND,
-            "LOOP_RUN_NOT_FOUND",
-            "no loop run with that run_id",
-        )
-    })?;
-    let snapshot = state.loops.get(&run_id).map(|run| json!({"type": "state", "run": run}));
+    let owner = super::auth::context_owner(user);
+    let (run, receiver) = state.loops.subscribe(&owner, &run_id).ok_or_else(run_not_found)?;
+    let snapshot = Some(json!({"type": "state", "run": run}));
     let stream = futures_util::stream::unfold(
         (receiver, snapshot, false),
         |(mut receiver, snapshot, mut done)| async move {
