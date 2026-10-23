@@ -387,6 +387,34 @@ async fn rate_limit_runs_before_auth_and_reports_retry_after() {
 }
 
 #[tokio::test]
+async fn refused_cross_site_requests_do_not_spend_the_shared_rate_budget() {
+    let model = start_mock_model().await;
+    let opts = ServerOptions::default().with("api.rate_limit.max_requests", "3");
+    let s = spawn_server(&model.base_url(), opts).await;
+    // Every browser tab shares the loopback bucket; a hostile page must not drain it.
+    for (header, value, expect_code) in [
+        ("sec-fetch-site", "cross-site", "CROSS_SITE_BLOCKED"),
+        ("origin", "http://evil.example", "CROSS_ORIGIN_BLOCKED"),
+    ] {
+        for _ in 0..5 {
+            let resp = s
+                .req(Method::GET, "/api/status")
+                .header(header, value)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(resp.status().as_u16(), 403, "{header}: {value}");
+            let b: serde_json::Value = resp.json().await.unwrap();
+            assert_eq!(code(&b), expect_code, "{header}: {value}");
+        }
+    }
+    for _ in 0..3 {
+        assert_eq!(s.open_get("/api/status").await.0, 200);
+    }
+    assert_eq!(s.open_get("/api/status").await.0, 429);
+}
+
+#[tokio::test]
 async fn host_header_must_be_loopback() {
     let model = start_mock_model().await;
     let s = spawn_server(

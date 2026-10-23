@@ -174,6 +174,11 @@ fn validate(worktree: &Path) -> Result<()> {
                 | "extensions.refstorage"
                 | "remote.origin.url"
                 | "remote.origin.fetch"
+                // `gh repo clone` of a fork records its parent. Inert here: push and
+                // ls-remote pass the pinned origin URL, and nothing fetches by name.
+                | "remote.upstream.url"
+                | "remote.upstream.fetch"
+                | "remote.upstream.gh-resolved"
                 | "user.name"
                 | "user.email"
                 | "init.defaultbranch"
