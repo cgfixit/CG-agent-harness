@@ -466,13 +466,30 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         }
     };
     let dest = tools.worktree().display().to_string();
-    let _run_lease = super::run_store::acquire_run_lease(&runs_dir, &run_id, true)?;
+    // Until `save_run` succeeds there is no record, so no run id can reach
+    // `real-repo-run-discard`: a failure here must remove the clone itself.
+    let _run_lease = match super::run_store::acquire_run_lease(&runs_dir, &run_id, true) {
+        Ok(lease) => lease,
+        Err(e) => {
+            tools.close();
+            return Err(e);
+        }
+    };
     // Persisted BEFORE the loop runs so a killed process still leaves a record.
     let mut record = RealRepoRunRecord::new(&run_id, &ctx.acfg.repo, &dest, "running");
-    record.origin_url = Some(tools.origin_url()?);
+    record.origin_url = match tools.origin_url() {
+        Ok(url) => Some(url),
+        Err(e) => {
+            tools.close();
+            return Err(e);
+        }
+    };
     record.provider = provider.clone();
     record.plan_sha256 = plan_sha.clone();
-    save_run(&runs_dir, &mut record)?;
+    if let Err(e) = save_run(&runs_dir, &mut record) {
+        tools.close();
+        return Err(e);
+    }
 
     let mut local_client;
     let cloud_client;
