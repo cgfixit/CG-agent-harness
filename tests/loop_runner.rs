@@ -302,7 +302,7 @@ async fn runs_are_owner_bound_and_end_when_the_account_is_disabled() {
     let (alice_id, alice) = account(&s, "alice", "operator").await;
     let (_, bob) = account(&s, "bob", "operator").await;
     let (status, created) = as_account(&s, &alice, Method::POST, "/api/sessions", json!({"title": "loop"})).await;
-    assert_eq!(status, 201, "{created}");
+    assert_eq!(status, 201);
     let sid = created["session_id"].as_str().unwrap().to_string();
     let (status, started) = as_account(
         &s,
@@ -312,7 +312,7 @@ async fn runs_are_owner_bound_and_end_when_the_account_is_disabled() {
         json!({"session_id": sid, "goal": "ship it", "max_turns": 1000}),
     )
     .await;
-    assert_eq!(status, 200, "{started}");
+    assert_eq!(status, 200);
     let run_id = started["run"]["run_id"].as_str().unwrap().to_string();
 
     // Another account cannot read, stream, discover or stop the run.
@@ -337,11 +337,8 @@ async fn runs_are_owner_bound_and_end_when_the_account_is_disabled() {
         json!({}),
     )
     .await;
-    assert_eq!(status, 200, "{body}");
-    assert!(
-        body["run"].is_null(),
-        "a foreign session's run is not discoverable: {body}"
-    );
+    assert_eq!(status, 200);
+    assert!(body["run"].is_null(), "a foreign session's run is not discoverable");
 
     // The owner discovers the live run by session, as a reopened console does.
     let (status, body) = as_account(
@@ -352,7 +349,7 @@ async fn runs_are_owner_bound_and_end_when_the_account_is_disabled() {
         json!({}),
     )
     .await;
-    assert_eq!(status, 200, "{body}");
+    assert_eq!(status, 200);
     assert_eq!(body["run"]["run_id"], run_id.as_str());
     assert_eq!(s.state.loops.get(&alice_id, &run_id).unwrap().state.as_str(), "running");
 
