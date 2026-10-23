@@ -73,7 +73,7 @@ fn searxng_endpoint(raw: &str) -> Result<(url::Url, SocketAddr)> {
     let ip: IpAddr = match url.host() {
         Some(url::Host::Ipv4(ip)) => ip.into(),
         Some(url::Host::Ipv6(ip)) => ip.into(),
-        _ => return Err(bad("must name a loopback IP literal such as 127.0.0.1, not a hostname")),
+        _ => return Err(bad("must name a loopback IP literal such as 127.0.0.1, not a hostname")), // DevSkim: ignore DS162092 because this is operator guidance naming the required loopback literal, not a connection.
     };
     if !ip.is_loopback() {
         return Err(bad("must be a loopback address (127.0.0.0/8 or ::1)"));
@@ -298,13 +298,13 @@ mod tests {
             "web: {search: {provider: searxng, searxng_url: 'http://searx.example:8888'}}", // DevSkim: ignore DS137138 because this asserts a hostname is refused.
             "web: {search: {provider: searxng, searxng_url: 'http://93.184.216.34:8888'}}", // DevSkim: ignore DS137138 because this asserts a public IP is refused.
             "web: {search: {provider: searxng, searxng_url: 'http://192.168.1.20:8888'}}", // DevSkim: ignore DS137138 because this asserts a LAN IP is refused in Phase 1.
-            "web: {search: {provider: searxng, searxng_url: 'http://[::ffff:127.0.0.1]:8888'}}", // DevSkim: ignore DS137138 because this asserts a mapped address is refused.
+            "web: {search: {provider: searxng, searxng_url: 'http://[::ffff:127.0.0.1]:8888'}}", // DevSkim: ignore DS137138,DS162092 because this asserts a mapped address is refused.
             "web: {search: {provider: searxng, searxng_url: 'http://127.0.0.1'}}", // DevSkim: ignore DS137138,DS162092 because this asserts a missing port is refused.
             "web: {search: {provider: searxng, searxng_url: 'http://127.0.0.1:80'}}", // DevSkim: ignore DS137138,DS162092 because this asserts a default port is refused.
             "web: {search: {provider: searxng, searxng_url: 'http://u:p@127.0.0.1:8888'}}", // DevSkim: ignore DS137138,DS162092 because this asserts credentials are refused.
             "web: {search: {provider: searxng, searxng_url: 'http://127.0.0.1:8888/other'}}", // DevSkim: ignore DS137138,DS162092 because this asserts another path is refused.
             "web: {search: {provider: searxng, searxng_url: 'http://127.0.0.1:8888/search?q=x'}}", // DevSkim: ignore DS137138,DS162092 because this asserts a query is refused.
-            "web: {search: {provider: searxng, searxng_url: 'ftp://127.0.0.1:8888'}}",
+            "web: {search: {provider: searxng, searxng_url: 'ftp://127.0.0.1:8888'}}", // DevSkim: ignore DS162092 because this asserts a non-HTTP loopback URL is refused.
             // A malformed URL fails boot even while another provider is selected.
             "web: {search: {provider: auto, searxng_url: 'http://searx.example:8888'}}", // DevSkim: ignore DS137138 because this asserts a hostname is refused.
         ] {
