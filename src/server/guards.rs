@@ -176,9 +176,10 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
         return next.run(req).await;
     }
     let path = req.uri().path().to_string();
-    if let Err(e) = enforce_rate_limit(&state, &req)
-        .and_then(|_| enforce_same_origin(&req))
+    // Refuse foreign requests before they spend the one loopback rate bucket.
+    if let Err(e) = enforce_same_origin(&req)
         .and_then(|_| enforce_direct_loopback(&req))
+        .and_then(|_| enforce_rate_limit(&state, &req))
     {
         return e.into_response();
     }

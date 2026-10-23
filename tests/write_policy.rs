@@ -329,6 +329,75 @@ fn decide_refuses_combined_push_or_publish_before_any_gate_or_record_read() {
     }
 }
 
+#[test]
+fn reject_settles_a_pending_run_whose_clone_is_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let (ctx, dest, _, mut rec) = fixture(dir.path());
+    rec.status = "pending_decision".into();
+    save_run(&ctx.runs_dir(), &mut rec).unwrap();
+    std::fs::remove_dir_all(&dest).unwrap();
+    let env = [
+        ("GROK_API_KEY", ""),
+        ("ANTHROPIC_API_KEY", ""),
+        ("DEEPAGENT_API_KEY", ""),
+    ];
+    let idarg = format!("--run-id={}", rec.run_id);
+    let record = ctx.runs_dir().join(format!("{}.json", rec.run_id));
+    let status = || -> String {
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+        v["status"].as_str().unwrap().to_string()
+    };
+    // Approve still needs the clone it would commit in.
+    let args = [
+        "real-repo-run-decide",
+        &idarg,
+        "--decision=approve",
+        "--reason=r",
+        "--confirm",
+    ];
+    let (code, out, err) = run_agentic(&ctx.config_path, &args, &env, dir.path());
+    assert_ne!(code, 0, "{out} {err}");
+    assert_eq!(status(), "pending_decision");
+    // Reject only records the decision, so a missing clone cannot strand the run.
+    let args = [
+        "real-repo-run-decide",
+        &idarg,
+        "--decision=reject",
+        "--reason=clone gone",
+    ];
+    let (code, out, err) = run_agentic(&ctx.config_path, &args, &env, dir.path());
+    assert_eq!(code, 0, "{out} {err}");
+    assert_eq!(status(), "rejected");
+    let (code, _, err) = run_agentic(&ctx.config_path, &["real-repo-run-discard", &idarg], &env, dir.path());
+    assert_eq!(code, 0, "{err}");
+    assert_eq!(status(), "discarded");
+}
+
+#[cfg(unix)]
+#[test]
+fn reject_keeps_a_pending_run_whose_clone_cannot_be_inspected() {
+    let dir = tempfile::tempdir().unwrap();
+    let (ctx, dest, _, mut rec) = fixture(dir.path());
+    // Point the record under a regular file: lookup fails with ENOTDIR, not NotFound.
+    let blocker = dest.parent().unwrap().join("blocker");
+    std::fs::write(&blocker, "").unwrap();
+    rec.dest = blocker.join("repo").display().to_string();
+    rec.status = "pending_decision".into();
+    save_run(&ctx.runs_dir(), &mut rec).unwrap();
+    let env = [
+        ("GROK_API_KEY", ""),
+        ("ANTHROPIC_API_KEY", ""),
+        ("DEEPAGENT_API_KEY", ""),
+    ];
+    let idarg = format!("--run-id={}", rec.run_id);
+    let args = ["real-repo-run-decide", &idarg, "--decision=reject", "--reason=r"];
+    let (code, out, err) = run_agentic(&ctx.config_path, &args, &env, dir.path());
+    assert_ne!(code, 0, "{out} {err}");
+    let record = ctx.runs_dir().join(format!("{}.json", rec.run_id));
+    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(record).unwrap()).unwrap();
+    assert_eq!(v["status"], "pending_decision");
+}
+
 #[tokio::test]
 async fn browser_api_requires_explicit_intent_and_shim_rechecks_disk_policy() {
     let model = start_mock_model().await;
@@ -411,4 +480,36 @@ fn denied_write_policy_still_allows_diff_without_executable_git_extensions() {
     assert!(ws.diff(false).unwrap().contains("review me"));
     assert!(ws.untracked_files().unwrap().contains(&"tripwire.sh".into()));
     assert!(!dest.join("tripwire-marker").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn record_mutations_wait_for_the_run_owner_lease() {
+    use cgagentharness::agentic::run_store::acquire_run_lease;
+    let dir = tempfile::tempdir().unwrap();
+    let (ctx, dest, bare, rec) = fixture(dir.path());
+    let record = ctx.runs_dir().join(format!("{}.json", rec.run_id));
+    let before = std::fs::read(&record).unwrap();
+    let env = [
+        ("GROK_API_KEY", ""),
+        ("ANTHROPIC_API_KEY", ""),
+        ("DEEPAGENT_API_KEY", ""),
+    ];
+    let idarg = format!("--run-id={}", rec.run_id);
+    // Another operation on this run (a push still in flight) owns the lease.
+    let lease = acquire_run_lease(&ctx.runs_dir(), &rec.run_id, true).unwrap();
+    for args in [
+        vec!["real-repo-run-discard", &idarg],
+        vec!["real-repo-run-push", &idarg, "--reason=reviewed", "--confirm"],
+    ] {
+        let (code, out, err) = run_agentic(&ctx.config_path, &args, &env, dir.path());
+        assert_eq!(code, 2, "{}: {out} {err}", args[0]);
+        assert_eq!(std::fs::read(&record).unwrap(), before, "{}: record changed", args[0]);
+        assert!(dest.is_dir(), "{}: clone removed", args[0]);
+        assert!(git(&["branch", "--list", "codex/*"], &bare).is_empty());
+    }
+    drop(lease);
+    let (code, _, err) = run_agentic(&ctx.config_path, &["real-repo-run-discard", &idarg], &env, dir.path());
+    assert_eq!(code, 0, "{err}");
+    assert!(!dest.exists());
 }

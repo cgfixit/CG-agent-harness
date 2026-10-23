@@ -887,19 +887,31 @@ async fn unknown_and_malformed_job_ids_are_rejected() {
     assert_eq!(status, 404, "{resp}");
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn a_job_holds_the_run_gate_so_a_concurrent_sync_run_is_busy() {
+    use std::os::unix::fs::PermissionsExt;
+    // A slow child keeps the job in flight; a disabled-layer child would exit at once
+    // and let the sync run fail for an unrelated reason.
+    let dir = tempfile::tempdir().unwrap();
+    let exe = dir.path().join("slow-shim");
+    std::fs::write(&exe, "#!/bin/sh\nsleep 10\nprintf '{\"status\":\"failed\"}\\n'\n").unwrap();
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
     let model = start_mock_model().await;
-    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let opts = ServerOptions {
+        shim_exe: Some(exe),
+        ..Default::default()
+    };
+    let s = spawn_server(&model.base_url(), opts).await;
     let (status, created) = s.post_json("/api/agent/jobs", run_body()).await;
     assert_eq!(status, 202, "{created}");
-    // The gate is claimed synchronously inside prepare_run before the task is spawned,
-    // so a request issued immediately after must already see it held (best-effort race window aside).
+    // The gate is claimed synchronously inside prepare_run before the task is spawned.
     let (status, resp) = s.post_json("/api/agent/run", run_body()).await;
-    assert!(
-        status == 409 && (code(&resp) == "AGENT_RUN_BUSY" || code(&resp) == "AGENTIC_DISABLED"),
-        "{status} {resp}"
-    );
+    assert_eq!(status, 409, "{resp}");
+    assert_eq!(code(&resp), "AGENT_RUN_BUSY", "{resp}");
+    let job_id = created["job_id"].as_str().unwrap();
+    s.post_json(&format!("/api/agent/jobs/{job_id}/cancel"), json!({}))
+        .await;
 }
 
 #[tokio::test]
