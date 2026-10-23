@@ -783,7 +783,7 @@ fn cmd_real_repo_run_decide(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     }
     let runs_dir = ctx.runs_dir();
     let run_id = opts.require("run-id").map_err(HarnessError::agentic)?;
-    let mut record = load_run(&runs_dir, &run_id)?;
+    let (_lease, mut record) = lease_settled_run(&runs_dir, &run_id)?;
     require_pending_decision(&record)?;
     let (branch, message) = match (&record.branch_name, &record.commit_message) {
         (Some(b), Some(m)) => (b.clone(), m.clone()),
@@ -829,17 +829,31 @@ fn cmd_real_repo_run_decide(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     Ok(EXIT_OK)
 }
 
+/// Decide, push, publish and discard each own the run's lease, then reload the
+/// record under it, so one cannot save over another's result. A running record
+/// keeps its worker's ownership evidence; a lease is never created for it.
+fn lease_settled_run(
+    runs_dir: &Path,
+    run_id: &str,
+) -> Result<(crate::common::file_lease::FileLease, RealRepoRunRecord)> {
+    if load_run(runs_dir, run_id)?.status == "running" {
+        return Err(HarnessError::agentic("run is live or ownership is unknown; refused"));
+    }
+    let lease = super::run_store::acquire_run_lease(runs_dir, run_id, true)?;
+    Ok((lease, load_run(runs_dir, run_id)?))
+}
+
 fn attach_approved(
     ctx: &AgenticCtx,
     opts: &Opts,
     require: &str,
-) -> Result<std::result::Result<(RealRepoRunRecord, PathBuf), u8>> {
+) -> Result<std::result::Result<(RealRepoRunRecord, PathBuf, crate::common::file_lease::FileLease), u8>> {
     if !ctx.acfg.enabled {
         return Ok(Err(disabled_noop()));
     }
     let run_id = opts.require("run-id").map_err(HarnessError::agentic)?;
     let runs_dir = ctx.runs_dir();
-    let record = load_run(&runs_dir, &run_id)?;
+    let (lease, record) = lease_settled_run(&runs_dir, &run_id)?;
     if require == "push" {
         require_approved_for_push(&record)?;
     } else {
@@ -848,11 +862,11 @@ fn attach_approved(
     if record.branch_name.is_none() {
         return Err(HarnessError::agentic("run record is approved but missing branch_name").detail("run_id", run_id));
     }
-    Ok(Ok((record, runs_dir)))
+    Ok(Ok((record, runs_dir, lease)))
 }
 
 fn cmd_real_repo_run_push(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
-    let (mut record, runs_dir) = match attach_approved(ctx, opts, "push")? {
+    let (mut record, runs_dir, _lease) = match attach_approved(ctx, opts, "push")? {
         Ok(v) => v,
         Err(code) => return Ok(code),
     };
@@ -877,7 +891,7 @@ fn cmd_real_repo_run_publish(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         err("--confirm is required to open a pull request");
         return Ok(EXIT_REFUSED);
     }
-    let (mut record, runs_dir) = match attach_approved(ctx, opts, "publish")? {
+    let (mut record, runs_dir, _lease) = match attach_approved(ctx, opts, "publish")? {
         Ok(v) => v,
         Err(code) => return Ok(code),
     };
@@ -933,6 +947,8 @@ fn cmd_real_repo_run_discard(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
             "run is live or ownership is unknown; discard refused",
         ));
     }
+    // reconcile_run released its own lease; check the settled record under ours.
+    let (_lease, mut record) = lease_settled_run(&runs_dir, &run_id)?;
     if record.status == PENDING_DECISION {
         err(&format!(
             "run {run_id} is still pending a decision -- run real-repo-run-decide first"
