@@ -457,10 +457,11 @@ callers append inline.
 ## Telemetry and unreviewed dependencies stay out
 
 `deny.toml` and `desktop/deny.toml` ban push-telemetry and crash-reporting crates
-(OpenTelemetry, Sentry and similar) by exact name, and the two lists stay
-identical. CI runs `cargo deny check` on both lockfiles with `unsound = "all"`;
-each advisory ignore carries a removal condition. Workflow actions are
-SHA-pinned and linted by zizmor. Rust is pinned independently: 1.88 backend, 1.90 desktop.
+(OpenTelemetry, Sentry and similar) by exact name; both lists stay identical.
+CI runs `cargo deny check` with `unsound = "all"` on the root, `desktop/` and
+`tests/fixtures/cargo-sandbox` lockfiles (fixture: no licenses check); each
+advisory ignore carries a removal condition. Workflow actions are SHA-pinned
+and zizmor-linted; Rust pins: 1.88 backend, 1.90 desktop.
 
 - Locked by: `tests/invariant_guard.rs::deny_lists_ban_the_same_telemetry_crates`,
   `.github/workflows/{ci,advisories,desktop,zizmor}.yml`.

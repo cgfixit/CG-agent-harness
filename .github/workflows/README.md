@@ -28,7 +28,7 @@ release flow: [docs/RELEASING.md](../../docs/RELEASING.md).
 - [`codeql.yml`](codeql.yml): push, PR, weekly: CodeQL for Rust and Actions.
 - [`devskim.yml`](devskim.yml): push and PR to `main`, weekly: DevSkim SARIF scan.
 - [`gitleaks.yml`](gitleaks.yml): push, PR, weekly: pinned gitleaks over the full reachable history.
-- [`advisories.yml`](advisories.yml): daily: cargo-deny RustSec advisories on both manifests.
+- [`advisories.yml`](advisories.yml): daily: cargo-deny RustSec advisories on the root, desktop and sandbox-fixture manifests.
 
 ## Path-filtered and live
 
