@@ -725,11 +725,12 @@ fn invalid(message: impl Into<String>) -> HarnessError {
     HarnessError::new("STRUCTURED_MEMORY_IO", message)
 }
 
-/// CodeQL rust/path-injection treats `contains("..") == false` as a sink barrier.
+/// CodeQL rust/path-injection treats these `contains` literals as a sink barrier;
+/// `Component::ParentDir` is the real check, so a home named `my..home` still opens.
 /// Reconstruct the path from the checked string so the sanitized value reaches FS APIs.
 fn refuse_parent_components(path: PathBuf) -> Result<PathBuf> {
     let raw = path.to_string_lossy();
-    if raw.contains("..") {
+    if raw.contains("../") || raw.contains("..\\") || path.components().any(|c| c == std::path::Component::ParentDir) {
         return Err(invalid(
             "structured memory path must not contain parent-directory components",
         ));
@@ -3548,6 +3549,16 @@ mod tests {
 
     fn cfg(dir: &Path) -> AppConfig {
         AppConfig::from_str(AppConfig::embedded_default(), &dir.join("config.yaml")).unwrap()
+    }
+
+    #[test]
+    fn a_home_with_doubled_dots_in_its_name_opens_its_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("my..home");
+        let path = home.join("memory/structured.sqlite3");
+        assert_eq!(refuse_parent_components(path.clone()).unwrap(), path);
+        assert!(refuse_parent_components(home.join("../escape.sqlite3")).is_err());
+        assert!(refuse_parent_components(home.join("memory/..")).is_err());
     }
 
     fn store(dir: &Path) -> StructuredMemoryStore {

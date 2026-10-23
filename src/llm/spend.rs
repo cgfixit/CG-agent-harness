@@ -397,8 +397,9 @@ pub fn spend_path(home: &Path, cfg: &AppConfig) -> PathBuf {
 /// CodeQL rust/path-injection treats `contains("..") == false` as a sink barrier.
 /// Reconstruct the path from the checked string so the sanitized value reaches FS APIs.
 fn refuse_parent_components(path: &Path) -> Option<PathBuf> {
+    // The `contains` literals are CodeQL's barrier; `ParentDir` is the real check.
     let raw = path.to_string_lossy();
-    if raw.contains("..") {
+    if raw.contains("../") || raw.contains("..\\") || path.components().any(|c| c == std::path::Component::ParentDir) {
         return None;
     }
     Some(PathBuf::from(raw.as_ref()))
@@ -693,6 +694,28 @@ fn add_opt(dst: &mut Option<u64>, src: Option<u64>) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn only_parent_components_refuse_a_spend_path() {
+        for allowed in [
+            "logs/spend..old.jsonl",
+            "logs/..spend.jsonl",
+            "data/my..home/logs/spend.jsonl",
+        ] {
+            assert_eq!(
+                refuse_parent_components(Path::new(allowed)),
+                Some(PathBuf::from(allowed))
+            );
+        }
+        for refused in [
+            "../spend.jsonl",
+            "logs/../../spend.jsonl",
+            "logs/..",
+            "logs\\..\\spend.jsonl",
+        ] {
+            assert_eq!(refuse_parent_components(Path::new(refused)), None, "{refused}");
+        }
+    }
 
     #[test]
     fn grok_responses_fixture_prefers_ticks_and_table_path_matches_hand_arithmetic() {
