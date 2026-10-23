@@ -61,6 +61,7 @@ The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs) and
 - [`web_google.rs`](web_google.rs): `WebTool::google_search` over the Google API or public listings.
 - [`web_index.rs`](web_index.rs): rebuildable Tantivy passage index over the authorized web cache.
 - [`web_intent.rs`](web_intent.rs): natural-language search intent parser (engine, count, quoted terms).
+- [`web_ledger.rs`](web_ledger.rs): per-session web read ledger: targets and counts, no page text, never prompted.
 - [`web_policy.rs`](web_policy.rs): URL allow and deny rules, canonical URL and public-IP checks.
 - [`web_research.rs`](web_research.rs): bounded research controller: planned queries, cited evidence, no authority.
 - [`web_search.rs`](web_search.rs): `WebTool` fetch and search: policy reload, pinned DNS, bounded HTML extraction.

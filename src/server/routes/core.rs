@@ -449,6 +449,7 @@ pub async fn get_session(
     out["goal"] = json!(session.goal);
     out["goal_web_mode"] = json!(session.goal_web_mode);
     out["style"] = json!(session.style);
+    out["web_sources"] = json!(session.web_sources);
     out["live_attachment_pins"] = json!(session
         .pinned_ids_for(&owner)
         .iter()
@@ -1650,8 +1651,9 @@ pub(crate) async fn chat_inner(
         &prompt_skills,
         compaction.as_ref().map(|c| (c.keep, c.summary.clone())),
         calibration,
+        &web_tools,
     );
-    let updated = recorded.map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    let (updated, web_turn) = recorded.map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     if !cloud_selected {
         let live = |id: &str| state.attachments.owned_blob(&owner, id).is_some();
         state
@@ -1687,6 +1689,15 @@ pub(crate) async fn chat_inner(
             event.extend(report.clone());
         }
         state.audit.log(event);
+    }
+    // Counts and codes only; the targets stay in the owner's session ledger.
+    if let Some(turn) = &web_turn {
+        state.audit.log(turn.audit(
+            &session.session_id,
+            updated.tally.exchanges,
+            req.loop_turn,
+            updated.compactions,
+        ));
     }
     let sensitivity = {
         let scanner = crate::common::injection::Scanner::core();
