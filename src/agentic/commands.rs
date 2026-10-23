@@ -794,6 +794,15 @@ fn cmd_real_repo_run_decide(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
             )
         }
     };
+    // A clone that is already gone has nothing left to clean up; rejecting
+    // must still settle the run, or it stays pending and can never be discarded.
+    if decision == "reject" && std::fs::symlink_metadata(&record.dest).is_err() {
+        let outcome = super::real_repo_loop::record_rejection(ctx, &branch);
+        record.status = outcome["status"].as_str().unwrap_or("").to_string();
+        save_run(&runs_dir, &mut record)?;
+        print_json(&record.to_json());
+        return Ok(EXIT_OK);
+    }
     let tools = RepoWorkspace::attach(ctx, Path::new(&record.dest))?;
     let outcome = finalize_real_repo_change(
         ctx,
