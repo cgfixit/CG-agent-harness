@@ -1,7 +1,7 @@
 # Netconnect flag, scope, and no-packet proof.
 # Path-filtered. Top-level permissions stay empty. The trigger is pull_request, not the target event.
 # The syscall job fails if strace or `unshare -rn` cannot run; it does not skip.
-name: netconnect
+name: Netconnect - Scope and no-packet checks
 
 on:
   pull_request:

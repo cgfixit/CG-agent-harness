@@ -1,4 +1,4 @@
-name: workflow lint
+name: Workflows - Syntax and security lint
 
 on:
   push:

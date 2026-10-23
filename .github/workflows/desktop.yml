@@ -1,4 +1,4 @@
-name: macOS desktop
+name: Desktop - Universal macOS app
 
 on:
   workflow_call:

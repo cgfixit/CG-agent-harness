@@ -1056,7 +1056,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".github/PULL_REQUEST_TEMPLATE.md", Agent, 2400),
     (".github/skills/repo-optimize/SKILL.md", Agent, 400),
     // why: operator-requested per-file index of the folder (one line per file); size plus about 10%, rounded up to the next 10.
-    (".github/workflows/README.md", Agent, 500),
+    (".github/workflows/README.md", Agent, 460),
     // why: netconnect passive CLI and LAN scope rule; rounded up to the next 100.
     // why: OS credential store sentence for managed provider keys; 1907 words after the main merge, rounded up to the next 100.
     // why: feature contracts folded into an INVARIANTS.md section table; 1491 words, rounded up to the next 100.
