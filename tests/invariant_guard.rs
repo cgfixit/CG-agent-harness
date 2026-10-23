@@ -1100,13 +1100,13 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
-    ("docs/CONSOLE.md", Guide, 6189),
+    ("docs/CONSOLE.md", Guide, 6187),
     // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
     // why: the 2026-10-20 dep-sync folded the dated 2026-09 audit notes into Retained constraints; 944 words, keep the cut.
     // why: operator-approved +200 (2026-10-22) so dated advisory notes such as RUSTSEC-2026-0384 fit without trimming history.
     ("docs/DEPENDENCIES.md", Guide, 1150),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
-    ("docs/DESKTOP.md", Guide, 2680),
+    ("docs/DESKTOP.md", Guide, 2655),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
     // why: hook behavior review trims duplicated reuse instructions; retain the smaller budget.
     ("docs/GITHOOKS.md", Guide, 1400),
@@ -1120,7 +1120,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #244 folded MEMORY_SETUP.md and the user manual's memory sections in here.
     ("docs/MEMORY_GUIDE.md", Guide, 1950),
     // why: #237 documented refused truncated cloud replies.
-    ("docs/MODELS.md", Guide, 1170),
+    ("docs/MODELS.md", Guide, 1163),
     ("docs/PROCESS_LIFECYCLE.md", Guide, 1360),
     // why: operator-requested per-file index of docs/ (3-5 sentences each) replaces the 150-word folder stub; 1103 words, rounded up to the next 100.
     // why: operator-requested reading paths plus an owning-code and tests line per doc; size plus about 5%, rounded up to the next 50.
@@ -1137,8 +1137,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
     ("docs/TROUBLESHOOTING.md", Guide, 1555),
     // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
-    ("docs/netconnect.md", Guide, 3500),
-    ("docs/screenshots/README.md", Evidence, 400),
+    ("docs/netconnect.md", Guide, 3491),
+    ("docs/screenshots/README.md", Evidence, 387),
     // why: the seven folder-README rows below are operator-requested per-file indexes (one line per file);
     // each is its size plus about 10%, rounded up to the next 10.
     // why: operator-approved (2026-10-14) install-macos.sh and start-macos.sh lines, then the operator-requested
@@ -1586,7 +1586,7 @@ fn docs_budget_rejects_unlisted_oversized_and_misplaced_files() {
         "over 1 MiB",
     );
     assert!(tree_violations(
-        &sized(&[("docs/screenshots/demos/a.mp4", VIDEO_FILE_BYTES)]),
+        &sized(&[("docs/screenshots/demo/a.mp4", VIDEO_FILE_BYTES)]),
         &[],
         &[],
         &[]
@@ -1594,7 +1594,7 @@ fn docs_budget_rejects_unlisted_oversized_and_misplaced_files() {
     .is_empty());
     expect(
         tree_violations(
-            &sized(&[("docs/screenshots/demos/a.MP4", VIDEO_FILE_BYTES + 1)]),
+            &sized(&[("docs/screenshots/demo/a.MP4", VIDEO_FILE_BYTES + 1)]),
             &[],
             &[],
             &[],
