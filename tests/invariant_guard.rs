@@ -1124,7 +1124,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/PROCESS_LIFECYCLE.md", Guide, 1360),
     // why: operator-requested per-file index of docs/ (3-5 sentences each) replaces the 150-word folder stub; 1103 words, rounded up to the next 100.
     // why: operator-requested reading paths plus an owning-code and tests line per doc; size plus about 5%, rounded up to the next 50.
-    ("docs/README.md", Guide, 1700),
+    // why: README audit removes 44 words; retain the existing headroom.
+    ("docs/README.md", Guide, 1656),
     ("docs/RELEASING.md", Guide, 900),
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
     // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
@@ -1146,7 +1147,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("scripts/README.md", Guide, 780),
     ("src/agentic/README.md", Guide, 550),
     ("src/common/README.md", Guide, 600),
-    ("src/netconnect/README.md", Guide, 390),
+    // why: README audit removes three words; retain the existing headroom.
+    ("src/netconnect/README.md", Guide, 387),
     ("src/server/README.md", Guide, 740),
     ("src/server/routes/README.md", Guide, 390),
     ("tests/README.md", Guide, 930),

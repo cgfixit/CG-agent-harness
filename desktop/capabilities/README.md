@@ -1,7 +1,7 @@
 # desktop/capabilities
 
-Tauri capability files. A new window or command needs a capability entry here
-or Tauri refuses the call.
+Tauri capability files grant webviews access to registered native commands.
 
-- [`setup.json`](setup.json): binds the `setup` window to the four permissions in
-  [`../permissions/setup.toml`](../permissions/setup.toml) and nothing else.
+- [`setup.json`](setup.json): grants only the local `setup` window the four
+  permissions in [`../permissions/setup.toml`](../permissions/setup.toml).
+  The sidecar-served `harness` window receives no native command grants.

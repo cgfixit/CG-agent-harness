@@ -1,9 +1,9 @@
 # Screenshots
 
-Store captures flat here with unique filenames. Record new artifact hashes,
-platform, fixture/live distinction and verification limits in the adding PR;
-do not add Markdown files. Historical screenshots do not verify newer builds.
-`slash-single-line-note.txt` is an operator aside.
+Store screenshots flat with unique filenames; recordings live in the indexed
+subfolders. Record hashes, platform, fixture/live distinction and verification
+limits in the adding PR. Add no Markdown files. Historical captures do not
+verify newer builds. `slash-single-line-note.txt` is an operator aside.
 
 ## Series index
 

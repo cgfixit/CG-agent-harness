@@ -9,7 +9,7 @@ and [docs/CODING_PIPELINE.md](../../../docs/CODING_PIPELINE.md#offline-cargo-ver
 - [`manifest.rs`](manifest.rs): acceptance digest over run id, HEAD, path hashes and modes; re-verified at approve.
 - [`prepared.rs`](prepared.rs): operator-prepared, lock-bound Cargo sources (`CargoInputs`); no dependency retrieval.
 - [`runner.rs`](runner.rs): runs fixed `Check` argv lists in the sandbox with a scrubbed env and timeouts.
-- [`sandbox.rs`](sandbox.rs): **core path.** Seatbelt, bubblewrap/netns and Windows Job Object backends; fail closed, no fallback.
+- [`sandbox.rs`](sandbox.rs): **core path.** Seatbelt; Linux bubblewrap with network-only netns fallback; Windows Job Object process containment. No unconstrained fallback.
 
 Tests: [tests/linux_bwrap.rs](../../../tests/linux_bwrap.rs), [tests/macos_cargo.rs](../../../tests/macos_cargo.rs),
 [tests/exhausted_run.rs](../../../tests/exhausted_run.rs).

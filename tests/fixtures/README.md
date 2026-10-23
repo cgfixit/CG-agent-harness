@@ -1,9 +1,9 @@
 # tests/fixtures
 
-Deterministic test data. No fixture contacts the network.
+Deterministic test inputs; no live-provider credentials required.
 
-- [`cargo-sandbox/`](cargo-sandbox/): a tiny serde crate whose build script, test
-  and doctest probe sandbox boundaries; built by [`../macos_cargo.rs`](../macos_cargo.rs).
+- [`cargo-sandbox/`](cargo-sandbox/): a tiny serde crate whose build script and test
+  assert filesystem and loopback-network denial; its doctest verifies compilation. Used by [`../macos_cargo.rs`](../macos_cargo.rs).
 - [`structured_memory/`](structured_memory/): gate, recall and consolidation step
   JSON for [`../structured_memory.rs`](../structured_memory.rs), plus the
   `phase7/corpus.json` evaluation corpus for

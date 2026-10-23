@@ -5,7 +5,8 @@ There is no shell-string path; MCP stdio children have their own owner in
 [`../mcp.rs`](../mcp.rs).
 
 - [`unix.rs`](unix.rs): `run`: nonblocking pipe capture under one deadline and
-  byte ceiling, process-group kill, cooperative cancel flag.
+  aggregate byte ceiling, process-group cleanup and cooperative cancellation. macOS
+  also tracks descendants across groups; that ancestry cleanup is best-effort.
 
 Related: [docs/PROCESS_LIFECYCLE.md](../../../docs/PROCESS_LIFECYCLE.md),
 [tests/process_lifecycle.rs](../../../tests/process_lifecycle.rs).

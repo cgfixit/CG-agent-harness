@@ -9,6 +9,7 @@ Inventory: [docs/API_ROUTES.md](../../../docs/API_ROUTES.md).
 - [`agent.rs`](agent.rs): `/api/github/status` and `/api/agent/*`: `prepare_run`, runs, jobs, schedules, decisions.
 - [`auth.rs`](auth.rs): `/api/auth/*` sessions, RBAC user admin, the `/api/audit` reader.
 - [`core.rs`](core.rs): `/api/status`, sessions, chat and cancel, model and soul toggles, spend, analytics, reload, uploads.
+- [`diag.rs`](diag.rs): `/api/diag/*`: gated admin/portal-auditor log inspection and one-turn local-chat staging.
 - [`goals.rs`](goals.rs): `/api/sessions/{id}/goal-stage`: goal-to-coding staging and completion state.
 - [`notes_corpus.rs`](notes_corpus.rs): `/api/notes-corpus` list, multipart ingest, delete.
 - [`notifications.rs`](notifications.rs): `/api/notifications` delivery status and bounded replay.

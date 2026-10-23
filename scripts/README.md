@@ -1,11 +1,11 @@
 # scripts
 
-Operator and CI helpers. Only `verify-local.sh`, `check-pr-template.sh` and
-`python3 test-desktop-backend.py` are pre-approved for Claude in
-[.claude/settings.json](../.claude/settings.json). The `test-*.mjs` files are
-Node `vm` contract tests for `harness.html` slices and the desktop Setup script,
-run by the `ci.yml` chat-browser job and `verify-local.sh`; `workflow-lint.yml` also runs
-`test-review-gate.mjs`.
+Operator and CI helpers. Claude command permissions live in
+[settings.json](../.claude/settings.json). All `test-*.mjs` scripts run in
+`ci.yml`'s chat-browser job and `verify-local.sh`; they cover extracted console,
+desktop Setup and review-workflow JavaScript with fixtures. `workflow-lint.yml`
+also runs `test-review-gate.mjs`. Use scoped checks for routine changes;
+[AGENTS.md](../AGENTS.md#quality-bar) owns the verification policy.
 
 ## Operator
 
@@ -26,9 +26,9 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 
 ## Verification and CI
 
-- [`verify-local.sh`](verify-local.sh): full local verification: lint, tests, contract scripts, build, smoke.
+- [`verify-local.sh`](verify-local.sh): broad opt-in lint/test/build/live-smoke runner; missing cargo-deny or Node skips those checks, and `SKIP_LIVE=1` skips smoke.
 - [`check-pr-template.sh`](check-pr-template.sh): local PR-body gate mirroring `pr-template-check.yml`.
-- [`ci-docs-only.sh`](ci-docs-only.sh): classifies a pull-request diff as docs-only so `ci.yml` skips compile jobs.
+- [`ci-docs-only.sh`](ci-docs-only.sh): classifies changed paths so qualifying PRs skip selected CI compile/test jobs; other event types run everything.
 - [`browser-acceptance.mjs`](browser-acceptance.mjs): native Chrome acceptance against a disposable fixture (manual, after `browser-fixture.py --http`).
 - [`chat-browser-acceptance.mjs`](chat-browser-acceptance.mjs): real-browser slash-command tests against a mock API.
 - [`test-analytics.mjs`](test-analytics.mjs): analytics and spend helpers, logout clearing.
@@ -51,16 +51,17 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 
 ## Packaging and release
 
-- [`package-desktop.sh`](package-desktop.sh): builds the macOS `.app` with sidecar on Apple Silicon.
+- [`package-desktop.sh`](package-desktop.sh): builds, signs, verifies and archives the `.app` on Apple Silicon; `--universal` includes Intel, `--dmg` adds an image.
 - [`package-release.sh`](package-release.sh): stages, optionally codesigns, archives and checksums the CLI binary.
-- [`verify-desktop-bundle.sh`](verify-desktop-bundle.sh): verifies `.app` codesign, plist, architectures, system-only linkage.
+- [`verify-desktop-bundle.sh`](verify-desktop-bundle.sh): checks signatures, versions, architectures, system linkage, resources, embedded sidecar digest and worker dispatch.
 - [`release-plan.py`](release-plan.py): read-only release planner via `gh api`; fails closed; run by hand, previews `main` ([RELEASING.md](../docs/RELEASING.md)).
 - [`prepare-cargo.py`](prepare-cargo.py): offline-by-default Cargo source and toolchain preparation; bundled into the `.app`.
+- [`build-self-manual.py`](build-self-manual.py): regenerates `assets/self/MANUAL.md` from declared source inputs; `tests/self_manual.rs` checks freshness.
 - [`desktop-icon.swift`](desktop-icon.swift): regenerates the app icon set by hand; no automated caller.
 
 ## Hooks, fixtures and probes
 
-- [`ensure-githooks.sh`](ensure-githooks.sh): idempotent `core.hooksPath` setup; run by the SessionStart hook, Copilot and `init.sh` ([GITHOOKS.md](../docs/GITHOOKS.md)).
+- [`ensure-githooks.sh`](ensure-githooks.sh): idempotent setup preserving existing hook managers; called by SessionStart, Copilot and `init.sh` ([GITHOOKS.md](../docs/GITHOOKS.md)).
 - [`install-githooks.sh`](install-githooks.sh): older once-per-clone installer with a gitleaks hint; nothing automated runs it.
 - [`browser-fixture.py`](browser-fixture.py): creates and serves a disposable arithmetic repo fixture; no real GitHub writes.
 - [`mcp-fixture.py`](mcp-fixture.py): disposable stdio and SSE MCP server for the MCP and process-lifecycle tests.
