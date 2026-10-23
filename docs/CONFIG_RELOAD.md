@@ -55,7 +55,7 @@ The `loop.*` keys bound the server-side `/loop` runner (turns and aggregate
 tokens per run, 0 = unlimited; consecutive failures before abort; pause between
 turns), which the console reads from `/api/status`.
 
-`web.concurrency` is **restart-only** (it sizes shared fetch permits), and so is `web.goal_web_default`.
+`web.concurrency` is **restart-only** (it sizes shared fetch permits), and so are `web.goal_web_default` and `web.search.*`.
 `web.max_rules` (default 64, 1–256) is restart-only too: a cap below the saved
 rule count refuses the policy until it is raised.
 TLS, authentication, credentials, `security.allow_plaintext_key_file` (default

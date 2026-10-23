@@ -121,6 +121,7 @@ fn web_err(e: &HarnessError) -> ApiError {
         "WEB_SEARCH_KEY_REJECTED" => "The configured SerpAPI key was rejected. Check API Keys; no public fallback was attempted.",
         "WEB_SEARCH_QUOTA" => "SerpAPI quota or rate limit reached. No public fallback was attempted.",
         "WEB_SEARCH_PROVIDER" => "The configured search provider failed. No public fallback was attempted.",
+        "WEB_SEARCH_KEY_MISSING" => "web.search.provider is serpapi, but no SerpAPI key is active. Add one in API Keys, or set web.search.provider to auto and restart.",
         "WEB_RULE_UNKNOWN" => "No rule has that ID or pattern, so nothing was removed. /web status lists rule IDs and patterns; www and apex hosts, and patterns with and without /*, are different rules.",
         "WEB_NO_LAST" => "No saved extract yet. Run /web fetch URL or /web pages <query> first, then /web inject.",
         "WEB_DNS" => "The host did not resolve to a usable public address. Check the exact host (www and apex are distinct).",

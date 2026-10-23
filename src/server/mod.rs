@@ -66,6 +66,7 @@ pub mod web_intent;
 pub mod web_policy;
 pub mod web_research;
 pub mod web_search;
+mod web_searxng;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;

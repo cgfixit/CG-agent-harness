@@ -1334,9 +1334,17 @@ function renderSkillsDiagram(skills, wired, total) {
   return lines.join('\n');
 }
 
+const SEARCH_PROVIDER_LABELS = {'google-public': 'public Google', 'google-serpapi': 'SerpAPI', searxng: 'SearXNG'};
+/* "via SearXNG (google did not answer)"; other providers keep their raw name. */
+function searchProviderLabel(result) {
+  const name = SEARCH_PROVIDER_LABELS[result.provider];
+  if (!name) return result.provider || 'search';
+  const degraded = Array.isArray(result.degraded) ? result.degraded.filter(e => typeof e === 'string') : [];
+  return 'via ' + name + (degraded.length ? ' (' + degraded.join(', ') + ' did not answer)' : '');
+}
 function renderSearchResults(result) {
   const box = document.createElement('div');
-  const provider = document.createElement('p'); provider.textContent = result.provider || 'search'; box.appendChild(provider);
+  const provider = document.createElement('p'); provider.textContent = searchProviderLabel(result); box.appendChild(provider);
   const list = document.createElement('ol');
   for (const row of result.results || []) {
     const item = document.createElement('li'); const link = document.createElement('a');
@@ -1378,7 +1386,7 @@ function renderWebStatus(data) {
     ['policy mode', deny ? 'block list — every public URL except blocked rules; /web block adds one' : 'allowlist — only permitted URLs; the globe button or /web mode denylist switches'],
     ['blocked rules', String((data.blocked || []).length)],
     ['permission rules', (data.allowlist || []).length + (Number.isInteger(data.max_allow) ? ' of ' + data.max_allow + ' (web.max_rules)' : '') + ' — see groups below; empty denies content reads' + (data.policy_missing ? ' (no policy file yet; the first /web allow creates it)' : '')],
-    ['keyword search', (data.search_provider || 'Google; /web pages for permitted-page passages') + (/serpapi/i.test(data.search_provider || '')
+    ['keyword search', (data.search_provider || 'Google; /web pages for permitted-page passages') + (/serpapi|searxng/i.test(data.search_provider || '')
       ? ' — /web search needs no URL rule; reading a listed page does'
       : ' — needs /web allow https://www.google.com/* or a SerpAPI key in API Keys')],
     ['web calls per chat', Number.isInteger(data.limits?.chat_tool_calls) ? data.limits.chat_tool_calls + ' maximum; token and time limits also apply' : 'unknown'],
@@ -1960,12 +1968,13 @@ async function refreshKeys() {
     clear.addEventListener('click', () => { field.value = ''; change({clear: [key.name]}); });
     form.append(label, detail, status, field, save, clear, feedback);
     if (key.name === 'SERPAPI_API_KEY') {
-      const test = document.createElement('button'); test.type = 'button'; test.textContent = 'Test Google search';
+      /* Tests whichever provider web.search.provider selects (SerpAPI, public Google or SearXNG). */
+      const test = document.createElement('button'); test.type = 'button'; test.textContent = 'Test search';
       test.addEventListener('click', async () => {
-        test.disabled = true; feedback.textContent = 'Searching Google…';
+        test.disabled = true; feedback.textContent = 'Searching…';
         try {
           const result = await api('/api/web/search', 'POST', {engine:'google',query:'SerpAPI Google Search API',count:3});
-          feedback.textContent = 'Connected via ' + result.provider + ': ' + result.results.length + ' results. Use /web search <query> or ask in chat.';
+          feedback.textContent = 'Connected ' + searchProviderLabel(result) + ': ' + result.results.length + ' results. Use /web search <query> or ask in chat.';
           sys(renderSearchResults(result));
         } catch (error) { feedback.textContent = error.message; }
         finally { test.disabled = false; }
@@ -4910,7 +4919,7 @@ async function sendMaybeNlSearch(text) {
      search gate, instead of only discarding the eventual result. It lives in
      its own slot, not inflightChat, so nothing posts /api/chat/cancel for it.
      The signal is passed explicitly so unrelated callers of the same route
-     (the settings "Test Google search" button) keep their own timeout path. */
+     (the settings "Test search" button) keep their own timeout path. */
   const controller = new AbortController();
   inflightSearch = controller;
   let fallbackToChat = false;
