@@ -94,9 +94,11 @@ pub async fn skills(State(state): State<Arc<AppState>>) -> Json<Value> {
 
 fn web_err(e: &HarnessError) -> ApiError {
     let status = match e.code.as_str() {
-        "WEB_DISABLED" | "WEB_ALLOWLIST_EMPTY" | "WEB_BUSY" | crate::server::state::WINDOW_CHANGED => {
-            StatusCode::CONFLICT
-        }
+        "WEB_DISABLED"
+        | "WEB_ALLOWLIST_EMPTY"
+        | "WEB_BUSY"
+        | "WEB_SEARCH_PACED"
+        | crate::server::state::WINDOW_CHANGED => StatusCode::CONFLICT,
         "WEB_PERMISSION_DENIED" | "WEB_MODE_CONFIRM_REQUIRED" => StatusCode::FORBIDDEN,
         "WEB_RULE_UNKNOWN" => StatusCode::NOT_FOUND,
         "WEB_FETCH_FAILED" | "WEB_DNS" | "WEB_CLEAR_FAILED" => StatusCode::BAD_GATEWAY,
@@ -121,6 +123,7 @@ fn web_err(e: &HarnessError) -> ApiError {
         "WEB_SEARCH_KEY_REJECTED" => "The configured SerpAPI key was rejected. Check API Keys; no public fallback was attempted.",
         "WEB_SEARCH_QUOTA" => "SerpAPI quota or rate limit reached. No public fallback was attempted.",
         "WEB_SEARCH_PROVIDER" => "The configured search provider failed. No public fallback was attempted.",
+        "WEB_SEARCH_PACED" => "Public Google searches stay at least 3 seconds apart, and the next one could not start within web.request_seconds. Wait a moment, then retry.",
         "WEB_RULE_UNKNOWN" => "No rule has that ID or pattern, so nothing was removed. /web status lists rule IDs and patterns; www and apex hosts, and patterns with and without /*, are different rules.",
         "WEB_NO_LAST" => "No saved extract yet. Run /web fetch URL or /web pages <query> first, then /web inject.",
         "WEB_DNS" => "The host did not resolve to a usable public address. Check the exact host (www and apex are distinct).",

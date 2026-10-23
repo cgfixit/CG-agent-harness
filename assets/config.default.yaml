@@ -168,7 +168,7 @@ web:
   run_bytes: 2097152 # 1024–8388608 per run
   run_seconds: 180 # 1–180
   per_site_pages: 10 # 1–20
-  pace_ms: 400 # 100–5000 between requests to an origin
+  pace_ms: 400 # 100–5000 between requests to an origin; public Google searches wait at least 3000 (code floor)
   cache_pages: 256 # 1–256; derived cache, oldest documents evicted
   cache_bytes: 16777216 # 1048576–33554432 serialized cache bytes
   subqueries: 3 # 1–5 total model-selected subqueries

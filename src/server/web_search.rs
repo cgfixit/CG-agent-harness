@@ -406,6 +406,11 @@ pub struct WebTool {
     pub(super) permits: Arc<Semaphore>,
     pub(super) mutation: Arc<Mutex<()>>,
     pub(super) search_gate: Arc<Semaphore>,
+    /// When the last public Google search request left, shared by every snapshot.
+    pub(super) public_search_sent: Arc<std::sync::Mutex<Option<tokio::time::Instant>>>,
+    /// Programmatic fixture hook replacing the public Google search URL; no
+    /// configuration, CLI or HTTP path sets it.
+    pub test_public_search: Option<url::Url>,
     pub research: Arc<super::web_research::ResearchState>,
     pub chat_turn: Arc<super::web_research::ResearchState>,
 }
@@ -423,6 +428,8 @@ impl WebTool {
             plaintext_key_file: cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE),
             mutation: Arc::new(Mutex::new(())),
             search_gate: Arc::new(Semaphore::new(1)),
+            public_search_sent: Arc::default(),
+            test_public_search: None,
             research: Arc::default(),
             chat_turn: Arc::default(),
         })

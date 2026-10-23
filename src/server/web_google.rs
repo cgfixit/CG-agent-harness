@@ -12,6 +12,30 @@ use crate::common::audit::Audit;
 use crate::common::credential_store::CredentialStore;
 use crate::common::errors::Result;
 
+/// Public Google answers bursts with challenges: chat searches there are at
+/// least this far apart whatever `web.pace_ms` says. SerpAPI is never paced.
+pub(crate) const PUBLIC_SEARCH_PACE_FLOOR_MS: u64 = 3000;
+
+/// When the next public Google request may leave, or `WEB_SEARCH_PACED` when
+/// that is not before the call's own deadline (never block past it).
+fn public_pace(
+    last: Option<tokio::time::Instant>,
+    pace_ms: u64,
+    deadline: tokio::time::Instant,
+) -> Result<Option<tokio::time::Instant>> {
+    let Some(last) = last else {
+        return Ok(None);
+    };
+    let ready = last + Duration::from_millis(pace_ms.max(PUBLIC_SEARCH_PACE_FLOOR_MS));
+    if ready >= deadline {
+        return Err(error(
+            "WEB_SEARCH_PACED",
+            "public Google searches are paced and the next one cannot start within web.request_seconds; do not retry web_search this turn",
+        ));
+    }
+    Ok(Some(ready))
+}
+
 /// The notice on every search listing.
 pub(crate) const SEARCH_NOTICE: &str =
     "Search-provider listings only. Linked pages have not been fetched and require their own URL permission.";
@@ -224,10 +248,16 @@ impl WebTool {
         } else {
             None
         };
-        let target = ["https://www.google.com/search", "https://google.com/search"]
+        let bases = match &self.test_public_search {
+            Some(fixture) => vec![fixture.clone()],
+            None => ["https://www.google.com/search", "https://google.com/search"]
+                .into_iter()
+                .map(|base| url::Url::parse(base).unwrap())
+                .collect(),
+        };
+        let target = bases
             .into_iter()
-            .find_map(|base| {
-                let mut url = url::Url::parse(base).unwrap();
+            .find_map(|mut url| {
                 url.query_pairs_mut()
                     .append_pair("q", query)
                     .append_pair("num", &count.to_string());
@@ -255,6 +285,12 @@ impl WebTool {
         };
         let rows = if key.trim().is_empty() {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
+            // Paced under the search gate, inside this call's deadline.
+            let last = *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner());
+            if let Some(ready) = public_pace(last, self.limits.pace_ms, deadline)? {
+                tokio::time::sleep_until(ready).await;
+            }
+            *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner()) = Some(tokio::time::Instant::now());
             tokio::time::timeout_at(deadline, async {
                 let (_, body) = self.get_raw(target.as_str(), None, None).await.map_err(|failure| {
                     if matches!(failure.code.as_str(), "WEB_FETCH_FAILED" | "WEB_REDIRECT_REFUSED") {
@@ -386,6 +422,36 @@ mod tests {
     }
 
     #[test]
+    fn public_pace_has_a_floor_and_refuses_past_the_deadline() {
+        let now = tokio::time::Instant::now();
+        let deadline = now + Duration::from_secs(8);
+        assert_eq!(
+            public_pace(None, 400, deadline).unwrap(),
+            None,
+            "the first search waits for nothing"
+        );
+        assert_eq!(
+            public_pace(Some(now), 400, deadline).unwrap(),
+            Some(now + Duration::from_millis(PUBLIC_SEARCH_PACE_FLOOR_MS)),
+            "a configured pace below the floor is raised to it"
+        );
+        assert_eq!(
+            public_pace(Some(now), 5000, deadline).unwrap(),
+            Some(now + Duration::from_millis(5000))
+        );
+        let short = now + Duration::from_secs(3);
+        assert_eq!(public_pace(Some(now), 400, short).unwrap_err().code, "WEB_SEARCH_PACED");
+        let later = now + Duration::from_secs(10);
+        assert!(
+            public_pace(Some(now), 400, later + Duration::from_secs(8))
+                .unwrap()
+                .unwrap()
+                <= later,
+            "an old search leaves nothing to wait for"
+        );
+    }
+
+    #[test]
     fn public_listing_parser_obeys_complexity_and_cancellation() {
         let body = "<div/>".repeat(40_000);
         assert_eq!(public_results(&body, 5).unwrap_err().code, "WEB_HTML_COMPLEXITY");
@@ -439,11 +505,20 @@ mod tests {
         let row = status.iter().find(|row| row["name"] == "SERPAPI_API_KEY").unwrap();
         assert_eq!(row["active_configured"], true);
         assert_eq!(row["pending_restart"], false);
+        let started = tokio::time::Instant::now();
         let result = web
             .google_search_at("veeam", 5, true, &audit, endpoint.clone())
             .await
             .unwrap();
         assert_eq!(result["provider"], "google-serpapi");
+        web.google_search_at("veeam backup", 5, true, &audit, endpoint.clone())
+            .await
+            .unwrap();
+        assert!(
+            started.elapsed() < Duration::from_millis(PUBLIC_SEARCH_PACE_FLOOR_MS),
+            "SerpAPI searches are never paced"
+        );
+        assert!(web.public_search_sent.lock().unwrap().is_none());
         assert_eq!(result["results"][0]["title"], "Actual API result");
         assert_eq!(
             web.require_enabled(true).unwrap_err().code,

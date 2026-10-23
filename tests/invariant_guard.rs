@@ -1095,7 +1095,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/API_ROUTES.md", Guide, 1830),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
     ("docs/CODING_PIPELINE.md", Guide, 3710),
-    ("docs/CONFIG_RELOAD.md", Guide, 600),
+    // why: operator-approved (2026-10-23) measured count for the public Google search pace floor.
+    ("docs/CONFIG_RELOAD.md", Guide, 606),
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
