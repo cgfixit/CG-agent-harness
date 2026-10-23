@@ -135,6 +135,93 @@ fn argv_builder_uses_single_element_form_for_dash_leading_values() {
     }
 }
 
+/// One call through `git::run`: the validating config read plus the operation.
+fn validated_git_call_sec(op_sec: u64) -> u64 {
+    cgagentharness::agentic::workspace::GIT_VALIDATE_TIMEOUT_SEC + op_sec
+}
+
+/// The push/publish sum above has siblings: approve and status also spend their
+/// whole budget in validated git calls, and `real-repo-run` spends its fixed
+/// overhead before the planner starts. Each shim budget must exceed the sum of
+/// the child's own bounds, computed here from the constants the child uses, so a
+/// slow operation ends in the child's own error rather than a shim kill (504
+/// `AGENTIC_TIMEOUT` with no child record of what happened).
+#[test]
+fn decide_status_and_setup_budgets_exceed_child_bounds() {
+    use cgagentharness::agentic::{config, gh_client, workspace};
+    let dir = tempfile::tempdir().unwrap();
+    let c = ctx(dir.path());
+    let git_op = validated_git_call_sec(workspace::DEFAULT_GIT_WRITE_TIMEOUT_SEC);
+
+    // Approve (`real_repo_loop::finalize_real_repo_change` ->
+    // `executor::apply::prove_disposable_copy` -> `workspace::commit_accepted`):
+    // verify_manifest, git_head on the disposable copy, verify_manifest,
+    // inspect_index, check-attr, read-tree, write-tree, verify_manifest,
+    // commit-tree, update-ref and symbolic-ref, plus hash-object and
+    // update-index per accepted file. Copying the clone for the proof is
+    // untimed on top. A kill after update-ref strands a committed branch
+    // behind a `pending_decision` record, so the budget covers at least a
+    // one-file approve; `BUDGETED_APPROVE_FILES` says how many it covers.
+    const BUDGETED_APPROVE_FILES: u64 = 1;
+    let approve_bounds = |files: u64| 11 * git_op + files * 2 * git_op;
+    let mut short = Vec::new();
+    let decide = shim::timeout_for(&c, &OpsRequest::new("real-repo-run-decide")).as_secs();
+    if decide <= approve_bounds(BUDGETED_APPROVE_FILES) {
+        short.push(format!(
+            "real-repo-run-decide: {decide}s <= child bounds {}s for {BUDGETED_APPROVE_FILES} file(s) \
+             (11 x validated git {git_op}s + {BUDGETED_APPROVE_FILES} x 2 x {git_op}s)",
+            approve_bounds(BUDGETED_APPROVE_FILES)
+        ));
+    }
+
+    // Status renders the pending diff (`commands::render_pending_diff`): `git
+    // diff` then `git status`, each through the same validated boundary.
+    let status_bounds = 2 * validated_git_call_sec(workspace::DEFAULT_GIT_WRITE_TIMEOUT_SEC);
+    let status = shim::timeout_for(&c, &OpsRequest::new("real-repo-run-status")).as_secs();
+    if status <= status_bounds {
+        short.push(format!(
+            "real-repo-run-status: {status}s <= child bounds {status_bounds}s (2 x validated git {git_op}s)"
+        ));
+    }
+
+    // `real-repo-run` before the planner (`commands::cmd_real_repo_run`), with
+    // the shipped gh timeout and retry count: one `gh --version` check, then
+    // `fetch_repo_context` (repo_view plus the list ops the shipped config
+    // allows), the clone, and the origin check; after acceptance, one more
+    // `git_head` for the manifest. Every gh read retries on transient errors
+    // and timeouts with backoff. The budget formula gives this phase only
+    // `REAL_REPO_RUN_OVERHEAD_SEC`; planner and check time are budgeted
+    // separately per iteration.
+    let acfg = config::load_agentic_config(&config_with(dir.path(), &[]), dir.path()).unwrap();
+    let attempts = u64::from(acfg.gh_retries) + 1;
+    let backoff = (1..=acfg.gh_retries)
+        .map(gh_client::retry_backoff_sec)
+        .sum::<f64>()
+        .ceil() as u64;
+    let gh_read = attempts * acfg.gh_timeout_sec + backoff;
+    let clone = attempts * gh_client::DEFAULT_CLONE_TIMEOUT_SEC + backoff;
+    let version_check = u64::from(gh_client::VERSION_CHECK_ATTEMPTS) * gh_client::VERSION_CHECK_TIMEOUT_SEC
+        + u64::from(gh_client::VERSION_CHECK_ATTEMPTS - 1) * gh_client::VERSION_CHECK_RETRY_DELAY_SEC;
+    let context_reads = 1 + ["pr_list", "issue_list"]
+        .iter()
+        .filter(|op| acfg.allowed_read_ops.iter().any(|allowed| allowed == *op))
+        .count() as u64;
+    let setup_bounds = version_check + context_reads * gh_read + clone + git_op + git_op;
+    if shim::REAL_REPO_RUN_OVERHEAD_SEC <= setup_bounds {
+        short.push(format!(
+            "REAL_REPO_RUN_OVERHEAD_SEC: {}s <= pre-planner child bounds {setup_bounds}s \
+             (gh version check {version_check}s + {context_reads} x gh read {gh_read}s + clone {clone}s \
+             + origin and manifest HEAD 2 x {git_op}s)",
+            shim::REAL_REPO_RUN_OVERHEAD_SEC
+        ));
+    }
+    assert!(
+        short.is_empty(),
+        "shim budgets below the child's own bounds:\n{}",
+        short.join("\n")
+    );
+}
+
 #[test]
 fn argv_builder_validation_mirrors_ops_runner() {
     let dir = tempfile::tempdir().unwrap();
