@@ -305,3 +305,88 @@ fn assert_fail_closed(workflow: &str, run: &str) {
     assert_eq!(run.matches("code=true").count(), 1, "{workflow}");
     assert_eq!(run.matches("code=false").count(), 1, "{workflow}");
 }
+
+/// Name filters on `cargo test` lines in every workflow, as (target, filter).
+/// A target is `lib` or a `tests/<file>.rs` stem.
+fn workflow_test_filters() -> Vec<(String, String, String)> {
+    let mut found = Vec::new();
+    let dir = repo_root().join(".github/workflows");
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("yml") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        for line in text.lines() {
+            if line.trim_start().starts_with('#') {
+                continue;
+            }
+            let Some(at) = line.find("cargo test") else { continue };
+            let mut target: Option<String> = None;
+            let mut tokens = line[at + "cargo test".len()..].split_whitespace();
+            while let Some(token) = tokens.next() {
+                match token {
+                    "--" | ">" | "|" | "&&" | ";" => break,
+                    "--test" => target = tokens.next().map(str::to_string),
+                    "--lib" => target = Some("lib".into()),
+                    "--manifest-path" | "--target" | "-p" | "--package" | "--features" => {
+                        tokens.next();
+                    }
+                    flag if flag.starts_with('-') => {}
+                    filter => {
+                        let filter = filter.trim_matches(|c| c == '\'' || c == '"');
+                        // Anything else is shell, not a libtest name filter.
+                        if !filter
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':')
+                        {
+                            break;
+                        }
+                        let file = path.file_name().unwrap().to_string_lossy().to_string();
+                        found.push((file, target.clone().unwrap_or_default(), filter.to_string()));
+                    }
+                }
+            }
+        }
+    }
+    found
+}
+
+/// A filtered `cargo test` exits 0 when its filter matches no test, so a renamed
+/// test silently leaves a required CI job proving nothing. Every filter must name
+/// an existing test function or a library module with tests.
+#[test]
+fn workflow_test_filters_name_existing_tests() {
+    let filters = workflow_test_filters();
+    assert!(
+        filters.iter().any(|(_, target, _)| target == "real_repo_loop"),
+        "parser found no filtered run: {filters:?}"
+    );
+    for (workflow, target, filter) in &filters {
+        assert!(
+            !target.is_empty(),
+            "{workflow}: filter {filter} has no --test/--lib target"
+        );
+        if target == "lib" {
+            let module = filter.trim_end_matches("::");
+            let rel = module.replace("::", "/");
+            let file = ["src/{}.rs", "src/{}/mod.rs"]
+                .iter()
+                .map(|f| repo_root().join(f.replace("{}", &rel)))
+                .find(|p| p.is_file())
+                .unwrap_or_else(|| panic!("{workflow}: --lib filter {filter} names no module"));
+            let text = std::fs::read_to_string(&file).unwrap();
+            assert!(
+                text.contains("#[test]") || text.contains("#[tokio::test]"),
+                "{workflow}: {filter} has no tests"
+            );
+        } else {
+            let file = repo_root().join(format!("tests/{target}.rs"));
+            let text = std::fs::read_to_string(&file).unwrap_or_else(|_| panic!("{workflow}: no tests/{target}.rs"));
+            assert!(
+                text.contains(&format!("fn {filter}(")) || text.contains(&format!("fn {filter}<")),
+                "{workflow}: `cargo test --test {target} {filter}` matches no test function"
+            );
+        }
+    }
+}

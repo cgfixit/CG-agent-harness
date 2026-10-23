@@ -36,6 +36,9 @@ const MAX_LOOP_CONTEXT_CHARS: usize = 8_000;
 const MAX_STATUS_DIFF_CHARS: usize = 20_000;
 /// Mirrors the server's ceiling for a speed-derived planner timeout.
 pub const MAX_PLANNER_TIMEOUT_SEC: u64 = 3_600;
+/// Iterations a run takes without `--max-iterations`. The shim budgets the
+/// same run with `REAL_REPO_RUN_DEFAULT_ITERATIONS`; the invariant guard pins both.
+pub const DEFAULT_MAX_ITERATIONS: u64 = 3;
 
 fn err(msg: &str) {
     eprintln!("  [error] {msg}");
@@ -380,7 +383,7 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     let commit_message = opts.require("commit-message").map_err(HarnessError::agentic)?;
     let reason = opts.get("reason").unwrap_or("").to_string();
     let max_iterations: u64 = match opts.get("max-iterations") {
-        None => 3,
+        None => DEFAULT_MAX_ITERATIONS,
         Some(v) => v
             .parse()
             .map_err(|_| HarnessError::agentic("--max-iterations must be an integer"))?,

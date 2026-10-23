@@ -764,10 +764,24 @@ fn cli_surface_hides_agentic_and_refuses_unknown_subcommands() {
     // sandbox" check fails and the CLI reports exit 2 -- same environment
     // dependence `real_repo_run_smoke` already tolerates by skipping.
     let (code, out, err) = run_agentic(&dir.path().join("config.yaml"), &["test"], &[], dir.path());
-    assert!(
-        matches!(code, 0 | 2),
-        "self-test exit contract is 0 (all checks passed) or 2 (a check failed, including a missing hard sandbox): {out} / {err}"
-    );
+    // Only environment-dependent checks may fail: the hard sandbox, and the gh
+    // version where gh is not installed. Exit 2 exactly when one did.
+    let failed: Vec<&str> = out
+        .lines()
+        .filter_map(|line| line.trim_start().strip_prefix("[FAIL] "))
+        .map(|rest| rest.split(':').next().unwrap_or(rest).trim())
+        .collect();
+    let gh_missing = cgagentharness::common::process::which("gh").is_none();
+    for name in &failed {
+        assert!(
+            *name == "hard sandbox" || (*name == "gh version" && gh_missing),
+            "self-test check {name:?} failed: {out} / {err}"
+        );
+    }
+    if std::env::var_os("CGAH_REQUIRE_CHECK_SANDBOX").is_some() {
+        assert!(!failed.contains(&"hard sandbox"), "{out} / {err}");
+    }
+    assert_eq!(code, if failed.is_empty() { 0 } else { 2 }, "{out} / {err}");
     assert!(out.contains("Self-test:"), "{out}");
     assert!(
         out.contains("passed") || err.contains("passed"),

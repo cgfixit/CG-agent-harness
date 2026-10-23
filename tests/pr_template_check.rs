@@ -497,3 +497,62 @@ fn missing_template_with_pr_files_set_is_not_a_pass() {
         "a missing template must not report success:\n{out}"
     );
 }
+
+/// The core-path list lives in three places: the PR template script, the CI
+/// workflow and the pre-commit notice. Normalized to `dir/` prefixes and exact
+/// file paths, the three must be the same non-empty set.
+#[test]
+fn workflow_and_script_share_the_core_path_list() {
+    let read = |rel: &str| std::fs::read_to_string(repo_root().join(rel)).unwrap();
+    let normalize = |raw: &str| {
+        raw.replace("\\/", "/")
+            .replace("\\.", ".")
+            .trim_end_matches('$')
+            .to_string()
+    };
+    let script = read("scripts/check-pr-template.sh");
+    let pattern = script
+        .lines()
+        .find_map(|l| l.strip_prefix("core_pattern='^("))
+        .and_then(|l| l.strip_suffix(")'"))
+        .expect("core_pattern in check-pr-template.sh");
+    let mut from_script: Vec<String> = pattern.split('|').map(normalize).collect();
+    let workflow = read(".github/workflows/pr-template-check.yml");
+    let start = workflow
+        .find("const corePaths = [")
+        .expect("corePaths in pr-template-check.yml");
+    let end = start + workflow[start..].find("];").unwrap();
+    // Each JavaScript regex literal `/^...$/`, escapes included.
+    let literal = regex::Regex::new(r"/\^((?:\\.|[^/\\])+)/").unwrap();
+    let mut from_workflow: Vec<String> = literal
+        .captures_iter(&workflow[start..end])
+        .map(|c| normalize(&c[1]))
+        .collect();
+    let hooks = read(".githooks/security.conf");
+    let start = hooks
+        .find("SEC_NOTICE_GLOBS+=(")
+        .expect("SEC_NOTICE_GLOBS in security.conf");
+    let end = start + hooks[start..].find("\n)").unwrap();
+    let mut from_hooks: Vec<String> = hooks[start..end]
+        .split('\'')
+        .skip(1)
+        .step_by(2)
+        .map(|glob| glob.trim_end_matches('*').to_string())
+        .collect();
+    for list in [&mut from_script, &mut from_workflow, &mut from_hooks] {
+        list.sort();
+    }
+    assert!(from_script.contains(&"src/shim/".to_string()), "{from_script:?}");
+    assert!(
+        from_script.contains(&"assets/config.default.yaml".to_string()),
+        "{from_script:?}"
+    );
+    assert_eq!(
+        from_script, from_workflow,
+        "check-pr-template.sh vs pr-template-check.yml"
+    );
+    assert_eq!(
+        from_script, from_hooks,
+        "check-pr-template.sh vs .githooks/security.conf"
+    );
+}
