@@ -481,3 +481,35 @@ fn denied_write_policy_still_allows_diff_without_executable_git_extensions() {
     assert!(ws.untracked_files().unwrap().contains(&"tripwire.sh".into()));
     assert!(!dest.join("tripwire-marker").exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn record_mutations_wait_for_the_run_owner_lease() {
+    use cgagentharness::agentic::run_store::acquire_run_lease;
+    let dir = tempfile::tempdir().unwrap();
+    let (ctx, dest, bare, rec) = fixture(dir.path());
+    let record = ctx.runs_dir().join(format!("{}.json", rec.run_id));
+    let before = std::fs::read(&record).unwrap();
+    let env = [
+        ("GROK_API_KEY", ""),
+        ("ANTHROPIC_API_KEY", ""),
+        ("DEEPAGENT_API_KEY", ""),
+    ];
+    let idarg = format!("--run-id={}", rec.run_id);
+    // Another operation on this run (a push still in flight) owns the lease.
+    let lease = acquire_run_lease(&ctx.runs_dir(), &rec.run_id, true).unwrap();
+    for args in [
+        vec!["real-repo-run-discard", &idarg],
+        vec!["real-repo-run-push", &idarg, "--reason=reviewed", "--confirm"],
+    ] {
+        let (code, out, err) = run_agentic(&ctx.config_path, &args, &env, dir.path());
+        assert_eq!(code, 2, "{}: {out} {err}", args[0]);
+        assert_eq!(std::fs::read(&record).unwrap(), before, "{}: record changed", args[0]);
+        assert!(dest.is_dir(), "{}: clone removed", args[0]);
+        assert!(git(&["branch", "--list", "codex/*"], &bare).is_empty());
+    }
+    drop(lease);
+    let (code, _, err) = run_agentic(&ctx.config_path, &["real-repo-run-discard", &idarg], &env, dir.path());
+    assert_eq!(code, 0, "{err}");
+    assert!(!dest.exists());
+}
