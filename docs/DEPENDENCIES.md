@@ -105,10 +105,11 @@ point-in-time advisory/license/source check, not proof of vulnerability absence.
 Workflow action pins live in `.github/workflows/` and move with those files,
 not with the lockfiles.
 
-## Last synchronization (2026-10-20)
+## Last synchronization (2026-10-23)
 
-Both crates took every compatible release the MSRV-aware resolver offered:
-shared `crc32fast` 1.5.3, `rustls-webpki` 0.103.16 and `tokio` 1.54.0; backend
+Both crates took `tokio` 1.54.1 for RUSTSEC-2026-0384 (1.54.0 yanked). The
+2026-10-20 pass took every compatible MSRV-aware release: shared `crc32fast`
+1.5.3 and `rustls-webpki` 0.103.16; backend
 `typed-path` 0.12.4; desktop `plist` 1.10.2 and `tauri-winres` 0.3.7. No
 manifest, feature, toolchain or advisory exception changed. Dated results
 describe that pass only; rerun the checks above before trusting them.
