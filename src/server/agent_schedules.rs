@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::common::errors::{HarnessError, Result};
-use crate::server::schemas::AgentRunRequest;
+use crate::server::schemas::{AgentRunRequest, Validate};
 
 pub const ACTIVE: &str = "active";
 pub const CANCELLED: &str = "cancelled";
@@ -553,13 +553,22 @@ fn read_schedule_text(path: &Path) -> Result<Option<String>> {
     Ok(Some(text))
 }
 
+/// Fire-time parse of a stored row: the same `Validate` pass `ValidJson`
+/// applies on `POST /api/agent/jobs`, so a row that stopped validating after
+/// it was created (a tightened `read_files` rule, a changed branch prefix) is
+/// refused rather than run with the failing field dropped.
 pub fn parse_request(value: &Value) -> crate::common::errors::Result<AgentRunRequest> {
-    serde_json::from_value(value.clone()).map_err(|_| {
+    let invalid = || {
         HarnessError::new(
             "INVALID_SCHEDULE_REQUEST",
             "stored schedule request is not a valid agent job",
         )
-    })
+    };
+    let request: AgentRunRequest = serde_json::from_value(value.clone()).map_err(|_| invalid())?;
+    if !request.validate().is_empty() {
+        return Err(invalid());
+    }
+    Ok(request)
 }
 
 #[cfg(test)]
