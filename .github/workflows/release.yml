@@ -12,9 +12,10 @@ on:
         type: boolean
         default: false
 
-# Tag pushes, the twice-daily schedule, and manual publish run to completion.
+# Read-only previews never wait for, or replace, a pending publication.
+# Publication keeps one running and one pending run; newer runs replace pending ones.
 concurrency:
-  group: release-publish
+  group: release-${{ github.event_name == 'workflow_dispatch' && !inputs.publish && format('preview-{0}', github.run_id) || 'publish' }}
   cancel-in-progress: false
 
 permissions: {}

@@ -4,7 +4,7 @@
 # home-lock refusal, standalone mode on a separate home, and its reset.
 # Path-filtered and manual only; not a merge gate. No secrets, no model pull.
 # --trust-cert is not exercised: it needs an interactive keychain password.
-name: macOS install
+name: Install - macOS setup and launch
 
 on:
   pull_request:

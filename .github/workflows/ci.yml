@@ -1,4 +1,4 @@
-name: CGagentHarness CI
+name: CI - Rust checks and cross-platform tests
 
 on:
   workflow_call:
@@ -133,7 +133,7 @@ jobs:
         with:
           # Check-only output. On dev-* clippy finished first and saved it, so
           # every build job restored it and recompiled all dependencies.
-          # rust-clippy.yml restores this entry without saving.
+          # clippy-sarif.yml restores this entry without saving.
           shared-key: clippy-${{ runner.os }}
           # Only main writes the cache: PR runs restore main's entry instead of
           # each branch saving its own and evicting the others (10 GB repo cap).
