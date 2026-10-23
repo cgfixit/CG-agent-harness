@@ -60,7 +60,12 @@ It waits for the Command Line Tools dialog, runs `install-macos.sh` (skipped whe
 (`~/.zprofile` for zsh, `~/.bash_profile` or `~/.profile` for bash), replaces
 admin's one-time setup code (it reads the code itself; in the app, **Cmd and +**
 shows it) with a new password and saves that in your login keychain as **CG Agent Harness
-admin password**, and grants the web allowlist. It then asks what to open:
+admin password**, grants the web allowlist, and offers to list the local model
+for automatic memory: it adds `structured_memory.suggestion_supported` (missing
+means no model may draft memory proposals) to the home `config.yaml` after a
+backup, default yes, then restart the app. When a previous install's home exists it first
+asks whether to delete it and its Keychain entries through `reset-macos.sh`
+(default no; you type `DELETE` after its dry run). It then asks what to open:
 **1** the app, **2** the console in your browser (served from that Terminal until
 Ctrl-C, or the open app's console), **3** both, **0** nothing. A failed step offers retry,
 skip or quit. A rerun skips finished steps (summary `ok`) and signs in with the saved
@@ -76,6 +81,8 @@ you quit it, because the app's backend needs the home.
 | `--model TAG`, `--with-gh`, `--no-ollama`, `--app-dir DIR` | Passed to `install-macos.sh` |
 | `--replace-app` | Passed on too, and runs the installer even when `--check` passes: replaces an installed app with the latest release (quit it first) |
 | `--trust-cert`, `--no-profile`, `--no-allowlist` | Trust the console certificate (choices 2 and 3 with the app); skip the profile or allowlist |
+| `--no-auto-memory` | Leave `suggestion_supported` unlisted |
+| `--reset-home` | With `--yes`, delete the previous home and its Keychain entries first |
 
 Each line is logged with a time to `scripts/logs/install.log` (private, ignored by
 git); passwords and setup codes never are. Read the saved password with

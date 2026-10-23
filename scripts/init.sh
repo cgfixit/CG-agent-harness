@@ -19,6 +19,9 @@
 #   --trust-cert      trust the console certificate for your browser (choices 2 and 3 with the app)
 #   --no-profile      do not add Homebrew and Rust PATH lines to your shell profile
 #   --no-allowlist    do not grant the web allowlist
+#   --no-auto-memory  do not list the local model for automatic memory suggestions
+#   --reset-home      with --yes, delete the previous install's home and Keychain
+#                     entries first (scripts/reset-macos.sh); asked otherwise, default no
 # Full guide: docs/INSTALL.md ("One command: init.sh").
 
 # Started from zsh or sh (`zsh scripts/init.sh`): rerun under bash. POSIX syntax until then.
@@ -38,8 +41,9 @@ if [ "$(sysctl -n sysctl.proc_translated 2>/dev/null)" = 1 ]; then exec arch -ar
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 choice='' interactive=1 trust=0 profile_opt=1 allowlist=1 ollama=1 app_dir='' replace=0
+auto_memory=1 reset_home=0
 install_args=()
-usage() { sed -n '2,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,26p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 while [ "$#" -gt 0 ]; do
   case $1 in
     --choice) case ${2:-} in 0 | 1 | 2 | 3) choice=$2; shift ;; *) echo 'init.sh: --choice takes 0, 1, 2 or 3' >&2; exit 3 ;; esac ;;
@@ -53,6 +57,8 @@ while [ "$#" -gt 0 ]; do
     --trust-cert) trust=1 ;;
     --no-profile) profile_opt=0 ;;
     --no-allowlist) allowlist=0 ;;
+    --no-auto-memory) auto_memory=0 ;;
+    --reset-home) reset_home=1 ;;
     -h | --help) usage; exit 0 ;;
     *) echo "init.sh: unknown option: $1 (see --help)" >&2; exit 3 ;;
   esac
@@ -538,6 +544,83 @@ step_web_allowlist() {
   return "$rc"
 }
 
+# A previous install's home (accounts, sessions, memory, logs) and its Keychain
+# entries go only on request, through scripts/reset-macos.sh: it shows what it
+# would remove and refuses while the app or a server holds the home. Never under
+# --yes without --reset-home. The app itself stays; ~/.CyClaw is another project.
+step_previous_install() {
+  local target=${CGAGENTHARNESS_HOME:-$HOME/.CGagentHarness}
+  if [ ! -f "$target/config.yaml" ] && [ ! -f "$target/harness.json" ]; then
+    say "no previous install at $target"
+    return "$SKIP"
+  fi
+  if [ "$interactive" = 0 ]; then
+    [ "$reset_home" = 1 ] || { say "keeping the previous install at $target (--reset-home deletes it)"; return "$SKIP"; }
+  else
+    ask "A previous install's home is at $target. Delete it and its Keychain entries for a fresh start? Accounts, sessions, memory and logs go with it. [y/N]" n
+    case $REPLY in [Yy]*) ;; *) say "keeping $target"; return "$SKIP" ;; esac
+  fi
+  CGAGENTHARNESS_HOME=$target bash "$root/scripts/reset-macos.sh" || return 1
+  if [ "$interactive" = 1 ]; then
+    ask 'Type DELETE to remove everything listed above (anything else keeps it):' ''
+    [ "$REPLY" = DELETE ] || { say "keeping $target"; return "$SKIP"; }
+  fi
+  CGAGENTHARNESS_HOME=$target bash "$root/scripts/reset-macos.sh" --yes
+}
+
+# Automatic memory drafts proposals (each still needs your approval) only for
+# model/mode pairs in structured_memory.suggestion_supported; a missing list
+# allows none. A home seeded before that key existed has no list, so offer the
+# local model: models.local_llm.model, plus the selected model when Ollama has it
+# (the memory model is the selected local model, else the configured one). One
+# line goes under structured_memory: after a backup, so comments stay.
+valid_tag() { [[ $1 =~ ^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$ ]]; }
+step_auto_memory() {
+  local cfg configured selected models=() m entries='' indent line mode tmp n
+  [ "$auto_memory" = 1 ] || { say 'skipped (--no-auto-memory)'; return "$SKIP"; }
+  cfg=${home:-${CGAGENTHARNESS_HOME:-$HOME/.CGagentHarness}}/config.yaml
+  if [ ! -f "$cfg" ] || [ -L "$cfg" ]; then warn "no regular config.yaml at $cfg yet: start the app or console once, then rerun"; return 1; fi
+  if grep -Eq '^[[:space:]]+suggestion_supported:' "$cfg"; then
+    say 'automatic memory already lists its models (structured_memory.suggestion_supported)'
+    return "$PRESENT"
+  fi
+  n=$(grep -Ec '^structured_memory:[[:space:]]*(#.*)?$' "$cfg")
+  configured=$(awk '
+    /^[^[:space:]#]/ { top = ($0 ~ /^models:/); inlocal = 0 }
+    top && /^  local_llm:/ { inlocal = 1; next }
+    top && inlocal && /^  [^[:space:]#]/ { inlocal = 0 }
+    top && inlocal && /^    model:/ {
+      v = $0; sub(/^    model:[[:space:]]*/, "", v); sub(/[[:space:]]+#.*$/, "", v)
+      gsub(/^["\047]|["\047]$/, "", v); print v; exit
+    }' "$cfg")
+  if [ "$n" != 1 ] || ! valid_tag "$configured"; then
+    warn "could not place the line automatically; add it under structured_memory: in $cfg yourself:"
+    warn '  suggestion_supported: [{ model: "<your local model tag>", modes: [summaries, insights, both] }]'
+    return 1
+  fi
+  models=("$configured")
+  selected=$(sed -n 's/.*"selected_model"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${cfg%/config.yaml}/harness.json" 2>/dev/null | head -n 1)
+  if [ -n "$selected" ] && [ "$selected" != "$configured" ] && valid_tag "$selected" && command -v ollama >/dev/null 2>&1 &&
+    ollama list 2>/dev/null | awk 'NR > 1 { print $1 }' | grep -Fxq -e "$selected" -e "$selected:latest"; then
+    models+=("$selected")
+  fi
+  for m in "${models[@]}"; do entries="$entries${entries:+, }{ model: \"$m\", modes: [summaries, insights, both] }"; done
+  ask "Let automatic memory draft proposals with ${models[*]}? You still approve each one. This adds structured_memory.suggestion_supported to $cfg and keeps a backup. [Y/n]" y
+  case $REPLY in [Nn]*) say 'automatic memory stays off until a model is listed (docs/STRUCTURED_MEMORY.md)'; return "$SKIP" ;; esac
+  indent=$(awk '/^structured_memory:/ { in_block = 1; next } in_block && /^[^[:space:]]/ { exit } in_block && /^[[:space:]]+[^[:space:]#]/ { match($0, /^[[:space:]]+/); print substr($0, 1, RLENGTH); exit }' "$cfg")
+  line="${indent:-  }suggestion_supported: [$entries]"
+  mode=$(stat -f %Lp "$cfg") || return 1
+  cp -p "$cfg" "$cfg.bak-$(date +%Y%m%d%H%M%S)" || return 1
+  tmp=$(mktemp "$cfg.XXXXXX") || return 1
+  if ! awk -v line="$line" '{ print } !done && /^structured_memory:/ { print line; done = 1 }' "$cfg" >"$tmp" || ! chmod "$mode" "$tmp" || ! mv -f "$tmp" "$cfg"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  say "listed for automatic memory: ${models[*]} (backup next to $cfg)"
+  # Restart-only key: a server or app that is already running reads it at its next start.
+  if [ -n "$(app_backends)" ] || { [ -n "$origin" ] && [ -z "$server_pid" ]; }; then warn 'restart the app or your server so it reads the new list'; fi
+}
+
 launch() {
   local c=$choice ollama_flag=() trust_flag=() port
   [ "$ollama" = 1 ] || ollama_flag=(--no-ollama)
@@ -586,12 +669,14 @@ launch() {
 note "=== init.sh started $(date '+%Y-%m-%d %H:%M:%S %Z'); args: ${install_args[*]:-none}; choice ${choice:-ask}; interactive $interactive"
 profile='' env_files='' home='' kc_service=''
 step 'Check this Mac' required step_preflight
+step 'Previous install (scripts/reset-macos.sh, asked)' optional step_previous_install
 step 'Command Line Tools' required step_developer_tools
 step 'Git hooks' optional step_checkout
 step 'Install tools, backend and app (install-macos.sh)' required step_install
 step 'Shell PATH for zsh or bash' optional step_shell_profile
 step 'Admin password (replaced, kept in Keychain)' optional step_admin_password
 step 'Web allowlist (web-allowlist-bootstrap.sh)' optional step_web_allowlist
+step 'Automatic memory model (structured_memory.suggestion_supported)' optional step_auto_memory
 close_server
 summary
 failed=0
