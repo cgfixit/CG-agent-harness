@@ -31,7 +31,7 @@ async fn start_counting_mock() -> (String, std::sync::Arc<std::sync::atomic::Ato
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    (format!("http://127.0.0.1:{}/v1", addr.port()), count) // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+    (format!("http://127.0.0.1:{}/v1", addr.port()), count) // DevSkim: ignore DS137138,DS162092 because this test-only model has no credentials and binds only to loopback.
 }
 
 async fn session_with_goal(s: &common::TestServer) -> String {

@@ -4203,7 +4203,7 @@ async function runLoopTurns() {
         stopLoop('model reported GOAL_DONE (unverified) — chat continuation stopped');
         return;
       }
-      if (loopState.completionTokens >= MAX_LOOP_TOTAL_COMPLETION_TOKENS) {
+      if (MAX_LOOP_TOTAL_COMPLETION_TOKENS > 0 && loopState.completionTokens >= MAX_LOOP_TOTAL_COMPLETION_TOKENS) {
         stopLoop('loop aggregate token budget exhausted (' + loopState.completionTokens + ' total completion tokens)');
         return;
       }
