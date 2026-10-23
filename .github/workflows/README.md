@@ -27,6 +27,7 @@ on enforcement; the review gate remains advisory.
 |---|---|
 | [`bundle.yml`](bundle.yml) | CLI archives and universal macOS app artifacts on main pushes; does not publish releases. |
 | [`desktop.yml`](desktop.yml) | Reusable universal macOS build, dependency policy and bundle verification; Bundle, release or manual. |
+| [`desktop-check.yml`](desktop-check.yml) | Desktop crate fmt, Clippy, tests and dependency policy when `desktop/` or `local_tls.rs` change; PR and merge queue, skipped otherwise; advisory until required. |
 | [`release.yml`](release.yml) | Plan, verify, package and publish; stable tags, twice-daily schedule or manual preview/publish. Uses the release environment. |
 
 ## Lint, security and targeted checks
