@@ -140,7 +140,9 @@ Each command supports `--help`.
 
 First launch seeds the home's `config.yaml` from [the defaults](assets/config.default.yaml); edit that copy. Permission gates require literal YAML `true`; quoted `"true"` or a missing key does not enable them. Startup logs any setting that ships `true` but is absent from your `config.yaml`, and `/memory` lists the structured-memory ones. Most settings require restart; selected web/API limits support [live reload](docs/CONFIG_RELOAD.md).
 
-Run the local quality bar (fmt, clippy, tests, and `cargo deny` when installed; see [AGENTS.md](AGENTS.md)):
+Before contributing, run `bash scripts/ensure-githooks.sh` and inspect its output
+([hook guide](docs/GITHOOKS.md)). Follow [AGENTS.md](AGENTS.md) for focused local
+verification. For comprehensive checks:
 
 ```bash
 SKIP_LIVE=1 scripts/verify-local.sh
