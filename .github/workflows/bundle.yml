@@ -1,9 +1,7 @@
 # Package the loopback CLI/server and universal macOS desktop application.
-# Hygiene mirrors CyClaw-Net-Viewer's Bundle job: release build -> stage a
-# named artifact -> sha256 -> verify after extract -> upload. Ad-hoc
-# codesign on macOS only. DRY via scripts/package-release.sh (shared with
-# release.yml).
-name: Bundle
+# Release build -> stage -> checksum -> extract-verify -> upload.
+# Ad-hoc codesign on macOS; scripts/package-release.sh is shared with release.yml.
+name: Bundle - CLI archives and macOS app
 
 on:
   push:
@@ -14,7 +12,7 @@ permissions:
 
 concurrency:
   group: bundle-${{ github.workflow }}-${{ github.ref }}
-  # Every main revision is release evidence; let its packaging finish.
+  # Preserve the running build; a newer push replaces an older pending run.
   cancel-in-progress: false
 
 env:
