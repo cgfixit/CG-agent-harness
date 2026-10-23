@@ -415,3 +415,14 @@ jobs:
         with:
           command: check
           arguments: --all-features
+      # The Seatbelt fixture (tests/fixtures/cargo-sandbox) is a third lockfile:
+      # tests/macos_cargo.rs compiles its crates, so they get the same RustSec,
+      # bans and sources policy from the root deny.toml. Licenses are skipped
+      # because the unpublished fixture crate has no license field. A second
+      # step, not a matrix: the main ruleset requires this job by name.
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          command-arguments: advisories bans sources
+          manifest-path: tests/fixtures/cargo-sandbox/Cargo.toml
+          arguments: --config deny.toml
