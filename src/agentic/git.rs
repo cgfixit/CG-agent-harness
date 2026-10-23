@@ -265,13 +265,24 @@ pub fn isolate_clone_environment(env: &mut BTreeMap<String, String>, template: &
 mod tests {
     #[test]
     fn pinned_helper_requires_an_absolute_quotable_path() {
-        let args = super::pinned_credential_helper(std::path::Path::new("/opt/gh dir/gh")).unwrap();
+        // temp_dir() is absolute on every platform (a drive path on Windows).
+        let gh = std::env::temp_dir().join("gh dir").join("gh");
+        let args = super::pinned_credential_helper(&gh).unwrap();
         assert_eq!(args[..3], ["-c", "credential.helper=", "-c"]);
-        assert_eq!(args[3], "credential.helper=!'/opt/gh dir/gh' auth git-credential");
-        for refused in ["gh", "relative/gh", "/opt/it's/gh"] {
+        assert_eq!(
+            args[3],
+            format!("credential.helper=!'{}' auth git-credential", gh.display())
+        );
+        let quoted = std::env::temp_dir().join("it's").join("gh");
+        for refused in [
+            std::path::PathBuf::from("gh"),
+            std::path::PathBuf::from("relative/gh"),
+            quoted,
+        ] {
             assert!(
-                super::pinned_credential_helper(std::path::Path::new(refused)).is_err(),
-                "{refused}"
+                super::pinned_credential_helper(&refused).is_err(),
+                "{}",
+                refused.display()
             );
         }
     }
