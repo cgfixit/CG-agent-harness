@@ -23,7 +23,7 @@ release flow: [docs/RELEASING.md](../../docs/RELEASING.md).
 ## Lint and scanners
 
 - [`zizmor.yml`](zizmor.yml): path-filtered: zizmor and pinned actionlint on workflows, plus `test-release-plan.py` and `test-review-gate.mjs`.
-- [`script-lint.yml`](script-lint.yml): path-filtered: shellcheck, Python compile, `node --check` on scripts and hooks.
+- [`script-lint.yml`](script-lint.yml): path-filtered: shellcheck, Python compile, `node --check`, and disposable Git-hook behavior checks.
 - [`rust-clippy.yml`](rust-clippy.yml): push, PR, weekly: the `ci.yml` clippy invocation published as SARIF; not the gate.
 - [`codeql.yml`](codeql.yml): push, PR, weekly: CodeQL for Rust and Actions.
 - [`devskim.yml`](devskim.yml): push and PR to `main`, weekly: DevSkim SARIF scan.

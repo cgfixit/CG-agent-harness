@@ -3,8 +3,8 @@
 # .githooks/_security.sh -- generic security gate for pre-commit and pre-push.
 # How it works, overrides, and how to reuse it: docs/GITHOOKS.md
 #
-# Sourced by the hooks, never executed. Identical in every repo; repo-specific
-# values live in .githooks/security.conf. Bash 3.2 compatible (stock macOS).
+# Sourced by the hooks, never executed; repo-specific values live in
+# .githooks/security.conf. Bash 3.2 compatible (stock macOS).
 #
 # Scope, on purpose. A hook earns its place only where CI is too late or
 # cannot see the action at all:
@@ -18,14 +18,14 @@
 # This is a speed bump, not a boundary: --no-verify skips it, a clone that
 # never ran `git config core.hooksPath .githooks` does not have it, and any
 # pipeline that pins core.hooksPath elsewhere bypasses it. CI secret scanning
-# and the branch ruleset are the controls; this makes the common case fail
-# early and tells the agent what to do at the moment it matters.
+# is a backstop; branch protection needs separate server configuration.
+# This makes the common case fail early and tells the agent what to do.
 #
 # Operator overrides. An agent setting one without being told to is a rule
 # violation, and the variable is visible in its transcript:
 #   HOOK_OPERATOR_ACK=1          allow a change to a protected path
 #   ALLOW_MAIN_PUSH=1            allow a direct push to a protected branch
-#   ALLOW_FORCE_WITH_LEASE=true  allow a non-fast-forward push
+#   ALLOW_FORCE_WITH_LEASE=true  allow a tag update or other ref rewrite
 # Secret and blocked-file findings have no override variable. For a false
 # positive: put `gitleaks:allow` on the line, or extend SEC_ALLOW_REGEX /
 # SEC_BLOCKED_EXCEPT in security.conf (itself a protected path).
@@ -296,6 +296,13 @@ sec__check_files() {
   done <<<"$bfiles"
   while IFS= read -r f; do
     [[ -n "$f" ]] || continue
+    # Git quotes special paths even with core.quotePath=false; colons collide
+    # with path:line:content records. Refuse rather than mis-scan either form.
+    if [[ "$f" == \"* || "$f" == *:* ]]; then
+      sec__say "security gate: unsupported filename in $where: $f" \
+        "  Quotes, backslashes, control characters and colons cannot be scanned safely."
+      rc=1
+    fi
     if sec__match_any "$f" ${SEC_PROTECTED_GLOBS[@]+"${SEC_PROTECTED_GLOBS[@]}"} ||
        sec__match_any "$f" ${SEC_PROTECTED_AGENT_GLOBS[@]+"${SEC_PROTECTED_AGENT_GLOBS[@]}"}; then
       protected+="    $f"$'\n'

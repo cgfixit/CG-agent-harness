@@ -1,7 +1,7 @@
 # Static checks for the repository's helper scripts: shellcheck on every
 # tracked shell script (and the root init.command launcher) and git hook, a full compile of every Python script,
-# and `node --check` on every .mjs script. Nothing here runs a script; the
-# contract tests that do live in ci.yml. File lists come from `git ls-files`
+# and `node --check` on every .mjs script. Hook behavior runs in disposable
+# repositories; application contract tests live in ci.yml. Lists use `git ls-files`
 # so a new script is linted without editing this workflow.
 name: script lint
 
@@ -67,6 +67,8 @@ jobs:
                   compile(f.read(), path, "exec")
               print(path)
           '
+      - name: Git hook behavior in disposable repositories
+        run: python3 scripts/test-githooks.py
       - name: Node scripts parse
         run: |
           set -euo pipefail
