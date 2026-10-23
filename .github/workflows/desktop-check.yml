@@ -1,0 +1,151 @@
+# Pull-request compile gate for the desktop crate. desktop.yml builds and
+# packages the universal .app but runs only from bundle.yml (main pushes) and
+# release.yml, and desktop/ is not a member of the root Cargo workspace, so the
+# backend fmt, clippy and test jobs never see it. desktop/src/backend.rs also
+# `#[path]`-includes src/common/local_tls.rs. A desktop/**, desktop/Cargo.lock
+# (Dependabot's /desktop updates) or local_tls.rs change therefore merged
+# green and broke the next main push. This workflow compiles, lints and tests
+# the crate the way desktop.yml does, without lipo, codesign or packaging.
+#
+# Not in the main ruleset. The classify job skips the compile jobs when no
+# desktop path changed, and a skipped job passes branch protection, so the
+# operator can add `desktop compile (macos-latest)` and `desktop cargo deny
+# (advisories, licenses, bans)` to the ruleset later without leaving
+# non-desktop PRs pending; a `paths:` filter on the trigger would. The
+# classify job runs on every PR and merge-queue entry (seconds on Linux); the
+# macOS job runs only when a desktop path changed, or on any doubt.
+name: desktop check
+
+on:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: desktop-check-${{ github.workflow }}-${{ github.ref }}
+  # Pull requests only. Do not cancel main, tags, schedules, or merge-queue runs.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  changes:
+    name: classify desktop paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      desktop: ${{ steps.classify.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # A pull_request checkout is GitHub's test merge commit; depth 2
+          # brings its parents, and HEAD^1 is the base it merges into. A
+          # merge_group checkout is the queue's merge commit; its base is
+          # fetched below by SHA.
+          fetch-depth: 2
+      - name: Skip the compile jobs when no desktop path changed
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+        # Any doubt (a failed fetch or diff, an empty diff) runs everything.
+        run: |
+          desktop=true
+          base=""
+          case "$EVENT_NAME" in
+            pull_request) base=HEAD^1 ;;
+            merge_group)
+              if git fetch --depth=1 origin "$MERGE_GROUP_BASE_SHA"; then
+                base=FETCH_HEAD
+              fi
+              ;;
+          esac
+          if [ -n "$base" ] &&
+             paths=$(git diff --no-renames --name-only "$base" HEAD) &&
+             [ -n "$paths" ] &&
+             ! printf '%s\n' "$paths" |
+               grep -Eq '^(desktop/|src/common/local_tls\.rs$|\.github/workflows/desktop-check\.yml$)'; then
+            desktop=false
+          fi
+          echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
+          echo "event=$EVENT_NAME desktop=$desktop"
+
+  desktop:
+    name: desktop compile (macos-latest)
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      # Same build environment as scripts/package-desktop.sh, so a pass here
+      # predicts the bundle build and the restored main cache stays valid.
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
+      RUSTUP_AUTO_INSTALL: "0"
+      CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP: none
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Both pins, as desktop.yml installs them: rust-toolchain.toml selects
+      # 1.88 at the root and 1.90 inside desktop/.
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: "1.90"
+          components: rustfmt, clippy
+          targets: aarch64-apple-darwin
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: "1.88"
+          components: rustfmt, clippy
+          targets: aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Restore-only: the same shared key desktop.yml saves from main, so a
+          # PR reuses main's compiled dependencies and never evicts them.
+          shared-key: desktop-universal
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: |
+            . -> target
+            desktop -> target
+      - name: Desktop formatting
+        run: cd desktop && cargo fmt -- --check
+      - name: Release backend for desktop/build.rs
+        # desktop/build.rs hashes ../target/release/cgagentharness at compile
+        # time and fails without it. Same arm64 path as package-desktop.sh,
+        # minus codesign: the hash is of the file, not its signature.
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          mkdir -p target/release
+          cp target/aarch64-apple-darwin/release/cgagentharness target/release/cgagentharness
+      - name: Desktop Clippy and policy tests
+        run: |
+          cd desktop
+          cargo clippy --all-targets --all-features --locked -- -D warnings
+          cargo test --locked
+
+  desktop-dependencies:
+    name: desktop cargo deny (advisories, licenses, bans)
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check
+          manifest-path: desktop/Cargo.toml
+          arguments: --all-features --config desktop/deny.toml
