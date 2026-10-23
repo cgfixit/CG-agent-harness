@@ -4,7 +4,7 @@ Operator and CI helpers. Only `verify-local.sh`, `check-pr-template.sh` and
 `python3 test-desktop-backend.py` are pre-approved for Claude in
 [.claude/settings.json](../.claude/settings.json). The `test-*.mjs` files are
 Node `vm` contract tests for `harness.html` slices and the desktop Setup script,
-run by the `ci.yml` chat-browser job and `verify-local.sh`; `zizmor.yml` also runs
+run by the `ci.yml` chat-browser job and `verify-local.sh`; `workflow-lint.yml` also runs
 `test-review-gate.mjs`.
 
 ## Operator
@@ -46,7 +46,7 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 - [`test-session-tokens.mjs`](test-session-tokens.mjs): header token refresh with out-of-order replies.
 - [`test-spend-dashboard.mjs`](test-spend-dashboard.mjs): spend summary rows, escaping, unknown days.
 - [`test-desktop-backend.py`](test-desktop-backend.py): public sidecar contract tests with disposable homes.
-- [`test-grok-acp-probe.py`](test-grok-acp-probe.py), [`test-prepare-cargo.py`](test-prepare-cargo.py), [`test-release-plan.py`](test-release-plan.py): unittest coverage of the matching scripts; the last also gates `release.yml` and `zizmor.yml`.
+- [`test-grok-acp-probe.py`](test-grok-acp-probe.py), [`test-prepare-cargo.py`](test-prepare-cargo.py), [`test-release-plan.py`](test-release-plan.py): unittest coverage of the matching scripts; the last also gates `release.yml` and `workflow-lint.yml`.
 
 ## Packaging and release
 

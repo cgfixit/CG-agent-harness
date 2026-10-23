@@ -47,9 +47,9 @@ For each file in the diff, extract the semantic change, not just the text:
 - `rust-toolchain.toml` — MSRV/channel bump (backend 1.88, desktop 1.90 are
   independently pinned; a bump to one is not a bump to the other)
 - `deny.toml` — advisory ignores, license allowlist, banned-crate changes
-- `.github/workflows/*.yml` (`ci.yml`, `rust-clippy.yml`, `release.yml`,
+- `.github/workflows/*.yml` (`ci.yml`, `clippy-sarif.yml`, `release.yml`,
   `bundle.yml`, `desktop.yml`, `codeql.yml`, `devskim.yml`, `gitleaks.yml`,
-  `zizmor.yml`) — toolchain versions, cached paths, new required jobs
+  `workflow-lint.yml`) — toolchain versions, cached paths, new required jobs
 - `scripts/package-desktop.sh`, `docs/RELEASING.md`, `docs/DESKTOP.md` —
   packaging order or signing steps that reference dependency/toolchain state
 
