@@ -32,8 +32,8 @@ agent, chat, or loop tool.
    Merge these fields into the existing configuration; do not replace other
    sections. All gateway fields are restart-only. Port collision or invalid configuration refuses startup.
 3. Mint a key using the local CLI. Use an existing account's stable `user_id`
-   (`GET /api/auth/whoami`, or `GET /api/auth/users` for an administrator), `local` for an intentionally
-   auth-disabled home's namespace, or an explicit `user_*` operator namespace:
+   (`GET /api/auth/whoami`, or `GET /api/auth/users` for an administrator), or
+   `local` for an intentionally auth-disabled home. The account must be enabled and past bootstrap:
 
    ```sh
    cgagentharness mcp-key create --owner YOUR_OWNER_ID --label workstation \

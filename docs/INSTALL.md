@@ -221,8 +221,9 @@ brew install --cask ollama
 Launch Ollama, then verify `ollama list` and the endpoint in [model setup](MODELS.md).
 If the CLI is unavailable, follow the
 [Ollama quickstart](https://docs.ollama.com/quickstart). The server never installs
-Ollama or downloads a model; `install-macos.sh` installs Ollama unless
-`--no-ollama` and pulls a model only with `--model`.
+Ollama or automatically downloads models; deliberate [API pulls](API_ROUTES.md#chat-model-and-chat-sessions)
+are supported. `install-macos.sh` installs Ollama unless `--no-ollama` and pulls
+a model only with `--model`.
 
 Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 assume
 `OLLAMA_CONTEXT_LENGTH=32768` is set **before** the Ollama process starts.
@@ -383,7 +384,7 @@ CGagentHarness console on https://127.0.0.1:8790/ (home /Users/you/.CGagentHarne
 First run seeds the application home. Chat uses the configured loopback service's
 `qwen3.8:27b-mlx-cg` tag by default, a [derived tag](MODELS.md#pin-32768-with-a-local-derived-tag)
 that exists only after `ollama create`. Inspect installed tags with `/model list` and
-select one with `/model use <exact-tag>`. The harness never downloads missing tags.
+select one with `/model use <exact-tag>`. Selection never downloads missing tags.
 
 To change the endpoint or configure the coding planner, quit with Cmd-Q or stop
 `serve` with Ctrl-C. Merge the exact installed tag into the active home's

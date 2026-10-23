@@ -58,9 +58,9 @@ with `/model use qwen3.8:27b-mlx-cg`. It is local-only: do not pull it.
 `/model profile` reports `declared.modelfile_num_ctx` and
 `loaded.context_length`; chat uses the loaded value. Confirm `/api/ps` is 32768.
 
-The recipe does not disable thinking. The harness sends `reasoning_effort:
-none` for provider `ollama` on every tag. For a 65536 window on a 48 GB Mac (the
-parent tag already pins it) and the values to set, see the
+The recipe does not disable thinking. For provider `ollama`,
+`models.local_llm.reasoning_effort` ships as `none`; absent/empty omits it.
+For a 65536 window on a 48 GB Mac and the values to verify, see the
 [bake-off report](bakeoff/local-model-bakeoff-2026-10-10.md#windows-above-32768-on-a-48-gb-mac).
 `SMOKE_MODEL=qwen3.8:27b-mlx-cg scripts/smoke-ollama.sh` selects it. Pinned
 models under `scripts/live-ollama/` are a separate fingerprint set.

@@ -196,16 +196,21 @@ certificate substitution.
 
 Explicit web settings persist; absent/invalid legacy `web_enabled` stays off.
 `/web on|off` (also terminal `web on|off`) controls future reads/injection;
-URL grants remain required. Enablement/allowlist are **shared-home** settings;
-saved selections are account-private. `/web status` shows groups/seeds;
-`/web check URL` checks exact permission without network access.
+enablement and policy are **shared-home**; selections are account-private.
+Allowlist mode is the default and requires URL grants. An administrator can
+confirm `/web mode denylist` to permit unblocked public URLs. `/web block` adds
+blocks; `/web unblock` removes them. Blocks win in both modes, including across
+HTTP/HTTPS; a host without a path blocks its subdomains too. Switching modes
+preserves both lists. Named groups still restrict reads to their allow rules.
+`/web status` shows policy; `/web check URL` checks permission without networking.
 
-`tools/web_allowlist.json` is the v1 policy: up to `web.max_rules` rules
-(default 64, 1–256, restart-only; one grant names 1–32), 4 KiB each and at
-least 64 KiB. A policy over a lowered cap is refused whole. `/web allow`
+`tools/web_allowlist.json` is the v1 policy: up to `web.max_rules` entries per
+allow/block list (default 64, range 1–256, restart-only; batches name 1–32).
+File size is capped at `max(64 KiB, web.max_rules × 4 KiB)`.
+A policy over a lowered cap is refused whole. `/web allow`
 and terminal `web allow` validate groups/seeds and assign stable IDs. Batches
-write atomically. Missing policy refuses reads; a validated admin grant can
-initialize it with that rule only. Invalid/unreadable files never reset.
+write atomically. Missing policy refuses reads; an authorized policy mutation
+can initialize it. Invalid/unreadable files never reset.
 Stop the server before manual edits; otherwise use serialized atomic API/CLI mutations.
 
 | Rule | Meaning |
@@ -235,12 +240,12 @@ without saving partial evidence. Byte and link limits still apply.
 Each rule belongs to one source group, `default` unless `--group NAME` names
 another. Repeatable `--seed URL` records concrete starting pages; each seed must
 fit a pattern in the same grant. `--group` on `check`, `fetch`, `pages`, `search`
-or `research` limits that request to the group's rules; without it, any rule can
-permit. `/web deny` removes a rule ID or matching pattern across groups.
+or `research` limits that request to the group's allow rules. `/web deny` removes
+an allow rule ID or matching pattern across groups; it does not add a block.
 
 Legacy rows migrate only to the actual stored URL targets the old fetcher could
 request. A formerly implicit prefix becomes exact; add an explicit wildcard to
-permit discovery (a host wildcard also needs a concrete seed). Unknown legacy fields/invalid rows fail the whole
+permit discovery. Unknown legacy fields/invalid rows fail the whole
 migration. Reading legacy data normalizes it in memory; the next authorized
 mutation persists v1. Legacy unproven `web_context.txt`/`web_last.json` are never
 injected. Current selections use `tools/web_<account-hash>_{last,context}.json`.
@@ -248,8 +253,8 @@ injected. Current selections use `tools/web_<account-hash>_{last,context}.json`.
 ## Search, fetch and research
 
 The app and browser console share the backend. Enter slash commands as plain text
-starting with `/`. Google needs a [SerpAPI key or Google grant](#google-search).
-To read the example page, an administrator first grants it:
+starting with `/`. See [Google search permissions](#google-search).
+In default allowlist mode, an administrator first grants the example page:
 
 ```text
 /web allow https://doc.rust-lang.org/book/ch01-01-installation.html
@@ -344,7 +349,7 @@ results, or silently switch search engines. Challenges, redirects, unreadable
 output and transport failures are explicit failures, so credential-free success
 is not promised. A keyed request's invalid-key, quota or upstream failure also
 stays explicit; public fallback occurs only when the active key is absent. For
-that keyless fallback only, an administrator first grants the Google page:
+that keyless fallback in allowlist mode, an administrator first grants Google:
 
 ```text
 /web allow https://www.google.com/*
@@ -353,8 +358,9 @@ that keyless fallback only, an administrator first grants the Google page:
 
 The exact generated search URL also works; an exact homepage grant is not enough.
 `https://google.com/*` does not grant `www`; the apex endpoint may redirect and
-redirects remain refused. Without a Google grant, an empty policy gives
+redirects remain refused. In allowlist mode, an empty policy gives
 `WEB_ALLOWLIST_EMPTY` and a non-Google policy gives `WEB_GOOGLE_PERMISSION`.
+Denylist mode needs no Google grant, but blocked Google URLs remain refused.
 
 `/web search` defaults to Google in the console and CLI; `/web pages` selects the
 existing permitted-page passage search, as does a source-group argument
@@ -387,13 +393,15 @@ charge the full response allowance. Reports expose partial coverage, failures an
 unvisited work.
 
 For `research`, repeat `--url` for permitted starts. Starts narrow one run but
-grant nothing. Without them, traversal begins at group seeds and permitted
-literal prefixes such as `/docs/`; host wildcards need concrete seeds. Every run
-attempts bounded discovery. Robots is fetched only with content permission. If
-unreadable, seeds remain readable but link traversal stops. HTML links are
-deduplicated, paced, and group-restricted. Robots consumes requests but supplies
-no evidence. Sitemap discovery is absent. Page research needs no provider key
-and has no cloud fallback.
+grant nothing. Otherwise traversal uses group seeds and permitted literal prefixes
+such as `/docs/`. A host wildcard without seeds can use up to four matching,
+currently permitted cached pages; without either, it reports `WEB_SEED_REQUIRED`.
+Each run attempts bounded discovery. Literal origin `/robots.txt` is readable
+when an allow rule covers that origin, even if path-restricted, or in ungrouped
+denylist mode; blocks still win. Unreadable robots leaves seeds readable but
+stops link traversal. Links are deduplicated, paced and policy-checked. Robots
+consumes requests but supplies no evidence. Sitemap discovery is absent.
+Page research needs no provider key and has no cloud fallback.
 
 Tantivy rebuilds a bounded in-memory BM25 index from permitted cached extracts.
 Phrases, identifiers (each `a_b`/`a::b` word matches exactly), title and
@@ -442,11 +450,11 @@ Research questions, answers, controller state, and web selections belong to the
 initiating random account identity, so a recreated username inherits nothing.
 Deleted accounts can leave private selections on disk, inaccessible to replacements.
 
-A non-empty allowlist is an armed content surface: every granted origin or path
-is reachable by chat `web_fetch`, still bounded by `web.chat_tool_calls`. Fresh
-homes refuse page fetching with `WEB_ALLOWLIST_EMPTY`. Search listings never
-authorize their destinations: a follow-up `web_fetch` must independently pass the
-current allowlist and account checks.
+Chat `web_fetch` reaches URLs permitted by the active mode, bounded by
+`web.chat_tool_calls`. Fresh homes use an empty allowlist and refuse page fetching
+with `WEB_ALLOWLIST_EMPTY`; confirmed denylist mode broadens public access.
+Search listings grant nothing: follow-up reads independently pass current policy,
+account and public-address checks.
 
 Policy is rechecked at dispatch, cache/index/context reads, storage, model use,
 and delivery; revocation discards in-flight evidence and blocks revoked cache,

@@ -266,11 +266,9 @@ resources, CLI/worker dispatch, policy tests, extracted ZIP, and dependencies. A
 the exact SHA for 14 days. Backend CI remains separate. A successful build is not
 GUI acceptance.
 
-Tauri is pinned to `=2.12.0`, whose published `tauri-utils` 2.10.1 replaces the
-unmaintained rust-unic chain with ICU through urlpattern 0.6; the upstream-commit
-patch that carried this fix was removed once Cargo reported it unused. Desktop
-Rust 1.90 is required; backend Rust 1.88 remains independently pinned. Each crate
-owns its lockfile; see [dependency maintenance](DEPENDENCIES.md). Desktop
+Desktop Rust 1.90 and backend Rust 1.88 remain independently pinned. Each crate
+owns its lockfile; [dependency maintenance](DEPENDENCIES.md#retained-constraints)
+tracks Tauri's pin and the maintained ICU replacement for rust-unic. Desktop
 dependency policy uses the same advisory/license/source rules, scoped to both
 shipped macOS targets, with no Git source in the lock and no advisory exceptions.
 
