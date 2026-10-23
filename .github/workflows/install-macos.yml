@@ -1,7 +1,7 @@
 # Run the macOS installer and launcher end to end on a fresh macos-latest runner:
 # inventory, dry run, real install (Rust, Ollama, backend build, checksummed
 # release app), idempotent rerun, app-mode browser hand-off, the standalone
-# home-lock refusal, and standalone mode on a separate home.
+# home-lock refusal, standalone mode on a separate home, and its reset.
 # Path-filtered and manual only; not a merge gate. No secrets, no model pull.
 # --trust-cert is not exercised: it needs an interactive keychain password.
 name: Install - macOS setup and launch
@@ -13,6 +13,8 @@ on:
       - "scripts/init.sh"
       - "scripts/start-macos.sh"
       - "scripts/start-web.sh"
+      - "scripts/reset-macos.sh"
+      - "scripts/test-reset-macos.py"
       - "scripts/web-allowlist-bootstrap.sh"
       - ".github/workflows/install-macos.yml"
   workflow_dispatch:
@@ -24,6 +26,18 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  reset-contract:
+    name: reset refusal contract (portable command doubles)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 scripts/test-reset-macos.py -v
+
   install:
     name: install-macos.sh and start-macos.sh (macos-latest)
     runs-on: macos-latest
@@ -108,19 +122,54 @@ jobs:
           test "$rc" = 3
 
       - name: Standalone mode on a separate home
+        id: standalone
         timeout-minutes: 5
         run: |
           set -euo pipefail
-          home=$(mktemp -d)
+          home=$(mktemp -d "$RUNNER_TEMP/cgah-reset.XXXXXX")
+          home=$(cd "$home" && pwd -P)
+          printf '%s\n' "$home" > "$home/.k19-owned"
+          printf 'home=%s\n' "$home" >> "$GITHUB_OUTPUT"
           CGAGENTHARNESS_HOME=$home NO_OPEN=1 scripts/start-macos.sh --no-ollama --standalone 8791 > standalone.log 2>&1 &
           server=$!
+          trap 'if [ -n "$server" ]; then kill "$server" 2>/dev/null || true; wait "$server" || true; fi' EXIT
           for _ in $(seq 1 120); do grep -q '^CGagentHarness console:' standalone.log && break; sleep 0.5; done
           cat standalone.log
+          # start-macos execs start-web, whose direct child holds this home's lock.
+          backend=$(lsof -t -- "$home/.server.lock")
+          test "$(ps -o ppid= -p "$backend" | tr -d ' ')" = "$server"
           CGAGENTHARNESS_HOME=$home target/release/cgagentharness tls certificate > standalone.pem
           code=$(curl --silent --show-error --max-time 15 --cacert standalone.pem -o /dev/null -w '%{http_code}' https://127.0.0.1:8791/api/status) # DevSkim: ignore DS162092 because the standalone console binds loopback only.
           echo "standalone /api/status answered $code"
-          kill "$server"
           test "$code" = 200
+          rc=0
+          CGAGENTHARNESS_HOME=$home scripts/reset-macos.sh --yes > reset-active.log 2>&1 || rc=$?
+          test "$rc" = 2
+          grep -q 'is open or could not be checked' reset-active.log
+          test -f "$home/config.yaml"
+          kill "$server"
+          rc=0
+          wait "$server" || rc=$?
+          server=''
+          test "$rc" = 0 || test "$rc" = 143
+          for _ in $(seq 1 120); do
+            kill -0 "$backend" 2>/dev/null || break
+            sleep 0.5
+          done
+          if kill -0 "$backend" 2>/dev/null; then echo 'owned backend did not stop'; exit 1; fi
+          for name in .server.lock auth.sqlite3 memory/structured.sqlite3; do
+            test -e "$home/$name" || continue
+            rc=0
+            holders=$(lsof -t -- "$home/$name" 2>/dev/null) || rc=$?
+            test "$rc" = 1
+            test -z "$holders"
+          done
+
+      - name: Reset only the stopped standalone home (native macOS)
+        timeout-minutes: 3
+        env:
+          RESET_TEST_HOME: ${{ steps.standalone.outputs.home }}
+        run: python3 scripts/test-reset-macos.py --native-home "$RESET_TEST_HOME"
 
       - name: Quit the app
         if: always()

@@ -9,3 +9,4 @@ necessary. Full behavior and overrides: [GITHOOKS.md](../docs/GITHOOKS.md).
 - [`pre-push`](pre-push): protected-branch/ref-rewrite guards; scans newly published commits, tag annotations and blob/tree targets.
 - [`_security.sh`](_security.sh): shared scanning, policy loading and refusal/reminder logic; Bash 3.2 compatible.
 - [`security.conf`](security.conf): harness state-file blocks, fixture exceptions, video limits, core-path reminders and formatting callback.
+- `README.md`: this index; detailed policy lives in the linked guide.

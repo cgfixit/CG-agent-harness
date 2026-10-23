@@ -1024,8 +1024,10 @@ const LOOP_RETRY_CAP_SEC = 300;
 /* Status/discard and GitHub-status calls spawn a CLI bounded at 120s. Job
    submission returns immediately; polling uses short calls. */
 const AGENT_CLI_TIMEOUT_MS = 130000;   /* 120s ops_runner._TIMEOUT_SEC + 10s margin */
-/* Decision, push and publish: shim::REAL_REPO_RUN_WRITE_SEC (420s) + 10s margin. */
-const AGENT_WRITE_TIMEOUT_MS = 430000;
+/* Run status renders the pending diff: shim::REAL_REPO_RUN_STATUS_SEC (180s) + 10s margin. */
+const AGENT_STATUS_TIMEOUT_MS = 190000;
+/* Decision, push and publish: shim::REAL_REPO_RUN_WRITE_SEC (1200s) + 10s margin. */
+const AGENT_WRITE_TIMEOUT_MS = 1210000;
 /* Active human-gated /loop. Never starts a real-repo run. Cleared on
    /loop stop, /clear, session switch, budget exhaust, or GOAL_DONE. */
 let loopState = null;
@@ -3501,7 +3503,7 @@ async function runSlash(line, webCommand) {
           try {
             if (sub === 'approve') {
               if (!rest.slice(2).join(' ').trim()) { sys('usage: /agent approve <run id> <reason for commit>'); break; }
-              const result = await api('/api/agent/runs/' + encodeURIComponent(id), 'GET', undefined, AGENT_CLI_TIMEOUT_MS);
+              const result = await api('/api/agent/runs/' + encodeURIComponent(id), 'GET', undefined, AGENT_STATUS_TIMEOUT_MS);
               if (staleReview()) break;
               const current = agentRecord(result);
               if (!current || current.run_id !== id) {
@@ -3522,7 +3524,7 @@ async function runSlash(line, webCommand) {
             }
             let r;
             if (sub === 'status') {
-              r = await api('/api/agent/runs/' + encodeURIComponent(id), 'GET', undefined, AGENT_CLI_TIMEOUT_MS);
+              r = await api('/api/agent/runs/' + encodeURIComponent(id), 'GET', undefined, AGENT_STATUS_TIMEOUT_MS);
             } else {
               r = await api('/api/agent/runs/' + encodeURIComponent(id) + '/decision', 'POST', { decision: sub, reason: rest.slice(2).join(' ').trim(), confirm: sub === 'approve' }, AGENT_WRITE_TIMEOUT_MS);
             }

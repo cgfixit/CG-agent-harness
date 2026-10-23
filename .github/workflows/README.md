@@ -35,7 +35,7 @@ on enforcement; the review gate remains advisory.
 | File | Purpose and trigger |
 |---|---|
 | [`workflow-lint.yml`](workflow-lint.yml) | actionlint, zizmor and release/review fixtures; filtered pushes/PRs or manual. |
-| [`script-lint.yml`](script-lint.yml) | ShellCheck, Python compilation and Node syntax; filtered pushes/PRs or manual. |
+| [`script-lint.yml`](script-lint.yml) | ShellCheck, Python compilation, Node syntax and disposable Git-hook behavior checks; filtered pushes/PRs or manual. |
 | [`clippy-sarif.yml`](clippy-sarif.yml) | Clippy findings in Security; separate from CI's Clippy gate; main push, PR, weekly or manual. |
 | [`codeql.yml`](codeql.yml) | Rust and Actions code scanning; main push, PR, weekly or manual. |
 | [`devskim.yml`](devskim.yml) | Source security patterns; main push, PR targeting main or weekly. |

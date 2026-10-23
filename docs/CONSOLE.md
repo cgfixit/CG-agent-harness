@@ -445,12 +445,12 @@ confirmation and persistence.
 | `/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]`, `/web deny <id-or-pattern>` | Administrator grants are atomic; repeat `--seed` per concrete seed. Every seed must fit a requested rule |
 | `/web mode allowlist\|denylist`, `/web block <pattern-or-host> [...]`, `/web unblock <id-or-pattern>` | Administrator. The header globe (red X) switches modes after a confirmation dialog. `denylist` reads every public URL except blocked rules; a host with no path blocks it and its subdomains. Both lists persist across switches |
 | `/web check <URL> [URL ...] [--group name]` | Exact permission diagnostic, with no network request or grant |
-| `/web cancel`, `/web fetch <URL> [URL ...] [--group name]`, `/web forget`, `/web inject` | Cancel research, batch-read exact permitted URLs, clear or select your last extract |
+| `/web cancel`, `/web fetch <URL> [URL ...] [--group name] [--crawl]`, `/web forget`, `/web inject` | Cancel research; fetch permitted URLs (`--crawl` follows links); clear/select extracts |
 | `/web pages [--group name] <query>`, `/web research [--group name] [--url URL ...] <question>` | Permitted-page discovery or local-model research; repeat `--url` per starting point; no new authority |
 | `/web search [--count 1..10] [--engine google\|pages] [--group name] <query>` | Google listings by default; a group selects permitted-page search |
 
 Web commands support the flags above; `--help` opens help without mutation.
-Named web flags accept `--flag value` or `--flag=value`. Quote whole arguments
+Value flags accept `--flag value` or `--flag=value`. Quote whole arguments
 when needed. In queries `-tokio` is text; use `--` before words starting `--`. Legacy
 `group=name` and single-pattern `allow PATTERN GROUP SEED` remain accepted.
 Unknown, repeated singleton, or missing-value flags refuse; fetch takes URLs,

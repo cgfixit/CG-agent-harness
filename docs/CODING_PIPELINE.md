@@ -392,8 +392,8 @@ use the supplied temporary directory; granting candidate writes would also expos
 Git metadata and hooks to build scripts.
 
 File metadata discovery remains allowed. OS libraries and SDKs are readable.
-Seatbelt is not a memory/disk quota; pipe capture and escaped child process
-groups remain separate work. Linux bubblewrap applies its own allowlisted
+Seatbelt is not a memory/disk quota. Unix pipe capture has deadline and byte
+bounds; escaped descendants remain a [lifecycle limit](PROCESS_LIFECYCLE.md). Linux bubblewrap applies its own allowlisted
 read-only filesystem with writable scratch; the `linux-netns` fallback and
 Windows Job Objects provide no filesystem policy. Windows preparation uses
 platform executable suffixes/path separators but native Windows acceptance is

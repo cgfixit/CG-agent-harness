@@ -22,7 +22,17 @@ pub const MAX_LIST_LIMIT: u64 = 1000;
 pub const MAX_DIFF_CHARS: usize = 200_000;
 pub const CLONE_DEPTH: u32 = 1;
 pub const DEFAULT_CLONE_TIMEOUT_SEC: u64 = 120;
+/// `gh --version` runs once per child process: this many attempts, each
+/// bounded by the timeout, with the delay between them.
+pub const VERSION_CHECK_ATTEMPTS: u32 = 2;
+pub const VERSION_CHECK_TIMEOUT_SEC: u64 = 10;
+pub const VERSION_CHECK_RETRY_DELAY_SEC: u64 = 1;
 const MAX_BACKOFF_SEC: f64 = 30.0;
+
+/// Sleep before retry `attempt + 1` of a read: 2 s, 4 s, 8 s ... capped.
+pub fn retry_backoff_sec(attempt: u32) -> f64 {
+    (2.0f64 * 2f64.powi(attempt as i32 - 1)).min(MAX_BACKOFF_SEC)
+}
 
 #[derive(Debug)]
 struct CheckedGh {
@@ -172,8 +182,8 @@ fn check_gh_version_uncached(min_version: (u32, u32, u32)) -> Result<CheckedGh> 
         binary,
         identity,
         min_version,
-        Duration::from_secs(10),
-        Duration::from_secs(1),
+        Duration::from_secs(VERSION_CHECK_TIMEOUT_SEC),
+        Duration::from_secs(VERSION_CHECK_RETRY_DELAY_SEC),
     )
 }
 
@@ -188,7 +198,7 @@ fn check_gh_binary(
     let env = gh_env();
     let mut last_timeout = None;
     let mut output = None;
-    for attempt in 1..=2u32 {
+    for attempt in 1..=VERSION_CHECK_ATTEMPTS {
         if executable_identity(&binary)? != identity {
             return Err(changed_gh(&binary));
         }
@@ -206,7 +216,7 @@ fn check_gh_binary(
             }
             Err(process::ProcessError::Timeout { .. }) => {
                 last_timeout = Some(attempt);
-                if attempt < 2 {
+                if attempt < VERSION_CHECK_ATTEMPTS {
                     std::thread::sleep(retry_delay);
                 }
             }
@@ -432,9 +442,7 @@ pub fn run_read(audit: &Audit, req: &ReadRequest<'_>) -> Result<Value> {
             Ok(out) => {
                 if out.status != Some(0) && attempt < attempts && is_transient_gh_error(&out.stderr) {
                     audit.log(json!({"event": "agentic_read_retry", "op": req.op, "repo": req.repo, "attempt": attempt, "exit_code": out.status}));
-                    std::thread::sleep(Duration::from_secs_f64(
-                        (2.0f64 * 2f64.powi(attempt as i32 - 1)).min(MAX_BACKOFF_SEC),
-                    ));
+                    std::thread::sleep(Duration::from_secs_f64(retry_backoff_sec(attempt)));
                     continue;
                 }
                 completed = Some(out);
@@ -448,9 +456,7 @@ pub fn run_read(audit: &Audit, req: &ReadRequest<'_>) -> Result<Value> {
                             let _ = std::fs::remove_dir_all(d);
                         }
                     }
-                    std::thread::sleep(Duration::from_secs_f64(
-                        (2.0f64 * 2f64.powi(attempt as i32 - 1)).min(MAX_BACKOFF_SEC),
-                    ));
+                    std::thread::sleep(Duration::from_secs_f64(retry_backoff_sec(attempt)));
                     continue;
                 }
                 return Err(

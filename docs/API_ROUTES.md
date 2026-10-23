@@ -1,9 +1,8 @@
 # HTTP route inventory
 
-Console routes, grouped by feature. `registered_paths()` in
-`src/server/routes/mod.rs` combines `REGISTERED_PATHS` with authentication
-extras. Its unit test checks router coverage; `GET /api/tools` reports catalog
-wiring against that set. Code remains authoritative.
+`registered_paths()` in `src/server/routes/mod.rs` combines `REGISTERED_PATHS`
+with authentication routes. Its unit test checks coverage; `GET /api/tools`
+reports catalog wiring. Code is authoritative.
 
 All console routes use the [guard chain](../INVARIANTS.md): rate limit,
 same-origin, direct loopback/no forwarding headers, account/RBAC, mutation
@@ -133,6 +132,8 @@ Confirmation and gate rules are in [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 | GET, POST | `/api/web` | Status and on/off toggle |
 | POST | `/api/web/allow` | Atomically grant exact URLs or explicit wildcards, with group/optional seeds |
 | POST | `/api/web/deny` | Remove a grant |
+| POST | `/api/web/mode` | Administrator selects allowlist/denylist; denylist requires confirmation |
+| POST | `/api/web/block`, `/api/web/unblock` | Administrator adds/removes blocks |
 | POST | `/api/web/fetch` | Read one or more exact permitted URLs within shared resource limits |
 | POST | `/api/web/check` | Check exact URL permissions locally, without fetching or granting access |
 | POST | `/api/web/search` | Page search; Google needs `engine:"google"` |
