@@ -356,15 +356,18 @@ step_shell_profile() {
 
 # The console origin a server process listens on, the same classification as
 # start-macos.sh: one plain-HTTP request per loopback listener; 200 is a
-# legacy-HTTP console, no HTTP reply is the TLS console, anything else is the
-# private MCP gateway.
+# legacy-HTTP console, a reply that is not HTTP is the TLS console, anything
+# else is the private MCP gateway. curl reports no status (000) for a refused
+# connection (exit 7) or a stalled one (exit 28) too; those ports are skipped.
 listener_origin() {
-  local p code
+  local p code rc
   for p in $(lsof -nP -a -p "$1" -iTCP@127.0.0.1 -sTCP:LISTEN -Fn 2>/dev/null | sed -n 's/^n127\.0\.0\.1:\([0-9]*\)$/\1/p' || true); do # DevSkim: ignore DS162092 because only loopback listeners of the home-owning pid are read.
-    code=$(curl --noproxy '*' --silent --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$p/api/status" || true) # DevSkim: ignore DS137138,DS162092 because this only classifies a loopback listener.
-    case $code in
-      200) echo "http://127.0.0.1:$p"; return 0 ;; # DevSkim: ignore DS137138,DS162092 because a legacy-HTTP home serves plain HTTP on loopback.
-      000) echo "https://127.0.0.1:$p"; return 0 ;; # DevSkim: ignore DS162092 because the console listens on loopback only.
+    rc=0
+    code=$(curl --noproxy '*' --silent --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$p/api/status") || rc=$? # DevSkim: ignore DS137138,DS162092 because this only classifies a loopback listener.
+    case $code:$rc in
+      200:*) echo "http://127.0.0.1:$p"; return 0 ;; # DevSkim: ignore DS137138,DS162092 because a legacy-HTTP home serves plain HTTP on loopback.
+      000:7 | 000:28) ;;
+      000:*) echo "https://127.0.0.1:$p"; return 0 ;; # DevSkim: ignore DS162092 because the console listens on loopback only.
     esac
   done
   return 1

@@ -201,7 +201,9 @@ fi
 # private MCP gateway's port (mcp.server.enabled), so classify each listener
 # with one plain-HTTP request to /api/status:
 #   200  the console on an explicit legacy-HTTP home
-#   000  no HTTP reply: a TLS listener, which only the console can be
+#   000  a reply that is not HTTP: a TLS listener, which only the console can be
+#        (curl also says 000 for a refused or stalled connection, exit 7 or 28:
+#        that port is skipped and retried on the next pass)
 #   else the MCP gateway (always plain HTTP; it refuses this path)
 # Probing HTTPS instead would need a TLS 1.3 client, which the LibreSSL curl
 # on macOS 12 is not.
@@ -215,10 +217,12 @@ for _ in $(seq 1 120); do
   if [ -n "$pids" ]; then
     # lsof exits 1 until the new backend listens; under pipefail that must not end the script.
     for p in $(lsof -nP -a -p "$pids" -iTCP@"$loopback" -sTCP:LISTEN -Fn 2>/dev/null | sed -n "s/^n$loopback:\([0-9]*\)\$/\1/p" || true); do
-      code=$(curl --noproxy '*' --silent --max-time 3 -o /dev/null -w '%{http_code}' "http://$loopback:$p/api/status" || true) # DevSkim: ignore DS137138 because this only classifies loopback listeners.
-      case $code in
-        200) port=$p scheme=http; break ;;
-        000) port=$p scheme=https; break ;;
+      rc=0
+      code=$(curl --noproxy '*' --silent --max-time 3 -o /dev/null -w '%{http_code}' "http://$loopback:$p/api/status") || rc=$? # DevSkim: ignore DS137138 because this only classifies loopback listeners.
+      case $code:$rc in
+        200:*) port=$p scheme=http; break ;;
+        000:7 | 000:28) ;;
+        000:*) port=$p scheme=https; break ;;
       esac
     done
     [ -z "$port" ] || break
