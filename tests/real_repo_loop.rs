@@ -1372,3 +1372,104 @@ async fn real_repo_run_smoke_end_to_end() {
         "an exhausted run's clone is reclaimed"
     );
 }
+
+/// `install_fake_gh` with one difference: after cloning, the origin is rewritten
+/// to a non-GitHub host, which is what `GH_HOST` or a renamed repository
+/// produces and what `RepoWorkspace::origin_url` refuses.
+#[cfg(unix)]
+fn install_fake_gh_foreign_origin(dir: &Path, bare: &Path) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = dir.join("fakebin-foreign");
+    std::fs::create_dir_all(&bin).unwrap();
+    let script = format!(
+        r#"#!/bin/sh
+BARE='{bare}'
+case "$1" in
+  --version) echo "gh version 2.60.0 (2026-01-01)"; exit 0 ;;
+  repo)
+    case "$2" in
+      view) echo '{{"name":"repo","description":"fake","defaultBranchRef":{{"name":"main"}},"url":"https://example.invalid/r"}}'; exit 0 ;;
+      clone)
+        DEST="$4"
+        git clone -q --depth 1 "$BARE" "$DEST" || exit $?
+        git -C "$DEST" remote set-url origin https://ghe.example.com/o/r
+        exit $? ;;
+    esac ;;
+  pr)
+    case "$2" in
+      list) echo '[]'; exit 0 ;;
+    esac ;;
+  issue)
+    case "$2" in
+      list) echo '[]'; exit 0 ;;
+    esac ;;
+esac
+echo "fake gh: unsupported $*" 1>&2
+exit 1
+"#,
+        bare = bare.display(),
+    );
+    let path = bin.join("gh");
+    std::fs::write(&path, script).unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    bin
+}
+
+/// A run that fails after the clone but before its record exists (here: the
+/// origin check) must not leave the clone behind: no run id means
+/// `real-repo-run-discard` can never reach it.
+#[cfg(unix)]
+#[test]
+fn real_repo_run_removes_the_clone_when_it_fails_before_a_record_exists() {
+    let dir = tempfile::tempdir().unwrap();
+    let bare = real_bare_repo(dir.path());
+    let bin = install_fake_gh_foreign_origin(dir.path(), &bare);
+    let path = path_with(&bin);
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    config_with(
+        &home,
+        &[
+            ("agentic.enabled", "true"),
+            ("agentic.deepagent_github.enabled", "true"),
+            ("agentic.deepagent_github.allow_git_write_tools", "true"),
+            ("agentic.deepagent_github.model", "\"mock-model\""),
+        ],
+    );
+    let config = home.join("config.yaml");
+    let checks = home.join("checks.json");
+    std::fs::write(
+        &checks,
+        json!({"checks": [{"name": "true", "argv": ["true"]}]}).to_string(),
+    )
+    .unwrap();
+    let env: Vec<(&str, &str)> = vec![("PATH", &path), ("GROK_API_KEY", ""), ("ANTHROPIC_API_KEY", "")];
+    let (code, out, err) = run_agentic(
+        &config,
+        &[
+            "real-repo-run",
+            "--instruction=x",
+            "--checks-file",
+            checks.to_str().unwrap(),
+            "--branch=claude/foreign-origin",
+            "--commit-message=m",
+            "--reason=r",
+            "--confirm",
+        ],
+        &env,
+        &home,
+    );
+    assert_eq!(code, 2, "stdout={out} stderr={err}");
+    assert!(err.contains("origin does not match"), "stdout={out} stderr={err}");
+    let workspace_root = home.join("data").join("agentic").join("workspaces");
+    let leftovers: Vec<String> = std::fs::read_dir(&workspace_root)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.starts_with("cgah-repo-clone-"))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(leftovers.is_empty(), "clone leaked without a run record: {leftovers:?}");
+}
