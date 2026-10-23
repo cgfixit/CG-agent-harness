@@ -5,7 +5,7 @@
 #
 # Do not restore actions-rs/toolchain. Do not `cargo install` unpinned
 # clippy-sarif / sarif-fmt. Do not persist checkout credentials.
-name: rust-clippy analyze
+name: Clippy - Code scanning report
 
 on:
   push:
@@ -75,7 +75,7 @@ jobs:
 
       - name: Install pinned SARIF converters
         if: steps.sarif-tools-cache.outputs.cache-hit != 'true'
-        # 0.8.0 is the current crates.io release of both CLIs (psastras/sarif-rs).
+        # Both CLIs use the reviewed 0.8.0 release (psastras/sarif-rs).
         # --locked pins their own lockfiles at publish time. Do not drop --version.
         run: |
           set -euo pipefail

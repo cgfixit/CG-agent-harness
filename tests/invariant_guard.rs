@@ -1056,8 +1056,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".github/PULL_REQUEST_TEMPLATE.md", Agent, 2400),
     (".github/skills/repo-optimize/SKILL.md", Agent, 400),
     // why: operator-requested per-file index of the folder (one line per file); size plus about 10%, rounded up to the next 10.
-    // why: README audit removes 16 words; retain the existing headroom.
-    (".github/workflows/README.md", Agent, 484),
+    (".github/workflows/README.md", Agent, 460),
     // why: netconnect passive CLI and LAN scope rule; rounded up to the next 100.
     // why: OS credential store sentence for managed provider keys; 1907 words after the main merge, rounded up to the next 100.
     // why: feature contracts folded into an INVARIANTS.md section table; 1491 words, rounded up to the next 100.
@@ -1104,7 +1103,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/CONSOLE.md", Guide, 6189),
     // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
     // why: the 2026-10-20 dep-sync folded the dated 2026-09 audit notes into Retained constraints; 944 words, keep the cut.
-    ("docs/DEPENDENCIES.md", Guide, 950),
+    // why: operator-approved +200 (2026-10-22) so dated advisory notes such as RUSTSEC-2026-0384 fit without trimming history.
+    ("docs/DEPENDENCIES.md", Guide, 1150),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     ("docs/DESKTOP.md", Guide, 2680),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
