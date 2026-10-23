@@ -1,4 +1,4 @@
-# Daily RustSec scan of both manifests. A new advisory against a quiet main
+# Daily RustSec scan of all three manifests. A new advisory against a quiet main
 # otherwise surfaces only on the next push; the release cron reaches the deny
 # job only when a release is due. Same pinned action and arguments as the deny
 # jobs in ci.yml and desktop.yml, advisories only.
@@ -32,6 +32,10 @@ jobs:
           - name: desktop
             manifest: desktop/Cargo.toml
             arguments: --all-features --config desktop/deny.toml
+          # Seatbelt fixture compiled by tests/macos_cargo.rs; root policy.
+          - name: sandbox-fixture
+            manifest: tests/fixtures/cargo-sandbox/Cargo.toml
+            arguments: --config deny.toml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
