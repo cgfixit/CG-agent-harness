@@ -2,10 +2,10 @@
 # macOS runners, with the same pinned Ollama and models (scripts/live-ollama/).
 # Each run records what auto_tune derives from the loaded window, the slash
 # parse decisions and the memory and goal routes, then the compare job diffs
-# the two runs and the checked-in baseline. Speeds are never compared: GitHub
-# runners have no GPU, so this proves behavior, not Apple-silicon performance.
+# the two runs and the checked-in baseline. Speeds are never compared: hosted
+# runner hardware is not an operator-machine performance baseline.
 # Not a required check; it downloads Ollama and model weights.
-name: live-ollama
+name: Ollama - Live model fingerprints
 
 on:
   workflow_dispatch:

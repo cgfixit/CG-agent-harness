@@ -60,7 +60,10 @@ In GitHub, open **Actions → release → Run workflow**:
   workflow; create previews deliberately using a separate manual process.
 
 The planner requires an existing latest regular `vMAJOR.MINOR.PATCH` release.
-API errors and occupied versions fail explicitly. Release runs are serialized.
+API errors and occupied versions fail explicitly. Publication runs share one
+concurrency group: the running release keeps its slot while awaiting approval;
+only the newest pending run is retained. Read-only manual previews use separate
+groups, so they neither wait behind approval nor replace a queued publication.
 After upload/publication failure, inspect the draft and assets before recovery;
 reruns refuse collisions and never overwrite uploads.
 

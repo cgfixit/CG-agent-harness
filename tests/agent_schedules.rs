@@ -238,3 +238,40 @@ async fn preview_and_create_refuse_the_shapes_the_run_and_job_routes_refuse() {
         .await;
     assert_eq!(status, 201, "{created}");
 }
+
+#[tokio::test]
+async fn a_persisted_request_that_no_longer_validates_is_refused_at_fire_time() {
+    // The create route validates the request body once. A stored row can stop
+    // validating later (a tightened path rule, a changed branch prefix), so fire
+    // must re-run the same `Validate` the job route runs, not plain serde.
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let staged = staged_request(&s).await;
+    let t0 = 1_700_000_000.0;
+    let mut escape = staged.clone();
+    escape["read_files"] = json!(["../outside.rs"]);
+    let mut zero = staged.clone();
+    zero["max_iterations"] = json!(0);
+    for (label, req) in [("read_files escape", escape), ("zero iterations", zero)] {
+        let created = s
+            .state
+            .schedules
+            .create(60, req, "local", t0)
+            .unwrap_or_else(|e| panic!("{label}: {e:?}"));
+        cgagentharness::server::routes::agent::tick_schedules(&s.state, t0 + 60.0).await;
+        assert!(
+            s.state.jobs.list("local").is_empty(),
+            "{label}: an invalid stored request must not start a job"
+        );
+        let row = s.state.schedules.get("local", &created.schedule_id).unwrap();
+        assert_eq!(row.last_dispatch.as_deref(), Some("skipped_refused"), "{label}");
+        assert_eq!(row.next_fire_at, t0 + 120.0, "{label}: the occurrence is consumed");
+    }
+    let audit = s.audit_log();
+    assert!(!audit.contains("agent_schedule_start"), "{audit}");
+    assert_eq!(
+        audit.matches("INVALID_SCHEDULE_REQUEST").count(),
+        2,
+        "each refused occurrence is audited once: {audit}"
+    );
+}

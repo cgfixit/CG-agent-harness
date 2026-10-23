@@ -8,9 +8,9 @@ updates:
     cooldown:
       default-days: 7
     ignore:
-      # This repo pins dtolnay/rust-toolchain to a commit that selects
-      # `stable`. Treat toolchain-action version noise as optional; cargo
-      # and Actions SHAs still get weekly PRs.
+      # Workflows select explicit Rust versions with `with.toolchain`.
+      # Keep rust-toolchain action-SHA upgrades manual; Cargo and other
+      # Actions dependencies still get weekly PRs.
       - dependency-name: dtolnay/rust-toolchain
   - package-ecosystem: cargo
     directories:

@@ -43,3 +43,27 @@ async fn planner_refuses_provider_truncation_even_with_a_complete_edit_block() {
     .unwrap();
     assert!(rejected, "truncated complete prefix must never reach patch application");
 }
+
+#[tokio::test]
+async fn planner_refuses_a_reply_over_the_shared_body_bound() {
+    // The cloud proposer and local chat cap model-controlled JSON at
+    // `MAX_RESPONSE_BYTES`; the local planner must not buffer past it.
+    let model = start_mock_model().await;
+    let over = "x".repeat(cgagentharness::llm::cloud_chat::MAX_RESPONSE_BYTES);
+    model.set_reply(json!({"choices": [{"finish_reason": "stop", "message": {"content": over}}]}));
+    let base = model.base_url();
+    let outcome = tokio::task::spawn_blocking(move || {
+        let tmp = tempfile::tempdir().unwrap();
+        let audit = Audit::new(tmp.path().join("audit.jsonl"), &config_with(tmp.path(), &[]));
+        let client = LocalProposerClient::new(&audit, &base, "local", 5, "", None).unwrap();
+        let outcome = client.invoke("system", "user", 32, None).map(|content| content.len());
+        let audit = std::fs::read_to_string(tmp.path().join("audit.jsonl")).unwrap_or_default();
+        (outcome, audit)
+    })
+    .await
+    .unwrap();
+    let (outcome, audit) = outcome;
+    let err = outcome.unwrap_err();
+    assert!(err.message.contains("exceeds"), "{err:?}");
+    assert!(audit.contains("ResponseTooLarge"), "{audit}");
+}
