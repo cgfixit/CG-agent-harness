@@ -263,7 +263,8 @@ jobs:
             rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 \
             sh -ec 'apt-get update && apt-get install -y --no-install-recommends bubblewrap python3 git pkg-config libdbus-1-dev
                     cargo test --test linux_bwrap --test mcp_client --locked -- --nocapture
-                    cargo test --test real_repo_loop real_repo_run_smoke_end_to_end --locked -- --nocapture'
+                    cargo test --test real_repo_loop real_repo_run_smoke_end_to_end --locked -- --nocapture
+                    cargo test --test process_lifecycle mcp_stdio_child_leads_its_own_session --locked -- --nocapture'
 
   linux-mcp-lifecycle:
     name: Linux MCP service lifecycle (required)
