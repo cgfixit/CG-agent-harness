@@ -123,6 +123,20 @@ fn argv_builder_uses_single_element_form_for_dash_leading_values() {
         decision_call.contains("AGENT_WRITE_TIMEOUT_MS"),
         "the console must wait out the approve budget: {decision_call}"
     );
+    // Status has its own budget: every run-status GET waits it out.
+    let status_ms = (shim::REAL_REPO_RUN_STATUS_SEC + 10) * 1000;
+    assert!(
+        console.contains(&format!("const AGENT_STATUS_TIMEOUT_MS = {status_ms};")),
+        "the console must wait out the status budget"
+    );
+    let status_calls: Vec<&str> = console
+        .lines()
+        .filter(|line| line.contains("'/api/agent/runs/' + encodeURIComponent(id), 'GET'"))
+        .collect();
+    assert!(!status_calls.is_empty(), "the console reads run status");
+    for call in status_calls {
+        assert!(call.contains("AGENT_STATUS_TIMEOUT_MS"), "{call}");
+    }
     assert_eq!(temps.len(), 2, "checks file + plan file");
     let checks_idx = argv.iter().position(|a| a == "--checks-file").unwrap();
     let manifest: serde_json::Value =
@@ -160,9 +174,11 @@ fn decide_status_and_setup_budgets_exceed_child_bounds() {
     // commit-tree, update-ref and symbolic-ref, plus hash-object and
     // update-index per accepted file. Copying the clone for the proof is
     // untimed on top. A kill after update-ref strands a committed branch
-    // behind a `pending_decision` record, so the budget covers at least a
-    // one-file approve; `BUDGETED_APPROVE_FILES` says how many it covers.
-    const BUDGETED_APPROVE_FILES: u64 = 1;
+    // behind a `pending_decision` record. `BUDGETED_APPROVE_FILES` is how many
+    // accepted files the write budget covers at the bound (a one-file approve
+    // is 780 s); a larger candidate is still approved whenever git answers in
+    // ordinary time, the kill guarantee just stops at this size.
+    const BUDGETED_APPROVE_FILES: u64 = 4;
     let approve_bounds = |files: u64| 11 * git_op + files * 2 * git_op;
     let mut short = Vec::new();
     let decide = shim::timeout_for(&c, &OpsRequest::new("real-repo-run-decide")).as_secs();
@@ -325,11 +341,11 @@ fn skill_argv_keeps_dash_values_single_and_confirms_only_apply() {
 
 #[test]
 fn budget_formula_and_labels() {
-    assert_eq!(shim::real_repo_run_budget_sec(720, None, 1), 3 * 720 + 3 * 120 + 300);
-    assert_eq!(shim::real_repo_run_budget_sec(720, Some(1), 0), 720 + 120 + 300);
+    assert_eq!(shim::real_repo_run_budget_sec(720, None, 1), 3 * 720 + 3 * 120 + 900);
+    assert_eq!(shim::real_repo_run_budget_sec(720, Some(1), 0), 720 + 120 + 900);
     assert_eq!(
         shim::real_repo_run_budget_sec(0, Some(2), 2),
-        2 * 720 + 2 * 2 * 120 + 300
+        2 * 720 + 2 * 2 * 120 + 900
     );
     assert_eq!(shim::real_repo_run_timeout_sec(720, Some(10), 8), 3600);
     // An extreme operator planner timeout saturates instead of overflowing

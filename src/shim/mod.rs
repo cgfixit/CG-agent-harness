@@ -24,15 +24,27 @@ pub const DEFAULT_TIMEOUT_SEC: u64 = 120;
 pub const REAL_REPO_RUN_FALLBACK_PLANNER_SEC: u64 = 720;
 pub const REAL_REPO_RUN_DEFAULT_ITERATIONS: u64 = 3;
 pub const REAL_REPO_RUN_CHECK_SEC: u64 = 120;
-pub const REAL_REPO_RUN_OVERHEAD_SEC: u64 = 300;
+/// Fixed per-run cost outside planner and check time: the gh version check,
+/// the repository context reads and the clone (each read retrying with
+/// backoff at the shipped `gh_timeout_sec`/`gh_retries`), the origin check and
+/// the acceptance manifest HEAD. The child's own bounds sum to 795 s with the
+/// shipped config; a smaller value turns a slow gh into a 504 with no child
+/// record. `tests/shim_and_agent_routes.rs` pins the sum.
+pub const REAL_REPO_RUN_OVERHEAD_SEC: u64 = 900;
+/// `real-repo-run-status` renders the pending diff through two validated git
+/// calls (120 s of bounds) before it answers; the default would cut it exactly
+/// at the bound. The console mirrors it as `AGENT_STATUS_TIMEOUT_MS`.
+pub const REAL_REPO_RUN_STATUS_SEC: u64 = 180;
 /// `real-repo-run-push` and `real-repo-run-publish`: above the child's own git
 /// (each call preceded by a validating config read) and gh bounds, so a slow
 /// remote ends in the child's INDETERMINATE record rather than a shim kill.
 /// `real-repo-run-decide` shares it: approve copies the whole clone for the
-/// disposable-copy proof and then commits through the same validated git
-/// calls, and a kill after `update-ref` strands a committed branch behind a
-/// `pending_decision` record. `tests/shim_and_agent_routes.rs` pins the sum.
-pub const REAL_REPO_RUN_WRITE_SEC: u64 = 420;
+/// disposable-copy proof and then commits through eleven validated git calls
+/// plus two per accepted file (660 s + 120 s per file of bounds), and a kill
+/// after `update-ref` strands a committed branch behind a `pending_decision`
+/// record. Sized for an approve of up to four files; the console mirrors it as
+/// `AGENT_WRITE_TIMEOUT_MS`. `tests/shim_and_agent_routes.rs` pins both sums.
+pub const REAL_REPO_RUN_WRITE_SEC: u64 = 1200;
 /// A ceiling on the ceiling: a synchronous HTTP request held open longer than
 /// this is its own failure mode.
 pub const REAL_REPO_RUN_MAX_TIMEOUT_SEC: u64 = 3600;
@@ -449,7 +461,8 @@ pub fn build_argv(ctx: &ShimContext, req: &OpsRequest) -> Result<(Vec<String>, V
 }
 
 /// Budget for a request: `real-repo-run` is sized by its shape, the three
-/// mutation boundaries share the write budget, everything else gets the default.
+/// mutation boundaries share the write budget, status gets its own, everything
+/// else gets the default.
 pub fn timeout_for(ctx: &ShimContext, req: &OpsRequest) -> Duration {
     let secs = match req.action.as_str() {
         "real-repo-run" => real_repo_run_timeout_sec(
@@ -458,6 +471,7 @@ pub fn timeout_for(ctx: &ShimContext, req: &OpsRequest) -> Duration {
             req.checks.as_ref().map(|c| c.len()).unwrap_or(0),
         ),
         "real-repo-run-decide" | "real-repo-run-push" | "real-repo-run-publish" => REAL_REPO_RUN_WRITE_SEC,
+        "real-repo-run-status" => REAL_REPO_RUN_STATUS_SEC,
         _ => DEFAULT_TIMEOUT_SEC,
     };
     Duration::from_secs(secs)
