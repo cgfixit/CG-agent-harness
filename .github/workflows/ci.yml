@@ -331,6 +331,9 @@ jobs:
         env:
           CGAH_REQUIRE_WINDOWS_MCP: "1"
           CGAH_REQUIRE_WINDOWS_CREDENTIALS: "1"
+          # Runs the real Credential Manager round trip, including an entry an
+          # earlier build stored as UTF-16LE (#610).
+          CGAGENTHARNESS_KEYRING_TEST: "1"
           GROK_API_KEY: ""
           ANTHROPIC_API_KEY: ""
           DEEPAGENT_API_KEY: ""

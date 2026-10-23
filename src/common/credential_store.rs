@@ -162,17 +162,25 @@ impl CredentialStore for OsCredentialStore {
     fn get(&self, name: &str) -> Result<Option<String>, StoreError> {
         let entry = self.entry(name)?;
         // Provider tokens are UTF-8 strings. Read the secret bytes instead of
-        // `get_password`, and drop a non-UTF-8 blob without formatting it.
-        match entry.get_secret() {
-            Ok(bytes) => String::from_utf8(bytes).map(Some).map_err(|_| StoreError::ReadFailed),
-            Err(keyring_core::Error::NoEntry) => Ok(None),
-            Err(error) => Err(self.classify(error)),
+        // `get_password`, and drop an undecodable blob without formatting it.
+        let bytes = match entry.get_secret() {
+            Ok(bytes) => bytes,
+            Err(keyring_core::Error::NoEntry) => return Ok(None),
+            Err(error) => return Err(self.classify(error)),
+        };
+        let (value, legacy) = decode_stored_secret(bytes, cfg!(windows))?;
+        if legacy {
+            // Best effort: a failed rewrite leaves the legacy entry, which still decodes.
+            let _ = self.set(name, &value);
         }
+        Ok(Some(value))
     }
 
     fn set(&self, name: &str, value: &str) -> Result<(), StoreError> {
         let entry = self.entry(name)?;
-        entry.set_password(value).map_err(|error| self.classify(error))
+        // Store UTF-8 bytes on every platform. `set_password` is the same call on
+        // macOS and Linux but UTF-16LE on Windows, which `get` would misread.
+        entry.set_secret(value.as_bytes()).map_err(|error| self.classify(error))
     }
 
     fn delete(&self, name: &str) -> Result<(), StoreError> {
@@ -182,6 +190,30 @@ impl CredentialStore for OsCredentialStore {
             Err(error) => Err(self.classify(error)),
         }
     }
+}
+
+/// Decode a stored secret. UTF-8 without NUL is the current format. With
+/// `allow_utf16`, an even-length blob that decodes as UTF-16LE without NUL is a
+/// Windows entry written by an earlier build's `set_password`; the flag reports
+/// it so the caller can rewrite it as UTF-8. ASCII stored as UTF-16LE always
+/// shows NUL bytes in its UTF-8 view, so an ASCII token is never misread. A
+/// non-ASCII legacy value whose UTF-16LE bytes happen to form NUL-free UTF-8
+/// (`中` is `2D 4E`, `-N`) reads as that UTF-8 text.
+fn decode_stored_secret(bytes: Vec<u8>, allow_utf16: bool) -> Result<(String, bool), StoreError> {
+    let current = !bytes.contains(&0) && std::str::from_utf8(&bytes).is_ok();
+    if allow_utf16 && !current && !bytes.is_empty() && bytes.len() % 2 == 0 {
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        if let Some(text) = String::from_utf16(&units).ok().filter(|text| !text.contains('\0')) {
+            return Ok((text, true));
+        }
+    }
+    // A UTF-8 value holding NUL is returned as stored, as earlier builds did.
+    String::from_utf8(bytes)
+        .map(|text| (text, false))
+        .map_err(|_| StoreError::ReadFailed)
 }
 
 /// Headless Linux without a session bus cannot reach Secret Service. Fail closed
@@ -1095,6 +1127,53 @@ export ANTHROPIC_API_KEY='anthropic-secret-value-2222'\n";
         assert_ne!(name, service_name("/tmp/other-home"));
     }
 
+    fn utf16le(text: &str) -> Vec<u8> {
+        text.encode_utf16().flat_map(u16::to_le_bytes).collect()
+    }
+
+    #[test]
+    fn current_utf8_secrets_decode_unchanged_on_every_platform() {
+        for value in ["xai-0123456789abcdef", "pässwörd-é", ""] {
+            for allow_utf16 in [false, true] {
+                let (text, legacy) = decode_stored_secret(value.as_bytes().to_vec(), allow_utf16).unwrap();
+                assert_eq!(text, value);
+                assert!(!legacy);
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_windows_utf16_secrets_decode_only_where_allowed() {
+        for value in ["xai-0123456789abcdef", "pässwörd-é"] {
+            let (text, legacy) = decode_stored_secret(utf16le(value), true).unwrap();
+            assert_eq!(text, value);
+            assert!(legacy);
+        }
+        // macOS and Linux keep the earlier behavior: ASCII UTF-16LE is valid
+        // UTF-8 with NULs and is returned as stored, never reinterpreted.
+        let (text, legacy) = decode_stored_secret(utf16le("abc"), false).unwrap();
+        assert_eq!(text, "a\0b\0c\0");
+        assert!(!legacy);
+    }
+
+    #[test]
+    fn undecodable_secrets_are_refused_without_their_bytes() {
+        // Odd length, invalid UTF-8.
+        assert_eq!(
+            decode_stored_secret(vec![0xff, 0xfe, 0xfd], true),
+            Err(StoreError::ReadFailed)
+        );
+        // Even length, invalid UTF-8 and an unpaired UTF-16 surrogate.
+        assert_eq!(
+            decode_stored_secret(vec![0x00, 0xd8, 0xff, 0xff], true),
+            Err(StoreError::ReadFailed)
+        );
+        assert_eq!(
+            decode_stored_secret(vec![0x00, 0xd8, 0xff, 0xff], false),
+            Err(StoreError::ReadFailed)
+        );
+    }
+
     #[test]
     fn os_store_round_trip_runs_only_when_requested() {
         if std::env::var("CGAGENTHARNESS_KEYRING_TEST").ok().as_deref() != Some("1") {
@@ -1103,11 +1182,19 @@ export ANTHROPIC_API_KEY='anthropic-secret-value-2222'\n";
         let dir = tempfile::tempdir().unwrap();
         let store = OsCredentialStore::for_home(dir.path());
         let name = "CGAGENTHARNESS_KEYRING_TEST_KEY";
-        let value = "os-store-round-trip-value";
-        store.delete(name).unwrap();
-        store.set(name, value).unwrap();
-        let got = store.get(name).unwrap().unwrap();
-        assert!(secret_eq(&got, value));
+        for value in ["os-store-round-trip-value", "pässwörd-é"] {
+            store.delete(name).unwrap();
+            store.set(name, value).unwrap();
+            let got = store.get(name).unwrap().unwrap();
+            assert!(secret_eq(&got, value));
+            assert_eq!(store.entry(name).unwrap().get_secret().unwrap(), value.as_bytes());
+        }
+        // An entry an earlier build wrote with `set_password` (UTF-16LE on
+        // Windows) reads back intact and is rewritten as UTF-8.
+        let value = "legacy-set-password-value";
+        store.entry(name).unwrap().set_password(value).unwrap();
+        assert!(secret_eq(&store.get(name).unwrap().unwrap(), value));
+        assert_eq!(store.entry(name).unwrap().get_secret().unwrap(), value.as_bytes());
         store.delete(name).unwrap();
         assert!(store.get(name).unwrap().is_none());
     }

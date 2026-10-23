@@ -484,8 +484,8 @@ protected DACL matching these checks, verify empty stages, sync and replace
 through the held handle. Failures preserve destinations. Services
 include canonical home; keyring targets select a macOS domain or the sole Windows
 credential name, not a namespace. `..` path components are refused before open;
-non-UTF-8 store entries are dropped unread. Values never enter argv,
-logs, diagnostics or `/api` responses, which show presence and masked tails only.
+non-UTF-8 entries are dropped unread; legacy Windows UTF-16 ones are rewritten as
+UTF-8. Values never enter argv, logs, diagnostics or `/api` responses.
 Account passwords stay scrypt-hashed in `auth.sqlite3`. Startup loads keys into
 the harness environment. Git/`gh` children receive an allowlist without provider
 keys. Shim children receive a separate allowlist; only `real-repo-run` receives
