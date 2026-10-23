@@ -812,6 +812,13 @@ pub struct FinalizeParams<'a> {
 }
 
 /// Materialize (approve) or discard (reject) an already-accepted candidate.
+/// Reject is an audited no-op on the clone; it needs no workspace.
+pub fn record_rejection(ctx: &AgenticCtx, branch_name: &str) -> serde_json::Value {
+    ctx.audit
+        .log(json!({"event": "agentic_real_repo_change_decided", "decision": "reject", "branch": branch_name}));
+    json!({"status": "rejected", "branch": branch_name})
+}
+
 pub fn finalize_real_repo_change(
     ctx: &AgenticCtx,
     tools: &RepoWorkspace<'_>,
@@ -820,11 +827,11 @@ pub fn finalize_real_repo_change(
     if f.decision != "approve" && f.decision != "reject" {
         return Err(HarnessError::agentic("decision must be 'approve' or 'reject'").detail("received", f.decision));
     }
+    if f.decision == "reject" {
+        return Ok(record_rejection(ctx, f.branch_name));
+    }
     ctx.audit
         .log(json!({"event": "agentic_real_repo_change_decided", "decision": f.decision, "branch": f.branch_name}));
-    if f.decision == "reject" {
-        return Ok(json!({"status": "rejected", "branch": f.branch_name}));
-    }
     tools.require_write("approve", f.reason, f.confirm)?;
     let digest = f.acceptance_digest.unwrap_or("");
     let base = f.acceptance_base_head.unwrap_or("");

@@ -4,8 +4,8 @@
 with authentication routes. Its unit test checks coverage; `GET /api/tools`
 reports catalog wiring. Code is authoritative.
 
-All console routes use the [guard chain](../INVARIANTS.md): rate limit,
-same-origin, direct loopback/no forwarding headers, account/RBAC, mutation
+All console routes use the [guard chain](../INVARIANTS.md): same-origin,
+direct loopback/no forwarding headers, rate limit, account/RBAC, mutation
 CSRF (`X-CyClaw-CSRF`). Public routes retain early guards. Agent requests carry
 check-profile names and run IDs, never browser-supplied commands.
 
