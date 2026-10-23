@@ -237,6 +237,36 @@ fn hooks_and_filters_do_not_execute_during_inspection_or_approval() {
 }
 
 #[test]
+fn fork_clone_upstream_metadata_is_ordinary() {
+    let temp = tempfile::tempdir().unwrap();
+    let (ctx, dest) = fixture(temp.path());
+    // What `gh repo clone` writes for a fork, pointing at a different repository.
+    let parent = temp.path().join("parent.git");
+    git(&["config", "remote.upstream.url", parent.to_str().unwrap()], &dest);
+    git(
+        &[
+            "config",
+            "remote.upstream.fetch",
+            "+refs/heads/*:refs/remotes/upstream/*",
+        ],
+        &dest,
+    );
+    git(&["config", "remote.upstream.gh-resolved", "base"], &dest);
+    std::fs::write(dest.join("target.txt"), "approved\n").unwrap();
+    let ws = RepoWorkspace::attach(&ctx, &dest).unwrap();
+    let origin = ws.origin_url().unwrap();
+    let approved = approve(&ctx, &ws, &["target.txt".into()]).unwrap();
+    let commit = approved["approved_commit"].as_str().unwrap();
+    // The push still goes to the pinned origin, never the parent.
+    ws.push_approved("codex/exact-tree", commit, &origin, "fork push", true)
+        .unwrap();
+    assert!(!parent.exists());
+    // Any other upstream key still refuses, e.g. a push redirect.
+    git(&["config", "remote.upstream.pushurl", parent.to_str().unwrap()], &dest);
+    assert!(ws.origin_url().is_err());
+}
+
+#[test]
 fn branch_and_destination_drift_refuse_separate_push() {
     let temp = tempfile::tempdir().unwrap();
     let (ctx, dest) = fixture(temp.path());

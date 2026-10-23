@@ -22,7 +22,7 @@ The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs) and
 - [`env_keys.rs`](env_keys.rs): `MANAGED_KEYS` allowlist for `/api/keys`: masked status, credential-store writes.
 - [`errors.rs`](errors.rs): `ApiError` JSON `detail` envelope the console's `api()` helper reads.
 - [`generation_gate.rs`](generation_gate.rs): single-holder local-LLM gate; busy claim returns 409; bounded preemption.
-- [`guards.rs`](guards.rs): **core path.** Loopback, rate limit, same-origin, `account_gate` RBAC, `CSRF_HEADER`.
+- [`guards.rs`](guards.rs): **core path.** Same-origin, loopback, rate limit, `account_gate` RBAC, `CSRF_HEADER`.
 - [`headers.rs`](headers.rs): **core path.** Outermost security headers (`DEFAULT_CSP`, no-store), loopback `trusted_host`.
 - [`live_state.rs`](live_state.rs): bounded in-memory status for local chat and prompt preview; no credential disclosure.
 - [`mcp.rs`](mcp.rs): outbound MCP client `McpRuntime`: declared servers only, pinned DNS, stdio or SSE.
