@@ -116,6 +116,18 @@ if [ "$mode" = app ] && [ "$(app_backends | grep -c .)" -gt 1 ]; then
   exit 3
 fi
 if [ "$mode" = app ] && [ -z "$(app_backends)" ]; then
+  # The app's backend needs its home's lock. Another owner (a `serve` started by
+  # hand, say) leaves the app on its recovery screen and this script waiting for
+  # a backend that never starts, so refuse now. open gives the app launchd's
+  # environment, not this shell's, so its home comes from launchctl.
+  app_home=$(launchctl getenv CGAGENTHARNESS_HOME 2>/dev/null || true)
+  app_home=${app_home:-$HOME/.CGagentHarness}
+  holder=$(lsof -t -- "$app_home/.server.lock" 2>/dev/null | head -n1 || true)
+  if [ -n "$holder" ]; then
+    echo "start-macos: $app_home is owned by pid $holder ($(ps -o command= -p "$holder" 2>/dev/null || echo unknown)), so the app cannot start its backend." >&2
+    echo 'Quit that process (or use the console it serves), then rerun.' >&2
+    exit 3
+  fi
   # A usable bundle: the same test as install-macos.sh's app_ok, including the
   # backend digest the shell was compiled with (checked without running either binary).
   sidecar_ok() {

@@ -135,7 +135,9 @@ ask_secret() {
 }
 
 # -------------------------------------------------------------- step runner
-SKIP=99
+# A step returns PRESENT when its work was already done (summary "ok") and SKIP
+# when it did not apply or an option turned it off (summary "skipped").
+PRESENT=98 SKIP=99
 step_names=() step_states=()
 record() { step_names+=("$1"); step_states+=("$2"); }
 # step NAME required|optional FUNCTION: run it; on failure retry, skip or stop.
@@ -149,12 +151,13 @@ step() {
     rc=$?
     case $rc in
       0) say "[$name] done ($((SECONDS - started))s)"; record "$name" 'done'; return 0 ;;
+      "$PRESENT") record "$name" ok; return 0 ;;
       "$SKIP") record "$name" skipped; return 0 ;;
     esac
     warn "[$name] failed (exit $rc); the lines above say why, and $log keeps them"
     if [ "$interactive" = 1 ]; then
       ask "Retry, skip or quit? [r/s/q]" r
-      case $REPLY in [Rr]*) continue ;; [Ss]*) record "$name" skipped; return 0 ;; *) record "$name" FAILED; exit "$rc" ;; esac
+      case $REPLY in [Rr]*) continue ;; [Ss]*) record "$name" SKIPPED; return 0 ;; *) record "$name" FAILED; exit "$rc" ;; esac
     fi
     record "$name" FAILED
     [ "$kind" = optional ] && return 0
@@ -164,7 +167,7 @@ step() {
 summary() {
   local i
   printf '\n'
-  say 'Summary'
+  say 'Summary (ok: already set up; skipped: not needed or turned off; SKIPPED: failed, then skipped at the prompt)'
   for i in "${!step_names[@]}"; do printf '    %-8s %s\n' "${step_states[$i]}" "${step_names[$i]}"; done
   say "log: $log"
 }
@@ -262,7 +265,7 @@ step_preflight() {
 
 step_developer_tools() {
   local waited=0
-  if clt_ok; then say "Command Line Tools: $(xcode-select -p)"; return "$SKIP"; fi
+  if clt_ok; then say "Command Line Tools: $(xcode-select -p)"; return "$PRESENT"; fi
   if xcode-select -p >/dev/null 2>&1; then
     warn "developer tools at $(xcode-select -p) are selected but clang does not run; scripts/install-macos.sh prints the fix"
     return 1
@@ -286,18 +289,28 @@ step_checkout() {
 }
 
 step_install() {
-  local rc
+  local rc args=(${install_args[@]+"${install_args[@]}"})
   # --check passes with an app installed, so --replace-app always runs the installer.
   if [ "$replace" = 0 ]; then
-    bash "$root/scripts/install-macos.sh" --check ${install_args[@]+"${install_args[@]}"}
-    rc=$?
+    # Keep a copy of the inventory: it names a newer release when there is one.
+    bash "$root/scripts/install-macos.sh" --check ${install_args[@]+"${install_args[@]}"} | tee "$private/check.out"
+    rc=${PIPESTATUS[0]}
     case $rc in
-      0) say 'already installed; nothing to do (--replace-app updates the app)'; return "$SKIP" ;;
+      0)
+        # A working app is only swapped on request: offer it here, never under --yes.
+        if [ "$interactive" = 0 ] || ! grep -q 'the latest release is' "$private/check.out"; then
+          say 'already installed; nothing to do (--replace-app updates the app)'
+          return "$PRESENT"
+        fi
+        ask 'Update the app to the latest release now? Its home and data are kept. [Y/n]' y
+        case $REPLY in [Nn]*) say 'keeping the installed app (--replace-app updates it later)'; return "$PRESENT" ;; esac
+        # The tools and backend just passed --check; only the app changes.
+        args+=(--replace-app --no-build) ;;
       1) ;;
       *) return "$rc" ;;
     esac
   fi
-  bash "$root/scripts/install-macos.sh" ${install_args[@]+"${install_args[@]}"}
+  bash "$root/scripts/install-macos.sh" ${args[@]+"${args[@]}"}
   rc=$?
   if [ "$rc" != 0 ] && app_running; then
     # The installer never replaces a running app. Offer to quit it, then retry once.
@@ -308,7 +321,7 @@ step_install() {
     # Its backend flushes and stops after the window closes; wait for both.
     for _ in $(seq 1 60); do app_running || break; sleep 0.5; done
     if app_running; then warn 'the app is still running; quit it and choose retry'; return "$rc"; fi
-    bash "$root/scripts/install-macos.sh" ${install_args[@]+"${install_args[@]}"} || return $?
+    bash "$root/scripts/install-macos.sh" ${args[@]+"${args[@]}"} || return $?
   elif [ "$rc" != 0 ]; then
     return "$rc"
   fi
@@ -337,14 +350,30 @@ step_shell_profile() {
     # shellcheck disable=SC2016
     [ "$has" = 1 ] || { add_line "$profile" '. "$HOME/.cargo/env"'; added=1; }
   fi
-  if [ "$added" = 0 ]; then say "Homebrew and Rust are already on your login shell's PATH"; return "$SKIP"; fi
+  if [ "$added" = 0 ]; then say "Homebrew and Rust are already on your login shell's PATH"; return "$PRESENT"; fi
   say 'open a new Terminal window to pick these up'
 }
 
-# The app's backend when it runs; otherwise a private server on a free port,
-# stopped again when setup is done. Sets origin.
+# The console origin a server process listens on, the same classification as
+# start-macos.sh: one plain-HTTP request per loopback listener; 200 is a
+# legacy-HTTP console, no HTTP reply is the TLS console, anything else is the
+# private MCP gateway.
+listener_origin() {
+  local p code
+  for p in $(lsof -nP -a -p "$1" -iTCP@127.0.0.1 -sTCP:LISTEN -Fn 2>/dev/null | sed -n 's/^n127\.0\.0\.1:\([0-9]*\)$/\1/p' || true); do
+    code=$(curl --noproxy '*' --silent --max-time 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$p/api/status" || true) # DevSkim: ignore DS137138,DS162092 because this only classifies a loopback listener.
+    case $code in
+      200) echo "http://127.0.0.1:$p"; return 0 ;; # DevSkim: ignore DS137138,DS162092 because a legacy-HTTP home serves plain HTTP on loopback.
+      000) echo "https://127.0.0.1:$p"; return 0 ;;
+    esac
+  done
+  return 1
+}
+# The app's backend when it runs; a `serve` of yours that already owns the home
+# (it keeps running); otherwise a private server on a free port, stopped again
+# when setup is done. Sets origin.
 open_server() {
-  local holder port code
+  local holder holder_cmd port code
   [ -z "$origin" ] || return 0
   if [ -n "$(app_backends)" ]; then
     origin=$(start_macos --no-ollama --no-browser 2>&1 | sed -n 's|^CGagentHarness console: \(.*\)/$|\1|p' | tail -n1)
@@ -354,7 +383,17 @@ open_server() {
   fi
   holder=$(lsof -t -- "$home/.server.lock" 2>/dev/null | head -n1 || true)
   if [ -n "$holder" ]; then
-    warn "$home is owned by pid $holder ($(ps -o command= -p "$holder" 2>/dev/null)); quit it, then retry"
+    holder_cmd=$(ps -o command= -p "$holder" 2>/dev/null || true)
+    # Only your own console server: a certificate renew or another user's process is not one.
+    case $holder_cmd in
+      *cgagentharness\ serve | *cgagentharness\ serve\ *)
+        if [ "$(ps -o uid= -p "$holder" 2>/dev/null | tr -d ' ')" = "$(id -u)" ] && origin=$(listener_origin "$holder"); then
+          say "using the server pid $holder already runs on this home at $origin; it keeps running afterwards"
+          return 0
+        fi
+        origin='' ;;
+    esac
+    warn "$home is owned by pid $holder (${holder_cmd:-unknown}), and it is not a console server of yours that answers; quit it, then retry"
     return 1
   fi
   port=$(free_port 8790) || { warn 'no free loopback port in 8790-8889'; return 1; }
@@ -527,6 +566,10 @@ launch() {
       if [ -n "$(app_backends)" ]; then
         say 'the app already owns the home; opening its console in your browser'
         start_macos ${ollama_flag[@]+"${ollama_flag[@]}"} ${trust_flag[@]+"${trust_flag[@]}"}
+      elif [ -n "$origin" ]; then
+        # Setup used a server of yours that owns the home (open_server); open it, do not compete.
+        say "your server already serves this home; opening $origin/"
+        open "$origin/" 3>&- 4>&-
       else
         port=$(free_port 8790) || { warn 'no free loopback port in 8790-8889'; return 1; }
         say "serving the console from this terminal on port $port; press Ctrl-C to stop it"

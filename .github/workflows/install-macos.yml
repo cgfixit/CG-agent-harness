@@ -171,6 +171,27 @@ jobs:
           RESET_TEST_HOME: ${{ steps.standalone.outputs.home }}
         run: python3 scripts/test-reset-macos.py --native-home "$RESET_TEST_HOME"
 
+      - name: init.sh signs in through a hand-started serve; app mode refuses it
+        timeout-minutes: 6
+        run: |
+          set -euo pipefail
+          osascript -e 'quit app "CG Agent Harness"' || true
+          for _ in $(seq 1 60); do pgrep -f '/Contents/MacOS/cgagentharness desktop$' >/dev/null || break; sleep 0.5; done
+          if pgrep -f '/Contents/MacOS/cgagentharness desktop$' >/dev/null; then echo 'the app backend did not stop'; exit 1; fi
+          ./target/release/cgagentharness serve --port 8792 > serve.log 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 120); do lsof -t -- "$HOME/.CGagentHarness/.server.lock" >/dev/null 2>&1 && break; sleep 0.5; done
+          scripts/init.sh --yes --choice 0 --app-dir "$RUNNER_TEMP/Applications" | tee adopt.log
+          grep -q "^==> using the server pid $server already runs on this home" adopt.log
+          grep -q 'signed in with the admin password from your login keychain' adopt.log
+          kill -0 "$server"
+          rc=0
+          CGAH_APP="$RUNNER_TEMP/Applications/CG Agent Harness.app" scripts/start-macos.sh --no-ollama > refuse.log 2>&1 || rc=$?
+          cat refuse.log
+          test "$rc" = 3
+          grep -q "is owned by pid $server" refuse.log
+
       - name: Quit the app
         if: always()
         timeout-minutes: 2

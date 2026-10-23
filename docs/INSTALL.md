@@ -63,7 +63,11 @@ shows it) with a new password and saves that in your login keychain as **CG Agen
 admin password**, and grants the web allowlist. It then asks what to open:
 **1** the app, **2** the console in your browser (served from that Terminal until
 Ctrl-C, or the open app's console), **3** both, **0** nothing. A failed step offers retry,
-skip or quit. A rerun skips finished steps and signs in with the saved password.
+skip or quit. A rerun skips finished steps (summary `ok`) and signs in with the saved
+password; when the installed app is older than the latest release, it asks before
+updating it (never with `--yes`). A `serve` of yours that already owns the home is
+used for setup and left running; choice 2 opens it, while choices 1 and 3 stop until
+you quit it, because the app's backend needs the home.
 
 | Option | Effect |
 |---|---|
@@ -123,7 +127,7 @@ using Rosetta** unchecked. Run every command from the clone, as your user.
 12. **Uninstall:** see [update, backup, rollback and uninstall](#update-backup-rollback-and-uninstall).
 
 If `start-macos.sh` reports no usable app, rerun step 5. If it reports the home is
-already owned, quit that owner or use app mode. More fixes:
+already owned, quit that owner (app mode refuses one that is not the app's backend). More fixes:
 [Troubleshooting](TROUBLESHOOTING.md).
 
 ## 2. Prerequisites
