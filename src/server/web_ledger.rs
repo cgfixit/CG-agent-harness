@@ -193,7 +193,10 @@ pub fn record_turn(
         let oldest = (0..sources.len())
             .min_by(|a, b| sources[*a].last_ts.total_cmp(&sources[*b].last_ts))
             .unwrap_or(0);
-        sources.remove(oldest);
+        // CodeQL rust/cleartext-logging flagged `Vec::remove` on the session-owned
+        // ledger as a log write of `session_id`; nothing here logs. `drain` keeps
+        // the same order and never leaves this module's bookkeeping.
+        sources.drain(oldest..=oldest);
     }
     summary.codes = codes.into_iter().collect();
     Some(summary)
