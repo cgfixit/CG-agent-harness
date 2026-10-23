@@ -16,8 +16,9 @@ release flow: [docs/RELEASING.md](../../docs/RELEASING.md).
 
 ## Packaging
 
-- [`bundle.yml`](bundle.yml): `main` pushes only: packages CLI tarballs and calls `desktop.yml`; PR validation stays separate.
+- [`bundle.yml`](bundle.yml): `main` pushes only: packages CLI tarballs and calls `desktop.yml`.
 - [`desktop.yml`](desktop.yml): `workflow_call` from bundle and release, or manual: builds, verifies and deny-checks the macOS `.app`.
+- [`desktop-check.yml`](desktop-check.yml): PR and merge queue: fmt, clippy, tests and deny on `desktop/` (which `#[path]`-includes `src/common/local_tls.rs`) when those paths change; skipped otherwise, so the ruleset could require it. Advisory today.
 - [`release.yml`](release.yml): `v*` tag, twice-daily cron, manual: plan, verify via `ci.yml`, build, desktop, publish.
 
 ## Lint and scanners
