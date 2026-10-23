@@ -40,7 +40,7 @@ on enforcement; the review gate remains advisory.
 | [`codeql.yml`](codeql.yml) | Rust and Actions code scanning; main push, PR, weekly or manual. |
 | [`devskim.yml`](devskim.yml) | Source security patterns; main push, PR targeting main or weekly. |
 | [`gitleaks.yml`](gitleaks.yml) | Full-history secret scan; main push, PR, weekly or manual. |
-| [`dependency-advisories.yml`](dependency-advisories.yml) | RustSec advisories for backend and desktop; daily or manual. |
+| [`dependency-advisories.yml`](dependency-advisories.yml) | RustSec advisories for backend, desktop and the sandbox fixture; daily or manual. |
 | [`netconnect.yml`](netconnect.yml) | Scope/flag tests and Linux no-packet proof; filtered pushes/PRs or manual. |
 | [`live-ollama.yml`](live-ollama.yml) | Real-model fingerprints on Linux/macOS; filtered PRs, daily or manual; downloads models. |
 | [`install-macos.yml`](install-macos.yml) | Installer and launcher acceptance; filtered PRs or manual. |
