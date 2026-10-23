@@ -3,8 +3,8 @@
 A `pre-commit` and `pre-push` gate that catches secrets, private data and
 ask-first actions. It runs for anyone committing through `git` in an installed clone.
 
-It is a speed bump, not a boundary. CI secret scanning (`gitleaks.yml`) and
-the `main` branch ruleset are the controls. Pull-request CI reads `.gitleaks.toml`
+It is a speed bump, not a boundary. CI secret scanning (`gitleaks.yml`) is a
+backstop; branch protection requires separate GitHub configuration. Pull-request CI reads `.gitleaks.toml`
 from the immutable base commit; other events use their source commit. Candidate
 ignore files and inline `gitleaks:allow` comments cannot suppress that scan.
 
@@ -12,12 +12,13 @@ ignore files and inline `gitleaks:allow` comments cannot suppress that scan.
 
 ```sh
 bash scripts/ensure-githooks.sh         # or: git config core.hooksPath .githooks
-git config core.hooksPath               # -> .githooks
+git config --get core.hooksPath         # verify the effective path
 ```
 
-Put that one line in every agent's setup step (session-start hook, Codex
-setup script, Copilot setup steps, container entrypoint). A fresh cloud clone
-has no hooks until it runs. Optional tools, used when present: `gitleaks`
+The setup script preserves an existing hook manager, honors
+`GITHOOKS_SKIP_INSTALL=1`, and exits successfully even if installation fails;
+inspect its output. `install-githooks.sh` explicitly replaces the local hook
+path. Put the non-overwriting setup in agent startup steps. Optional tools: `gitleaks`
 (entropy-based detection of unprefixed secrets) and `exiftool` (image and
 document metadata). Without them the gate still runs its own checks and says
 what it skipped.
@@ -27,9 +28,9 @@ what it skipped.
 | File | Tracked | Role |
 |---|---|---|
 | `.githooks/pre-commit`, `.githooks/pre-push` | yes | Entry points. They source the gate and call it. |
-| `.githooks/_security.sh` | yes | The gate. Identical in every repo that uses this template; Bash 3.2 compatible (stock macOS). |
+| `.githooks/_security.sh` | yes | Shared scanner and policy engine; Bash 3.2 compatible (stock macOS). |
 | `.githooks/security.conf` | yes | This repo's values: extra blocked files, protected paths, fixture allowlist, repo checks. |
-| `~/.config/githooks/private.conf` | **never** | Your own identifiers (PII patterns, personal email). Applies to every repo on the machine. |
+| `${XDG_CONFIG_HOME:-$HOME/.config}/githooks/private.conf` | **never** | Your identifiers (PII patterns, personal email), shared by installed clones. |
 | `.githooks/security.local.conf` | **never** (gitignored) | Same, for one clone only. |
 
 Load order: gate defaults, then `security.conf`, then `private.conf`, then
@@ -41,8 +42,9 @@ Load order: gate defaults, then `security.conf`, then `private.conf`, then
 
 | Check | pre-commit | pre-push |
 |---|---|---|
-| Credential-shaped strings in added lines: provider prefixes (xAI, Anthropic, OpenAI incl. legacy `sk-`, Stripe, GitHub, AWS, Slack, Hugging Face, Google, Telegram, Dropbox, private-key headers), plus `gitleaks` when installed | staged diff | every commit being published |
+| Credential-shaped strings: provider prefixes and private-key headers, plus `gitleaks` when installed | staged diff | every commit being published |
 | Credential and runtime-state filenames (any case): `.env*`, keys, keystores, `*.db` and its renamed copies, agent session residue (`.aider*`, `settings.local.json`, `*.har`, shell histories) | staged files | every commit being published |
+| Ambiguous filenames: Git-quoted paths (quotes, backslashes, control characters) or colons | all changed paths | every commit being published |
 | Your identifiers from `private.conf` | staged diff | every commit being published |
 | Absolute home-directory paths (`/Users/<name>/`, `/home/<name>/`, `C:\Users\<name>\`); placeholder users pass | staged diff | every commit being published |
 | Invisible bidi-override and Unicode tag characters (Trojan Source; hidden instructions in agent files) | staged diff | every commit being published |
@@ -56,6 +58,9 @@ Load order: gate defaults, then `security.conf`, then `private.conf`, then
 Pre-push scans each commit, not the tip against the base: a key added in one
 commit and deleted in the next is still published, so it is still refused.
 This also catches `--no-verify` commits and commits from hookless clones.
+Tag annotation chains and blob/tree targets are scanned too. Ambiguous names
+are refused because the scanners use newline records and `path:line:content`;
+spaces and ordinary Unicode names remain supported.
 
 **Reminders.** Printed, never blocking. Answer them in the PR body.
 
@@ -67,8 +72,8 @@ This also catches `--no-verify` commits and commits from hookless clones.
 | Exposure-prone line | TLS verification off, `0.0.0.0`, wildcard CORS, pipe-to-shell, `--no-verify`, `chmod 777`, a secret-named value in a log call |
 | `.gitignore` no longer covers a probe path | `SEC_IGNORE_PROBES` |
 
-Reminder scans skip tests, docs, examples and Markdown. Push repeats only the
-blocking checks.
+Content reminders skip tests, docs, examples and Markdown; filename reminders
+still apply. Push suppresses ordinary reminders but repeats protected-control notices.
 
 ## Overrides: operator only
 
@@ -76,7 +81,9 @@ blocking checks.
 |---|---|
 | `HOOK_OPERATOR_ACK=1` | a change to or deletion of a protected path, or a removed `.gitignore` rule |
 | `ALLOW_MAIN_PUSH=1` | a direct push to a protected branch |
-| `ALLOW_FORCE_WITH_LEASE=true` | a non-fast-forward push |
+| `ALLOW_FORCE_WITH_LEASE=true` | an existing-tag update or other ref rewrite |
+
+Protected-branch deletion is always refused, including with `ALLOW_MAIN_PUSH=1`.
 
 An agent never sets these on its own. When the gate refuses, the agent stops,
 shows the operator the message and the diff, and waits. The operator reruns
@@ -92,7 +99,7 @@ CI requires a reviewed `.gitleaks.toml` exception already present on the PR base
 
 ## Privacy setup
 
-Copy this to `~/.config/githooks/private.conf` and `chmod 600` it:
+Create the private config at the path above and `chmod 600` it:
 
 ```sh
 SEC_PII_REGEX='your-email-localpart@|555-867-5309|Your Full Name|internal\.employer\.example'
@@ -118,7 +125,7 @@ The gate sees text, not intent. These rules stay with review:
 
 ## Known limits
 
-- `git commit --no-verify` skips pre-commit; `git push --no-verify` skips both; CI is the backstop.
+- `git commit --no-verify` skips pre-commit; `git push --no-verify` skips pre-push.
 - A clone that never set `core.hooksPath` has no gate.
 - An agent can set an override variable itself. The gate makes that a visible rule violation, not an impossible one.
 - Regex detection misses secrets with no known prefix and low entropy, and flags look-alike fixtures.
@@ -126,24 +133,21 @@ The gate sees text, not intent. These rules stay with review:
 
 ## Reuse in another repository
 
-1. Copy `.githooks/_security.sh` unchanged.
-2. Write `.githooks/security.conf` with that repo's runtime-state files, protected control files, fixture allowlist and optional `sec_repo_pre_commit` / `sec_repo_pre_push` functions. Append with `+=`; do not copy the defaults.
-3. Add to `pre-commit`: `. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_security.sh"` then `sec_pre_commit || exit 1`.
-4. In `pre-push`, call `sec_pre_push_ref "$1" <local_ref> <local_sha> <remote_ref> <remote_sha>` for each stdin line, then `sec_pre_push_finish`.
-5. Run the gate over the whole tree once and tune `SEC_ALLOW_REGEX` until existing fixtures pass.
-
-Keep `_security.sh` byte-identical across repos, so a fix lands everywhere by copying one file.
+Copy the gate and entrypoints; customize `security.conf`, appending lists with
+`+=`. Optional `sec_repo_pre_commit` / `sec_repo_pre_push` callbacks add repository
+checks. Verify existing fixtures and refusals before installation. Copies need
+explicit updates and verification in each repository.
 
 ## CGagentHarness specifics
 
 `.githooks/pre-commit` and `.githooks/pre-push` contain only the gate; branch
-and title rules stay in `scripts/check-pr-template.sh` and CI.
+naming and PR title rules stay in `scripts/check-pr-template.sh` and CI.
 `.githooks/security.conf` adds:
 
 - **Blocked files:** `.githooks/security.local.conf`, the operator-home spill that `.gitignore` lists (`harness.json`, `soul.md`, `soul-pending-apply.json`, `auth.json`, `auth.initialized`, `cli-session.json`, `.CGagentHarness/`, `sessions/`, `tls/`, `soul-history/`, `attachments/`, `notes_corpus/`, `exports/`, `memory/`, `logs/`, `data/agentic/`), so `git add -f` or a home inside the checkout cannot publish it.
 - **Protected (ask first):** `.gitleaks.toml`, `deny.toml` (root and `desktop/`), plus the template's `.githooks/*` and agent tool settings.
 - **Core-path reminder:** the `AGENTS.md` core paths (`src/shim/`, `src/server/{guards,headers}.rs`, `src/agentic/{writer,workspace}.rs`, `src/agentic/executor/sandbox.rs`, `assets/config.default.yaml`) print a reminder that the PR body needs an invariant statement.
-- **Repo check:** `cargo fmt --all -- --check` when staged files include Rust (the first line of the CI merge gate; skipped with a notice without `cargo`).
+- **Repo check:** staged Rust triggers `cargo fmt --all -- --check` on the root working-tree workspace (not index contents or the separate desktop workspace); skipped with a notice without `cargo`.
 - **Fixture allowlist:** the synthetic AWS, GitHub and Anthropic values in `src/common/audit.rs`, `tests/common_layer.rs`, `tests/chat_and_sessions.rs` and `.gitleaks.toml`.
 
 The coding pipeline runs `git` with `core.hooksPath` pinned to the null device

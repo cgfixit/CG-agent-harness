@@ -1108,7 +1108,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     ("docs/DESKTOP.md", Guide, 2655),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
-    ("docs/GITHOOKS.md", Guide, 1550),
+    // why: hook behavior review trims duplicated reuse instructions; retain the smaller budget.
+    ("docs/GITHOOKS.md", Guide, 1400),
     // why: credentials table now describes the OS store and the plaintext opt-in; 5571 words, rounded up to the next 100.
     // Setup memory guidance replaces repeated setup/verification prose; keep the cut.
     // why: operator-approved (2026-10-14) automated macOS install (section 1) and browser access (section 7); 5188 words plus about 1%, rounded up to the next 50.

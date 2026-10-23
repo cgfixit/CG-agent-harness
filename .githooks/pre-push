@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Security gate on every push: refuses a direct push to (or deletion of) main
-# and a non-fast-forward push, and scans every commit the push would publish
+# Security gate on every push: guards protected branches and ref rewrites,
+# and scans newly published commits, tag annotations and blob/tree targets
 # for secrets and blocked files (catches commits made with --no-verify or from
 # a clone without hooks). Logic: .githooks/_security.sh; repo values:
-# .githooks/security.conf. Install: scripts/install-githooks.sh
+# .githooks/security.conf. Setup: scripts/ensure-githooks.sh
 set -euo pipefail
 # shellcheck source=SCRIPTDIR/_security.sh
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_security.sh"

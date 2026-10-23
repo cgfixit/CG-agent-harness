@@ -18,7 +18,8 @@ esac
 [ "$#" -le 1 ] || { echo "usage: scripts/reset-macos.sh [--yes]" >&2; exit 2; }
 
 HOME_DIR="${CGAGENTHARNESS_HOME:-$HOME/.CGagentHarness}"
-HOME_DIR="${HOME_DIR%/}"
+# A trailing slash hides a symlink from -L, including after another slash.
+while [[ "$HOME_DIR" == */ ]]; do HOME_DIR="${HOME_DIR%/}"; done
 case "$HOME_DIR" in /*) ;; *) echo "refusing: home must be an absolute path: $HOME_DIR" >&2; exit 2 ;; esac
 [ ! -L "$HOME_DIR" ] || { echo "refusing: $HOME_DIR is a symlink; point CGAGENTHARNESS_HOME at the real directory" >&2; exit 2; }
 [ -d "$HOME_DIR" ] || { echo "no home directory at $HOME_DIR (nothing to delete)"; HOME_DIR=""; }
@@ -61,22 +62,22 @@ CGagentHarness ($RESOLVED)
 CGagentHarness admin ($RESOLVED)"
 fi
 COUNT=0
+keychain_failure() {
+  echo "$1" >&2
+  echo "Reset stopped after $COUNT successful delete operations; home removal was not attempted." >&2
+  echo "Resolve the reported problem, then rerun with the same CGAGENTHARNESS_HOME and arguments." >&2
+  exit 1
+}
+
+# Check every service before deleting any entries. This cannot reserve access:
+# a later delete can still fail, so report partial progress and permit a retry.
 FOUND=""
 while IFS= read -r SERVICE; do
-  N=0
-  while :; do
-    # 44 is errSecItemNotFound; any other failure (locked, denied) aborts before rm.
-    if security find-generic-password -s "$SERVICE" </dev/null >/dev/null 2>&1; then RC=0; else RC=$?; fi
-    [ "$RC" -eq 44 ] && break
-    [ "$RC" -eq 0 ] || { echo "refusing: Keychain lookup for $SERVICE failed (status $RC)" >&2; exit 1; }
-    FOUND="$FOUND  Keychain entries with service: $SERVICE
+  if security find-generic-password -s "$SERVICE" </dev/null >/dev/null 2>&1; then RC=0; else RC=$?; fi
+  [ "$RC" -eq 44 ] && continue
+  [ "$RC" -eq 0 ] || keychain_failure "refusing: Keychain lookup for $SERVICE failed (status $RC)"
+  FOUND="$FOUND  Keychain entries with service: $SERVICE
 "
-    [ "$APPLY" -eq 1 ] || break
-    N=$((N + 1))
-    [ "$N" -le 100 ] || { echo "refusing: more than 100 Keychain entries for $SERVICE; stopping" >&2; exit 1; }
-    security delete-generic-password -s "$SERVICE" </dev/null >/dev/null 2>&1 || { echo "could not delete a Keychain entry for $SERVICE" >&2; exit 1; }
-    COUNT=$((COUNT + 1))
-  done
 done <<EOF_SERVICES
 $SERVICES
 EOF_SERVICES
@@ -88,6 +89,22 @@ if [ "$APPLY" -eq 0 ]; then
   echo "Quit the app first. Re-run with --yes to apply."
   exit 0
 fi
+
+while IFS= read -r SERVICE; do
+  N=0
+  while :; do
+    # 44 is errSecItemNotFound; any other failure (locked, denied) aborts before rm.
+    if security find-generic-password -s "$SERVICE" </dev/null >/dev/null 2>&1; then RC=0; else RC=$?; fi
+    [ "$RC" -eq 44 ] && break
+    [ "$RC" -eq 0 ] || keychain_failure "refusing: Keychain lookup for $SERVICE failed (status $RC)"
+    N=$((N + 1))
+    [ "$N" -le 100 ] || keychain_failure "refusing: more than 100 Keychain entries for $SERVICE; stopping"
+    security delete-generic-password -s "$SERVICE" </dev/null >/dev/null 2>&1 || { RC=$?; keychain_failure "could not delete a Keychain entry for $SERVICE (status $RC)"; }
+    COUNT=$((COUNT + 1))
+  done
+done <<EOF_SERVICES
+$SERVICES
+EOF_SERVICES
 
 [ -z "$HOME_DIR" ] || { rm -rf -- "$HOME_DIR"; echo "removed $HOME_DIR"; }
 echo "removed $COUNT Keychain entr$([ "$COUNT" -eq 1 ] && echo y || echo ies)"

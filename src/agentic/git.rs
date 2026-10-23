@@ -7,6 +7,14 @@ use crate::common::{
 };
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
+/// Every `run`/`checked` call first reads the local config through `validate`,
+/// bounded by this; the operation's own bound comes on top. The shim budgets in
+/// `tests/shim_and_agent_routes.rs` sum both.
+pub const VALIDATE_TIMEOUT_SEC: u64 = 30;
+/// Bound for one metadata-sized operation (rev-parse, check-attr, index, tree
+/// and ref writes). Network operations carry their own, larger bounds.
+pub const DEFAULT_OP_TIMEOUT_SEC: u64 = 30;
+
 pub(super) fn environment(extra: &[(&str, &str)]) -> BTreeMap<String, String> {
     let mut env: BTreeMap<String, String> = [
         "PATH",
@@ -121,7 +129,7 @@ fn validate(worktree: &Path) -> Result<()> {
     let output = raw(
         worktree,
         &["config", "--local", "--no-includes", "--null", "--list"],
-        Duration::from_secs(30),
+        Duration::from_secs(VALIDATE_TIMEOUT_SEC),
         &[],
         None,
     )?;
@@ -197,7 +205,7 @@ pub fn require_raw_paths(worktree: &Path, paths: &[String]) -> Result<()> {
         "--",
     ];
     args.extend(paths.iter().map(String::as_str));
-    let text = checked(worktree, &args, Duration::from_secs(30), &[], None)?;
+    let text = checked(worktree, &args, Duration::from_secs(DEFAULT_OP_TIMEOUT_SEC), &[], None)?;
     let parts: Vec<_> = text.split_terminator('\0').collect();
     if parts.len() % 3 != 0 {
         return Err(HarnessError::agentic("invalid Git attribute response"));
