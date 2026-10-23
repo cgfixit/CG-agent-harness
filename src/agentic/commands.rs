@@ -796,7 +796,12 @@ fn cmd_real_repo_run_decide(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     };
     // A clone that is already gone has nothing left to clean up; rejecting
     // must still settle the run, or it stays pending and can never be discarded.
-    if decision == "reject" && std::fs::symlink_metadata(&record.dest).is_err() {
+    // Only NotFound means gone: any other error falls through to attach, which refuses.
+    let clone_gone = matches!(
+        std::fs::symlink_metadata(&record.dest),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound
+    );
+    if decision == "reject" && clone_gone {
         let outcome = super::real_repo_loop::record_rejection(ctx, &branch);
         record.status = outcome["status"].as_str().unwrap_or("").to_string();
         save_run(&runs_dir, &mut record)?;

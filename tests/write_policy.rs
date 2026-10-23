@@ -373,6 +373,31 @@ fn reject_settles_a_pending_run_whose_clone_is_gone() {
     assert_eq!(status(), "discarded");
 }
 
+#[cfg(unix)]
+#[test]
+fn reject_keeps_a_pending_run_whose_clone_cannot_be_inspected() {
+    let dir = tempfile::tempdir().unwrap();
+    let (ctx, dest, _, mut rec) = fixture(dir.path());
+    // Point the record under a regular file: lookup fails with ENOTDIR, not NotFound.
+    let blocker = dest.parent().unwrap().join("blocker");
+    std::fs::write(&blocker, "").unwrap();
+    rec.dest = blocker.join("repo").display().to_string();
+    rec.status = "pending_decision".into();
+    save_run(&ctx.runs_dir(), &mut rec).unwrap();
+    let env = [
+        ("GROK_API_KEY", ""),
+        ("ANTHROPIC_API_KEY", ""),
+        ("DEEPAGENT_API_KEY", ""),
+    ];
+    let idarg = format!("--run-id={}", rec.run_id);
+    let args = ["real-repo-run-decide", &idarg, "--decision=reject", "--reason=r"];
+    let (code, out, err) = run_agentic(&ctx.config_path, &args, &env, dir.path());
+    assert_ne!(code, 0, "{out} {err}");
+    let record = ctx.runs_dir().join(format!("{}.json", rec.run_id));
+    let v: serde_json::Value = serde_json::from_slice(&std::fs::read(record).unwrap()).unwrap();
+    assert_eq!(v["status"], "pending_decision");
+}
+
 #[tokio::test]
 async fn browser_api_requires_explicit_intent_and_shim_rechecks_disk_policy() {
     let model = start_mock_model().await;
