@@ -1085,7 +1085,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved +150 (2026-10-18), shared by the four compaction follow-up PRs (#513 fixes, hard limit, reply parity, window trigger).
     // why: owner-approved (2026-10-18) cap set to the measured count with #546 + #551 together; never trim gate text to fit.
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
-    ("INVARIANTS.md", Root, 7170),
+    // why: operator-approved (2026-10-23) raise to 10,000 with the Root group, so new contracts fit without trimming gate text.
+    ("INVARIANTS.md", Root, 10_000),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     // why: dependency refresh removed five stale Linux prerequisite words; keep the cut.
@@ -1184,7 +1185,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: operator-approved (2026-10-18) +200 Root words for the #494 first-run session contract in INVARIANTS.md.
 // why: operator-approved (2026-10-18) +200 per raised DOCS_BUDGET row, added to its group (Root 3, Guide 21, Evidence 1, Agent 20).
 // why: the Codex skill and AGENTS trim lowers Agent row caps by 3,590 words; retain that reduction in the group cap.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 9_300), (Guide, 68_700), (Evidence, 700), (Agent, 21_910)];
+// why: operator-approved (2026-10-23) Root raised to 10,000 with the INVARIANTS.md row; Root was at 9,216 of 9,300.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 10_000), (Guide, 68_700), (Evidence, 700), (Agent, 21_910)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
