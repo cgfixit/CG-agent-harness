@@ -327,8 +327,8 @@ async fn auto_tune_measures_the_selection_and_tightens_its_chat_limits() {
     assert_eq!(tuning["window"], 16384, "{profile}");
     assert_eq!(tuning["max_tokens"], 2048, "{profile}");
     assert_eq!(tuning["tools_off"], true, "{profile}");
-    // 12000/1500 + (2048 + 5 x 128)/50 = 61.8 s; doubled and rounded up to 150.
-    assert_eq!(tuning["timeout_sec"], 150, "{profile}");
+    // 12000/1500 + (2048 + 15 x 128)/50 = 87.4 s; doubled and rounded up to 180.
+    assert_eq!(tuning["timeout_sec"], 180, "{profile}");
     // Research's answer deadline follows the same sample: (1500 + 1000)/1500 +
     // 512/50 = 11.9 s, doubled and rounded up, floored at 60.
     assert_eq!(tuning["synthesis_seconds"], 60, "{profile}");
