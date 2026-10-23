@@ -9,7 +9,13 @@ use serde_json::{json, Value};
 use crate::common::errors::{HarnessError, Result};
 
 pub fn git_head(worktree: &Path) -> Result<String> {
-    let out = super::super::git::run(worktree, &["rev-parse", "HEAD"], Duration::from_secs(30), &[], None)?;
+    let out = super::super::git::run(
+        worktree,
+        &["rev-parse", "HEAD"],
+        Duration::from_secs(super::super::git::DEFAULT_OP_TIMEOUT_SEC),
+        &[],
+        None,
+    )?;
     let sha = out.stdout.trim().to_string();
     if out.status != Some(0) || sha.len() < 7 {
         return Err(

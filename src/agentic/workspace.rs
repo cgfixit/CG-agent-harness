@@ -25,7 +25,9 @@ use super::gh_client::{run_read, ReadRequest, DEFAULT_CLONE_TIMEOUT_SEC};
 
 pub const DEFAULT_MAX_READ_BYTES: u64 = 256_000;
 pub const DEFAULT_MAX_WRITE_BYTES: usize = 256_000;
-pub const DEFAULT_GIT_WRITE_TIMEOUT_SEC: u64 = 30;
+/// Re-exported for the shim budget sums; `git` itself stays crate-private.
+pub const GIT_VALIDATE_TIMEOUT_SEC: u64 = super::git::VALIDATE_TIMEOUT_SEC;
+pub const DEFAULT_GIT_WRITE_TIMEOUT_SEC: u64 = super::git::DEFAULT_OP_TIMEOUT_SEC;
 pub const DEFAULT_PUSH_TIMEOUT_SEC: u64 = 120;
 
 /// Canonical repo-relative form, or `None` if unsafe (the WRITE-path rule).
@@ -703,7 +705,7 @@ impl<'a> RepoWorkspace<'a> {
                 base,
                 "--",
             ],
-            30,
+            DEFAULT_GIT_WRITE_TIMEOUT_SEC,
             &[],
         )?;
         if !staged.is_empty() {
@@ -728,7 +730,13 @@ impl<'a> RepoWorkspace<'a> {
         let extra = [("GIT_INDEX_FILE", index_name)];
         let write = |args: &[&str], stdin: Option<&[u8]>| -> Result<String> {
             self.require_write("approve", f.reason, f.confirm)?;
-            super::git::checked(&self.dest, args, Duration::from_secs(30), &extra, stdin)
+            super::git::checked(
+                &self.dest,
+                args,
+                Duration::from_secs(DEFAULT_GIT_WRITE_TIMEOUT_SEC),
+                &extra,
+                stdin,
+            )
         };
         write(&["read-tree", base], None)?;
         for file in accepted["files"]
@@ -800,7 +808,12 @@ impl<'a> RepoWorkspace<'a> {
     }
 
     pub fn origin_url(&self) -> Result<String> {
-        let remote = self.run_git("origin", &["config", "--get", "remote.origin.url"], 30, &[])?;
+        let remote = self.run_git(
+            "origin",
+            &["config", "--get", "remote.origin.url"],
+            DEFAULT_GIT_WRITE_TIMEOUT_SEC,
+            &[],
+        )?;
         let remote = remote.trim().to_string();
         let https = format!("https://github.com/{}", self.ctx.acfg.repo);
         let ssh = format!("git@github.com:{}", self.ctx.acfg.repo);
