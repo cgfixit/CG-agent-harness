@@ -190,8 +190,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
     // Request order, outermost first: request_log (when enabled) ->
     // security_headers -> trusted_host (loopback Host/authority) -> account_gate
     // -> the per-router CSRF layer -> handler.
-    // account_gate covers every `/api/` path: rate limit -> same-origin ->
-    // direct loopback/no proxy -> account/RBAC (with auth enabled, only
+    // account_gate covers every `/api/` path: same-origin -> direct
+    // loopback/no proxy -> rate limit -> account/RBAC (with auth enabled, only
     // /api/status and the setup-status and login routes are reachable
     // without a session). `/` and `/static/*` skip account_gate.
     //
