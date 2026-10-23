@@ -2,6 +2,7 @@
 //! Port of `agentic/harness_optimizer/model_adapter.py::LocalProposerClient`.
 //! The child process is synchronous; a blocking reqwest client is correct here.
 
+use std::io::Read;
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -148,7 +149,22 @@ impl ProposerClient for LocalProposerClient<'_> {
                     .detail("error_type", "HTTPStatusError"),
             );
         }
-        let data: Value = resp.json().map_err(|_| {
+        // Bound model-controlled JSON independently of the requested tokens:
+        // the cap the cloud proposer and local chat already apply.
+        let cap = crate::llm::cloud_chat::MAX_RESPONSE_BYTES;
+        let mut body = Vec::new();
+        if resp.take(cap as u64 + 1).read_to_end(&mut body).is_err() {
+            failed("ValueError");
+            return Err(HarnessError::agentic("local proposer invocation failed (ValueError)"));
+        }
+        if body.len() > cap {
+            failed("ResponseTooLarge");
+            return Err(
+                HarnessError::agentic("local proposer response exceeds limit; this response was not applied")
+                    .detail("error_type", "ResponseTooLarge"),
+            );
+        }
+        let data: Value = serde_json::from_slice(&body).map_err(|_| {
             failed("ValueError");
             HarnessError::agentic("local proposer invocation failed (ValueError)")
         })?;

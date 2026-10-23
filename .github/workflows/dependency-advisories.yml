@@ -2,7 +2,7 @@
 # otherwise surfaces only on the next push; the release cron reaches the deny
 # job only when a release is due. Same pinned action and arguments as the deny
 # jobs in ci.yml and desktop.yml, advisories only.
-name: Daily advisories
+name: Dependencies - Daily RustSec advisories
 
 on:
   schedule:

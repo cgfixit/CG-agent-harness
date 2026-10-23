@@ -3,7 +3,7 @@
 # script and this workflow enforce the same rules. The core-path rule
 # requires an explicit "invariant" mention when the isolation boundary or a
 # security gate moves.
-name: PR template check
+name: PR - Template and base branch checks
 
 on:
   pull_request:
