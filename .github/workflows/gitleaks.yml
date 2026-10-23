@@ -1,4 +1,4 @@
-name: gitleaks
+name: Gitleaks - Secret scanning
 
 on:
   push:
@@ -27,7 +27,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      # Pinned CLI + sha256 (same pattern as CyClaw-Net-Viewer). The MIT
+      # Pinned CLI + sha256. The MIT
       # CLI needs no GITLEAKS_LICENSE. Replaces gitleaks-action so the
       # scanner binary is what we hashed, not an action wrapper.
       - name: Install Gitleaks 8.30.1
