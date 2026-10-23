@@ -4260,9 +4260,10 @@ async function runServerLoop() {
       session_id: currentSession,
       max_turns: activeLoop.total,
     });
-    if (loopState !== activeLoop) {
-      /* A /loop stop or session switch won while the run was created: halt it. */
+    if (loopState !== activeLoop || !activeLoop.auto) {
+      /* A /loop stop, session switch or auto off won while the run was created: halt it. */
       api('/api/loop/stop', 'POST', { run_id: started.run.run_id }).catch(function () {});
+      if (loopState === activeLoop) stopLoop('loop stopped — auto turned off before the server run started');
       return;
     }
     activeLoop.runId = started.run.run_id;

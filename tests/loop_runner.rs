@@ -145,9 +145,17 @@ async fn loop_start_status_stop_round_trip() {
             .any(|e| e.file_name().to_string_lossy() == format!("{run_id}.json")),
         "run state persisted under loops/"
     );
-    // A second start for the same session is refused while one is live.
-    let (_url2, count2) = start_counting_mock().await;
-    let _ = (_url2, count2);
+    // A new run for the session replaces the finished one in memory; the old
+    // run's record stays on disk.
+    let (status, body) = s
+        .post_json("/api/loop/start", json!({"session_id": sid, "max_turns": 50}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let (status, _) = s.get_json(&format!("/api/loop/status?run_id={run_id}")).await;
+    assert_eq!(status, 404, "a finished run is evicted when its session starts another");
+    assert!(s.home.join("loops").join(format!("{run_id}.json")).is_file());
+    let next = body["run"]["run_id"].as_str().unwrap().to_string();
+    s.post_json("/api/loop/stop", json!({"run_id": next})).await;
 }
 
 #[tokio::test]

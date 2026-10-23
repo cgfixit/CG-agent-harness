@@ -266,6 +266,10 @@ impl LoopManager {
                     "a loop run is already active for this session",
                 ));
             }
+            // A session keeps only its newest run in memory, so the map is
+            // bounded by sessions rather than growing with every run; a
+            // finished run's record stays in loops/<run_id>.json.
+            runs.retain(|_, e| e.run.session_id != run.session_id);
             runs.insert(run_id.clone(), entry);
         }
         let dir = self.dir.clone();
