@@ -27,7 +27,7 @@ async fn shipped_local_model_settings_are_nested_and_effective() {
 fn shipped_web_and_workspace_settings_validate_for_a_fresh_home() {
     let cfg = shipped();
     let web = cgagentharness::server::web_search::Limits::load(&cfg).unwrap();
-    assert_eq!(web.chat_tool_calls, 10);
+    assert_eq!(web.chat_tool_calls, 30);
     let root = tempfile::tempdir().unwrap();
     let home = cgagentharness::common::home::Home::at(root.path().join("home"));
     home.ensure_layout().unwrap();
