@@ -116,6 +116,18 @@ if [ "$mode" = app ] && [ "$(app_backends | grep -c .)" -gt 1 ]; then
   exit 3
 fi
 if [ "$mode" = app ] && [ -z "$(app_backends)" ]; then
+  # The app's backend needs its home's lock. Another owner (a `serve` started by
+  # hand, say) leaves the app on its recovery screen and this script waiting for
+  # a backend that never starts, so refuse now. open gives the app launchd's
+  # environment, not this shell's, so its home comes from launchctl.
+  app_home=$(launchctl getenv CGAGENTHARNESS_HOME 2>/dev/null || true)
+  app_home=${app_home:-$HOME/.CGagentHarness}
+  holder=$(lsof -t -- "$app_home/.server.lock" 2>/dev/null | head -n1 || true)
+  if [ -n "$holder" ]; then
+    echo "start-macos: $app_home is owned by pid $holder ($(ps -o command= -p "$holder" 2>/dev/null || echo unknown)), so the app cannot start its backend." >&2
+    echo 'Quit that process (or use the console it serves), then rerun.' >&2
+    exit 3
+  fi
   # A usable bundle: the same test as install-macos.sh's app_ok, including the
   # backend digest the shell was compiled with (checked without running either binary).
   sidecar_ok() {
@@ -189,7 +201,9 @@ fi
 # private MCP gateway's port (mcp.server.enabled), so classify each listener
 # with one plain-HTTP request to /api/status:
 #   200  the console on an explicit legacy-HTTP home
-#   000  no HTTP reply: a TLS listener, which only the console can be
+#   000  a reply that is not HTTP: a TLS listener, which only the console can be
+#        (curl also says 000 for a refused or stalled connection, exit 7 or 28:
+#        that port is skipped and retried on the next pass)
 #   else the MCP gateway (always plain HTTP; it refuses this path)
 # Probing HTTPS instead would need a TLS 1.3 client, which the LibreSSL curl
 # on macOS 12 is not.
@@ -203,10 +217,12 @@ for _ in $(seq 1 120); do
   if [ -n "$pids" ]; then
     # lsof exits 1 until the new backend listens; under pipefail that must not end the script.
     for p in $(lsof -nP -a -p "$pids" -iTCP@"$loopback" -sTCP:LISTEN -Fn 2>/dev/null | sed -n "s/^n$loopback:\([0-9]*\)\$/\1/p" || true); do
-      code=$(curl --noproxy '*' --silent --max-time 3 -o /dev/null -w '%{http_code}' "http://$loopback:$p/api/status" || true) # DevSkim: ignore DS137138 because this only classifies loopback listeners.
-      case $code in
-        200) port=$p scheme=http; break ;;
-        000) port=$p scheme=https; break ;;
+      rc=0
+      code=$(curl --noproxy '*' --silent --max-time 3 -o /dev/null -w '%{http_code}' "http://$loopback:$p/api/status") || rc=$? # DevSkim: ignore DS137138 because this only classifies loopback listeners.
+      case $code:$rc in
+        200:*) port=$p scheme=http; break ;;
+        000:7 | 000:28) ;;
+        000:*) port=$p scheme=https; break ;;
       esac
     done
     [ -z "$port" ] || break
