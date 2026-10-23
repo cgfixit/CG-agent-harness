@@ -44,6 +44,10 @@ pub struct Limits {
     pub run_seconds: u64,
     pub per_site_pages: usize,
     pub pace_ms: u64,
+    /// Restart-only pause after a public Google challenge or block (`web.search_cooldown_public_sec`).
+    pub search_cooldown_public_sec: u64,
+    /// Restart-only pause after a SerpAPI quota refusal; 0 waits for the next clock hour.
+    pub search_cooldown_quota_sec: u64,
     pub cache_pages: usize,
     pub cache_bytes: usize,
     pub subqueries: usize,
@@ -88,6 +92,8 @@ impl Limits {
             run_seconds: bound("run_seconds", 60, 1, 180)?,
             per_site_pages: bound("per_site_pages", 10, 1, 20)? as usize,
             pace_ms: bound("pace_ms", 250, 100, 5000)?,
+            search_cooldown_public_sec: bound("search_cooldown_public_sec", 600, 60, 3600)?,
+            search_cooldown_quota_sec: bound("search_cooldown_quota_sec", 0, 0, 3600)?,
             cache_pages: bound("cache_pages", 128, 1, 256)? as usize,
             cache_bytes: bound("cache_bytes", 16_777_216, 1_048_576, 33_554_432)? as usize,
             subqueries: bound("subqueries", 3, 1, 5)? as usize,
@@ -406,6 +412,11 @@ pub struct WebTool {
     pub(super) permits: Arc<Semaphore>,
     pub(super) mutation: Arc<Mutex<()>>,
     pub(super) search_gate: Arc<Semaphore>,
+    /// Per-provider pause after a refusal, shared by every snapshot; lost on restart.
+    pub(super) search_cooldown: Arc<super::web_google::SearchCooldown>,
+    /// Programmatic fixture hook replacing the public Google search URL; no
+    /// configuration, CLI or HTTP path sets it.
+    pub test_public_search: Option<url::Url>,
     pub research: Arc<super::web_research::ResearchState>,
     pub chat_turn: Arc<super::web_research::ResearchState>,
 }
@@ -423,6 +434,8 @@ impl WebTool {
             plaintext_key_file: cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE),
             mutation: Arc::new(Mutex::new(())),
             search_gate: Arc::new(Semaphore::new(1)),
+            search_cooldown: Arc::default(),
+            test_public_search: None,
             research: Arc::default(),
             chat_turn: Arc::default(),
         })

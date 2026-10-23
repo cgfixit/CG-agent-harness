@@ -1374,6 +1374,102 @@ async fn chat_search_without_google_pattern_returns_google_permission() {
     assert_no_serpapi_secret(&body, &s.home);
 }
 
+/// A public Google CAPTCHA pauses that provider: the next loop turn's search is
+/// refused `WEB_SEARCH_COOLDOWN` before any request, the model is told when it
+/// ends, and the turn still completes.
+#[tokio::test]
+async fn loop_search_after_a_google_challenge_cools_down_without_a_second_request() {
+    let hits = Arc::new(AtomicUsize::new(0));
+    let h = hits.clone();
+    let google = Router::new().route(
+        "/search",
+        get(move || {
+            let h = h.clone();
+            async move {
+                h.fetch_add(1, Ordering::SeqCst);
+                (
+                    [("content-type", "text/html")],
+                    "<html>Our systems have detected unusual traffic. <div class='g-recaptcha'></div></html>",
+                )
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let address = listener.local_addr().unwrap();
+    let fixture = tokio::spawn(async move { axum::serve(listener, google).await.unwrap() });
+    let model = common::start_mock_model().await;
+    model.set_reply(tool_call_reply(
+        "web_search",
+        r#"{"query":"veeam cve"}"#,
+        "cooldown_search",
+    ));
+    let s = common::spawn_server(
+        &model.base_url(),
+        common::ServerOptions {
+            web_resolve: Some(("google.fixture".into(), address)),
+            public_search: Some(url::Url::parse("http://google.fixture/search").unwrap()), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            // Inline appends, so the audit file is complete when the reply returns.
+            ..common::ServerOptions::default().with("logging.audit_queue_lines", "0")
+        },
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://google.fixture/*"})) // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            .await
+            .0,
+        200
+    );
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"Find current CVEs"}),
+    )
+    .await;
+    let (status, first) = s
+        .post_json("/api/chat", json!({"message":"continue","session_id":sid,"loop":true}))
+        .await;
+    assert_eq!(status, 200, "{first}");
+    assert_eq!(first["web_tools"][0]["code"], "WEB_GOOGLE_CHALLENGE", "{first}");
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    let (status, second) = s
+        .post_json("/api/chat", json!({"message":"continue","session_id":sid,"loop":true}))
+        .await;
+    assert_eq!(status, 200, "a cooled-down search still completes the turn: {second}");
+    assert_eq!(second["web_tools"][0]["code"], "WEB_SEARCH_COOLDOWN", "{second}");
+    let message = second["web_tools"][0]["message"].as_str().unwrap();
+    assert!(message.contains("search is cooling down until "), "{message}");
+    assert_eq!(hits.load(Ordering::SeqCst), 1, "no second request reached the provider");
+    assert_eq!(
+        cgagentharness::server::loop_runner::next_tool_failures(0, second["web_tools"].as_array().unwrap()),
+        0,
+        "a cooldown turn does not count toward loop.max_failures"
+    );
+    let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap();
+    let starts: Vec<&str> = audit
+        .lines()
+        .filter(|l| l.contains("\"web_search_cooldown\""))
+        .collect();
+    assert_eq!(
+        starts.len(),
+        1,
+        "one line when the pause starts, none while it holds: {audit}"
+    );
+    assert!(starts[0].contains("\"provider\":\"google-public\""), "{}", starts[0]);
+    assert!(starts[0].contains("WEB_GOOGLE_CHALLENGE"), "{}", starts[0]);
+    let (status, panel) = s
+        .post_json("/api/web/search", json!({"query":"veeam cve","engine":"google"}))
+        .await;
+    assert_eq!(status, 409, "{panel}");
+    assert_eq!(common::code(&panel), "WEB_SEARCH_COOLDOWN", "{panel}");
+    assert!(
+        common::message(&panel).contains("search is cooling down until "),
+        "{panel}"
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1);
+    fixture.abort();
+}
+
 fn tool_call_reply(name: &str, arguments: &str, id: &str) -> Value {
     json!({"model":"mock","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
         "tool_calls":[{"id":id,"type":"function","function":{"name":name,"arguments":arguments}}]}}],
