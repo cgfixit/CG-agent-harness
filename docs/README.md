@@ -197,7 +197,7 @@ links resolve. Truth order for every claim is code, then
   (dependency watches), how to check and synchronize, and dated audits.
   Owns: `Cargo.toml`, `Cargo.lock`, `deny.toml`, `rust-toolchain.toml`, their
   `desktop/` twins, [.cargo/config.toml](../.cargo/README.md). Checked by:
-  `.github/workflows/advisories.yml`, the `ci.yml` deny job, the `dep-sync` skill.
+  `.github/workflows/dependency-advisories.yml`, the `ci.yml` deny job, the `dep-sync` skill.
 - [RELEASING.md](RELEASING.md): the scheduled `release` workflow (08:17 and
   20:17 UTC). How the tree is compared with the latest release, the Bundle
   gate, patch version selection, draft-then-Latest publication, changing the

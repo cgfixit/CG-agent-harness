@@ -28,6 +28,20 @@ fn bundled_docs(packaging: &str) -> Vec<String> {
         .collect()
 }
 
+/// Same extraction as the script: the quoted entries of the generator's
+/// `INPUTS = [` ... `]` block.
+fn manual_inputs(generator: &str) -> Vec<String> {
+    let pattern = regex::Regex::new(r#""([^"]+)""#).expect("inputs pattern");
+    generator
+        .lines()
+        .skip_while(|line| !line.starts_with("INPUTS = ["))
+        .skip(1)
+        .take_while(|line| !line.starts_with(']'))
+        .filter_map(|line| pattern.captures(line))
+        .map(|hit| hit[1].to_string())
+        .collect()
+}
+
 fn classify(script_path: &Path, paths: &[&str]) -> Output {
     let mut child = Command::new(std::env::var_os("CGAH_TEST_BASH").unwrap_or_else(|| "bash".into()))
         .arg(script_path)
@@ -106,6 +120,44 @@ fn code_and_uncertain_paths_run_everything() {
 }
 
 #[test]
+fn self_manual_inputs_run_everything() {
+    let script = script();
+    let generator =
+        std::fs::read_to_string(repo_root().join("scripts/build-self-manual.py")).expect("build-self-manual.py");
+    let inputs = manual_inputs(&generator);
+    for path in &inputs {
+        assert!(
+            repo_root().join(path).is_file(),
+            "build-self-manual.py reads {path}, which does not exist"
+        );
+    }
+    // The docs-shaped inputs are what the other rules would let through.
+    for expected in ["INVARIANTS.md", "docs/CONSOLE.md"] {
+        assert!(
+            inputs.iter().any(|path| path == expected),
+            "build-self-manual.py must still read {expected}, got {inputs:?}"
+        );
+    }
+    for path in &inputs {
+        assert_exit("self-manual input", &script, &[path.as_str()], 1);
+    }
+}
+
+#[test]
+fn an_unreadable_self_manual_input_list_runs_everything() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let script_path = dir.path().join("ci-docs-only.sh");
+    std::fs::copy(script(), &script_path).expect("copy classifier");
+    std::fs::copy(
+        repo_root().join("scripts/package-desktop.sh"),
+        dir.path().join("package-desktop.sh"),
+    )
+    .expect("copy packaging");
+    std::fs::write(dir.path().join("build-self-manual.py"), "INPUTS = [\n]\n").expect("write empty generator");
+    assert_exit("empty INPUTS list", &script_path, &["docs/INSTALL.md"], 1);
+}
+
+#[test]
 fn plain_docs_may_skip() {
     let script = script();
     let packaging =
@@ -115,6 +167,15 @@ fn plain_docs_may_skip() {
         !bundled.iter().any(|path| path == "docs/INSTALL.md"),
         "docs/INSTALL.md is the unbundled docs fixture, got {bundled:?}"
     );
+    let generator =
+        std::fs::read_to_string(repo_root().join("scripts/build-self-manual.py")).expect("build-self-manual.py");
+    let inputs = manual_inputs(&generator);
+    for fixture in ["docs/INSTALL.md", "SECURITY.md"] {
+        assert!(
+            !inputs.iter().any(|path| path == fixture),
+            "{fixture} is the docs-only fixture and must stay outside the self-manual inputs, got {inputs:?}"
+        );
+    }
     assert_exit("unbundled docs/INSTALL.md", &script, &["docs/INSTALL.md"], 0);
     assert_exit("SECURITY.md", &script, &["SECURITY.md"], 0);
 }
