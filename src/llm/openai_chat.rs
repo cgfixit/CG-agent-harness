@@ -529,6 +529,58 @@ mod tests {
         assert!(ChatClient::new(plain, "local", 5.0, "", None).is_ok());
     }
 
+    /// Both local reply readers stop at 4 MiB of model-controlled bytes: the
+    /// JSON body and one server-sent event. Exactly 4 MiB still parses.
+    #[tokio::test]
+    async fn oversized_local_replies_are_refused_at_the_byte_ceiling() {
+        const LIMIT: usize = 4_194_304;
+        // A valid completion padded with JSON whitespace to exactly `len` bytes.
+        fn padded(len: usize) -> String {
+            let body = reply("ok").to_string();
+            format!("{body}{}", " ".repeat(len - body.len()))
+        }
+        let json_body =
+            |len: usize| async move { ([(reqwest::header::CONTENT_TYPE, "application/json")], padded(len)) };
+        let app = axum::Router::new()
+            .route(
+                "/exact/v1/chat/completions",
+                axum::routing::post(move || json_body(LIMIT)),
+            )
+            .route(
+                "/over/v1/chat/completions",
+                axum::routing::post(move || json_body(LIMIT + 1)),
+            )
+            .route(
+                "/sse/v1/chat/completions",
+                axum::routing::post(|| async {
+                    (
+                        [(reqwest::header::CONTENT_TYPE, "text/event-stream")],
+                        format!("data: {}\n\n", padded(LIMIT)),
+                    )
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only ephemeral loopback.
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client =
+            |path: &str| ChatClient::new(&format!("http://{addr}/{path}/v1"), "local", 30.0, "", None).unwrap(); // DevSkim: ignore DS137138 because this fixture uses no credentials and binds only to loopback.
+        let exact = client("exact").chat("s", &[], None, 16, 0.0).await.unwrap();
+        assert_eq!(exact.body_text, "ok");
+        let over = client("over").chat("s", &[], None, 16, 0.0).await.unwrap_err();
+        assert_eq!(over.message, "model response exceeds limit");
+        let (sender, _receiver) = tokio::sync::mpsc::channel(4);
+        let output = super::super::openai_stream::Output {
+            sender: &sender,
+            validate: &|| Ok(()),
+        };
+        let streamed = client("sse")
+            .chat_stream("s", &[], None, 16, 0.0, Some(output))
+            .await
+            .unwrap_err();
+        assert_eq!(streamed.message, "model response exceeds limit");
+        server.abort();
+    }
+
     #[tokio::test]
     async fn json_mode_is_requested_only_for_json_calls() {
         let app = axum::Router::new().route(

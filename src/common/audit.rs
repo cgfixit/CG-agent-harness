@@ -742,7 +742,12 @@ mod tests {
             &home.join("config.yaml"),
         )
         .unwrap();
-        assert_eq!(Audit::from_home(&home, &cfg).path(), home.join("logs/audit..old.jsonl"));
+        let dotted = Audit::from_home(&home, &cfg);
+        assert_eq!(dotted.path(), home.join("logs/audit..old.jsonl"));
+        // A doubled dot inside a name is not a parent component: the record lands.
+        dotted.log(json!({"event":"dotted"}));
+        dotted.flush();
+        assert_eq!(written(&home.join("logs/audit..old.jsonl")).len(), 1);
     }
 
     #[test]

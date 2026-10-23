@@ -1102,3 +1102,47 @@ async fn status_distinguishes_automatic_fallback_from_a_saved_model_override() {
     assert_eq!(status["model"], "longctx:q8");
     assert_eq!(status["selection_overrides_config"], true);
 }
+
+#[tokio::test]
+async fn pull_refuses_a_progress_line_over_max_response_bytes() {
+    // A native server whose pull would succeed, except that one progress line
+    // is 2048 bytes: only the configured byte bound can refuse it.
+    let app = Router::new()
+        .route(
+            "/v1/models",
+            get(|| async { Json(json!({"data": [{"id": "qwen3.8:27b-mlx-cg"}]})) }),
+        )
+        .route(
+            "/api/tags",
+            get(|| async { Json(json!({"models": [{"name": "tinyllama:latest", "size": 1}]})) }),
+        )
+        .route(
+            "/api/pull",
+            post(|| async {
+                (
+                    [(axum::http::header::CONTENT_TYPE, "application/x-ndjson")],
+                    format!("{{\"status\":\"{}\"}}\n{{\"status\":\"success\"}}\n", "x".repeat(2048)),
+                )
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let s = spawn_server(
+        &format!("{base}/v1"),
+        ServerOptions::default().with("models.local_llm.pull.max_response_bytes", "1024"),
+    )
+    .await;
+    let (status, body) = s
+        .post_json("/api/ollama/pull", json!({"model": "tinyllama:latest"}))
+        .await;
+    assert_eq!(status, 502, "{body}");
+    let finished: Vec<Value> = s
+        .audit_log()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|row| row["event"] == "ollama_pull_finished")
+        .collect();
+    assert_eq!(finished.len(), 1, "{finished:?}");
+    assert_eq!(finished[0]["ok"], false);
+}
