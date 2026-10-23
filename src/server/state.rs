@@ -114,6 +114,8 @@ pub struct AppState {
     pub rate_limiter: RateLimiter,
     pub loop_rate_limiter: RateLimiter,
     pub loop_inflight: Mutex<HashMap<String, f64>>,
+    /// Server-side `/loop` runs that outlive the browser connection.
+    pub loops: super::loop_runner::LoopManager,
     pub generation_gate: GenerationGate,
     pub agent_run_gate: GenerationGate,
     pub csrf_token: String,

@@ -129,7 +129,27 @@ api:
   harness_loop_rate_limit:
     max_requests: 34
     window_seconds: 500
-    max_tokens: 2048 # same backend-dependent ceiling as local chat; legacy 0 selects 2048
+    # Per-turn generation budget for /loop turns. With the default local model
+    # (Ollama reasoning=none) the reload-time ceiling is 25904; with reasoning
+    # or a compatible backend it is 12952. Set to 0 to keep the legacy 2048
+    # default, or raise it toward the ceiling your model window allows.
+    max_tokens: 8192 # same backend-dependent ceiling as local chat; legacy 0 selects 2048
+
+# Server-side /loop runner bounds (Reload limits/SIGHUP; see docs/CONFIG_RELOAD.md
+# and docs/CONSOLE.md). The console reads these from /api/status at runtime and
+# falls back to these values. 0 means unlimited for max_turns and
+# max_total_completion_tokens; other conditions (GOAL_DONE, repeated reply,
+# max_failures, or /loop stop) still end a run.
+loop:
+  # Turns one /loop run may take. 0 means unlimited.
+  max_turns: 0 # 0 (unlimited) or 1–1000000
+  # Aggregate reported completion tokens across a run's turns. 0 means unlimited.
+  max_total_completion_tokens: 0 # 0 (unlimited) or 1–100000000
+  # Consecutive failed turns (a timeout, a truncated or malformed reply, a
+  # refusal) after which the run aborts.
+  max_failures: 2 # 1–100
+  # Pause between turns, so /loop stop can land and the model server breathes.
+  cooldown_ms: 2000 # 0–300000
 
 # Bounded public content reads; fresh harness.json enables web with an empty URL allowlist.
 # Missing values in existing homes use these defaults; invalid values fail boot.

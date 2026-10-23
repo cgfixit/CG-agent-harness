@@ -690,7 +690,8 @@ async fn a_loop_turn_compacts_at_the_input_measured_prefill_reads() {
         &ollama.openai_url(),
         ServerOptions::default()
             .with("models.local_llm.auto_tune", "true")
-            .with("api.rate_limit.max_requests", "1000"),
+            .with("api.rate_limit.max_requests", "1000")
+            .with("api.harness_loop_rate_limit.max_tokens", "2048"),
     )
     .await;
     s.post_json("/api/web", json!({"enabled": false})).await;

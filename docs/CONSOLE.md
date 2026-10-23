@@ -1,12 +1,12 @@
 # Chat, soul, skills and slash commands
 
-This page covers chat, sessions, soul, skills, style, and commands.
+This page covers chat, sessions, soul, skills, style and commands.
 See the [index](../README.md), [memory setup](MEMORY_GUIDE.md), and
 [web operations](SECURE_RESEARCH.md#search-fetch-and-research).
 
 Chat continuation and coding jobs differ: `/loop` follows a session goal,
 while `/agent` drives the [coding pipeline](CODING_PIPELINE.md). A goal, skill,
-persona, or reply never authorizes commands, commits, pushes, or publication.
+persona, or reply never authorizes commands, commits, pushes or publication.
 
 ## What you can do
 
@@ -28,21 +28,21 @@ persona, or reply never authorizes commands, commits, pushes, or publication.
 
 Text follows browser zoom. In the sidebar tab list, arrow keys, Home and End move
 and Enter or Space opens a tab. Drag its right edge to resize; drag far left to
-hide it. The top-left **>>** restores it. The divider also accepts arrow keys,
-Home to hide and End to expand. Width lasts until reload. The conversation is a
-polite live log, marked busy while a reply streams.
+hide it, or focus the divider and use the same keys. The top-left **>>** restores
+it. Width lasts until reload. The conversation is a polite live log, marked busy
+while a reply streams.
 
 ## 7. Chat, soul, skills and goals
 
 Fresh chat has no assigned repository or automatic coding skills. When web is
 enabled, local chat can dispatch only the bounded read-only `web_search` and
 `web_fetch` tools, including local `/loop` turns. Chat cannot inspect local
-files or certify live wiring; use command results as evidence and the coding
+files or certify live wiring; use command results as evidence, the coding
 workflow for execution.
 
 Existing homes retain repositories and skill files; chat neither loads nor edits
-legacy coding skills. For an isolated test, start `/session new`, use
-`/skill clear`, inspect `/memory` and `/soul status`, then `/prompt`. A new
+legacy coding skills. For an isolated test, start `/session new`, `/skill clear`,
+inspect `/memory` and `/soul status`, then `/prompt`. A new
 session still uses enabled shared notes and persona.
 
 Enter slash commands in chat; `/help` lists them. Begin with `/status`,
@@ -58,14 +58,14 @@ Enter slash commands in chat; `/help` lists them. Begin with `/status`,
 ```
 
 Send a question and confirm a reply. `/tokens` and the header's
-**session · tokens** count show the session's tally
+**session · tokens** count the tally
 ([interpretation](SPEND_AND_NOTIFICATIONS.md#read-spend-without-mistaking-missing-data-for-zero)).
 
 Creating or switching sessions replaces the visible transcript, stops chat and
 the generation wait, discards delayed replies, and clears staged
 coding or persona reviews. Switching restores retained messages without
 duplicates. A new session has no messages, goal, or prompt skills. Persona and
-enabled notes stay shared within the home; your account's web selection and
+enabled notes stay shared; your account's web selection and
 injected context survive session changes. Reset controls differ in scope:
 
 | Intent | Control | Retained data |
@@ -76,7 +76,7 @@ injected context survive session changes. Reset controls differ in scope:
 
 In the dialog, choose **Delete my session history** to confirm or **Cancel**.
 Confirmation stops active chat, clears the conversation, and deletes your saved
-sessions, goals, skill selections, and token totals. It retains other accounts,
+sessions, goals, skill selections, and token totals, retaining other accounts,
 unassigned legacy records, and unreadable files. Late replies cannot recreate a
 deleted session. Afterward, send a message or use `/session new`. If storage
 fails, resolve the reported problem before retrying; deletion may be partial.
@@ -86,20 +86,19 @@ in other clients remain.
 
 In the composer, Up recalls older prompts; Down moves forward or restores the draft. Every submitted line enters history, refused commands included; `/api`
 keeps only its key name and `/loop` turns are skipped. The session log keeps the
-latest 50 across restart; legacy logs seed it from user messages and compaction
-keeps it. Session switches and logout reset navigation; the browser stores nothing.
+latest 50 across restart; legacy logs seed it and compaction keeps it. Session switches and logout reset navigation; the browser stores nothing.
 
 The session store retains at most 500 messages per conversation, dropping the
 oldest whole exchanges after the first exchange or its summary. A model reply
 that opens with `[session-compacted]` is stored with a leading space, so only
 compaction writes a summary. Local prompt
 history uses that window; [compaction](#local-history-compaction) reduces
-overflow against the configured token budget, preserving the goal and recent messages. Stored token totals can
-therefore exceed the compacted context sent to the model.
+overflow against the configured token budget, preserving the goal and recent messages. Stored token totals can therefore
+exceed what is sent to the model.
 
 Runtime `sessions/` directories, named `.CGagentHarness/` homes and dotenv files
 are Git-ignored in this repository. Avoid `git add -f` for private files: ignore
-rules do not remove files already tracked by Git and are not global Git policy.
+rules do not remove files already tracked by Git.
 A custom home with another name can expose notes, web extracts, or coding
 records. Keep the whole home outside the checkout. Before publication, these
 checks must show matching ignore rules and no tracked runtime files:
@@ -117,8 +116,12 @@ git ls-files -- ':(glob)**/sessions/**' ':(glob)**/.CGagentHarness/**' '.env' '.
 /goal clear
 ```
 
-`/loop 3` runs up to three follow-up turns toward the goal (default three,
-maximum five), each restating the bounded goal. Text after the count sets the
+`/loop 3` runs up to three follow-up turns toward the goal (default three;
+`loop.max_turns` ships unlimited (0), hot-reloadable, not hardcoded). Each
+turn restates the goal. Turn,
+aggregate-token, failure and cooldown limits are the other `loop.*` keys
+(0 = unlimited for turns and tokens); the per-turn generation budget is
+`api.harness_loop_rate_limit.max_tokens`. Text after the count sets the
 goal first, so `/loop 3 <text>` is `/goal <text>` then `/loop 3`. With no stored
 goal, `/loop` takes the last prompt as the goal. Manual mode pauses after each
 turn; `/loop` continues. `/loop auto` toggles automatic continuation; turning it
@@ -126,14 +129,24 @@ on with a goal (or last prompt) to follow starts the loop after 5 s, and so does
 `/goal <text>` while auto is on. `/loop auto` with a count, mode or goal turns
 auto on and starts after the same pause, storing nothing until then. A turn
 that needed compaction continues the same way automatically. `/loop stop`
-cancels generation, cooldown or a pending start. Goal clear, session switching, token budgets, a 90%-identical reply and two
+cancels generation, cooldown or a pending start. Goal clear, session switching, token budgets, a 90%-identical reply or two
 consecutive failed turns (auto retries once) stop it. A `GOAL_DONE` line (even `**GOAL_DONE**`) stops it
 too, but is only model advice.
 
-This loop does not edit files, run skills as programs, or perform coding checks.
-`--web` on `/goal` or `/loop` sets the chat tools of every turn while the goal is set; without it the goal takes `web.goal_web_default` (ships `all`, restart-only). `fetch` excludes search, `off` excludes web context and tools. Search listings never grant URL permission; URL permissions still apply. Preflight shows the mode. Counters and auto state are page state.
-Refresh/restart does not resume an unattended loop. Goal-to-coding execution is
-an explicit separate workflow in [goal staging](CODING_PIPELINE.md#94-stage-a-session-goal-as-a-coding-task).
+With `server_loop` in `/api/status`, auto loops run server-side,
+outliving the tab: the console renders turns from
+`GET /api/loop/events/<run_id>`, reattaches on `/session use`
+(`/api/loop/status?session_id=`), and `/loop stop` or auto off posts
+`/api/loop/stop`. Runs are owner-bound; each turn rechecks the account.
+`POST /api/loop/start` takes `session_id`, optional `goal`/`web_mode`, and
+limit overrides; each turn persists to `$CGAGENTHARNESS_HOME/loops/`.
+Manual, older-server and compaction-started loops stay browser-driven, as do
+staged attachments.
+
+This loop does not edit files, run skills as programs, or run coding checks.
+`--web` on `/goal` or `/loop` sets the chat tools of every turn while the goal is set; without it the goal takes `web.goal_web_default` (ships `all`, restart-only). `fetch` excludes search, `off` excludes web context and tools. Search listings never grant URL permission; URL permissions still apply. Preflight shows the mode.
+A server restart does not resume a loop; goal-to-coding execution
+is the separate [goal staging](CODING_PIPELINE.md#94-stage-a-session-goal-as-a-coding-task) workflow.
 
 #### Search and export session transcripts
 
@@ -141,14 +154,13 @@ Search and export are guarded APIs, not `/session` subcommands.
 `POST /api/sessions/search` accepts `{"query":"exact phrase"}` and returns owned
 session snippets. Its request-local Tantivy RAM index covers at most 200 sessions
 and 2,000,000 bytes. Queries allow 200 characters; indexing uses up to 32 terms.
-Results contain at most 16 hits, two per session, with 160-character snippets.
-Overlap finds case-insensitive literal phrases across 1,200-character chunks. Search runs on
-the blocking pool, writes no web cache, and sends nothing off-machine. Rebuilding per
-query is accepted within these bounds; measure representative latency before
-introducing a cache (#258).
+Results contain at most 16 hits, two per session, with 160-character snippets,
+found as case-insensitive literal phrases across 1,200-character chunks. Search runs on
+the blocking pool, writes no web cache, and sends nothing off-machine. Per-query
+rebuilding is accepted within these bounds (#258).
 
-`GET /api/sessions/{session_id}/export` returns Markdown and writes it to
-`<home>/exports/{id}.md`. Both APIs enforce owner and CSRF. Export includes
+`GET /api/sessions/{session_id}/export` returns Markdown, written to
+`<home>/exports/{id}.md`. Both APIs enforce owner and CSRF; export includes
 bounded attachment metadata without bodies or filenames.
 
 ### 7.2 Default soul, effective prompt and persona editing
@@ -159,9 +171,9 @@ Existing files and deliberate deletions are preserved. Select `/style soul` for
 concise evidence-first communication without creating a global persona. The
 original reference remains in `assets/soul.default.md`.
 Planning and coding use the same public shipped communication guidance, beneath
-their governed output contracts. Private local persona edits are not implicitly
-sent to a cloud coding provider. The two seeded coding skills are
-optional context and are not injected automatically.
+their governed output contracts; private persona edits are not implicitly sent
+to a cloud coding provider. The two seeded coding skills are optional context,
+not injected automatically.
 
 ```text
 /soul status
@@ -176,7 +188,7 @@ selected optional prompt skills, enabled persona, the active output style, sessi
 goal, explicitly injected web context while web is enabled, and enabled memory
 notes. The API also reports source load state and limits; no credentials file is
 included. Preview and editor responses require the existing API guards and use
-`Cache-Control: no-store`. Review the preview before sharing. It is not a
+`Cache-Control: no-store`. Review the preview before sharing; it is not a
 transcript or the coding planner's prompt.
 
 To create or change persona in the editor:
@@ -200,8 +212,8 @@ as a private SHA256-named backup. `/soul history` lists backup revisions; the
 guarded API `GET /api/soul/document?version=<revision>` reads one for deliberate
 restoration through the same preview/confirmed-edit process. `/soul propose` opens
 a proposal-only editor: **Create proposal only** stores proposed text without
-applying it and returns an ID. This accepts text you supply, including
-model-authored text; it does not automatically generate a new personality.
+applying it and returns an ID. It accepts supplied or model-authored
+text; it does not generate a new personality.
 
 ```text
 /soul review <proposal-id>
@@ -213,17 +225,17 @@ there is no second dialog. `/soul reject <proposal-id> <reason>` preserves the
 active persona. A changed base, changed proposal, or decided proposal is refused.
 Backup and proposal storage holds 32 records without automatic deletion.
 
-Before replacement, Apply records proposal and content hashes in
-`soul-pending-apply.json`, then removes the marker after saving proposal status.
+Apply records proposal and content hashes in `soul-pending-apply.json` before
+replacement and removes the marker after saving proposal status.
 Under the persona lock, startup and the next persona operation reconcile matching
 candidate content as `applied`, unchanged base content as `pending`, and unrelated
-content as `interrupted`. Recovery writes no persona text. Review an interrupted
+content as `interrupted`. Recovery writes no persona text; review an interrupted
 record and create a new proposal if needed.
 
 Unreadable or unwritable recovery storage blocks startup and persona operations. Before manual
 repair, preserve `soul.md`, `soul-history/`, and `soul-pending-apply.json`; do not
-delete the marker blindly. Recovery covers process interruption, not power loss
-or external concurrent edits. Older unmarked interruptions need manual review.
+delete the marker blindly. Recovery covers process interruption, not power loss or
+concurrent external edits; older unmarked interruptions need manual review.
 
 ### 7.3 Runtime skills and Codex development skills
 
@@ -263,20 +275,20 @@ characters per body and 16,000 total. Frontmatter is stripped. These limits live
 under `personality.prompt_skill_max_chars` and `personality.prompt_skills_total_chars`.
 
 After chat, `/skill status` reports the last successful snapshot's IDs, character
-counts, and SHA256 hashes. It can differ from current files or selection and does
-not prove execution. Use `/agent job <id>` or `/agent status <run-id>` for coding
-evidence. A missing, empty, unreadable, or invalid selected file blocks chat;
-restore it or use `/skill clear`. Clearing removes optional prompt bodies,
-including seeded selections, but does not delete files.
+counts, and SHA256 hashes; it can differ from current files and does not prove
+execution. Use `/agent job <id>` or `/agent status <run-id>` for coding
+evidence. A missing, empty, unreadable, or invalid selected file blocks chat; restore it
+or `/skill clear`. Clearing removes optional prompt bodies, seeded selections
+included, but not files.
 
 Repository development skills are indexed in [AGENTS.md](../AGENTS.md); they
 neither enter app chat nor authorize publication.
 
 ### 7.4 Customize response style
 
-Use soul for your usual voice across sessions; use an optional runtime skill for
-an explicitly selected task style. Neither changes the app's permissions or gives
-chat access to a repository. Start with `/soul edit` and adapt this example:
+Use soul for your usual voice across sessions; an optional runtime skill styles
+an explicitly selected task. Neither changes permissions or gives chat repository
+access. Start with `/soul edit` and adapt this example:
 
 ```text
 Lead with the answer. Use plain, direct language.
@@ -315,19 +327,18 @@ empty, missing, or scanner-refused overlay.
 `concise` is brief, `technical` traces mechanism, `research` grades evidence,
 `code-review` leads with blockers at file:line, `design` weighs tradeoffs. These model
 instructions do not deterministically rewrite or limit
-output. An explicit format request wins. `off` removes only style; soul remains.
+output; an explicit format request wins. `off` removes only style; soul remains.
 Changes affect future turns without rewriting history. Compare the same question,
 model, and settings in a new session; a loaded indicator alone proves no prose effect.
 
 **The `unslop` planner probe.** This optional local coding-planner probe is
-not a chat preset. It excludes proposed file bodies when possible,
-then records a response hash and counts 16 fixed case-insensitive phrases such
-as "delve" and "game-changer." It may nudge another ordinary loop iteration but
-never rewrites an answer, forces an iteration, or applies to cloud planners. A
-candidate can pass with hits; phrase matching is not a quality score.
+not a chat preset. It excludes proposed file bodies when possible, records a
+response hash and counts 16 fixed case-insensitive phrases such as "delve" and
+"game-changer." It may nudge another loop iteration but never rewrites an
+answer, forces an iteration, or applies to cloud planners; phrase matching is
+not a quality score.
 
-If you already use the governed local coding workflow and want that probe,
-merge this into the existing active home's `config.yaml`, then restart:
+To enable it, merge this into the active home's `config.yaml`, then restart:
 
 ```yaml
 unslop:
@@ -335,7 +346,7 @@ unslop:
   metrics_path: "logs/unslop.jsonl"
 ```
 
-It ships disabled. Metrics follow bounded JSONL policy. There is no configurable
+It ships disabled; metrics follow bounded JSONL policy. There is no configurable
 phrase list or `/unslop` command.
 See [the current probe](../src/agentic/unslop.rs) and
 [its loop integration](../src/agentic/real_repo_loop.rs).
@@ -346,11 +357,10 @@ See [the current probe](../src/agentic/unslop.rs) and
 does not probe a model, invoke GitHub, or arm writes. `last_result: null` means
 no invocation history; registered or legacy `wired` does not prove readiness.
 `/tools mcp` shows external MCP declarations, read/write grants, network policy,
-and explicit process-group or unrestricted Windows Job Object exceptions. It does not execute a tool or prove that
-the selected sandbox is available. See [MCP capabilities](MCP_CLIENT.md).
-`/connectors` displays connector inventory; `/registry` is another inventory
-view. None of these commands installs a connector or proves its prerequisites
-are ready. The registry's tools array is not a replacement for `/tools`.
+and process-group or unrestricted Windows Job Object exceptions. It does not execute a tool or prove the selected sandbox is available. See [MCP capabilities](MCP_CLIENT.md).
+`/connectors` displays connector inventory; `/registry` is another. Neither
+installs a connector or proves its prerequisites ready; the registry's tools
+array is not a replacement for `/tools`.
 
 | Capability | Current configuration / action | Actual boundary |
 |---|---|---|
@@ -366,17 +376,16 @@ are ready. The registry's tools array is not a replacement for `/tools`.
 | `openai-compatible` catalog entry | Inventory only as a connector | Separately configured local compatible model/fallback paths exist; the row is not an activation control |
 | Runtime prompt skill | Home skill file plus `/skill use` | Prompt context, not an executable plugin or permission grant |
 
-Upstream names do not establish support. Copying settings does not implement a connector,
-and the Setup folder chooser prepares offline Cargo inputs rather than chat file
-access. Remaining connector work is tracked in issues, checked against the
+Upstream names do not establish support; copying settings does not implement a connector,
+and the Setup folder chooser prepares offline Cargo inputs, not chat file
+access. Remaining connector work is tracked in issues against the
 [current connector inventory](../src/server/views.rs).
 
 ### 7.8 Slash-command quick reference
 
 Angle brackets mean "replace with your value"; square brackets mark optional
-arguments; `|` separates alternatives. The Commands pane folds the alphabetical
-catalog by family under a search box, a topic filter and a short list of easily
-mistyped forms; `/help all` prints the same catalog, and `/help` opens a topic
+arguments; `|` separates alternatives. The Commands pane folds the catalog
+by family under a search box, topic filter and easily mistyped forms; `/help all` prints the same catalog, and `/help` opens a topic
 overview filtered by a topic key or search words. A row's `?` opens the command's
 manual: synopsis, arguments, examples, notes and related commands. Commands,
 examples, suggestions and **Insert into composer** only insert the fixed prefix
@@ -390,8 +399,7 @@ differently from the console.
 Memory commands require an exact `/memory` root and subcommand (case-insensitive;
 ordinary spaces are allowed). `/mem`, typos and conversational forms such as
 `/memory please retrieve preferences` only suggest; they never read memory, start
-chat, toggle gates or write notes. Unknown subcommands are refused. Retype the
-intended command after reviewing a suggestion. Exact `/memory retrieve <query>`
+chat, toggle gates or write notes. Unknown subcommands are refused. Exact `/memory retrieve <query>`
 starts a model turn with explicit retrieval; `/memory search <query>` only lists
 candidates. Use `/memory` for status and `/help` for syntax. Exact save/remember
 still require `:: <reason>`; exact clear/forget still delete pinned notes, so
@@ -399,10 +407,9 @@ inspect the command before sending.
 
 Typed slash commands require the server parser; a parser failure or invalid reply
 leaves the command unexecuted, so retry or inspect the pane. Pending parser
-responses are discarded after a session/account change or clearing the transcript.
+responses are discarded after a session/account change or transcript clear.
 Exact `/loop stop` still cancels chat continuation while the parser is unavailable;
-extra words disable that local shortcut. Inspect results after every
-state-changing command. The [coding pipeline](CODING_PIPELINE.md) describes
+extra words disable that local shortcut. Inspect results after every state-changing command. The [coding pipeline](CODING_PIPELINE.md) describes
 confirmation and persistence.
 
 | Command family | Supported use |
@@ -418,7 +425,7 @@ confirmation and persistence.
 | `/goal stage <branch>`, `/goal task` | Explicitly stage coding from a goal or inspect its task linkage |
 | `/harness` | List retained optimizer runs; does not start optimization |
 | `/help [topic\|search words\|all]` | Searchable topic guide, full command catalog and insertable examples |
-| `/loop [auto] [--web off\|fetch\|all] [n] [goal text]`, `/loop stop` | Bounded chat continuation; goal text sets the goal first; `auto` toggles and starts after 5 s; exact `stop` also cancels a streaming chat turn |
+| `/loop [auto] [--web off\|fetch\|all] [n] [goal text]`, `/loop stop` | Goal-driven chat continuation; goal text sets the goal first; `auto` toggles and starts after 5 s; exact `stop` also cancels a streaming chat turn |
 | `/memory`, `status`, `on`, `off`, `add <note>`, `forget <id>`, `clear` | Shared pinned notes; [operator memory notes](MEMORY_GUIDE.md#pinned-notes) |
 | `/memory capture\|recall\|retrieval\|auto-retrieve\|consolidation\|auto-consolidate\|auto-suggest-chat\|auto-suggest-coding on\|off` | Administrator-only structured-memory gate overrides; `on` or `off` is required. `/memory on` stays pinned notes |
 | `/memory consolidate <episode-id> [episode-id ...]` | Selected-episode consolidation into pending proposals; does not apply facts |
@@ -449,8 +456,8 @@ confirmation and persistence.
 | `/web pages [--group name] <query>`, `/web research [--group name] [--url URL ...] <question>` | Permitted-page discovery or local-model research; repeat `--url` per starting point; no new authority |
 | `/web search [--count 1..10] [--engine google\|pages] [--group name] <query>` | Google listings by default; a group selects permitted-page search |
 
-Web commands support the flags above; `--help` opens help without mutation.
-Value flags accept `--flag value` or `--flag=value`. Quote whole arguments
+Web commands support these flags; `--help` opens help without mutation.
+Value flags accept `--flag value` or `--flag=value`; quote whole arguments
 when needed. In queries `-tokio` is text; use `--` before words starting `--`. Legacy
 `group=name` and single-pattern `allow PATTERN GROUP SEED` remain accepted.
 Unknown, repeated singleton, or missing-value flags refuse; fetch takes URLs,
@@ -572,7 +579,7 @@ cancelled partial text is removed and not persisted. Streams require a completio
 reason and `[DONE]`; malformed or truncated output fails. The final event supplies
 usage. Valid JSON fallback remains compatible but arrives as one answer.
 
-`/loop stop` (`POST /api/chat/cancel`) cancels the account's chat or loop turn.
+`/loop stop` (`POST /api/chat/cancel`) cancels the account's chat or browser-driven loop turn; a server-side run is halted with `POST /api/loop/stop`.
 Closing the stream aborts its task, releases claims, and drops model and web
 requests. Each ChatClient call has an independent cancellation record. Socket
 disconnect does not claim immediate GPU release.

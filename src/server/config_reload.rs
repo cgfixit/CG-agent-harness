@@ -12,12 +12,16 @@ use crate::llm::backend::ResolvedLocalBackend;
 use super::state::AppState;
 use super::web_search::Limits;
 
-pub const RELOADABLE: [&str; 23] = [
+pub const RELOADABLE: [&str; 27] = [
     "api.rate_limit.max_requests",
     "api.rate_limit.window_seconds",
     "api.harness_loop_rate_limit.max_requests",
     "api.harness_loop_rate_limit.window_seconds",
     "api.harness_loop_rate_limit.max_tokens",
+    "loop.max_turns",
+    "loop.max_total_completion_tokens",
+    "loop.max_failures",
+    "loop.cooldown_ms",
     "web.response_bytes",
     "web.request_seconds",
     "web.pages",
@@ -68,7 +72,29 @@ pub struct RuntimeLimits {
     pub api: RateBudget,
     pub loop_rate: RateBudget,
     pub loop_max_tokens: u64,
+    pub loop_limits: LoopLimits,
     pub web: Limits,
+}
+
+/// Server-side `/loop` runner bounds (`loop.*`). `0` marks "unlimited" for the
+/// turn and aggregate-token caps. The console reads these from `/api/status`.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+pub struct LoopLimits {
+    pub max_turns: u64,
+    pub max_total_completion_tokens: u64,
+    pub max_failures: u64,
+    pub cooldown_ms: u64,
+}
+
+impl LoopLimits {
+    pub fn load(cfg: &AppConfig) -> Result<Self> {
+        Ok(Self {
+            max_turns: integer(cfg, "loop.max_turns", 0, 0, 1_000_000)?,
+            max_total_completion_tokens: integer(cfg, "loop.max_total_completion_tokens", 0, 0, 100_000_000)?,
+            max_failures: integer(cfg, "loop.max_failures", 2, 1, 100)?,
+            cooldown_ms: integer(cfg, "loop.cooldown_ms", 2000, 0, 300_000)?,
+        })
+    }
 }
 
 /// What the selected model holds the web budget and reply to while a tuning
@@ -114,6 +140,7 @@ impl RuntimeLimits {
             api: RateBudget::load(cfg, "api.rate_limit", 120, 60.0)?,
             loop_rate: RateBudget::load(cfg, "api.harness_loop_rate_limit", 16, 300.0)?,
             loop_max_tokens: super::validate_reply_budget(key, cap, backend)?,
+            loop_limits: LoopLimits::load(cfg)?,
             web,
         })
     }
@@ -261,6 +288,41 @@ mod tests {
         assert!(lease.token.is_cancelled());
         drop(lease);
         assert!(second.research.start("local").is_ok());
+    }
+
+    #[test]
+    fn loop_limits_load_defaults_and_reject_invalid_values() {
+        let parse = |text: &str| AppConfig::from_str(text, std::path::Path::new("fixture.yaml")).unwrap();
+        let defaults = LoopLimits::load(&parse("{}")).unwrap();
+        assert_eq!(
+            defaults,
+            LoopLimits {
+                max_turns: 0,
+                max_total_completion_tokens: 0,
+                max_failures: 2,
+                cooldown_ms: 2000,
+            }
+        );
+        let raised = LoopLimits::load(&parse(
+            "loop: {max_turns: 0, max_total_completion_tokens: 0, max_failures: 5, cooldown_ms: 500}",
+        ))
+        .unwrap();
+        assert_eq!(raised.max_turns, 0, "0 marks unlimited turns");
+        assert_eq!(raised.max_total_completion_tokens, 0, "0 marks unlimited tokens");
+        assert_eq!(raised.max_failures, 5);
+        assert_eq!(raised.cooldown_ms, 500);
+        for text in [
+            "loop: {max_turns: -1}",
+            "loop: {max_turns: 1000001}",
+            "loop: {max_turns: '5'}",
+            "loop: {max_total_completion_tokens: -1}",
+            "loop: {max_failures: 0}",
+            "loop: {max_failures: 101}",
+            "loop: {cooldown_ms: 300001}",
+            "loop: {cooldown_ms: true}",
+        ] {
+            assert!(LoopLimits::load(&parse(text)).is_err(), "{text}");
+        }
     }
 
     #[test]

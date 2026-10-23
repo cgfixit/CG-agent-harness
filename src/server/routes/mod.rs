@@ -6,6 +6,7 @@ pub mod auth;
 pub mod core;
 pub mod diag;
 pub mod goals;
+pub mod loop_runner;
 pub mod notes_corpus;
 pub mod notifications;
 pub mod ollama;
@@ -27,7 +28,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 111] = [
+pub const REGISTERED_PATHS: [&str; 115] = [
     "/api/analytics/summary",
     "/api/config/reload",
     "/",
@@ -114,6 +115,10 @@ pub const REGISTERED_PATHS: [&str; 111] = [
     "/api/notes-corpus",
     "/api/notes-corpus/{id}",
     "/api/chat/cancel",
+    "/api/loop/start",
+    "/api/loop/stop",
+    "/api/loop/status",
+    "/api/loop/events/{run_id}",
     "/api/github/status",
     "/api/agent/checks",
     "/api/agent/run",
@@ -336,6 +341,10 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         )
         .route("/api/notes-corpus/{id}", delete(notes_corpus::delete_note))
         .route("/api/chat/cancel", post(core::cancel_chat))
+        .route("/api/loop/start", post(loop_runner::start))
+        .route("/api/loop/stop", post(loop_runner::stop))
+        .route("/api/loop/status", get(loop_runner::status))
+        .route("/api/loop/events/{run_id}", get(loop_runner::events))
         .route("/api/github/status", get(agent::github_status))
         .route("/api/agent/run", post(agent::agent_run))
         .route("/api/agent/runs", get(agent::agent_runs))
@@ -439,7 +448,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 111);
+        assert_eq!(REGISTERED_PATHS.len(), 115);
 
         let all = registered_paths();
         assert!(
