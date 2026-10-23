@@ -118,8 +118,66 @@ fn unavailable_reason(state: &AppState, source: Source) -> Option<&'static str> 
     None
 }
 
+/// D7 (#603): automatic suggestions run only for the local model and mode pairs
+/// listed in `structured_memory.suggestion_supported`. A missing or null list
+/// supports nothing; a malformed one refuses everything. `*` matches any model.
+pub(crate) fn model_mode_supported(list: Option<&serde_yaml_ng::Value>, model: &str, mode: &str) -> Option<bool> {
+    use serde_yaml_ng::Value as Yaml;
+    // Ollama resolves a bare name to its `latest` tag.
+    fn tag(model: &str) -> String {
+        let model = model.trim();
+        if model.contains(':') {
+            model.to_string()
+        } else {
+            format!("{model}:latest")
+        }
+    }
+    let entries = match list {
+        None | Some(Yaml::Null) => return Some(false),
+        Some(Yaml::Sequence(entries)) => entries,
+        Some(_) => return None,
+    };
+    let mut supported = false;
+    for entry in entries {
+        let listed = entry
+            .get("model")
+            .and_then(Yaml::as_str)
+            .map(str::trim)
+            .filter(|m| !m.is_empty())?;
+        let modes = entry.get("modes").and_then(Yaml::as_sequence)?;
+        let mut covers = false;
+        for listed_mode in modes {
+            let listed_mode = listed_mode.as_str()?;
+            if !matches!(listed_mode, "summaries" | "insights" | "both") {
+                return None;
+            }
+            covers |= listed_mode == mode;
+        }
+        supported |= covers && (listed == "*" || tag(listed) == tag(model));
+    }
+    Some(supported)
+}
+
+fn support_reason(state: &AppState, model: &str) -> Option<&'static str> {
+    match model_mode_supported(
+        state.cfg.get("structured_memory.suggestion_supported"),
+        model,
+        mode(state),
+    ) {
+        Some(true) => None,
+        Some(false) => Some("unsupported_model_mode"),
+        None => Some("invalid_supported_models"),
+    }
+}
+
+/// Gate refusal first, then the D7 model/mode support check for `model`.
+fn refusal(state: &AppState, source: Source, model: &str) -> Option<&'static str> {
+    unavailable_reason(state, source).or_else(|| support_reason(state, model))
+}
+
+/// Availability for the current selection's local memory model.
 pub fn available(state: &AppState, source: Source) -> bool {
-    unavailable_reason(state, source).is_none()
+    refusal(state, source, &state.local_memory_model()).is_none()
 }
 
 fn attempt(
@@ -149,8 +207,8 @@ pub fn status(state: &AppState, owner: &str) -> Value {
     let queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
     json!({
         "chat": available(state, Source::Chat), "coding": available(state, Source::Coding),
-        "chat_unavailable_reason": unavailable_reason(state, Source::Chat),
-        "coding_unavailable_reason": unavailable_reason(state, Source::Coding),
+        "chat_unavailable_reason": refusal(state, Source::Chat, &state.local_memory_model()),
+        "coding_unavailable_reason": refusal(state, Source::Coding, &state.local_memory_model()),
         "last_attempt": queue.attempts.iter().find(|(id, _)| id == owner).map(|(_, value)| value),
         "poll_interval_ms": state.cfg.u64_or("structured_memory.status_poll_ms", 30000).clamp(250, 30000),
         "mode": mode(state), "queued": queue.jobs.iter().filter(|j| j.owner == owner).count(),
@@ -224,7 +282,8 @@ pub fn enqueue_for_model(
     model: &str,
 ) -> Value {
     let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(reason) = unavailable_reason(state, source) {
+    let model = state.local_memory_model_for(model);
+    if let Some(reason) = refusal(state, source, &model) {
         return attempt(
             state,
             &mut queue,
@@ -333,7 +392,7 @@ pub fn enqueue_for_model(
         owner: owner.into(),
         episode: episode.clone(),
         source,
-        model: state.local_memory_model_for(model),
+        model,
         run: run.id.clone(),
         input,
         output,
@@ -430,7 +489,7 @@ async fn worker(state: Arc<AppState>) {
                 let reason = if job.created.elapsed() > Duration::from_secs(ttl) {
                     Some("queue_expired")
                 } else {
-                    unavailable_reason(&state, job.source)
+                    refusal(&state, job.source, &job.model)
                 };
                 if let Some(reason) = reason {
                     discard(&state, job, reason, attempts);
@@ -460,7 +519,7 @@ async fn worker(state: Arc<AppState>) {
         let reason = if job.created.elapsed() > Duration::from_secs(ttl) {
             Some("queue_expired")
         } else {
-            unavailable_reason(&state, job.source)
+            refusal(&state, job.source, &job.model)
         };
         let result = if let Some(reason) = reason {
             Err(HarnessError::new(reason, "suggestion input discarded"))
@@ -559,7 +618,7 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
         if chat_cleared(state, job) {
             return Err(HarnessError::new("source_cleared", "chat cleared"));
         }
-        if let Some(reason) = unavailable_reason(state, job.source) {
+        if let Some(reason) = refusal(state, job.source, &job.model) {
             return Err(HarnessError::new(reason, "suggestion disabled"));
         }
         let mut parsed = parse_consolidator_output(&reply.body_text, store.limits().max_consolidation_candidates)?;
@@ -619,4 +678,90 @@ async fn generate(state: &AppState, job: &Job, cancel: &CancellationToken) -> Re
         let _ = store.fail_consolidation_run(&job.owner, &run.id, class);
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::model_mode_supported;
+
+    fn list(yaml: &str) -> serde_yaml_ng::Value {
+        serde_yaml_ng::from_str(yaml).unwrap()
+    }
+
+    #[test]
+    fn missing_or_null_list_supports_nothing() {
+        assert_eq!(model_mode_supported(None, "qwen3:8b", "both"), Some(false));
+        assert_eq!(
+            model_mode_supported(Some(&list("null")), "qwen3:8b", "both"),
+            Some(false)
+        );
+        assert_eq!(model_mode_supported(Some(&list("[]")), "qwen3:8b", "both"), Some(false));
+    }
+
+    #[test]
+    fn only_listed_model_and_mode_pairs_are_supported() {
+        let supported = list("[{model: \"qwen3:8b\", modes: [insights]}, {model: gemma3, modes: [summaries, both]}]");
+        assert_eq!(
+            model_mode_supported(Some(&supported), "qwen3:8b", "insights"),
+            Some(true)
+        );
+        // A listed model in an unlisted mode, and an unlisted model, stay unsupported.
+        assert_eq!(model_mode_supported(Some(&supported), "qwen3:8b", "both"), Some(false));
+        assert_eq!(
+            model_mode_supported(Some(&supported), "qwen3:14b", "insights"),
+            Some(false)
+        );
+        // Exact tags: no prefix or case folding.
+        assert_eq!(
+            model_mode_supported(Some(&supported), "qwen3:8b-q4", "insights"),
+            Some(false)
+        );
+        assert_eq!(
+            model_mode_supported(Some(&supported), "QWEN3:8b", "insights"),
+            Some(false)
+        );
+        // A bare name is Ollama's `latest` tag, in the list and in the model.
+        assert_eq!(
+            model_mode_supported(Some(&supported), "gemma3:latest", "both"),
+            Some(true)
+        );
+        assert_eq!(
+            model_mode_supported(Some(&supported), " gemma3 ", "summaries"),
+            Some(true)
+        );
+        assert_eq!(
+            model_mode_supported(Some(&supported), "gemma3:27b", "both"),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn wildcard_matches_any_model_for_its_listed_modes_only() {
+        let any = list("[{model: \"*\", modes: [summaries]}]");
+        assert_eq!(model_mode_supported(Some(&any), "anything:1b", "summaries"), Some(true));
+        assert_eq!(model_mode_supported(Some(&any), "anything:1b", "both"), Some(false));
+    }
+
+    #[test]
+    fn malformed_lists_refuse_instead_of_matching() {
+        for bad in [
+            "qwen3:8b",
+            "{model: qwen3, modes: [both]}",
+            "[qwen3]",
+            "[{model: qwen3}]",
+            "[{modes: [both]}]",
+            "[{model: \"\", modes: [both]}]",
+            "[{model: qwen3, modes: both}]",
+            "[{model: qwen3, modes: [all]}]",
+            "[{model: qwen3, modes: [1]}]",
+            // One bad entry poisons the list even when another entry matches.
+            "[{model: qwen3, modes: [both]}, {model: x, modes: [everything]}]",
+        ] {
+            assert_eq!(
+                model_mode_supported(Some(&list(bad)), "qwen3:latest", "both"),
+                None,
+                "{bad}"
+            );
+        }
+    }
 }

@@ -124,7 +124,13 @@ together before applying them.
 with administrator-only overrides. Both require an open store and episode
 capture; neither requires nor opens consolidation, recall, or retrieval.
 `suggestion_mode` selects `summaries`, `insights`, or `both` (default); invalid
-values disable suggestions.
+values disable suggestions. Per D7 (#603), suggestions also need the resolved
+local model and mode listed in `suggestion_supported`; otherwise the receipt and
+`/api/structured-memory` report `unsupported_model_mode` and no model is called.
+A missing key supports nothing, so existing homes add it to keep suggestions:
+`suggestion_supported: [{ model: "<tag>", modes: [summaries, insights, both] }]`.
+Fresh homes list the shipped local model. `"*"` matches any model and opts out
+of the corpus rule; a malformed list refuses (`invalid_supported_models`).
 `completion-suggestions-v1` reads bounded, redacted current
 completion evidence in RAM for the initiating account. It neither scans shared
 archives nor writes human semantic summaries. Synchronous and detached coding share the shim hook

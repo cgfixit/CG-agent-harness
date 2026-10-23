@@ -702,6 +702,20 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
     ] {
         assert!(cfg.flag_is_true(gate), "{gate} must ship true");
     }
+    // D7 (#603): automatic suggestions ship restricted to listed local models;
+    // the "*" opt-out is an operator choice, never a shipped default.
+    let supported = cfg
+        .get("structured_memory.suggestion_supported")
+        .and_then(|v| v.as_sequence())
+        .expect("structured_memory.suggestion_supported ships as a list");
+    assert!(!supported.is_empty(), "the shipped local model is listed");
+    for entry in supported {
+        let model = entry.get("model").and_then(|m| m.as_str()).unwrap_or("");
+        assert!(
+            !model.is_empty() && model.trim() != "*",
+            "shipped entries name one model: {entry:?}"
+        );
+    }
     for boundary in ["auth.enabled", "tls.enabled", "tls.auto_generate"] {
         assert!(cfg.flag_is_true(boundary), "{boundary} must ship true");
     }

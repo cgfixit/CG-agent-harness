@@ -1475,3 +1475,73 @@ async fn terminal_loop_suggests_from_human_goal_without_queuing_intermediate_fra
     assert_eq!(payload["output"], "The operator requested metric units.\n**GOAL_DONE**");
     assert!(!request.to_string().contains("GENERATED_FRAMING"));
 }
+
+/// The shipped `structured_memory.suggestion_supported` value, not the fixture wildcard.
+fn shipped_supported() -> String {
+    cgagentharness::common::config::AppConfig::embedded_default()
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("suggestion_supported:"))
+        .expect("shipped list")
+        .trim()
+        .to_string()
+}
+
+#[tokio::test]
+async fn only_listed_local_model_and_mode_pairs_queue_suggestions() {
+    let model = model().await;
+    let s = spawn_server(
+        &model.base,
+        options("both")
+            .with("structured_memory.auto_suggest_coding", "false")
+            .with("structured_memory.suggestion_supported", &shipped_supported()),
+    )
+    .await;
+    let shipped_model = s.state.local_memory_model();
+    assert!(suggest::available(&s.state, Source::Chat));
+    assert!(suggest::status(&s.state, "local")["chat_unavailable_reason"].is_null());
+    let (_, chat) = s
+        .post_json("/api/chat", json!({"message":"I prefer metric units."}))
+        .await;
+    assert_eq!(chat["memory_suggestion"]["queued"], true, "{chat}");
+    settled(&s, "local").await;
+    assert_eq!(model.requests.lock().unwrap().len(), 1);
+    assert_eq!(model.requests.lock().unwrap()[0]["model"], shipped_model.as_str());
+    // A turn on an unlisted local model completes, but its evidence never reaches a model.
+    let (status, chat) = s
+        .post_json(
+            "/api/chat",
+            json!({"message":"I prefer metric units.","model":"unlisted-local:1b"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{chat}");
+    assert_eq!(chat["memory_suggestion"]["queued"], false, "{chat}");
+    assert_eq!(chat["memory_suggestion"]["reason"], "unsupported_model_mode");
+    settled(&s, "local").await;
+    assert_eq!(model.requests.lock().unwrap().len(), 1);
+
+    // A listed model in an unlisted mode, and a malformed list, refuse with their reasons.
+    for (list, reason) in [
+        (
+            format!("[{{ model: \"{shipped_model}\", modes: [insights] }}]"),
+            "unsupported_model_mode",
+        ),
+        (
+            "[{ model: \"*\", modes: [all] }]".to_string(),
+            "invalid_supported_models",
+        ),
+        ("null".to_string(), "unsupported_model_mode"),
+    ] {
+        let s = spawn_server(
+            &model.base,
+            options("both").with("structured_memory.suggestion_supported", &list),
+        )
+        .await;
+        assert!(!suggest::available(&s.state, Source::Chat), "{list}");
+        let status = suggest::status(&s.state, "local");
+        assert_eq!(status["chat_unavailable_reason"], reason, "{list}");
+        assert_eq!(status["coding_unavailable_reason"], reason, "{list}");
+        let queued = suggest::enqueue(&s.state, "local", Source::Chat, None, "content", "response");
+        assert_eq!(queued["reason"], reason, "{list}");
+    }
+    assert_eq!(model.requests.lock().unwrap().len(), 1);
+}
