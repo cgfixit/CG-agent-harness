@@ -419,6 +419,22 @@ missing prepared inputs. Synthetic markers contain no real secrets. This gate
 proves Cargo execution and tested boundaries, not complete harness or real-model
 acceptance.
 
+**Linux confinement evidence.** Linux CI (`CI=true`) fails if `bwrap` is missing.
+The ordinary test matrix may report a classified confinement skip when a
+GitHub-hosted runner refuses `RTM_NEWADDR`; that is not confinement proof. The
+separate `Linux bubblewrap confinement (required)` job runs the same suite in a
+pinned container with namespace/mount capabilities. Docs-only pull requests
+(`scripts/ci-docs-only.sh`) skip compile jobs, this one included; the invariant
+guard still runs. Setting `CGAH_REQUIRE_LINUX_BWRAP` (any value) makes every probe
+failure fatal and also refuses a non-Linux host; it is a test-only requirement,
+not a production gate. Python 3 probes must execute successfully, demonstrate
+candidate reads and scratch writes, and explicitly observe denied secret/symlink
+reads and candidate writes. The network probe first connects to an owned host
+listener outside the sandbox, then requires a different network namespace and
+connection denial inside it. No public endpoint or generic nonzero exit serves as
+network proof. The job changes no host sysctl and preserves the production backend
+ladder.
+
 ## Git approval and publication
 
 The retained clone is data, including its local Git configuration and index.
