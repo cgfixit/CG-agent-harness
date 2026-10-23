@@ -464,7 +464,7 @@ ignore carries a removal condition. Workflow actions are SHA-pinned and
 zizmor-linted; Rust pins: 1.88 backend, 1.90 desktop.
 
 - Locked by: `tests/invariant_guard.rs::deny_lists_ban_the_same_telemetry_crates`,
-  `.github/workflows/{ci,advisories,desktop,zizmor}.yml`.
+  `.github/workflows/{ci,dependency-advisories,desktop,zizmor}.yml`.
 
 ## Provider keys live in the OS credential store
 
