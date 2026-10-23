@@ -5,7 +5,7 @@ use cgagentharness::agentic::{
     edits::Proposal,
     executor::manifest,
     real_repo_loop::FinalizeParams,
-    run_store::{acquire_run_lease, save_run, RealRepoRunRecord},
+    run_store::{save_run, RealRepoRunRecord},
     workspace::RepoWorkspace,
 };
 use common::*;
@@ -416,6 +416,7 @@ fn denied_write_policy_still_allows_diff_without_executable_git_extensions() {
 #[cfg(unix)]
 #[test]
 fn record_mutations_wait_for_the_run_owner_lease() {
+    use cgagentharness::agentic::run_store::acquire_run_lease;
     let dir = tempfile::tempdir().unwrap();
     let (ctx, dest, bare, rec) = fixture(dir.path());
     let record = ctx.runs_dir().join(format!("{}.json", rec.run_id));
