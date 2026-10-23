@@ -18,7 +18,7 @@ pub(crate) const PUBLIC_SEARCH_PACE_FLOOR_MS: u64 = 3000;
 
 /// When the next public Google request may leave, or `WEB_SEARCH_PACED` when
 /// that is not before the call's own deadline (never block past it).
-fn public_pace(
+pub(super) fn public_pace(
     last: Option<tokio::time::Instant>,
     pace_ms: u64,
     deadline: tokio::time::Instant,
@@ -285,23 +285,20 @@ impl WebTool {
         };
         let rows = if key.trim().is_empty() {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
-            // Paced under the search gate, inside this call's deadline.
-            let last = *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner());
-            if let Some(ready) = public_pace(last, self.limits.pace_ms, deadline)? {
-                tokio::time::sleep_until(ready).await;
-            }
-            *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner()) = Some(tokio::time::Instant::now());
             tokio::time::timeout_at(deadline, async {
-                let (_, body) = self.get_raw(target.as_str(), None, None).await.map_err(|failure| {
-                    if matches!(failure.code.as_str(), "WEB_FETCH_FAILED" | "WEB_REDIRECT_REFUSED") {
-                        error(
-                            "WEB_GOOGLE_BLOCKED",
-                            "Public Google refused or redirected the request; configure a SerpAPI key in API Keys",
-                        )
-                    } else {
-                        failure
-                    }
-                })?;
+                let (_, body) = self
+                    .get_raw_paced(target.as_str(), None, None, Some((self.limits.pace_ms, deadline)))
+                    .await
+                    .map_err(|failure| {
+                        if matches!(failure.code.as_str(), "WEB_FETCH_FAILED" | "WEB_REDIRECT_REFUSED") {
+                            error(
+                                "WEB_GOOGLE_BLOCKED",
+                                "Public Google refused or redirected the request; configure a SerpAPI key in API Keys",
+                            )
+                        } else {
+                            failure
+                        }
+                    })?;
                 // Listings reparse HTML too, including text/plain responses.
                 // Keep that work off async workers under the original deadline.
                 let permit = self
@@ -419,6 +416,69 @@ mod tests {
 
     fn public_results(body: &str, limit: usize) -> Result<Vec<SearchResult>> {
         super::public_results(body, limit, 512, &|| Ok(()))
+    }
+
+    #[tokio::test]
+    async fn public_pace_is_measured_at_the_send_not_before_the_permit_wait() {
+        use axum::{routing::get, Router};
+        use std::sync::{Arc, Mutex};
+        let sent = Arc::new(Mutex::new(Vec::<std::time::Instant>::new()));
+        let log = sent.clone();
+        let router = Router::new().route(
+            "/search",
+            get(move || {
+                let log = log.clone();
+                async move {
+                    log.lock().unwrap().push(std::time::Instant::now());
+                    "<a href='/url?q=https%3A%2F%2Fveeam.com%2Fkb1'><h3>Paced</h3></a>"
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only an ephemeral loopback port.
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let dir = tempfile::tempdir().unwrap();
+        crate::common::home::Home::at(dir.path().to_path_buf())
+            .ensure_layout()
+            .unwrap();
+        let cfg =
+            crate::common::config::AppConfig::from_str("web: {pace_ms: 100}", std::path::Path::new("config.yaml"))
+                .unwrap();
+        let mut web = WebTool::new(&dir.path().join("tools"), &cfg).unwrap();
+        web.search_key_from_file = true;
+        web.plaintext_key_file = true;
+        web.test_resolve = Some(("google.fixture".into(), address));
+        web.test_public_search = Some(url::Url::parse("http://google.fixture/search").unwrap()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        web.allow("http://google.fixture/*", true).unwrap(); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        let audit = crate::common::audit::Audit::new(dir.path().join("audit.jsonl"), &cfg);
+        let endpoint = url::Url::parse("http://unused.example/search").unwrap();
+        // Another web operation holds every fetch permit for 2 s: the first search
+        // queues, then sends; the second must still leave >= 3 s after that send.
+        let held = web
+            .permits
+            .clone()
+            .acquire_many_owned(web.limits.concurrency as u32)
+            .await
+            .unwrap();
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(2000)).await;
+            drop(held);
+        });
+        web.google_search_at("veeam", 3, true, &audit, endpoint.clone())
+            .await
+            .unwrap();
+        web.google_search_at("veeam backup", 3, true, &audit, endpoint)
+            .await
+            .unwrap();
+        release.await.unwrap();
+        let sent = sent.lock().unwrap().clone();
+        assert_eq!(sent.len(), 2);
+        assert!(
+            sent[1] - sent[0] >= Duration::from_millis(PUBLIC_SEARCH_PACE_FLOOR_MS),
+            "sends {:?} apart; permit queueing must not shorten the floor",
+            sent[1] - sent[0]
+        );
+        server.abort();
     }
 
     #[test]

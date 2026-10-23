@@ -808,6 +808,19 @@ impl WebTool {
         group: Option<&str>,
         cached: Option<&Page>,
     ) -> Result<(Page, String)> {
+        self.get_raw_paced(raw, group, cached, None).await
+    }
+
+    /// `pace` (`pace_ms`, the caller's deadline) spaces public Google searches.
+    /// It is checked and stamped just before the send, after the permit wait and
+    /// DNS, so queueing behind other fetches cannot shorten the gap.
+    pub(super) async fn get_raw_paced(
+        &self,
+        raw: &str,
+        group: Option<&str>,
+        cached: Option<&Page>,
+        pace: Option<(u64, tokio::time::Instant)>,
+    ) -> Result<(Page, String)> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
         tokio::time::timeout_at(deadline, async {
             // Keep the permit until the worker actually exits, including its
@@ -838,6 +851,13 @@ impl WebTool {
                 if let Some(modified) = &page.last_modified {
                     request = request.header(reqwest::header::IF_MODIFIED_SINCE, modified);
                 }
+            }
+            if let Some((pace_ms, search_deadline)) = pace {
+                let last = *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(ready) = super::web_google::public_pace(last, pace_ms, search_deadline)? {
+                    tokio::time::sleep_until(ready).await;
+                }
+                *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner()) = Some(tokio::time::Instant::now());
             }
             let mut response = request
                 .send()
