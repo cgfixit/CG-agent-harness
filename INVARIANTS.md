@@ -519,10 +519,11 @@ the starting account: deleted, disabled, password-pending, or no longer
 operator/admin ends the run `failed`. `portal_auditor` cannot start one. Start,
 stop, status and events are bound to the starting owner; a foreign run reads as
 `LOOP_RUN_NOT_FOUND`. A session holds one live run (`LOOP_IN_FLIGHT`). A run ends
-on stop, a changed or cleared session goal (`LOOP_GOAL_CHANGED`), `loop.max_turns`, `loop.max_total_completion_tokens`, `loop.max_failures`
+on stop, a changed or cleared session goal (`LOOP_GOAL_CHANGED`), `loop.max_turns`,
+`loop.max_total_completion_tokens`, `loop.max_failures`
 consecutive failed turns or failed web rounds, unverified `GOAL_DONE`, a
 near-repeat reply, or a web refusal every later turn would repeat. Both budgets
-ship `0` (unlimited). Runs live
+ship `0` (unlimited), so by default only the other conditions end a run. Runs live
 in process memory: a restart ends them without resuming, and
 `loops/<run_id>.json` is a record, not a resume point. Audits hold start and
 finish metadata, never replies.
