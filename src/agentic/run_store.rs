@@ -193,7 +193,7 @@ pub fn require_pushed_for_publish(record: &RealRepoRunRecord) -> Result<()> {
 }
 
 /// Kept for the complete worker lifetime, before publishing its running record.
-/// Unix can prove the owner exited without consulting an untrusted PID file.
+/// Unix and Windows can prove the owner exited without consulting an untrusted PID file.
 pub fn acquire_run_lease(runs_dir: &Path, run_id: &str, create: bool) -> Result<crate::common::file_lease::FileLease> {
     let path = run_path(runs_dir, run_id)?.with_extension("lease");
     std::fs::create_dir_all(runs_dir)?;
@@ -205,7 +205,7 @@ pub fn acquire_run_lease(runs_dir: &Path, run_id: &str, create: bool) -> Result<
 /// Reconcile only records with ownership evidence from this implementation.
 /// Older records without a lease remain unknown; never guess they are dead.
 pub fn reconcile_run(runs_dir: &Path, record: &mut RealRepoRunRecord) -> Result<()> {
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     if record.status == "running" {
         if let Ok(_lease) = acquire_run_lease(runs_dir, &record.run_id, false) {
             // Completion may race the initial read. Re-read under the lease.
@@ -220,12 +220,12 @@ pub fn reconcile_run(runs_dir: &Path, record: &mut RealRepoRunRecord) -> Result<
             }
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(not(any(unix, windows)))]
     let _ = (runs_dir, record);
     Ok(())
 }
 
-#[cfg(all(test, unix))]
+#[cfg(all(test, any(unix, windows)))]
 mod recovery_tests {
     use super::*;
     #[test]

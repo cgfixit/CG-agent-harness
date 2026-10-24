@@ -1538,6 +1538,74 @@ async fn loop_search_after_a_google_challenge_cools_down_without_a_second_reques
     fixture.abort();
 }
 
+/// Two public Google searches in one chat turn leave at least the 3 s floor
+/// apart, whatever `web.pace_ms` says; both still answer.
+#[tokio::test]
+async fn chat_public_google_searches_in_one_turn_are_paced_by_the_floor() {
+    let sent = Arc::new(Mutex::new(Vec::<std::time::Instant>::new()));
+    let log = sent.clone();
+    let fixture = Router::new()
+        .route(
+            "/search",
+            get(move || {
+                let log = log.clone();
+                async move {
+                    log.lock().unwrap().push(std::time::Instant::now());
+                    (
+                        [("content-type", "text/html")],
+                        "<a href='/url?q=https%3A%2F%2Fveeam.com%2Fkb1'><h3>Paced result</h3></a>",
+                    )
+                }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(|Json(body): Json<Value>| async move {
+                let messages = body["messages"].as_array().unwrap();
+                if messages.last().unwrap()["role"] == "tool" {
+                    return Json(common::ok_reply("Both listings arrived.", 10, 3));
+                }
+                Json(json!({"model":"mock","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+                    "tool_calls":[
+                        {"id":"pace_a","type":"function","function":{"name":"web_search","arguments":json!({"query":"veeam cve"}).to_string()}},
+                        {"id":"pace_b","type":"function","function":{"name":"web_search","arguments":json!({"query":"veeam backup advisory"}).to_string()}}]}}],
+                    "usage":{"prompt_tokens":10,"completion_tokens":2}}))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+        common::ServerOptions {
+            web_resolve: Some(("google.fixture".into(), address)),
+            public_search: Some(url::Url::parse("http://google.fixture/search").unwrap()), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            ..common::ServerOptions::default().with("web.pace_ms", "100")
+        },
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://google.fixture/*"})) // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            .await
+            .0,
+        200
+    );
+    let (status, reply) = s.post_json("/api/chat", json!({"message":"Search twice"})).await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["reply"], "Both listings arrived.", "{reply}");
+    let tools = reply["web_tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 2, "{reply}");
+    assert!(tools.iter().all(|t| t["ok"] == true), "{reply}");
+    let sent = sent.lock().unwrap().clone();
+    assert_eq!(sent.len(), 2);
+    let gap = sent[1] - sent[0];
+    assert!(
+        gap >= std::time::Duration::from_millis(3000),
+        "public Google searches {gap:?} apart; the floor is 3 s"
+    );
+    task.abort();
+}
+
 fn tool_call_reply(name: &str, arguments: &str, id: &str) -> Value {
     json!({"model":"mock","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
         "tool_calls":[{"id":id,"type":"function","function":{"name":name,"arguments":arguments}}]}}],

@@ -138,6 +138,10 @@ fn clear_readonly_files(dir: &cap_std::fs::Dir) {
                 continue;
             }
             let mut perms = meta.permissions();
+            #[expect(
+                clippy::permissions_set_readonly_false,
+                reason = "Windows-only: clears FILE_ATTRIBUTE_READONLY without changing ACLs"
+            )]
             perms.set_readonly(false);
             let _ = file.set_permissions(perms);
         }
@@ -853,6 +857,20 @@ impl<'a> RepoWorkspace<'a> {
         Ok(())
     }
 
+    /// HTTPS remotes authenticate through Git's credential helper, so they get
+    /// the version- and identity-checked `gh` that `pr_create` uses. SSH and
+    /// absolute local remotes never ask a helper and need no `gh`.
+    fn remote_credential_args(&self, origin: &str) -> Result<Vec<String>> {
+        if !origin
+            .get(..8)
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"))
+        {
+            return Ok(Vec::new());
+        }
+        let gh = super::gh_client::checked_gh_binary(self.ctx.acfg.gh_min_version)?;
+        Ok(super::git::pinned_credential_helper(&gh)?.to_vec())
+    }
+
     pub fn push_approved(
         &self,
         branch: &str,
@@ -866,25 +884,21 @@ impl<'a> RepoWorkspace<'a> {
         // Object-ID refspec and a pinned URL prevent a later local branch or
         // origin change from selecting different content/destination.
         let refspec = format!("{commit}:refs/heads/{branch}");
+        let credential = self.remote_credential_args(origin)?;
+        let mut args: Vec<&str> = credential.iter().map(String::as_str).collect();
+        args.extend(["push", "--", origin, &refspec]);
         self.require_write("push_branch", reason, confirm)?;
-        self.run_git(
-            "push_branch",
-            &["push", "--", origin, &refspec],
-            DEFAULT_PUSH_TIMEOUT_SEC,
-            &[],
-        )?;
+        self.run_git("push_branch", &args, DEFAULT_PUSH_TIMEOUT_SEC, &[])?;
         Ok(json!({"pushed": branch, "approved_commit": commit}))
     }
 
     pub fn verify_published_source(&self, branch: &str, commit: &str, origin: &str) -> Result<()> {
         self.verify_approved_source(branch, commit, origin)?;
         let reference = format!("refs/heads/{branch}");
-        let remote = self.run_git(
-            "remote_approved_source",
-            &["ls-remote", "--refs", "--", origin, &reference],
-            DEFAULT_PUSH_TIMEOUT_SEC,
-            &[],
-        )?;
+        let credential = self.remote_credential_args(origin)?;
+        let mut args: Vec<&str> = credential.iter().map(String::as_str).collect();
+        args.extend(["ls-remote", "--refs", "--", origin, &reference]);
+        let remote = self.run_git("remote_approved_source", &args, DEFAULT_PUSH_TIMEOUT_SEC, &[])?;
         let expected = format!("{commit}\t{reference}");
         if remote.trim() != expected {
             return Err(self.deny("publish", "remote branch differs from the approved commit", None));

@@ -629,7 +629,8 @@ async fn run_inner(
                 }
             };
             if result.get("error").is_none() {
-                if result["provider"] != "google-serpapi" {
+                // Provider listings (SerpAPI, loopback SearXNG) are not URL evidence.
+                if !matches!(result["provider"].as_str(), Some("google-serpapi" | "searxng")) {
                     if let Some(source) = result
                         .get("search_url")
                         .or_else(|| result.get("url"))
