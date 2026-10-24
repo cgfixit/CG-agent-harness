@@ -569,12 +569,28 @@ fn duplicated_constants_still_agree() {
             "{name} has an empty argv"
         );
     }
-    // The shim whitelist is exactly the CLI's dispatch table (no deepagent-plan, no __sleep).
+    assert_eq!(
+        cgagentharness::shim::REAL_REPO_RUN_DEFAULT_ITERATIONS,
+        cgagentharness::agentic::commands::DEFAULT_MAX_ITERATIONS
+    );
+    // The shim whitelist is exactly the CLI's dispatch table (no deepagent-plan, no __sleep),
+    // in both directions: an arm missing from ACTIONS would be unreachable through the shim.
     let commands = std::fs::read_to_string(root().join("agentic").join("commands.rs")).unwrap();
-    for action in cgagentharness::shim::ACTIONS {
+    let start = commands.find("pub fn dispatch(").expect("dispatch");
+    let end = start + commands[start..].find("\n}\n").expect("dispatch end");
+    let arm = regex::Regex::new(r#""([a-z][a-z-]*)" =>"#).unwrap();
+    let mut arms: Vec<&str> = arm
+        .captures_iter(&commands[start..end])
+        .map(|c| c.get(1).unwrap().as_str())
+        .collect();
+    arms.sort_unstable();
+    let mut actions = cgagentharness::shim::ACTIONS.to_vec();
+    actions.sort_unstable();
+    assert_eq!(arms, actions, "CLI dispatch arms and shim::ACTIONS differ");
+    for action in cgagentharness::shim::JSON_ACTIONS {
         assert!(
-            commands.contains(&format!("\"{action}\" =>")),
-            "{action} missing from the CLI dispatch"
+            cgagentharness::shim::ACTIONS.contains(&action),
+            "{action} is JSON but not an action"
         );
     }
     assert!(cgagentharness::shim::ACTIONS.contains(&"real-repo-runs"));
