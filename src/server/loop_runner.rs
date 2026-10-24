@@ -75,9 +75,10 @@ pub fn loop_blocking_web_code(events: &[Value]) -> Option<String> {
     None
 }
 
-/// Turns on which every web read failed, after this turn (console mirror). A
-/// `WEB_SEARCH_COOLDOWN` is a deliberate pause the model was told about: a turn
-/// whose only failures are cooldowns neither counts nor resets the streak.
+/// Turns on which every web read failed, after this turn (console mirror).
+/// `WEB_SEARCH_COOLDOWN` and `WEB_SEARCH_PACED` are deliberate pauses the model
+/// was told not to retry: a turn whose only failures are those pauses neither
+/// counts nor resets the streak.
 pub fn next_tool_failures(previous: u64, events: &[Value]) -> u64 {
     let failed: Vec<&Value> = events
         .iter()
@@ -85,10 +86,12 @@ pub fn next_tool_failures(previous: u64, events: &[Value]) -> u64 {
         .collect();
     if failed.is_empty() || events.iter().any(|e| e.get("ok") == Some(&Value::Bool(true))) {
         0
-    } else if failed
-        .iter()
-        .all(|e| e.get("code").and_then(Value::as_str) == Some("WEB_SEARCH_COOLDOWN"))
-    {
+    } else if failed.iter().all(|e| {
+        matches!(
+            e.get("code").and_then(Value::as_str),
+            Some("WEB_SEARCH_COOLDOWN" | "WEB_SEARCH_PACED")
+        )
+    }) {
         previous
     } else {
         previous + 1
@@ -589,6 +592,24 @@ mod tests {
         assert_eq!(next_tool_failures(3, &[fail("WEB_SEARCH_COOLDOWN"), ok.clone()]), 0);
         assert_eq!(next_tool_failures(3, &[]), 0);
         assert_eq!(loop_blocking_web_code(&[fail("WEB_SEARCH_COOLDOWN")]), None);
+    }
+
+    #[test]
+    fn search_paced_turns_do_not_count_toward_max_failures() {
+        let fail = |code: &str| json!({"tool":"web_search","ok":false,"code":code});
+        let ok = json!({"tool":"web_fetch","ok":true});
+        assert_eq!(next_tool_failures(1, &[fail("WEB_SEARCH_PACED")]), 1);
+        assert_eq!(next_tool_failures(0, &[fail("WEB_SEARCH_PACED")]), 0);
+        assert_eq!(
+            next_tool_failures(1, &[fail("WEB_SEARCH_PACED"), fail("WEB_SEARCH_COOLDOWN")]),
+            1
+        );
+        assert_eq!(
+            next_tool_failures(1, &[fail("WEB_SEARCH_PACED"), fail("WEB_TIMEOUT")]),
+            2
+        );
+        assert_eq!(next_tool_failures(3, &[fail("WEB_SEARCH_PACED"), ok]), 0);
+        assert_eq!(loop_blocking_web_code(&[fail("WEB_SEARCH_PACED")]), None);
     }
 
     #[test]
