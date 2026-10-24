@@ -63,9 +63,9 @@ shows it) with a new password and saves that in your login keychain as **CG Agen
 admin password**, grants the web allowlist, and offers to list the local model
 for automatic memory: it adds `structured_memory.suggestion_supported` (missing
 means no model may draft memory proposals) to the home `config.yaml` after a
-backup, default yes, then restart the app. When a previous install's home exists it first
-asks whether to delete it and its Keychain entries through `reset-macos.sh`
-(default no; you type `DELETE` after its dry run). It then asks what to open:
+backup, default yes, then restart the app. With `--reset-home` and an existing home it first
+deletes the home and its Keychain entries through `reset-macos.sh` (interactively: default no,
+and you type `DELETE` after its dry run); without the flag it keeps them. It then asks what to open:
 **1** the app, **2** the console in your browser (served from that Terminal until
 Ctrl-C, or the open app's console), **3** both, **0** nothing. A failed step offers retry,
 skip or quit. A rerun skips finished steps (summary `ok`) and signs in with the saved
@@ -82,7 +82,7 @@ you quit it, because the app's backend needs the home.
 | `--replace-app` | Passed on too, and runs the installer even when `--check` passes: replaces an installed app with the latest release (quit it first) |
 | `--trust-cert`, `--no-profile`, `--no-allowlist` | Trust the console certificate (choices 2 and 3 with the app); skip the profile or allowlist |
 | `--no-auto-memory` | Leave `suggestion_supported` unlisted |
-| `--reset-home` | With `--yes`, delete the previous home and its Keychain entries first |
+| `--reset-home` | Delete the previous home and its Keychain entries first (confirmed unless `--yes`) |
 
 Each line is logged with a time to `scripts/logs/install.log` (private, ignored by
 git); passwords and setup codes never are. Read the saved password with
@@ -647,7 +647,7 @@ second launch focuses the same instance. During work, Cmd-Q offers **Keep
 running** or **Cancel work and quit**. Ctrl-C or SIGTERM stops `serve`. Neither
 path installs login startup or resumes requests or approvals after reboot.
 
-One server owns a home at a time. Quit its owner before switching between app
+On Unix and Windows, one server owns a home at a time; competing starts refuse. Quit its owner before switching between app
 and standalone use; do not delete a live lock file. Different homes can run
 independently. This lock does not cover manually invoked agentic CLI writers.
 
@@ -664,7 +664,7 @@ Notifications do not replace job records. The private bounded outbox persists
 delivery state before networking, resumes eligible attempts after restart, and
 supports explicit owner-confirmed replay within current grants and limits.
 
-`/agent runs` shows durable run records. On Unix, a released worker lease allows
+`/agent runs` shows durable run records. On Unix and Windows, a released worker lease allows
 reconciliation to interrupted; a live lease remains running. Legacy records
 without ownership evidence remain unknown. Inspect `/agent status <id>` before
 deciding or discarding. The Harness never replays a commit, push, publication,

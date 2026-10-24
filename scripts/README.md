@@ -27,7 +27,7 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 ## Verification and CI
 
 - [`verify-local.sh`](verify-local.sh): broad opt-in lint/test/build/live-smoke runner; missing cargo-deny or Node skips those checks, and `SKIP_LIVE=1` skips smoke.
-- [`check-pr-template.sh`](check-pr-template.sh): local PR-body gate mirroring `pr-template-check.yml`.
+- [`check-pr-template.sh`](check-pr-template.sh): local PR-body gate mirroring `pr-template-check.yml`, including its Cursor and trailing Claude Code footer strips.
 - [`ci-docs-only.sh`](ci-docs-only.sh): classifies changed paths so qualifying PRs skip selected CI compile/test jobs; other event types run everything.
 - [`browser-acceptance.mjs`](browser-acceptance.mjs): native Chrome acceptance against a disposable fixture (manual, after `browser-fixture.py --http`).
 - [`chat-browser-acceptance.mjs`](chat-browser-acceptance.mjs): real-browser slash-command tests against a mock API.

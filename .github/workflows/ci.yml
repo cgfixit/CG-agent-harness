@@ -168,6 +168,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: "1.88"
+          components: clippy
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # Sole dev-* writer on each OS. The narrower lifecycle and invariant
@@ -191,6 +192,9 @@ jobs:
       - name: Install bubblewrap on Linux
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y bubblewrap pkg-config libdbus-1-dev
+      - name: Windows Clippy (all features)
+        if: runner.os == 'Windows'
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Build (all targets)
         run: cargo build --all-targets --locked
       - name: Prepare dependency inventory for required native Cargo fixture
@@ -332,6 +336,9 @@ jobs:
         env:
           CGAH_REQUIRE_WINDOWS_MCP: "1"
           CGAH_REQUIRE_WINDOWS_CREDENTIALS: "1"
+          # Runs the real Credential Manager round trip, including an entry an
+          # earlier build stored as UTF-16LE (#610).
+          CGAGENTHARNESS_KEYRING_TEST: "1"
           GROK_API_KEY: ""
           ANTHROPIC_API_KEY: ""
           DEEPAGENT_API_KEY: ""

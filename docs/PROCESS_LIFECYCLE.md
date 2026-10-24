@@ -130,7 +130,8 @@ only when neither stream advances. Deadline tests retain separate 100 ms cases.
 
 The desktop parent owns a private inherited control pipe; EOF requests backend
 shutdown and cancellation through the same owners described above. A server home
-lease excludes a second Unix server. New coding workers hold a per-run lease;
+lease excludes a second server on Unix (`flock`) and Windows (`LockFileEx`).
+New coding workers hold a per-run lease;
 `/agent runs` or status reconciliation marks a running record interrupted only
 after that lease is demonstrably released. There is no PID-file kill authority,
 automatic resume or approval replay. Legacy running state stays unknown. A

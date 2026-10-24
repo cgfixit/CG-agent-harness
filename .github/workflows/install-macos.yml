@@ -1,7 +1,9 @@
 # Run the macOS installer and launcher end to end on a fresh macos-latest runner:
 # inventory, dry run, real install (Rust, Ollama, backend build, checksummed
 # release app), idempotent rerun, app-mode browser hand-off, the standalone
-# home-lock refusal, standalone mode on a separate home, and its reset.
+# home-lock refusal, standalone mode on a separate home, and its reset, then
+# init.sh's automatic-memory line (re-added after removal, left alone on a
+# rerun) and --reset-home (deletes the previous home, --yes alone keeps it).
 # Path-filtered and manual only; not a merge gate. No secrets, no model pull.
 # --trust-cert is not exercised: it needs an interactive keychain password.
 name: Install - macOS setup and launch
@@ -191,6 +193,56 @@ jobs:
           cat refuse.log
           test "$rc" = 3
           grep -q "is owned by pid $server" refuse.log
+
+      # Both init.sh steps added by #642 run only under --yes here. The
+      # interactive prompts (the memory line's [Y/n]; the reset's [y/N] and
+      # typed DELETE, offered only with --reset-home once #663 lands) are
+      # covered by the shell scenarios in those PRs' bodies, not by this job.
+      - name: init.sh re-adds the automatic-memory line, keeps it on a rerun, and --reset-home removes the home
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          home_dir="$HOME/.CGagentHarness"
+          cfg="$home_dir/config.yaml"
+          # On failure, show what the assertions saw; the job log is the only evidence a PR gets.
+          diagnose() {
+            echo "::group::diagnostics"; ls -la "$home_dir" || true
+            for f in automemory.log automemory-rerun.log keep.log reset-home.log; do [ -f "$f" ] && { echo "--- $f"; tail -n 40 "$f"; }; done
+            [ -f "$cfg" ] && { echo "--- structured_memory block"; awk '/^structured_memory:/{p=1} p&&/^[^ #]/&&!/^structured_memory:/{exit} p' "$cfg"; }
+            echo "::endgroup::"; return 0
+          }
+          trap diagnose ERR
+          backups() { find "$home_dir" -maxdepth 1 -name 'config.yaml.bak-*' | wc -l | tr -d ' '; }
+          # Present either way: seeded by a shipped config that carries the key, or
+          # written (with one backup) by the first init.sh run above.
+          grep -q '^  suggestion_supported:' "$cfg"
+          mode=$(stat -f %Lp "$cfg")
+          before=$(backups)
+          sed -i '' '/^  suggestion_supported:/d' "$cfg"
+          rest_before=$(grep -v '^  suggestion_supported:' "$cfg")
+          scripts/init.sh --yes --choice 0 --app-dir "$RUNNER_TEMP/Applications" | tee automemory.log
+          grep -q '^==> listed for automatic memory: ' automemory.log
+          grep -q '^  suggestion_supported: \[{ model: "' "$cfg"
+          # Exactly one new backup, nothing else in the file changed, mode kept.
+          test "$(backups)" = "$((before + 1))"
+          test "$(grep -v '^  suggestion_supported:' "$cfg")" = "$rest_before"
+          test "$(stat -f %Lp "$cfg")" = "$mode"
+          scripts/init.sh --yes --choice 0 --app-dir "$RUNNER_TEMP/Applications" | tee automemory-rerun.log
+          grep -q 'already lists its models' automemory-rerun.log
+          test "$(backups)" = "$((before + 1))"
+          # --yes alone keeps a previous install.
+          touch "$home_dir/marker-previous-install"
+          scripts/init.sh --yes --choice 0 --app-dir "$RUNNER_TEMP/Applications" | tee keep.log
+          grep -q '^==> keeping the previous install at ' keep.log
+          test -e "$home_dir/marker-previous-install"
+          # --yes --reset-home deletes it (reset-macos.sh dry run, then --yes) and setup reseeds a fresh home.
+          home=$(cd "$home_dir" && pwd -P)
+          scripts/init.sh --yes --reset-home --choice 0 --app-dir "$RUNNER_TEMP/Applications" | tee reset-home.log
+          grep -q "^removed $home\$" reset-home.log
+          test ! -e "$home_dir/marker-previous-install"
+          test -f "$cfg"
+          grep -q 'admin password replaced and saved in your login keychain' reset-home.log
+          security find-generic-password -a admin -s "CGagentHarness admin ($home)" >/dev/null
 
       - name: Quit the app
         if: always()

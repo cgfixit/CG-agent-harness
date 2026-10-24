@@ -156,6 +156,14 @@ async fn multiple_streamed_tools_then_buffered_synthesis_keep_the_total_call_bud
         );
         assert!(!s.state.generation_gate.is_held());
     }
+    s.state.audit.flush_async().await;
+    let ledger = std::fs::read_to_string(s.home.join("logs/spend.jsonl")).unwrap();
+    let rows: Vec<Value> = ledger.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[1]["outcome"], "failed_after_billing");
+    assert_eq!(rows[1]["input_tokens"], 10);
+    assert_eq!(rows[1]["output_tokens"], 2);
+    assert_eq!(rows[1]["usage_missing"], false);
     task.abort();
 }
 fn events(text: &str) -> Vec<Value> {

@@ -40,7 +40,7 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
                 assert!(body.get("tools").is_none(),"an all-failed batch after evidence ends the tool rounds");
                 return Json(common::ok_reply("Answered from the first read after a refusal.",20,5));
             }
-            if finished && mode!="cumulative" {
+            if finished && !mode.starts_with("cumulative") {
                 assert_eq!(tool_messages.len(),2);
                 assert!(tool_messages.iter().all(|m|m["content"].as_str().unwrap().contains("BATCH_BACKUP_EVIDENCE")));
                 return Json(common::ok_reply("Compared both fetched sources.",20,5));
@@ -49,7 +49,8 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
             if mode=="duplicate" { calls[1]["id"]=calls[0]["id"].clone(); }
             if mode=="malformed" { calls[1]["function"]["arguments"]=json!("{}"); }
             if mode=="denied" { calls[1]["function"]["arguments"]=json!(json!({"url":"http://docs.example/private"}).to_string()); } // DevSkim: ignore DS137138 because this synthetic URL tests permission refusal against the loopback fixture.
-            Json(json!({"choices":[{"finish_reason":"tool_calls","message":{"content":null,"tool_calls":calls}}],"usage":{"prompt_tokens":10,"completion_tokens":3}}))
+            let usage = if mode=="cumulative-missing" && !finished { json!({"prompt_tokens":10}) } else { json!({"prompt_tokens":10,"completion_tokens":3}) };
+            Json(json!({"choices":[{"finish_reason":"tool_calls","message":{"content":null,"tool_calls":calls}}],"usage":usage}))
         }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -83,6 +84,7 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
         let (status, reply) = s.post_json("/api/chat", json!({"message":mode})).await;
         assert_eq!(status, 502, "{reply}");
         assert_eq!(common::code(&reply), code, "{reply}");
+        assert_eq!(reply["detail"]["details"]["completion_tokens"], 3);
         assert_eq!(
             reads.load(Ordering::SeqCst),
             2,
@@ -97,6 +99,27 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
         4,
         "two calls plus two more exceeds total budget three"
     );
+    assert_eq!(reply["detail"]["details"]["prompt_tokens"], 20);
+    assert_eq!(reply["detail"]["details"]["completion_tokens"], 6);
+    assert_eq!(reply["detail"]["details"]["known_completion_tokens"], 6);
+    s.state.audit.flush_async().await;
+    let ledger = std::fs::read_to_string(s.home.join("logs/spend.jsonl")).unwrap();
+    let rows: Vec<Value> = ledger.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(rows.len(), 5, "success and each rejected logical turn record once");
+    for (row, input, output) in [
+        (&rows[1], 10, 3),
+        (&rows[2], 10, 3),
+        (&rows[3], 10, 3),
+        (&rows[4], 20, 6),
+    ] {
+        assert_eq!(row["outcome"], "failed_after_billing");
+        assert_eq!(row["input_tokens"], input);
+        assert_eq!(row["output_tokens"], output);
+        assert_eq!(row["usage_missing"], false);
+    }
+    for private in ["docs.example", "BATCH_BACKUP_EVIDENCE", "arguments", &s.api_key] {
+        assert!(!ledger.contains(private));
+    }
     // A refused sibling is that call's result, not the end of the turn: the
     // permitted read is kept and the model answers from it. Before, one denied
     // URL in a batch discarded every sibling result and the turn had no answer.
@@ -124,6 +147,20 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
         6,
         "one more permitted read, none for the refusal"
     );
+    let (_, reply) = s.post_json("/api/chat", json!({"message":"cumulative-missing"})).await;
+    assert_eq!(common::code(&reply), "WEB_TOOL_LIMIT");
+    assert_eq!(reply["detail"]["details"]["prompt_tokens"], 20);
+    assert!(reply["detail"]["details"]["completion_tokens"].is_null());
+    assert_eq!(reply["detail"]["details"]["known_completion_tokens"], 3);
+    s.state.audit.flush_async().await;
+    let ledger = std::fs::read_to_string(s.home.join("logs/spend.jsonl")).unwrap();
+    let rows: Vec<Value> = ledger.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(rows.len(), 8);
+    let row = rows.last().unwrap();
+    assert_eq!(row["outcome"], "failed_after_billing");
+    assert_eq!(row["input_tokens"], 20);
+    assert!(row["output_tokens"].is_null());
+    assert_eq!(row["usage_missing"], true);
     task.abort();
 }
 
@@ -1499,6 +1536,74 @@ async fn loop_search_after_a_google_challenge_cools_down_without_a_second_reques
     );
     assert_eq!(hits.load(Ordering::SeqCst), 1);
     fixture.abort();
+}
+
+/// Two public Google searches in one chat turn leave at least the 3 s floor
+/// apart, whatever `web.pace_ms` says; both still answer.
+#[tokio::test]
+async fn chat_public_google_searches_in_one_turn_are_paced_by_the_floor() {
+    let sent = Arc::new(Mutex::new(Vec::<std::time::Instant>::new()));
+    let log = sent.clone();
+    let fixture = Router::new()
+        .route(
+            "/search",
+            get(move || {
+                let log = log.clone();
+                async move {
+                    log.lock().unwrap().push(std::time::Instant::now());
+                    (
+                        [("content-type", "text/html")],
+                        "<a href='/url?q=https%3A%2F%2Fveeam.com%2Fkb1'><h3>Paced result</h3></a>",
+                    )
+                }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(|Json(body): Json<Value>| async move {
+                let messages = body["messages"].as_array().unwrap();
+                if messages.last().unwrap()["role"] == "tool" {
+                    return Json(common::ok_reply("Both listings arrived.", 10, 3));
+                }
+                Json(json!({"model":"mock","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+                    "tool_calls":[
+                        {"id":"pace_a","type":"function","function":{"name":"web_search","arguments":json!({"query":"veeam cve"}).to_string()}},
+                        {"id":"pace_b","type":"function","function":{"name":"web_search","arguments":json!({"query":"veeam backup advisory"}).to_string()}}]}}],
+                    "usage":{"prompt_tokens":10,"completion_tokens":2}}))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+        common::ServerOptions {
+            web_resolve: Some(("google.fixture".into(), address)),
+            public_search: Some(url::Url::parse("http://google.fixture/search").unwrap()), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            ..common::ServerOptions::default().with("web.pace_ms", "100")
+        },
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://google.fixture/*"})) // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            .await
+            .0,
+        200
+    );
+    let (status, reply) = s.post_json("/api/chat", json!({"message":"Search twice"})).await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["reply"], "Both listings arrived.", "{reply}");
+    let tools = reply["web_tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 2, "{reply}");
+    assert!(tools.iter().all(|t| t["ok"] == true), "{reply}");
+    let sent = sent.lock().unwrap().clone();
+    assert_eq!(sent.len(), 2);
+    let gap = sent[1] - sent[0];
+    assert!(
+        gap >= std::time::Duration::from_millis(3000),
+        "public Google searches {gap:?} apart; the floor is 3 s"
+    );
+    task.abort();
 }
 
 fn tool_call_reply(name: &str, arguments: &str, id: &str) -> Value {
