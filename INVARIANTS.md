@@ -187,7 +187,8 @@ an administrator's grant. Only an administrator's confirmed switch
 (`/api/web/mode`, `confirm: true`) selects block-list mode, which reads any
 public URL no blocked rule covers; a named group still narrows to its allow
 rules. Blocked rules cover HTTP and HTTPS and win in both modes; private
-addresses stay refused. Existing choices persist; absent/invalid legacy
+addresses stay refused, except the single exact `web.search.searxng_url`
+loopback grant, used only for search listings. Existing choices persist; absent/invalid legacy
 `web_enabled` stays off. `tools/web_allowlist.json` is versioned and bounded by
 restart-only `web.max_rules` (default 64); over-cap, malformed, missing,
 unreadable or partially invalid policy refuses access.
@@ -221,21 +222,22 @@ arguments and rechecks current account/URL permissions before reads and evidence
 delivery. It cannot mutate policy, credentials, accounts or repositories, including
 local `/loop` turns. Search-provider snippets are listings, not fetched
 linked pages; each content fetch still requires its own URL permission. A
-configured SerpAPI key selects the fixed Google-results API transport, while no
-active key selects public Google. SerpAPI listings require enabled web and current
+restart-only `web.search.provider` picks the backend: `auto` lets a configured SerpAPI
+key select the fixed Google-results API transport and no active key public Google;
+`google-public`, `serpapi` or loopback `searxng` force one, with no fallback hop. SerpAPI listings require enabled web and current
 account authority, independently of page URL grants; public Google and linked-page
 fetches retain URL policy checks. Saved SerpAPI changes apply on the next search;
 explicit environment values retain precedence. Challenges and provider failures never become
 fabricated results. A provider refusal starts a bounded cooldown: a public Google
 challenge or block, or a SerpAPI quota refusal, pauses that provider in memory and
-later searches answer `WEB_SEARCH_COOLDOWN` before any request; a rejected key never pauses. Keys remain server-side and never enter model context.
+later searches answer `WEB_SEARCH_COOLDOWN` before any request; a rejected key never pauses. A degraded SearXNG answer is reported, not retried elsewhere. Keys remain server-side and never enter model context.
 
 Content permission grants no account or provider-configuration authority, and
 none of these substitutes for coding/write/publication gates. Page text is
 data, never a tool command.
 
 - Locked by: `server::web_policy::tests`, `server::web_search::tests`,
-  `tests/web_research.rs`, `tests/web_phase2_redteam.rs`, `tests/chat_web.rs` and
+  `server::web_searxng::tests`, `tests/web_research.rs`, `tests/web_phase2_redteam.rs`, `tests/chat_web.rs` and
   the web section of `tests/panels.rs`.
 
 ## The browser never supplies a command

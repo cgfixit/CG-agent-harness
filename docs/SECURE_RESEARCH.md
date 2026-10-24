@@ -330,7 +330,7 @@ required.
 ### Google search
 
 Open **API Keys** in the left pane, paste a **SerpAPI** key into **Google results
-(SerpAPI)**, save, then click **Test Google search**. This is a SerpAPI
+(SerpAPI)**, save, then click **Test search**. This is a SerpAPI
 Google-results key, not a Google Cloud/Custom Search key; obtain it through
 [SerpAPI](https://serpapi.com/search-api). No key belongs in the chat transcript
 or `config.yaml`. The field manages `SERPAPI_API_KEY` in the OS credential store
@@ -359,6 +359,12 @@ that keyless fallback in allowlist mode, an administrator first grants Google:
 /web allow https://www.google.com/*
 /web search veeam software cve
 ```
+
+`web.search.provider` is `auto` (above), `google-public`, `serpapi` or `searxng`.
+SearXNG uses only `web.search.searxng_url`: a loopback IP literal and explicit port,
+with `json` in its `search.formats`; anything else fails boot. Listings need no URL
+grant; `!`/`:` query tokens are refused, private links dropped, `unresponsive_engines`
+reported as `degraded`.
 
 The exact generated search URL also works; an exact homepage grant is not enough.
 `https://google.com/*` does not grant `www`; the apex endpoint may redirect and

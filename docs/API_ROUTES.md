@@ -140,7 +140,7 @@ Confirmation and gate rules are in [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 | POST | `/api/web/block`, `/api/web/unblock` | Administrator adds/removes blocks |
 | POST | `/api/web/fetch` | Read one or more exact permitted URLs within shared resource limits |
 | POST | `/api/web/check` | Check exact URL permissions locally, without fetching or granting access |
-| POST | `/api/web/search` | Page search; Google needs `engine:"google"` |
+| POST | `/api/web/search` | Page search; `engine:"google"` uses `web.search.provider` |
 | POST | `/api/web/research` | Research permitted sources; question ≤2,000 characters, optional group/URLs |
 | POST | `/api/web/research/cancel` | Cancel research |
 | POST | `/api/web/inject` | Inject a read into the session context |
