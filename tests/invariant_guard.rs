@@ -1081,7 +1081,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // (gate list, /loop excludes MCP, no job-long gate), plus ~10%, rounded up to the next 50.
     // why: the 2026-10-13 doc-sync cut it to 1441 words; 1490 keeps the ~50-word roadmap allowance above.
     // why: #550/#552 self-manual and red-team guidance grew it to 1459; standing rule is to raise the cap to the reported count, never trim gate text.
-    ("AGENTS.md", Agent, 1459),
+    ("AGENTS.md", Agent, 1452),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     // why: now `@AGENTS.md` plus Claude-only lines; 183 words, rounded up to the next 100.
     ("CLAUDE.md", Agent, 400),
@@ -1131,7 +1131,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // Setup memory guidance replaces repeated setup/verification prose; keep the cut.
     // why: operator-approved (2026-10-14) automated macOS install (section 1) and browser access (section 7); 5188 words plus about 1%, rounded up to the next 50.
     // why: operator-approved (2026-10-14) raise to 7500 for room to grow the install guide after #491 and #496 together hit 5250; the Guide group cap still bounds it.
-    ("docs/INSTALL.md", Guide, 7474),
+    ("docs/INSTALL.md", Guide, 7406),
     ("docs/MCP_CLIENT.md", Guide, 1087),
     ("docs/MCP_SERVER.md", Guide, 1230),
     // why: #244 folded MEMORY_SETUP.md and the user manual's memory sections in here.

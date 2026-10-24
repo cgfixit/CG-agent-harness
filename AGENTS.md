@@ -42,7 +42,7 @@ When prose contradicts code, fix the prose in the same PR.
 | Provider keys (OS credential store; env wins) | Provider keys live in the OS credential store |
 | Outbound MCP client (`mcp.enabled`, `mcp.servers`, stdio sandbox) | I6 — process isolation…; `docs/MCP_CLIENT.md` |
 | Clone jail, read deny-list, repo retrieval | The clone jail |
-| Detached jobs, schedules | A detached run cannot outlive its gates; Scheduled agentic runs… |
+| Detached jobs, schedules, server `/loop` runs | A detached run cannot outlive its gates; Scheduled agentic runs… |
 | Ollama inventory, pull, warmup | Native Ollama pull stays on loopback… |
 | Session export and search | Session export and transcript search stay on the machine |
 | Spend ledger and prediction | Inference spend keeps recorded usage separate… |
@@ -119,7 +119,6 @@ When prose contradicts code, fix the prose in the same PR.
   reviews; it never fails CI. Read it before merging and re-run it after
   resolving the last thread. Never comment `@codex review` without the
   operator's approval.
-- Loading a skill never authorizes push, merge or release.
 
 ## Docs policy
 

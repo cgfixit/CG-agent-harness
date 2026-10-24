@@ -61,9 +61,8 @@ It waits for the Command Line Tools dialog, runs `install-macos.sh` (skipped whe
 admin's one-time setup code (it reads the code itself; in the app, **Cmd and +**
 shows it) with a new password and saves that in your login keychain as **CG Agent Harness
 admin password**, grants the web allowlist, and offers to list the local model
-for automatic memory: it adds `structured_memory.suggestion_supported` (missing
-means no model may draft memory proposals) to the home `config.yaml` after a
-backup, default yes, then restart the app. When a previous install's home exists it first
+for automatic memory: it adds `structured_memory.suggestion_supported` to the home `config.yaml`
+after a backup, default yes, then restart the app. When a previous install's home exists it first
 asks whether to delete it and its Keychain entries through `reset-macos.sh`
 (default no; you type `DELETE` after its dry run). It then asks what to open:
 **1** the app, **2** the console in your browser (served from that Terminal until
@@ -653,9 +652,10 @@ independently. This lock does not cover manually invoked agentic CLI writers.
 
 ### Retained jobs and runs
 
-`data/agentic/console-jobs.json` retains up to 32 terminal jobs plus one active
-job within 16 MiB. Restart marks a running job interrupted without resuming it.
-Use `/agent jobs` to list handles and `/agent job <id>` to inspect one.
+Restart marks a running job interrupted without resuming it. Use `/agent jobs`
+to list handles and `/agent job <id>` to inspect one; inspect `/agent status <id>`
+before deciding or discarding a run. The Harness never replays a commit, push,
+publication or approval.
 
 `data/agentic/console-schedules.json` stores schedules. Occurrences are consumed
 before launch, and missed windows are skipped. See
@@ -664,19 +664,9 @@ Notifications do not replace job records. The private bounded outbox persists
 delivery state before networking, resumes eligible attempts after restart, and
 supports explicit owner-confirmed replay within current grants and limits.
 
-`/agent runs` shows durable run records. On Unix, a released worker lease allows
-reconciliation to interrupted; a live lease remains running. Legacy records
-without ownership evidence remain unknown. Inspect `/agent status <id>` before
-deciding or discarding. The Harness never replays a commit, push, publication,
-or approval. Cancellation is best-effort; inspect escaped descendants before
-further writes.
-
-Audit/spend/optional metrics JSONL logs retain a current file and one previous
-`.1` generation, default 8 MiB each. Logging remains best-effort; audit lines use
-a [bounded background writer](../INVARIANTS.md#secrets-never-reach-a-response-or-a-log-line).
-See
-[the coding pipeline](CODING_PIPELINE.md), [desktop recovery](DESKTOP.md) and
-[process lifecycle](PROCESS_LIFECYCLE.md) for precise limits.
+Job and log retention limits, worker-lease reconciliation and cancellation limits:
+[desktop recovery](DESKTOP.md#closing-quitting-and-recovery),
+[process lifecycle](PROCESS_LIFECYCLE.md) and [the coding pipeline](CODING_PIPELINE.md).
 
 ### Update, backup, rollback and uninstall
 
