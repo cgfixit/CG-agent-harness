@@ -108,6 +108,7 @@ async fn console_uses_a_per_response_nonce_and_no_store() {
         r1.headers()["cache-control"].to_str().unwrap(),
         "no-store, no-cache, must-revalidate, max-age=0"
     );
+    assert_eq!(r1.headers()["x-frame-options"].to_str().unwrap(), "DENY");
     let body1 = r1.text().await.unwrap();
     let nonce1 = csp1
         .split("'nonce-")
@@ -126,6 +127,8 @@ async fn console_uses_a_per_response_nonce_and_no_store() {
     let csp2 = r2.headers()["content-security-policy"].to_str().unwrap().to_string();
     assert_ne!(csp1, csp2, "nonce differs per response");
     assert!(csp1.contains("script-src 'self' 'nonce-"));
+    assert!(csp1.contains("frame-ancestors 'none'"));
+    assert!(csp1.contains("frame-src 'self'"));
     // Static assets: no-store, correct JS type.
     let js = s.client.get(s.url("/static/auth_admin.js")).send().await.unwrap();
     assert_eq!(js.status().as_u16(), 200);
@@ -147,4 +150,34 @@ async fn console_uses_a_per_response_nonce_and_no_store() {
             .as_u16(),
         404
     );
+}
+
+#[tokio::test]
+async fn preview_html_is_frameable_only_by_the_console() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let preview = s.client.get(s.url("/preview/html?run=1")).send().await.unwrap();
+    assert_eq!(preview.status().as_u16(), 200);
+    assert_eq!(preview.headers()["x-frame-options"].to_str().unwrap(), "SAMEORIGIN");
+    assert_eq!(
+        preview.headers()["content-security-policy"].to_str().unwrap(),
+        cgagentharness::server::console::PREVIEW_CSP
+    );
+    assert_eq!(
+        preview.headers()["cache-control"].to_str().unwrap(),
+        "no-store, no-cache, must-revalidate, max-age=0"
+    );
+    let body = preview.text().await.unwrap();
+    assert!(body.contains("document.write"));
+    assert!(body.contains("https:"));
+    assert!(body.contains("127.0.0.1")); // DevSkim: ignore DS162092 because the shell must name loopback and nothing else.
+    assert!(!body.contains("__CYCLAW_CSRF_TOKEN__"));
+    assert!(!body.contains("__CYCLAW_CSP_NONCE__"));
+    assert!(!body.contains(&s.csrf));
+    let page = s.client.get(s.url("/")).send().await.unwrap();
+    let csp = page.headers()["content-security-policy"].to_str().unwrap();
+    assert_eq!(page.headers()["x-frame-options"].to_str().unwrap(), "DENY");
+    assert!(csp.contains("frame-ancestors 'none'"));
+    assert!(csp.contains("frame-src 'self'"));
+    assert!(!csp.contains("unsafe-inline"));
 }
