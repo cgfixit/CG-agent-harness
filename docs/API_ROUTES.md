@@ -73,7 +73,7 @@ session timeouts.
 | POST | `/api/sessions/{session_id}/adopt` | Administrator adopts into own account with confirmation/reason; clears prior goal-stage approval |
 | POST | `/api/sessions/search` | Owned local transcript search off async workers; case-insensitive literal phrases cross chunk boundaries; Unicode-safe snippets ≤160 characters |
 | POST | `/api/sessions/clear` | Delete owned sessions; retain foreign, legacy, corrupt and staged files |
-| GET | `/api/sessions/{session_id}` | Load one owned session |
+| GET | `/api/sessions/{session_id}` | Load one owned session, with its `web_sources` read ledger |
 | GET | `/api/sessions/{session_id}/export` | Markdown export; also written 0o600 under home/exports |
 | POST | `/api/sessions/{session_id}/rename` | Rename |
 | POST | `/api/sessions/{session_id}/goal` | Set goal; optional `web_mode` `off`/`fetch`/`all`, else `web.goal_web_default` (ships `all`) |
