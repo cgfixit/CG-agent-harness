@@ -17,7 +17,7 @@ one.
 
 ## Supported settings
 
-Only these 27 keys reload; values are integers except finite `window_seconds`.
+Only these 28 keys reload; values are integers except finite `window_seconds`.
 Bounds also apply at startup. Defaults live in `assets/config.default.yaml`;
 removing a key selects its code fallback.
 
@@ -50,12 +50,13 @@ removing a key selects its code fallback.
 | `web.synthesis_seconds` | 10–1,800 |
 | `web.stale_seconds` | 60–31,536,000 |
 | `web.chat_tool_calls` | 1–30 |
+| `web.carry_forward_sources` | 0–50 |
 
 The `loop.*` keys bound the server-side `/loop` runner (turns and aggregate
-tokens per run, 0 = unlimited; consecutive failures before abort; pause between
+tokens per run; consecutive failures before abort; pause between
 turns), which the console reads from `/api/status`.
 
-`web.concurrency` is **restart-only** (it sizes shared fetch permits), and so are `web.goal_web_default` and `web.search*`.
+`web.concurrency` is **restart-only** (it sizes shared fetch permits), as are `web.goal_web_default`, `web.search*`.
 `web.max_rules` (default 64, 1–256) is restart-only too: a cap below the saved
 rule count refuses the policy until it is raised.
 TLS, authentication, credentials, `security.allow_plaintext_key_file` (default

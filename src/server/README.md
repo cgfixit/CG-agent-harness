@@ -14,7 +14,7 @@ The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs) and
 - [`chat_web.rs`](chat_web.rs): chat-model `web_search`/`web_fetch` tool loop with bounded reads and SSE.
 - [`client.rs`](client.rs): `account`/`web` portal clients; `tls` inspects or renews home-owned certificates.
 - [`compaction.rs`](compaction.rs): prompt-window estimation, reply reservation, web budgets, summary compaction.
-- [`config_reload.rs`](config_reload.rs): hot reload of `RELOADABLE` (23 keys) into `RuntimeLimits`; SIGHUP installer.
+- [`config_reload.rs`](config_reload.rs): hot reload of `RELOADABLE` (28 keys) into `RuntimeLimits`; SIGHUP installer.
 - [`console.rs`](console.rs): `GET /` and `/static/{name}`; inserts response CSP nonces after `mod.rs` substitutes the CSRF token.
 - [`desktop.rs`](desktop.rs): Unix-only parent/sidecar stdio protocol; carries ownership, no API authority.
 - [`diag_reader.rs`](diag_reader.rs): allowlisted private log tails, bounded reads, redaction and injection scanning.
