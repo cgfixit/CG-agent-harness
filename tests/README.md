@@ -31,6 +31,7 @@ Docs-only classification can skip compile jobs. CI expectations: [docs/INSTALL.m
 ## Chat, sessions and web
 
 - [`chat_and_sessions.rs`](chat_and_sessions.rs): `/api/chat` turns, compaction and reply budgets, cancel, busy gate, `/loop`, sessions, 422 envelope.
+- [`loop_runner.rs`](loop_runner.rs): server-side `/loop`: start/status/stop, unlimited turns, refusals, owner binding, per-turn account recheck.
 - [`chat_stream.rs`](chat_stream.rs): streaming chat shares guards, tools, session commit and the generation gate with JSON chat.
 - [`chat_attachments.rs`](chat_attachments.rs): text and DOCX attachments and the notes corpus: limits, magic, prompt fence.
 - [`chat_web.rs`](chat_web.rs): chat `web_fetch`/`web_search` rounds: URL permission, token budgets, cancel, revoked sources.
