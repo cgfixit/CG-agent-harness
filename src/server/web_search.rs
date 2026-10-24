@@ -412,6 +412,8 @@ pub struct WebTool {
     pub(super) permits: Arc<Semaphore>,
     pub(super) mutation: Arc<Mutex<()>>,
     pub(super) search_gate: Arc<Semaphore>,
+    /// When the last public Google search request left, shared by every snapshot.
+    pub(super) public_search_sent: Arc<std::sync::Mutex<Option<tokio::time::Instant>>>,
     /// `web.search.provider` and its one exact SearXNG socket; restart-only.
     pub(super) search_provider: super::web_searxng::SearchProvider,
     /// Per-provider pause after a refusal, shared by every snapshot; lost on restart.
@@ -436,6 +438,7 @@ impl WebTool {
             plaintext_key_file: cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE),
             mutation: Arc::new(Mutex::new(())),
             search_gate: Arc::new(Semaphore::new(1)),
+            public_search_sent: Arc::default(),
             search_provider: super::web_searxng::SearchProvider::load(cfg)?,
             search_cooldown: Arc::default(),
             test_public_search: None,
@@ -837,6 +840,19 @@ impl WebTool {
         group: Option<&str>,
         cached: Option<&Page>,
     ) -> Result<(Page, String)> {
+        self.get_raw_paced(raw, group, cached, None).await
+    }
+
+    /// `pace` (`pace_ms`, the caller's deadline) spaces public Google searches.
+    /// It is checked and stamped just before the send, after the permit wait and
+    /// DNS, so queueing behind other fetches cannot shorten the gap.
+    pub(super) async fn get_raw_paced(
+        &self,
+        raw: &str,
+        group: Option<&str>,
+        cached: Option<&Page>,
+        pace: Option<(u64, tokio::time::Instant)>,
+    ) -> Result<(Page, String)> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
         tokio::time::timeout_at(deadline, async {
             // Keep the permit until the worker actually exits, including its
@@ -867,6 +883,13 @@ impl WebTool {
                 if let Some(modified) = &page.last_modified {
                     request = request.header(reqwest::header::IF_MODIFIED_SINCE, modified);
                 }
+            }
+            if let Some((pace_ms, search_deadline)) = pace {
+                let last = *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(ready) = super::web_google::public_pace(last, pace_ms, search_deadline)? {
+                    tokio::time::sleep_until(ready).await;
+                }
+                *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner()) = Some(tokio::time::Instant::now());
             }
             let mut response = request
                 .send()
