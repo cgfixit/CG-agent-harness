@@ -414,6 +414,10 @@ pub struct WebTool {
     pub(super) search_gate: Arc<Semaphore>,
     /// `web.search.provider` and its one exact SearXNG socket; restart-only.
     pub(super) search_provider: super::web_searxng::SearchProvider,
+    /// Opt-in fallback hops after the provider; restart-only.
+    pub(super) search_fallback: super::web_searxng::Fallback,
+    /// SerpAPI fallbacks this clock hour, shared by every snapshot.
+    pub(super) search_fallback_burst: Arc<super::web_searxng::FallbackBurst>,
     /// When the last public Google search request left, shared by every snapshot.
     pub(super) public_search_sent: Arc<std::sync::Mutex<Option<tokio::time::Instant>>>,
     /// Per-provider pause after a refusal, shared by every snapshot; lost on restart.
@@ -439,6 +443,8 @@ impl WebTool {
             mutation: Arc::new(Mutex::new(())),
             search_gate: Arc::new(Semaphore::new(1)),
             search_provider: super::web_searxng::SearchProvider::load(cfg)?,
+            search_fallback: super::web_searxng::Fallback::load(cfg)?,
+            search_fallback_burst: Arc::default(),
             public_search_sent: Arc::default(),
             search_cooldown: Arc::default(),
             test_public_search: None,

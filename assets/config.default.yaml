@@ -179,10 +179,17 @@ web:
   # Google. google-public and serpapi force one. searxng sends listings to searxng_url only:
   # one http(s) loopback IP literal with an explicit port (e.g. http://127.0.0.1:8888), whose
   # settings.yml lists json in search.formats. Hostnames, public/LAN IPs or a missing port fail
-  # boot. No fallback between providers; web_fetch of that URL stays refused.
+  # boot; web_fetch of that URL stays refused. Fallback hops ship off and run in the fixed
+  # order searxng -> serpapi -> google-public inside one web.request_seconds deadline and one
+  # search slot. A hop falls through only when its provider is unusable (transport, timeout,
+  # non-200, bad body; a SerpAPI cooldown is skipped); zero results, degraded engines, a
+  # rejected key or a spent quota never spend another provider.
   search:
     provider: auto # auto|google-public|serpapi|searxng
     searxng_url: "" # e.g. http://127.0.0.1:8888; validated at boot even when unused
+    fallback_to_serpapi: false # literal true: a failed searxng tries SerpAPI when a key is active
+    fallback_to_public_google: false # literal true: a failed earlier hop tries public Google (needs its URL rule)
+    fallback_alert_per_hour: 20 # 1–1000 SerpAPI fallbacks per clock hour before one web_search_fallback_burst audit line
 
 # Completion webhooks are explicit operator configuration and restart-only.
 notifications:
