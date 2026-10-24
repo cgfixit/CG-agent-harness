@@ -703,6 +703,10 @@ What the scripts leave behind, all optional to remove:
 Homebrew, rustup, Ollama, models and `gh` are general tools; the installer
 never removes them.
 
+A failed reset can leave the home with credentials already removed. Follow
+[reset failure and recovery](DESKTOP.md#reset-failure-and-recovery) before retrying
+or reusing it.
+
 To test a candidate without using your normal home, launch it explicitly with a
 new absolute temporary home (adjust the app path):
 
