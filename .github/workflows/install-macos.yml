@@ -202,32 +202,44 @@ jobs:
         timeout-minutes: 15
         run: |
           set -euo pipefail
-          cfg="$HOME/.CGagentHarness/config.yaml"
-          # Seeded by the shipped config, or written by an earlier init.sh run.
+          home_dir="$HOME/.CGagentHarness"
+          cfg="$home_dir/config.yaml"
+          # On failure, show what the assertions saw; the job log is the only evidence a PR gets.
+          diagnose() {
+            echo "::group::diagnostics"; ls -la "$home_dir" || true
+            for f in automemory.log automemory-rerun.log keep.log reset-home.log; do [ -f "$f" ] && { echo "--- $f"; tail -n 40 "$f"; }; done
+            [ -f "$cfg" ] && { echo "--- structured_memory block"; awk '/^structured_memory:/{p=1} p&&/^[^ #]/&&!/^structured_memory:/{exit} p' "$cfg"; }
+            echo "::endgroup::"; return 0
+          }
+          trap diagnose ERR
+          backups() { find "$home_dir" -maxdepth 1 -name 'config.yaml.bak-*' | wc -l | tr -d ' '; }
+          # Present either way: seeded by a shipped config that carries the key, or
+          # written (with one backup) by the first init.sh run above.
           grep -q '^  suggestion_supported:' "$cfg"
           mode=$(stat -f %Lp "$cfg")
+          before=$(backups)
           sed -i '' '/^  suggestion_supported:/d' "$cfg"
           rest_before=$(grep -v '^  suggestion_supported:' "$cfg")
           scripts/init.sh --yes --choice 0 --app-dir "$RUNNER_TEMP/Applications" | tee automemory.log
           grep -q '^==> listed for automatic memory: ' automemory.log
           grep -q '^  suggestion_supported: \[{ model: "' "$cfg"
-          # One backup, nothing else in the file changed, mode kept.
-          test "$(find "$(dirname "$cfg")" -maxdepth 1 -name "config.yaml.bak-*" | wc -l | tr -d ' ')" = 1
+          # Exactly one new backup, nothing else in the file changed, mode kept.
+          test "$(backups)" = "$((before + 1))"
           test "$(grep -v '^  suggestion_supported:' "$cfg")" = "$rest_before"
           test "$(stat -f %Lp "$cfg")" = "$mode"
           scripts/init.sh --yes --choice 0 --app-dir "$RUNNER_TEMP/Applications" | tee automemory-rerun.log
           grep -q 'already lists its models' automemory-rerun.log
-          test "$(find "$(dirname "$cfg")" -maxdepth 1 -name "config.yaml.bak-*" | wc -l | tr -d ' ')" = 1
+          test "$(backups)" = "$((before + 1))"
           # --yes alone keeps a previous install.
-          touch "$HOME/.CGagentHarness/marker-previous-install"
+          touch "$home_dir/marker-previous-install"
           scripts/init.sh --yes --choice 0 --app-dir "$RUNNER_TEMP/Applications" | tee keep.log
           grep -q '^==> keeping the previous install at ' keep.log
-          test -e "$HOME/.CGagentHarness/marker-previous-install"
+          test -e "$home_dir/marker-previous-install"
           # --yes --reset-home deletes it (reset-macos.sh dry run, then --yes) and setup reseeds a fresh home.
-          home=$(cd "$HOME/.CGagentHarness" && pwd -P)
+          home=$(cd "$home_dir" && pwd -P)
           scripts/init.sh --yes --reset-home --choice 0 --app-dir "$RUNNER_TEMP/Applications" | tee reset-home.log
           grep -q "^removed $home\$" reset-home.log
-          test ! -e "$HOME/.CGagentHarness/marker-previous-install"
+          test ! -e "$home_dir/marker-previous-install"
           test -f "$cfg"
           grep -q 'admin password replaced and saved in your login keychain' reset-home.log
           security find-generic-password -a admin -s "CGagentHarness admin ($home)" >/dev/null
