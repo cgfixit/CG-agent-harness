@@ -138,6 +138,10 @@ fn clear_readonly_files(dir: &cap_std::fs::Dir) {
                 continue;
             }
             let mut perms = meta.permissions();
+            #[expect(
+                clippy::permissions_set_readonly_false,
+                reason = "Windows-only: clears FILE_ATTRIBUTE_READONLY without changing ACLs"
+            )]
             perms.set_readonly(false);
             let _ = file.set_permissions(perms);
         }
