@@ -571,6 +571,8 @@ impl CloudChat {
             prompt_tokens: tokens.input_tokens.unwrap_or(0),
             completion_tokens: tokens.output_tokens.unwrap_or(0),
             usage_reported: tokens.usage_reported(),
+            reported_prompt_tokens: tokens.input_tokens,
+            reported_completion_tokens: tokens.output_tokens,
             initial_prompt_tokens: None,
             initial_prompt_tools: false,
             final_prompt_tools: false,
