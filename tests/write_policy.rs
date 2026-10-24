@@ -482,7 +482,7 @@ fn denied_write_policy_still_allows_diff_without_executable_git_extensions() {
     assert!(!dest.join("tripwire-marker").exists());
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[test]
 fn record_mutations_wait_for_the_run_owner_lease() {
     use cgagentharness::agentic::run_store::acquire_run_lease;

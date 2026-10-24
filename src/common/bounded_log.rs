@@ -1,4 +1,4 @@
-//! Two-generation JSONL retention, serialized between cooperating Unix writers.
+//! Two-generation JSONL retention, serialized between cooperating Unix and Windows writers.
 use super::{config::AppConfig, file_lease::FileLease};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
@@ -140,7 +140,7 @@ mod tests {
         assert!(!dir.path().join("audit.jsonl").exists());
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn a_briefly_busy_lease_is_awaited_and_a_stuck_one_is_refused_in_bounded_time() {
         let dir = tempfile::tempdir().unwrap();
