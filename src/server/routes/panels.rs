@@ -124,8 +124,8 @@ fn web_err(e: &HarnessError) -> ApiError {
         "WEB_SEARCH_KEY_REJECTED" => "The configured SerpAPI key was rejected. Check API Keys; no public fallback was attempted.",
         "WEB_SEARCH_QUOTA" => "SerpAPI quota or rate limit reached. No public fallback was attempted.",
         "WEB_SEARCH_PROVIDER" => "The search provider failed, and no enabled fallback hop answered (web.search.fallback_* ship off).",
-        "WEB_SEARCH_KEY_MISSING" => "web.search.provider is serpapi, but no SerpAPI key is active. Add one in API Keys, or set web.search.provider to auto and restart.",
         "WEB_SEARCH_PACED" => "Public Google searches stay at least 3 seconds apart, and the next one could not start within web.request_seconds. Wait a moment, then retry.",
+        "WEB_SEARCH_KEY_MISSING" => "web.search.provider is serpapi, but no SerpAPI key is active. Add one in API Keys, or set web.search.provider to auto and restart.",
         // Harness-built text naming the provider and the local end time; never upstream content.
         "WEB_SEARCH_COOLDOWN" => &e.message,
         "WEB_RULE_UNKNOWN" => "No rule has that ID or pattern, so nothing was removed. /web status lists rule IDs and patterns; www and apex hosts, and patterns with and without /*, are different rules.",
