@@ -159,6 +159,11 @@ web:
   run_seconds: 180 # 1–180
   per_site_pages: 10 # 1–20
   pace_ms: 400 # 100–5000 between requests to an origin
+  # In-memory pause per search provider after a refusal, so a /loop stops asking; lost on
+  # restart. A paused search answers WEB_SEARCH_COOLDOWN before any request. Restart-only.
+  search_cooldown_public_sec: 600 # 60–3600 after public Google WEB_GOOGLE_CHALLENGE or WEB_GOOGLE_BLOCKED
+  search_cooldown_quota_sec: 0 # 0–3600 after SerpAPI WEB_SEARCH_QUOTA; 0 waits for the next clock hour (SerpAPI's hourly cap)
+  # WEB_SEARCH_KEY_REJECTED never pauses: a bad key stays loud on every search.
   cache_pages: 256 # 1–256; derived cache, oldest documents evicted
   cache_bytes: 16777216 # 1048576–33554432 serialized cache bytes
   subqueries: 3 # 1–5 total model-selected subqueries

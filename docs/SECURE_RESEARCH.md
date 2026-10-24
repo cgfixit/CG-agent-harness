@@ -372,6 +372,11 @@ redirects remain refused. In allowlist mode, an empty policy gives
 `WEB_ALLOWLIST_EMPTY` and a non-Google policy gives `WEB_GOOGLE_PERMISSION`.
 Denylist mode needs no Google grant, but blocked Google URLs remain refused.
 
+A challenge or block pauses public Google for `web.search_cooldown_public_sec`; a
+quota refusal pauses SerpAPI for `web.search_cooldown_quota_sec` (0: next clock hour).
+Paused search answers `WEB_SEARCH_COOLDOWN` ("cooling down until HH:MM", local time)
+without a request; `/loop` does not count it. Restart clears it; rejected keys never pause.
+
 `/web search` defaults to Google in the console and CLI; `/web pages` selects the
 existing permitted-page passage search, as does a source-group argument
 (including the legacy `/web search group=docs ...` form). For API compatibility,

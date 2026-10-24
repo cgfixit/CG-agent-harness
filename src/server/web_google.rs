@@ -1,6 +1,7 @@
 //! Google result listings, distinct from permission to read linked pages.
-use std::collections::BTreeSet;
-use std::time::Duration;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime};
 
 use scraper::Selector;
 use serde::Serialize;
@@ -16,6 +17,112 @@ use crate::common::errors::Result;
 /// The notice on every search listing.
 pub(crate) const SEARCH_NOTICE: &str =
     "Search-provider listings only. Linked pages have not been fetched and require their own URL permission.";
+
+/// A provider paused after it refused us, and why.
+#[derive(Debug, Clone)]
+struct Pause {
+    ends: Instant,
+    until_unix: u64,
+    code: String,
+}
+
+/// Per-provider pause after a refusal, so a `/loop` stops asking a provider that
+/// will refuse again. In memory only: a restart clears it.
+#[derive(Debug, Default)]
+pub(crate) struct SearchCooldown(Mutex<HashMap<&'static str, Pause>>);
+
+/// How long a refusal pauses its provider; `None` keeps the provider loud. A
+/// rejected key is the operator's error and must fail on every search.
+fn cooldown_seconds(provider: &str, code: &str, now_unix: u64, public_sec: u64, quota_sec: u64) -> Option<u64> {
+    match (provider, code) {
+        ("google-public", "WEB_GOOGLE_CHALLENGE" | "WEB_GOOGLE_BLOCKED") => Some(public_sec),
+        // SerpAPI caps searches per clock hour: 0 waits for the next hour boundary.
+        ("google-serpapi", "WEB_SEARCH_QUOTA") if quota_sec == 0 => Some(3600 - now_unix % 3600),
+        ("google-serpapi", "WEB_SEARCH_QUOTA") => Some(quota_sec),
+        _ => None,
+    }
+}
+
+impl SearchCooldown {
+    fn holding(&self, provider: &str, now: Instant) -> Option<Pause> {
+        let mut paused = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        match paused.get(provider) {
+            Some(pause) if pause.ends > now => Some(pause.clone()),
+            Some(_) => {
+                paused.remove(provider);
+                None
+            }
+            None => None,
+        }
+    }
+
+    /// Pause `provider` when `code` calls for it; returns the wall-clock end.
+    fn start(
+        &self,
+        provider: &'static str,
+        code: &str,
+        limits: &super::web_search::Limits,
+        now: Instant,
+        now_unix: u64,
+    ) -> Option<u64> {
+        let seconds = cooldown_seconds(
+            provider,
+            code,
+            now_unix,
+            limits.search_cooldown_public_sec,
+            limits.search_cooldown_quota_sec,
+        )?;
+        let until_unix = now_unix + seconds;
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).insert(
+            provider,
+            Pause {
+                ends: now + Duration::from_secs(seconds),
+                until_unix,
+                code: code.into(),
+            },
+        );
+        Some(until_unix)
+    }
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+/// `HH:MM` in the server's local time zone.
+#[cfg(unix)]
+fn local_hhmm(unix: u64) -> String {
+    let at = unix as libc::time_t;
+    // SAFETY: an all-zero `tm` is valid, and localtime_r writes only into it.
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&at, &mut tm) }.is_null() {
+        return format!("{:02}:{:02} UTC", unix / 3600 % 24, unix / 60 % 60);
+    }
+    format!("{:02}:{:02}", tm.tm_hour, tm.tm_min)
+}
+
+#[cfg(not(unix))]
+fn local_hhmm(unix: u64) -> String {
+    format!("{:02}:{:02} UTC", unix / 3600 % 24, unix / 60 % 60)
+}
+
+fn cooldown_error(provider: &str, pause: &Pause) -> crate::common::errors::HarnessError {
+    let (label, hint) = if provider == "google-public" {
+        ("Public Google", "; a SerpAPI key in API Keys searches sooner")
+    } else {
+        ("SerpAPI", "")
+    };
+    error(
+        "WEB_SEARCH_COOLDOWN",
+        &format!(
+            "{label} search is cooling down until {} after {}; do not retry web_search before then{hint}",
+            local_hhmm(pause.until_unix),
+            pause.code
+        ),
+    )
+}
 
 #[derive(Debug, Serialize)]
 pub(super) struct SearchResult {
@@ -245,10 +352,16 @@ impl WebTool {
         } else {
             None
         };
-        let target = ["https://www.google.com/search", "https://google.com/search"]
+        let bases = match &self.test_public_search {
+            Some(fixture) => vec![fixture.clone()],
+            None => ["https://www.google.com/search", "https://google.com/search"]
+                .into_iter()
+                .map(|base| url::Url::parse(base).unwrap())
+                .collect(),
+        };
+        let target = bases
             .into_iter()
-            .find_map(|base| {
-                let mut url = url::Url::parse(base).unwrap();
+            .find_map(|mut url| {
                 url.query_pairs_mut()
                     .append_pair("q", query)
                     .append_pair("num", &count.to_string());
@@ -263,18 +376,22 @@ impl WebTool {
                     "allow https://www.google.com/* or the exact Google search URL first",
                 )
             })?;
+        let provider = if key.trim().is_empty() {
+            "google-public"
+        } else {
+            "google-serpapi"
+        };
+        // A paused provider answers before the broker, the gate and any request.
+        if let Some(pause) = self.search_cooldown.holding(provider, Instant::now()) {
+            return Err(cooldown_error(provider, &pause));
+        }
         self.gate_tool("web_search", &[query.into()], enabled, audit)?;
         let _gate = self
             .search_gate
             .clone()
             .try_acquire_owned()
             .map_err(|_| error("WEB_BUSY", "a web search is already running"))?;
-        let provider = if key.trim().is_empty() {
-            "google-public"
-        } else {
-            "google-serpapi"
-        };
-        let rows = if key.trim().is_empty() {
+        let fetched = if key.trim().is_empty() {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
             tokio::time::timeout_at(deadline, async {
                 let (_, body) = self.get_raw(target.as_str(), None, None).await.map_err(|failure| {
@@ -302,9 +419,24 @@ impl WebTool {
                 .await
             })
             .await
-            .map_err(|_| error("WEB_TIMEOUT", "request deadline exceeded"))??
+            .map_err(|_| error("WEB_TIMEOUT", "request deadline exceeded"))
+            .and_then(|rows| rows)
         } else {
-            self.api_search(endpoint, query, count, key.trim()).await?
+            self.api_search(endpoint, query, count, key.trim()).await
+        };
+        let rows = match fetched {
+            Ok(rows) => rows,
+            Err(failure) => {
+                // One audit line when a pause starts; none while it holds.
+                if let Some(until) =
+                    self.search_cooldown
+                        .start(provider, &failure.code, &self.limits, Instant::now(), unix_now())
+                {
+                    audit.log(json!({"event":"web_search_cooldown","provider":provider,
+                        "code":failure.code,"until":until}));
+                }
+                return Err(failure);
+            }
         };
         if let Some(policy) = policy {
             let current = self.policy()?;
@@ -404,6 +536,81 @@ mod tests {
 
     fn public_results(body: &str, limit: usize) -> Result<Vec<SearchResult>> {
         super::public_results(body, limit, 512, &|| Ok(()))
+    }
+
+    #[test]
+    fn cooldown_starts_holds_expires_and_never_pauses_a_rejected_key() {
+        let cfg = crate::common::config::AppConfig::from_str(
+            "web: {search_cooldown_public_sec: 600, search_cooldown_quota_sec: 120}",
+            std::path::Path::new("config.yaml"),
+        )
+        .unwrap();
+        let limits = super::super::web_search::Limits::load(&cfg).unwrap();
+        let pauses = SearchCooldown::default();
+        let now = Instant::now();
+        let wall = 1_800_000_000;
+        assert!(pauses.holding("google-public", now).is_none());
+        assert_eq!(
+            pauses.start("google-public", "WEB_GOOGLE_CHALLENGE", &limits, now, wall),
+            Some(wall + 600)
+        );
+        let held = pauses.holding("google-public", now + Duration::from_secs(599)).unwrap();
+        assert_eq!(held.code, "WEB_GOOGLE_CHALLENGE");
+        let message = cooldown_error("google-public", &held).message;
+        assert!(message.contains("search is cooling down until "), "{message}");
+        assert!(message.contains("WEB_GOOGLE_CHALLENGE"), "{message}");
+        assert!(
+            pauses.holding("google-serpapi", now).is_none(),
+            "a pause is per provider"
+        );
+        assert!(pauses
+            .holding("google-public", now + Duration::from_secs(600))
+            .is_none());
+        assert!(
+            pauses.holding("google-public", now).is_none(),
+            "an expired pause is removed"
+        );
+        assert_eq!(
+            pauses.start("google-public", "WEB_GOOGLE_BLOCKED", &limits, now, wall),
+            Some(wall + 600)
+        );
+        assert_eq!(
+            pauses.start("google-serpapi", "WEB_SEARCH_QUOTA", &limits, now, wall),
+            Some(wall + 120)
+        );
+        for (provider, code) in [
+            ("google-serpapi", "WEB_SEARCH_KEY_REJECTED"),
+            ("google-serpapi", "WEB_SEARCH_PROVIDER"),
+            ("google-public", "WEB_GOOGLE_UNREADABLE"),
+            ("google-public", "WEB_TIMEOUT"),
+            ("google-public", "WEB_SEARCH_QUOTA"),
+            ("google-serpapi", "WEB_GOOGLE_CHALLENGE"),
+        ] {
+            let fresh = SearchCooldown::default();
+            assert_eq!(
+                fresh.start(provider, code, &limits, now, wall),
+                None,
+                "{provider} {code}"
+            );
+            assert!(fresh.holding(provider, now).is_none(), "{provider} {code}");
+        }
+    }
+
+    #[test]
+    fn quota_cooldown_zero_waits_for_the_next_clock_hour() {
+        let hour = 500_001 * 3600;
+        for (now, seconds) in [(hour, 3600), (hour + 1, 3599), (hour + 3599, 1), (hour + 1800, 1800)] {
+            assert_eq!(
+                cooldown_seconds("google-serpapi", "WEB_SEARCH_QUOTA", now, 600, 0),
+                Some(seconds),
+                "{now}"
+            );
+            assert_eq!((now + seconds) % 3600, 0, "ends on the hour");
+        }
+        assert_eq!(
+            cooldown_seconds("google-serpapi", "WEB_SEARCH_KEY_REJECTED", hour, 600, 0),
+            None
+        );
     }
 
     #[test]

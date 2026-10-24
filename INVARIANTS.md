@@ -233,7 +233,9 @@ key select the fixed Google-results API transport and no active key public Googl
 account authority, independently of page URL grants; public Google and linked-page
 fetches retain URL policy checks. Saved SerpAPI changes apply on the next search;
 explicit environment values retain precedence. Challenges and provider failures never become
-fabricated results. A degraded SearXNG answer is reported, not retried elsewhere. Keys remain server-side and never enter model context.
+fabricated results. A provider refusal starts a bounded cooldown: a public Google
+challenge or block, or a SerpAPI quota refusal, pauses that provider in memory and
+later searches answer `WEB_SEARCH_COOLDOWN` before any request; a rejected key never pauses. A degraded SearXNG answer is reported, not retried elsewhere. Keys remain server-side and never enter model context.
 
 Content permission grants no account or provider-configuration authority, and
 none of these substitutes for coding/write/publication gates. Page text is
