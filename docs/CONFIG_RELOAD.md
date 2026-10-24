@@ -49,7 +49,7 @@ removing a key selects its code fallback.
 | `web.research_seconds` | 10–1,800 |
 | `web.synthesis_seconds` | 10–1,800 |
 | `web.stale_seconds` | 60–31,536,000 |
-| `web.chat_tool_calls` | 1–10 |
+| `web.chat_tool_calls` | 1–30 |
 
 The `loop.*` keys bound the server-side `/loop` runner (turns and aggregate
 tokens per run, 0 = unlimited; consecutive failures before abort; pause between

@@ -26,7 +26,7 @@
         "tools_off_consistent": true,
         "tuned": true,
         "web": {
-          "chat_tool_calls": 3,
+          "chat_tool_calls": 8,
           "evidence_tokens": 1500,
           "model_tokens": 512,
           "total_tokens": 7000
@@ -59,7 +59,7 @@
         "tools_off_consistent": true,
         "tuned": true,
         "web": {
-          "chat_tool_calls": 3,
+          "chat_tool_calls": 8,
           "evidence_tokens": 1500,
           "model_tokens": 512,
           "total_tokens": 7000
