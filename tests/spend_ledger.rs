@@ -251,6 +251,12 @@ async fn rejected_local_replies_record_usage_once_without_saving_an_exchange() {
                 row["usage_missing"],
                 !usage["prompt_tokens"].is_number() || !usage["completion_tokens"].is_number()
             );
+            if web && (finish == "length" || !content.is_string()) {
+                assert_eq!(
+                    reply["detail"]["details"]["known_completion_tokens"].as_u64(),
+                    Some(usage["completion_tokens"].as_u64().unwrap_or(0))
+                );
+            }
             for private in ["PRIVATE_PROMPT", "REJECTED_TEXT", "PRIVATE_REASONING", &s.api_key] {
                 assert!(!text.contains(private), "ledger contains private content");
             }

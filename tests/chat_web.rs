@@ -101,6 +101,7 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
     );
     assert_eq!(reply["detail"]["details"]["prompt_tokens"], 20);
     assert_eq!(reply["detail"]["details"]["completion_tokens"], 6);
+    assert_eq!(reply["detail"]["details"]["known_completion_tokens"], 6);
     s.state.audit.flush_async().await;
     let ledger = std::fs::read_to_string(s.home.join("logs/spend.jsonl")).unwrap();
     let rows: Vec<Value> = ledger.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
@@ -150,6 +151,7 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
     assert_eq!(common::code(&reply), "WEB_TOOL_LIMIT");
     assert_eq!(reply["detail"]["details"]["prompt_tokens"], 20);
     assert!(reply["detail"]["details"]["completion_tokens"].is_null());
+    assert_eq!(reply["detail"]["details"]["known_completion_tokens"], 3);
     s.state.audit.flush_async().await;
     let ledger = std::fs::read_to_string(s.home.join("logs/spend.jsonl")).unwrap();
     let rows: Vec<Value> = ledger.lines().map(|line| serde_json::from_str(line).unwrap()).collect();

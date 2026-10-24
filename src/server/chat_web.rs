@@ -246,18 +246,20 @@ pub async fn run_stream(
 ) -> Result<(ChatResult, Vec<Value>)> {
     let lease = web.chat_turn.start(owner)?;
     let mut usage = None;
+    let mut known_completion_tokens = 0u64;
     let result = tokio::select! {
         biased;
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
         // A turn of several tool rounds gets more than one call's deadline; each
         // model call keeps its own (`ChatClient::timeout_for`).
-        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, output, &mut usage)) =>
+        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, output, &mut usage, &mut known_completion_tokens)) =>
             result.unwrap_or_else(|_| Err(error("WEB_TIMEOUT", "chat web turn deadline exceeded"))),
     };
     result.map_err(|failure| match usage {
         Some(tokens) => failure
             .detail("prompt_tokens", json!(tokens.input_tokens))
             .detail("completion_tokens", json!(tokens.output_tokens))
+            .detail("known_completion_tokens", known_completion_tokens)
             .detail("usage_reported", tokens.usage_reported()),
         None => failure,
     })
@@ -278,6 +280,7 @@ async fn run_inner(
     sized_tuned: bool,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
     usage: &mut Option<crate::llm::spend::UsageTokens>,
+    known_completion_tokens: &mut u64,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let mut messages: Vec<Value> = history
         .iter()
@@ -376,6 +379,10 @@ async fn run_inner(
             ..Default::default()
         });
         let usage = &response["usage"];
+        if usage["completion_tokens"].is_number() {
+            *known_completion_tokens = known_completion_tokens
+                .saturating_add(crate::llm::openai_chat::token_count(usage.get("completion_tokens")));
+        }
         // An unknown round makes that dimension's total unknown, never zero.
         for (total, field) in [
             (&mut totals.input_tokens, "prompt_tokens"),
