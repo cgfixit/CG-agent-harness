@@ -1,7 +1,9 @@
 # Run the macOS installer and launcher end to end on a fresh macos-latest runner:
 # inventory, dry run, real install (Rust, Ollama, backend build, checksummed
 # release app), idempotent rerun, app-mode browser hand-off, the standalone
-# home-lock refusal, standalone mode on a separate home, and its reset.
+# home-lock refusal, standalone mode on a separate home, and its reset, then
+# init.sh's automatic-memory line (re-added after removal, left alone on a
+# rerun) and --reset-home (deletes the previous home, --yes alone keeps it).
 # Path-filtered and manual only; not a merge gate. No secrets, no model pull.
 # --trust-cert is not exercised: it needs an interactive keychain password.
 name: Install - macOS setup and launch
@@ -191,6 +193,43 @@ jobs:
           cat refuse.log
           test "$rc" = 3
           grep -q "is owned by pid $server" refuse.log
+
+      # Both init.sh steps added by #642 run only under --yes here; the
+      # interactive prompts (default yes for the memory line, default no for
+      # the reset) are covered by the shell scenarios in that PR's body.
+      - name: init.sh re-adds the automatic-memory line, keeps it on a rerun, and --reset-home removes the home
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          cfg="$HOME/.CGagentHarness/config.yaml"
+          # Seeded by the shipped config, or written by an earlier init.sh run.
+          grep -q '^  suggestion_supported:' "$cfg"
+          mode=$(stat -f %Lp "$cfg")
+          sed -i '' '/^  suggestion_supported:/d' "$cfg"
+          rest_before=$(grep -v '^  suggestion_supported:' "$cfg")
+          scripts/init.sh --yes --choice 0 --app-dir "$RUNNER_TEMP/Applications" | tee automemory.log
+          grep -q '^==> listed for automatic memory: ' automemory.log
+          grep -q '^  suggestion_supported: \[{ model: "' "$cfg"
+          # One backup, nothing else in the file changed, mode kept.
+          test "$(find "$(dirname "$cfg")" -maxdepth 1 -name "config.yaml.bak-*" | wc -l | tr -d ' ')" = 1
+          test "$(grep -v '^  suggestion_supported:' "$cfg")" = "$rest_before"
+          test "$(stat -f %Lp "$cfg")" = "$mode"
+          scripts/init.sh --yes --choice 0 --app-dir "$RUNNER_TEMP/Applications" | tee automemory-rerun.log
+          grep -q 'already lists its models' automemory-rerun.log
+          test "$(find "$(dirname "$cfg")" -maxdepth 1 -name "config.yaml.bak-*" | wc -l | tr -d ' ')" = 1
+          # --yes alone keeps a previous install.
+          touch "$HOME/.CGagentHarness/marker-previous-install"
+          scripts/init.sh --yes --choice 0 --app-dir "$RUNNER_TEMP/Applications" | tee keep.log
+          grep -q '^==> keeping the previous install at ' keep.log
+          test -e "$HOME/.CGagentHarness/marker-previous-install"
+          # --yes --reset-home deletes it (reset-macos.sh dry run, then --yes) and setup reseeds a fresh home.
+          home=$(cd "$HOME/.CGagentHarness" && pwd -P)
+          scripts/init.sh --yes --reset-home --choice 0 --app-dir "$RUNNER_TEMP/Applications" | tee reset-home.log
+          grep -q "^removed $home\$" reset-home.log
+          test ! -e "$HOME/.CGagentHarness/marker-previous-install"
+          test -f "$cfg"
+          grep -q 'admin password replaced and saved in your login keychain' reset-home.log
+          security find-generic-password -a admin -s "CGagentHarness admin ($home)" >/dev/null
 
       - name: Quit the app
         if: always()
