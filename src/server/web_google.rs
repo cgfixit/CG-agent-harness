@@ -42,6 +42,13 @@ pub(super) fn public_pace(
 pub(crate) const SEARCH_NOTICE: &str =
     "Search-provider listings only. Linked pages have not been fetched and require their own URL permission.";
 
+fn blocked() -> crate::common::errors::HarnessError {
+    error(
+        "WEB_GOOGLE_BLOCKED",
+        "Public Google refused or redirected the request; configure a SerpAPI key in API Keys",
+    )
+}
+
 /// A provider paused after it refused us, and why.
 #[derive(Debug, Clone)]
 struct Pause {
@@ -421,15 +428,14 @@ impl WebTool {
                 let (_, body) = self
                     .get_raw_paced(target.as_str(), None, None, Some((self.limits.pace_ms, deadline)))
                     .await
-                    .map_err(|failure| {
-                        if matches!(failure.code.as_str(), "WEB_FETCH_FAILED" | "WEB_REDIRECT_REFUSED") {
-                            error(
-                                "WEB_GOOGLE_BLOCKED",
-                                "Public Google refused or redirected the request; configure a SerpAPI key in API Keys",
-                            )
-                        } else {
-                            failure
-                        }
+                    .map_err(|failure| match failure.code.as_str() {
+                        // Google answered with a status or a redirect: its verdict, so it pauses.
+                        "WEB_REDIRECT_REFUSED" => blocked(),
+                        "WEB_FETCH_FAILED" if failure.details.get("status").is_some() => blocked(),
+                        // No answer (connect, TLS, a dropped body, local setup) is a provider
+                        // failure, not a refusal: it never starts a pause.
+                        "WEB_FETCH_FAILED" => error("WEB_SEARCH_PROVIDER", "public Google request failed"),
+                        _ => failure,
                     })?;
                 // Listings reparse HTML too, including text/plain responses.
                 // Keep that work off async workers under the original deadline.
@@ -626,6 +632,75 @@ mod tests {
             sent[1] - sent[0]
         );
         server.abort();
+    }
+
+    /// A public-Google fixture tool: `google.fixture` resolves to `address`.
+    fn public_tool(address: std::net::SocketAddr) -> (WebTool, Audit, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        crate::common::home::Home::at(dir.path().to_path_buf())
+            .ensure_layout()
+            .unwrap();
+        let cfg = crate::common::config::AppConfig::from_str("web: {}", std::path::Path::new("config.yaml")).unwrap();
+        let mut web = WebTool::new(&dir.path().join("tools"), &cfg).unwrap();
+        web.search_key_from_file = true;
+        web.plaintext_key_file = true;
+        web.test_resolve = Some(("google.fixture".into(), address));
+        web.test_public_search = Some(url::Url::parse("http://google.fixture/search").unwrap()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        web.allow("http://google.fixture/*", true).unwrap(); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        let audit = Audit::new(dir.path().join("audit.jsonl"), &cfg);
+        (web, audit, dir)
+    }
+
+    async fn public_search(web: &WebTool, audit: &Audit, query: &str) -> Result<Value> {
+        let endpoint = url::Url::parse("http://unused.example/search").unwrap(); // DevSkim: ignore DS137138 because public Google never reads the endpoint.
+        web.google_search_at(query, 3, true, audit, endpoint).await
+    }
+
+    fn cooldown_lines(dir: &tempfile::TempDir) -> usize {
+        std::fs::read_to_string(dir.path().join("audit.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| line.contains("\"web_search_cooldown\""))
+            .count()
+    }
+
+    #[tokio::test]
+    async fn a_failed_connection_to_public_google_is_a_provider_failure_not_a_refusal() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only an ephemeral loopback port.
+        let address = listener.local_addr().unwrap();
+        drop(listener); // nothing listens: connection refused, no status ever arrives
+        let (web, audit, dir) = public_tool(address);
+        for query in ["veeam first", "veeam second"] {
+            let err = public_search(&web, &audit, query).await.unwrap_err();
+            assert_eq!(err.code, "WEB_SEARCH_PROVIDER", "{query}: {err:?}");
+        }
+        assert_eq!(cooldown_lines(&dir), 0, "a blip must not start a pause");
+        assert!(web.search_cooldown.holding("google-public", Instant::now()).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_status_or_redirect_from_public_google_is_still_a_refusal_that_pauses() {
+        use axum::{http::StatusCode, response::Redirect, routing::get, Router};
+        let status = Router::new().route("/search", get(|| async { StatusCode::TOO_MANY_REQUESTS }));
+        let redirect = Router::new().route("/search", get(|| async { Redirect::temporary("/sorry") }));
+        for (label, router) in [("429", status), ("302", redirect)] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only an ephemeral loopback port.
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            let (web, audit, dir) = public_tool(address);
+            assert_eq!(
+                public_search(&web, &audit, "veeam first").await.unwrap_err().code,
+                "WEB_GOOGLE_BLOCKED",
+                "{label}"
+            );
+            assert_eq!(
+                public_search(&web, &audit, "veeam second").await.unwrap_err().code,
+                "WEB_SEARCH_COOLDOWN",
+                "{label}: a refusal pauses the provider"
+            );
+            assert_eq!(cooldown_lines(&dir), 1, "{label}");
+            server.abort();
+        }
     }
 
     #[test]

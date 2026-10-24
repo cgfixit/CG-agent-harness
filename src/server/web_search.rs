@@ -928,7 +928,8 @@ impl WebTool {
                     return Err(error("WEB_REDIRECT_REFUSED", "redirect refused"));
                 }
                 if !status.is_success() {
-                    return Err(error("WEB_FETCH_FAILED", "upstream error"));
+                    // `status` tells a server's answer from a connection that never produced one.
+                    return Err(error("WEB_FETCH_FAILED", "upstream error").detail("status", status.as_u16()));
                 }
                 if response
                     .content_length()
