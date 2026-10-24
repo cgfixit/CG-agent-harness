@@ -535,8 +535,8 @@ impl Sink {
     /// Retry a busy lease *outside* `self.lock`. Sleeping under that mutex
     /// serialized every `/api/*` `portal.request` behind the waiter, so the
     /// nth caller both stalled and then dropped the line when the shared
-    /// deadline expired. One non-blocking attempt runs under the mutex
-    /// (Windows has no flock); the wait itself does not.
+    /// deadline expired. One non-blocking attempt runs under the mutex;
+    /// the wait itself does not.
     fn append(&self, path: &Path, line: &str, deadline: Instant) -> std::io::Result<()> {
         let retry = self.retention.lease_retry;
         loop {
@@ -785,7 +785,7 @@ mod tests {
         assert_eq!(written(&path).last().unwrap()["event"], "last");
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn a_busy_lease_never_blocks_log_and_a_full_queue_drops_new_lines() {
         let dir = tempfile::tempdir().unwrap();
@@ -866,7 +866,7 @@ mod tests {
         assert_eq!(written(&path).len(), 2);
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[tokio::test]
     async fn flush_async_returns_once_every_earlier_line_is_written() {
         let dir = tempfile::tempdir().unwrap();

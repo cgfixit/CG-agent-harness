@@ -847,8 +847,7 @@ fn cmd_real_repo_run_decide(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
 }
 
 /// Decide, push, publish and discard each own the run's lease, then reload the
-/// record under it, so on Unix one cannot save over another's result (Windows
-/// `FileLease` takes no lock, so there this serializes nothing). A running
+/// record under it, so on Unix and Windows one cannot save over another's result. A running
 /// record keeps its worker's ownership evidence; a lease is never created for it.
 fn lease_settled_run(
     runs_dir: &Path,
