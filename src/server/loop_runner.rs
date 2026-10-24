@@ -10,7 +10,7 @@
 //! Stop conditions mirror the console's `runLoopTurns`: the configured turn
 //! budget, the aggregate completion-token budget, consecutive failures,
 //! `GOAL_DONE`, a repeated reply, and web codes that refuse the same way on
-//! every later turn.
+//! every later turn. A changed session goal stops the run before its next turn.
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -442,7 +442,7 @@ async fn run_turns(
             retrieve_query: None,
             attachment_ids: Vec::new(),
         };
-        let result = chat_inner(state.clone(), peer, user, req, None).await;
+        let result = chat_inner(state.clone(), peer, user, req, None, Some(&run.goal)).await;
         let mut terminal: Option<(LoopRunState, String)> = None;
         match result {
             Ok(axum::Json(value)) => {
@@ -492,6 +492,9 @@ async fn run_turns(
                 } else {
                     last_reply = Some(reply);
                 }
+            }
+            Err(error) if error.code == "LOOP_GOAL_CHANGED" => {
+                terminal = Some((LoopRunState::Stopped, error.message));
             }
             Err(error) => {
                 run.stats.consecutive_failures += 1;
