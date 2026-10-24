@@ -188,6 +188,8 @@ mod tests {
             last_prompt_skills: Vec::new(),
             goal_stage: None,
             attachment_pins: Vec::new(),
+            web_sources: Vec::new(),
+            compactions: 0,
         }
     }
 
