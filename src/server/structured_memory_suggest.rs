@@ -204,11 +204,14 @@ fn attempt(
 }
 
 pub fn status(state: &AppState, owner: &str) -> Value {
+    let model = state.local_memory_model();
+    let chat_reason = refusal(state, Source::Chat, &model);
+    let coding_reason = refusal(state, Source::Coding, &model);
     let queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
     json!({
-        "chat": available(state, Source::Chat), "coding": available(state, Source::Coding),
-        "chat_unavailable_reason": refusal(state, Source::Chat, &state.local_memory_model()),
-        "coding_unavailable_reason": refusal(state, Source::Coding, &state.local_memory_model()),
+        "chat": chat_reason.is_none(), "coding": coding_reason.is_none(),
+        "chat_unavailable_reason": chat_reason,
+        "coding_unavailable_reason": coding_reason,
         "last_attempt": queue.attempts.iter().find(|(id, _)| id == owner).map(|(_, value)| value),
         "poll_interval_ms": state.cfg.u64_or("structured_memory.status_poll_ms", 30000).clamp(250, 30000),
         "mode": mode(state), "queued": queue.jobs.iter().filter(|j| j.owner == owner).count(),

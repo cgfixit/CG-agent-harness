@@ -1545,3 +1545,35 @@ async fn only_listed_local_model_and_mode_pairs_queue_suggestions() {
     }
     assert_eq!(model.requests.lock().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn suggestion_status_stays_consistent_while_the_selected_model_changes() {
+    let model = model().await;
+    let s = spawn_server(
+        &model.base,
+        options("both").with("structured_memory.suggestion_supported", &shipped_supported()),
+    )
+    .await;
+    let state = s.state.clone();
+    let stop = Arc::new(AtomicBool::new(false));
+    let switching_stop = stop.clone();
+    let switching = std::thread::spawn(move || {
+        while !switching_stop.load(Ordering::Relaxed) {
+            for selected in ["", "unlisted-local:1b"] {
+                state.settings.lock().unwrap().selected_model = selected.into();
+                std::thread::yield_now();
+            }
+        }
+    });
+    let inconsistent = (0..2000).find_map(|_| {
+        let status = suggest::status(&s.state, "local");
+        let consistent = ["chat", "coding"]
+            .iter()
+            .all(|source| status[source].as_bool() == Some(status[format!("{source}_unavailable_reason")].is_null()));
+        (!consistent || status["chat"] != status["coding"]).then_some(status)
+    });
+    stop.store(true, Ordering::Relaxed);
+    switching.join().unwrap();
+    assert!(inconsistent.is_none(), "inconsistent status: {inconsistent:?}");
+    assert!(model.requests.lock().unwrap().is_empty());
+}
