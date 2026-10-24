@@ -747,7 +747,7 @@ content adapter or inbound listener is enabled. See
 ## Reload changes limits, not authority
 
 The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE`
-contains 23 API/web limits. Startup, reload and disk-policy rechecks use the same
+holds API, web and `loop.*` limits. Startup, reload and disk-policy rechecks use the same
 private, UTF-8 config reader (1 MiB maximum). Unix checks the open file's owner,
 owner-only mode and single link; symlink files are refused. macOS also refuses
 extended ACL entries. Windows uses the credential reader's owner/DACL checks.
@@ -793,7 +793,7 @@ finish. Disabling or deleting an account sets `disabled=1` on that owner's
 machine keys and retires that owner's schedules and completion notifications.
 Key rows stay until an explicit key-id revoke.
 Audits contain recognized tools, public IDs and coarse outcomes, never content.
-All gateway settings remain restart-only, outside the 23-key reload allowlist.
+All gateway settings remain restart-only, outside `RELOADABLE`.
 Remote exposure needs the deployment acceptance in `docs/MCP_SERVER.md`; nothing
 here opens a LAN/public service or tunnel.
 
@@ -859,7 +859,7 @@ send no packets. `passive_listen` is a flag only (joining multicast is
 not passive). Device strings are length-capped, control-stripped, marked
 untrusted, and never argv, commands or paths. `throughput` has no
 default endpoint; setting its flag or endpoint warns at load (internet egress
-outside this scope). These keys are outside the 23-key reload allowlist.
+outside this scope). These keys are outside `RELOADABLE`.
 Outside tests, `src/netconnect` imports only `crate::common` and
 `crate::server::slash`, never `crate::agentic`, and spawns only fixed argv
 through `common::process::run`. A false master gate exits 4. Invalid

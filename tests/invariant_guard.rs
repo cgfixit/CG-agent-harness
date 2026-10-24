@@ -1102,7 +1102,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: owner-approved (2026-10-18) cap set to the measured count with #546 + #551 together; never trim gate text to fit.
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
     // why: operator-approved (2026-10-23) measured count for the web search cooldown sentence.
-    ("INVARIANTS.md", Root, 7206),
+    ("INVARIANTS.md", Root, 7202),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     // why: dependency refresh removed five stale Linux prerequisite words; keep the cut.
@@ -1132,7 +1132,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved (2026-10-14) automated macOS install (section 1) and browser access (section 7); 5188 words plus about 1%, rounded up to the next 50.
     // why: operator-approved (2026-10-14) raise to 7500 for room to grow the install guide after #491 and #496 together hit 5250; the Guide group cap still bounds it.
     ("docs/INSTALL.md", Guide, 7474),
-    ("docs/MCP_CLIENT.md", Guide, 1090),
+    ("docs/MCP_CLIENT.md", Guide, 1087),
     ("docs/MCP_SERVER.md", Guide, 1230),
     // why: #244 folded MEMORY_SETUP.md and the user manual's memory sections in here.
     ("docs/MEMORY_GUIDE.md", Guide, 1950),
@@ -1156,7 +1156,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
     ("docs/TROUBLESHOOTING.md", Guide, 1555),
     // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
-    ("docs/netconnect.md", Guide, 3491),
+    ("docs/netconnect.md", Guide, 3488),
     ("docs/screenshots/README.md", Evidence, 387),
     // why: the seven folder-README rows below are operator-requested per-file indexes (one line per file);
     // each is its size plus about 10%, rounded up to the next 10.
