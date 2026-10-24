@@ -867,9 +867,16 @@ mod tests {
             }
         }
 
+        /// `request_seconds: 10` gives SearXNG a 6 s hop budget: Windows retries a
+        /// refused loopback connect for about 2 s before reporting it, which must
+        /// finish as `WEB_SEARCH_PROVIDER`, not race the budget into `WEB_TIMEOUT`.
         pub(super) fn yaml(searxng_port: u16, extra: &str) -> String {
+            yaml_with(10, searxng_port, extra)
+        }
+
+        pub(super) fn yaml_with(request_seconds: u64, searxng_port: u16, extra: &str) -> String {
             format!(
-                "web: {{request_seconds: 4, search: {{provider: searxng, searxng_url: 'http://127.0.0.1:{searxng_port}'{extra}}}}}" // DevSkim: ignore DS137138,DS162092 because the SearXNG fixture is loopback-only.
+                "web: {{request_seconds: {request_seconds}, search: {{provider: searxng, searxng_url: 'http://127.0.0.1:{searxng_port}'{extra}}}}}" // DevSkim: ignore DS137138,DS162092 because the SearXNG fixture is loopback-only.
             )
         }
     }
@@ -993,7 +1000,7 @@ mod tests {
         let sx = chain::searxng("slow").await;
         let serp = chain::serpapi().await;
         let chain = chain::Chain::new(
-            &chain::yaml(sx.addr.port(), ", fallback_to_serpapi: true"),
+            &chain::yaml_with(4, sx.addr.port(), ", fallback_to_serpapi: true"),
             "good",
             &serp,
             None,
