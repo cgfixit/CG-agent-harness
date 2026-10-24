@@ -450,7 +450,7 @@ ignore carries a removal condition. Workflow actions are SHA-pinned and
 zizmor-linted; Rust pins: 1.88 backend, 1.90 desktop.
 
 - Locked by: `tests/invariant_guard.rs::deny_lists_ban_the_same_telemetry_crates`,
-  `.github/workflows/{ci,dependency-advisories,desktop,zizmor}.yml`.
+  `.github/workflows/{ci,dependency-advisories,desktop,desktop-check}.yml`.
 
 ## Provider keys live in the OS credential store
 
@@ -521,7 +521,8 @@ the starting account: deleted, disabled, password-pending, or no longer
 operator/admin ends the run `failed`. `portal_auditor` cannot start one. Start,
 stop, status and events are bound to the starting owner; a foreign run reads as
 `LOOP_RUN_NOT_FOUND`. A session holds one live run (`LOOP_IN_FLIGHT`). A run ends
-on stop, `loop.max_turns`, `loop.max_total_completion_tokens`, `loop.max_failures`
+on stop, a changed or cleared session goal (`LOOP_GOAL_CHANGED`), `loop.max_turns`,
+`loop.max_total_completion_tokens`, `loop.max_failures`
 consecutive failed turns or failed web rounds, unverified `GOAL_DONE`, a
 near-repeat reply, or a web refusal every later turn would repeat. Both budgets
 ship `0` (unlimited), so by default only the other conditions end a run. Runs live
@@ -550,7 +551,7 @@ cap `MAX_MESSAGES`); no 20-turn or 8000-char clip; compaction owns overflow.
 The effective trigger is
 `max(chat.compact_prompt_tokens, max_tokens + 4096 +
 calibrated_tool_definition_tokens)`, capped at 30000 (scaled to an `auto_tune`-verified
-window); that cap, floored with `effective_reply_reservation` in place of
+window); that cap, floored with `compaction::reply_reservation` in place of
 `max_tokens`, is the hard limit a compacting turn may still send. Web-enabled chat tightens both
 toward `web.total_tokens - minimal tool result` (the projection carries the reservation and definitions, so every admitted
 prompt fits a round)

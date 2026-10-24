@@ -553,7 +553,7 @@ hides it. Coding-policy checks reread disk at mutation boundaries.
 | Persona and soul toggle | `soul.md` plus `harness.json`, shared across sessions; next request | `/soul status`, `/prompt` |
 | Runtime skill file | `<home>/skills/<id>/SKILL.md`; selection is per session | `/skill status` and next `/prompt`; last successful snapshot may be older |
 | Goal and chat history | Saved session; goal maximum 2,000 characters | `/goal`, `/session list`, `/goal task` for coding linkage |
-| Loop counters and automatic continuation | Current page only; not an unattended scheduler | Visible loop state; restart does not resume it |
+| Loop counters and automatic continuation | Manual loops: current page. Auto loops run server-side when `/api/status` reports `server_loop`, outliving the tab | Visible loop state, `/api/loop/status`; restart does not resume a run |
 | Memory notes and inclusion | Home-wide saved notes/toggle; next request | `/memory`, `/prompt` |
 | Structured-memory store and gates | `structured_memory.*` in `config.yaml` (restart); slash overlays in `memory/structured_gates.json` once the store is open | `/memory`, `/memory search`, `/memory consolidate`, `/memory auto-consolidate`, `/prompt`; retrieval-off search is 409 |
 | Web allowlist and cache; last extract and injected text | Shared policy/public cache; account-scoped selection with current permission checks | `/web`, `/prompt`; use `forget` to remove context |
@@ -653,9 +653,10 @@ independently. This lock does not cover manually invoked agentic CLI writers.
 
 ### Retained jobs and runs
 
-`data/agentic/console-jobs.json` retains up to 32 terminal jobs plus one active
-job within 16 MiB. Restart marks a running job interrupted without resuming it.
-Use `/agent jobs` to list handles and `/agent job <id>` to inspect one.
+Restart marks a running job interrupted without resuming it. Use `/agent jobs`
+to list handles and `/agent job <id>` to inspect one; inspect `/agent status <id>`
+before deciding or discarding a run. The Harness never replays a commit, push,
+publication or approval.
 
 `data/agentic/console-schedules.json` stores schedules. Occurrences are consumed
 before launch, and missed windows are skipped. See
@@ -664,19 +665,9 @@ Notifications do not replace job records. The private bounded outbox persists
 delivery state before networking, resumes eligible attempts after restart, and
 supports explicit owner-confirmed replay within current grants and limits.
 
-`/agent runs` shows durable run records. On Unix and Windows, a released worker lease allows
-reconciliation to interrupted; a live lease remains running. Legacy records
-without ownership evidence remain unknown. Inspect `/agent status <id>` before
-deciding or discarding. The Harness never replays a commit, push, publication,
-or approval. Cancellation is best-effort; inspect escaped descendants before
-further writes.
-
-Audit/spend/optional metrics JSONL logs retain a current file and one previous
-`.1` generation, default 8 MiB each. Logging remains best-effort; audit lines use
-a [bounded background writer](../INVARIANTS.md#secrets-never-reach-a-response-or-a-log-line).
-See
-[the coding pipeline](CODING_PIPELINE.md), [desktop recovery](DESKTOP.md) and
-[process lifecycle](PROCESS_LIFECYCLE.md) for precise limits.
+Job and log retention limits, worker-lease reconciliation and cancellation limits:
+[desktop recovery](DESKTOP.md#closing-quitting-and-recovery),
+[process lifecycle](PROCESS_LIFECYCLE.md) and [the coding pipeline](CODING_PIPELINE.md).
 
 ### Update, backup, rollback and uninstall
 

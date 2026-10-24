@@ -51,8 +51,8 @@ The enforcement contracts live in [INVARIANTS.md](INVARIANTS.md):
   arm writes alone.
 - Provider keys live in the OS credential store; environment variables win and
   the plaintext key file is an opt-in that ships off.
-- Netconnect is passive, read-only and LAN-scoped: every gate ships false and an
-  empty `allowed_cidrs` refuses armed tiers.
+- Netconnect is fail-closed and LAN-scoped: every gate ships false, an empty
+  `allowed_cidrs` refuses armed tiers, and only the budgeted `diag` probe dials.
 - No push telemetry: `deny.toml` bans such crates; CI runs `cargo deny` and zizmor
   and SHA-pins actions.
 
@@ -65,8 +65,8 @@ The enforcement contracts live in [INVARIANTS.md](INVARIANTS.md):
 ## Local authority and shared resources
 
 Chat sessions, jobs, schedules, research, web selections and structured memory
-are owner-private. Persona, pinned notes, model selection, spend and agentic run
-records remain shared; accounts are not isolated tenants. Recalled facts grant
+are owner-private. Persona, pinned notes, model selection, spend, agentic run
+records and the public-page cache (`tools/web_cache`) remain shared; accounts are not isolated tenants. Recalled facts grant
 no tool, coding or network authority. Auditors see designated redacted status/audit
 information. Filesystem owners can edit configuration, databases and binaries
 outside the account boundary; malicious same-user filesystem races are not
