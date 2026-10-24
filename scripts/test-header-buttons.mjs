@@ -15,9 +15,9 @@ assert.ok(!html.includes('id="openSpend"'), 'Spend is folded into Analytics');
 
 const nodes = new Map();
 const node = id => {
-  if (!nodes.has(id)) nodes.set(id, {id, hidden:buttons.includes(id), textContent:'', value:'', disabled:false, listeners:{},
+  if (!nodes.has(id)) nodes.set(id, {id, hidden:buttons.includes(id), textContent:'', value:'', disabled:false, open:false, dataset:{}, listeners:{},
     addEventListener(event, handler) { this.listeners[event] = handler; }, focus() {}, contains() { return false; }, scrollIntoView() {},
-    replaceChildren() { this.textContent = ''; }});
+    replaceChildren() { this.textContent = ''; }, close() { this.open = false; }, showModal() { this.open = true; }});
   return nodes.get(id);
 };
 const shown = () => buttons.filter(id => !node(id).hidden);
@@ -186,4 +186,23 @@ vm.runInContext("currentSession = 'second-session'", context);
 auth.logout = reply(401); auth.whoami = () => { throw new TypeError('Failed to fetch'); };
 await node('hAuthLogout').listeners.click(); await settle();
 assert.equal(context.currentSession, null, 'a 401 logout resets even when the probe fails');
+
+// Logout must drop the HTML draft. A blank textarea must not be saved back under the old chat.
+const priorChat = 'chat-before-logout';
+vm.runInContext('currentSession = ' + JSON.stringify(priorChat), context);
+const htmlSource = node('htmlEditorSource');
+htmlSource.dataset.draftKey = priorChat;
+htmlSource.value = 'MARKER-BEFORE-LOGOUT';
+const htmlDialog = node('htmlEditorDialog');
+htmlDialog.drafts = new Map([[priorChat, 'MARKER-BEFORE-LOGOUT']]);
+htmlDialog.open = true;
+context.resetAccountView();
+assert.equal(htmlDialog.drafts.has(priorChat), false, 'logout drops the stored HTML draft for the prior chat');
+vm.runInContext('currentSession = ' + JSON.stringify(priorChat), context);
+context.openHtmlEditor(node('htmlEditorToggle'));
+assert.equal(htmlSource.dataset.draftKey, priorChat, 'reopening that chat keys the draft to it');
+assert.ok(htmlSource.value.includes('color:#008000'), 'the next open loads the starter style');
+assert.ok(htmlSource.value.includes('script ran'), 'the next open loads the starter script');
+assert.equal(htmlSource.value.includes('MARKER-BEFORE-LOGOUT'), false, 'the marker typed before logout is gone');
+assert.notEqual(htmlSource.value, '', 'logout does not leave an empty draft');
 console.log('header buttons: hidden until auth is known, signed-out and failed probes stay hidden, enabled features shown, login/setup/logout re-evaluate, stale probes discarded, sign-in card, direct first-run password prompt, and the initial-password lock passed');

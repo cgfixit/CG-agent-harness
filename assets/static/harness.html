@@ -5646,7 +5646,10 @@ function resetAccountView() {
   currentStyle = 'off'; currentStyleIssue = null; paintStyle(); sessionRevision++;
   htmlEditorDrafts().clear();
   const htmlSource = $('htmlEditorSource');
-  if (htmlSource) htmlSource.value = '';
+  if (htmlSource) {
+    if (htmlSource.dataset) delete htmlSource.dataset.draftKey;
+    htmlSource.value = '';
+  }
   closeHtmlEditor(false);
 }
 var htmlEditorOpener = null;
