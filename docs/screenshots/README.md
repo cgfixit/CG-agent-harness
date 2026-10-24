@@ -13,6 +13,7 @@ verify newer builds. `slash-single-line-note.txt` is an operator aside.
 - `0N-session-*`, `05-independent-spend-ledger`: per-session spend isolation.
 - `*-safari`: ownership, cron, delivery, MCP and private-memory acceptance.
 - `slash-single-line-0N-native-*`: the 2026-09-22 native slash captures (below).
+- `searxng-provider-0N-*-chromium`: #647 Phase 1 provider label, against a loopback SearXNG-shaped fixture.
 - `demo/`: the README's silent 60-second native-and-web demo (`poster.jpg`, the MP4, `voiceover-cues.txt` with timing, edits and limits; recorded source `3a32ae5`).
 
 ## Overview captures

@@ -113,7 +113,7 @@ and local-certificate trust. The script and paths come from the shell, never pag
 content. Ordinary browser consoles hide this button.
 
 An OS-held home lock prevents concurrent desktop and headless server writers on
-Unix. A private, user/home-scoped Unix socket only focuses an existing desktop;
+Unix and Windows. A private, user/home-scoped Unix socket only focuses an existing desktop;
 it carries no secrets, commands, or PID authority. Different
 homes can run independently. Independent manually invoked agentic CLI commands
 are not excluded by the server home lock; do not run concurrent writers manually.
@@ -199,7 +199,7 @@ reattaches or resumes. A persistence failure refuses execution or reports an
 unsaved outcome.
 
 `/agent runs` lists bounded recent records and reconciles released
-Unix worker leases to `interrupted`. A live lease remains running. Legacy running
+Unix/Windows worker leases to `interrupted`. A live lease remains running. Legacy running
 records without ownership evidence stay unknown and cannot be discarded by a
 stale-state guess. `/agent status <id>` inspects retained evidence and available
 diff; `/agent discard <id>` removes interrupted or decided work through the
@@ -284,11 +284,32 @@ JSON is corrupt or oversized, stop the app and preserve a copy for inspection
 before an operator explicitly archives that one job-history file. Keep separate
 run records, workspaces, credentials and sessions. There is no automatic reset.
 
-To uninstall, quit and move only the app to Trash. Removing the application home
-is a separate, optional destructive action after backing up wanted data; it is
-not part of uninstall. `scripts/reset-macos.sh` prints the home and Keychain
-entries it would delete, and removes them only with `--yes`. The per-user focus directory under `/private/tmp` contains
-only lock/socket files, no credentials. No persistent service needs removal.
+To uninstall, quit and move the app to Trash. Removing its home is a separate,
+optional destructive action; back up wanted data first. `scripts/reset-macos.sh`
+previews selected home and Keychain removals; `--yes` applies them. The per-user
+focus directory under `/private/tmp` holds only lock/socket files, no credentials.
+No persistent service needs removal.
+
+### Reset failure and recovery
+
+Reset checks every selected Keychain service before deletion. A reported
+preflight lookup failure exits 1 without deleting entries or the home. A later
+lookup/delete failure also exits 1, reports the successful-delete count and
+preserves the home; earlier deletions are not rolled back. Read the count: a
+retained home may lack provider keys or its saved admin password. Account
+passwords in `auth.sqlite3` remain unchanged.
+
+Resolve the Keychain problem, keep the harness stopped, then rerun with the same
+`CGAGENTHARNESS_HOME` and `--yes`. Missing entries are skipped; home removal
+follows successful completion of remaining credential operations. Another failure
+can leave further progress. Before reusing a retained home, re-enter missing keys
+you need; a home backup does not restore Keychain entries.
+
+The `security` CLI deletes one item per call and provides this script no
+transaction or rollback. Reset neither exports secrets for fallible restores nor
+restores a shared Keychain. Its progress/retry guarantee covers the selected
+home's service names; other homes, credentials under other service names and
+shared tools stay outside the purge.
 
 ## Primary references
 

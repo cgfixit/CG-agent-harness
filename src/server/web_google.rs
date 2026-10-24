@@ -9,9 +9,34 @@ use serde_json::{json, Value};
 
 use super::web_policy::{canonical_url, error};
 use super::web_search::{parse_html, run_web_cpu, WebTool};
+use super::web_searxng::SearchProvider;
 use crate::common::audit::Audit;
 use crate::common::credential_store::CredentialStore;
 use crate::common::errors::Result;
+
+/// Public Google answers bursts with challenges: chat searches there are at
+/// least this far apart whatever `web.pace_ms` says. SerpAPI is never paced.
+pub(crate) const PUBLIC_SEARCH_PACE_FLOOR_MS: u64 = 3000;
+
+/// When the next public Google request may leave, or `WEB_SEARCH_PACED` when
+/// that is not before the call's own deadline (never block past it).
+pub(super) fn public_pace(
+    last: Option<tokio::time::Instant>,
+    pace_ms: u64,
+    deadline: tokio::time::Instant,
+) -> Result<Option<tokio::time::Instant>> {
+    let Some(last) = last else {
+        return Ok(None);
+    };
+    let ready = last + Duration::from_millis(pace_ms.max(PUBLIC_SEARCH_PACE_FLOOR_MS));
+    if ready >= deadline {
+        return Err(error(
+            "WEB_SEARCH_PACED",
+            "public Google searches are paced and the next one cannot start within web.request_seconds; do not retry web_search this turn",
+        ));
+    }
+    Ok(Some(ready))
+}
 
 /// The notice on every search listing.
 pub(crate) const SEARCH_NOTICE: &str =
@@ -124,14 +149,14 @@ fn cooldown_error(provider: &str, pause: &Pause) -> crate::common::errors::Harne
 }
 
 #[derive(Debug, Serialize)]
-struct SearchResult {
-    rank: usize,
-    title: String,
-    url: String,
-    snippet: String,
+pub(super) struct SearchResult {
+    pub(super) rank: usize,
+    pub(super) title: String,
+    pub(super) url: String,
+    pub(super) snippet: String,
 }
 
-fn add_result(
+pub(super) fn add_result(
     rows: &mut Vec<SearchResult>,
     seen: &mut BTreeSet<String>,
     title: &str,
@@ -283,8 +308,9 @@ impl WebTool {
         }
     }
 
-    /// A key chooses the fixed SerpAPI Google backend. It is never sent to Google
-    /// or a returned result URL. No fallback on a configured provider's failure.
+    /// `web.search.provider` picks the backend; `auto` lets a key choose the fixed
+    /// SerpAPI Google backend. A key is never sent to Google, SearXNG or a returned
+    /// result URL. No fallback on a configured provider's failure.
     pub async fn google_search(&self, query: &str, count: usize, enabled: bool, audit: &Audit) -> Result<Value> {
         self.google_search_at(
             query,
@@ -314,7 +340,26 @@ impl WebTool {
         if !enabled {
             return Err(error("WEB_DISABLED", "web access is disabled"));
         }
-        let key = self.search_key()?;
+        let key = match &self.search_provider {
+            SearchProvider::Searxng { endpoint, socket } => {
+                return self
+                    .searxng_listing(query, count, enabled, audit, endpoint, *socket)
+                    .await
+            }
+            // Forced public Google never reads or sends the saved key.
+            SearchProvider::GooglePublic => String::new(),
+            SearchProvider::Serpapi => {
+                let key = self.search_key()?;
+                if key.trim().is_empty() {
+                    return Err(error(
+                        "WEB_SEARCH_KEY_MISSING",
+                        "web.search.provider is serpapi but no SerpAPI key is active; add one in API Keys",
+                    ));
+                }
+                key
+            }
+            SearchProvider::Auto => self.search_key()?,
+        };
         // Provider listings require web/account authority, not page-content permission.
         // Public Google is a page fetch and retains the original URL policy checks.
         let policy = if key.is_empty() {
@@ -373,16 +418,19 @@ impl WebTool {
         let fetched = if key.trim().is_empty() {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
             tokio::time::timeout_at(deadline, async {
-                let (_, body) = self.get_raw(target.as_str(), None, None).await.map_err(|failure| {
-                    if matches!(failure.code.as_str(), "WEB_FETCH_FAILED" | "WEB_REDIRECT_REFUSED") {
-                        error(
-                            "WEB_GOOGLE_BLOCKED",
-                            "Public Google refused or redirected the request; configure a SerpAPI key in API Keys",
-                        )
-                    } else {
-                        failure
-                    }
-                })?;
+                let (_, body) = self
+                    .get_raw_paced(target.as_str(), None, None, Some((self.limits.pace_ms, deadline)))
+                    .await
+                    .map_err(|failure| {
+                        if matches!(failure.code.as_str(), "WEB_FETCH_FAILED" | "WEB_REDIRECT_REFUSED") {
+                            error(
+                                "WEB_GOOGLE_BLOCKED",
+                                "Public Google refused or redirected the request; configure a SerpAPI key in API Keys",
+                            )
+                        } else {
+                            failure
+                        }
+                    })?;
                 // Listings reparse HTML too, including text/plain responses.
                 // Keep that work off async workers under the original deadline.
                 let permit = self
@@ -427,7 +475,7 @@ impl WebTool {
                 ));
             }
         }
-        if self.search_key()? != key {
+        if self.search_provider != SearchProvider::GooglePublic && self.search_key()? != key {
             return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
         }
         Ok(
@@ -515,6 +563,99 @@ mod tests {
 
     fn public_results(body: &str, limit: usize) -> Result<Vec<SearchResult>> {
         super::public_results(body, limit, 512, &|| Ok(()))
+    }
+
+    #[tokio::test]
+    async fn public_pace_is_measured_at_the_send_not_before_the_permit_wait() {
+        use axum::{routing::get, Router};
+        use std::sync::{Arc, Mutex};
+        let sent = Arc::new(Mutex::new(Vec::<std::time::Instant>::new()));
+        let log = sent.clone();
+        let router = Router::new().route(
+            "/search",
+            get(move || {
+                let log = log.clone();
+                async move {
+                    log.lock().unwrap().push(std::time::Instant::now());
+                    "<a href='/url?q=https%3A%2F%2Fveeam.com%2Fkb1'><h3>Paced</h3></a>"
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only an ephemeral loopback port.
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let dir = tempfile::tempdir().unwrap();
+        crate::common::home::Home::at(dir.path().to_path_buf())
+            .ensure_layout()
+            .unwrap();
+        let cfg =
+            crate::common::config::AppConfig::from_str("web: {pace_ms: 100}", std::path::Path::new("config.yaml"))
+                .unwrap();
+        let mut web = WebTool::new(&dir.path().join("tools"), &cfg).unwrap();
+        web.search_key_from_file = true;
+        web.plaintext_key_file = true;
+        web.test_resolve = Some(("google.fixture".into(), address));
+        web.test_public_search = Some(url::Url::parse("http://google.fixture/search").unwrap()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        web.allow("http://google.fixture/*", true).unwrap(); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        let audit = crate::common::audit::Audit::new(dir.path().join("audit.jsonl"), &cfg);
+        let endpoint = url::Url::parse("http://unused.example/search").unwrap();
+        // Another web operation holds every fetch permit for 2 s: the first search
+        // queues, then sends; the second must still leave >= 3 s after that send.
+        let held = web
+            .permits
+            .clone()
+            .acquire_many_owned(web.limits.concurrency as u32)
+            .await
+            .unwrap();
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(2000)).await;
+            drop(held);
+        });
+        web.google_search_at("veeam", 3, true, &audit, endpoint.clone())
+            .await
+            .unwrap();
+        web.google_search_at("veeam backup", 3, true, &audit, endpoint)
+            .await
+            .unwrap();
+        release.await.unwrap();
+        let sent = sent.lock().unwrap().clone();
+        assert_eq!(sent.len(), 2);
+        assert!(
+            sent[1] - sent[0] >= Duration::from_millis(PUBLIC_SEARCH_PACE_FLOOR_MS),
+            "sends {:?} apart; permit queueing must not shorten the floor",
+            sent[1] - sent[0]
+        );
+        server.abort();
+    }
+
+    #[test]
+    fn public_pace_has_a_floor_and_refuses_past_the_deadline() {
+        let now = tokio::time::Instant::now();
+        let deadline = now + Duration::from_secs(8);
+        assert_eq!(
+            public_pace(None, 400, deadline).unwrap(),
+            None,
+            "the first search waits for nothing"
+        );
+        assert_eq!(
+            public_pace(Some(now), 400, deadline).unwrap(),
+            Some(now + Duration::from_millis(PUBLIC_SEARCH_PACE_FLOOR_MS)),
+            "a configured pace below the floor is raised to it"
+        );
+        assert_eq!(
+            public_pace(Some(now), 5000, deadline).unwrap(),
+            Some(now + Duration::from_millis(5000))
+        );
+        let short = now + Duration::from_secs(3);
+        assert_eq!(public_pace(Some(now), 400, short).unwrap_err().code, "WEB_SEARCH_PACED");
+        let later = now + Duration::from_secs(10);
+        assert!(
+            public_pace(Some(now), 400, later + Duration::from_secs(8))
+                .unwrap()
+                .unwrap()
+                <= later,
+            "an old search leaves nothing to wait for"
+        );
     }
 
     #[test]
@@ -646,11 +787,20 @@ mod tests {
         let row = status.iter().find(|row| row["name"] == "SERPAPI_API_KEY").unwrap();
         assert_eq!(row["active_configured"], true);
         assert_eq!(row["pending_restart"], false);
+        let started = tokio::time::Instant::now();
         let result = web
             .google_search_at("veeam", 5, true, &audit, endpoint.clone())
             .await
             .unwrap();
         assert_eq!(result["provider"], "google-serpapi");
+        web.google_search_at("veeam backup", 5, true, &audit, endpoint.clone())
+            .await
+            .unwrap();
+        assert!(
+            started.elapsed() < Duration::from_millis(PUBLIC_SEARCH_PACE_FLOOR_MS),
+            "SerpAPI searches are never paced"
+        );
+        assert!(web.public_search_sent.lock().unwrap().is_none());
         assert_eq!(result["results"][0]["title"], "Actual API result");
         assert_eq!(
             web.require_enabled(true).unwrap_err().code,

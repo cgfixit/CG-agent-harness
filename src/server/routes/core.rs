@@ -804,11 +804,11 @@ pub async fn chat(
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.split(',').any(|part| part.trim() == "text/event-stream"));
     if !streaming {
-        return chat_inner(state, peer, user, req, None).await.into_response();
+        return chat_inner(state, peer, user, req, None, None).await.into_response();
     }
     let (sender, receiver) = tokio::sync::mpsc::channel::<Value>(16);
     let task = tokio::spawn(async move {
-        let result = chat_inner(state, peer, user, req, Some(&sender)).await;
+        let result = chat_inner(state, peer, user, req, Some(&sender), None).await;
         let event = match result {
             Ok(Json(data)) => json!({"type":"done","data":data}),
             Err(error) => {
@@ -868,6 +868,7 @@ pub(crate) async fn chat_inner(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     req: ChatRequest,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
+    expected_loop_goal: Option<&str>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
     if req.loop_turn && req.session_id.as_deref().unwrap_or("").is_empty() {
@@ -888,6 +889,13 @@ pub(crate) async fn chat_inner(
             .create(&state.current_model(), "")
             .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?,
     };
+    // Validate the same snapshot used below for system context, not a separate load.
+    if expected_loop_goal.is_some_and(|goal| goal != session.goal) {
+        return Err(loop_error(
+            "LOOP_GOAL_CHANGED",
+            "session goal changed; start a new loop for the current goal",
+        ));
+    }
     let model = req
         .model
         .clone()
@@ -1041,7 +1049,8 @@ pub(crate) async fn chat_inner(
         web.limits = state.model_web_limits(&model, live.web.clone());
     }
 
-    tokio::select! {
+    let mut summary_completion_tokens = 0u64;
+    let result = tokio::select! {
         biased;
         _ = chat_owner.token.cancelled() => Err(cancelled()),
         result = async {
@@ -1219,7 +1228,6 @@ pub(crate) async fn chat_inner(
     // Why this turn was sent uncompacted although it passed the trigger.
     let mut compaction_skipped: Option<&'static str> = None;
     let mut summary_prompt_tokens = 0u64;
-    let mut summary_completion_tokens = 0u64;
     // The prompt limit this turn was sized for, checked again before the reply.
     let mut turn_prompt_limit = 0u64;
     if !cloud_selected {
@@ -1485,6 +1493,29 @@ pub(crate) async fn chat_inner(
             .await
             .map_err(|e| ApiError::from_err(llm_status(&e), &e))?;
     }
+    let local_failure = |e: crate::common::errors::HarnessError| {
+        // Usage metadata is attached only after receiving a model response.
+        if e.details.get("usage_reported").is_some() {
+            crate::llm::spend::record(
+                Some(&state.audit),
+                &state.spend_file,
+                crate::common::bounded_log::limit(&state.cfg),
+                crate::llm::spend::SpendEvent {
+                    provider: "local",
+                    model: &model,
+                    served_model: None,
+                    source: spend_source,
+                    tokens: crate::llm::spend::UsageTokens {
+                        input_tokens: e.details["prompt_tokens"].as_u64(),
+                        output_tokens: e.details["completion_tokens"].as_u64(),
+                        ..Default::default()
+                    },
+                    outcome: Some("failed_after_billing"),
+                },
+            );
+        }
+        ApiError::from_err(llm_status(&e), &e)
+    };
     let (mut reply, web_tools) = if cloud_selected {
         require_cloud_consent(&state, &owner, &model)?;
         (
@@ -1520,7 +1551,7 @@ pub(crate) async fn chat_inner(
             output,
         )
         .await
-        .map_err(|e| ApiError::from_err(llm_status(&e), &e))?
+        .map_err(local_failure)?
     } else {
         (
             state
@@ -1537,7 +1568,7 @@ pub(crate) async fn chat_inner(
                     }),
                 )
                 .await
-                .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?,
+                .map_err(local_failure)?,
             Vec::new(),
         )
     };
@@ -1551,14 +1582,10 @@ pub(crate) async fn chat_inner(
     reply.body_text = crate::server::tool_inventory::ground_assistant_text(&reply.body_text, &inventory);
 
     if !cloud_selected {
-        let tokens = if reply.usage_reported {
-            crate::llm::spend::UsageTokens {
-                input_tokens: Some(reply.prompt_tokens),
-                output_tokens: Some(reply.completion_tokens),
-                ..crate::llm::spend::UsageTokens::default()
-            }
-        } else {
-            crate::llm::spend::UsageTokens::default()
+        let tokens = crate::llm::spend::UsageTokens {
+            input_tokens: reply.reported_prompt_tokens,
+            output_tokens: reply.reported_completion_tokens,
+            ..crate::llm::spend::UsageTokens::default()
         };
         let empty = reply.body_text.trim().is_empty();
         crate::llm::spend::record(
@@ -1579,7 +1606,13 @@ pub(crate) async fn chat_inner(
                 StatusCode::BAD_GATEWAY,
                 "EMPTY_MODEL_RESPONSE",
                 "local model returned HTTP 2xx with empty text after billing",
-            ));
+            )
+            .details(json!({
+                // Per-field counts; the caller adds summary_completion_tokens once (known_completion_tokens).
+                "prompt_tokens": reply.reported_prompt_tokens,
+                "completion_tokens": reply.reported_completion_tokens,
+                "usage_reported": reply.usage_reported,
+            })));
         }
     }
 
@@ -1770,7 +1803,16 @@ pub(crate) async fn chat_inner(
         },
     })))
         } => result,
-    }
+    };
+    result.map_err(|mut error: ApiError| {
+        // Loop limits use known subtotals even when the complete usage is unknown.
+        let completion = error.details["known_completion_tokens"]
+            .as_u64()
+            .or_else(|| error.details["completion_tokens"].as_u64())
+            .unwrap_or(0);
+        error.details["known_completion_tokens"] = json!(completion.saturating_add(summary_completion_tokens));
+        error
+    })
 }
 
 /// Keep window, quota and context refusals distinct from upstream failures (502).

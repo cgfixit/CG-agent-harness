@@ -245,14 +245,24 @@ pub async fn run_stream(
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let lease = web.chat_turn.start(owner)?;
-    tokio::select! {
+    let mut usage = None;
+    let mut known_completion_tokens = 0u64;
+    let result = tokio::select! {
         biased;
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
         // A turn of several tool rounds gets more than one call's deadline; each
         // model call keeps its own (`ChatClient::timeout_for`).
-        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, output)) =>
-            result.map_err(|_| error("WEB_TIMEOUT", "chat web turn deadline exceeded"))?,
-    }
+        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, output, &mut usage, &mut known_completion_tokens)) =>
+            result.unwrap_or_else(|_| Err(error("WEB_TIMEOUT", "chat web turn deadline exceeded"))),
+    };
+    result.map_err(|failure| match usage {
+        Some(tokens) => failure
+            .detail("prompt_tokens", json!(tokens.input_tokens))
+            .detail("completion_tokens", json!(tokens.output_tokens))
+            .detail("known_completion_tokens", known_completion_tokens)
+            .detail("usage_reported", tokens.usage_reported()),
+        None => failure,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -269,6 +279,8 @@ async fn run_inner(
     web_mode: super::sessions::GoalWebMode,
     sized_tuned: bool,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
+    usage: &mut Option<crate::llm::spend::UsageTokens>,
+    known_completion_tokens: &mut u64,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let mut messages: Vec<Value> = history
         .iter()
@@ -280,7 +292,6 @@ async fn run_inner(
     let mut used_calls = 0;
     let mut prompt_tokens = 0u64;
     let mut completion_tokens = 0u64;
-    let mut reported = true;
     let mut initial_prompt_tokens = None;
     let definitions = tools_for(web_mode);
     let definition_json = serde_json::to_string(&definitions)?;
@@ -362,11 +373,28 @@ async fn run_inner(
                 }),
             )
             .await?;
+        let totals = usage.get_or_insert_with(|| crate::llm::spend::UsageTokens {
+            input_tokens: Some(0),
+            output_tokens: Some(0),
+            ..Default::default()
+        });
         let usage = &response["usage"];
+        if usage["completion_tokens"].is_number() {
+            *known_completion_tokens = known_completion_tokens
+                .saturating_add(crate::llm::openai_chat::token_count(usage.get("completion_tokens")));
+        }
+        // An unknown round makes that dimension's total unknown, never zero.
+        for (total, field) in [
+            (&mut totals.input_tokens, "prompt_tokens"),
+            (&mut totals.output_tokens, "completion_tokens"),
+        ] {
+            *total = total
+                .zip(usage.get(field).filter(|v| v.is_number()))
+                .map(|(sum, count)| sum.saturating_add(crate::llm::openai_chat::token_count(Some(count))));
+        }
         if turn == 0 {
             initial_prompt_tokens = crate::llm::openai_chat::initial_prompt_tokens(&response);
         }
-        reported &= usage["prompt_tokens"].is_u64() && usage["completion_tokens"].is_u64();
         prompt_tokens = prompt_tokens.saturating_add(crate::llm::openai_chat::token_count(usage.get("prompt_tokens")));
         completion_tokens =
             completion_tokens.saturating_add(crate::llm::openai_chat::token_count(usage.get("completion_tokens")));
@@ -383,7 +411,9 @@ async fn run_inner(
             let mut reply = parse_chat_response(&response, model)?;
             reply.prompt_tokens = prompt_tokens;
             reply.completion_tokens = completion_tokens;
-            reply.usage_reported = reported;
+            reply.usage_reported = totals.usage_reported();
+            reply.reported_prompt_tokens = totals.input_tokens;
+            reply.reported_completion_tokens = totals.output_tokens;
             reply.initial_prompt_tokens = initial_prompt_tokens;
             reply.initial_prompt_tools = initial_prompt_tools;
             reply.final_prompt_tools = !available.is_empty();
@@ -599,7 +629,8 @@ async fn run_inner(
                 }
             };
             if result.get("error").is_none() {
-                if result["provider"] != "google-serpapi" {
+                // Provider listings (SerpAPI, loopback SearXNG) are not URL evidence.
+                if !matches!(result["provider"].as_str(), Some("google-serpapi" | "searxng")) {
                     if let Some(source) = result
                         .get("search_url")
                         .or_else(|| result.get("url"))
@@ -628,7 +659,9 @@ async fn run_inner(
                         model: model.into(),
                         prompt_tokens,
                         completion_tokens,
-                        usage_reported: reported,
+                        usage_reported: totals.usage_reported(),
+                        reported_prompt_tokens: totals.input_tokens,
+                        reported_completion_tokens: totals.output_tokens,
                         initial_prompt_tokens,
                         initial_prompt_tools,
                         // The last model call offered tools: it returned this batch.
