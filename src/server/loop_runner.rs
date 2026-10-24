@@ -75,6 +75,26 @@ pub fn loop_blocking_web_code(events: &[Value]) -> Option<String> {
     None
 }
 
+/// Turns on which every web read failed, after this turn (console mirror). A
+/// `WEB_SEARCH_COOLDOWN` is a deliberate pause the model was told about: a turn
+/// whose only failures are cooldowns neither counts nor resets the streak.
+pub fn next_tool_failures(previous: u64, events: &[Value]) -> u64 {
+    let failed: Vec<&Value> = events
+        .iter()
+        .filter(|e| e.get("ok") == Some(&Value::Bool(false)))
+        .collect();
+    if failed.is_empty() || events.iter().any(|e| e.get("ok") == Some(&Value::Bool(true))) {
+        0
+    } else if failed
+        .iter()
+        .all(|e| e.get("code").and_then(Value::as_str) == Some("WEB_SEARCH_COOLDOWN"))
+    {
+        previous
+    } else {
+        previous + 1
+    }
+}
+
 /// Console `loopWords` port: lowercase words with punctuation dropped.
 fn loop_words(text: &str) -> Vec<String> {
     let mut words = Vec::new();
@@ -445,19 +465,7 @@ async fn run_turns(
                 run.stats.total_completion_tokens = run.stats.total_completion_tokens.saturating_add(completion);
                 run.stats.consecutive_failures = 0;
                 run.stats.last_reply_preview = reply.chars().take(200).collect();
-                let failed = web_events
-                    .iter()
-                    .filter(|e| e.get("ok") == Some(&Value::Bool(false)))
-                    .count();
-                if failed > 0 {
-                    if web_events.iter().any(|e| e.get("ok") == Some(&Value::Bool(true))) {
-                        run.stats.tool_failures = 0;
-                    } else {
-                        run.stats.tool_failures += 1;
-                    }
-                } else {
-                    run.stats.tool_failures = 0;
-                }
+                run.stats.tool_failures = next_tool_failures(run.stats.tool_failures, &web_events);
                 if let Some(blocking) = loop_blocking_web_code(&web_events) {
                     terminal = Some((
                         LoopRunState::Done,
@@ -557,6 +565,22 @@ fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn search_cooldown_turns_do_not_count_toward_max_failures() {
+        let fail = |code: &str| json!({"tool":"web_search","ok":false,"code":code});
+        let ok = json!({"tool":"web_fetch","ok":true});
+        assert_eq!(next_tool_failures(1, &[fail("WEB_SEARCH_COOLDOWN")]), 1);
+        assert_eq!(next_tool_failures(0, &[fail("WEB_SEARCH_COOLDOWN")]), 0);
+        assert_eq!(next_tool_failures(1, &[fail("WEB_FETCH_FAILED")]), 2);
+        assert_eq!(
+            next_tool_failures(1, &[fail("WEB_SEARCH_COOLDOWN"), fail("WEB_TIMEOUT")]),
+            2
+        );
+        assert_eq!(next_tool_failures(3, &[fail("WEB_SEARCH_COOLDOWN"), ok.clone()]), 0);
+        assert_eq!(next_tool_failures(3, &[]), 0);
+        assert_eq!(loop_blocking_web_code(&[fail("WEB_SEARCH_COOLDOWN")]), None);
+    }
 
     #[test]
     fn turn_prompt_mirrors_console_framing() {
