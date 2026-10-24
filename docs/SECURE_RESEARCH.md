@@ -311,6 +311,10 @@ unreported, never invented.
 `/loop stop` or the chat cancellation endpoint aborts the whole turn, including
 an outstanding content request. Direct chat uses `POST /api/chat` and returns
 `web_tools` alongside the reply and aggregate usage.
+Each session keeps a bounded ledger of its reads (targets, counts, truncation,
+citations, re-reads after compaction; no page text) that never enters a prompt;
+`GET /api/sessions/{id}` returns it as `web_sources`. Each web turn audits
+`chat_web_turn` counts without targets.
 
 Existing homes keep explicitly configured smaller call budgets. To use thirty there,
 set `web.chat_tool_calls: 30` in the active home's `config.yaml` and use
@@ -361,6 +365,11 @@ The exact generated search URL also works; an exact homepage grant is not enough
 redirects remain refused. In allowlist mode, an empty policy gives
 `WEB_ALLOWLIST_EMPTY` and a non-Google policy gives `WEB_GOOGLE_PERMISSION`.
 Denylist mode needs no Google grant, but blocked Google URLs remain refused.
+
+A challenge or block pauses public Google for `web.search_cooldown_public_sec`; a
+quota refusal pauses SerpAPI for `web.search_cooldown_quota_sec` (0: next clock hour).
+Paused search answers `WEB_SEARCH_COOLDOWN` ("cooling down until HH:MM", local time)
+without a request; `/loop` does not count it. Restart clears it; rejected keys never pause.
 
 `/web search` defaults to Google in the console and CLI; `/web pages` selects the
 existing permitted-page passage search, as does a source-group argument
