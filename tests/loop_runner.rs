@@ -74,6 +74,97 @@ async fn loop_status(s: &common::TestServer, run_id: &str) -> Value {
 }
 
 #[tokio::test]
+async fn loop_budget_counts_failed_inference_without_successful_exchanges() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    let mut unknown = ok_reply("", 0, 0);
+    unknown.as_object_mut().unwrap().remove("usage");
+    let mut truncated = ok_reply("unfinished", 100, 220);
+    truncated["choices"][0]["finish_reason"] = json!("length");
+    for (name, replies, total, turns, failures, state) in [
+        ("empty", vec![ok_reply("", 100, 220)], 220, 0, 1, "done"),
+        ("truncated", vec![truncated], 220, 0, 1, "done"),
+        ("unknown", vec![unknown.clone(), unknown], 0, 0, 2, "failed"),
+        (
+            "success then failure",
+            vec![ok_reply("progress", 100, 20), ok_reply("", 100, 220)],
+            240,
+            1,
+            1,
+            "done",
+        ),
+        (
+            "failure then success",
+            vec![ok_reply("", 100, 20), ok_reply("progress", 100, 80)],
+            100,
+            1,
+            0,
+            "done",
+        ),
+    ] {
+        let expected_requests = replies.len();
+        let count = Arc::new(AtomicUsize::new(0));
+        let calls = count.clone();
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(move || {
+                let n = calls.fetch_add(1, Ordering::SeqCst);
+                // An unexpected retry remains observable without crashing the mock.
+                let reply = replies[n.min(replies.len() - 1)].clone();
+                async move { axum::Json(reply) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+        let addr = listener.local_addr().unwrap();
+        let mock = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let s = spawn_server(&format!("http://{addr}/v1"), ServerOptions::default()).await; // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+        let sid = session_with_goal(&s).await;
+        let (status, body) = s
+            .post_json(
+                "/api/loop/start",
+                json!({
+                    "session_id": sid,
+                    "max_turns": 3,
+                    "max_total_completion_tokens": 100,
+                    "max_failures": 2,
+                    "cooldown_ms": 0,
+                }),
+            )
+            .await;
+        assert_eq!(status, 200, "{name}: {body}");
+        let run_id = body["run"]["run_id"].as_str().unwrap();
+        let run = wait_for(&s, run_id, "budget or failure stop", |run| run["state"] == state).await;
+        assert_eq!(count.load(Ordering::SeqCst), expected_requests, "{name}: {run}");
+        assert_eq!(run["stats"]["total_completion_tokens"], total, "{name}: {run}");
+        assert_eq!(run["stats"]["turns_completed"], turns, "{name}: {run}");
+        assert_eq!(run["stats"]["consecutive_failures"], failures, "{name}: {run}");
+        let reason = run["reason"].as_str().unwrap();
+        assert!(
+            reason.contains(if state == "done" {
+                "token budget exhausted"
+            } else {
+                "consecutive chat failures"
+            }),
+            "{name}: {run}"
+        );
+        let (_, session) = s.get_json(&format!("/api/sessions/{sid}")).await;
+        assert_eq!(session["tokens"]["exchanges"], turns, "{name}: {session}");
+        assert_eq!(
+            session["messages"].as_array().unwrap().len(),
+            turns as usize * 2,
+            "{name}: {session}"
+        );
+        let persisted: Value = serde_json::from_str(
+            &std::fs::read_to_string(s.home.join("loops").join(format!("{run_id}.json"))).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(persisted["stats"], run["stats"], "{name}");
+        mock.abort();
+    }
+}
+
+#[tokio::test]
 async fn status_exposes_loop_config_and_server_loop_flag() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;

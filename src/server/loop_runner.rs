@@ -486,6 +486,9 @@ async fn run_turns(
                 }
             }
             Err(error) => {
+                // Failed inference still spends tokens; missing usage contributes no known count.
+                let completion = error.details["completion_tokens"].as_u64().unwrap_or(0);
+                run.stats.total_completion_tokens = run.stats.total_completion_tokens.saturating_add(completion);
                 run.stats.consecutive_failures += 1;
                 run.reason = format!("turn {turn} failed: {} ({})", error.code, error.message);
                 if run.stats.consecutive_failures >= run.config.max_failures {

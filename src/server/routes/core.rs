@@ -1578,7 +1578,12 @@ pub(crate) async fn chat_inner(
                 StatusCode::BAD_GATEWAY,
                 "EMPTY_MODEL_RESPONSE",
                 "local model returned HTTP 2xx with empty text after billing",
-            ));
+            )
+            .details(json!({
+                "prompt_tokens": reply.usage_reported.then_some(reply.prompt_tokens.saturating_add(summary_prompt_tokens)),
+                "completion_tokens": reply.usage_reported.then_some(reply.completion_tokens.saturating_add(summary_completion_tokens)),
+                "usage_reported": reply.usage_reported,
+            })));
         }
     }
 
