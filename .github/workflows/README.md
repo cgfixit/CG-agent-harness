@@ -9,7 +9,7 @@ and [release controls](../../docs/RELEASING.md).
 | File | Purpose and trigger |
 |---|---|
 | [`ci.yml`](ci.yml) | Rust formatting, Clippy, dependency policy, browser, sandbox and lifecycle tests; PR, main push, merge queue and release calls. |
-| [`pr-template-check.yml`](pr-template-check.yml) | PR-body requirements and base-is-main checks; PR open/edit/sync/reopen/ready events. |
+| [`pr-template-check.yml`](pr-template-check.yml) | PR-body requirements (Cursor and trailing Claude Code footers are stripped) and base-is-main checks; PR open/edit/sync/reopen/ready events. |
 | [`review-gate-request.yml`](review-gate-request.yml) | Unprivileged wake-up signal from PR, review and review-comment events, including forks. |
 | [`review-gate.yml`](review-gate.yml) | Trusted dispatcher; validates request-run identity or handles Codex summary comments, then calls the evaluator. |
 | [`review-gate-evaluate.yml`](review-gate-evaluate.yml) | Reusable advisory check: unresolved threads/running reviews are neutral; evaluation errors fail. Re-run the dispatcher after resolving threads. |

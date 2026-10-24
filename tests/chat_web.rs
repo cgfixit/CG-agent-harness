@@ -40,7 +40,7 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
                 assert!(body.get("tools").is_none(),"an all-failed batch after evidence ends the tool rounds");
                 return Json(common::ok_reply("Answered from the first read after a refusal.",20,5));
             }
-            if finished && mode!="cumulative" {
+            if finished && !mode.starts_with("cumulative") {
                 assert_eq!(tool_messages.len(),2);
                 assert!(tool_messages.iter().all(|m|m["content"].as_str().unwrap().contains("BATCH_BACKUP_EVIDENCE")));
                 return Json(common::ok_reply("Compared both fetched sources.",20,5));
@@ -49,7 +49,8 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
             if mode=="duplicate" { calls[1]["id"]=calls[0]["id"].clone(); }
             if mode=="malformed" { calls[1]["function"]["arguments"]=json!("{}"); }
             if mode=="denied" { calls[1]["function"]["arguments"]=json!(json!({"url":"http://docs.example/private"}).to_string()); } // DevSkim: ignore DS137138 because this synthetic URL tests permission refusal against the loopback fixture.
-            Json(json!({"choices":[{"finish_reason":"tool_calls","message":{"content":null,"tool_calls":calls}}],"usage":{"prompt_tokens":10,"completion_tokens":3}}))
+            let usage = if mode=="cumulative-missing" && !finished { json!({"prompt_tokens":10}) } else { json!({"prompt_tokens":10,"completion_tokens":3}) };
+            Json(json!({"choices":[{"finish_reason":"tool_calls","message":{"content":null,"tool_calls":calls}}],"usage":usage}))
         }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -83,6 +84,7 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
         let (status, reply) = s.post_json("/api/chat", json!({"message":mode})).await;
         assert_eq!(status, 502, "{reply}");
         assert_eq!(common::code(&reply), code, "{reply}");
+        assert_eq!(reply["detail"]["details"]["completion_tokens"], 3);
         assert_eq!(
             reads.load(Ordering::SeqCst),
             2,
@@ -97,6 +99,27 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
         4,
         "two calls plus two more exceeds total budget three"
     );
+    assert_eq!(reply["detail"]["details"]["prompt_tokens"], 20);
+    assert_eq!(reply["detail"]["details"]["completion_tokens"], 6);
+    assert_eq!(reply["detail"]["details"]["known_completion_tokens"], 6);
+    s.state.audit.flush_async().await;
+    let ledger = std::fs::read_to_string(s.home.join("logs/spend.jsonl")).unwrap();
+    let rows: Vec<Value> = ledger.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(rows.len(), 5, "success and each rejected logical turn record once");
+    for (row, input, output) in [
+        (&rows[1], 10, 3),
+        (&rows[2], 10, 3),
+        (&rows[3], 10, 3),
+        (&rows[4], 20, 6),
+    ] {
+        assert_eq!(row["outcome"], "failed_after_billing");
+        assert_eq!(row["input_tokens"], input);
+        assert_eq!(row["output_tokens"], output);
+        assert_eq!(row["usage_missing"], false);
+    }
+    for private in ["docs.example", "BATCH_BACKUP_EVIDENCE", "arguments", &s.api_key] {
+        assert!(!ledger.contains(private));
+    }
     // A refused sibling is that call's result, not the end of the turn: the
     // permitted read is kept and the model answers from it. Before, one denied
     // URL in a batch discarded every sibling result and the turn had no answer.
@@ -124,6 +147,20 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
         6,
         "one more permitted read, none for the refusal"
     );
+    let (_, reply) = s.post_json("/api/chat", json!({"message":"cumulative-missing"})).await;
+    assert_eq!(common::code(&reply), "WEB_TOOL_LIMIT");
+    assert_eq!(reply["detail"]["details"]["prompt_tokens"], 20);
+    assert!(reply["detail"]["details"]["completion_tokens"].is_null());
+    assert_eq!(reply["detail"]["details"]["known_completion_tokens"], 3);
+    s.state.audit.flush_async().await;
+    let ledger = std::fs::read_to_string(s.home.join("logs/spend.jsonl")).unwrap();
+    let rows: Vec<Value> = ledger.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(rows.len(), 8);
+    let row = rows.last().unwrap();
+    assert_eq!(row["outcome"], "failed_after_billing");
+    assert_eq!(row["input_tokens"], 20);
+    assert!(row["output_tokens"].is_null());
+    assert_eq!(row["usage_missing"], true);
     task.abort();
 }
 
