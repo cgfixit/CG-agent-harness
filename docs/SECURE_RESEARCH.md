@@ -312,9 +312,12 @@ unreported, never invented.
 an outstanding content request. Direct chat uses `POST /api/chat` and returns
 `web_tools` alongside the reply and aggregate usage.
 Each session keeps a bounded ledger of its reads (targets, counts, truncation,
-citations, re-reads after compaction; no page text) that never enters a prompt;
-`GET /api/sessions/{id}` returns it as `web_sources`. Each web turn audits
-`chat_web_turn` counts without targets.
+citations, re-reads after compaction; no page text); `GET /api/sessions/{id}`
+returns it as `web_sources`. Each web turn audits `chat_web_turn` counts without
+targets. `web.carry_forward_sources` (ships 0, off; up to 50) lists that many
+earlier reads in later web turns' prompts, fenced as untrusted: URLs and
+queries only, goal-matching and cited first, fetched URLs only while the
+current policy still permits them.
 
 Existing homes keep explicitly configured smaller call budgets. To use thirty there,
 set `web.chat_tool_calls: 30` in the active home's `config.yaml` and use
@@ -352,7 +355,8 @@ execute JavaScript, solve CAPTCHA, adopt browser cookies, manufacture missing
 results, or silently switch search engines. Challenges, redirects, unreadable
 output and transport failures are explicit failures, so credential-free success
 is not promised. A keyed request's invalid-key, quota or upstream failure also
-stays explicit; public fallback occurs only when the active key is absent. For
+stays explicit; public fallback occurs only when the active key is absent or
+`web.search.fallback_to_public_google` is literal true. For
 that keyless fallback in allowlist mode, an administrator first grants Google:
 
 ```text
@@ -364,7 +368,9 @@ that keyless fallback in allowlist mode, an administrator first grants Google:
 SearXNG uses only `web.search.searxng_url`: a loopback IP literal and explicit port,
 with `json` in its `search.formats`; anything else fails boot. Listings need no URL
 grant; `!`/`:` query tokens are refused, private links dropped, `unresponsive_engines`
-reported as `degraded`.
+reported as `degraded`. Opt-in `web.search.fallback_to_serpapi` and
+`fallback_to_public_google` try the next hop only when a provider is unusable; the
+answer carries `fallback_from` and each hop logs `web_search_fallback`.
 
 The exact generated search URL also works; an exact homepage grant is not enough.
 `https://google.com/*` does not grant `www`; the apex endpoint may redirect and
@@ -459,8 +465,7 @@ are refused, and reverse proxies are unsupported. The dedicated
 [machine gateway](MCP_SERVER.md) does not inherit console authority.
 
 Ownership follows [session ownership](#session-ownership-and-legacy-adoption)
-and the shared-resource list in [SECURITY.md](../SECURITY.md#local-authority-and-shared-resources);
-the public-page cache (`tools/web_cache`) is also shared, not per account.
+and the shared-resource list in [SECURITY.md](../SECURITY.md#local-authority-and-shared-resources).
 Research questions, answers, controller state, and web selections belong to the
 initiating random account identity, so a recreated username inherits nothing.
 Deleted accounts can leave private selections on disk, inaccessible to replacements.

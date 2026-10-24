@@ -504,6 +504,112 @@ async fn check_fetch_evidence(loop_turn: bool) {
     server.abort();
 }
 
+/// With `web.carry_forward_sources` above 0, the next web turn's system prompt
+/// lists the URL an earlier turn read (no page text) in a fenced untrusted
+/// block; at the shipped 0 it lists nothing until a reload raises it.
+#[tokio::test]
+async fn a_later_web_turn_lists_earlier_reads_only_when_carry_forward_is_on() {
+    for rows in ["0", "5"] {
+        let systems = Arc::new(Mutex::new(Vec::<String>::new()));
+        let recorded = systems.clone();
+        let router = Router::new()
+            .route(
+                "/docs/item",
+                get(|| async { ([("content-type", "text/plain")], "PAGE_TEXT_NOT_CARRIED") }),
+            )
+            .route(
+                "/v1/chat/completions",
+                post(move |Json(body): Json<Value>| {
+                    let systems = recorded.clone();
+                    async move {
+                        let messages = body["messages"].as_array().unwrap();
+                        systems
+                            .lock()
+                            .unwrap()
+                            .push(messages[0]["content"].as_str().unwrap_or("").to_string());
+                        if messages.last().unwrap()["role"] == "tool" {
+                            Json(common::ok_reply("Read it.", 10, 2))
+                        } else {
+                            Json(tool_call_reply(
+                                "web_fetch",
+                                r#"{"url":"http://docs.example/docs/item"}"#,
+                                "carry_1",
+                            ))
+                        }
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let s = common::spawn_server(
+            &format!("http://{address}/v1"),
+            common::ServerOptions {
+                web_resolve: Some(("docs.example".into(), address)),
+                ..common::ServerOptions::default().with("web.carry_forward_sources", rows)
+            },
+        )
+        .await;
+        assert_eq!(
+            s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"}))
+                .await
+                .0,
+            200
+        );
+        let (_, session) = s.post_json("/api/sessions", json!({})).await;
+        let sid = session["session_id"].as_str().unwrap();
+        for message in ["first", "second"] {
+            let (status, reply) = s
+                .post_json("/api/chat", json!({"message": message, "session_id": sid}))
+                .await;
+            assert_eq!(status, 200, "{reply}");
+        }
+        let systems_handle = systems.clone();
+        let systems = systems.lock().unwrap().clone();
+        // Calls: turn 1 (tool call, follow-up), turn 2 (tool call, follow-up).
+        assert_eq!(systems.len(), 4, "{rows}");
+        assert!(
+            !systems[0].contains("WEB_READS_DATA"),
+            "nothing to carry on the first turn"
+        );
+        let second = &systems[2];
+        if rows == "0" {
+            assert!(!second.contains("WEB_READS_DATA"), "off at the shipped 0");
+            // Reloadable: raising the key in config.yaml and reloading turns it
+            // on for the next turn, with no restart.
+            let path = &s.state.cfg.path;
+            let text = std::fs::read_to_string(path).unwrap();
+            assert!(text.contains("carry_forward_sources: 0"), "{text}");
+            std::fs::write(
+                path,
+                text.replace("carry_forward_sources: 0", "carry_forward_sources: 5"),
+            )
+            .unwrap();
+            let reloaded = cgagentharness::server::config_reload::reload(s.state.clone(), "test")
+                .await
+                .unwrap();
+            assert_eq!(reloaded["changed"], true, "{reloaded}");
+            let (status, reply) = s
+                .post_json("/api/chat", json!({"message": "third", "session_id": sid}))
+                .await;
+            assert_eq!(status, 200, "{reply}");
+            let third = systems_handle.lock().unwrap()[4].clone();
+            assert!(
+                third.contains("- fetched http://docs.example/docs/item (turns 1, 2)"),
+                "{third}"
+            );
+        } else {
+            assert!(second.contains("<<<WEB_READS_DATA>>>"), "{second}");
+            assert!(
+                second.contains("- fetched http://docs.example/docs/item (turns 1)"),
+                "{second}"
+            );
+            assert!(!second.contains("PAGE_TEXT_NOT_CARRIED"), "page text is never carried");
+        }
+        server.abort();
+    }
+}
+
 /// A tool round sends the whole prompt again with the result. Web chat must keep
 /// that follow-up inside web.total_tokens: clip a fetched page to the room left.
 /// Each prompt is charged once (the history is re-read, not spent twice), so a
@@ -1603,6 +1709,98 @@ async fn chat_public_google_searches_in_one_turn_are_paced_by_the_floor() {
         gap >= std::time::Duration::from_millis(3000),
         "public Google searches {gap:?} apart; the floor is 3 s"
     );
+    task.abort();
+}
+
+/// #647 Phase 2: with SearXNG down and the opt-in public Google hop on, a loop
+/// turn's search is answered by the next hop, the tool result says so, and the
+/// turn's `chat_web_turn` audit line records the provider and the fallback.
+#[tokio::test]
+async fn loop_search_falls_back_from_a_down_searxng_and_audits_the_provider() {
+    let google_hits = Arc::new(AtomicUsize::new(0));
+    let g = google_hits.clone();
+    let fixture = Router::new()
+        .route(
+            "/search",
+            get(move || {
+                let g = g.clone();
+                async move {
+                    g.fetch_add(1, Ordering::SeqCst);
+                    "<a href='/url?q=https%3A%2F%2Fveeam.com%2Fkb1'><h3>Fallback result</h3></a>"
+                }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(|Json(body): Json<Value>| async move {
+                let messages = body["messages"].as_array().unwrap();
+                if messages.last().unwrap()["role"] == "tool" {
+                    return Json(common::ok_reply("Answered from the fallback listing.", 10, 3));
+                }
+                Json(tool_call_reply(
+                    "web_search",
+                    r#"{"query":"veeam cve"}"#,
+                    "fallback_search",
+                ))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    // A loopback port with nothing listening: SearXNG is down.
+    let down = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let down_port = down.local_addr().unwrap().port();
+    drop(down);
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+        common::ServerOptions {
+            web_resolve: Some(("google.fixture".into(), address)),
+            public_search: Some(url::Url::parse("http://google.fixture/search").unwrap()), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            ..common::ServerOptions::default()
+                .with("logging.audit_queue_lines", "0")
+                .with("web.search.provider", "searxng")
+                .with("web.search.searxng_url", &format!("\"http://127.0.0.1:{down_port}\"")) // DevSkim: ignore DS137138,DS162092 because the SearXNG URL is a loopback test port.
+                .with("web.search.fallback_to_public_google", "true")
+        },
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://google.fixture/*"})) // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            .await
+            .0,
+        200
+    );
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"Find current CVEs"}),
+    )
+    .await;
+    let (status, reply) = s
+        .post_json("/api/chat", json!({"message":"continue","session_id":sid,"loop":true}))
+        .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["reply"], "Answered from the fallback listing.", "{reply}");
+    let result = &reply["web_tools"][0]["result"];
+    assert_eq!(result["provider"], "google-public", "{reply}");
+    assert_eq!(result["fallback_from"], json!(["searxng"]), "{reply}");
+    assert_eq!(google_hits.load(Ordering::SeqCst), 1);
+    let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap();
+    let lines: Vec<Value> = audit
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    let fallback: Vec<&Value> = lines.iter().filter(|l| l["event"] == "web_search_fallback").collect();
+    assert_eq!(fallback.len(), 1, "{audit}");
+    assert_eq!(fallback[0]["from"], "searxng");
+    assert_eq!(fallback[0]["to"], "google-public");
+    let turn = lines
+        .iter()
+        .rfind(|l| l["event"] == "chat_web_turn")
+        .expect("chat_web_turn audit line");
+    assert_eq!(turn["providers"], json!(["google-public"]), "{turn}");
+    assert_eq!(turn["fallbacks"], 1, "{turn}");
     task.abort();
 }
 

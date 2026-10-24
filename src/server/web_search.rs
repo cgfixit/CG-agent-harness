@@ -60,6 +60,9 @@ pub struct Limits {
     pub synthesis_seconds: u64,
     pub stale_seconds: u64,
     pub chat_tool_calls: usize,
+    /// Earlier web reads listed in a web turn's prompt (`web_ledger::carry_forward`);
+    /// 0, the shipped value, lists none. Reloadable.
+    pub carry_forward_sources: usize,
     /// The mode a `/goal` takes when the request names none (`web.goal_web_default`,
     /// restart-only). Ships `all`: search is a read-only listing that grants no URL
     /// permission, so unattended loop turns may search; fetches stay policy-gated.
@@ -106,6 +109,7 @@ impl Limits {
             synthesis_seconds: bound("synthesis_seconds", 300, 10, 1800)?,
             chat_tool_calls: bound("chat_tool_calls", 30, 1, crate::llm::openai_stream::MAX_TOOL_CALLS)? as usize,
             stale_seconds: bound("stale_seconds", 604800, 60, 31_536_000)?,
+            carry_forward_sources: bound("carry_forward_sources", 0, 0, 50)? as usize,
             goal_web_default: match cfg.get("web.goal_web_default") {
                 None => super::sessions::GoalWebMode::All,
                 Some(serde_yaml_ng::Value::String(s)) => s
@@ -412,6 +416,10 @@ pub struct WebTool {
     pub(super) permits: Arc<Semaphore>,
     pub(super) mutation: Arc<Mutex<()>>,
     pub(super) search_gate: Arc<Semaphore>,
+    /// Opt-in fallback hops after the provider; restart-only.
+    pub(super) search_fallback: super::web_searxng::Fallback,
+    /// SerpAPI fallbacks this clock hour, shared by every snapshot.
+    pub(super) search_fallback_burst: Arc<super::web_searxng::FallbackBurst>,
     /// When the last public Google search request left, shared by every snapshot.
     pub(super) public_search_sent: Arc<std::sync::Mutex<Option<tokio::time::Instant>>>,
     /// `web.search.provider` and its one exact SearXNG socket; restart-only.
@@ -438,6 +446,8 @@ impl WebTool {
             plaintext_key_file: cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE),
             mutation: Arc::new(Mutex::new(())),
             search_gate: Arc::new(Semaphore::new(1)),
+            search_fallback: super::web_searxng::Fallback::load(cfg)?,
+            search_fallback_burst: Arc::default(),
             public_search_sent: Arc::default(),
             search_provider: super::web_searxng::SearchProvider::load(cfg)?,
             search_cooldown: Arc::default(),

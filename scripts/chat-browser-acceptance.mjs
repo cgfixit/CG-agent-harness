@@ -48,7 +48,8 @@ const server=createServer(async(req,res)=>{
  let data=''; for await (const chunk of req) data+=chunk;
  const body=data?JSON.parse(data):{}; const path=req.url; requests.push([req.method,path,body]);
  const reply=(value,status=200)=>{if(!res.headersSent)res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
- if(path==='/'){res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'nonce-fixture'; style-src 'nonce-fixture'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");res.end(html.replaceAll('__CYCLAW_CSRF_TOKEN__','fixture').replaceAll('__CYCLAW_CSP_NONCE__','fixture'));return;}
+ if(path==='/'){res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'nonce-fixture'; style-src 'nonce-fixture'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; frame-src 'self'");res.end(html.replaceAll('__CYCLAW_CSRF_TOKEN__','fixture').replaceAll('__CYCLAW_CSP_NONCE__','fixture'));return;}
+ if(path.startsWith('/preview/html')){res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; frame-src 'none'");res.setHeader('X-Frame-Options','SAMEORIGIN');res.end('<!DOCTYPE html><html><body><p>Run a page to preview it here.</p></body></html>');return;}
  if(path.startsWith('/static/')){res.end('');return;}
  // Mirrors account_gate (src/server/guards.rs): an audit account reaches only the public
  // routes, its own whoami/password/logout and GET /api/audit.

@@ -1172,6 +1172,11 @@ pub(crate) async fn chat_inner(
         })
         .await
     };
+    // Earlier reads from the session's ledger, for web turns only (off unless
+    // web.carry_forward_sources is above 0).
+    let web_reads = (!cloud_selected && chat_tools)
+        .then(|| crate::server::web_ledger::carried_web_reads(&web, &session, web.limits.carry_forward_sources))
+        .flatten();
     let system_prompt = if cloud_selected {
         String::new()
     } else {
@@ -1198,6 +1203,7 @@ pub(crate) async fn chat_inner(
             live_state: live_block.as_deref(),
             self_manual: manual.as_ref().map(|selection| selection.block.as_str()),
             diag_context: diag.as_ref().map(|staged| staged.block.as_str()),
+            web_reads: web_reads.as_deref(),
         })
     };
     let max_tokens = if req.loop_turn {

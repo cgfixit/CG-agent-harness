@@ -8,16 +8,16 @@ const between = (start, end) => {
   assert.ok(from >= 0 && to > from, 'console markers must bound the slice: ' + start + ' … ' + end);
   return html.slice(from, to);
 };
-const buttons = ['openAnalytics', 'openDeliveries', 'openSchedules'];
+const buttons = ['openAnalytics', 'htmlEditorToggle', 'openDeliveries', 'openSchedules'];
 for (const id of buttons) assert.match(html, new RegExp('<button [^>]*id="' + id + '"[^>]* hidden[ >]'), id + ' must start hidden');
 assert.match(html, /<button [^>]*id="openDeliveries"[^>]*title="Outgoing, metadata-only [^"]*coding job finishes"[^>]*>Job webhooks<\/button>/);
 assert.ok(!html.includes('id="openSpend"'), 'Spend is folded into Analytics');
 
 const nodes = new Map();
 const node = id => {
-  if (!nodes.has(id)) nodes.set(id, {id, hidden:buttons.includes(id), textContent:'', value:'', disabled:false, listeners:{},
+  if (!nodes.has(id)) nodes.set(id, {id, hidden:buttons.includes(id), textContent:'', value:'', disabled:false, open:false, dataset:{}, listeners:{},
     addEventListener(event, handler) { this.listeners[event] = handler; }, focus() {}, contains() { return false; }, scrollIntoView() {},
-    replaceChildren() { this.textContent = ''; }});
+    replaceChildren() { this.textContent = ''; }, close() { this.open = false; }, showModal() { this.open = true; }});
   return nodes.get(id);
 };
 const shown = () => buttons.filter(id => !node(id).hidden);
@@ -67,18 +67,18 @@ await new Promise(setImmediate);
 assert.deepEqual(probes, [], 'no probe before the account state is known');
 assert.deepEqual(shown(), []);
 answer(reply(503)); await refreshing; await settle();
-assert.deepEqual(shown(), ['openAnalytics'], 'shipped defaults: notifications and coding pipeline disabled');
+assert.deepEqual(shown(), ['openAnalytics', 'htmlEditorToggle'], 'shipped defaults: notifications and coding pipeline disabled');
 assert.deepEqual(probes.sort(), ['/api/notifications', '/api/tools']);
 
 assert.deepEqual(await paint(true, enabled), buttons);
 for (const [label, failure] of [['401', refused(401)], ['403', refused(403)], ['network', new TypeError('Failed to fetch')]]) {
-  assert.deepEqual(await paint(true, {'/api/notifications':failure, '/api/tools':failure}), ['openAnalytics'], label + ' keeps both hidden');
+  assert.deepEqual(await paint(true, {'/api/notifications':failure, '/api/tools':failure}), ['openAnalytics', 'htmlEditorToggle'], label + ' keeps both hidden');
 }
-assert.deepEqual(await paint(true, {'/api/notifications':{}, '/api/tools':{}}), ['openAnalytics'], 'an empty reply is not an enabled feature');
+assert.deepEqual(await paint(true, {'/api/notifications':{}, '/api/tools':{}}), ['openAnalytics', 'htmlEditorToggle'], 'an empty reply is not an enabled feature');
 assert.deepEqual(await paint(true, {'/api/notifications':{enabled:'true'},
-  '/api/tools':{tools:[null, 7, {path:'/api/agent/runs',enabled:true}, {path:'/api/agent/schedules',enabled:'true'}]}}), ['openAnalytics'], 'only a literal true enables');
-assert.deepEqual(await paint(true, {'/api/notifications':enabled['/api/notifications'], '/api/tools':refused(401)}), ['openAnalytics', 'openDeliveries']);
-assert.deepEqual(await paint(true, {'/api/notifications':refused(401), '/api/tools':enabled['/api/tools']}), ['openAnalytics', 'openSchedules']);
+  '/api/tools':{tools:[null, 7, {path:'/api/agent/runs',enabled:true}, {path:'/api/agent/schedules',enabled:'true'}]}}), ['openAnalytics', 'htmlEditorToggle'], 'only a literal true enables');
+assert.deepEqual(await paint(true, {'/api/notifications':enabled['/api/notifications'], '/api/tools':refused(401)}), ['openAnalytics', 'htmlEditorToggle', 'openDeliveries']);
+assert.deepEqual(await paint(true, {'/api/notifications':refused(401), '/api/tools':enabled['/api/tools']}), ['openAnalytics', 'htmlEditorToggle', 'openSchedules']);
 
 // A probe that answers after logout cannot reveal a button.
 let late;
@@ -186,4 +186,26 @@ vm.runInContext("currentSession = 'second-session'", context);
 auth.logout = reply(401); auth.whoami = () => { throw new TypeError('Failed to fetch'); };
 await node('hAuthLogout').listeners.click(); await settle();
 assert.equal(context.currentSession, null, 'a 401 logout resets even when the probe fails');
+
+// Logout must drop the HTML draft. A blank textarea must not be saved back under the old chat.
+const priorChat = 'chat-before-logout';
+vm.runInContext('currentSession = ' + JSON.stringify(priorChat), context);
+const htmlSource = node('htmlEditorSource');
+htmlSource.dataset.draftKey = priorChat;
+htmlSource.value = 'MARKER-BEFORE-LOGOUT';
+const htmlDialog = node('htmlEditorDialog');
+htmlDialog.drafts = new Map([[priorChat, 'MARKER-BEFORE-LOGOUT']]);
+htmlDialog.open = true;
+context.resetAccountView();
+assert.equal(htmlDialog.drafts.has(priorChat), false, 'logout drops the stored HTML draft for the prior chat');
+vm.runInContext('currentSession = ' + JSON.stringify(priorChat), context);
+context.openHtmlEditor(node('htmlEditorToggle'));
+assert.equal(htmlSource.dataset.draftKey, priorChat, 'reopening that chat keys the draft to it');
+assert.ok(htmlSource.value.includes('color:#008000'), 'the next open loads the starter style');
+assert.ok(htmlSource.value.includes('script ran'), 'the next open loads the starter script');
+assert.equal(htmlSource.value.includes('MARKER-BEFORE-LOGOUT'), false, 'the marker typed before logout is gone');
+assert.notEqual(htmlSource.value, '', 'logout does not leave an empty draft');
+node('htmlPreviewStatus').textContent = 'Script ran. Style applied. The preview did not reach the API.';
+context.runHtmlPreview();
+assert.equal(node('htmlPreviewStatus').textContent, '', 'Run clears the previous preview verdict');
 console.log('header buttons: hidden until auth is known, signed-out and failed probes stay hidden, enabled features shown, login/setup/logout re-evaluate, stale probes discarded, sign-in card, direct first-run password prompt, and the initial-password lock passed');

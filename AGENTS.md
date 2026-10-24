@@ -42,7 +42,7 @@ When prose contradicts code, fix the prose in the same PR.
 | Provider keys (OS credential store; env wins) | Provider keys live in the OS credential store |
 | Outbound MCP client (`mcp.enabled`, `mcp.servers`, stdio sandbox) | I6 — process isolation…; `docs/MCP_CLIENT.md` |
 | Clone jail, read deny-list, repo retrieval | The clone jail |
-| Detached jobs, schedules | A detached run cannot outlive its gates; Scheduled agentic runs… |
+| Detached jobs, schedules, server `/loop` runs | A detached run cannot outlive its gates; Scheduled agentic runs… |
 | Ollama inventory, pull, warmup | Native Ollama pull stays on loopback… |
 | Session export and search | Session export and transcript search stay on the machine |
 | Spend ledger and prediction | Inference spend keeps recorded usage separate… |
@@ -61,7 +61,7 @@ When prose contradicts code, fix the prose in the same PR.
   Cross the boundary only through `src/shim` and the CLI whitelist.
 - Duplicated on purpose, kept in sync by tests: `RUN_ID_PATTERN` (server
   `agent_policy` vs agentic `run_store`), the planner/check timeout constants
-  (shim vs agentic), the check-profile table. Do not "deduplicate" them.
+  (shim vs agentic), the iteration default. Do not "deduplicate" them.
 - Gates read through `flag_is_true`: only literal YAML `true` is on; quoted
   `"true"` and a missing key are off. Note a missing key is not the shipped
   value: several gates ship `true` (structured memory, Ollama warmup, auth, TLS).
@@ -84,7 +84,7 @@ When prose contradicts code, fix the prose in the same PR.
   workers; requests never wait on a file.
 - scrypt at n=2^17 is slow unoptimized; `[profile.dev.package."*"] opt-level=3`
   is load-bearing for test time.
-- `RELOADABLE` in `src/server/config_reload.rs` (27 keys) is the only
+- `RELOADABLE` in `src/server/config_reload.rs` (28 keys) is the only
   hot-reload allowlist; everything else, including `web.concurrency`, is
   restart-only.
 
@@ -119,7 +119,6 @@ When prose contradicts code, fix the prose in the same PR.
   reviews; it never fails CI. Read it before merging and re-run it after
   resolving the last thread. Never comment `@codex review` without the
   operator's approval.
-- Loading a skill never authorizes push, merge or release.
 
 ## Docs policy
 
