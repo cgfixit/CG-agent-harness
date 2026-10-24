@@ -352,7 +352,8 @@ execute JavaScript, solve CAPTCHA, adopt browser cookies, manufacture missing
 results, or silently switch search engines. Challenges, redirects, unreadable
 output and transport failures are explicit failures, so credential-free success
 is not promised. A keyed request's invalid-key, quota or upstream failure also
-stays explicit; public fallback occurs only when the active key is absent. For
+stays explicit; public fallback occurs only when the active key is absent or
+`web.search.fallback_to_public_google` is literal true. For
 that keyless fallback in allowlist mode, an administrator first grants Google:
 
 ```text
@@ -364,7 +365,9 @@ that keyless fallback in allowlist mode, an administrator first grants Google:
 SearXNG uses only `web.search.searxng_url`: a loopback IP literal and explicit port,
 with `json` in its `search.formats`; anything else fails boot. Listings need no URL
 grant; `!`/`:` query tokens are refused, private links dropped, `unresponsive_engines`
-reported as `degraded`.
+reported as `degraded`. Opt-in `web.search.fallback_to_serpapi` and
+`fallback_to_public_google` try the next hop only when a provider is unusable; the
+answer carries `fallback_from` and each hop logs `web_search_fallback`.
 
 The exact generated search URL also works; an exact homepage grant is not enough.
 `https://google.com/*` does not grant `www`; the apex endpoint may redirect and

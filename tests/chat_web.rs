@@ -1569,6 +1569,98 @@ async fn chat_public_google_searches_in_one_turn_are_paced_by_the_floor() {
     task.abort();
 }
 
+/// #647 Phase 2: with SearXNG down and the opt-in public Google hop on, a loop
+/// turn's search is answered by the next hop, the tool result says so, and the
+/// turn's `chat_web_turn` audit line records the provider and the fallback.
+#[tokio::test]
+async fn loop_search_falls_back_from_a_down_searxng_and_audits_the_provider() {
+    let google_hits = Arc::new(AtomicUsize::new(0));
+    let g = google_hits.clone();
+    let fixture = Router::new()
+        .route(
+            "/search",
+            get(move || {
+                let g = g.clone();
+                async move {
+                    g.fetch_add(1, Ordering::SeqCst);
+                    "<a href='/url?q=https%3A%2F%2Fveeam.com%2Fkb1'><h3>Fallback result</h3></a>"
+                }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(|Json(body): Json<Value>| async move {
+                let messages = body["messages"].as_array().unwrap();
+                if messages.last().unwrap()["role"] == "tool" {
+                    return Json(common::ok_reply("Answered from the fallback listing.", 10, 3));
+                }
+                Json(tool_call_reply(
+                    "web_search",
+                    r#"{"query":"veeam cve"}"#,
+                    "fallback_search",
+                ))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    // A loopback port with nothing listening: SearXNG is down.
+    let down = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let down_port = down.local_addr().unwrap().port();
+    drop(down);
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+        common::ServerOptions {
+            web_resolve: Some(("google.fixture".into(), address)),
+            public_search: Some(url::Url::parse("http://google.fixture/search").unwrap()), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            ..common::ServerOptions::default()
+                .with("logging.audit_queue_lines", "0")
+                .with("web.search.provider", "searxng")
+                .with("web.search.searxng_url", &format!("\"http://127.0.0.1:{down_port}\"")) // DevSkim: ignore DS137138,DS162092 because the SearXNG URL is a loopback test port.
+                .with("web.search.fallback_to_public_google", "true")
+        },
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://google.fixture/*"})) // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            .await
+            .0,
+        200
+    );
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"Find current CVEs"}),
+    )
+    .await;
+    let (status, reply) = s
+        .post_json("/api/chat", json!({"message":"continue","session_id":sid,"loop":true}))
+        .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["reply"], "Answered from the fallback listing.", "{reply}");
+    let result = &reply["web_tools"][0]["result"];
+    assert_eq!(result["provider"], "google-public", "{reply}");
+    assert_eq!(result["fallback_from"], json!(["searxng"]), "{reply}");
+    assert_eq!(google_hits.load(Ordering::SeqCst), 1);
+    let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap();
+    let lines: Vec<Value> = audit
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    let fallback: Vec<&Value> = lines.iter().filter(|l| l["event"] == "web_search_fallback").collect();
+    assert_eq!(fallback.len(), 1, "{audit}");
+    assert_eq!(fallback[0]["from"], "searxng");
+    assert_eq!(fallback[0]["to"], "google-public");
+    let turn = lines
+        .iter()
+        .rfind(|l| l["event"] == "chat_web_turn")
+        .expect("chat_web_turn audit line");
+    assert_eq!(turn["providers"], json!(["google-public"]), "{turn}");
+    assert_eq!(turn["fallbacks"], 1, "{turn}");
+    task.abort();
+}
+
 fn tool_call_reply(name: &str, arguments: &str, id: &str) -> Value {
     json!({"model":"mock","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
         "tool_calls":[{"id":id,"type":"function","function":{"name":name,"arguments":arguments}}]}}],
