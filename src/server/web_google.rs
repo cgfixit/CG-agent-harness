@@ -9,7 +9,9 @@ use serde_json::{json, Value};
 
 use super::web_policy::{canonical_url, error};
 use super::web_search::{parse_html, run_web_cpu, WebTool};
-use super::web_searxng::{falls_through, plan_hops, refuse_searxng_syntax, Hop, SearchProvider};
+use super::web_searxng::{
+    falls_through, plan_hops, refuse_searxng_syntax, searxng_silent, Hop, SearchProvider, SEARXNG_SILENT,
+};
 use crate::common::audit::Audit;
 use crate::common::credential_store::CredentialStore;
 use crate::common::errors::Result;
@@ -411,7 +413,16 @@ impl WebTool {
             let result = tokio::time::timeout_at(hop_deadline, attempt)
                 .await
                 .map_err(|_| error("WEB_TIMEOUT", "search deadline exceeded"))
-                .and_then(|value| value);
+                .and_then(|value| value)
+                .and_then(|value| {
+                    // Silent engines say nothing about the query: with a later hop that is an
+                    // unusable provider; without one the listing stays the answer.
+                    if hop == Hop::Searxng && next.is_some() && searxng_silent(&value) {
+                        Err(error(SEARXNG_SILENT, "no SearXNG engine answered"))
+                    } else {
+                        Ok(value)
+                    }
+                });
             match result {
                 Ok(mut value) => {
                     if !fallback_from.is_empty() {
@@ -738,7 +749,8 @@ mod tests {
             Fixture { hits, addr, task }
         }
 
-        /// SearXNG answering `mode`: "zero" rows, "slow" (10 s), or one row.
+        /// SearXNG answering `mode`: "zero" rows, "slow" (10 s), "silent" (no rows and
+        /// google did not answer), "partial" (one row, google did not answer) or one row.
         pub(super) async fn searxng(mode: &'static str) -> Fixture {
             let hits = Arc::new(AtomicUsize::new(0));
             let h = hits.clone();
@@ -751,12 +763,17 @@ mod tests {
                         if mode == "slow" {
                             tokio::time::sleep(Duration::from_secs(10)).await;
                         }
-                        let rows = if mode == "zero" {
+                        let rows = if matches!(mode, "zero" | "silent") {
                             json!([])
                         } else {
                             json!([{"title":"SearXNG row","url":"https://veeam.com/sx","content":"x"}])
                         };
-                        Json(json!({"results":rows,"unresponsive_engines":[]}))
+                        let silent = if matches!(mode, "silent" | "partial") {
+                            json!([["google", "Suspended: CAPTCHA"]])
+                        } else {
+                            json!([])
+                        };
+                        Json(json!({"results":rows,"unresponsive_engines":silent}))
                     }
                 }),
             );
@@ -948,23 +965,69 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_rejected_key_or_spent_quota_never_reaches_public_google() {
+    async fn a_rejected_key_never_reaches_public_google() {
         let serp = chain::serpapi().await;
         let google = chain::google().await;
-        for (key, code) in [("bad", "WEB_SEARCH_KEY_REJECTED"), ("quota", "WEB_SEARCH_QUOTA")] {
-            let chain = chain::Chain::new(
-                &chain::yaml(
-                    chain::refused_port().await,
-                    ", fallback_to_serpapi: true, fallback_to_public_google: true",
-                ),
-                key,
-                &serp,
-                Some(&google),
-            )
-            .await;
-            assert_eq!(chain.search("veeam cve").await.unwrap_err().code, code, "{key}");
-        }
+        let chain = chain::Chain::new(
+            &chain::yaml(
+                chain::refused_port().await,
+                ", fallback_to_serpapi: true, fallback_to_public_google: true",
+            ),
+            "bad",
+            &serp,
+            Some(&google),
+        )
+        .await;
+        assert_eq!(
+            chain.search("veeam cve").await.unwrap_err().code,
+            "WEB_SEARCH_KEY_REJECTED",
+            "the operator's error stays loud"
+        );
         assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_spent_quota_moves_on_to_public_google_on_the_first_search_and_then_skips_serpapi() {
+        let serp = chain::serpapi().await;
+        let google = chain::google().await;
+        let yaml = chain::yaml(
+            chain::refused_port().await,
+            ", fallback_to_serpapi: true, fallback_to_public_google: true",
+        );
+        let chain = chain::Chain::new(&yaml, "quota", &serp, Some(&google)).await;
+        let first = chain.search("veeam cve").await.unwrap();
+        assert_eq!(first["provider"], "google-public");
+        assert_eq!(first["fallback_from"], json!(["searxng", "google-serpapi"]));
+        let second = chain.search("veeam backup").await.unwrap();
+        assert_eq!(second["provider"], "google-public");
+        assert_eq!(
+            serp.hits.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the cooling SerpAPI was asked once"
+        );
+        let codes: Vec<Value> = chain
+            .audit_events("web_search_fallback")
+            .iter()
+            .map(|line| line["code"].clone())
+            .collect();
+        assert_eq!(
+            codes,
+            [
+                json!("WEB_SEARCH_PROVIDER"),
+                json!("WEB_SEARCH_QUOTA"),
+                json!("WEB_SEARCH_PROVIDER"),
+                json!("WEB_SEARCH_COOLDOWN")
+            ]
+        );
+        // Without the public hop nobody is spent beyond the operator's opt-ins: still an error.
+        let alone = chain::Chain::new(
+            &chain::yaml(chain::refused_port().await, ", fallback_to_serpapi: true"),
+            "quota",
+            &serp,
+            None,
+        )
+        .await;
+        assert_eq!(alone.search("veeam cve").await.unwrap_err().code, "WEB_SEARCH_QUOTA");
     }
 
     #[tokio::test]
@@ -979,19 +1042,53 @@ mod tests {
             Some(&google),
         )
         .await;
-        assert_eq!(chain.search("first").await.unwrap_err().code, "WEB_SEARCH_QUOTA");
+        let first = chain.search("first").await.unwrap();
+        assert_eq!(first["provider"], "google-public");
+        assert_eq!(first["fallback_from"], json!(["google-serpapi"]));
         let value = chain.search("second").await.unwrap();
         assert_eq!(value["provider"], "google-public");
         assert_eq!(value["fallback_from"], json!(["google-serpapi"]));
         assert_eq!(
             serp.hits.load(std::sync::atomic::Ordering::SeqCst),
             1,
-            "cooling SerpAPI was not asked"
+            "cooling SerpAPI was not asked again"
         );
-        assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let lines = chain.audit_events("web_search_fallback");
+        assert_eq!(lines[0]["code"], "WEB_SEARCH_QUOTA");
+        assert_eq!(lines[1]["code"], "WEB_SEARCH_COOLDOWN");
+    }
+
+    #[tokio::test]
+    async fn silent_searxng_engines_move_on_but_a_partial_or_clean_answer_stays() {
+        let serp = chain::serpapi().await;
+        let silent = chain::searxng("silent").await;
+        let on = ", fallback_to_serpapi: true";
+        let chain = chain::Chain::new(&chain::yaml(silent.addr.port(), on), "good", &serp, None).await;
+        let value = chain.search("veeam cve").await.unwrap();
+        assert_eq!(value["provider"], "google-serpapi");
+        assert_eq!(value["fallback_from"], json!(["searxng"]));
         assert_eq!(
             chain.audit_events("web_search_fallback")[0]["code"],
-            "WEB_SEARCH_COOLDOWN"
+            "WEB_SEARCH_DEGRADED"
+        );
+        // No later hop: the empty listing is still the answer, with the engines named.
+        let alone = chain::Chain::new(&chain::yaml(silent.addr.port(), ""), "good", &serp, None).await;
+        let value = alone.search("veeam cve").await.unwrap();
+        assert_eq!(value["provider"], "searxng");
+        assert_eq!(value["results"], json!([]));
+        assert_eq!(value["degraded"], json!(["google"]));
+        assert!(alone.audit_events("web_search_fallback").is_empty());
+        // Rows with a silent engine are an answer.
+        let partial = chain::searxng("partial").await;
+        let part = chain::Chain::new(&chain::yaml(partial.addr.port(), on), "good", &serp, None).await;
+        let value = part.search("veeam cve").await.unwrap();
+        assert_eq!(value["provider"], "searxng");
+        assert_eq!(value["results"][0]["title"], "SearXNG row");
+        assert_eq!(
+            serp.hits.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "only the silent answer spent SerpAPI"
         );
     }
 
