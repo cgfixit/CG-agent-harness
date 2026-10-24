@@ -98,7 +98,7 @@ impl Limits {
             total_tokens: bound("total_tokens", 16000, 2048, super::compaction::MAX_WEB_TOTAL_TOKENS)?,
             research_seconds: bound("research_seconds", 300, 10, 1800)?,
             synthesis_seconds: bound("synthesis_seconds", 300, 10, 1800)?,
-            chat_tool_calls: bound("chat_tool_calls", 10, 1, crate::llm::openai_stream::MAX_TOOL_CALLS)? as usize,
+            chat_tool_calls: bound("chat_tool_calls", 30, 1, crate::llm::openai_stream::MAX_TOOL_CALLS)? as usize,
             stale_seconds: bound("stale_seconds", 604800, 60, 31_536_000)?,
             goal_web_default: match cfg.get("web.goal_web_default") {
                 None => super::sessions::GoalWebMode::All,
@@ -1113,16 +1113,16 @@ mod tests {
     }
 
     #[test]
-    fn chat_tool_call_budget_defaults_to_ten_and_rejects_out_of_range_values() {
+    fn chat_tool_call_budget_defaults_to_thirty_and_rejects_out_of_range_values() {
         for yaml in ["{}", include_str!("../../assets/config.default.yaml")] {
             let cfg = AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap();
-            assert_eq!(Limits::load(&cfg).unwrap().chat_tool_calls, 10);
+            assert_eq!(Limits::load(&cfg).unwrap().chat_tool_calls, 30);
         }
-        for value in ["1", "3", "10", "0", "11", "-1", "1.5", "\"10\"", "null"] {
+        for value in ["1", "3", "10", "30", "0", "31", "-1", "1.5", "\"10\"", "null"] {
             let cfg =
                 AppConfig::from_str(&format!("web: {{chat_tool_calls: {value}}}"), Path::new("config.yaml")).unwrap();
             let result = Limits::load(&cfg);
-            if let Ok(expected @ 1..=10) = value.parse::<usize>() {
+            if let Ok(expected @ 1..=30) = value.parse::<usize>() {
                 assert_eq!(result.unwrap().chat_tool_calls, expected);
             } else {
                 assert!(result.is_err(), "invalid limit accepted: {value}");
