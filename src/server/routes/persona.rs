@@ -480,6 +480,9 @@ pub async fn preview(
         })
     });
     let manual = manual_query.and_then(|query| state.self_knowledge.select(&query));
+    let web_reads = session.as_ref().filter(|_| chat_web_mode.enabled()).and_then(|s| {
+        crate::server::web_ledger::carried_web_reads(&state.web, s, state.runtime_limits().web.carry_forward_sources)
+    });
     let inputs = PromptInputs {
         selected_skills: &selected,
         soul_enabled: settings.soul_enabled && !portal_auditor,
@@ -509,6 +512,7 @@ pub async fn preview(
         live_state: live_block.as_deref(),
         self_manual: manual.as_ref().map(|selection| selection.block.as_str()),
         diag_context: diag.as_ref().map(|staged| staged.block.as_str()),
+        web_reads: web_reads.as_deref(),
     };
     let composed = crate::server::prompts::compose_system_prompt_detailed(&inputs);
     let prompt = composed.prompt;
