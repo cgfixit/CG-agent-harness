@@ -20,8 +20,9 @@
 #   --no-profile      do not add Homebrew and Rust PATH lines to your shell profile
 #   --no-allowlist    do not grant the web allowlist
 #   --no-auto-memory  do not list the local model for automatic memory suggestions
-#   --reset-home      with --yes, delete the previous install's home and Keychain
-#                     entries first (scripts/reset-macos.sh); asked otherwise, default no
+#   --reset-home      delete the previous install's home and Keychain entries first
+#                     (scripts/reset-macos.sh); asks you to confirm unless --yes, never
+#                     offered without this flag
 # Full guide: docs/INSTALL.md ("One command: init.sh").
 
 # Started from zsh or sh (`zsh scripts/init.sh`): rerun under bash. POSIX syntax until then.
@@ -546,17 +547,17 @@ step_web_allowlist() {
 
 # A previous install's home (accounts, sessions, memory, logs) and its Keychain
 # entries go only on request, through scripts/reset-macos.sh: it shows what it
-# would remove and refuses while the app or a server holds the home. Never under
-# --yes without --reset-home. The app itself stays; ~/.CyClaw is another project.
+# would remove and refuses while the app or a server holds the home. Only with
+# --reset-home, so a routine rerun never offers it. The app itself stays;
+# ~/.CyClaw is another project.
 step_previous_install() {
   local target=${CGAGENTHARNESS_HOME:-$HOME/.CGagentHarness}
   if [ ! -f "$target/config.yaml" ] && [ ! -f "$target/harness.json" ]; then
     say "no previous install at $target"
     return "$SKIP"
   fi
-  if [ "$interactive" = 0 ]; then
-    [ "$reset_home" = 1 ] || { say "keeping the previous install at $target (--reset-home deletes it)"; return "$SKIP"; }
-  else
+  [ "$reset_home" = 1 ] || { say "keeping the previous install at $target (--reset-home deletes it)"; return "$SKIP"; }
+  if [ "$interactive" = 1 ]; then
     ask "A previous install's home is at $target. Delete it and its Keychain entries for a fresh start? Accounts, sessions, memory and logs go with it. [y/N]" n
     case $REPLY in [Yy]*) ;; *) say "keeping $target"; return "$SKIP" ;; esac
   fi
@@ -669,7 +670,7 @@ launch() {
 note "=== init.sh started $(date '+%Y-%m-%d %H:%M:%S %Z'); args: ${install_args[*]:-none}; choice ${choice:-ask}; interactive $interactive"
 profile='' env_files='' home='' kc_service=''
 step 'Check this Mac' required step_preflight
-step 'Previous install (scripts/reset-macos.sh, asked)' optional step_previous_install
+step 'Previous install (scripts/reset-macos.sh, --reset-home only)' optional step_previous_install
 step 'Command Line Tools' required step_developer_tools
 step 'Git hooks' optional step_checkout
 step 'Install tools, backend and app (install-macos.sh)' required step_install
