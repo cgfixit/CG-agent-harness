@@ -79,6 +79,10 @@ pub struct TurnSummary {
     /// Distinct codes the turn's tool events carried, refusals and
     /// `WEB_TOOLS_WITHHELD` included.
     pub codes: Vec<String>,
+    /// Distinct providers that answered this turn's searches.
+    pub providers: Vec<String>,
+    /// Searches answered by a fallback hop (`fallback_from` non-empty).
+    pub fallbacks: u64,
 }
 
 impl TurnSummary {
@@ -97,6 +101,8 @@ impl TurnSummary {
             "rereads_after_compaction": self.rereads_after_compaction,
             "cited": self.cited,
             "codes": self.codes,
+            "providers": self.providers,
+            "fallbacks": self.fallbacks,
         })
     }
 }
@@ -121,6 +127,7 @@ pub fn record_turn(
 ) -> Option<TurnSummary> {
     let mut summary = TurnSummary::default();
     let mut codes = BTreeSet::new();
+    let mut providers = BTreeSet::new();
     let mut cited = HashSet::new();
     for event in events {
         if let Some(code) = event["code"].as_str() {
@@ -183,6 +190,12 @@ pub fn record_turn(
             }
             cites(reply, &target) || result["url"].as_str().is_some_and(|url| cites(reply, url))
         } else {
+            if let Some(provider) = result["provider"].as_str() {
+                providers.insert(crate::common::clip_chars(provider, 32));
+            }
+            if result["fallback_from"].as_array().is_some_and(|from| !from.is_empty()) {
+                summary.fallbacks += 1;
+            }
             let rows = result["results"].as_array().map_or(&[][..], Vec::as_slice);
             source.results = rows.len() as u64;
             rows.iter()
@@ -208,6 +221,7 @@ pub fn record_turn(
         sources.drain(oldest..=oldest);
     }
     summary.codes = codes.into_iter().collect();
+    summary.providers = providers.into_iter().collect();
     Some(summary)
 }
 
@@ -333,6 +347,8 @@ mod tests {
                 rereads_after_compaction: 0,
                 cited: 2,
                 codes: vec!["WEB_HOST_DENIED".into(), "WEB_TOOLS_WITHHELD".into()],
+                providers: vec![],
+                fallbacks: 0,
             }
         );
         let page = &sources[0];
@@ -344,6 +360,30 @@ mod tests {
         assert_eq!(sources[2].last_code.as_deref(), Some("WEB_HOST_DENIED"));
         let stored = serde_json::to_string(&sources).unwrap();
         assert!(!stored.contains("abc") && !stored.contains("\"T\""), "{stored}");
+    }
+
+    #[test]
+    fn search_providers_and_fallbacks_are_counted_for_the_audit() {
+        let mut sources = Vec::new();
+        let search = |q: &str, provider: &str, from: Value| {
+            json!({"tool":"web_search","ok":true,"target":q,
+                "result":{"query":q,"provider":provider,"fallback_from":from,"results":[]}})
+        };
+        let events = [
+            search("a", "google-serpapi", json!(["searxng"])),
+            search("b", "searxng", Value::Null),
+            search("c", "google-serpapi", json!([])),
+        ];
+        let summary = record_turn(&mut sources, &events, "", 1, 0, 1.0).unwrap();
+        assert_eq!(summary.providers, ["google-serpapi", "searxng"]);
+        assert_eq!(summary.fallbacks, 1);
+        let fields = summary.audit_fields(1, true, 0);
+        assert_eq!(fields["providers"], json!(["google-serpapi", "searxng"]));
+        assert_eq!(fields["fallbacks"], 1);
+        assert!(
+            !fields.to_string().contains("\"a\""),
+            "targets stay out of the audit: {fields}"
+        );
     }
 
     #[test]
