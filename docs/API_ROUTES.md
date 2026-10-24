@@ -14,6 +14,7 @@ check-profile names and run IDs, never browser-supplied commands.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/` | Console page (`assets/static/harness.html` with CSRF/CSP placeholders filled) |
+| GET | `/preview/html` | Sandboxed inline-only HTML preview, no network. |
 | GET | `/static/{name}` | Static console assets |
 | GET | `/api/status` | Public minimal status; operational `model`, `configured_model`, `selection_overrides_config` require account access |
 | GET | `/api/tools` | Wired-route and tool inventory |
@@ -58,7 +59,7 @@ session timeouts.
 | DELETE | `/api/notes-corpus/{id}` | Unlink one owner-owned note. |
 | POST | `/api/chat/cancel` | Cancel the active turn (`/loop stop`) |
 | POST | `/api/loop/start` | Start an owner-bound server-side `/loop` run: `session_id`, optional `goal`/`web_mode`, limit overrides |
-| POST | `/api/loop/stop` | Stop one run by `run_id` |
+| POST | `/api/loop/stop` | Stop by `run_id` |
 | GET | `/api/loop/status` | One run (`?run_id=`) or a session's run (`?session_id=`) |
 | GET | `/api/loop/events/{run_id}` | SSE per-turn progress ([server loops](CONSOLE.md#71-sessions-and-bounded-chat-continuation)) |
 | POST | `/api/sessions/{session_id}/prompt-history` | Owner-scoped: save one submitted composer line (`{text}`) for ArrowUp recall, refused or not; last 50 kept, an immediate repeat once. The console omits `/api set` values. |

@@ -66,7 +66,7 @@ the generation wait, discards delayed replies, and clears staged
 coding or persona reviews. Switching restores retained messages without
 duplicates. A new session has no messages, goal, or prompt skills. Persona and
 enabled notes stay shared; your account's web selection and
-injected context survive session changes. Reset controls differ in scope:
+injected context survive session changes. The HTML editor button, beside the web-policy globe, previews the draft for the chat that was open when you clicked it. That preview is a separate page. It can run the draft's own style and script, and it cannot call this console. Reset controls differ in scope:
 
 | Intent | Control | Retained data |
 |---|---|---|
