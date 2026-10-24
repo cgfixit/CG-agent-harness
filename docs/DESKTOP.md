@@ -105,7 +105,7 @@ and local-certificate trust. The script and paths come from the shell, never pag
 content. Ordinary browser consoles hide this button.
 
 An OS-held home lock prevents concurrent desktop and headless server writers on
-Unix. A private, user/home-scoped Unix socket only focuses an existing desktop;
+Unix and Windows. A private, user/home-scoped Unix socket only focuses an existing desktop;
 it carries no secrets, commands, or PID authority. Different
 homes can run independently. Independent manually invoked agentic CLI commands
 are not excluded by the server home lock; do not run concurrent writers manually.
@@ -191,7 +191,7 @@ reattaches or resumes. A persistence failure refuses execution or reports an
 unsaved outcome.
 
 `/agent runs` lists bounded recent records and reconciles released
-Unix worker leases to `interrupted`. A live lease remains running. Legacy running
+Unix/Windows worker leases to `interrupted`. A live lease remains running. Legacy running
 records without ownership evidence stay unknown and cannot be discarded by a
 stale-state guess. `/agent status <id>` inspects retained evidence and available
 diff; `/agent discard <id>` removes interrupted or decided work through the

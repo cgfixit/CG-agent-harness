@@ -647,7 +647,7 @@ second launch focuses the same instance. During work, Cmd-Q offers **Keep
 running** or **Cancel work and quit**. Ctrl-C or SIGTERM stops `serve`. Neither
 path installs login startup or resumes requests or approvals after reboot.
 
-One server owns a home at a time. Quit its owner before switching between app
+On Unix and Windows, one server owns a home at a time; competing starts refuse. Quit its owner before switching between app
 and standalone use; do not delete a live lock file. Different homes can run
 independently. This lock does not cover manually invoked agentic CLI writers.
 
