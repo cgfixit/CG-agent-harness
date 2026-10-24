@@ -1102,7 +1102,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: owner-approved (2026-10-18) cap set to the measured count with #546 + #551 together; never trim gate text to fit.
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
     // why: operator-approved (2026-10-23) measured count for the web search cooldown sentence.
-    ("INVARIANTS.md", Root, 7202),
+    ("INVARIANTS.md", Root, 7135),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     // why: dependency refresh removed five stale Linux prerequisite words; keep the cut.
