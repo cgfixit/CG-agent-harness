@@ -1335,12 +1335,17 @@ function renderSkillsDiagram(skills, wired, total) {
 }
 
 const SEARCH_PROVIDER_LABELS = {'google-public': 'public Google', 'google-serpapi': 'SerpAPI', searxng: 'SearXNG'};
-/* "via SearXNG (google did not answer)"; other providers keep their raw name. */
+/* "via SearXNG (google did not answer)", or after a fallback hop "via public Google
+   (SearXNG did not answer)"; other providers keep their raw name. Own keys only, so
+   "constructor" or "__proto__" never resolve through Object.prototype. */
+const searchProviderName = p => Object.prototype.hasOwnProperty.call(SEARCH_PROVIDER_LABELS, p) ? SEARCH_PROVIDER_LABELS[p] : '';
 function searchProviderLabel(result) {
-  const name = SEARCH_PROVIDER_LABELS[result.provider];
+  const name = searchProviderName(result.provider);
   if (!name) return result.provider || 'search';
   const degraded = Array.isArray(result.degraded) ? result.degraded.filter(e => typeof e === 'string') : [];
-  return 'via ' + name + (degraded.length ? ' (' + degraded.join(', ') + ' did not answer)' : '');
+  const skipped = Array.isArray(result.fallback_from) ? result.fallback_from.map(searchProviderName).filter(Boolean) : [];
+  const missing = skipped.concat(degraded);
+  return 'via ' + name + (missing.length ? ' (' + missing.join(', ') + ' did not answer)' : '');
 }
 function renderSearchResults(result) {
   const box = document.createElement('div');
