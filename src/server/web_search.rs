@@ -412,6 +412,10 @@ pub struct WebTool {
     pub(super) permits: Arc<Semaphore>,
     pub(super) mutation: Arc<Mutex<()>>,
     pub(super) search_gate: Arc<Semaphore>,
+    /// When the last public Google search request left, shared by every snapshot.
+    pub(super) public_search_sent: Arc<std::sync::Mutex<Option<tokio::time::Instant>>>,
+    /// `web.search.provider` and its one exact SearXNG socket; restart-only.
+    pub(super) search_provider: super::web_searxng::SearchProvider,
     /// Per-provider pause after a refusal, shared by every snapshot; lost on restart.
     pub(super) search_cooldown: Arc<super::web_google::SearchCooldown>,
     /// Programmatic fixture hook replacing the public Google search URL; no
@@ -434,6 +438,8 @@ impl WebTool {
             plaintext_key_file: cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE),
             mutation: Arc::new(Mutex::new(())),
             search_gate: Arc::new(Semaphore::new(1)),
+            public_search_sent: Arc::default(),
+            search_provider: super::web_searxng::SearchProvider::load(cfg)?,
             search_cooldown: Arc::default(),
             test_public_search: None,
             research: Arc::default(),
@@ -499,7 +505,8 @@ impl WebTool {
             "rules": policy.rules, "policy_revision": policy.revision,
             "mode": policy.mode, "blocked": policy.blocked,
             "policy_scope":"shared_home", "context_scope":"account", "limits":self.limits,
-            "search_provider": if self.search_key()?.is_empty() { "public Google (may require JavaScript/CAPTCHA)" } else { "Google via SerpAPI" },
+            "search_provider": self.search_provider.describe(
+                self.search_provider == super::web_searxng::SearchProvider::Auto && !self.search_key()?.is_empty()),
             "injected": enabled && stored, "context_stored": stored,
             "has_last": self.read_page(&self.last_path(owner), None).is_ok(), "max_allow": self.limits.max_rules,
             "policy_missing": missing}),
@@ -804,6 +811,25 @@ impl WebTool {
             .map_err(|_| error("WEB_FETCH_FAILED", "HTTP setup failed"))
     }
 
+    /// The single private-address exception: SearXNG listings reach exactly the
+    /// configured loopback socket, validated at boot. Only `searxng_listing` calls
+    /// this; fetch, discovery, research and webhooks keep `pinned_client`.
+    pub(super) fn searxng_client(&self, endpoint: &url::Url, socket: SocketAddr) -> Result<reqwest::Client> {
+        let host = endpoint.host_str().unwrap_or_default().trim_matches(['[', ']']);
+        reqwest::Client::builder()
+            .no_proxy()
+            .http1_only()
+            .pool_max_idle_per_host(0)
+            .retry(reqwest::retry::never())
+            .redirect(reqwest::redirect::Policy::none())
+            .dns_resolver(Arc::new(RefuseDns))
+            .resolve_to_addrs(host, &[socket])
+            .timeout(Duration::from_secs(self.limits.request_seconds))
+            .user_agent("CGagentHarness-web/1.0")
+            .build()
+            .map_err(|_| error("WEB_FETCH_FAILED", "HTTP setup failed"))
+    }
+
     pub(super) async fn get(&self, raw: &str, group: Option<&str>, cached: Option<&Page>) -> Result<Page> {
         self.get_raw(raw, group, cached).await.map(|(page, _)| page)
     }
@@ -813,6 +839,19 @@ impl WebTool {
         raw: &str,
         group: Option<&str>,
         cached: Option<&Page>,
+    ) -> Result<(Page, String)> {
+        self.get_raw_paced(raw, group, cached, None).await
+    }
+
+    /// `pace` (`pace_ms`, the caller's deadline) spaces public Google searches.
+    /// It is checked and stamped just before the send, after the permit wait and
+    /// DNS, so queueing behind other fetches cannot shorten the gap.
+    pub(super) async fn get_raw_paced(
+        &self,
+        raw: &str,
+        group: Option<&str>,
+        cached: Option<&Page>,
+        pace: Option<(u64, tokio::time::Instant)>,
     ) -> Result<(Page, String)> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
         tokio::time::timeout_at(deadline, async {
@@ -844,6 +883,13 @@ impl WebTool {
                 if let Some(modified) = &page.last_modified {
                     request = request.header(reqwest::header::IF_MODIFIED_SINCE, modified);
                 }
+            }
+            if let Some((pace_ms, search_deadline)) = pace {
+                let last = *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(ready) = super::web_google::public_pace(last, pace_ms, search_deadline)? {
+                    tokio::time::sleep_until(ready).await;
+                }
+                *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner()) = Some(tokio::time::Instant::now());
             }
             let mut response = request
                 .send()
