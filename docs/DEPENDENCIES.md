@@ -86,7 +86,9 @@ cargo build --locked
 cargo deny check
 ```
 
-Use another private report path on non-macOS systems. Check Cargo's exit status;
+Use another private report path on non-macOS systems. Use cargo-deny 0.20 or
+newer (CI's action bundles 0.20.2); 0.18 rejects `deny.toml`'s `unsound = "all"`.
+Check Cargo's exit status;
 do not infer success from a grep match or suppress errors. The update command is
 a preview and leaves the lockfile unchanged; `--locked` alone does not mean all
 available versions are installed. Review compatibility and upstream changes.
@@ -105,11 +107,13 @@ point-in-time advisory/license/source check, not proof of vulnerability absence.
 Workflow action pins live in `.github/workflows/` and move with those files,
 not with the lockfiles.
 
-## Last synchronization (2026-10-23)
+## Last synchronization (2026-10-24)
 
-Both crates took `tokio` 1.54.1 for RUSTSEC-2026-0384 (1.54.0 yanked). The
-2026-10-20 pass took every compatible MSRV-aware release: shared `crc32fast`
-1.5.3 and `rustls-webpki` 0.103.16; backend
-`typed-path` 0.12.4; desktop `plist` 1.10.2 and `tauri-winres` 0.3.7. No
-manifest, feature, toolchain or advisory exception changed. Dated results
-describe that pass only; rerun the checks above before trusting them.
+Both locks took every compatible MSRV-aware release, including shared ICU 2.4 (`icu_*`,
+`zerovec`, `yoke`, `tinystr`), `cc` 1.10, `smallvec` 1.16.4 and
+`webpki-root-certs` 1.0.11; backend `bon` 3.10.3 and `memmap2` 0.9.12; desktop
+Tauri sub-crates (`tauri-build`/`-codegen`/`-macros` 2.7.4, `tauri-runtime-wry`
+2.12.3, `wry` 0.57.1, `tao` 0.37.2), `uuid` 1.29 and `ico` 0.6, which drops the
+duplicate `png` 0.17. `tauri` stays `=2.12.4`; no manifest, feature, toolchain or
+advisory exception changed. Dated results describe that pass only; rerun the
+checks above before trusting them.
