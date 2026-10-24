@@ -97,7 +97,13 @@ pub fn resolve_check_profiles(names: &[String]) -> Result<Vec<Value>> {
         ));
     }
     let mut out = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
     for name in names {
+        // A repeated name adds no evidence; resolve it once so the manifest and
+        // the run budget count distinct profiles.
+        if !seen.insert(name.as_str()) {
+            continue;
+        }
         match profiles().get(name.as_str()) {
             Some(p) => out.push(json!({"name": name, "argv": p.argv})),
             None => {
@@ -110,4 +116,19 @@ pub fn resolve_check_profiles(names: &[String]) -> Result<Vec<Value>> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_check_profiles;
+
+    #[test]
+    fn duplicate_profile_names_resolve_once() {
+        let names = ["cargo-test", "cargo-fmt", "cargo-test"].map(String::from);
+        let resolved = resolve_check_profiles(&names).unwrap();
+        let resolved: Vec<&str> = resolved.iter().map(|p| p["name"].as_str().unwrap()).collect();
+        assert_eq!(resolved, ["cargo-test", "cargo-fmt"]);
+        // An unknown name still refuses, even after a known duplicate.
+        assert!(resolve_check_profiles(&["cargo-test", "cargo-test", "nope"].map(String::from)).is_err());
+    }
 }

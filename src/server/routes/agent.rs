@@ -69,6 +69,12 @@ pub async fn github_status(State(state): State<Arc<AppState>>) -> ApiResult<Json
                 "AGENTIC_TIMEOUT",
                 format!("agentic {action} exceeded its {timeout_sec}s budget"),
             ),
+            // A spawn or temp-file failure is the shim's, not the request's: 502, as agentic_call.
+            ShimError::Io(msg) => ApiError::new(
+                StatusCode::BAD_GATEWAY,
+                "SHIM_IO_ERROR",
+                format!("status shim failed: {}", state.audit.redact(&msg)),
+            ),
             other => ApiError::bad_request("AGENTIC_ERROR", state.audit.redact(&other.to_string())),
         })?;
     Ok(Json(result.to_json(state.audit.redactors())))
@@ -359,8 +365,9 @@ pub(crate) fn start_job(
     owner: String,
     schedule_id: Option<String>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
-    let prepared = prepare_run_inner(&state, &req, &owner, schedule_id.is_some())?;
+    // Refuse before the broker decision and gate claims, like agent_run.
     refuse_bound_session_pins(&state, &owner, &req)?;
+    let prepared = prepare_run_inner(&state, &req, &owner, schedule_id.is_some())?;
     let job_id = crate::common::random_hex(16);
     let action = prepared.ops.action.clone();
     let task_state = state.clone();

@@ -87,20 +87,10 @@ chat:
   compact_tail_percent: 25 # 10–50: verbatim tail budget as a percent of the trigger; at least the last exchange
   compact_follow_window: false # an auto_tune-verified window above 32768 scales the trigger up in proportion; literal false keeps it
   compact_max_prefill_sec: 1500 # 30–1800: bounds scaled-trigger prefill only when compact_follow_window is true
-    # Sentences with a code, host:port, URL, path or "remember"-style cue, quoted verbatim
-  # from the pinned first message and the full compacted user turns (the summary reads
-  # each turn's first 800 characters only), under a label that they and the pinned
-  # message outrank the summary. 0 turns ledger and label off; held at 4000.
-  fact_ledger_max_chars: 1200
 
 compaction:
   summary_max_tokens: 2048 # clamped to 128–2048; existing homes without this key also use 768; sent doubled where the reply is reserved twice
-  # Sentences with a code, host:port, URL, path or "remember"-style cue, quoted verbatim
-  # from the pinned first message and the full compacted user turns (the summary reads
-  # each turn's first 800 characters only), under a label that they and the pinned
-  # message outrank the summary. 0 turns ledger and label off; held at 4000.
-  fact_ledger_max_chars: 1200
-  
+
 # Chat text attachments (/api/chat/attachments). Size, count and quota limits
 # are fixed in src/server/attachments.rs; this bounds how many upload bodies
 # (up to ~45 MiB each) may be buffered at once. Range 1–8.
