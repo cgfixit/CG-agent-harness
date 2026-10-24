@@ -691,6 +691,9 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "agentic.deepagent_github.retrieval.enabled",
         "diagnostics.logs_enabled",
         "diagnostics.model_tool",
+        // #647 Phase 2: spending another search provider is opt-in.
+        "web.search.fallback_to_serpapi",
+        "web.search.fallback_to_public_google",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
     }

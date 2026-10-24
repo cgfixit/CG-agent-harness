@@ -16,6 +16,7 @@ let adminPassword=FIXTURE_SETUP_CODE;
 const userIds={admin:'1'.repeat(32),'audit-fixture':'2'.repeat(32),'memory-second':'3'.repeat(32)}; // random_hex(16) owner ids
 let persona=''; let clearFails=false, slashMode='dispatch';
 let authFixture=false, signedIn=false, logoutStatus=200, whoamiDrop=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
+let searchFallback=false; // /api/web/search answers as a public-Google hop after a failed SearXNG; 'constructor' must not resolve to a label
 let automationFixture=null; // null keeps the unknown-path {} reply for the header feature probes
 const headerState='["openAnalytics","openDeliveries","openSchedules"].filter(id=>!document.getElementById(id).hidden).join()';
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
@@ -142,7 +143,7 @@ const server=createServer(async(req,res)=>{
   if(body.id!=='check:cargo-fmt'){reply({detail:{code:'SKILL_ID',message:'Unknown fixed check'}},400);return;}
   reply({id:body.id,profile:'cargo-fmt',executed:false});return;
  }
- if(path==='/api/web/search'){reply(body.engine==='google'?{provider:'google-serpapi',results:[{rank:1,title:'Fixture Google result',url:'https://veeam.com/kb1',snippet:'Search listing only'}],notice:'Linked page not fetched'}:{hits:[],coverage:{searched:[],failed:[]}});return;}
+ if(path==='/api/web/search'){reply(body.engine==='google'?{...(searchFallback?{provider:'google-public',fallback_from:['searxng','constructor']}:{provider:'google-serpapi'}),results:[{rank:1,title:'Fixture Google result',url:'https://veeam.com/kb1',snippet:'Search listing only'}],notice:'Linked page not fetched'}:{hits:[],coverage:{searched:[],failed:[]}});return;}
  if(path==='/api/chat/cancel'){reply({cancelled:true});return;}
  if(path==='/api/memory'||path.startsWith('/api/memory?')){
   if(req.method==='POST')memoryEnabled=!!body.enabled;
@@ -849,6 +850,7 @@ try {
  await send('/session use '+goalSession);await send('/goal task');assert.equal(await evaluate('pendingAgentRun.goal_stage.session_id'),goalSession);
  await send('/agent confirm');assert.equal(await evaluate('pendingAgentRun.instruction'),'Implement the fixture','missing reason keeps request staged');
  await send('/web search veeam software cve');assert.equal(requests.filter(r=>r[1]==='/api/web/search').at(-1)[2].engine,'google');assert.ok(await evaluate('document.getElementById("stream").innerText.includes("Fixture Google result")'));
+ searchFallback=true;await send('/web search veeam fallback');const fallbackLabel=await evaluate('[...document.querySelectorAll("#stream p")].filter(p=>p.textContent.startsWith("via ")).at(-1)?.textContent');assert.equal(fallbackLabel,'via public Google (SearXNG did not answer)','a fallback hop names the provider that failed first');assert.ok(!/constructor|function/.test(fallbackLabel),'unknown fallback hops never resolve through Object.prototype');assert.ok(!(await evaluate('document.getElementById("stream").innerText.includes("constructor")')),'no prototype leak reaches the stream');searchFallback=false;
  await send('/web pages veeam');assert.equal(requests.filter(r=>r[1]==='/api/web/search').at(-1)[2].engine,'pages');
  await evaluate('renderChatWebTools([{tool:"web_fetch",ok:true,result:{url:"https://veeam.com/kb1",source_chars:123,notice:"Fetched fixture page"}},{tool:"web_search",ok:false,code:"WEB_GOOGLE_CHALLENGE",message:"Google requires interaction"}])');
  assert.ok(await evaluate('document.getElementById("stream").innerText.includes("WEB_GOOGLE_CHALLENGE")'));
