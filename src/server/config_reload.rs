@@ -12,7 +12,7 @@ use crate::llm::backend::ResolvedLocalBackend;
 use super::state::AppState;
 use super::web_search::Limits;
 
-pub const RELOADABLE: [&str; 27] = [
+pub const RELOADABLE: [&str; 28] = [
     "api.rate_limit.max_requests",
     "api.rate_limit.window_seconds",
     "api.harness_loop_rate_limit.max_requests",
@@ -40,6 +40,7 @@ pub const RELOADABLE: [&str; 27] = [
     "web.synthesis_seconds",
     "web.stale_seconds",
     "web.chat_tool_calls",
+    "web.carry_forward_sources",
 ];
 
 #[derive(Debug, Clone, Serialize, PartialEq)]

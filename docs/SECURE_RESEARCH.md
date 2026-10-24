@@ -312,9 +312,12 @@ unreported, never invented.
 an outstanding content request. Direct chat uses `POST /api/chat` and returns
 `web_tools` alongside the reply and aggregate usage.
 Each session keeps a bounded ledger of its reads (targets, counts, truncation,
-citations, re-reads after compaction; no page text) that never enters a prompt;
-`GET /api/sessions/{id}` returns it as `web_sources`. Each web turn audits
-`chat_web_turn` counts without targets.
+citations, re-reads after compaction; no page text); `GET /api/sessions/{id}`
+returns it as `web_sources`. Each web turn audits `chat_web_turn` counts without
+targets. `web.carry_forward_sources` (ships 0, off; up to 50) lists that many
+earlier reads in later web turns' prompts, fenced as untrusted: URLs and
+queries only, goal-matching and cited first, fetched URLs only while the
+current policy still permits them.
 
 Existing homes keep explicitly configured smaller call budgets. To use thirty there,
 set `web.chat_tool_calls: 30` in the active home's `config.yaml` and use
