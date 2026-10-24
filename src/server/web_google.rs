@@ -499,7 +499,12 @@ impl WebTool {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
             tokio::time::timeout_at(deadline, async {
                 let (_, body) = self
-                    .get_raw_paced(target.as_str(), None, None, Some((self.limits.pace_ms, deadline)))
+                    .get_raw_paced(
+                        target.as_str(),
+                        None,
+                        None,
+                        Some((self.limits.pace_ms, deadline, audit)),
+                    )
                     .await
                     .map_err(|failure| {
                         if matches!(failure.code.as_str(), "WEB_FETCH_FAILED" | "WEB_REDIRECT_REFUSED") {
@@ -706,6 +711,28 @@ mod tests {
             sent[1] - sent[0] >= Duration::from_millis(PUBLIC_SEARCH_PACE_FLOOR_MS),
             "sends {:?} apart; permit queueing must not shorten the floor",
             sent[1] - sent[0]
+        );
+        // The audit line is written at the send, not at the broker decision before the wait.
+        let lines: Vec<Value> = std::fs::read_to_string(dir.path().join("audit.jsonl"))
+            .unwrap()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|line| line["event"] == "web_search_sent")
+            .collect();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(lines[0]["provider"], "google-public");
+        assert!(
+            lines[0]["gap_ms"].is_null(),
+            "the first send has no earlier send: {lines:?}"
+        );
+        assert!(
+            lines[1]["gap_ms"].as_u64().unwrap() >= PUBLIC_SEARCH_PACE_FLOOR_MS,
+            "{lines:?}"
+        );
+        assert!(lines[1]["waited_ms"].as_u64().unwrap() > 0, "{lines:?}");
+        assert!(
+            !lines.iter().any(|line| line.to_string().contains("veeam")),
+            "no query text"
         );
         server.abort();
     }
