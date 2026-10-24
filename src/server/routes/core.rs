@@ -803,11 +803,11 @@ pub async fn chat(
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.split(',').any(|part| part.trim() == "text/event-stream"));
     if !streaming {
-        return chat_inner(state, peer, user, req, None).await.into_response();
+        return chat_inner(state, peer, user, req, None, None).await.into_response();
     }
     let (sender, receiver) = tokio::sync::mpsc::channel::<Value>(16);
     let task = tokio::spawn(async move {
-        let result = chat_inner(state, peer, user, req, Some(&sender)).await;
+        let result = chat_inner(state, peer, user, req, Some(&sender), None).await;
         let event = match result {
             Ok(Json(data)) => json!({"type":"done","data":data}),
             Err(error) => {
@@ -867,6 +867,7 @@ pub(crate) async fn chat_inner(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     req: ChatRequest,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
+    expected_loop_goal: Option<&str>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
     if req.loop_turn && req.session_id.as_deref().unwrap_or("").is_empty() {
@@ -887,6 +888,13 @@ pub(crate) async fn chat_inner(
             .create(&state.current_model(), "")
             .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?,
     };
+    // Validate the same snapshot used below for system context, not a separate load.
+    if expected_loop_goal.is_some_and(|goal| goal != session.goal) {
+        return Err(loop_error(
+            "LOOP_GOAL_CHANGED",
+            "session goal changed; start a new loop for the current goal",
+        ));
+    }
     let model = req
         .model
         .clone()

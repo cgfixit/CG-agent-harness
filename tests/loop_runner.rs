@@ -87,6 +87,96 @@ async fn status_exposes_loop_config_and_server_loop_flag() {
 }
 
 #[tokio::test]
+async fn changed_goal_stops_the_run_before_another_model_request() {
+    let (requests, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let release = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
+    let model_release = release.clone();
+    let app = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+            let requests = requests.clone();
+            let release = model_release.clone();
+            async move {
+                requests.send(body).unwrap();
+                release.acquire().await.unwrap().forget();
+                axum::Json(ok_reply("Completed one concrete step.", 10, 2))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+    let addr = listener.local_addr().unwrap();
+    let model = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let s = spawn_server(
+        &format!("http://{addr}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+        ServerOptions::default().with("loop.cooldown_ms", "0"),
+    )
+    .await;
+    let sid = session_with_goal(&s).await;
+    let (status, body) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id": sid, "goal": "OLD_GOAL_441", "max_turns": 3}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let run_id = body["run"]["run_id"].as_str().unwrap();
+    let first = tokio::time::timeout(std::time::Duration::from_secs(5), received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(first["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("OLD_GOAL_441"));
+    assert!(first["messages"].as_array().unwrap().last().unwrap()["content"]
+        .as_str()
+        .unwrap()
+        .contains("Session goal: OLD_GOAL_441"));
+
+    // Change the goal while the first model call owns its old session snapshot.
+    let (status, body) = s
+        .post_json(&format!("/api/sessions/{sid}/goal"), json!({"goal": "NEW_GOAL_882"}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    release.add_permits(1);
+    let run = wait_for(&s, run_id, "a goal-change stop", |run| run["state"] == "stopped").await;
+    assert_eq!(run["goal"], "OLD_GOAL_441");
+    assert_eq!(run["stats"]["turns_completed"], 1);
+    assert_eq!(run["stats"]["consecutive_failures"], 0);
+    assert!(run["reason"].as_str().unwrap().contains("session goal changed"));
+    assert!(received.try_recv().is_err(), "no mixed-goal request reached the model");
+    let saved: Value =
+        serde_json::from_str(&std::fs::read_to_string(s.home.join("loops").join(format!("{run_id}.json"))).unwrap())
+            .unwrap();
+    assert_eq!(saved, run);
+
+    // Restarting explicitly binds both the next real turn and status to the new goal.
+    let (status, body) = s
+        .post_json("/api/loop/start", json!({"session_id": sid, "max_turns": 1}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["run"]["goal"], "NEW_GOAL_882");
+    let next_id = body["run"]["run_id"].as_str().unwrap();
+    let next = tokio::time::timeout(std::time::Duration::from_secs(5), received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let system = next["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains("NEW_GOAL_882"));
+    assert!(!system.contains("OLD_GOAL_441"));
+    let prompt = next["messages"].as_array().unwrap().last().unwrap()["content"]
+        .as_str()
+        .unwrap();
+    assert!(prompt.contains("Session goal: NEW_GOAL_882"));
+    assert!(!prompt.contains("OLD_GOAL_441"));
+    release.add_permits(1);
+    let run = wait_for(&s, next_id, "the restarted turn", |run| run["state"] == "done").await;
+    assert_eq!(run["stats"]["turns_completed"], 1);
+    assert_eq!(run["goal"], "NEW_GOAL_882");
+    model.abort();
+}
+
+#[tokio::test]
 async fn loop_start_status_stop_round_trip() {
     let (url, _count) = start_counting_mock().await;
     let s = spawn_server(
