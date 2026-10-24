@@ -510,7 +510,8 @@ structured_memory:
   # D7 (#603): suggestions run only for these exact local model/mode pairs; any
   # other pair is refused as unsupported_model_mode, never sent to an untested
   # model. A missing key supports nothing; a malformed list refuses everything
-  # (invalid_supported_models). A bare name means its :latest tag. "*" matches
+  # (invalid_supported_models). Only Ollama aliases bare names to :latest;
+  # other local backends require exact model IDs. "*" matches
   # any model: an explicit opt-out of the corpus rule, never shipped. Seeded with
   # the shipped local model pending its corpus run. Restart-only.
   suggestion_supported: [{ model: "qwen3.8:27b-mlx-cg", modes: [summaries, insights, both] }]

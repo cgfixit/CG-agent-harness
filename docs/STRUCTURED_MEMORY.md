@@ -129,6 +129,7 @@ local model and mode listed in `suggestion_supported`; otherwise the receipt and
 `/api/structured-memory` report `unsupported_model_mode` and no model is called.
 A missing key supports nothing, so existing homes add it to keep suggestions:
 `suggestion_supported: [{ model: "<tag>", modes: [summaries, insights, both] }]`.
+Only Ollama aliases bare names to `:latest`; other local backends require exact IDs.
 Fresh homes list the shipped local model. `"*"` matches any model and opts out
 of the corpus rule; a malformed list refuses (`invalid_supported_models`).
 `completion-suggestions-v1` reads bounded, redacted current

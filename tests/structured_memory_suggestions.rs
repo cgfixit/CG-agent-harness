@@ -1547,6 +1547,44 @@ async fn only_listed_local_model_and_mode_pairs_queue_suggestions() {
 }
 
 #[tokio::test]
+async fn non_ollama_suggestions_require_exact_model_ids() {
+    let model = model().await;
+    for provider in ["lmstudio", "openai_compatible"] {
+        for (listed, unlisted) in [("fixture:latest", "fixture"), ("fixture", "fixture:latest")] {
+            let s = spawn_server(
+                &model.base,
+                options("both").with("models.local_llm.provider", provider).with(
+                    "structured_memory.suggestion_supported",
+                    &format!("[{{ model: \"{listed}\", modes: [both] }}]"),
+                ),
+            )
+            .await;
+            assert_eq!(s.state.backend.provider, provider);
+            let before = model.requests.lock().unwrap().len();
+            let (status, chat) = s
+                .post_json(
+                    "/api/chat",
+                    json!({"message":"I prefer metric units.","model":unlisted}),
+                )
+                .await;
+            assert_eq!(status, 200, "{chat}");
+            assert_eq!(chat["memory_suggestion"]["queued"], false, "{provider}: {chat}");
+            assert_eq!(chat["memory_suggestion"]["reason"], "unsupported_model_mode");
+            settled(&s, "local").await;
+            assert_eq!(model.requests.lock().unwrap().len(), before);
+            let (_, chat) = s
+                .post_json("/api/chat", json!({"message":"I prefer metric units.","model":listed}))
+                .await;
+            assert_eq!(chat["memory_suggestion"]["queued"], true, "{chat}");
+            settled(&s, "local").await;
+            let requests = model.requests.lock().unwrap();
+            assert_eq!(requests.len(), before + 1);
+            assert_eq!(requests.last().unwrap()["model"], listed);
+        }
+    }
+}
+
+#[tokio::test]
 async fn suggestion_status_stays_consistent_while_the_selected_model_changes() {
     let model = model().await;
     let s = spawn_server(

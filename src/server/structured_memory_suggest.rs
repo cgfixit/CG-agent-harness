@@ -121,17 +121,14 @@ fn unavailable_reason(state: &AppState, source: Source) -> Option<&'static str> 
 /// D7 (#603): automatic suggestions run only for the local model and mode pairs
 /// listed in `structured_memory.suggestion_supported`. A missing or null list
 /// supports nothing; a malformed one refuses everything. `*` matches any model.
-pub(crate) fn model_mode_supported(list: Option<&serde_yaml_ng::Value>, model: &str, mode: &str) -> Option<bool> {
+pub(crate) fn model_mode_supported(
+    list: Option<&serde_yaml_ng::Value>,
+    model: &str,
+    mode: &str,
+    provider: &str,
+) -> Option<bool> {
     use serde_yaml_ng::Value as Yaml;
-    // Ollama resolves a bare name to its `latest` tag.
-    fn tag(model: &str) -> String {
-        let model = model.trim();
-        if model.contains(':') {
-            model.to_string()
-        } else {
-            format!("{model}:latest")
-        }
-    }
+    let model = model.trim();
     let entries = match list {
         None | Some(Yaml::Null) => return Some(false),
         Some(Yaml::Sequence(entries)) => entries,
@@ -153,7 +150,10 @@ pub(crate) fn model_mode_supported(list: Option<&serde_yaml_ng::Value>, model: &
             }
             covers |= listed_mode == mode;
         }
-        supported |= covers && (listed == "*" || tag(listed) == tag(model));
+        supported |= covers
+            && (listed == "*"
+                || listed == model
+                || (provider == "ollama" && crate::llm::profile::same_model(listed, model)));
     }
     Some(supported)
 }
@@ -163,6 +163,7 @@ fn support_reason(state: &AppState, model: &str) -> Option<&'static str> {
         state.cfg.get("structured_memory.suggestion_supported"),
         model,
         mode(state),
+        &state.backend.provider,
     ) {
         Some(true) => None,
         Some(false) => Some("unsupported_model_mode"),
@@ -693,56 +694,91 @@ mod tests {
 
     #[test]
     fn missing_or_null_list_supports_nothing() {
-        assert_eq!(model_mode_supported(None, "qwen3:8b", "both"), Some(false));
+        assert_eq!(model_mode_supported(None, "qwen3:8b", "both", "ollama"), Some(false));
         assert_eq!(
-            model_mode_supported(Some(&list("null")), "qwen3:8b", "both"),
+            model_mode_supported(Some(&list("null")), "qwen3:8b", "both", "ollama"),
             Some(false)
         );
-        assert_eq!(model_mode_supported(Some(&list("[]")), "qwen3:8b", "both"), Some(false));
+        assert_eq!(
+            model_mode_supported(Some(&list("[]")), "qwen3:8b", "both", "ollama"),
+            Some(false)
+        );
     }
 
     #[test]
     fn only_listed_model_and_mode_pairs_are_supported() {
         let supported = list("[{model: \"qwen3:8b\", modes: [insights]}, {model: gemma3, modes: [summaries, both]}]");
         assert_eq!(
-            model_mode_supported(Some(&supported), "qwen3:8b", "insights"),
+            model_mode_supported(Some(&supported), "qwen3:8b", "insights", "ollama"),
             Some(true)
         );
         // A listed model in an unlisted mode, and an unlisted model, stay unsupported.
-        assert_eq!(model_mode_supported(Some(&supported), "qwen3:8b", "both"), Some(false));
         assert_eq!(
-            model_mode_supported(Some(&supported), "qwen3:14b", "insights"),
+            model_mode_supported(Some(&supported), "qwen3:8b", "both", "ollama"),
+            Some(false)
+        );
+        assert_eq!(
+            model_mode_supported(Some(&supported), "qwen3:14b", "insights", "ollama"),
             Some(false)
         );
         // Exact tags: no prefix or case folding.
         assert_eq!(
-            model_mode_supported(Some(&supported), "qwen3:8b-q4", "insights"),
+            model_mode_supported(Some(&supported), "qwen3:8b-q4", "insights", "ollama"),
             Some(false)
         );
         assert_eq!(
-            model_mode_supported(Some(&supported), "QWEN3:8b", "insights"),
+            model_mode_supported(Some(&supported), "QWEN3:8b", "insights", "ollama"),
             Some(false)
         );
         // A bare name is Ollama's `latest` tag, in the list and in the model.
         assert_eq!(
-            model_mode_supported(Some(&supported), "gemma3:latest", "both"),
+            model_mode_supported(Some(&supported), "gemma3:latest", "both", "ollama"),
             Some(true)
         );
         assert_eq!(
-            model_mode_supported(Some(&supported), " gemma3 ", "summaries"),
+            model_mode_supported(Some(&supported), " gemma3 ", "summaries", "ollama"),
             Some(true)
         );
         assert_eq!(
-            model_mode_supported(Some(&supported), "gemma3:27b", "both"),
+            model_mode_supported(Some(&supported), "gemma3:27b", "both", "ollama"),
             Some(false)
         );
     }
 
     #[test]
+    fn non_ollama_model_ids_are_exact() {
+        for provider in ["lmstudio", "openai_compatible", ""] {
+            for (listed, alias) in [("fixture", "fixture:latest"), ("fixture:latest", "fixture")] {
+                let supported = list(&format!("[{{model: '{listed}', modes: [both]}}]"));
+                assert_eq!(
+                    model_mode_supported(Some(&supported), listed, "both", provider),
+                    Some(true)
+                );
+                assert_eq!(
+                    model_mode_supported(Some(&supported), alias, "both", provider),
+                    Some(false)
+                );
+                assert_eq!(
+                    model_mode_supported(Some(&supported), alias, "both", "ollama"),
+                    Some(true)
+                );
+            }
+        }
+    }
+
+    #[test]
     fn wildcard_matches_any_model_for_its_listed_modes_only() {
         let any = list("[{model: \"*\", modes: [summaries]}]");
-        assert_eq!(model_mode_supported(Some(&any), "anything:1b", "summaries"), Some(true));
-        assert_eq!(model_mode_supported(Some(&any), "anything:1b", "both"), Some(false));
+        for provider in ["ollama", "lmstudio", "openai_compatible"] {
+            assert_eq!(
+                model_mode_supported(Some(&any), "anything:1b", "summaries", provider),
+                Some(true)
+            );
+            assert_eq!(
+                model_mode_supported(Some(&any), "anything:1b", "both", provider),
+                Some(false)
+            );
+        }
     }
 
     #[test]
@@ -761,7 +797,7 @@ mod tests {
             "[{model: qwen3, modes: [both]}, {model: x, modes: [everything]}]",
         ] {
             assert_eq!(
-                model_mode_supported(Some(&list(bad)), "qwen3:latest", "both"),
+                model_mode_supported(Some(&list(bad)), "qwen3:latest", "both", "ollama"),
                 None,
                 "{bad}"
             );
