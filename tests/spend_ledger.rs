@@ -175,3 +175,87 @@ fn summary_distinguishes_empty_corrupt_unreadable_and_oversized_generations() {
     assert_eq!(summarize()["complete"], true);
     assert_eq!(summarize()["rows"], 2);
 }
+
+#[tokio::test]
+async fn rejected_local_replies_record_usage_once_without_saving_an_exchange() {
+    let model = start_mock_model().await;
+    for web in [false, true] {
+        let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+        assert_eq!(s.post_json("/api/web", json!({"enabled":web})).await.0, 200);
+        let (_, session) = s.post_json("/api/sessions", json!({})).await;
+        let id = session["session_id"].as_str().unwrap();
+        for (index, (content, finish, usage)) in [
+            (
+                json!("REJECTED_TEXT"),
+                "length",
+                json!({"prompt_tokens":11,"completion_tokens":3}),
+            ),
+            (json!(null), "stop", json!({"prompt_tokens":12,"completion_tokens":4})),
+            (json!(""), "stop", json!({"prompt_tokens":13,"completion_tokens":5})),
+            (
+                json!("<think>PRIVATE_REASONING</think>"),
+                "stop",
+                json!({"prompt_tokens":14,"completion_tokens":6}),
+            ),
+            (json!("REJECTED_TEXT"), "length", json!({"prompt_tokens":15})),
+            (json!("REJECTED_TEXT"), "length", json!({"completion_tokens":7})),
+            (
+                json!("REJECTED_TEXT"),
+                "length",
+                json!({"prompt_tokens":"99","completion_tokens":"99"}),
+            ),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            model.set_reply(json!({"choices":[{"finish_reason":finish,"message":{"content":content}}],"usage":usage}));
+            let (status, reply) = s
+                .post_json("/api/chat", json!({"session_id":id,"message":"PRIVATE_PROMPT"}))
+                .await;
+            assert_eq!(status, 502, "{reply}");
+            s.state.audit.flush_async().await;
+            let text = std::fs::read_to_string(s.home.join("logs/spend.jsonl")).unwrap();
+            let rows: Vec<Value> = text.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+            assert_eq!(rows.len(), index + 1, "one row per rejected logical turn");
+            let row = rows.last().unwrap();
+            assert_eq!(row["outcome"], "failed_after_billing");
+            for (source, dest) in [
+                ("prompt_tokens", "input_tokens"),
+                ("completion_tokens", "output_tokens"),
+            ] {
+                assert_eq!(row[dest].as_u64(), usage[source].as_u64(), "{row}");
+            }
+            assert_eq!(
+                row["usage_missing"],
+                !usage["prompt_tokens"].is_number() || !usage["completion_tokens"].is_number()
+            );
+            for private in ["PRIVATE_PROMPT", "REJECTED_TEXT", "PRIVATE_REASONING", &s.api_key] {
+                assert!(!text.contains(private), "ledger contains private content");
+            }
+            let (_, saved) = s.get_json(&format!("/api/sessions/{id}")).await;
+            assert_eq!(saved["tokens"]["exchanges"], 0);
+            assert_eq!(saved["tokens"]["total"], 0);
+            assert_eq!(saved["messages"], json!([]));
+        }
+    }
+}
+
+#[tokio::test]
+async fn local_upstream_http_error_does_not_invent_spend() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(|| async { axum::http::StatusCode::BAD_GATEWAY }),
+        );
+        axum::serve(listener, app).await.unwrap();
+    });
+    let s = spawn_server(&format!("http://{address}/v1"), ServerOptions::default()).await;
+    let (status, reply) = s.post_json("/api/chat", json!({"message":"private"})).await;
+    assert_eq!(status, 502, "{reply}");
+    assert_eq!(code(&reply), "HARNESS_LLM_ERROR");
+    s.state.audit.flush_async().await;
+    assert!(!s.home.join("logs/spend.jsonl").exists());
+    task.abort();
+}

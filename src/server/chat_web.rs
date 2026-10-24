@@ -245,14 +245,22 @@ pub async fn run_stream(
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let lease = web.chat_turn.start(owner)?;
-    tokio::select! {
+    let mut usage = None;
+    let result = tokio::select! {
         biased;
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
         // A turn of several tool rounds gets more than one call's deadline; each
         // model call keeps its own (`ChatClient::timeout_for`).
-        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, output)) =>
-            result.map_err(|_| error("WEB_TIMEOUT", "chat web turn deadline exceeded"))?,
-    }
+        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, output, &mut usage)) =>
+            result.unwrap_or_else(|_| Err(error("WEB_TIMEOUT", "chat web turn deadline exceeded"))),
+    };
+    result.map_err(|failure| match usage {
+        Some(tokens) => failure
+            .detail("prompt_tokens", json!(tokens.input_tokens))
+            .detail("completion_tokens", json!(tokens.output_tokens))
+            .detail("usage_reported", tokens.usage_reported()),
+        None => failure,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -269,6 +277,7 @@ async fn run_inner(
     web_mode: super::sessions::GoalWebMode,
     sized_tuned: bool,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
+    usage: &mut Option<crate::llm::spend::UsageTokens>,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let mut messages: Vec<Value> = history
         .iter()
@@ -362,7 +371,21 @@ async fn run_inner(
                 }),
             )
             .await?;
+        let totals = usage.get_or_insert_with(|| crate::llm::spend::UsageTokens {
+            input_tokens: Some(0),
+            output_tokens: Some(0),
+            ..Default::default()
+        });
         let usage = &response["usage"];
+        // An unknown round makes that dimension's total unknown, never zero.
+        for (total, field) in [
+            (&mut totals.input_tokens, "prompt_tokens"),
+            (&mut totals.output_tokens, "completion_tokens"),
+        ] {
+            *total = total
+                .zip(usage.get(field).filter(|v| v.is_number()))
+                .map(|(sum, count)| sum.saturating_add(crate::llm::openai_chat::token_count(Some(count))));
+        }
         if turn == 0 {
             initial_prompt_tokens = crate::llm::openai_chat::initial_prompt_tokens(&response);
         }
