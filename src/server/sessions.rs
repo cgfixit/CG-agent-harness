@@ -180,6 +180,13 @@ pub struct Session {
     /// adoption; only the caller's live blobs enter local chat or preview.
     #[serde(default)]
     pub attachment_pins: Vec<AttachmentPin>,
+    /// Web reads this session's turns made: targets and counts, no page text.
+    /// Survives compaction and never enters a prompt (`web_ledger`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub web_sources: Vec<crate::server::web_ledger::WebSource>,
+    /// Compactions applied to `messages`; the web ledger's epoch.
+    #[serde(default)]
+    pub compactions: u64,
 }
 
 impl Session {
@@ -594,6 +601,8 @@ impl OwnedSessionStore<'_> {
             last_prompt_skills: Vec::new(),
             goal_stage: None,
             attachment_pins: Vec::new(),
+            web_sources: Vec::new(),
+            compactions: 0,
         };
         self.write(&session)?;
         Ok(session)
@@ -659,7 +668,9 @@ impl OwnedSessionStore<'_> {
             prompt_skills,
             None,
             None,
+            &[],
         )
+        .map(|(session, _)| session)
     }
 
     #[cfg(test)]
@@ -684,9 +695,13 @@ impl OwnedSessionStore<'_> {
             prompt_skills,
             Some((keep_recent, summary.to_string())),
             None,
+            &[],
         )
+        .map(|(session, _)| session)
     }
 
+    /// Also folds the turn's `web_tools` events into the session's web ledger
+    /// and returns that turn's counts when it made a web read.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn record_exchange_inner(
         &self,
@@ -698,11 +713,13 @@ impl OwnedSessionStore<'_> {
         prompt_skills: &[Value],
         compact: Option<(usize, String)>,
         calibration: Option<crate::server::compaction::TokenCalibration>,
-    ) -> Result<Session> {
+        web_events: &[Value],
+    ) -> Result<(Session, Option<crate::server::web_ledger::TurnSummary>)> {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let mut session = self.get(session_id)?;
         if let Some((keep_recent, summary)) = compact {
             session.messages = crate::server::compaction::compact_messages(&session.messages, keep_recent, &summary);
+            session.compactions += 1;
         }
         let now = crate::common::now_ts();
         session.messages.push(Message {
@@ -733,8 +750,16 @@ impl OwnedSessionStore<'_> {
         session.tally.prompt_tokens += usage.prompt_tokens;
         session.tally.completion_tokens += usage.completion_tokens;
         session.tally.exchanges += 1;
+        let web_turn = crate::server::web_ledger::record_turn(
+            &mut session.web_sources,
+            web_events,
+            assistant_text,
+            session.tally.exchanges,
+            session.compactions,
+            now,
+        );
         self.write(&session)?;
-        Ok(session)
+        Ok((session, web_turn))
     }
 
     /// `title=None` leaves the title alone; `goal=Some("")` clears the goal.
