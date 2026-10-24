@@ -416,6 +416,10 @@ pub struct WebTool {
     pub(super) permits: Arc<Semaphore>,
     pub(super) mutation: Arc<Mutex<()>>,
     pub(super) search_gate: Arc<Semaphore>,
+    /// Opt-in fallback hops after the provider; restart-only.
+    pub(super) search_fallback: super::web_searxng::Fallback,
+    /// SerpAPI fallbacks this clock hour, shared by every snapshot.
+    pub(super) search_fallback_burst: Arc<super::web_searxng::FallbackBurst>,
     /// When the last public Google search request left, shared by every snapshot.
     pub(super) public_search_sent: Arc<std::sync::Mutex<Option<tokio::time::Instant>>>,
     /// `web.search.provider` and its one exact SearXNG socket; restart-only.
@@ -442,6 +446,8 @@ impl WebTool {
             plaintext_key_file: cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE),
             mutation: Arc::new(Mutex::new(())),
             search_gate: Arc::new(Semaphore::new(1)),
+            search_fallback: super::web_searxng::Fallback::load(cfg)?,
+            search_fallback_burst: Arc::default(),
             public_search_sent: Arc::default(),
             search_provider: super::web_searxng::SearchProvider::load(cfg)?,
             search_cooldown: Arc::default(),
@@ -855,7 +861,7 @@ impl WebTool {
         raw: &str,
         group: Option<&str>,
         cached: Option<&Page>,
-        pace: Option<(u64, tokio::time::Instant)>,
+        pace: Option<(u64, tokio::time::Instant, &Audit)>,
     ) -> Result<(Page, String)> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
         tokio::time::timeout_at(deadline, async {
@@ -888,12 +894,18 @@ impl WebTool {
                     request = request.header(reqwest::header::IF_MODIFIED_SINCE, modified);
                 }
             }
-            if let Some((pace_ms, search_deadline)) = pace {
+            if let Some((pace_ms, search_deadline, audit)) = pace {
                 let last = *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner());
+                let waiting = tokio::time::Instant::now();
                 if let Some(ready) = super::web_google::public_pace(last, pace_ms, search_deadline)? {
                     tokio::time::sleep_until(ready).await;
                 }
-                *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner()) = Some(tokio::time::Instant::now());
+                let sent = tokio::time::Instant::now();
+                *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner()) = Some(sent);
+                // The broker decision is written before this wait; this line's timestamp is the send.
+                audit.log(json!({"event":"web_search_sent","provider":"google-public",
+                    "waited_ms":(sent - waiting).as_millis() as u64,
+                    "gap_ms":last.map(|at| (sent - at).as_millis() as u64)}));
             }
             let mut response = request
                 .send()

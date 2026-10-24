@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use super::web_policy::{canonical_url, error};
 use super::web_search::{parse_html, run_web_cpu, WebTool};
-use super::web_searxng::SearchProvider;
+use super::web_searxng::{falls_through, plan_hops, refuse_searxng_syntax, Hop, SearchProvider};
 use crate::common::audit::Audit;
 use crate::common::credential_store::CredentialStore;
 use crate::common::errors::Result;
@@ -317,7 +317,7 @@ impl WebTool {
 
     /// `web.search.provider` picks the backend; `auto` lets a key choose the fixed
     /// SerpAPI Google backend. A key is never sent to Google, SearXNG or a returned
-    /// result URL. No fallback on a configured provider's failure.
+    /// result URL. Fallback hops (`web.search.fallback_*`) ship off; see `plan_hops`.
     pub async fn google_search(&self, query: &str, count: usize, enabled: bool, audit: &Audit) -> Result<Value> {
         self.google_search_at(
             query,
@@ -347,26 +347,112 @@ impl WebTool {
         if !enabled {
             return Err(error("WEB_DISABLED", "web access is disabled"));
         }
-        let key = match &self.search_provider {
-            SearchProvider::Searxng { endpoint, socket } => {
-                return self
-                    .searxng_listing(query, count, enabled, audit, endpoint, *socket)
-                    .await
-            }
-            // Forced public Google never reads or sends the saved key.
-            SearchProvider::GooglePublic => String::new(),
-            SearchProvider::Serpapi => {
-                let key = self.search_key()?;
-                if key.trim().is_empty() {
-                    return Err(error(
-                        "WEB_SEARCH_KEY_MISSING",
-                        "web.search.provider is serpapi but no SerpAPI key is active; add one in API Keys",
-                    ));
-                }
-                key
-            }
-            SearchProvider::Auto => self.search_key()?,
+        // The saved key is read only when a SerpAPI hop could run.
+        let reads_key = match &self.search_provider {
+            SearchProvider::GooglePublic => false,
+            SearchProvider::Searxng { .. } => self.search_fallback.to_serpapi,
+            SearchProvider::Auto | SearchProvider::Serpapi => true,
         };
+        let key = if reads_key { self.search_key()? } else { String::new() };
+        let keyed = !key.trim().is_empty();
+        if self.search_provider == SearchProvider::Serpapi && !keyed {
+            return Err(error(
+                "WEB_SEARCH_KEY_MISSING",
+                "web.search.provider is serpapi but no SerpAPI key is active; add one in API Keys",
+            ));
+        }
+        let hops = plan_hops(&self.search_provider, keyed, &self.search_fallback);
+        if hops[0] == Hop::Searxng {
+            refuse_searxng_syntax(query)?;
+        }
+        // One broker decision, one search gate and one deadline for the whole chain:
+        // fallback never makes a search longer or more concurrent than one search.
+        self.gate_tool("web_search", &[query.into()], enabled, audit)?;
+        let _gate = self
+            .search_gate
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| error("WEB_BUSY", "a web search is already running"))?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
+        let mut fallback_from: Vec<&str> = Vec::new();
+        for (index, hop) in hops.iter().copied().enumerate() {
+            let next = hops.get(index + 1).copied();
+            // SearXNG leaves at least 2 s for the next hop.
+            let hop_deadline = if hop == Hop::Searxng && next.is_some() {
+                let budget = self.limits.request_seconds.saturating_sub(2).clamp(1, 6);
+                deadline.min(tokio::time::Instant::now() + Duration::from_secs(budget))
+            } else {
+                deadline
+            };
+            if hop == Hop::Serpapi && !fallback_from.is_empty() {
+                if let Some(count) = self
+                    .search_fallback_burst
+                    .note(unix_now(), self.search_fallback.alert_per_hour)
+                {
+                    audit.log(json!({"event":"web_search_fallback_burst","provider":hop.name(),
+                        "count":count,"threshold":self.search_fallback.alert_per_hour}));
+                }
+            }
+            let expected_key = match hop {
+                Hop::Serpapi => Some(key.clone()),
+                // Keyless auto: a key saved mid-search still discards public listings.
+                Hop::GooglePublic if self.search_provider == SearchProvider::Auto && !keyed => Some(String::new()),
+                _ => None,
+            };
+            let attempt = async {
+                match (hop, &self.search_provider) {
+                    (Hop::Searxng, SearchProvider::Searxng { endpoint, socket }) => {
+                        self.searxng_listing(query, count, audit, endpoint, *socket).await
+                    }
+                    (Hop::Searxng, _) => Err(error("WEB_SEARCH_PROVIDER", "SearXNG is not configured")),
+                    (Hop::Serpapi, _) => {
+                        self.google_hop(query, count, enabled, audit, endpoint.clone(), key.trim(), expected_key)
+                            .await
+                    }
+                    (Hop::GooglePublic, _) => {
+                        self.google_hop(query, count, enabled, audit, endpoint.clone(), "", expected_key)
+                            .await
+                    }
+                }
+            };
+            let result = tokio::time::timeout_at(hop_deadline, attempt)
+                .await
+                .map_err(|_| error("WEB_TIMEOUT", "search deadline exceeded"))
+                .and_then(|value| value);
+            match result {
+                Ok(mut value) => {
+                    if !fallback_from.is_empty() {
+                        value["fallback_from"] = json!(fallback_from);
+                    }
+                    return Ok(value);
+                }
+                Err(failure) => match next {
+                    Some(next) if falls_through(hop, &failure.code) => {
+                        // Codes only: never the query, a key or provider text.
+                        audit.log(json!({"event":"web_search_fallback","from":hop.name(),
+                            "to":next.name(),"code":failure.code}));
+                        fallback_from.push(hop.name());
+                    }
+                    _ => return Err(failure),
+                },
+            }
+        }
+        Err(error("WEB_SEARCH_PROVIDER", "no search provider is available"))
+    }
+
+    /// One Google hop: SerpAPI when `key` is non-empty, else public Google (URL
+    /// policy, cooldown and pacing apply). `expected_key` rechecks the saved key.
+    #[allow(clippy::too_many_arguments)]
+    async fn google_hop(
+        &self,
+        query: &str,
+        count: usize,
+        enabled: bool,
+        audit: &Audit,
+        endpoint: url::Url,
+        key: &str,
+        expected_key: Option<String>,
+    ) -> Result<Value> {
         // Provider listings require web/account authority, not page-content permission.
         // Public Google is a page fetch and retains the original URL policy checks.
         let policy = if key.is_empty() {
@@ -416,17 +502,16 @@ impl WebTool {
         if let Some(pause) = self.search_cooldown.holding(provider, Instant::now()) {
             return Err(cooldown_error(provider, &pause));
         }
-        self.gate_tool("web_search", &[query.into()], enabled, audit)?;
-        let _gate = self
-            .search_gate
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| error("WEB_BUSY", "a web search is already running"))?;
         let fetched = if key.trim().is_empty() {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
             tokio::time::timeout_at(deadline, async {
                 let (_, body) = self
-                    .get_raw_paced(target.as_str(), None, None, Some((self.limits.pace_ms, deadline)))
+                    .get_raw_paced(
+                        target.as_str(),
+                        None,
+                        None,
+                        Some((self.limits.pace_ms, deadline, audit)),
+                    )
                     .await
                     .map_err(|failure| match failure.code.as_str() {
                         // Google answered with a status or a redirect: its verdict, so it pauses.
@@ -481,8 +566,10 @@ impl WebTool {
                 ));
             }
         }
-        if self.search_provider != SearchProvider::GooglePublic && self.search_key()? != key {
-            return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
+        if let Some(expected) = expected_key {
+            if self.search_key()? != expected {
+                return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
+            }
         }
         Ok(
             json!({"query":query,"provider":provider,"search_url":target.as_str(),"results":rows,
@@ -631,6 +718,28 @@ mod tests {
             "sends {:?} apart; permit queueing must not shorten the floor",
             sent[1] - sent[0]
         );
+        // The audit line is written at the send, not at the broker decision before the wait.
+        let lines: Vec<Value> = std::fs::read_to_string(dir.path().join("audit.jsonl"))
+            .unwrap()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|line| line["event"] == "web_search_sent")
+            .collect();
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!(lines[0]["provider"], "google-public");
+        assert!(
+            lines[0]["gap_ms"].is_null(),
+            "the first send has no earlier send: {lines:?}"
+        );
+        assert!(
+            lines[1]["gap_ms"].as_u64().unwrap() >= PUBLIC_SEARCH_PACE_FLOOR_MS,
+            "{lines:?}"
+        );
+        assert!(lines[1]["waited_ms"].as_u64().unwrap() > 0, "{lines:?}");
+        assert!(
+            !lines.iter().any(|line| line.to_string().contains("veeam")),
+            "no query text"
+        );
         server.abort();
     }
 
@@ -701,6 +810,334 @@ mod tests {
             assert_eq!(cooldown_lines(&dir), 1, "{label}");
             server.abort();
         }
+    }
+
+    /// Loopback fixtures for the fallback chain: SearXNG, SerpAPI (via the
+    /// endpoint seam) and public Google (via `test_public_search`).
+    mod chain {
+        use super::*;
+        use axum::{extract::Query, routing::get, Json, Router};
+        use std::collections::HashMap;
+        use std::net::SocketAddr;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        pub(super) struct Fixture {
+            pub hits: Arc<AtomicUsize>,
+            pub addr: SocketAddr,
+            task: tokio::task::JoinHandle<()>,
+        }
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                self.task.abort();
+            }
+        }
+
+        async fn serve(router: Router, hits: Arc<AtomicUsize>) -> Fixture {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only an ephemeral loopback port.
+            let addr = listener.local_addr().unwrap();
+            let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            Fixture { hits, addr, task }
+        }
+
+        /// SearXNG answering `mode`: "zero" rows, "slow" (10 s), or one row.
+        pub(super) async fn searxng(mode: &'static str) -> Fixture {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let h = hits.clone();
+            let router = Router::new().route(
+                "/search",
+                get(move || {
+                    let h = h.clone();
+                    async move {
+                        h.fetch_add(1, Ordering::SeqCst);
+                        if mode == "slow" {
+                            tokio::time::sleep(Duration::from_secs(10)).await;
+                        }
+                        let rows = if mode == "zero" {
+                            json!([])
+                        } else {
+                            json!([{"title":"SearXNG row","url":"https://veeam.com/sx","content":"x"}])
+                        };
+                        Json(json!({"results":rows,"unresponsive_engines":[]}))
+                    }
+                }),
+            );
+            serve(router, hits).await
+        }
+
+        /// SerpAPI: key "good" answers, "bad" is 401, "quota" is 429.
+        pub(super) async fn serpapi() -> Fixture {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let h = hits.clone();
+            let router = Router::new().route(
+                "/search",
+                get(move |Query(q): Query<HashMap<String, String>>| {
+                    let h = h.clone();
+                    async move {
+                        h.fetch_add(1, Ordering::SeqCst);
+                        let status = match q.get("api_key").map(String::as_str) {
+                            Some("bad") => axum::http::StatusCode::UNAUTHORIZED,
+                            Some("quota") => axum::http::StatusCode::TOO_MANY_REQUESTS,
+                            _ => axum::http::StatusCode::OK,
+                        };
+                        (
+                            status,
+                            Json(json!({"organic_results":[{"title":"SerpAPI row","link":"https://veeam.com/kb1","snippet":"s"}]})),
+                        )
+                    }
+                }),
+            );
+            serve(router, hits).await
+        }
+
+        pub(super) async fn google() -> Fixture {
+            let hits = Arc::new(AtomicUsize::new(0));
+            let h = hits.clone();
+            let router = Router::new().route(
+                "/search",
+                get(move || {
+                    let h = h.clone();
+                    async move {
+                        h.fetch_add(1, Ordering::SeqCst);
+                        "<a href='/url?q=https%3A%2F%2Fveeam.com%2Fpublic'><h3>Public row</h3></a>"
+                    }
+                }),
+            );
+            serve(router, hits).await
+        }
+
+        /// A loopback port with nothing listening (connection refused).
+        pub(super) async fn refused_port() -> u16 {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only an ephemeral loopback port.
+            listener.local_addr().unwrap().port()
+        }
+
+        pub(super) struct Chain {
+            pub web: WebTool,
+            pub audit: Audit,
+            pub endpoint: url::Url,
+            pub dir: tempfile::TempDir,
+        }
+
+        impl Chain {
+            pub(super) async fn new(yaml: &str, key: &str, serp: &Fixture, google: Option<&Fixture>) -> Self {
+                let dir = tempfile::tempdir().unwrap();
+                crate::common::home::Home::at(dir.path().to_path_buf())
+                    .ensure_layout()
+                    .unwrap();
+                let cfg =
+                    crate::common::config::AppConfig::from_str(yaml, std::path::Path::new("config.yaml")).unwrap();
+                let mut web = WebTool::new(&dir.path().join("tools"), &cfg).unwrap();
+                web.search_key_from_file = true;
+                web.plaintext_key_file = true;
+                web.test_resolve = Some(("provider.example".into(), serp.addr));
+                if let Some(google) = google {
+                    web.test_resolve_extra = vec![("google.fixture".into(), google.addr)];
+                    web.test_public_search = Some(url::Url::parse("http://google.fixture/search").unwrap()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                    web.allow("http://google.fixture/*", true).unwrap(); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                }
+                if !key.is_empty() {
+                    super::super::super::env_keys::write_keys(
+                        &dir.path().join(".env"),
+                        &std::collections::BTreeMap::from([("SERPAPI_API_KEY".into(), key.into())]),
+                    )
+                    .unwrap();
+                }
+                let audit = Audit::new(dir.path().join("audit.jsonl"), &cfg);
+                let endpoint = url::Url::parse("http://provider.example/search").unwrap(); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                Self {
+                    web,
+                    audit,
+                    endpoint,
+                    dir,
+                }
+            }
+
+            pub(super) async fn search(&self, query: &str) -> Result<Value> {
+                self.web
+                    .google_search_at(query, 3, true, &self.audit, self.endpoint.clone())
+                    .await
+            }
+
+            pub(super) fn audit_events(&self, event: &str) -> Vec<Value> {
+                std::fs::read_to_string(self.dir.path().join("audit.jsonl"))
+                    .unwrap_or_default()
+                    .lines()
+                    .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                    .filter(|line| line["event"] == event)
+                    .collect()
+            }
+        }
+
+        /// `request_seconds: 10` gives SearXNG a 6 s hop budget: Windows retries a
+        /// refused loopback connect for about 2 s before reporting it, which must
+        /// finish as `WEB_SEARCH_PROVIDER`, not race the budget into `WEB_TIMEOUT`.
+        pub(super) fn yaml(searxng_port: u16, extra: &str) -> String {
+            yaml_with(10, searxng_port, extra)
+        }
+
+        pub(super) fn yaml_with(request_seconds: u64, searxng_port: u16, extra: &str) -> String {
+            format!(
+                "web: {{request_seconds: {request_seconds}, search: {{provider: searxng, searxng_url: 'http://127.0.0.1:{searxng_port}'{extra}}}}}" // DevSkim: ignore DS137138,DS162092 because the SearXNG fixture is loopback-only.
+            )
+        }
+    }
+
+    #[tokio::test]
+    async fn fallback_is_off_by_default_and_a_down_searxng_stays_explicit() {
+        let serp = chain::serpapi().await;
+        let chain = chain::Chain::new(&chain::yaml(chain::refused_port().await, ""), "good", &serp, None).await;
+        let err = chain.search("veeam cve").await.unwrap_err();
+        assert_eq!(err.code, "WEB_SEARCH_PROVIDER");
+        assert_eq!(
+            serp.hits.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "no hop was enabled"
+        );
+        assert!(chain.audit_events("web_search_fallback").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_down_searxng_falls_back_to_serpapi_and_says_so() {
+        let serp = chain::serpapi().await;
+        let chain = chain::Chain::new(
+            &chain::yaml(chain::refused_port().await, ", fallback_to_serpapi: true"),
+            "good",
+            &serp,
+            None,
+        )
+        .await;
+        let value = chain.search("veeam cve").await.unwrap();
+        assert_eq!(value["provider"], "google-serpapi");
+        assert_eq!(value["fallback_from"], json!(["searxng"]));
+        assert_eq!(value["results"][0]["title"], "SerpAPI row");
+        let lines = chain.audit_events("web_search_fallback");
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["from"], "searxng");
+        assert_eq!(lines[0]["to"], "google-serpapi");
+        assert_eq!(lines[0]["code"], "WEB_SEARCH_PROVIDER");
+        let text = std::fs::read_to_string(chain.dir.path().join("audit.jsonl")).unwrap();
+        assert!(!text.contains("veeam cve") && !text.contains("\"good\""), "{text}");
+    }
+
+    #[tokio::test]
+    async fn zero_searxng_results_are_an_answer_not_a_fallback() {
+        let sx = chain::searxng("zero").await;
+        let serp = chain::serpapi().await;
+        let google = chain::google().await;
+        let chain = chain::Chain::new(
+            &chain::yaml(
+                sx.addr.port(),
+                ", fallback_to_serpapi: true, fallback_to_public_google: true",
+            ),
+            "good",
+            &serp,
+            Some(&google),
+        )
+        .await;
+        let value = chain.search("nothing matches").await.unwrap();
+        assert_eq!(value["provider"], "searxng");
+        assert_eq!(value["results"], json!([]));
+        assert!(value.get("fallback_from").is_none());
+        assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(
+            chain.search("!g bang").await.unwrap_err().code,
+            "WEB_BAD_QUERY",
+            "a refused query never falls through"
+        );
+        assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_rejected_key_or_spent_quota_never_reaches_public_google() {
+        let serp = chain::serpapi().await;
+        let google = chain::google().await;
+        for (key, code) in [("bad", "WEB_SEARCH_KEY_REJECTED"), ("quota", "WEB_SEARCH_QUOTA")] {
+            let chain = chain::Chain::new(
+                &chain::yaml(
+                    chain::refused_port().await,
+                    ", fallback_to_serpapi: true, fallback_to_public_google: true",
+                ),
+                key,
+                &serp,
+                Some(&google),
+            )
+            .await;
+            assert_eq!(chain.search("veeam cve").await.unwrap_err().code, code, "{key}");
+        }
+        assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_serpapi_cooldown_is_skipped_to_public_google_without_a_request() {
+        let serp = chain::serpapi().await;
+        let google = chain::google().await;
+        // Keyed auto: SerpAPI first, public Google as the opt-in last hop.
+        let chain = chain::Chain::new(
+            "web: {search: {fallback_to_public_google: true}}",
+            "quota",
+            &serp,
+            Some(&google),
+        )
+        .await;
+        assert_eq!(chain.search("first").await.unwrap_err().code, "WEB_SEARCH_QUOTA");
+        let value = chain.search("second").await.unwrap();
+        assert_eq!(value["provider"], "google-public");
+        assert_eq!(value["fallback_from"], json!(["google-serpapi"]));
+        assert_eq!(
+            serp.hits.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "cooling SerpAPI was not asked"
+        );
+        assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            chain.audit_events("web_search_fallback")[0]["code"],
+            "WEB_SEARCH_COOLDOWN"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_whole_chain_shares_one_deadline() {
+        let sx = chain::searxng("slow").await;
+        let serp = chain::serpapi().await;
+        let chain = chain::Chain::new(
+            &chain::yaml_with(4, sx.addr.port(), ", fallback_to_serpapi: true"),
+            "good",
+            &serp,
+            None,
+        )
+        .await;
+        let started = tokio::time::Instant::now();
+        let value = chain.search("veeam cve").await.unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(value["provider"], "google-serpapi");
+        assert_eq!(chain.audit_events("web_search_fallback")[0]["code"], "WEB_TIMEOUT");
+        // request_seconds 4: SearXNG gets min(4 - 2, 6) = 2 s, the chain ends inside 4 s.
+        assert!(elapsed >= Duration::from_secs(2), "{elapsed:?}");
+        assert!(elapsed < Duration::from_secs(4), "{elapsed:?}");
+    }
+
+    #[tokio::test]
+    async fn serpapi_fallbacks_past_the_hourly_threshold_log_one_burst_line() {
+        let serp = chain::serpapi().await;
+        let chain = chain::Chain::new(
+            &chain::yaml(
+                chain::refused_port().await,
+                ", fallback_to_serpapi: true, fallback_alert_per_hour: 1",
+            ),
+            "good",
+            &serp,
+            None,
+        )
+        .await;
+        for query in ["a one", "b two", "c three"] {
+            chain.search(query).await.unwrap();
+        }
+        let bursts = chain.audit_events("web_search_fallback_burst");
+        assert_eq!(bursts.len(), 1, "{bursts:?}");
+        assert_eq!(bursts[0]["count"], 2);
+        assert_eq!(bursts[0]["threshold"], 1);
     }
 
     #[test]
