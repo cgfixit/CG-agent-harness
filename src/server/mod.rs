@@ -63,6 +63,7 @@ mod web_command;
 mod web_google;
 pub mod web_index;
 pub mod web_intent;
+pub mod web_ledger;
 pub mod web_policy;
 pub mod web_research;
 pub mod web_search;
