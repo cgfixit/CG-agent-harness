@@ -194,9 +194,10 @@ jobs:
           test "$rc" = 3
           grep -q "is owned by pid $server" refuse.log
 
-      # Both init.sh steps added by #642 run only under --yes here; the
-      # interactive prompts (default yes for the memory line, default no for
-      # the reset) are covered by the shell scenarios in that PR's body.
+      # Both init.sh steps added by #642 run only under --yes here. The
+      # interactive prompts (the memory line's [Y/n]; the reset's [y/N] and
+      # typed DELETE, offered only with --reset-home once #663 lands) are
+      # covered by the shell scenarios in those PRs' bodies, not by this job.
       - name: init.sh re-adds the automatic-memory line, keeps it on a rerun, and --reset-home removes the home
         timeout-minutes: 15
         run: |
