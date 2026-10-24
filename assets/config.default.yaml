@@ -159,7 +159,7 @@ web:
   run_bytes: 2097152 # 1024–8388608 per run
   run_seconds: 180 # 1–180
   per_site_pages: 10 # 1–20
-  pace_ms: 400 # 100–5000 between requests to an origin
+  pace_ms: 400 # 100–5000 between requests to an origin; public Google searches wait at least 3000 (code floor)
   # In-memory pause per search provider after a refusal, so a /loop stops asking; lost on
   # restart. A paused search answers WEB_SEARCH_COOLDOWN before any request. Restart-only.
   search_cooldown_public_sec: 600 # 60–3600 after public Google WEB_GOOGLE_CHALLENGE or WEB_GOOGLE_BLOCKED
@@ -176,6 +176,14 @@ web:
   research_seconds: 1200 # 10–1800 discovery and planning deadline
   synthesis_seconds: 1800 # 10–1800 answer deadline, started after discovery; missing keys use 300
   stale_seconds: 604800 # 60–31536000; fetch age, not publication-date verification
+  # Search backend, restart-only. auto: an active SerpAPI key selects SerpAPI, else public
+  # Google. google-public and serpapi force one. searxng sends listings to searxng_url only:
+  # one http(s) loopback IP literal with an explicit port (e.g. http://127.0.0.1:8888), whose
+  # settings.yml lists json in search.formats. Hostnames, public/LAN IPs or a missing port fail
+  # boot. No fallback between providers; web_fetch of that URL stays refused.
+  search:
+    provider: auto # auto|google-public|serpapi|searxng
+    searxng_url: "" # e.g. http://127.0.0.1:8888; validated at boot even when unused
 
 # Completion webhooks are explicit operator configuration and restart-only.
 notifications:

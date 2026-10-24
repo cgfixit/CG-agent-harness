@@ -38,7 +38,7 @@ removing a key selects its code fallback.
 | `web.run_bytes` | 1,024–8,388,608 |
 | `web.run_seconds` | 1–180 |
 | `web.per_site_pages` | 1–20 |
-| `web.pace_ms` | 100–5,000 |
+| `web.pace_ms` | 100–5,000; public Google search keeps a 3,000 floor (code) |
 | `web.cache_pages` | 1–256 |
 | `web.cache_bytes` | 1,048,576–33,554,432 |
 | `web.subqueries` | 1–5 |
@@ -55,7 +55,7 @@ The `loop.*` keys bound the server-side `/loop` runner (turns and aggregate
 tokens per run, 0 = unlimited; consecutive failures before abort; pause between
 turns), which the console reads from `/api/status`.
 
-`web.concurrency` is **restart-only** (it sizes shared fetch permits), as are `web.goal_web_default`, `web.carry_forward_sources`, `web.search_cooldown_*`.
+`web.concurrency` is **restart-only** (it sizes shared fetch permits), as are `web.goal_web_default`, `web.carry_forward_sources`, `web.search*`.
 `web.max_rules` (default 64, 1–256) is restart-only too: a cap below the saved
 rule count refuses the policy until it is raised.
 TLS, authentication, credentials, `security.allow_plaintext_key_file` (default
