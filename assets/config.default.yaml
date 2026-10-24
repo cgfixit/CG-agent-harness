@@ -520,6 +520,14 @@ structured_memory:
   auto_suggest_chat: true
   auto_suggest_coding: true
   suggestion_mode: both # summaries | insights | both; invalid values disable suggestions
+  # D7 (#603): suggestions run only for these exact local model/mode pairs; any
+  # other pair is refused as unsupported_model_mode, never sent to an untested
+  # model. A missing key supports nothing; a malformed list refuses everything
+  # (invalid_supported_models). Only Ollama aliases bare names to :latest;
+  # other local backends require exact model IDs. "*" matches
+  # any model: an explicit opt-out of the corpus rule, never shipped. Seeded with
+  # the shipped local model pending its corpus run. Restart-only.
+  suggestion_supported: [{ model: "qwen3.8:27b-mlx-cg", modes: [summaries, insights, both] }]
   suggestion_max_input_chars: 8000 # total across input/output, split equally
   suggestion_max_queue: 8 # queued inputs; one additional generation may be running
   suggestion_queue_ttl_secs: 300 # volatile inputs expire; restart drops them

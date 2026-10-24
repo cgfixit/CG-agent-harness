@@ -5920,6 +5920,8 @@ function memoryRecovery(reason) {
   if (['source_disabled', 'capture_disabled', 'disabled'].includes(reason)) return 'Automatic suggestions are off for this activity. An administrator can enable them.';
   if (reason === 'store_closed') return 'Structured memory is unavailable. Check the local memory configuration.';
   if (reason === 'invalid_mode') return 'The suggestion mode is not valid. Check the local memory configuration.';
+  if (reason === 'unsupported_model_mode') return 'This local model and suggestion mode are not on the approved list (structured_memory.suggestion_supported), so nothing was sent to the model.';
+  if (reason === 'invalid_supported_models') return 'The approved model list (structured_memory.suggestion_supported) is not valid. Check the local memory configuration.';
   if (reason === 'injection_detected') return 'The input safety check refused this content.';
   if (reason === 'already_recorded') return 'This activity already has a suggestion attempt. See Suggestion activity for its result.';
   if (reason === 'receipt_store_failed') return 'The input was discarded, but its status could not be saved. Check local storage before trying again.';
