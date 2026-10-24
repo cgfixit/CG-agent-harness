@@ -144,7 +144,7 @@ loop:
 # Bounded public content reads; fresh harness.json enables web with an empty URL allowlist.
 # Missing values in existing homes use these defaults; invalid values fail boot.
 web:
-  chat_tool_calls: 10 # 1–10 read-only calls per chat or local /loop turn
+  chat_tool_calls: 30 # 1–30 read-only calls per chat or local /loop turn; web.total_tokens usually binds first
   goal_web_default: all # off|fetch|all; restart-only. The mode a /goal gets without --web.
   # fetch reads permitted URLs only; all also lets unattended /loop turns pick web_search
   # queries. Search listings never grant URL permission. Set fetch to withhold search from
