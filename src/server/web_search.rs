@@ -61,7 +61,7 @@ pub struct Limits {
     pub stale_seconds: u64,
     pub chat_tool_calls: usize,
     /// Earlier web reads listed in a web turn's prompt (`web_ledger::carry_forward`);
-    /// 0, the shipped value, lists none. Restart-only.
+    /// 0, the shipped value, lists none. Reloadable.
     pub carry_forward_sources: usize,
     /// The mode a `/goal` takes when the request names none (`web.goal_web_default`,
     /// restart-only). Ships `all`: search is a read-only listing that grants no URL

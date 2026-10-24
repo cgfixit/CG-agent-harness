@@ -469,7 +469,7 @@ async fn check_fetch_evidence(loop_turn: bool) {
 
 /// With `web.carry_forward_sources` above 0, the next web turn's system prompt
 /// lists the URL an earlier turn read (no page text) in a fenced untrusted
-/// block; at the shipped 0 it lists nothing.
+/// block; at the shipped 0 it lists nothing until a reload raises it.
 #[tokio::test]
 async fn a_later_web_turn_lists_earlier_reads_only_when_carry_forward_is_on() {
     for rows in ["0", "5"] {
@@ -527,6 +527,7 @@ async fn a_later_web_turn_lists_earlier_reads_only_when_carry_forward_is_on() {
                 .await;
             assert_eq!(status, 200, "{reply}");
         }
+        let systems_handle = systems.clone();
         let systems = systems.lock().unwrap().clone();
         // Calls: turn 1 (tool call, follow-up), turn 2 (tool call, follow-up).
         assert_eq!(systems.len(), 4, "{rows}");
@@ -537,6 +538,29 @@ async fn a_later_web_turn_lists_earlier_reads_only_when_carry_forward_is_on() {
         let second = &systems[2];
         if rows == "0" {
             assert!(!second.contains("WEB_READS_DATA"), "off at the shipped 0");
+            // Reloadable: raising the key in config.yaml and reloading turns it
+            // on for the next turn, with no restart.
+            let path = &s.state.cfg.path;
+            let text = std::fs::read_to_string(path).unwrap();
+            assert!(text.contains("carry_forward_sources: 0"), "{text}");
+            std::fs::write(
+                path,
+                text.replace("carry_forward_sources: 0", "carry_forward_sources: 5"),
+            )
+            .unwrap();
+            let reloaded = cgagentharness::server::config_reload::reload(s.state.clone(), "test")
+                .await
+                .unwrap();
+            assert_eq!(reloaded["changed"], true, "{reloaded}");
+            let (status, reply) = s
+                .post_json("/api/chat", json!({"message": "third", "session_id": sid}))
+                .await;
+            assert_eq!(status, 200, "{reply}");
+            let third = systems_handle.lock().unwrap()[4].clone();
+            assert!(
+                third.contains("- fetched http://docs.example/docs/item (turns 1, 2)"),
+                "{third}"
+            );
         } else {
             assert!(second.contains("<<<WEB_READS_DATA>>>"), "{second}");
             assert!(
