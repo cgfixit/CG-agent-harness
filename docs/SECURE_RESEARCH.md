@@ -459,8 +459,7 @@ are refused, and reverse proxies are unsupported. The dedicated
 [machine gateway](MCP_SERVER.md) does not inherit console authority.
 
 Ownership follows [session ownership](#session-ownership-and-legacy-adoption)
-and the shared-resource list in [SECURITY.md](../SECURITY.md#local-authority-and-shared-resources);
-the public-page cache (`tools/web_cache`) is also shared, not per account.
+and the shared-resource list in [SECURITY.md](../SECURITY.md#local-authority-and-shared-resources).
 Research questions, answers, controller state, and web selections belong to the
 initiating random account identity, so a recreated username inherits nothing.
 Deleted accounts can leave private selections on disk, inaccessible to replacements.

@@ -53,24 +53,16 @@ Application Support. Config, sessions, notes, persona, keys, and run evidence
 stay outside the bundle. Check the home in the footer or Setup, and record it
 separately from `Contents/Resources/COMMIT` when comparing app copies.
 
-Desktop and headless `serve` load managed keys from the OS credential
-store (macOS Keychain, Linux Secret Service, Windows Credential Manager). The
-service name includes the canonical home, so two homes do not share entries. An
-inherited environment value wins, including empty.
-A one-time migration reads legacy home `.env`: each managed line is written,
-read back, and removed only after the values match. Unknown lines stay. A failed
-store write or verify leaves that line, shows a setup warning without the value,
-and does not load it. API keys stay out of argv, user-facing URLs, readiness
-files, diagnostics, and errors. SerpAPI sends its key only in that
+Desktop and headless `serve` load managed keys from the OS credential store; the
+[key-store contract](../INVARIANTS.md#provider-keys-live-in-the-os-credential-store)
+covers environment precedence, per-home entries, legacy `.env` migration, failure
+handling and the plaintext opt-in. Keys also stay out of user-facing URLs and
+readiness files. SerpAPI sends its key only in that
 fixed provider's HTTPS request query, never to result URLs. Config/key parse
 failures show a setup error without quoting values. Existing configuration is
 preserved; fresh homes enable accounts and roles. No desktop session elevation exists.
 
-Settings save and clear go to the OS store. If it is unavailable, save is refused
-and `.env` is unchanged. Literal `security.allow_plaintext_key_file: true`
-(default false, restart required) enables the legacy private `.env` under the
-[file checks](../INVARIANTS.md#provider-keys-live-in-the-os-credential-store);
-unsafe or unreadable files refuse startup. A SerpAPI key selects API-backed Google results without a Google page grant;
+A SerpAPI key selects API-backed Google results without a Google page grant;
 linked pages still require URL permission. Without a key, public Google may hit
 JavaScript or CAPTCHA blocks. Other provider gates
 remain independent. Loading a key never grants content, account, or repository-write

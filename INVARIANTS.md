@@ -81,13 +81,7 @@ the error code. See `docs/MCP_CLIENT.md` and
 Servers are operator-declared in `mcp.servers`; unknown names fail closed.
 SSE URLs reuse DNS-pinned SSRF checks; loopback SSE is `mcp.sse_allow_loopback`
 and ships false. Namespaced tools (`mcp:<server>:<tool>`) pass `tool_broker`
-and require `confirm: true`. MCP stays off `/loop`. Local loops reuse owned attachments
-and permitted web tools. Goal modes `off`/`fetch`/`all` restrict chat tools without granting
-URLs; a goal set without a mode takes `web.goal_web_default` (ships `all`, restart-only):
-search is a read-only listing that grants no URL permission, and operators withhold
-unattended search with `fetch` or `off`; token and cancellation bounds hold. A goal-less
-loop takes the session's last prompt as its goal; a turn that needed compaction
-continues automatically; both stay within local-only bounds. Cloud loops remain refused. Owner-scoped
+and require `confirm: true`. MCP stays off `/loop` ([loop runs](#a-detached-run-cannot-outlive-its-gates)). Owner-scoped
 unpinning excludes generation and retains blobs and messages. `GET /api/mcp`
 discloses declared server and tool names to authenticated accounts; declarations
 are shared. Calls and refusals are audited (`mcp_stdio_spawn`,
@@ -384,23 +378,8 @@ user-service-manager, D-Bus/Secret Service and SSH-agent sockets; network namesp
 do not remove that local-service authority. That fallback is explicit in the backend name, an
 info-level `linux hard sandbox backend selected` line, the self-test line, and
 the audit `sandbox` field. `/api/status` does not report the backend. Both backends missing is
-`HARD_SANDBOX_UNAVAILABLE` (exit 3). Linux CI (`CI=true`) fails if `bwrap` is
-missing. The ordinary test matrix may report a classified confinement skip
-when a GitHub-hosted runner refuses `RTM_NEWADDR`; that is not confinement proof.
-The separate `Linux bubblewrap confinement (required)` job runs the same suite
-in a pinned container with namespace/mount capabilities. Docs-only pull requests
-(`scripts/ci-docs-only.sh`) skip compile jobs, this one included; the
-invariant guard still runs. Setting
-`CGAH_REQUIRE_LINUX_BWRAP` (any value) makes every probe failure fatal and also
-refuses a non-Linux host; it is a test-only requirement, not a production gate.
-Python 3 probes must execute successfully, demonstrate candidate reads and
-scratch writes, and explicitly observe denied secret/symlink reads and candidate
-writes. The network probe first connects to an owned host listener outside the
-sandbox, then requires a different network namespace and connection denial
-inside it. No public endpoint or generic nonzero exit serves as network proof.
-The job changes no host sysctl and preserves the production backend ladder.
-SIGKILL of the runner with a live grandchild is unverified. See `docs/CODING_PIPELINE.md#offline-cargo-verification` for preparation, required native tests,
-and remaining process/resource limitations.
+`HARD_SANDBOX_UNAVAILABLE` (exit 3). SIGKILL of the runner with a live grandchild is unverified. See `docs/CODING_PIPELINE.md#offline-cargo-verification` for preparation, required native tests,
+CI confinement evidence and remaining process/resource limitations.
 
 - Locked by: `tests/macos_cargo.rs` (no sandbox capability skip),
   `tests/linux_bwrap.rs`,
@@ -469,7 +448,7 @@ ignore carries a removal condition. Workflow actions are SHA-pinned and
 zizmor-linted; Rust pins: 1.88 backend, 1.90 desktop.
 
 - Locked by: `tests/invariant_guard.rs::deny_lists_ban_the_same_telemetry_crates`,
-  `.github/workflows/{ci,dependency-advisories,desktop,zizmor}.yml`.
+  `.github/workflows/{ci,dependency-advisories,desktop,desktop-check}.yml`.
 
 ## Provider keys live in the OS credential store
 
@@ -526,6 +505,32 @@ resurrect a job the operator killed.
   `::a_job_holds_the_run_gate_so_a_concurrent_sync_run_is_busy`,
   `src/server/agent_jobs.rs` unit tests.
 
+Local `/loop` turns, console or detached, are local-only (cloud refuses
+`CLOUD_CHAT_LOOP`), need a session goal and take the loop rate limit. They reuse
+owned attachments and permitted read-only web tools; goal modes `off`/`fetch`/`all`
+restrict those tools without granting URLs, and a goal set without a mode takes
+restart-only `web.goal_web_default` (ships `all`; withhold unattended search with
+`fetch` or `off`). A goal-less console loop takes the session's last prompt as its
+goal; a turn needing compaction continues automatically.
+
+`POST /api/loop/start` runs those turns in a server task that outlives the
+browser. Each turn goes through `chat_inner` (`loop_turn: true`) after re-reading
+the starting account: deleted, disabled, password-pending, or no longer
+operator/admin ends the run `failed`. `portal_auditor` cannot start one. Start,
+stop, status and events are bound to the starting owner; a foreign run reads as
+`LOOP_RUN_NOT_FOUND`. A session holds one live run (`LOOP_IN_FLIGHT`). A run ends
+on stop, a changed or cleared session goal (`LOOP_GOAL_CHANGED`), `loop.max_turns`, `loop.max_total_completion_tokens`, `loop.max_failures`
+consecutive failed turns or failed web rounds, unverified `GOAL_DONE`, a
+near-repeat reply, or a web refusal every later turn would repeat. Both budgets
+ship `0` (unlimited). Runs live
+in process memory: a restart ends them without resuming, and
+`loops/<run_id>.json` is a record, not a resume point. Audits hold start and
+finish metadata, never replies.
+
+- Locked by: `tests/loop_runner.rs` (`runs_are_owner_bound_and_end_when_the_account_is_disabled`,
+  `loop_start_validates_goal_config_and_run_ids`, `unlimited_turns_do_not_stop_at_five`),
+  `src/server/loop_runner.rs` units.
+
 ## Local chat compaction preserves goal and the first user turn
 
 The initial estimator is UTF-8 `bytes.div_ceil(4)`, not a tokenizer.
@@ -543,7 +548,7 @@ cap `MAX_MESSAGES`); no 20-turn or 8000-char clip; compaction owns overflow.
 The effective trigger is
 `max(chat.compact_prompt_tokens, max_tokens + 4096 +
 calibrated_tool_definition_tokens)`, capped at 30000 (scaled to an `auto_tune`-verified
-window); that cap, floored with `effective_reply_reservation` in place of
+window); that cap, floored with `compaction::reply_reservation` in place of
 `max_tokens`, is the hard limit a compacting turn may still send. Web-enabled chat tightens both
 toward `web.total_tokens - minimal tool result` (the projection carries the reservation and definitions, so every admitted
 prompt fits a round)
@@ -607,10 +612,8 @@ user message are preserved, even at `MAX_MESSAGES`. The audits `chat_session_com
 - `security.api_key_optional` on a host fronted by a header-stripping proxy is
   indistinguishable from no proxy: explicitly set it false there.
 
-Unix subprocess I/O shares an operation deadline and a fixed aggregate capture
-ceiling. The direct child stays unreaped through process-group cleanup. macOS
-also stops observed descendants across groups; this is best-effort ancestry
-cleanup, not containment. See `docs/PROCESS_LIFECYCLE.md` for limits and tests.
+Unix subprocess capture is deadline- and byte-bounded; descendant cleanup is
+best-effort, not containment ([limits and tests](docs/PROCESS_LIFECYCLE.md)).
 
 ## Native Ollama pull stays on loopback and never sends num_ctx
 
@@ -707,19 +710,15 @@ inference. If a later MCP tool bills a cloud model, it must record
   `tests/spend_ledger.rs`.
 
 Cloud selection needs active keys and account/provider consent; restart resets local.
-Prediction precedes generation. Guarded
-`POST /api/spend/predict` accepts only the explicit message/model and shares the
-generation/cancellation gate. Claude counts the same model/message body at its
-fixed count endpoint, with `count_timeout_sec` (default 2 s, 0.1–10)
-and 4 MiB response cap;
-Grok and count failures use a labelled UTF-8 bytes/4 heuristic. No history,
-attachments, local context or tokenizer calibration reaches the cloud counter.
-The rate table prices reserved output without cache credit.
-A missing/null `models.cloud_chat.max_usd_per_call` leaves generation ungated;
-otherwise it must be finite and positive. Vendor estimates enforce a known-rate
-cap; heuristic estimates enforce it only with literal `budget_on_heuristic: true`.
-Unknown rates remain unpriced. Prediction, count requests and budget refusal
-create no spend rows. An estimate, never an invoice ceiling.
+Prediction precedes generation. Guarded `POST /api/spend/predict` takes only the
+explicit message/model and shares the generation/cancellation gate. Claude counts
+that body at its fixed count endpoint (`count_timeout_sec`, 4 MiB response cap);
+Grok and count failures use a labelled bytes/4 heuristic. No history, attachments,
+local context or calibration reaches the counter. A null
+`models.cloud_chat.max_usd_per_call` leaves generation ungated; known-rate vendor
+estimates enforce a cap, heuristic ones only with literal `budget_on_heuristic: true`.
+Prediction, counting and refusal create no spend rows. An estimate, never an invoice
+ceiling ([configuration](docs/SPEND_AND_NOTIFICATIONS.md#estimate-a-cloud-draft-and-configure-a-per-call-cap)).
 
 ## Completion notifications do not grant job or content authority
 
@@ -751,7 +750,7 @@ content adapter or inbound listener is enabled. See
 ## Reload changes limits, not authority
 
 The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE`
-contains 23 API/web limits. Startup, reload and disk-policy rechecks use the same
+holds API, web and `loop.*` limits. Startup, reload and disk-policy rechecks use the same
 private, UTF-8 config reader (1 MiB maximum). Unix checks the open file's owner,
 owner-only mode and single link; symlink files are refused. macOS also refuses
 extended ACL entries. Windows uses the credential reader's owner/DACL checks.
@@ -797,7 +796,7 @@ finish. Disabling or deleting an account sets `disabled=1` on that owner's
 machine keys and retires that owner's schedules and completion notifications.
 Key rows stay until an explicit key-id revoke.
 Audits contain recognized tools, public IDs and coarse outcomes, never content.
-All gateway settings remain restart-only, outside the 23-key reload allowlist.
+All gateway settings remain restart-only, outside `RELOADABLE`.
 Remote exposure needs the deployment acceptance in `docs/MCP_SERVER.md`; nothing
 here opens a LAN/public service or tunnel.
 
@@ -863,7 +862,7 @@ send no packets. `passive_listen` is a flag only (joining multicast is
 not passive). Device strings are length-capped, control-stripped, marked
 untrusted, and never argv, commands or paths. `throughput` has no
 default endpoint; setting its flag or endpoint warns at load (internet egress
-outside this scope). These keys are outside the 23-key reload allowlist.
+outside this scope). These keys are outside `RELOADABLE`.
 Outside tests, `src/netconnect` imports only `crate::common` and
 `crate::server::slash`, never `crate::agentic`, and spawns only fixed argv
 through `common::process::run`. A false master gate exits 4. Invalid
