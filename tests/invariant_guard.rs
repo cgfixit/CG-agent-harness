@@ -718,6 +718,20 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
     ] {
         assert!(cfg.flag_is_true(gate), "{gate} must ship true");
     }
+    // D7 (#603): automatic suggestions ship restricted to listed local models;
+    // the "*" opt-out is an operator choice, never a shipped default.
+    let supported = cfg
+        .get("structured_memory.suggestion_supported")
+        .and_then(|v| v.as_sequence())
+        .expect("structured_memory.suggestion_supported ships as a list");
+    assert!(!supported.is_empty(), "the shipped local model is listed");
+    for entry in supported {
+        let model = entry.get("model").and_then(|m| m.as_str()).unwrap_or("");
+        assert!(
+            !model.is_empty() && model.trim() != "*",
+            "shipped entries name one model: {entry:?}"
+        );
+    }
     for boundary in ["auth.enabled", "tls.enabled", "tls.auto_generate"] {
         assert!(cfg.flag_is_true(boundary), "{boundary} must ship true");
     }
@@ -1131,7 +1145,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // Setup memory guidance replaces repeated setup/verification prose; keep the cut.
     // why: operator-approved (2026-10-14) automated macOS install (section 1) and browser access (section 7); 5188 words plus about 1%, rounded up to the next 50.
     // why: operator-approved (2026-10-14) raise to 7500 for room to grow the install guide after #491 and #496 together hit 5250; the Guide group cap still bounds it.
-    ("docs/INSTALL.md", Guide, 7406),
+    ("docs/INSTALL.md", Guide, 7414),
     ("docs/MCP_CLIENT.md", Guide, 1087),
     ("docs/MCP_SERVER.md", Guide, 1230),
     // why: #244 folded MEMORY_SETUP.md and the user manual's memory sections in here.

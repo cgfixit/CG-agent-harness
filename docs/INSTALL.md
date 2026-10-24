@@ -61,8 +61,9 @@ It waits for the Command Line Tools dialog, runs `install-macos.sh` (skipped whe
 admin's one-time setup code (it reads the code itself; in the app, **Cmd and +**
 shows it) with a new password and saves that in your login keychain as **CG Agent Harness
 admin password**, grants the web allowlist, and offers to list the local model
-for automatic memory: it adds `structured_memory.suggestion_supported` to the home `config.yaml`
-after a backup, default yes, then restart the app. When a previous install's home exists it first
+for automatic memory: it adds `structured_memory.suggestion_supported` (missing
+means no model may draft memory proposals) to the home `config.yaml` after a
+backup, default yes, then restart the app. When a previous install's home exists it first
 asks whether to delete it and its Keychain entries through `reset-macos.sh`
 (default no; you type `DELETE` after its dry run). It then asks what to open:
 **1** the app, **2** the console in your browser (served from that Terminal until
