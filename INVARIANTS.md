@@ -153,11 +153,12 @@ chat preempts only a running memory suggestion (bounded 5 s wait); any other
 gate holder returns `CHAT_BUSY` naming it. The run persists with
 `state=cancelled`, `error_class=preempted` and returns to the queue front unless
 its chat was cleared; only that error class resumes, and an owner's cancel is
-final. Independently gated completion suggestions require store + capture, use
-bounded current completion evidence for the initiating
-owner, and produce pending proposals only. They never read shared archives or
-write human semantic summaries. `/memory save <text> :: <reason>` is an explicit
-human confirmed fact write through the existing API, not model authority.
+final. Completion suggestions require store+capture and a model/mode
+pair in `structured_memory.suggestion_supported` (missing supports nothing), use
+bounded current evidence for the initiating owner, and produce pending proposals
+only. They never read shared archives or write human semantic summaries.
+`/memory save <text> :: <reason>` is an explicit human-confirmed fact write, not
+model authority.
 `/memory on` remains pinned-note prompt inclusion
 only and does not open capture, recall, retrieval, or consolidation. Recalled text is
 untrusted background context and cannot authorize tools, coding, or network.

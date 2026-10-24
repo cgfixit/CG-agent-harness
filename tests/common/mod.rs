@@ -51,6 +51,12 @@ pub fn config_with(dir: &Path, overrides: &[(&str, &str)]) -> AppConfig {
     // shipped tuning choices must not silently change what these tests exercise.
     // Dedicated shipped-config tests validate the seed without these overrides.
     for (key, value) in [
+        // Memory fixtures run many fixture model names. D7 enforcement has its
+        // own tests, which set this key; a fixture that does not lists any model.
+        (
+            "structured_memory.suggestion_supported",
+            "[{ model: \"*\", modes: [summaries, insights, both] }]",
+        ),
         ("chat.compact_keep_messages", "8"),
         ("chat.compact_follow_window", "true"),
         ("chat.compact_max_prefill_sec", "120"),

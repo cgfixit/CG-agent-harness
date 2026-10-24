@@ -93,6 +93,7 @@ structured_memory:
   auto_suggest_chat: true
   auto_suggest_coding: true
   suggestion_mode: "both" # "summaries", "insights", or "both"
+  suggestion_supported: [{ model: "qwen3.8:27b-mlx-cg", modes: [summaries, insights, both] }]
   consolidation: true
   auto_consolidation: true
   explicit_recall: true
@@ -107,8 +108,9 @@ separately, follow the [enable order](STRUCTURED_MEMORY.md#enable-order).
 ## Automatic suggestions and review
 
 With store, capture and source enabled, completed work can produce pending
-`session_summary`, `insight`, or both according to `suggestion_mode`. Invalid
-modes disable suggestions. Local chat and `/prompt` receive source eligibility,
+`session_summary`, `insight`, or both according to `suggestion_mode`, for local
+models listed in `suggestion_supported` ([D7](STRUCTURED_MEMORY.md#completion-suggestions)).
+Invalid modes disable suggestions. Local chat and `/prompt` receive source eligibility,
 separate from pinned notes. Empty results are valid; no setting approves
 proposals. Human-summary consolidation and retrieval remain separate.
 
