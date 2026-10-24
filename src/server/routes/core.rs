@@ -1573,14 +1573,10 @@ pub(crate) async fn chat_inner(
     reply.body_text = crate::server::tool_inventory::ground_assistant_text(&reply.body_text, &inventory);
 
     if !cloud_selected {
-        let tokens = if reply.usage_reported {
-            crate::llm::spend::UsageTokens {
-                input_tokens: Some(reply.prompt_tokens),
-                output_tokens: Some(reply.completion_tokens),
-                ..crate::llm::spend::UsageTokens::default()
-            }
-        } else {
-            crate::llm::spend::UsageTokens::default()
+        let tokens = crate::llm::spend::UsageTokens {
+            input_tokens: reply.reported_prompt_tokens,
+            output_tokens: reply.reported_completion_tokens,
+            ..crate::llm::spend::UsageTokens::default()
         };
         let empty = reply.body_text.trim().is_empty();
         crate::llm::spend::record(
@@ -1601,7 +1597,12 @@ pub(crate) async fn chat_inner(
                 StatusCode::BAD_GATEWAY,
                 "EMPTY_MODEL_RESPONSE",
                 "local model returned HTTP 2xx with empty text after billing",
-            ));
+            )
+            .details(json!({
+                "prompt_tokens": reply.reported_prompt_tokens.map(|count| count.saturating_add(summary_prompt_tokens)),
+                "completion_tokens": reply.reported_completion_tokens.map(|count| count.saturating_add(summary_completion_tokens)),
+                "usage_reported": reply.usage_reported,
+            })));
         }
     }
 

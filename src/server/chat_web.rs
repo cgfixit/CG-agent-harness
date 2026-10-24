@@ -289,7 +289,6 @@ async fn run_inner(
     let mut used_calls = 0;
     let mut prompt_tokens = 0u64;
     let mut completion_tokens = 0u64;
-    let mut reported = true;
     let mut initial_prompt_tokens = None;
     let definitions = tools_for(web_mode);
     let definition_json = serde_json::to_string(&definitions)?;
@@ -389,7 +388,6 @@ async fn run_inner(
         if turn == 0 {
             initial_prompt_tokens = crate::llm::openai_chat::initial_prompt_tokens(&response);
         }
-        reported &= usage["prompt_tokens"].is_u64() && usage["completion_tokens"].is_u64();
         prompt_tokens = prompt_tokens.saturating_add(crate::llm::openai_chat::token_count(usage.get("prompt_tokens")));
         completion_tokens =
             completion_tokens.saturating_add(crate::llm::openai_chat::token_count(usage.get("completion_tokens")));
@@ -406,7 +404,9 @@ async fn run_inner(
             let mut reply = parse_chat_response(&response, model)?;
             reply.prompt_tokens = prompt_tokens;
             reply.completion_tokens = completion_tokens;
-            reply.usage_reported = reported;
+            reply.usage_reported = totals.usage_reported();
+            reply.reported_prompt_tokens = totals.input_tokens;
+            reply.reported_completion_tokens = totals.output_tokens;
             reply.initial_prompt_tokens = initial_prompt_tokens;
             reply.initial_prompt_tools = initial_prompt_tools;
             reply.final_prompt_tools = !available.is_empty();
@@ -647,7 +647,9 @@ async fn run_inner(
                         model: model.into(),
                         prompt_tokens,
                         completion_tokens,
-                        usage_reported: reported,
+                        usage_reported: totals.usage_reported(),
+                        reported_prompt_tokens: totals.input_tokens,
+                        reported_completion_tokens: totals.output_tokens,
                         initial_prompt_tokens,
                         initial_prompt_tools,
                         // The last model call offered tools: it returned this batch.

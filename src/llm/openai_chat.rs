@@ -26,6 +26,9 @@ pub struct ChatResult {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub usage_reported: bool,
+    /// Numeric provider counts, independently unknown when absent or malformed.
+    pub reported_prompt_tokens: Option<u64>,
+    pub reported_completion_tokens: Option<u64>,
     /// First request only, never the sum of a multi-call web turn. Numeric,
     /// positive prompt usage is needed for session estimator calibration.
     pub initial_prompt_tokens: Option<u64>,
@@ -174,6 +177,8 @@ pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatR
         prompt_tokens,
         completion_tokens,
         usage_reported,
+        reported_prompt_tokens: prompt_reported.then_some(prompt_tokens),
+        reported_completion_tokens: completion_reported.then_some(completion_tokens),
         initial_prompt_tokens: initial_prompt_tokens(parsed),
         initial_prompt_tools: false,
         final_prompt_tools: false,

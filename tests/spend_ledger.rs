@@ -197,6 +197,23 @@ async fn rejected_local_replies_record_usage_once_without_saving_an_exchange() {
                 "stop",
                 json!({"prompt_tokens":14,"completion_tokens":6}),
             ),
+            (json!(""), "stop", json!({"prompt_tokens":15})),
+            (json!(""), "stop", json!({"completion_tokens":7})),
+            (
+                json!("<think>PRIVATE_REASONING</think>"),
+                "stop",
+                json!({"prompt_tokens":15}),
+            ),
+            (
+                json!("<think>PRIVATE_REASONING</think>"),
+                "stop",
+                json!({"completion_tokens":7}),
+            ),
+            (
+                json!(""),
+                "stop",
+                json!({"prompt_tokens":"99","completion_tokens":"99"}),
+            ),
             (json!("REJECTED_TEXT"), "length", json!({"prompt_tokens":15})),
             (json!("REJECTED_TEXT"), "length", json!({"completion_tokens":7})),
             (
@@ -224,6 +241,11 @@ async fn rejected_local_replies_record_usage_once_without_saving_an_exchange() {
                 ("completion_tokens", "output_tokens"),
             ] {
                 assert_eq!(row[dest].as_u64(), usage[source].as_u64(), "{row}");
+                assert_eq!(
+                    reply["detail"]["details"][source].as_u64(),
+                    usage[source].as_u64(),
+                    "{reply}"
+                );
             }
             assert_eq!(
                 row["usage_missing"],
@@ -242,7 +264,7 @@ async fn rejected_local_replies_record_usage_once_without_saving_an_exchange() {
 
 #[tokio::test]
 async fn local_upstream_http_error_does_not_invent_spend() {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
         let app = axum::Router::new().route(
@@ -251,7 +273,7 @@ async fn local_upstream_http_error_does_not_invent_spend() {
         );
         axum::serve(listener, app).await.unwrap();
     });
-    let s = spawn_server(&format!("http://{address}/v1"), ServerOptions::default()).await;
+    let s = spawn_server(&format!("http://{address}/v1"), ServerOptions::default()).await; // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
     let (status, reply) = s.post_json("/api/chat", json!({"message":"private"})).await;
     assert_eq!(status, 502, "{reply}");
     assert_eq!(code(&reply), "HARNESS_LLM_ERROR");
