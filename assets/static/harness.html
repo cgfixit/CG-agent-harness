@@ -5697,6 +5697,8 @@ function openHtmlEditor(opener) {
 }
 function runHtmlPreview() {
   rememberHtmlDraft();
+  const status = $('htmlPreviewStatus');
+  if (status) status.textContent = '';
   const frame = $('htmlPreviewFrame');
   const source = $('htmlEditorSource');
   const run = ++htmlPreviewRun;

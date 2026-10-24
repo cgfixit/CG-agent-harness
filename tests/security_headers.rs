@@ -170,7 +170,7 @@ async fn preview_html_is_frameable_only_by_the_console() {
     let body = preview.text().await.unwrap();
     assert!(body.contains("document.write"));
     assert!(body.contains("https:"));
-    assert!(body.contains("127.0.0.1"));
+    assert!(body.contains("127.0.0.1")); // DevSkim: ignore DS162092 because the shell must name loopback and nothing else.
     assert!(!body.contains("__CYCLAW_CSRF_TOKEN__"));
     assert!(!body.contains("__CYCLAW_CSP_NONCE__"));
     assert!(!body.contains(&s.csrf));

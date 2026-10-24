@@ -73,7 +73,7 @@ pub const PREVIEW_HTML: &str = r#"<!DOCTYPE html>
       var url = new URL(origin);
       if (url.protocol !== "http:" && url.protocol !== "https:") return false;
       var host = url.hostname;
-      return host === "127.0.0.1" || host === "localhost" || host === "::1";
+      return host === "127.0.0.1" || host === "localhost" || host === "::1"; // DevSkim: ignore DS162092 because this names the loopback parent and never dials it.
     } catch (e) {
       return false;
     }

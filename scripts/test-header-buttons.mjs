@@ -205,4 +205,7 @@ assert.ok(htmlSource.value.includes('color:#008000'), 'the next open loads the s
 assert.ok(htmlSource.value.includes('script ran'), 'the next open loads the starter script');
 assert.equal(htmlSource.value.includes('MARKER-BEFORE-LOGOUT'), false, 'the marker typed before logout is gone');
 assert.notEqual(htmlSource.value, '', 'logout does not leave an empty draft');
+node('htmlPreviewStatus').textContent = 'Script ran. Style applied. The preview did not reach the API.';
+context.runHtmlPreview();
+assert.equal(node('htmlPreviewStatus').textContent, '', 'Run clears the previous preview verdict');
 console.log('header buttons: hidden until auth is known, signed-out and failed probes stay hidden, enabled features shown, login/setup/logout re-evaluate, stale probes discarded, sign-in card, direct first-run password prompt, and the initial-password lock passed');
