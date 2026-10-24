@@ -718,6 +718,31 @@ home. A prepared local app copy can keep an absolute home in its launch
 environment without changing the published `~/.CGagentHarness` default. Record
 both app source and data home when comparing versions. Do not change `HOME`.
 
+#### Reset failure and recovery
+
+Reset is a staged purge, not an atomic operation. It checks every selected
+Keychain service before deleting anything. A reported preflight lookup failure
+exits 1 without deleting credentials or the home. After deletion starts, a later
+lookup/delete failure also exits 1, reports the successful-delete count, and
+leaves the home in place. **Earlier credential deletions are not rolled back:**
+the retained home may have missing provider keys or its saved admin password;
+it is not an unchanged, fully usable installation. Exit 1 alone does not prove
+partial deletion; read the reported count.
+
+Resolve the reported Keychain problem, keep the harness stopped, and rerun with
+the same `CGAGENTHARNESS_HOME` and `--yes`. Missing entries are skipped; the retry
+removes the home only after all remaining selected credential operations
+succeed. Another failure can leave further progress without rollback. A home
+backup does not restore Keychain entries. Before reusing that home, re-enter any
+missing keys you need; account passwords in `auth.sqlite3` are unchanged.
+
+The `security` CLI deletes one item per call; preflight cannot reserve later
+access or make the calls transactional. Reset neither exports secrets for a
+fallible restore nor restores a shared Keychain. Its supported guarantee is
+reported progress and retry, scoped to the selected home's service names;
+other homes, credentials under other service names and shared tools stay outside
+the purge.
+
 ### Release cadence and finding updates
 
 The app has no built-in updater. The [release

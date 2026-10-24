@@ -287,7 +287,11 @@ run records, workspaces, credentials and sessions. There is no automatic reset.
 To uninstall, quit and move only the app to Trash. Removing the application home
 is a separate, optional destructive action after backing up wanted data; it is
 not part of uninstall. `scripts/reset-macos.sh` prints the home and Keychain
-entries it would delete, and removes them only with `--yes`. The per-user focus directory under `/private/tmp` contains
+entries it would delete, and removes them only with `--yes`. A late Keychain
+failure preserves the home but can leave credentials already removed; it does
+not roll back. Follow [reset recovery](INSTALL.md#reset-failure-and-recovery)
+before treating that home as usable or retrying the purge.
+The per-user focus directory under `/private/tmp` contains
 only lock/socket files, no credentials. No persistent service needs removal.
 
 ## Primary references
