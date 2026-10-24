@@ -158,7 +158,7 @@ web:
   run_bytes: 2097152 # 1024–8388608 per run
   run_seconds: 180 # 1–180
   per_site_pages: 10 # 1–20
-  pace_ms: 400 # 100–5000 between requests to an origin
+  pace_ms: 400 # 100–5000 between requests to an origin; public Google searches wait at least 3000 (code floor)
   # In-memory pause per search provider after a refusal, so a /loop stops asking; lost on
   # restart. A paused search answers WEB_SEARCH_COOLDOWN before any request. Restart-only.
   search_cooldown_public_sec: 600 # 60–3600 after public Google WEB_GOOGLE_CHALLENGE or WEB_GOOGLE_BLOCKED
