@@ -22,7 +22,7 @@ CG Agent Harness combines chat, files, memory and selected tools locally.
 | **Jobs and schedules** | Detached coding jobs and reviewed interval or cron schedules. | Same coding permissions and owner-bound review. |
 | **Cloud chat** | Optional Grok or Claude. Sends only the new message, never local history, memory, skills, attachments, or web context. | Requires provider setup; unavailable for `/loop`. |
 | **MCP integrations** | Declared external tools and a separate read-only memory gateway with dedicated machine credentials. | Both disabled. |
-| **LAN observation** | Netconnect reads in-scope interfaces, routes, and neighbors from local tables. | Disabled with empty scope; no active scans, probes, or device control. |
+| **LAN observation** | Netconnect reads in-scope interfaces, routes, and neighbors from local tables. | Disabled with empty scope; the only active tier is the budgeted `diag` TCP probe; no scans or device control. |
 | **Self-knowledge** | A bundled harness manual and a live status block as untrusted local-chat context. | On; never sent to cloud chat, `/loop` or `/agent`. |
 | **Log diagnostics** | `/diag` shows bounded, redacted tails of allowlisted home logs. | Disabled; admin or `portal_auditor` only. |
 
@@ -118,7 +118,7 @@ Start coding only after the separate [coding setup](docs/CODING_PIPELINE.md).
 - **Network boundaries:** loopback binding limits incoming access only; research, cloud providers, subprocesses, and external model runtimes still reach the network.
 - **Cloud coding:** six gates end in per-run `--confirm-online`. Requests can send repository excerpts and task context before diff review; redaction does not remove proprietary code.
 - **Sandbox differences:** macOS uses Seatbelt. Linux prefers bubblewrap; its `unshare --net` fallback isolates networking without equivalent filesystem confinement.
-- **Data scope:** structured memory and sessions are account-owned; pinned notes, persona, model selection, spend, run records, and page cache are shared within a home. This is not tenant isolation.
+- **Data scope:** structured memory and sessions are account-owned; other home state is [shared](SECURITY.md#local-authority-and-shared-resources). This is not tenant isolation.
 - **Credentials and records:** provider keys default to the OS credential store; audit records use secret-pattern and startup-key redaction and stay under the home.
 
 The deployment model is a local operator workstation; Windows builds and releases remain parked. Read [Security](SECURITY.md), [Invariants](INVARIANTS.md), and [Secure research](docs/SECURE_RESEARCH.md) for boundaries and limitations.

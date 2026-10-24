@@ -175,7 +175,7 @@ links resolve. Truth order for every claim is code, then
   Tests: `tests/process_lifecycle.rs`, `tests/process_writer_outcome.rs`,
   `tests/child_env.rs`.
 - [CONFIG_RELOAD.md](CONFIG_RELOAD.md): **Reload limits**,
-  `POST /api/config/reload` and SIGHUP. Lists the 23 reloadable keys, what a
+  `POST /api/config/reload` and SIGHUP. Lists the reloadable keys, what a
   reload preserves, why tightening a ceiling can return 429 at once, and refusal and
   recovery. Everything else, including MCP declarations, needs a restart.
   Owns: `RELOADABLE` in `src/server/config_reload.rs`. Tests: `tests/secure_portal.rs`.
@@ -217,7 +217,7 @@ links resolve. Truth order for every claim is code, then
 - [`learning/`](learning/README.md): operator reading material (Rust and AI
   design PDFs). Agents never open it unless the operator asks.
 - [`screenshots/`](screenshots/README.md): captures indexed by series, plus
-  `demo/` and `demos/` recordings. Record hashes, platform and fixture-versus-live
+  `demo/` recordings. Record hashes, platform and fixture-versus-live
   in the adding PR; add no Markdown there.
 
 ## How these docs are kept

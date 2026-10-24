@@ -1106,18 +1106,18 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     // why: dependency refresh removed five stale Linux prerequisite words; keep the cut.
-    ("README.md", Root, 1689),
+    ("README.md", Root, 1686),
     ("SECURITY.md", Root, 690),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
     ("docs/API_ROUTES.md", Guide, 1830),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
     ("docs/CODING_PIPELINE.md", Guide, 3710),
-    ("docs/CONFIG_RELOAD.md", Guide, 600),
+    ("docs/CONFIG_RELOAD.md", Guide, 597),
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
-    ("docs/CONSOLE.md", Guide, 6187),
+    ("docs/CONSOLE.md", Guide, 6182),
     // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
     // why: the 2026-10-20 dep-sync folded the dated 2026-09 audit notes into Retained constraints; 944 words, keep the cut.
     // why: operator-approved +200 (2026-10-22) so dated advisory notes such as RUSTSEC-2026-0384 fit without trimming history.
@@ -1142,12 +1142,12 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-requested per-file index of docs/ (3-5 sentences each) replaces the 150-word folder stub; 1103 words, rounded up to the next 100.
     // why: operator-requested reading paths plus an owning-code and tests line per doc; size plus about 5%, rounded up to the next 50.
     // why: README audit removes 44 words; retain the existing headroom.
-    ("docs/README.md", Guide, 1656),
+    ("docs/README.md", Guide, 1653),
     ("docs/RELEASING.md", Guide, 900),
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
     // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
     // why: operator-approved (2026-10-24) raise to 4000 so #649 and #651 fit together without trimming contract text.
-    ("docs/SECURE_RESEARCH.md", Guide, 4000),
+    ("docs/SECURE_RESEARCH.md", Guide, 3990),
     // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here; 2157 words, cap set to 2750 for room to grow.
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2750),
     // why: #244 made this the one memory contract: a gate table, and the #87
