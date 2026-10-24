@@ -196,9 +196,9 @@ impl CredentialStore for OsCredentialStore {
 /// `allow_utf16`, an even-length blob that decodes as UTF-16LE without NUL is a
 /// Windows entry written by an earlier build's `set_password`; the flag reports
 /// it so the caller can rewrite it as UTF-8. ASCII stored as UTF-16LE always
-/// shows NUL bytes in its UTF-8 view, so an ASCII token is never misread. A
-/// non-ASCII legacy value whose UTF-16LE bytes happen to form NUL-free UTF-8
-/// (`中` is `2D 4E`, `-N`) reads as that UTF-8 text.
+/// shows NUL bytes in its UTF-8 view, so an ASCII token is never misread.
+/// shortcut: ambiguous legacy bytes stay UTF-8; full recovery needs format
+/// provenance, since `中` as UTF-16LE and `-N` as UTF-8 are both `2D 4E`.
 fn decode_stored_secret(bytes: Vec<u8>, allow_utf16: bool) -> Result<(String, bool), StoreError> {
     let current = !bytes.contains(&0) && std::str::from_utf8(&bytes).is_ok();
     if allow_utf16 && !current && !bytes.is_empty() && bytes.len() % 2 == 0 {
@@ -1149,6 +1149,10 @@ export ANTHROPIC_API_KEY='anthropic-secret-value-2222'\n";
             assert_eq!(text, value);
             assert!(legacy);
         }
+        // These bytes have no format marker. Prefer current UTF-8 so an old
+        // value cannot cause a valid current secret to be silently rewritten.
+        assert_eq!(utf16le("中"), b"-N");
+        assert_eq!(decode_stored_secret(utf16le("中"), true).unwrap(), ("-N".into(), false));
         // macOS and Linux keep the earlier behavior: ASCII UTF-16LE is valid
         // UTF-8 with NULs and is returned as stored, never reinterpreted.
         let (text, legacy) = decode_stored_secret(utf16le("abc"), false).unwrap();
@@ -1191,10 +1195,11 @@ export ANTHROPIC_API_KEY='anthropic-secret-value-2222'\n";
         }
         // An entry an earlier build wrote with `set_password` (UTF-16LE on
         // Windows) reads back intact and is rewritten as UTF-8.
-        let value = "legacy-set-password-value";
-        store.entry(name).unwrap().set_password(value).unwrap();
-        assert!(secret_eq(&store.get(name).unwrap().unwrap(), value));
-        assert_eq!(store.entry(name).unwrap().get_secret().unwrap(), value.as_bytes());
+        for value in ["legacy-set-password-value", "pässwörd-é"] {
+            store.entry(name).unwrap().set_password(value).unwrap();
+            assert!(secret_eq(&store.get(name).unwrap().unwrap(), value));
+            assert_eq!(store.entry(name).unwrap().get_secret().unwrap(), value.as_bytes());
+        }
         store.delete(name).unwrap();
         assert!(store.get(name).unwrap().is_none());
     }
