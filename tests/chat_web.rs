@@ -416,6 +416,37 @@ async fn check_fetch_evidence(loop_turn: bool) {
         1,
         "denied destination must not be fetched"
     );
+    // The session keeps a ledger of both reads (targets and counts, no page
+    // text); the audit gets each turn's counts without the targets.
+    let (_, stored) = s.get_json(&format!("/api/sessions/{sid}")).await;
+    let ledger = stored["web_sources"].as_array().unwrap();
+    assert_eq!(ledger.len(), 2, "{stored}");
+    assert_eq!(ledger[0]["target"], "http://docs.example/docs/item?q=version");
+    assert_eq!(
+        (&ledger[0]["reads"], &ledger[0]["cited"], &ledger[0]["turns"]),
+        (&json!(1), &json!(1), &json!([1]))
+    );
+    assert_eq!(ledger[0]["delivered_chars"], ledger[0]["source_chars"]);
+    assert_eq!((&ledger[1]["failures"], &ledger[1]["turns"]), (&json!(1), &json!([2])));
+    assert!(!stored["web_sources"].to_string().contains("FETCHED_ONLY_EVIDENCE"));
+    let turns: Vec<Value> = s
+        .audit_log()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|line| line["event"] == "chat_web_turn")
+        .collect();
+    assert_eq!(turns.len(), 2, "{turns:?}");
+    assert_eq!(
+        (
+            &turns[0]["turn"],
+            &turns[0]["ok"],
+            &turns[0]["cited"],
+            &turns[0]["loop_turn"]
+        ),
+        (&json!(1), &json!(1), &json!(1), &json!(loop_turn))
+    );
+    assert_eq!((&turns[1]["failed"], &turns[1]["calls"]), (&json!(1), &json!(1)));
+    assert!(!format!("{turns:?}").contains("docs.example"), "{turns:?}");
     let (status, unsafe_tool) = s
         .post_json(
             "/api/chat",
