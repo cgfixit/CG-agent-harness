@@ -16,6 +16,10 @@ pub const SERVICE: &str = "CGagentHarness";
 pub const PLAINTEXT_KEY_FILE: &str = "security.allow_plaintext_key_file";
 pub const OS_STORE_LABEL: &str = "os-credential-store";
 
+// A legacy read may rewrite its entry; serialize it with saves/clears across store instances.
+#[cfg(windows)]
+static OS_STORE_MUTATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StoreError {
     Unavailable,
@@ -160,6 +164,8 @@ impl OsCredentialStore {
 
 impl CredentialStore for OsCredentialStore {
     fn get(&self, name: &str) -> Result<Option<String>, StoreError> {
+        #[cfg(windows)]
+        let _guard = OS_STORE_MUTATION.lock().map_err(|_| StoreError::Unavailable)?;
         let entry = self.entry(name)?;
         // Provider tokens are UTF-8 strings. Read the secret bytes instead of
         // `get_password`, and drop an undecodable blob without formatting it.
@@ -171,12 +177,14 @@ impl CredentialStore for OsCredentialStore {
         let (value, legacy) = decode_stored_secret(bytes, cfg!(windows))?;
         if legacy {
             // Best effort: a failed rewrite leaves the legacy entry, which still decodes.
-            let _ = self.set(name, &value);
+            let _ = entry.set_secret(value.as_bytes()).map_err(|error| self.classify(error));
         }
         Ok(Some(value))
     }
 
     fn set(&self, name: &str, value: &str) -> Result<(), StoreError> {
+        #[cfg(windows)]
+        let _guard = OS_STORE_MUTATION.lock().map_err(|_| StoreError::Unavailable)?;
         let entry = self.entry(name)?;
         // Store UTF-8 bytes on every platform. `set_password` is the same call on
         // macOS and Linux but UTF-16LE on Windows, which `get` would misread.
@@ -184,6 +192,8 @@ impl CredentialStore for OsCredentialStore {
     }
 
     fn delete(&self, name: &str) -> Result<(), StoreError> {
+        #[cfg(windows)]
+        let _guard = OS_STORE_MUTATION.lock().map_err(|_| StoreError::Unavailable)?;
         let entry = self.entry(name)?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
@@ -1176,6 +1186,145 @@ export ANTHROPIC_API_KEY='anthropic-secret-value-2222'\n";
             decode_stored_secret(vec![0x00, 0xd8, 0xff, 0xff], false),
             Err(StoreError::ReadFailed)
         );
+    }
+
+    #[test]
+    #[cfg_attr(not(windows), ignore = "Windows legacy rewrite serialization")]
+    fn legacy_rewrite_does_not_overwrite_concurrent_save_or_clear() {
+        use keyring_core::api::{CredentialApi, CredentialStoreApi};
+        use std::sync::{mpsc, Arc};
+        use std::time::{Duration, Instant};
+
+        const CHILD: &str = "CGAGENTHARNESS_CREDENTIAL_RACE_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // The mock default store belongs only to this exact test's child process.
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "common::credential_store::tests::legacy_rewrite_does_not_overwrite_concurrent_save_or_clear",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    assert!(status.success(), "isolated credential race check failed");
+                    return;
+                }
+                if Instant::now() >= deadline {
+                    child.kill().unwrap();
+                    child.wait().unwrap();
+                    panic!("isolated credential race check timed out");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        struct PausedRead {
+            secret: Mutex<Option<Vec<u8>>>,
+            started: mpsc::Sender<()>,
+            resume: Mutex<mpsc::Receiver<()>>,
+        }
+        impl CredentialApi for PausedRead {
+            fn get_secret(&self) -> keyring_core::Result<Vec<u8>> {
+                let bytes = self
+                    .secret
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .ok_or(keyring_core::Error::NoEntry)?;
+                self.started.send(()).unwrap();
+                self.resume
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
+                Ok(bytes)
+            }
+            fn set_secret(&self, bytes: &[u8]) -> keyring_core::Result<()> {
+                *self.secret.lock().unwrap() = Some(bytes.to_vec());
+                Ok(())
+            }
+            fn delete_credential(&self) -> keyring_core::Result<()> {
+                *self.secret.lock().unwrap() = None;
+                Ok(())
+            }
+            fn get_credential(&self) -> keyring_core::Result<Option<Arc<keyring_core::Credential>>> {
+                Ok(None)
+            }
+            fn get_specifiers(&self) -> Option<(String, String)> {
+                None
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+        struct IsolatedStore(Arc<PausedRead>);
+        impl CredentialStoreApi for IsolatedStore {
+            fn vendor(&self) -> String {
+                "credential-race-fixture".into()
+            }
+            fn id(&self) -> String {
+                "isolated-child".into()
+            }
+            fn build(
+                &self,
+                _: &str,
+                _: &str,
+                _: Option<&std::collections::HashMap<&str, &str>>,
+            ) -> keyring_core::Result<keyring_core::Entry> {
+                Ok(keyring_core::Entry::new_with_credential(self.0.clone()))
+            }
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        for clear in [false, true] {
+            let (read_started, saw_read) = mpsc::channel();
+            let (resume, paused) = mpsc::channel();
+            let entry = Arc::new(PausedRead {
+                secret: Mutex::new(Some(utf16le("old-fixture-key"))),
+                started: read_started,
+                resume: Mutex::new(paused),
+            });
+            keyring_core::set_default_store(Arc::new(IsolatedStore(entry.clone())));
+            let store = || OsCredentialStore {
+                home: "credential-race-fixture".into(),
+                unavailable: AtomicBool::new(false),
+            };
+            let reader = store();
+            let reader = std::thread::spawn(move || reader.get("SERPAPI_API_KEY"));
+            saw_read.recv_timeout(Duration::from_secs(5)).unwrap();
+            #[cfg(windows)]
+            assert!(matches!(
+                OS_STORE_MUTATION.try_lock(),
+                Err(std::sync::TryLockError::WouldBlock)
+            ));
+            let writer = store();
+            let (started, saw_writer) = mpsc::channel();
+            let (done, completed) = mpsc::channel();
+            let writer = std::thread::spawn(move || {
+                started.send(()).unwrap();
+                let result = if clear {
+                    writer.delete("SERPAPI_API_KEY")
+                } else {
+                    writer.set("SERPAPI_API_KEY", "new-fixture-key")
+                };
+                done.send(result).unwrap();
+            });
+            saw_writer.recv_timeout(Duration::from_secs(5)).unwrap();
+            let while_reading = completed.recv_timeout(Duration::from_millis(200));
+            resume.send(()).unwrap();
+            assert_eq!(reader.join().unwrap(), Ok(Some("old-fixture-key".into())));
+            writer.join().unwrap();
+            assert_eq!(while_reading, Err(mpsc::RecvTimeoutError::Timeout));
+            assert_eq!(completed.recv_timeout(Duration::from_secs(5)).unwrap(), Ok(()));
+            let expected = (!clear).then(|| b"new-fixture-key".to_vec());
+            assert_eq!(*entry.secret.lock().unwrap(), expected);
+        }
     }
 
     #[test]
