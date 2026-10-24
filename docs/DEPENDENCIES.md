@@ -1,7 +1,9 @@
 # Dependency maintenance
 
 The backend and desktop are separate Cargo crates, with independently committed
-manifests, lockfiles, toolchains and `deny.toml` policies. The backend pins Rust
+manifests, lockfiles, toolchains and `deny.toml` policies. A third lockfile,
+the Seatbelt test fixture `tests/fixtures/cargo-sandbox`, gets the root policy's
+advisories, bans and sources checks in CI. The backend pins Rust
 1.88; `desktop/` pins 1.90. Use rustup's Cargo so the local toolchain files take
 effect. CI/release builds use locked resolution. Downloads during dependency
 preparation are separate from the application's offline Cargo verification.
@@ -75,7 +77,8 @@ build dependency does not itself require a CMake executable. See
 
 ## Check and synchronize
 
-Run in the repository root, then repeat inside `desktop/`:
+Run in the repository root, then repeat inside `desktop/`; check the fixture with
+`cargo deny --manifest-path tests/fixtures/cargo-sandbox/Cargo.toml --config deny.toml check advisories bans sources`:
 
 ```bash
 rustup show active-toolchain

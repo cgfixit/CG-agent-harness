@@ -61,7 +61,7 @@ When prose contradicts code, fix the prose in the same PR.
   Cross the boundary only through `src/shim` and the CLI whitelist.
 - Duplicated on purpose, kept in sync by tests: `RUN_ID_PATTERN` (server
   `agent_policy` vs agentic `run_store`), the planner/check timeout constants
-  (shim vs agentic), the check-profile table. Do not "deduplicate" them.
+  (shim vs agentic), the iteration default. Do not "deduplicate" them.
 - Gates read through `flag_is_true`: only literal YAML `true` is on; quoted
   `"true"` and a missing key are off. Note a missing key is not the shipped
   value: several gates ship `true` (structured memory, Ollama warmup, auth, TLS).

@@ -553,7 +553,7 @@ hides it. Coding-policy checks reread disk at mutation boundaries.
 | Persona and soul toggle | `soul.md` plus `harness.json`, shared across sessions; next request | `/soul status`, `/prompt` |
 | Runtime skill file | `<home>/skills/<id>/SKILL.md`; selection is per session | `/skill status` and next `/prompt`; last successful snapshot may be older |
 | Goal and chat history | Saved session; goal maximum 2,000 characters | `/goal`, `/session list`, `/goal task` for coding linkage |
-| Loop counters and automatic continuation | Current page only; not an unattended scheduler | Visible loop state; restart does not resume it |
+| Loop counters and automatic continuation | Manual loops: current page. Auto loops run server-side when `/api/status` reports `server_loop`, outliving the tab | Visible loop state, `/api/loop/status`; restart does not resume a run |
 | Memory notes and inclusion | Home-wide saved notes/toggle; next request | `/memory`, `/prompt` |
 | Structured-memory store and gates | `structured_memory.*` in `config.yaml` (restart); slash overlays in `memory/structured_gates.json` once the store is open | `/memory`, `/memory search`, `/memory consolidate`, `/memory auto-consolidate`, `/prompt`; retrieval-off search is 409 |
 | Web allowlist and cache; last extract and injected text | Shared policy/public cache; account-scoped selection with current permission checks | `/web`, `/prompt`; use `forget` to remove context |

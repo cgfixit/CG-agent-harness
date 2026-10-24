@@ -1123,7 +1123,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved +200 (2026-10-22) so dated advisory notes such as RUSTSEC-2026-0384 fit without trimming history.
     ("docs/DEPENDENCIES.md", Guide, 1150),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
-    ("docs/DESKTOP.md", Guide, 2655),
+    ("docs/DESKTOP.md", Guide, 2553),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
     // why: hook behavior review trims duplicated reuse instructions; retain the smaller budget.
     ("docs/GITHOOKS.md", Guide, 1400),
