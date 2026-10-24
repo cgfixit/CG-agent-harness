@@ -44,6 +44,10 @@ pub struct Limits {
     pub run_seconds: u64,
     pub per_site_pages: usize,
     pub pace_ms: u64,
+    /// Restart-only pause after a public Google challenge or block (`web.search_cooldown_public_sec`).
+    pub search_cooldown_public_sec: u64,
+    /// Restart-only pause after a SerpAPI quota refusal; 0 waits for the next clock hour.
+    pub search_cooldown_quota_sec: u64,
     pub cache_pages: usize,
     pub cache_bytes: usize,
     pub subqueries: usize,
@@ -88,6 +92,8 @@ impl Limits {
             run_seconds: bound("run_seconds", 60, 1, 180)?,
             per_site_pages: bound("per_site_pages", 10, 1, 20)? as usize,
             pace_ms: bound("pace_ms", 250, 100, 5000)?,
+            search_cooldown_public_sec: bound("search_cooldown_public_sec", 600, 60, 3600)?,
+            search_cooldown_quota_sec: bound("search_cooldown_quota_sec", 0, 0, 3600)?,
             cache_pages: bound("cache_pages", 128, 1, 256)? as usize,
             cache_bytes: bound("cache_bytes", 16_777_216, 1_048_576, 33_554_432)? as usize,
             subqueries: bound("subqueries", 3, 1, 5)? as usize,
@@ -98,7 +104,7 @@ impl Limits {
             total_tokens: bound("total_tokens", 16000, 2048, super::compaction::MAX_WEB_TOTAL_TOKENS)?,
             research_seconds: bound("research_seconds", 300, 10, 1800)?,
             synthesis_seconds: bound("synthesis_seconds", 300, 10, 1800)?,
-            chat_tool_calls: bound("chat_tool_calls", 10, 1, crate::llm::openai_stream::MAX_TOOL_CALLS)? as usize,
+            chat_tool_calls: bound("chat_tool_calls", 30, 1, crate::llm::openai_stream::MAX_TOOL_CALLS)? as usize,
             stale_seconds: bound("stale_seconds", 604800, 60, 31_536_000)?,
             goal_web_default: match cfg.get("web.goal_web_default") {
                 None => super::sessions::GoalWebMode::All,
@@ -406,6 +412,11 @@ pub struct WebTool {
     pub(super) permits: Arc<Semaphore>,
     pub(super) mutation: Arc<Mutex<()>>,
     pub(super) search_gate: Arc<Semaphore>,
+    /// Per-provider pause after a refusal, shared by every snapshot; lost on restart.
+    pub(super) search_cooldown: Arc<super::web_google::SearchCooldown>,
+    /// Programmatic fixture hook replacing the public Google search URL; no
+    /// configuration, CLI or HTTP path sets it.
+    pub test_public_search: Option<url::Url>,
     pub research: Arc<super::web_research::ResearchState>,
     pub chat_turn: Arc<super::web_research::ResearchState>,
 }
@@ -423,6 +434,8 @@ impl WebTool {
             plaintext_key_file: cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE),
             mutation: Arc::new(Mutex::new(())),
             search_gate: Arc::new(Semaphore::new(1)),
+            search_cooldown: Arc::default(),
+            test_public_search: None,
             research: Arc::default(),
             chat_turn: Arc::default(),
         })
@@ -1113,16 +1126,16 @@ mod tests {
     }
 
     #[test]
-    fn chat_tool_call_budget_defaults_to_ten_and_rejects_out_of_range_values() {
+    fn chat_tool_call_budget_defaults_to_thirty_and_rejects_out_of_range_values() {
         for yaml in ["{}", include_str!("../../assets/config.default.yaml")] {
             let cfg = AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap();
-            assert_eq!(Limits::load(&cfg).unwrap().chat_tool_calls, 10);
+            assert_eq!(Limits::load(&cfg).unwrap().chat_tool_calls, 30);
         }
-        for value in ["1", "3", "10", "0", "11", "-1", "1.5", "\"10\"", "null"] {
+        for value in ["1", "3", "10", "30", "0", "31", "-1", "1.5", "\"10\"", "null"] {
             let cfg =
                 AppConfig::from_str(&format!("web: {{chat_tool_calls: {value}}}"), Path::new("config.yaml")).unwrap();
             let result = Limits::load(&cfg);
-            if let Ok(expected @ 1..=10) = value.parse::<usize>() {
+            if let Ok(expected @ 1..=30) = value.parse::<usize>() {
                 assert_eq!(result.unwrap().chat_tool_calls, expected);
             } else {
                 assert!(result.is_err(), "invalid limit accepted: {value}");

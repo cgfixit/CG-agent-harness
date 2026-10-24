@@ -63,6 +63,7 @@ mod web_command;
 mod web_google;
 pub mod web_index;
 pub mod web_intent;
+pub mod web_ledger;
 pub mod web_policy;
 pub mod web_research;
 pub mod web_search;
@@ -127,6 +128,8 @@ pub struct AppOptions {
     pub web_test_resolve: Option<(String, SocketAddr)>,
     /// Additional exact hosts for multi-site fixtures; never populated by a serving entrypoint.
     pub web_test_resolve_extra: Vec<(String, SocketAddr)>,
+    /// Test hook: replace the public Google search URL with a fixture; never populated by a serving entrypoint.
+    pub web_test_public_search: Option<url::Url>,
     /// Test hook: the executable the shim spawns (tests run inside the test
     /// harness binary, whose `current_exe()` is not `cgagentharness`).
     pub shim_exe: Option<PathBuf>,
@@ -145,6 +148,7 @@ impl AppOptions {
             mcp_tool_allowlist_override: None,
             web_test_resolve: None,
             web_test_resolve_extra: Vec::new(),
+            web_test_public_search: None,
             shim_exe: None,
         }
     }
@@ -243,6 +247,7 @@ pub async fn build_app_with_sources(
     web.search_key_from_file = opts.key_file_sources.contains("SERPAPI_API_KEY");
     web.test_resolve = opts.web_test_resolve.clone();
     web.test_resolve_extra = opts.web_test_resolve_extra;
+    web.test_public_search = opts.web_test_public_search;
     let planner = cfg.u64_or(
         "agentic.deepagent_github.planner_timeout_sec",
         crate::shim::REAL_REPO_RUN_FALLBACK_PLANNER_SEC,

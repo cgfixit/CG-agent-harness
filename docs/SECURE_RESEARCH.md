@@ -296,7 +296,7 @@ and `web_fetch` (an exact permitted public URL). They use OpenAI-compatible tool
 receive the retrieved content.
 No repository, shell, policy, account, key or mutation tool is exposed. Invalid names, arguments and excess tool requests are refused; batches are
 validated before their first read and run sequentially. A turn allows at most
-`web.chat_tool_calls` (1–10, default 10) across all rounds, gets the chat timeout
+`web.chat_tool_calls` (1–30, default 30) across all rounds, gets the chat timeout
 plus a measured tool-round allowance (at most twice it), and checks each call's
 prompt against `web.total_tokens`, charged once. Tools are offered only while
 the prompt, its definitions, one reply and a minimal result (≥256 calibrated
@@ -311,9 +311,13 @@ unreported, never invented.
 `/loop stop` or the chat cancellation endpoint aborts the whole turn, including
 an outstanding content request. Direct chat uses `POST /api/chat` and returns
 `web_tools` alongside the reply and aggregate usage.
+Each session keeps a bounded ledger of its reads (targets, counts, truncation,
+citations, re-reads after compaction; no page text) that never enters a prompt;
+`GET /api/sessions/{id}` returns it as `web_sources`. Each web turn audits
+`chat_web_turn` counts without targets.
 
-Existing homes keep explicitly configured smaller call budgets. To use ten there,
-set `web.chat_tool_calls: 10` in the active home's `config.yaml` and use
+Existing homes keep explicitly configured smaller call budgets. To use thirty there,
+set `web.chat_tool_calls: 30` in the active home's `config.yaml` and use
 **Reload limits** (or restart). Raising the call ceiling does not raise token,
 time, byte, or URL-permission limits.
 
@@ -361,6 +365,11 @@ The exact generated search URL also works; an exact homepage grant is not enough
 redirects remain refused. In allowlist mode, an empty policy gives
 `WEB_ALLOWLIST_EMPTY` and a non-Google policy gives `WEB_GOOGLE_PERMISSION`.
 Denylist mode needs no Google grant, but blocked Google URLs remain refused.
+
+A challenge or block pauses public Google for `web.search_cooldown_public_sec`; a
+quota refusal pauses SerpAPI for `web.search_cooldown_quota_sec` (0: next clock hour).
+Paused search answers `WEB_SEARCH_COOLDOWN` ("cooling down until HH:MM", local time)
+without a request; `/loop` does not count it. Restart clears it; rejected keys never pause.
 
 `/web search` defaults to Google in the console and CLI; `/web pages` selects the
 existing permitted-page passage search, as does a source-group argument

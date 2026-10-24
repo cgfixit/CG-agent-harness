@@ -23,7 +23,7 @@ pub fn tools_for(mode: super::sessions::GoalWebMode) -> Vec<Value> {
 
 pub fn tools() -> Vec<Value> {
     vec![
-        json!({"type":"function","function":{"name":"web_search","description":"Search Google for current ranked links and snippets. Listings are not fetched destination pages. Use for explicit search or current-web questions. Resolve references using conversation context; write one focused query with the relevant entities and constraints. Start with five results. Reuse evidence, avoid repeated queries, and stop once you can answer. Search again only for a specific unresolved gap. Do not send credentials or private conversation text.","parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":200},"count":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":false}}}),
+        json!({"type":"function","function":{"name":"web_search","description":"Search Google for current ranked links and snippets. Listings are not fetched destination pages. Use for explicit search or current-web questions. Resolve references using conversation context; write one focused query with the relevant entities and constraints. Start with five results. Reuse evidence, avoid repeated queries, and stop once you can answer. Search again only for a specific unresolved gap. A WEB_SEARCH_COOLDOWN reply means search is paused: do not call web_search again this turn. Do not send credentials or private conversation text.","parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":200},"count":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":false}}}),
         json!({"type":"function","function":{"name":"web_fetch","description":"Read an exact public URL permitted by the administrator. Use when asked to read, retrieve, fetch or summarize a URL. Never grants permission or follows redirects.","parameters":{"type":"object","properties":{"url":{"type":"string","maxLength":2048}},"required":["url"],"additionalProperties":false}}}),
     ]
 }
@@ -500,6 +500,8 @@ async fn run_inner(
                 .ok_or_else(|| error("WEB_TOOL_ARGUMENTS", "invalid tool arguments"))?;
             authorize_owner(state, owner)?;
             let argv = tool_argv(name, args);
+            // The URL or query as asked, for the session's web ledger (`web_ledger`).
+            let target = argv.first().cloned().unwrap_or_default();
             assert_allowed(name, &argv, &chat_callable_names(web_mode), &state.audit)
                 .map_err(|e| error("WEB_TOOL_DENIED", &e.message))?;
             let result = match name {
@@ -588,7 +590,9 @@ async fn run_inner(
                     result
                 }
                 Err(failure) => {
-                    events.push(json!({"tool":name,"ok":false,"code":failure.code,"message":failure.message}));
+                    events.push(
+                        json!({"tool":name,"ok":false,"target":target,"code":failure.code,"message":failure.message}),
+                    );
                     batch_failures.push((failure.code.clone(), failure.message.clone()));
                     json!({"error":failure.code,"message":failure.message,
                         "notice":"This read did not run or did not fit. Answer from the other results, or say what could not be read."})
@@ -605,7 +609,7 @@ async fn run_inner(
                     }
                 }
                 check_evidence(state, owner, &sources)?;
-                events.push(json!({"tool":name,"ok":true,"result":result}));
+                events.push(json!({"tool":name,"ok":true,"target":target,"result":result}));
             }
             messages.push(tool_message(id, &result)?);
         }
