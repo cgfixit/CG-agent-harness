@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 
 use super::web_policy::{canonical_url, error};
 use super::web_search::{parse_html, run_web_cpu, WebTool};
+use super::web_searxng::SearchProvider;
 use crate::common::audit::Audit;
 use crate::common::credential_store::CredentialStore;
 use crate::common::errors::Result;
@@ -148,14 +149,14 @@ fn cooldown_error(provider: &str, pause: &Pause) -> crate::common::errors::Harne
 }
 
 #[derive(Debug, Serialize)]
-struct SearchResult {
-    rank: usize,
-    title: String,
-    url: String,
-    snippet: String,
+pub(super) struct SearchResult {
+    pub(super) rank: usize,
+    pub(super) title: String,
+    pub(super) url: String,
+    pub(super) snippet: String,
 }
 
-fn add_result(
+pub(super) fn add_result(
     rows: &mut Vec<SearchResult>,
     seen: &mut BTreeSet<String>,
     title: &str,
@@ -307,8 +308,9 @@ impl WebTool {
         }
     }
 
-    /// A key chooses the fixed SerpAPI Google backend. It is never sent to Google
-    /// or a returned result URL. No fallback on a configured provider's failure.
+    /// `web.search.provider` picks the backend; `auto` lets a key choose the fixed
+    /// SerpAPI Google backend. A key is never sent to Google, SearXNG or a returned
+    /// result URL. No fallback on a configured provider's failure.
     pub async fn google_search(&self, query: &str, count: usize, enabled: bool, audit: &Audit) -> Result<Value> {
         self.google_search_at(
             query,
@@ -338,7 +340,26 @@ impl WebTool {
         if !enabled {
             return Err(error("WEB_DISABLED", "web access is disabled"));
         }
-        let key = self.search_key()?;
+        let key = match &self.search_provider {
+            SearchProvider::Searxng { endpoint, socket } => {
+                return self
+                    .searxng_listing(query, count, enabled, audit, endpoint, *socket)
+                    .await
+            }
+            // Forced public Google never reads or sends the saved key.
+            SearchProvider::GooglePublic => String::new(),
+            SearchProvider::Serpapi => {
+                let key = self.search_key()?;
+                if key.trim().is_empty() {
+                    return Err(error(
+                        "WEB_SEARCH_KEY_MISSING",
+                        "web.search.provider is serpapi but no SerpAPI key is active; add one in API Keys",
+                    ));
+                }
+                key
+            }
+            SearchProvider::Auto => self.search_key()?,
+        };
         // Provider listings require web/account authority, not page-content permission.
         // Public Google is a page fetch and retains the original URL policy checks.
         let policy = if key.is_empty() {
@@ -454,7 +475,7 @@ impl WebTool {
                 ));
             }
         }
-        if self.search_key()? != key {
+        if self.search_provider != SearchProvider::GooglePublic && self.search_key()? != key {
             return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
         }
         Ok(

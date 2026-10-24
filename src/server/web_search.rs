@@ -414,6 +414,8 @@ pub struct WebTool {
     pub(super) search_gate: Arc<Semaphore>,
     /// When the last public Google search request left, shared by every snapshot.
     pub(super) public_search_sent: Arc<std::sync::Mutex<Option<tokio::time::Instant>>>,
+    /// `web.search.provider` and its one exact SearXNG socket; restart-only.
+    pub(super) search_provider: super::web_searxng::SearchProvider,
     /// Per-provider pause after a refusal, shared by every snapshot; lost on restart.
     pub(super) search_cooldown: Arc<super::web_google::SearchCooldown>,
     /// Programmatic fixture hook replacing the public Google search URL; no
@@ -437,6 +439,7 @@ impl WebTool {
             mutation: Arc::new(Mutex::new(())),
             search_gate: Arc::new(Semaphore::new(1)),
             public_search_sent: Arc::default(),
+            search_provider: super::web_searxng::SearchProvider::load(cfg)?,
             search_cooldown: Arc::default(),
             test_public_search: None,
             research: Arc::default(),
@@ -502,7 +505,8 @@ impl WebTool {
             "rules": policy.rules, "policy_revision": policy.revision,
             "mode": policy.mode, "blocked": policy.blocked,
             "policy_scope":"shared_home", "context_scope":"account", "limits":self.limits,
-            "search_provider": if self.search_key()?.is_empty() { "public Google (may require JavaScript/CAPTCHA)" } else { "Google via SerpAPI" },
+            "search_provider": self.search_provider.describe(
+                self.search_provider == super::web_searxng::SearchProvider::Auto && !self.search_key()?.is_empty()),
             "injected": enabled && stored, "context_stored": stored,
             "has_last": self.read_page(&self.last_path(owner), None).is_ok(), "max_allow": self.limits.max_rules,
             "policy_missing": missing}),
@@ -801,6 +805,25 @@ impl WebTool {
             .redirect(reqwest::redirect::Policy::none())
             .dns_resolver(Arc::new(RefuseDns))
             .resolve_to_addrs(host, &addresses)
+            .timeout(Duration::from_secs(self.limits.request_seconds))
+            .user_agent("CGagentHarness-web/1.0")
+            .build()
+            .map_err(|_| error("WEB_FETCH_FAILED", "HTTP setup failed"))
+    }
+
+    /// The single private-address exception: SearXNG listings reach exactly the
+    /// configured loopback socket, validated at boot. Only `searxng_listing` calls
+    /// this; fetch, discovery, research and webhooks keep `pinned_client`.
+    pub(super) fn searxng_client(&self, endpoint: &url::Url, socket: SocketAddr) -> Result<reqwest::Client> {
+        let host = endpoint.host_str().unwrap_or_default().trim_matches(['[', ']']);
+        reqwest::Client::builder()
+            .no_proxy()
+            .http1_only()
+            .pool_max_idle_per_host(0)
+            .retry(reqwest::retry::never())
+            .redirect(reqwest::redirect::Policy::none())
+            .dns_resolver(Arc::new(RefuseDns))
+            .resolve_to_addrs(host, &[socket])
             .timeout(Duration::from_secs(self.limits.request_seconds))
             .user_agent("CGagentHarness-web/1.0")
             .build()
