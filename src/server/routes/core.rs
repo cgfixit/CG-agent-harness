@@ -1493,6 +1493,29 @@ pub(crate) async fn chat_inner(
             .await
             .map_err(|e| ApiError::from_err(llm_status(&e), &e))?;
     }
+    let local_failure = |e: crate::common::errors::HarnessError| {
+        // Usage metadata is attached only after receiving a model response.
+        if e.details.get("usage_reported").is_some() {
+            crate::llm::spend::record(
+                Some(&state.audit),
+                &state.spend_file,
+                crate::common::bounded_log::limit(&state.cfg),
+                crate::llm::spend::SpendEvent {
+                    provider: "local",
+                    model: &model,
+                    served_model: None,
+                    source: spend_source,
+                    tokens: crate::llm::spend::UsageTokens {
+                        input_tokens: e.details["prompt_tokens"].as_u64(),
+                        output_tokens: e.details["completion_tokens"].as_u64(),
+                        ..Default::default()
+                    },
+                    outcome: Some("failed_after_billing"),
+                },
+            );
+        }
+        ApiError::from_err(llm_status(&e), &e)
+    };
     let (mut reply, web_tools) = if cloud_selected {
         require_cloud_consent(&state, &owner, &model)?;
         (
@@ -1528,7 +1551,7 @@ pub(crate) async fn chat_inner(
             output,
         )
         .await
-        .map_err(|e| ApiError::from_err(llm_status(&e), &e))?
+        .map_err(local_failure)?
     } else {
         (
             state
@@ -1545,7 +1568,7 @@ pub(crate) async fn chat_inner(
                     }),
                 )
                 .await
-                .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?,
+                .map_err(local_failure)?,
             Vec::new(),
         )
     };
@@ -1559,14 +1582,10 @@ pub(crate) async fn chat_inner(
     reply.body_text = crate::server::tool_inventory::ground_assistant_text(&reply.body_text, &inventory);
 
     if !cloud_selected {
-        let tokens = if reply.usage_reported {
-            crate::llm::spend::UsageTokens {
-                input_tokens: Some(reply.prompt_tokens),
-                output_tokens: Some(reply.completion_tokens),
-                ..crate::llm::spend::UsageTokens::default()
-            }
-        } else {
-            crate::llm::spend::UsageTokens::default()
+        let tokens = crate::llm::spend::UsageTokens {
+            input_tokens: reply.reported_prompt_tokens,
+            output_tokens: reply.reported_completion_tokens,
+            ..crate::llm::spend::UsageTokens::default()
         };
         let empty = reply.body_text.trim().is_empty();
         crate::llm::spend::record(
@@ -1589,8 +1608,9 @@ pub(crate) async fn chat_inner(
                 "local model returned HTTP 2xx with empty text after billing",
             )
             .details(json!({
-                "prompt_tokens": reply.usage_reported.then_some(reply.prompt_tokens),
-                "completion_tokens": reply.usage_reported.then_some(reply.completion_tokens),
+                // Per-field counts; the caller adds summary_completion_tokens once (known_completion_tokens).
+                "prompt_tokens": reply.reported_prompt_tokens,
+                "completion_tokens": reply.reported_completion_tokens,
                 "usage_reported": reply.usage_reported,
             })));
         }
