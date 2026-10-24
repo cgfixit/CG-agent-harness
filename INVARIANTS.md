@@ -487,10 +487,11 @@ effective user with a verifiable DACL containing only ordinary allow
 ACEs for that user. Windows writes create an explicit owner and
 protected DACL matching these checks, verify empty stages, sync and replace
 through the held handle. Failures preserve destinations. Services
-include canonical home; keyring targets select a macOS domain or the sole Windows
+include canonical home; targets select a macOS domain or Windows
 credential name, not a namespace. `..` path components are refused before open;
-non-UTF-8 store entries are dropped unread. Values never enter argv,
-logs, diagnostics or `/api` responses, which show presence and masked tails only.
+undecodable entries fail; Windows attempts distinguishable UTF-16LE rewrites, preserving
+ambiguous UTF-8. Values never enter argv, logs or diagnostics; `/api` shows presence
+and masked tails only.
 Account passwords stay scrypt-hashed in `auth.sqlite3`. Startup loads keys into
 the harness environment. Git/`gh` children receive an allowlist without provider
 keys. Shim children receive a separate allowlist; only `real-repo-run` receives
