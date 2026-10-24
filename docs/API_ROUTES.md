@@ -14,7 +14,7 @@ check-profile names and run IDs, never browser-supplied commands.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/` | Console page (`assets/static/harness.html` with CSRF/CSP placeholders filled) |
-| GET | `/preview/html` | Sandboxed HTML preview shell. Inline style and script only. No network. |
+| GET | `/preview/html` | Sandboxed inline-only HTML preview, no network. |
 | GET | `/static/{name}` | Static console assets |
 | GET | `/api/status` | Public minimal status; operational `model`, `configured_model`, `selection_overrides_config` require account access |
 | GET | `/api/tools` | Wired-route and tool inventory |
