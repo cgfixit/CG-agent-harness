@@ -1040,7 +1040,8 @@ pub(crate) async fn chat_inner(
         web.limits = state.model_web_limits(&model, live.web.clone());
     }
 
-    tokio::select! {
+    let mut summary_completion_tokens = 0u64;
+    let result = tokio::select! {
         biased;
         _ = chat_owner.token.cancelled() => Err(cancelled()),
         result = async {
@@ -1218,7 +1219,6 @@ pub(crate) async fn chat_inner(
     // Why this turn was sent uncompacted although it passed the trigger.
     let mut compaction_skipped: Option<&'static str> = None;
     let mut summary_prompt_tokens = 0u64;
-    let mut summary_completion_tokens = 0u64;
     // The prompt limit this turn was sized for, checked again before the reply.
     let mut turn_prompt_limit = 0u64;
     if !cloud_selected {
@@ -1580,8 +1580,8 @@ pub(crate) async fn chat_inner(
                 "local model returned HTTP 2xx with empty text after billing",
             )
             .details(json!({
-                "prompt_tokens": reply.usage_reported.then_some(reply.prompt_tokens.saturating_add(summary_prompt_tokens)),
-                "completion_tokens": reply.usage_reported.then_some(reply.completion_tokens.saturating_add(summary_completion_tokens)),
+                "prompt_tokens": reply.usage_reported.then_some(reply.prompt_tokens),
+                "completion_tokens": reply.usage_reported.then_some(reply.completion_tokens),
                 "usage_reported": reply.usage_reported,
             })));
         }
@@ -1764,7 +1764,16 @@ pub(crate) async fn chat_inner(
         },
     })))
         } => result,
-    }
+    };
+    result.map_err(|mut error: ApiError| {
+        // Loop limits use known subtotals even when the complete usage is unknown.
+        let completion = error.details["known_completion_tokens"]
+            .as_u64()
+            .or_else(|| error.details["completion_tokens"].as_u64())
+            .unwrap_or(0);
+        error.details["known_completion_tokens"] = json!(completion.saturating_add(summary_completion_tokens));
+        error
+    })
 }
 
 /// Keep window, quota and context refusals distinct from upstream failures (502).
