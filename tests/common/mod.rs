@@ -135,6 +135,8 @@ pub struct ServerOptions {
     pub api_key: Option<String>,
     pub deny_all_tools: bool,
     pub web_resolve: Option<(String, SocketAddr)>,
+    /// Test hook: a fixture URL standing in for public Google search.
+    pub public_search: Option<url::Url>,
     /// Test hook. `None` uses the OS credential store when the plaintext opt-in is off.
     pub credential_store: Option<Arc<dyn CredentialStore>>,
 }
@@ -169,6 +171,7 @@ impl Default for ServerOptions {
             api_key: Some("test-api-key-0123456789".to_string()),
             deny_all_tools: false,
             web_resolve: None,
+            public_search: None,
             credential_store: None,
         }
     }
@@ -211,6 +214,7 @@ pub async fn prepare_server(model_url: &str, opts: ServerOptions) -> PreparedSer
         app_opts.tool_allowlist_override = Some(BTreeSet::new());
     }
     app_opts.web_test_resolve = opts.web_resolve;
+    app_opts.web_test_public_search = opts.public_search;
     app_opts.credential_store = opts.credential_store;
     app_opts.shim_exe = Some(opts.shim_exe.unwrap_or_else(|| PathBuf::from(BIN)));
     PreparedServer {

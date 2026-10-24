@@ -1365,6 +1365,7 @@ const WEB_TOOL_NEXT_STEP = {
   WEB_HOST_DENIED: 'That URL is outside the permitted patterns. /web status lists them; an administrator can add one with /web allow.',
   WEB_BLOCKED: 'That URL is on the web block list. /web status lists blocked rules; an administrator can remove one with /web unblock.',
   WEB_GOOGLE_PERMISSION: 'Keyless Google search needs /web allow https://www.google.com/*, or add a SerpAPI key in API Keys.',
+  WEB_SEARCH_COOLDOWN: 'Search is paused after the provider refused it; it resumes at the time shown. A restart clears the pause.',
   WEB_TOKEN_BUDGET: 'The turn ran out of web token budget (web.total_tokens); ask a narrower question or start a new session.',
 };
 function renderWebStatus(data) {
@@ -4501,8 +4502,11 @@ async function finishChat(r, asLoop) {
     const blocking = loopBlockingWebCode(webEvents);
     if (blocking) loopState.blockedTool = blocking;
     else if (failedTools.length) {
-      /* One read's failure is not the loop's: count turns on which every read failed. */
-      loopState.toolFailures = webEvents.some(tool => tool.ok === true) ? 0 : (loopState.toolFailures || 0) + 1;
+      /* One read's failure is not the loop's: count turns on which every read failed.
+         A search cooldown is a deliberate pause, not a failure (loop_runner.rs mirrors this). */
+      const counted = failedTools.filter(tool => tool.code !== 'WEB_SEARCH_COOLDOWN');
+      if (webEvents.some(tool => tool.ok === true)) loopState.toolFailures = 0;
+      else if (counted.length) loopState.toolFailures = (loopState.toolFailures || 0) + 1;
       sys('web: ' + failedTools.length + ' read(s) failed this turn (' + failedTools.map(tool => tool.code || 'WEB_TOOL_FAILED').join(', ') + '); the model was told and the loop continues');
     } else loopState.toolFailures = 0;
   }
