@@ -296,7 +296,7 @@ and `web_fetch` (an exact permitted public URL). They use OpenAI-compatible tool
 receive the retrieved content.
 No repository, shell, policy, account, key or mutation tool is exposed. Invalid names, arguments and excess tool requests are refused; batches are
 validated before their first read and run sequentially. A turn allows at most
-`web.chat_tool_calls` (1–10, default 10) across all rounds, gets the chat timeout
+`web.chat_tool_calls` (1–30, default 30) across all rounds, gets the chat timeout
 plus a measured tool-round allowance (at most twice it), and checks each call's
 prompt against `web.total_tokens`, charged once. Tools are offered only while
 the prompt, its definitions, one reply and a minimal result (≥256 calibrated
@@ -316,8 +316,8 @@ citations, re-reads after compaction; no page text) that never enters a prompt;
 `GET /api/sessions/{id}` returns it as `web_sources`. Each web turn audits
 `chat_web_turn` counts without targets.
 
-Existing homes keep explicitly configured smaller call budgets. To use ten there,
-set `web.chat_tool_calls: 10` in the active home's `config.yaml` and use
+Existing homes keep explicitly configured smaller call budgets. To use thirty there,
+set `web.chat_tool_calls: 30` in the active home's `config.yaml` and use
 **Reload limits** (or restart). Raising the call ceiling does not raise token,
 time, byte, or URL-permission limits.
 

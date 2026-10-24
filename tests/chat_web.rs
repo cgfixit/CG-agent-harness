@@ -1300,7 +1300,7 @@ async fn chat_empty_allowlist_refuses_fetch_and_search() {
 }
 
 /// After an administrator grants a fixture-origin rule, `web_fetch` succeeds
-/// within `web.chat_tool_calls` (default 10). The N+1 model tool request is
+/// within `web.chat_tool_calls` (default 30). The N+1 model tool request is
 /// refused with `WEB_TOOL_LIMIT` and the generation gate is released.
 #[tokio::test]
 async fn chat_origin_grant_fetches_within_bound_and_refuses_n_plus_one() {
@@ -1335,7 +1335,7 @@ async fn chat_origin_grant_fetches_within_bound_and_refuses_n_plus_one() {
         },
     )
     .await;
-    assert_eq!(s.state.web.limits.chat_tool_calls, 10, "shipped default N");
+    assert_eq!(s.state.web.limits.chat_tool_calls, 30, "shipped default N");
     assert_eq!(
         s.post_json("/api/web/allow", json!({"url": "http://docs.example/*"}))
             .await
