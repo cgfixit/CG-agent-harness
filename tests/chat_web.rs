@@ -504,6 +504,112 @@ async fn check_fetch_evidence(loop_turn: bool) {
     server.abort();
 }
 
+/// With `web.carry_forward_sources` above 0, the next web turn's system prompt
+/// lists the URL an earlier turn read (no page text) in a fenced untrusted
+/// block; at the shipped 0 it lists nothing until a reload raises it.
+#[tokio::test]
+async fn a_later_web_turn_lists_earlier_reads_only_when_carry_forward_is_on() {
+    for rows in ["0", "5"] {
+        let systems = Arc::new(Mutex::new(Vec::<String>::new()));
+        let recorded = systems.clone();
+        let router = Router::new()
+            .route(
+                "/docs/item",
+                get(|| async { ([("content-type", "text/plain")], "PAGE_TEXT_NOT_CARRIED") }),
+            )
+            .route(
+                "/v1/chat/completions",
+                post(move |Json(body): Json<Value>| {
+                    let systems = recorded.clone();
+                    async move {
+                        let messages = body["messages"].as_array().unwrap();
+                        systems
+                            .lock()
+                            .unwrap()
+                            .push(messages[0]["content"].as_str().unwrap_or("").to_string());
+                        if messages.last().unwrap()["role"] == "tool" {
+                            Json(common::ok_reply("Read it.", 10, 2))
+                        } else {
+                            Json(tool_call_reply(
+                                "web_fetch",
+                                r#"{"url":"http://docs.example/docs/item"}"#,
+                                "carry_1",
+                            ))
+                        }
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let s = common::spawn_server(
+            &format!("http://{address}/v1"),
+            common::ServerOptions {
+                web_resolve: Some(("docs.example".into(), address)),
+                ..common::ServerOptions::default().with("web.carry_forward_sources", rows)
+            },
+        )
+        .await;
+        assert_eq!(
+            s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"}))
+                .await
+                .0,
+            200
+        );
+        let (_, session) = s.post_json("/api/sessions", json!({})).await;
+        let sid = session["session_id"].as_str().unwrap();
+        for message in ["first", "second"] {
+            let (status, reply) = s
+                .post_json("/api/chat", json!({"message": message, "session_id": sid}))
+                .await;
+            assert_eq!(status, 200, "{reply}");
+        }
+        let systems_handle = systems.clone();
+        let systems = systems.lock().unwrap().clone();
+        // Calls: turn 1 (tool call, follow-up), turn 2 (tool call, follow-up).
+        assert_eq!(systems.len(), 4, "{rows}");
+        assert!(
+            !systems[0].contains("WEB_READS_DATA"),
+            "nothing to carry on the first turn"
+        );
+        let second = &systems[2];
+        if rows == "0" {
+            assert!(!second.contains("WEB_READS_DATA"), "off at the shipped 0");
+            // Reloadable: raising the key in config.yaml and reloading turns it
+            // on for the next turn, with no restart.
+            let path = &s.state.cfg.path;
+            let text = std::fs::read_to_string(path).unwrap();
+            assert!(text.contains("carry_forward_sources: 0"), "{text}");
+            std::fs::write(
+                path,
+                text.replace("carry_forward_sources: 0", "carry_forward_sources: 5"),
+            )
+            .unwrap();
+            let reloaded = cgagentharness::server::config_reload::reload(s.state.clone(), "test")
+                .await
+                .unwrap();
+            assert_eq!(reloaded["changed"], true, "{reloaded}");
+            let (status, reply) = s
+                .post_json("/api/chat", json!({"message": "third", "session_id": sid}))
+                .await;
+            assert_eq!(status, 200, "{reply}");
+            let third = systems_handle.lock().unwrap()[4].clone();
+            assert!(
+                third.contains("- fetched http://docs.example/docs/item (turns 1, 2)"),
+                "{third}"
+            );
+        } else {
+            assert!(second.contains("<<<WEB_READS_DATA>>>"), "{second}");
+            assert!(
+                second.contains("- fetched http://docs.example/docs/item (turns 1)"),
+                "{second}"
+            );
+            assert!(!second.contains("PAGE_TEXT_NOT_CARRIED"), "page text is never carried");
+        }
+        server.abort();
+    }
+}
+
 /// A tool round sends the whole prompt again with the result. Web chat must keep
 /// that follow-up inside web.total_tokens: clip a fetched page to the room left.
 /// Each prompt is charged once (the history is re-read, not spent twice), so a
