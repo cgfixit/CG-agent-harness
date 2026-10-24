@@ -6,7 +6,10 @@ use tokio::sync::mpsc::Sender;
 
 /// Protocol allocation ceiling; the web dispatcher enforces the configured
 /// (possibly smaller) remaining budget before executing any assembled calls.
-pub(crate) const MAX_TOOL_CALLS: u64 = 10;
+/// It is also the `web.chat_tool_calls` ceiling: a model may batch every call it
+/// has left in one reply, so a smaller per-reply bound would refuse in-budget
+/// batches. `web.total_tokens` and the turn deadline still bind first.
+pub(crate) const MAX_TOOL_CALLS: u64 = 30;
 
 #[derive(Clone, Copy)]
 pub struct Output<'a> {

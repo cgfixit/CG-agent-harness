@@ -610,7 +610,7 @@ mod tests {
         assert_eq!(value(&proposal, "web.total_tokens"), 14_000);
         assert_eq!(value(&proposal, "web.evidence_tokens"), 3_000);
         assert_eq!(value(&proposal, "web.model_tokens"), 1024);
-        assert_eq!(value(&proposal, "web.chat_tool_calls"), 5);
+        assert_eq!(value(&proposal, "web.chat_tool_calls"), 15);
     }
 
     #[test]
@@ -774,16 +774,16 @@ mod tests {
         let speed = json!({"prefill_tps": 1500.0, "decode_tps": 50.0, "load_seconds": 0.0});
         let profile = loaded(16_384);
         let proposal = propose(&profile, Some(&speed), &cfg, &web, &backend(Some("none")));
-        // 12000/1500 = 8 s, (2048 + 5 x 128)/50 = 53.8 s; x2 = 124 s, rounded up to 150.
-        assert_eq!(value(&proposal, "models.local_llm.timeout_sec"), 150);
+        // 12000/1500 = 8 s, (2048 + 15 x 128)/50 = 79.4 s; x2 = 175 s, rounded up to 180.
+        assert_eq!(value(&proposal, "models.local_llm.timeout_sec"), 180);
         let tuning = tuning_from("m", &profile, &proposal, Some(speed)).unwrap();
         assert_eq!(
             (tuning.max_tokens, tuning.timeout_sec, tuning.tools_off),
-            (2_048, Some(150), false)
+            (2_048, Some(180), false)
         );
         let mut live = web.clone();
         tuning.apply_web(&mut live);
-        assert_eq!((live.total_tokens, live.chat_tool_calls), (14_000, 5));
+        assert_eq!((live.total_tokens, live.chat_tool_calls), (14_000, 15));
         // (1500 + 1000)/1500 + 512/50 = 11.9 s; x2 rounded up is 30, floored at 60.
         assert_eq!((tuning.synthesis_seconds, live.synthesis_seconds), (Some(60), 60));
         // A configured value already below the tuning is kept.

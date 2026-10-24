@@ -313,6 +313,22 @@ async fn a_staged_excerpt_reaches_one_local_turn_and_is_refused_elsewhere() {
         (400, "DIAG_SURFACE_FORBIDDEN"),
         "{body}"
     );
+    // A detached job refuses the same way, before any broker decision or gate claim.
+    let decisions = audit_rows(&s, "tool_broker_decision").len();
+    let (status, body) = json_call(
+        &s,
+        &admin,
+        Method::POST,
+        "/api/agent/jobs",
+        Some(json!({"instruction":"x","branch":"claude/x","commit_message":"m","reason":"r","checks":["cargo-fmt"]})),
+    )
+    .await;
+    assert_eq!(
+        (status, code(&body).as_str()),
+        (400, "DIAG_SURFACE_FORBIDDEN"),
+        "{body}"
+    );
+    assert_eq!(audit_rows(&s, "tool_broker_decision").len(), decisions);
 
     // /loop never receives it and leaves it staged.
     let (status, _) = json_call(
