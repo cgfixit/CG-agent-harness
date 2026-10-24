@@ -654,7 +654,10 @@ class DesktopBoundary(unittest.TestCase):
         config = self.home / 'config.yaml'
         config.write_text(config.read_text().replace(
             'base_url: "http://127.0.0.1:11434/v1"', f'base_url: "{model.base}"', 1
-        ).replace('suggestion_idle_ms: 2000', 'suggestion_idle_ms: 10'))
+        ).replace('suggestion_idle_ms: 2000', 'suggestion_idle_ms: 10').replace(
+            'suggestion_supported: [{ model: "qwen3.8:27b-mlx-cg"',
+            'suggestion_supported: [{ model: "fixture-memory-local"', 1,
+        ))
         child = self.start()
         headers = child.authorize()
 
@@ -663,6 +666,11 @@ class DesktopBoundary(unittest.TestCase):
             self.assertEqual(status, expected, payload)
             return json.loads(payload)
 
+        # D7: an unlisted local model completes the chat but never runs inference.
+        call('/api/model', {'model': 'fixture-unlisted-local'})
+        refused = call('/api/chat', {'message': 'I always prefer imperial units.'})
+        self.assertIs(refused['memory_suggestion']['queued'], False, refused)
+        self.assertEqual(refused['memory_suggestion']['reason'], 'unsupported_model_mode', refused)
         selected = 'fixture-memory-local'
         call('/api/model', {'model': selected})
         chat = call('/api/chat', {'message': 'I always prefer metric units.'})
