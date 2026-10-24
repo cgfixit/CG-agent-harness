@@ -8,7 +8,7 @@ const between = (start, end) => {
   assert.ok(from >= 0 && to > from, 'console markers must bound the slice: ' + start + ' … ' + end);
   return html.slice(from, to);
 };
-const buttons = ['openAnalytics', 'openDeliveries', 'openSchedules'];
+const buttons = ['openAnalytics', 'htmlEditorToggle', 'openDeliveries', 'openSchedules'];
 for (const id of buttons) assert.match(html, new RegExp('<button [^>]*id="' + id + '"[^>]* hidden[ >]'), id + ' must start hidden');
 assert.match(html, /<button [^>]*id="openDeliveries"[^>]*title="Outgoing, metadata-only [^"]*coding job finishes"[^>]*>Job webhooks<\/button>/);
 assert.ok(!html.includes('id="openSpend"'), 'Spend is folded into Analytics');
@@ -67,18 +67,18 @@ await new Promise(setImmediate);
 assert.deepEqual(probes, [], 'no probe before the account state is known');
 assert.deepEqual(shown(), []);
 answer(reply(503)); await refreshing; await settle();
-assert.deepEqual(shown(), ['openAnalytics'], 'shipped defaults: notifications and coding pipeline disabled');
+assert.deepEqual(shown(), ['openAnalytics', 'htmlEditorToggle'], 'shipped defaults: notifications and coding pipeline disabled');
 assert.deepEqual(probes.sort(), ['/api/notifications', '/api/tools']);
 
 assert.deepEqual(await paint(true, enabled), buttons);
 for (const [label, failure] of [['401', refused(401)], ['403', refused(403)], ['network', new TypeError('Failed to fetch')]]) {
-  assert.deepEqual(await paint(true, {'/api/notifications':failure, '/api/tools':failure}), ['openAnalytics'], label + ' keeps both hidden');
+  assert.deepEqual(await paint(true, {'/api/notifications':failure, '/api/tools':failure}), ['openAnalytics', 'htmlEditorToggle'], label + ' keeps both hidden');
 }
-assert.deepEqual(await paint(true, {'/api/notifications':{}, '/api/tools':{}}), ['openAnalytics'], 'an empty reply is not an enabled feature');
+assert.deepEqual(await paint(true, {'/api/notifications':{}, '/api/tools':{}}), ['openAnalytics', 'htmlEditorToggle'], 'an empty reply is not an enabled feature');
 assert.deepEqual(await paint(true, {'/api/notifications':{enabled:'true'},
-  '/api/tools':{tools:[null, 7, {path:'/api/agent/runs',enabled:true}, {path:'/api/agent/schedules',enabled:'true'}]}}), ['openAnalytics'], 'only a literal true enables');
-assert.deepEqual(await paint(true, {'/api/notifications':enabled['/api/notifications'], '/api/tools':refused(401)}), ['openAnalytics', 'openDeliveries']);
-assert.deepEqual(await paint(true, {'/api/notifications':refused(401), '/api/tools':enabled['/api/tools']}), ['openAnalytics', 'openSchedules']);
+  '/api/tools':{tools:[null, 7, {path:'/api/agent/runs',enabled:true}, {path:'/api/agent/schedules',enabled:'true'}]}}), ['openAnalytics', 'htmlEditorToggle'], 'only a literal true enables');
+assert.deepEqual(await paint(true, {'/api/notifications':enabled['/api/notifications'], '/api/tools':refused(401)}), ['openAnalytics', 'htmlEditorToggle', 'openDeliveries']);
+assert.deepEqual(await paint(true, {'/api/notifications':refused(401), '/api/tools':enabled['/api/tools']}), ['openAnalytics', 'htmlEditorToggle', 'openSchedules']);
 
 // A probe that answers after logout cannot reveal a button.
 let late;

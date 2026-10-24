@@ -444,9 +444,9 @@
   .toggle .v.off { color: var(--accent-red); }
   /* Web policy mode: a globe with a red X (allowlist; click to open the block-list
      mode) or a red-outlined globe while every unblocked public URL is readable. */
-  #webModeToggle { display: inline-flex; align-items: center; padding: 3px; border: 1px solid transparent; border-radius: 6px; color: var(--text-secondary); }
-  #webModeToggle:hover { color: var(--text-primary); border-color: var(--border); }
-  #webModeToggle:focus-visible { outline: 2px solid var(--accent-amber); outline-offset: 2px; }
+  #webModeToggle, #htmlEditorToggle { display: inline-flex; align-items: center; padding: 3px; border: 1px solid transparent; border-radius: 6px; color: var(--text-secondary); }
+  #webModeToggle:hover, #htmlEditorToggle:hover { color: var(--text-primary); border-color: var(--border); }
+  #webModeToggle:focus-visible, #htmlEditorToggle:focus-visible { outline: 2px solid var(--accent-amber); outline-offset: 2px; }
   #webModeToggle .x { stroke: var(--accent-red); }
   #webModeToggle[data-mode="denylist"] { border-color: var(--accent-red); color: var(--accent-red); }
   #webModeToggle[data-mode="denylist"] .x { display: none; }
@@ -474,21 +474,25 @@ dialog::backdrop { background:#0009; }
 dialog h2 { font-size:var(--fs-lg, 18px); margin-bottom:12px; }
 dialog p { margin-bottom:12px; }
 :is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) label { display:block; }
-:is(#passwordDialog, #soulEditor) input:not([type=checkbox]), #soulContent { display:block; width:100%; margin-top:6px; padding:8px 10px; background:var(--bg-input); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; }
-:is(#passwordDialog, #soulEditor) input:not([type=checkbox]):focus, #soulContent:focus { outline:none; border-color:var(--border-focus); box-shadow:0 0 0 2px rgba(212,146,11,.18); }
+:is(#passwordDialog, #soulEditor) input:not([type=checkbox]), #soulContent, #htmlEditorSource { display:block; width:100%; margin-top:6px; padding:8px 10px; background:var(--bg-input); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; }
+:is(#passwordDialog, #soulEditor) input:not([type=checkbox]):focus, #soulContent:focus, #htmlEditorSource:focus { outline:none; border-color:var(--border-focus); box-shadow:0 0 0 2px rgba(212,146,11,.18); }
 :is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) input[type=checkbox] { margin-right:6px; accent-color:var(--accent-amber); }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button { padding:8px 14px; margin:4px 8px 8px 0; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; cursor:pointer; }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button:hover { background:var(--border); }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog) button { padding:8px 14px; margin:4px 8px 8px 0; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; cursor:pointer; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog) button:hover { background:var(--border); }
 /* One primary action per dialog; a destructive one is red, not amber. */
-:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button.primary { background:var(--accent-amber); border-color:var(--accent-amber); color:#000; font-weight:700; }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button.primary:hover { background:#e8a31c; border-color:#e8a31c; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog) button.primary { background:var(--accent-amber); border-color:var(--accent-amber); color:#000; font-weight:700; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog) button.primary:hover { background:#e8a31c; border-color:#e8a31c; }
 :is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button.danger { background:transparent; border-color:var(--accent-red); color:var(--accent-red); font-weight:700; }
 :is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button.danger:hover { background:var(--accent-red); color:#000; }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button:disabled { opacity:.45; cursor:default; }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) :focus-visible { outline:2px solid var(--accent-amber); outline-offset:2px; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog) button:disabled { opacity:.45; cursor:default; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog) :focus-visible { outline:2px solid var(--accent-amber); outline-offset:2px; }
 #passwordFeedback:empty, #sessionClearFeedback:empty { display:none; }
 #passwordFeedback, #sessionClearFeedback { color:var(--accent-red); }
-#soulEditor { width:min(950px,calc(100% - 32px)); }
+#soulEditor, #htmlEditorDialog { width:min(950px,calc(100% - 32px)); }
+#htmlEditorDialog .html-editor-panes { display:flex; gap:12px; align-items:stretch; }
+#htmlEditorDialog .html-editor-panes label { flex:1; min-width:0; }
+#htmlEditorSource { min-height:280px; resize:vertical; font-family:ui-monospace, monospace; }
+#htmlPreviewFrame { flex:1; min-width:0; min-height:280px; border:1px solid var(--border); background:#fff; }
 #analyticsDialog { width:calc(100% - 32px);max-width:1100px;max-height:92dvh;margin:auto;padding:0;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border);border-radius:12px;overflow:auto;box-shadow:0 24px 80px #0008; }
 #analyticsDialog::backdrop { background:#0009; }
 #analyticsDialog .analytics-header { position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 24px;background:var(--bg-secondary);border-bottom:1px solid var(--border); }
@@ -610,6 +614,9 @@ dialog p { margin-bottom:12px; }
       <button class="toggle" id="openSchedules" type="button" hidden>Schedules</button>
       <button class="toggle" id="webModeToggle" type="button" hidden data-mode="allowlist" aria-haspopup="dialog" aria-label="Web policy: allowlist. Switch to block-list mode" title="Web policy: allowlist (only allowed URLs). Click to switch to block-list mode">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/><path class="x" stroke-width="2.4" stroke-linecap="round" d="M15 15l7 7M22 15l-7 7"/></svg>
+      </button>
+      <button class="toggle" id="htmlEditorToggle" type="button" hidden aria-haspopup="dialog" aria-label="HTML editor" title="HTML editor">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 6L3 12l5 6M16 6l5 6-5 6"/></svg>
       </button>
       <button class="toggle" id="reloadLimits" type="button" hidden title="Apply supported web and API limits from config.yaml; other changes require restart">Reload limits</button>
       <div class="chips" role="group" aria-label="Readiness">
@@ -767,6 +774,19 @@ dialog p { margin-bottom:12px; }
   <p>Destinations and subscriptions require explicit owner-bound configuration in the private home's config.yaml and a restart. Pending attempts recheck grants and account authority; this panel grants no new destination.</p>
   <p id="notificationStatus" role="status" aria-live="polite"></p>
   <div id="notificationDestinations"></div><div id="notificationRows"></div>
+</dialog>
+<dialog id="htmlEditorDialog" aria-labelledby="htmlEditorTitle">
+  <h2 id="htmlEditorTitle">HTML editor</h2>
+  <button id="htmlEditorClose" type="button">Close</button>
+  <button id="htmlEditorRun" type="button" class="primary">Run</button>
+  <p id="htmlPreviewStatus" role="status" aria-live="polite"></p>
+  <!-- sandbox stays allow-scripts only: allow-same-origin would let this frame read the console token. -->
+  <div class="html-editor-panes">
+    <label>Draft
+      <textarea id="htmlEditorSource" spellcheck="false" aria-label="HTML draft"></textarea>
+    </label>
+    <iframe id="htmlPreviewFrame" title="HTML preview" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>
+  </div>
 </dialog>
 <dialog id="commandHelpDialog" aria-labelledby="commandHelpTitle">
   <div class="man-head"><h2 id="commandHelpTitle"></h2><button id="commandHelpClose" type="button" autofocus>Close</button></div>
@@ -5624,7 +5644,89 @@ function resetAccountView() {
   $('sSession').textContent = 'none'; input.value = ''; retryAttachmentIds = null;
   promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false};
   currentStyle = 'off'; currentStyleIssue = null; paintStyle(); sessionRevision++;
+  htmlEditorDrafts().clear();
+  const htmlSource = $('htmlEditorSource');
+  if (htmlSource) htmlSource.value = '';
+  closeHtmlEditor(false);
 }
+var htmlEditorOpener = null;
+var htmlPreviewRun = 0;
+var HTML_EDITOR_STARTER = '<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>Preview</title></head><body>\n'
+  + '<p id="sample" style="color:#008000">styled</p>\n<script>\n'
+  + 'var sample = document.getElementById("sample");\n'
+  + 'var styled = getComputedStyle(sample).color.replace(/\\s/g, "") === "rgb(0,128,0)";\n'
+  + 'sample.textContent = "script ran";\n'
+  + 'var probe = {kind:"html-preview-probe", script:true, styled:styled, fetched:false};\n'
+  + 'fetch("/api/status").then(function () { probe.fetched = true; parent.postMessage(probe, "*"); }).catch(function () { parent.postMessage(probe, "*"); });\n'
+  + '<' + '/script>\n</body></html>';
+function htmlDraftKey(sessionId) {
+  return sessionId == null ? 'none' : String(sessionId);
+}
+function htmlEditorDrafts() {
+  const dialog = $('htmlEditorDialog');
+  if (!dialog.drafts) dialog.drafts = new Map();
+  return dialog.drafts;
+}
+function rememberHtmlDraft() {
+  const source = $('htmlEditorSource');
+  if (!source || !source.dataset || !source.dataset.draftKey) return;
+  htmlEditorDrafts().set(source.dataset.draftKey, source.value);
+}
+function closeHtmlEditor(restore) {
+  rememberHtmlDraft();
+  const dialog = $('htmlEditorDialog');
+  if (dialog && dialog.open && typeof dialog.close === 'function') dialog.close();
+  if (restore && htmlEditorOpener && typeof htmlEditorOpener.focus === 'function') htmlEditorOpener.focus();
+}
+function openHtmlEditor(opener) {
+  const dialog = $('htmlEditorDialog');
+  if (!dialog || dialog.open) return;
+  htmlEditorOpener = opener || $('htmlEditorToggle');
+  const source = $('htmlEditorSource');
+  const key = htmlDraftKey(currentSession);
+  source.dataset.draftKey = key;
+  if (!htmlEditorDrafts().has(key)) htmlEditorDrafts().set(key, HTML_EDITOR_STARTER);
+  source.value = htmlEditorDrafts().get(key);
+  const status = $('htmlPreviewStatus');
+  if (status) status.textContent = '';
+  dialog.showModal();
+  if (typeof source.focus === 'function') source.focus();
+}
+function runHtmlPreview() {
+  rememberHtmlDraft();
+  const frame = $('htmlPreviewFrame');
+  const source = $('htmlEditorSource');
+  const run = ++htmlPreviewRun;
+  frame.addEventListener('load', function onLoad() {
+    frame.removeEventListener('load', onLoad);
+    if (run !== htmlPreviewRun || !frame.contentWindow) return;
+    // Chrome rejects targetOrigin "null". The shell checks the parent origin.
+    try { frame.contentWindow.postMessage(source.value, '*'); }
+    catch (e) {
+      const status = $('htmlPreviewStatus');
+      if (status) status.textContent = 'Preview did not accept the draft.';
+    }
+  });
+  frame.src = '/preview/html?run=' + run;
+}
+function onHtmlPreviewMessage(event) {
+  const frame = $('htmlPreviewFrame');
+  if (!frame || !frame.contentWindow || event.source !== frame.contentWindow) return;
+  if (event.origin !== 'null') return;
+  const data = event.data;
+  if (!data || data.kind !== 'html-preview-probe') return;
+  const status = $('htmlPreviewStatus');
+  if (!status) return;
+  status.textContent = (data.script === true ? 'Script ran. ' : 'Script did not report. ')
+    + (data.styled === true ? 'Style applied. ' : 'Style did not report. ')
+    + (data.fetched === true ? 'The preview reached the API.' : 'The preview did not reach the API.');
+}
+if (window && typeof window.addEventListener === 'function') window.addEventListener('message', onHtmlPreviewMessage);
+$('htmlEditorToggle').addEventListener('click', () => openHtmlEditor($('htmlEditorToggle')));
+$('htmlEditorRun').addEventListener('click', runHtmlPreview);
+$('htmlEditorClose').addEventListener('click', () => closeHtmlEditor(true));
+$('htmlEditorDialog').addEventListener('cancel', (event) => { event.preventDefault(); closeHtmlEditor(true); });
+$('htmlEditorSource').addEventListener('input', rememberHtmlDraft);
 /* Fresh setup uses the password dialog over the same locked account screen.
    Opening the page never signs in; only submitting a new password does. */
 let firstRunPassword = false;
@@ -5665,6 +5767,8 @@ let headerFeatureRevision = 0;
 async function refreshHeaderFeatures(usable) {
   const revision = ++headerFeatureRevision;
   $('openAnalytics').hidden = !usable;
+  $('htmlEditorToggle').hidden = !usable;
+  if (!usable) closeHtmlEditor(false);
   $('openDeliveries').hidden = true; $('openSchedules').hidden = true;
   if (!usable) return;
   const probe = path => api(path).catch(() => null);

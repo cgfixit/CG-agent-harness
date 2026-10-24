@@ -1108,7 +1108,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("README.md", Root, 1689),
     ("SECURITY.md", Root, 690),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
-    ("docs/API_ROUTES.md", Guide, 1830),
+    // why: the sandboxed HTML preview route row; measured 1840 words.
+    ("docs/API_ROUTES.md", Guide, 1840),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
     ("docs/CODING_PIPELINE.md", Guide, 3710),
     ("docs/CONFIG_RELOAD.md", Guide, 600),
@@ -1116,7 +1117,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
-    ("docs/CONSOLE.md", Guide, 6187),
+    // why: the HTML editor preview sentence; measured 6229 words.
+    ("docs/CONSOLE.md", Guide, 6229),
     // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
     // why: the 2026-10-20 dep-sync folded the dated 2026-09 audit notes into Retained constraints; 944 words, keep the cut.
     // why: operator-approved +200 (2026-10-22) so dated advisory notes such as RUSTSEC-2026-0384 fit without trimming history.
