@@ -1040,3 +1040,17 @@ async fn an_agentic_child_starts_after_the_audit_line_that_authorized_it() {
     assert_eq!(status, 200, "{result}");
     assert_eq!(result["parsed"]["decision_on_disk"], true, "{result}");
 }
+
+#[tokio::test]
+async fn github_status_spawn_failure_is_502() {
+    let model = start_mock_model().await;
+    let dir = tempfile::tempdir().unwrap();
+    let opts = ServerOptions {
+        shim_exe: Some(dir.path().join("missing-shim")),
+        ..Default::default()
+    };
+    let s = spawn_server(&model.base_url(), opts).await;
+    let (status, resp) = s.get_json("/api/github/status").await;
+    assert_eq!(status, 502, "{resp}");
+    assert_eq!(code(&resp), "SHIM_IO_ERROR");
+}
