@@ -26,6 +26,9 @@ pub struct ChatResult {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub usage_reported: bool,
+    /// Numeric provider counts, independently unknown when absent or malformed.
+    pub reported_prompt_tokens: Option<u64>,
+    pub reported_completion_tokens: Option<u64>,
     /// First request only, never the sum of a multi-call web turn. Numeric,
     /// positive prompt usage is needed for session estimator calibration.
     pub initial_prompt_tokens: Option<u64>,
@@ -125,31 +128,40 @@ pub fn reply_json_text(text: &str) -> &str {
 
 /// Extract body text + usage or fail with a typed error (never echoes the body).
 pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatResult> {
-    let obj = parsed
-        .as_object()
-        .ok_or_else(|| llm_err("malformed response from model server"))?;
+    let obj = parsed.as_object().ok_or_else(|| {
+        llm_err("malformed response from model server").with_details(json!({
+            "prompt_tokens": null, "completion_tokens": null, "usage_reported": false
+        }))
+    })?;
     let first = obj
         .get("choices")
         .and_then(|c| c.as_array())
         .and_then(|a| a.first())
         .cloned()
         .unwrap_or(json!({}));
+    let usage = obj.get("usage").and_then(|u| u.as_object());
+    let prompt_tokens = token_count(usage.and_then(|u| u.get("prompt_tokens")));
+    let completion_tokens = token_count(usage.and_then(|u| u.get("completion_tokens")));
+    let prompt_reported = usage.and_then(|u| u.get("prompt_tokens")).is_some_and(Value::is_number);
+    let completion_reported = usage
+        .and_then(|u| u.get("completion_tokens"))
+        .is_some_and(Value::is_number);
+    let usage_reported = prompt_reported && completion_reported;
+    let incomplete = |message: &str| {
+        llm_err(message).with_details(json!({
+            "prompt_tokens": prompt_reported.then_some(prompt_tokens),
+            "completion_tokens": completion_reported.then_some(completion_tokens),
+            "usage_reported": usage_reported,
+        }))
+    };
     let body_text = first
         .get("message")
         .and_then(|m| m.get("content"))
         .and_then(|c| c.as_str())
         .map(strip_leading_reasoning)
-        .ok_or_else(|| llm_err("malformed response from model server"))?
+        .ok_or_else(|| incomplete("malformed response from model server"))?
         .to_string();
-    let usage = obj.get("usage").and_then(|u| u.as_object());
-    let prompt_tokens = token_count(usage.and_then(|u| u.get("prompt_tokens")));
-    let completion_tokens = token_count(usage.and_then(|u| u.get("completion_tokens")));
-    let usage_reported = usage.is_some_and(|u| {
-        u.get("prompt_tokens").is_some_and(Value::is_number) && u.get("completion_tokens").is_some_and(Value::is_number)
-    });
-    let incomplete = |message: &str| {
-        llm_err(message).with_details(json!({"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens, "usage_reported":usage_reported, "output_bytes":body_text.len()}))
-    };
+    let incomplete = |message: &str| incomplete(message).detail("output_bytes", body_text.len());
     match first.get("finish_reason").and_then(Value::as_str) {
         Some("stop") => {}
         Some("length") => return Err(incomplete("model output was truncated; reduce the requested output or adjust the configured token budget before retrying").detail("truncated", true)),
@@ -165,6 +177,8 @@ pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatR
         prompt_tokens,
         completion_tokens,
         usage_reported,
+        reported_prompt_tokens: prompt_reported.then_some(prompt_tokens),
+        reported_completion_tokens: completion_reported.then_some(completion_tokens),
         initial_prompt_tokens: initial_prompt_tokens(parsed),
         initial_prompt_tools: false,
         final_prompt_tools: false,
