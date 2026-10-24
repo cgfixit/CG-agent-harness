@@ -9,7 +9,7 @@ cannot expand declarations. `/loop` has no MCP tools. The client is separate fro
 
 Stdio declarations need `capabilities` or startup refuses. Review paths and
 lifecycle policy; upgrades grant no ambient access. Disabled, undeclared MCP
-stays off. Declarations require restart, outside the 23-key reload allowlist.
+stays off. Declarations require restart, outside `RELOADABLE`.
 
 Keep `config.yaml` private; see [configuration storage](INSTALL.md#home-and-optional-credentials).
 An `env` value or complete SSE `url` accepts whole-value `env:NAME` from the
