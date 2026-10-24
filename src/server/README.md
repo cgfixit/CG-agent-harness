@@ -14,7 +14,7 @@ The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs) and
 - [`chat_web.rs`](chat_web.rs): chat-model `web_search`/`web_fetch` tool loop with bounded reads and SSE.
 - [`client.rs`](client.rs): `account`/`web` portal clients; `tls` inspects or renews home-owned certificates.
 - [`compaction.rs`](compaction.rs): prompt-window estimation, reply reservation, web budgets, summary compaction.
-- [`config_reload.rs`](config_reload.rs): hot reload of `RELOADABLE` (28 keys) into `RuntimeLimits`; SIGHUP installer.
+- [`config_reload.rs`](config_reload.rs): hot reload of the `RELOADABLE` allowlist into `RuntimeLimits`; SIGHUP installer.
 - [`console.rs`](console.rs): `GET /` and `/static/{name}`; inserts response CSP nonces after `mod.rs` substitutes the CSRF token.
 - [`desktop.rs`](desktop.rs): Unix-only parent/sidecar stdio protocol; carries ownership, no API authority.
 - [`diag_reader.rs`](diag_reader.rs): allowlisted private log tails, bounded reads, redaction and injection scanning.
@@ -25,6 +25,7 @@ The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs) and
 - [`guards.rs`](guards.rs): **core path.** Same-origin, loopback, rate limit, `account_gate` RBAC, `CSRF_HEADER`.
 - [`headers.rs`](headers.rs): **core path.** Outermost security headers (`DEFAULT_CSP`, no-store), loopback `trusted_host`.
 - [`live_state.rs`](live_state.rs): bounded in-memory status for local chat and prompt preview; no credential disclosure.
+- [`loop_runner.rs`](loop_runner.rs): server-side `/loop` runs that outlive the tab; owner-bound, account rechecked each turn.
 - [`mcp.rs`](mcp.rs): outbound MCP client `McpRuntime`: declared servers only, pinned DNS, stdio or SSE.
 - [`mcp_keys.rs`](mcp_keys.rs): SQLite machine-key store for inbound MCP; the `mcp-key` CLI, local file authority.
 - [`mcp_server.rs`](mcp_server.rs): default-off loopback inbound MCP memory gateway, own bearer auth and rates.

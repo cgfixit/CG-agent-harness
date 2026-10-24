@@ -116,11 +116,9 @@ git ls-files -- ':(glob)**/sessions/**' ':(glob)**/.CGagentHarness/**' '.env' '.
 /goal clear
 ```
 
-`/loop 3` runs up to three follow-up turns toward the goal (default three;
-`loop.max_turns` ships unlimited (0), hot-reloadable, not hardcoded). Each
-turn restates the goal. Turn,
-aggregate-token, failure and cooldown limits are the other `loop.*` keys
-(0 = unlimited for turns and tokens); the per-turn generation budget is
+`/loop 3` runs up to three follow-up turns toward the goal (default three).
+Each turn restates the goal. Run limits are the hot-reloadable
+[`loop.*` keys](CONFIG_RELOAD.md); the per-turn generation budget is
 `api.harness_loop_rate_limit.max_tokens`. Text after the count sets the
 goal first, so `/loop 3 <text>` is `/goal <text>` then `/loop 3`. With no stored
 goal, `/loop` takes the last prompt as the goal. Manual mode pauses after each
@@ -129,8 +127,8 @@ on with a goal (or last prompt) to follow starts the loop after 5 s, and so does
 `/goal <text>` while auto is on. `/loop auto` with a count, mode or goal turns
 auto on and starts after the same pause, storing nothing until then. A turn
 that needed compaction continues the same way automatically. `/loop stop`
-cancels generation, cooldown or a pending start. Goal clear, session switching, token budgets, a 90%-identical reply or two
-consecutive failed turns (auto retries once) stop it. A `GOAL_DONE` line (even `**GOAL_DONE**`) stops it
+cancels generation, cooldown or a pending start. Goal clear, session switching, token budgets, a 90%-identical reply or
+`loop.max_failures` consecutive failed turns (default 2; auto retries once) stop it. A `GOAL_DONE` line (even `**GOAL_DONE**`) stops it
 too, but is only model advice.
 
 With `server_loop` in `/api/status`, auto loops run server-side,
@@ -527,8 +525,9 @@ these sources; cloud chat and `/agent` refuse attachment IDs or live pins with
 Loop startup reports live pins, web availability, uploads.
 A repeating refusal (no URL permitted, keyless search, no budget for a round)
 stops continuation; one failed read is reported and the loop continues
-until two turns' reads all failed. A loop rate limit waits out
-`retry_after` (up to 300 s); `/loop stop` ends the wait.
+until two turns' reads all failed. A browser-driven loop waits out a
+rate limit's `retry_after` (up to 300 s; `/loop stop` ends the wait); a
+server-side run counts it as a failed turn.
 Unsupported formats are refused; clipped sections say they are incomplete.
 
 The notes corpus has multipart ingest, list, and delete

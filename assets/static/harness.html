@@ -1064,7 +1064,7 @@ function applyLoopConfig(status) {
    Loop turns themselves are excluded; runLoopTurns owns their continuation. */
 const LOOP_AUTO_ON_COMPACT = true;
 /* An unattended loop waits out a rate-limit window instead of stopping: the
-   loop limit ships 16 turns per 300 s (api.harness_loop_rate_limit), so a fast
+   loop limit ships 34 turns per 500 s (api.harness_loop_rate_limit), so a fast
    model's auto loop hits it within minutes. /loop stop still ends the wait. */
 const LOOP_RETRY_CAP_SEC = 300;
 /* Status/discard and GitHub-status calls spawn a CLI bounded at 120s. Job
