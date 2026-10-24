@@ -60,6 +60,9 @@ pub struct Limits {
     pub synthesis_seconds: u64,
     pub stale_seconds: u64,
     pub chat_tool_calls: usize,
+    /// Earlier web reads listed in a web turn's prompt (`web_ledger::carry_forward`);
+    /// 0, the shipped value, lists none. Restart-only.
+    pub carry_forward_sources: usize,
     /// The mode a `/goal` takes when the request names none (`web.goal_web_default`,
     /// restart-only). Ships `all`: search is a read-only listing that grants no URL
     /// permission, so unattended loop turns may search; fetches stay policy-gated.
@@ -106,6 +109,7 @@ impl Limits {
             synthesis_seconds: bound("synthesis_seconds", 300, 10, 1800)?,
             chat_tool_calls: bound("chat_tool_calls", 30, 1, crate::llm::openai_stream::MAX_TOOL_CALLS)? as usize,
             stale_seconds: bound("stale_seconds", 604800, 60, 31_536_000)?,
+            carry_forward_sources: bound("carry_forward_sources", 0, 0, 50)? as usize,
             goal_web_default: match cfg.get("web.goal_web_default") {
                 None => super::sessions::GoalWebMode::All,
                 Some(serde_yaml_ng::Value::String(s)) => s
