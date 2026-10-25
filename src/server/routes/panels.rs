@@ -123,7 +123,7 @@ fn web_err(e: &HarnessError) -> ApiError {
         "WEB_GOOGLE_UNREADABLE" => "Google returned no recognizable result listing. Configure a SerpAPI key in API Keys, then retry.",
         "WEB_SEARCH_KEY_REJECTED" => "The configured SerpAPI key was rejected. Check API Keys; no public fallback was attempted.",
         "WEB_SEARCH_QUOTA" => "SerpAPI quota or rate limit reached. No public fallback was attempted.",
-        "WEB_SEARCH_PROVIDER" => "The search provider failed, and no enabled fallback hop answered (web.search.fallback_* ship off).",
+        "WEB_SEARCH_PROVIDER" => "The search provider could not be reached or returned an error, and no enabled fallback hop answered (web.search.fallback_* ship off). Nothing was fabricated; retry in a moment.",
         "WEB_SEARCH_PACED" => "Public Google searches stay at least 3 seconds apart, and the next one could not start within web.request_seconds. Wait a moment, then retry.",
         "WEB_SEARCH_KEY_MISSING" => "web.search.provider is serpapi, but no SerpAPI key is active. Add one in API Keys, or set web.search.provider to auto and restart.",
         // Harness-built text naming the provider and the local end time; never upstream content.
