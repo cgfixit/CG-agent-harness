@@ -14,8 +14,8 @@ models:
   # provider key still requires restart. Cloud selection resets to local on restart.
   cloud_chat:
     enabled: true
-    max_tokens: 4096
-    timeout_sec: 180
+    max_tokens: 10000
+    timeout_sec: 360
     count_timeout_sec: 2 # 0.1–10; Claude count_tokens deadline, then a labelled heuristic fallback
     max_usd_per_call: null # null/absent: no gate; otherwise a finite positive USD estimate limit
     budget_on_heuristic: false # only literal true applies the cap to bytes/4 estimates (unreliable for CJK)
@@ -32,7 +32,7 @@ models:
   local_llm:
     provider: "ollama"
     base_url: "http://127.0.0.1:11434/v1"  # DevSkim: ignore DS162092 - Ollama loopback only; non-loopback refused at runtime
-    model: "qwen3.8:27b-mlx-cg"
+    model: "gemma4-26b-a4b:ud-q4_k_xl-cg"  # qwen3.8:27b-mlx-cg - for now since it does run better in the harness...
     # Sent only for a resolved Ollama backend. none | low | medium | high | max;
     # absent/empty omits the field, an invalid value fails at boot.
     reasoning_effort: "none"
@@ -41,7 +41,7 @@ models:
     # `ollama serve` and verify context_length on /api/ps (docs/MODELS.md).
     # The harness sends no num_ctx and inherits that window.
     max_tokens: 4096 # 1–25904 with Ollama reasoning=none; otherwise 1–12952 with a 2x reservation
-    temperature: 0.0
+    temperature: 0.1  #funsies but really dont go higher 
     timeout_sec: 1800
     # Explicit local inventory only; no inference, cloud probes or model downloads.
     inventory:
