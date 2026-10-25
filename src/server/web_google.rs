@@ -799,18 +799,124 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_status_or_redirect_from_public_google_is_still_a_refusal_that_pauses() {
-        use axum::{http::StatusCode, response::Redirect, routing::get, Router};
+    async fn transient_public_google_failures_allow_the_next_search_to_recover() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        for fault in ["headers-timeout", "body-timeout", "truncated-body"] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only an ephemeral loopback port.
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                for attempt in 0..2 {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut request = Vec::new();
+                    while !request.ends_with(b"\r\n\r\n") {
+                        request.push(socket.read_u8().await.unwrap());
+                    }
+                    if attempt == 0 {
+                        if fault != "headers-timeout" {
+                            // Even challenge text in an incomplete 200 body is not a verdict.
+                            socket
+                                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 1000\r\nConnection: close\r\n\r\nunusual traffic")
+                                .await
+                                .unwrap();
+                        }
+                        if fault != "truncated-body" {
+                            // Wait for the client's real deadline to close the connection.
+                            let mut rest = Vec::new();
+                            let _ = socket.read_to_end(&mut rest).await;
+                        }
+                    } else {
+                        let body = "<a href='https://www.veeam.com/'><h3>Recovered result</h3></a>";
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        socket.write_all(response.as_bytes()).await.unwrap();
+                    }
+                }
+            });
+            let (web, audit, dir) = public_tool(address);
+            let err = public_search(&web, &audit, "veeam first").await.unwrap_err();
+            if fault == "truncated-body" {
+                assert_eq!(err.code, "WEB_SEARCH_PROVIDER", "{fault}: {err:?}");
+            } else {
+                // Reqwest and the outer deadline race; neither outcome is a refusal.
+                assert!(
+                    matches!(err.code.as_str(), "WEB_TIMEOUT" | "WEB_SEARCH_PROVIDER"),
+                    "{fault}: {err:?}"
+                );
+            }
+            assert!(
+                web.search_cooldown.holding("google-public", Instant::now()).is_none(),
+                "{fault}"
+            );
+            let recovered = public_search(&web, &audit, "veeam second").await.unwrap();
+            assert_eq!(
+                recovered["results"][0]["url"], "https://www.veeam.com/",
+                "{fault}: {recovered}"
+            );
+            assert_eq!(cooldown_lines(&dir), 0, "{fault}: a blip must not start a pause");
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_public_google_tls_failure_never_starts_a_pause() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only an ephemeral loopback port.
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut hello = [0; 4096];
+                assert!(socket.read(&mut hello).await.unwrap() > 0);
+                // Plain HTTP cannot satisfy a TLS handshake; no Google answer exists.
+                let _ = socket.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await;
+            }
+        });
+        let (mut web, audit, dir) = public_tool(address);
+        web.test_public_search = Some(url::Url::parse("https://google.fixture/search").unwrap());
+        web.allow("https://google.fixture/*", true).unwrap();
+        for query in ["veeam first", "veeam second"] {
+            assert_eq!(
+                public_search(&web, &audit, query).await.unwrap_err().code,
+                "WEB_SEARCH_PROVIDER"
+            );
+        }
+        assert!(web.search_cooldown.holding("google-public", Instant::now()).is_none());
+        assert_eq!(cooldown_lines(&dir), 0);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_status_redirect_or_challenge_from_public_google_still_pauses() {
+        use axum::{
+            http::StatusCode,
+            response::{Html, Redirect},
+            routing::get,
+            Router,
+        };
         let status = Router::new().route("/search", get(|| async { StatusCode::TOO_MANY_REQUESTS }));
         let redirect = Router::new().route("/search", get(|| async { Redirect::temporary("/sorry") }));
-        for (label, router) in [("429", status), ("302", redirect)] {
+        let challenge = Router::new().route(
+            "/search",
+            get(|| async {
+                Html("<html>Our systems have detected unusual traffic. <div class='g-recaptcha'></div></html>")
+            }),
+        );
+        for (label, router, code) in [
+            ("429", status, "WEB_GOOGLE_BLOCKED"),
+            ("307", redirect, "WEB_GOOGLE_BLOCKED"),
+            ("challenge", challenge, "WEB_GOOGLE_CHALLENGE"),
+        ] {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only an ephemeral loopback port.
             let address = listener.local_addr().unwrap();
             let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
             let (web, audit, dir) = public_tool(address);
             assert_eq!(
                 public_search(&web, &audit, "veeam first").await.unwrap_err().code,
-                "WEB_GOOGLE_BLOCKED",
+                code,
                 "{label}"
             );
             assert_eq!(
