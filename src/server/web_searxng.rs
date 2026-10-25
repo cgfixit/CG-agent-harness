@@ -220,10 +220,15 @@ pub(super) fn plan_hops(provider: &SearchProvider, keyed: bool, fallback: &Fallb
     hops
 }
 
-/// Whether a hop's failure moves the search to the next hop. Only an unusable
-/// provider does: zero results, degraded engines, a refused query, a rejected key
-/// or a spent quota are answers or operator problems, never a reason to spend
-/// another provider. A SerpAPI cooldown is skipped without a request.
+/// The code of a SearXNG answer that carries no rows because no engine answered.
+pub(super) const SEARXNG_SILENT: &str = "WEB_SEARCH_DEGRADED";
+
+/// Whether a hop's failure moves the search to the next hop. A hop that cannot
+/// answer does: an unusable provider, a SerpAPI quota that is spent (public
+/// Google is the next hop and costs nothing) and a SearXNG answer whose engines
+/// all stayed silent. A clean zero-result answer, a partial answer, a refused
+/// query and a rejected key (the operator's error, loud on every search) do not.
+/// A SerpAPI cooldown is skipped without a request.
 pub(super) fn falls_through(hop: Hop, code: &str) -> bool {
     match hop {
         Hop::Searxng => matches!(
@@ -234,10 +239,27 @@ pub(super) fn falls_through(hop: Hop, code: &str) -> bool {
                 | "WEB_TOO_LARGE"
                 | "WEB_HEADERS_TOO_LARGE"
                 | "WEB_ENCODING_REFUSED"
+                | SEARXNG_SILENT
         ),
-        Hop::Serpapi => matches!(code, "WEB_SEARCH_PROVIDER" | "WEB_TIMEOUT" | "WEB_SEARCH_COOLDOWN"),
+        Hop::Serpapi => matches!(
+            code,
+            "WEB_SEARCH_PROVIDER" | "WEB_TIMEOUT" | "WEB_SEARCH_COOLDOWN" | "WEB_SEARCH_QUOTA"
+        ),
         Hop::GooglePublic => false,
     }
+}
+
+/// A SearXNG listing with no rows and at least one engine that did not answer:
+/// it says nothing about the query, so a later hop may be tried. Clean zero rows
+/// (every engine answered) and any listing with rows are answers.
+pub(super) fn searxng_silent(listing: &Value) -> bool {
+    let empty = |key: &str, want_empty: bool| {
+        listing
+            .get(key)
+            .and_then(Value::as_array)
+            .is_some_and(|rows| rows.is_empty() == want_empty)
+    };
+    empty("results", true) && empty("degraded", false)
 }
 
 /// SerpAPI fallbacks in the current clock hour; in memory, lost on restart.
@@ -535,12 +557,17 @@ mod tests {
         for code in ["WEB_BAD_QUERY", "WEB_BUSY", "WEB_DISABLED", "WEB_CANCELLED"] {
             assert!(!falls_through(Hop::Searxng, code), "{code}");
         }
-        for code in ["WEB_SEARCH_PROVIDER", "WEB_TIMEOUT", "WEB_SEARCH_COOLDOWN"] {
+        assert!(falls_through(Hop::Searxng, SEARXNG_SILENT));
+        for code in [
+            "WEB_SEARCH_PROVIDER",
+            "WEB_TIMEOUT",
+            "WEB_SEARCH_COOLDOWN",
+            "WEB_SEARCH_QUOTA",
+        ] {
             assert!(falls_through(Hop::Serpapi, code), "{code}");
         }
         for code in [
             "WEB_SEARCH_KEY_REJECTED",
-            "WEB_SEARCH_QUOTA",
             "WEB_SEARCH_RESPONSE",
             "WEB_SEARCH_KEY_CHANGED",
             "WEB_SEARCH_KEY_UNAVAILABLE",
@@ -549,6 +576,22 @@ mod tests {
         }
         assert!(!falls_through(Hop::GooglePublic, "WEB_GOOGLE_CHALLENGE"));
         assert!(!falls_through(Hop::GooglePublic, "WEB_TIMEOUT"));
+    }
+
+    #[test]
+    fn only_a_listing_with_no_rows_and_a_silent_engine_is_silent() {
+        let silent = json!({"results":[],"degraded":["google"]});
+        assert!(searxng_silent(&silent));
+        assert!(
+            !searxng_silent(&json!({"results":[],"degraded":[]})),
+            "every engine answered: zero results is the answer"
+        );
+        assert!(
+            !searxng_silent(&json!({"results":[{"title":"t"}],"degraded":["google"]})),
+            "a partial answer is an answer"
+        );
+        assert!(!searxng_silent(&json!({"results":[]})), "no degraded list");
+        assert!(!searxng_silent(&json!({"degraded":["google"]})), "no results list");
     }
 
     #[test]

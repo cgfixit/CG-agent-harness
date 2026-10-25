@@ -226,14 +226,14 @@ restart-only `web.search.provider` picks the backend: `auto` lets a configured S
 key select the fixed Google-results API transport and no active key public Google;
 `google-public`, `serpapi` or loopback `searxng` force one. Fallback hops ship off and follow
 searxng → serpapi → google-public within one deadline and search slot; they are audited
-with the provider that answered, and a rejected key or spent quota never falls through. SerpAPI listings require enabled web and current
+with the provider that answered. A hop moves on only when it cannot answer: an unusable provider, a spent SerpAPI quota (public Google is the next hop and costs nothing) or a SearXNG listing with no rows whose engines were silent. A rejected key, a refused query, a clean zero-result answer and a partial answer never fall through. SerpAPI listings require enabled web and current
 account authority, independently of page URL grants; public Google and linked-page
 fetches retain URL policy checks. Saved SerpAPI changes apply on the next search;
 explicit environment values retain precedence. Challenges and provider failures never become
 fabricated results. A provider refusal starts a bounded cooldown: a public Google
 challenge or block (an answer, not a failed connection), or a SerpAPI quota refusal, pauses
 that provider in memory and later searches answer `WEB_SEARCH_COOLDOWN` before any request; a
-rejected key or a connection that fails before any answer never pauses. A degraded SearXNG answer is reported, not retried elsewhere. Keys remain server-side and never enter model context.
+rejected key or a connection that fails before any answer never pauses. A SearXNG answer with rows is reported with its silent engines, never retried elsewhere. Keys remain server-side and never enter model context.
 
 Content permission grants no account or provider-configuration authority, and
 none of these substitutes for coding/write/publication gates. Page text is
