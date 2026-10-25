@@ -4537,8 +4537,8 @@ async function finishChat(r, asLoop) {
     if (blocking) loopState.blockedTool = blocking;
     else if (failedTools.length) {
       /* One read's failure is not the loop's: count turns on which every read failed.
-         A search cooldown is a deliberate pause, not a failure (loop_runner.rs mirrors this). */
-      const counted = failedTools.filter(tool => tool.code !== 'WEB_SEARCH_COOLDOWN');
+         A search cooldown or pace refusal is a deliberate pause, not a failure (loop_runner.rs mirrors this). */
+      const counted = failedTools.filter(tool => tool.code !== 'WEB_SEARCH_COOLDOWN' && tool.code !== 'WEB_SEARCH_PACED');
       if (webEvents.some(tool => tool.ok === true)) loopState.toolFailures = 0;
       else if (counted.length) loopState.toolFailures = (loopState.toolFailures || 0) + 1;
       sys('web: ' + failedTools.length + ' read(s) failed this turn (' + failedTools.map(tool => tool.code || 'WEB_TOOL_FAILED').join(', ') + '); the model was told and the loop continues');

@@ -23,7 +23,7 @@ pub fn tools_for(mode: super::sessions::GoalWebMode) -> Vec<Value> {
 
 pub fn tools() -> Vec<Value> {
     vec![
-        json!({"type":"function","function":{"name":"web_search","description":"Search Google for current ranked links and snippets. Listings are not fetched destination pages. Use for explicit search or current-web questions. Resolve references using conversation context; write one focused query with the relevant entities and constraints. Start with five results. Reuse evidence, avoid repeated queries, and stop once you can answer. Search again only for a specific unresolved gap. A WEB_SEARCH_COOLDOWN reply means search is paused: do not call web_search again this turn. Do not send credentials or private conversation text.","parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":200},"count":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":false}}}),
+        json!({"type":"function","function":{"name":"web_search","description":"Search Google for current ranked links and snippets. Listings are not fetched destination pages. Use for explicit search or current-web questions. Resolve references using conversation context; write one focused query with the relevant entities and constraints. Start with five results. Reuse evidence, avoid repeated queries, and stop once you can answer. Search again only for a specific unresolved gap. A WEB_SEARCH_COOLDOWN or WEB_SEARCH_PACED reply means search is paused: do not call web_search again this turn. Do not send credentials or private conversation text.","parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":200},"count":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":false}}}),
         json!({"type":"function","function":{"name":"web_fetch","description":"Read an exact public URL permitted by the administrator. Use when asked to read, retrieve, fetch or summarize a URL. Never grants permission or follows redirects.","parameters":{"type":"object","properties":{"url":{"type":"string","maxLength":2048}},"required":["url"],"additionalProperties":false}}}),
     ]
 }
@@ -682,6 +682,24 @@ async fn run_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_search_tool_tells_the_model_not_to_retry_a_paced_or_cooldown_reply() {
+        let tools = tools();
+        let description = tools
+            .iter()
+            .find(|tool| tool["function"]["name"] == "web_search")
+            .and_then(|tool| tool["function"]["description"].as_str())
+            .unwrap_or("");
+        assert!(
+            description.contains("WEB_SEARCH_COOLDOWN or WEB_SEARCH_PACED"),
+            "{description}"
+        );
+        assert!(
+            description.contains("do not call web_search again this turn"),
+            "{description}"
+        );
+    }
 
     fn size(value: &Value) -> usize {
         serde_json::to_vec(value).unwrap().len()
