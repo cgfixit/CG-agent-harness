@@ -535,7 +535,9 @@ structured_memory:
   # (invalid_supported_models). Only Ollama aliases bare names to :latest;
   # other local backends require exact model IDs. "*" matches
   # any model: an explicit opt-out of the corpus rule, never shipped. Seeded with
-  # the shipped local model pending its corpus run. Restart-only.
+  # qwen3.8:27b-mlx-cg. The shipped chat default (models.local_llm.model) is not
+  # listed until its corpus run passes, so its suggestions report
+  # unsupported_model_mode. Restart-only.
   suggestion_supported: [{ model: "qwen3.8:27b-mlx-cg", modes: [summaries, insights, both] }]
   suggestion_max_input_chars: 8000 # total across input/output, split equally
   suggestion_max_queue: 8 # queued inputs; one additional generation may be running
