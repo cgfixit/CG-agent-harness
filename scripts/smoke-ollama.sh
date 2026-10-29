@@ -42,16 +42,19 @@ esac
 # Temperature 0 makes the "pong" turn greedy: at the former 0.2 a 0.5B model
 # sometimes sampled "péng!", so the check failed by chance, not by regression.
 python3 - "$CGAGENTHARNESS_HOME/config.yaml" "$MODEL_URL" <<'PYMODEL'
-import json,sys
+import json,re,sys
 from pathlib import Path
 from urllib.parse import urlsplit
 url=sys.argv[2].rstrip('/')
 assert urlsplit(url).hostname in ('127.0.0.1','localhost','::1')  # DevSkim: ignore DS162092 because this refuses any non-loopback model URL.
 p=Path(sys.argv[1]);text=p.read_text()
-for old,new in (('base_url: "http://127.0.0.1:11434/v1"','base_url: '+json.dumps(url+'/v1')),('    temperature: 0.0\n','    temperature: 0\n')):  # DevSkim: ignore DS162092,DS137138 because these are the seeded loopback Ollama URL and the operator's loopback URL.
-    # The first match is models.local_llm (agentic.deepagent_github repeats base_url later).
-    assert old in text,'seeded config changed; update smoke-ollama.sh: '+old.strip()
-    text=text.replace(old,new,1)
+old='base_url: "http://127.0.0.1:11434/v1"'  # DevSkim: ignore DS162092 because this is the seeded loopback Ollama URL.
+# The first match is models.local_llm (agentic.deepagent_github repeats base_url later).
+assert old in text,'seeded config changed; update smoke-ollama.sh: '+old
+text=text.replace(old,'base_url: '+json.dumps(url+'/v1'),1)  # DevSkim: ignore DS137138 because this is the operator's loopback URL.
+# Pin greedy decoding whatever the shipped default is; the first match is models.local_llm.
+text,n=re.subn(r'(?m)^    temperature: [0-9.]+[^\n]*$','    temperature: 0',text,count=1)
+assert n==1,'seeded config changed; update smoke-ollama.sh: local_llm temperature'
 p.write_text(text)
 PYMODEL
 "$BIN" serve >"$CGAGENTHARNESS_HOME/serve.log" 2>&1 &
