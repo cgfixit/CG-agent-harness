@@ -851,10 +851,7 @@ mod tests {
                 "{fault}"
             );
             let recovered = public_search(&web, &audit, "veeam second").await.unwrap();
-            assert_eq!(
-                recovered["results"][0]["url"], "https://www.veeam.com/",
-                "{fault}: {recovered}"
-            );
+            assert_eq!(recovered["results"][0]["url"], "https://www.veeam.com/", "{fault}");
             assert_eq!(cooldown_lines(&dir), 0, "{fault}: a blip must not start a pause");
             server.await.unwrap();
         }
