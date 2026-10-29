@@ -241,7 +241,8 @@ Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 assume
 [Model setup](MODELS.md) is the set-and-verify step. The harness sends no `num_ctx`.
 A Modelfile `num_ctx` beats that variable; pin 32768 with the
 [local derived tag](MODELS.md#pin-32768-with-a-local-derived-tag). The shipped
-chat and planner default is that tag, `qwen3.8:27b-mlx-cg`.
+planner default is that tag, `qwen3.8:27b-mlx-cg`; the chat default is the
+operator-local tag `gemma4-26b-a4b:ud-q4_k_xl-cg`.
 
 ### 2.6 (Optional, for the coding pipeline only) GitHub CLI
 
@@ -393,8 +394,8 @@ CGagentHarness console on https://127.0.0.1:8790/ (home /Users/you/.CGagentHarne
 ```
 
 First run seeds the application home. Chat uses the configured loopback service's
-`qwen3.8:27b-mlx-cg` tag by default, a [derived tag](MODELS.md#pin-32768-with-a-local-derived-tag)
-that exists only after `ollama create`. Inspect installed tags with `/model list` and
+`gemma4-26b-a4b:ud-q4_k_xl-cg` tag by default, a local tag with no shipped recipe,
+reported `tag_missing` until installed. Inspect installed tags with `/model list` and
 select one with `/model use <exact-tag>`. Selection never downloads missing tags.
 
 To change the endpoint or configure the coding planner, quit with Cmd-Q or stop
@@ -578,7 +579,7 @@ on first run. Common operator settings follow:
 | `api.rate_limit.max_requests` / `window_seconds` | 300 / 240 | Per-IP sliding-window ceiling on every route: 75 a minute sustained, above the 44 a minute a console polls while an `/agent` job runs |
 | `api.harness_loop_rate_limit.*` | 34 / 500 s / 8192 tokens | Separate `/loop` budget; same backend-dependent ceiling as local chat after the legacy `0` → `2048` fallback |
 | `models.cloud_chat.enabled` | true | Allows `/model use grok` / `claude`; each provider has its own `enabled` and `model` |
-| `models.cloud_chat.max_tokens` / `timeout_sec` | 4096 / 180 | Cloud reply ceiling and timeout; boot refuses 0 or >32768 tokens, or a timeout outside 1–720 s |
+| `models.cloud_chat.max_tokens` / `timeout_sec` | 10000 / 360 | Cloud reply ceiling and timeout; boot refuses 0 or >32768 tokens, or a timeout outside 1–720 s |
 | `models.local_llm.max_tokens` | 4096 | Local reply ceiling: 1–25904 with resolved Ollama and explicit reasoning `none`; otherwise 1–12952, with twice the ceiling reserved for completion. Invalid combinations fail startup with `CONFIG_ERROR` |
 | `models.local_llm.reasoning_effort` | `none` | Sent only to resolved Ollama: `none`, `low`, `medium`, `high`, `max`. Missing/empty omits the field and uses the doubled reservation |
 | `models.local_llm.timeout_sec` | 1800 | Local fallback deadline; missing uses 720 s; auto-tune replaces it when a speed sample is available |

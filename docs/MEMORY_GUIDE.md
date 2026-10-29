@@ -110,6 +110,7 @@ separately, follow the [enable order](STRUCTURED_MEMORY.md#enable-order).
 With store, capture and source enabled, completed work can produce pending
 `session_summary`, `insight`, or both according to `suggestion_mode`, for local
 models listed in `suggestion_supported` ([D7](STRUCTURED_MEMORY.md#completion-suggestions)).
+The shipped chat default is unlisted until its corpus run, so it reports `unsupported_model_mode`.
 Invalid modes disable suggestions. Local chat and `/prompt` receive source eligibility,
 separate from pinned notes. Empty results are valid; no setting approves
 proposals. Human-summary consolidation and retrieval remain separate.

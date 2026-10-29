@@ -60,7 +60,7 @@ A **home** is the application's state directory: `~/.CGagentHarness`, overridden
 
 ### 1. Prepare a local model
 
-Pick an installed model that fits your hardware (`ollama list`); the default `qwen3.8:27b-mlx-cg` is a [locally derived tag](docs/MODELS.md#pin-32768-with-a-local-derived-tag), not bundled or required.
+Pick an installed model that fits your hardware (`ollama list`); the chat default `gemma4-26b-a4b:ud-q4_k_xl-cg` and planner default `qwen3.8:27b-mlx-cg` are [locally derived tags](docs/MODELS.md#pin-32768-with-a-local-derived-tag), not bundled or required.
 
 The default endpoint is `http://127.0.0.1:11434/v1`. Seeded research budgets assume a **32,768-token context window**; for a terminal-managed Ollama service, set it at startup:
 
