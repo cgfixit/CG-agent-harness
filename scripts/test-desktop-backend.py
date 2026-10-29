@@ -291,7 +291,8 @@ class DesktopBoundary(unittest.TestCase):
                 .replace('http://127.0.0.1:11434/v1', fixture.base)
                 # Match complete tags; a prefix replacement invents fixture-chat-cg.
                 .replace('"qwen3.8:27b-mlx"', '"fixture-chat"')
-                .replace('"qwen3.8:27b-mlx-cg"', '"fixture-chat"'))
+                .replace('"qwen3.8:27b-mlx-cg"', '"fixture-chat"')
+                .replace('"gemma4-26b-a4b:ud-q4_k_xl-cg"', '"fixture-chat"'))
             child = self.start()
             child.send({'command': 'models'})
             result = child.read()
