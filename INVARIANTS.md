@@ -233,7 +233,7 @@ explicit environment values retain precedence. Challenges and provider failures 
 fabricated results. A provider refusal starts a bounded cooldown: a public Google
 challenge or block (an answer, not a failed connection), or a SerpAPI quota refusal, pauses
 that provider in memory and later searches answer `WEB_SEARCH_COOLDOWN` before any request; a
-rejected key or a connection that fails before any answer never pauses. A SearXNG answer with rows is reported with its silent engines, never retried elsewhere. Keys remain server-side and never enter model context.
+rejected key, transport failure (including an interrupted body) or timeout never pauses. A SearXNG answer with rows is reported with its silent engines, never retried elsewhere. Keys remain server-side and never enter model context.
 
 Content permission grants no account or provider-configuration authority, and
 none of these substitutes for coding/write/publication gates. Page text is
