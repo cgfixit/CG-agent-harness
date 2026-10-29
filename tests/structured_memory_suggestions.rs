@@ -1486,17 +1486,39 @@ fn shipped_supported() -> String {
         .to_string()
 }
 
+/// The first model named in the shipped `suggestion_supported` list.
+fn shipped_listed_model() -> String {
+    let list = shipped_supported();
+    let rest = list.split("model: \"").nth(1).expect("a listed model");
+    rest[..rest.find('"').expect("closing quote")].to_string()
+}
+
 #[tokio::test]
 async fn only_listed_local_model_and_mode_pairs_queue_suggestions() {
     let model = model().await;
+    // D7: the shipped chat default has no corpus run yet, so it is not listed and
+    // its suggestions are refused. List it only after it qualifies.
+    let s = spawn_server(
+        &model.base,
+        options("both").with("structured_memory.suggestion_supported", &shipped_supported()),
+    )
+    .await;
+    assert_ne!(s.state.local_memory_model(), shipped_listed_model());
+    assert!(!suggest::available(&s.state, Source::Chat));
+    let status = suggest::status(&s.state, "local");
+    assert_eq!(status["chat_unavailable_reason"], "unsupported_model_mode");
+
+    let listed = shipped_listed_model();
     let s = spawn_server(
         &model.base,
         options("both")
+            .with("models.local_llm.model", &format!("\"{listed}\""))
             .with("structured_memory.auto_suggest_coding", "false")
             .with("structured_memory.suggestion_supported", &shipped_supported()),
     )
     .await;
     let shipped_model = s.state.local_memory_model();
+    assert_eq!(shipped_model, listed);
     assert!(suggest::available(&s.state, Source::Chat));
     assert!(suggest::status(&s.state, "local")["chat_unavailable_reason"].is_null());
     let (_, chat) = s
@@ -1533,7 +1555,9 @@ async fn only_listed_local_model_and_mode_pairs_queue_suggestions() {
     ] {
         let s = spawn_server(
             &model.base,
-            options("both").with("structured_memory.suggestion_supported", &list),
+            options("both")
+                .with("models.local_llm.model", &format!("\"{listed}\""))
+                .with("structured_memory.suggestion_supported", &list),
         )
         .await;
         assert!(!suggest::available(&s.state, Source::Chat), "{list}");
