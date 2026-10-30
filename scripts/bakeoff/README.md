@@ -21,3 +21,5 @@ python3 bakeoff10.py --score out/A
 Writes `out/<label>/<case>.score.json` and `summary.json`.
 
 Judge on route_ok and leak first, then cites and facts. Wall time is secondary.
+
+CI self-test invokes the archived harness runner at `scripts/bakeoff/archive/bakeoff_harness.py`.
