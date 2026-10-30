@@ -1050,9 +1050,35 @@ pub(crate) async fn chat_inner(
     }
 
     let mut summary_completion_tokens = 0u64;
+    let spend_source = if req.loop_turn { "loop" } else { "chat" };
+    // The outer cancellation drops the web future; retain only completed-round usage.
+    let web_usage = std::sync::Mutex::new(None);
+    let record_local_failure = |tokens| {
+        crate::llm::spend::record(
+            Some(&state.audit),
+            &state.spend_file,
+            crate::common::bounded_log::limit(&state.cfg),
+            crate::llm::spend::SpendEvent {
+                provider: "local",
+                model: &model,
+                served_model: None,
+                source: spend_source,
+                tokens,
+                outcome: Some("failed_after_billing"),
+            },
+        );
+    };
     let result = tokio::select! {
         biased;
-        _ = chat_owner.token.cancelled() => Err(cancelled()),
+        _ = chat_owner.token.cancelled() => {
+            let usage = web_usage.lock().unwrap().take();
+            if let Some((tokens, known_completion_tokens)) = usage {
+                record_local_failure(tokens);
+                Err(cancelled().details(json!({"known_completion_tokens": known_completion_tokens})))
+            } else {
+                Err(cancelled())
+            }
+        },
         result = async {
     let surface = if cloud_selected {
         crate::server::retrieval::RetrievalSurface::CloudChat
@@ -1489,7 +1515,6 @@ pub(crate) async fn chat_inner(
         content: req.message.clone(),
     });
     let temperature = state.cfg.f64_or("models.local_llm.temperature", DEFAULT_TEMPERATURE);
-    let spend_source = if req.loop_turn { "loop" } else { "chat" };
     // Compaction can take a while: the window must still allow what this turn
     // was sized for before the reply is requested, even if tuning was cleared.
     if !cloud_selected {
@@ -1502,23 +1527,12 @@ pub(crate) async fn chat_inner(
     let local_failure = |e: crate::common::errors::HarnessError| {
         // Usage metadata is attached only after receiving a model response.
         if e.details.get("usage_reported").is_some() {
-            crate::llm::spend::record(
-                Some(&state.audit),
-                &state.spend_file,
-                crate::common::bounded_log::limit(&state.cfg),
-                crate::llm::spend::SpendEvent {
-                    provider: "local",
-                    model: &model,
-                    served_model: None,
-                    source: spend_source,
-                    tokens: crate::llm::spend::UsageTokens {
-                        input_tokens: e.details["prompt_tokens"].as_u64(),
-                        output_tokens: e.details["completion_tokens"].as_u64(),
-                        ..Default::default()
-                    },
-                    outcome: Some("failed_after_billing"),
-                },
-            );
+            web_usage.lock().unwrap().take();
+            record_local_failure(crate::llm::spend::UsageTokens {
+                input_tokens: e.details["prompt_tokens"].as_u64(),
+                output_tokens: e.details["completion_tokens"].as_u64(),
+                ..Default::default()
+            });
         }
         ApiError::from_err(llm_status(&e), &e)
     };
@@ -1555,6 +1569,7 @@ pub(crate) async fn chat_inner(
             chat_web_mode,
             sized_tuned,
             output,
+            &web_usage,
         )
         .await
         .map_err(local_failure)?
@@ -1588,6 +1603,8 @@ pub(crate) async fn chat_inner(
     reply.body_text = crate::server::tool_inventory::ground_assistant_text(&reply.body_text, &inventory);
 
     if !cloud_selected {
+        // Once the normal path records usage, cancellation must not record it again.
+        web_usage.lock().unwrap().take();
         let tokens = crate::llm::spend::UsageTokens {
             input_tokens: reply.reported_prompt_tokens,
             output_tokens: reply.reported_completion_tokens,

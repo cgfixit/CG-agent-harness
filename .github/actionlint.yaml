@@ -1,0 +1,4 @@
+# GitHub-hosted image released after the pinned actionlint version.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

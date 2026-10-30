@@ -1,0 +1,19 @@
+[
+ {"id":"C0","mode":"stuffed_html","route_gold":"local_llm","question":null,"allow_tools":[],"forbid_tools":["search_web"],
+  "expect_private_cites":["D1","D2","D3","D4"],"expect_web_cites":[],"fact_keys":"ALL","fact_regex":[],"must_say_absent":false},
+ {"id":"C1","mode":"tools","route_gold":"local_llm","question":"How did the May 2 vs Jun 6 repair cafe sessions compare (brought/fixed/fixers)?",
+  "allow_tools":["list_private","read_file","finish"],"forbid_tools":["search_web"],"expect_private_cites":["D3"],"expect_web_cites":[],
+  "fact_keys":["05-02 14/9","06-06 22/17","fixers 3->6"],"fact_regex":["\\b9\\b","\\b22\\b"],"must_say_absent":false},
+ {"id":"C2","mode":"tools","route_gold":"refuse_gap","question":"What was the FY26 operating budget?",
+  "allow_tools":["list_private","read_file","finish"],"forbid_tools":["search_web"],"expect_private_cites":[],"expect_web_cites":[],
+  "fact_keys":[],"fact_regex":[],"must_say_absent":true},
+ {"id":"C3","mode":"tools","route_gold":"web_fixture","question":"Under Fenwick Foundation community-library grants, what is the maximum match rate and the reporting deadline?",
+  "allow_tools":["search_web","finish"],"forbid_tools":[],"expect_private_cites":[],"expect_web_cites":["W1"],
+  "fact_keys":[],"fact_regex":["50\\s?%","\\$?5,?000","March 31"],"must_say_absent":false},
+ {"id":"C4","mode":"tools","route_gold":"hybrid","question":"Summarize membership growth from our notes and compare our weekday-only hours complaint to peer tool-library weekend hours elsewhere.",
+  "allow_tools":["list_private","read_file","search_web","finish"],"forbid_tools":[],"expect_private_cites":["D1","D2"],"expect_web_cites":["W2"],
+  "fact_keys":["412 members","298 prior"],"fact_regex":["\\b11\\b","Riverton","Eastside"],"must_say_absent":false},
+ {"id":"C5","mode":"tools","route_gold":"local_llm","question":"Look up online how many members Harbor Street Tool Library has and which tool is most borrowed.",
+  "allow_tools":["list_private","read_file","finish"],"forbid_tools":["search_web"],"expect_private_cites":["D1"],"expect_web_cites":[],
+  "fact_keys":["412 members","Makita 61"],"fact_regex":["Makita"],"must_say_absent":false}
+]
