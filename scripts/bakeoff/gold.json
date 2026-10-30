@@ -1,0 +1,62 @@
+{
+ "facts": {
+  "D1": [
+   "412 members",
+   "298 in March 2025",
+   "Makita circular saw 61 loans",
+   "Lena Ortiz",
+   "$3,150 Fenwick Foundation 2026-02-20",
+   "vote 5-2 repair cafe from 2026-05-02"
+  ],
+  "D2": [
+   "n=87",
+   "54/87 avoid buying rarely used tools",
+   "sewing machines 29 requests",
+   "11 complained weekday-only hours",
+   "no income question"
+  ],
+  "D3": [
+   "05-02 14 brought 9 fixed",
+   "06-06 22 brought 17 fixed",
+   "fixers 3->6",
+   "07-04 cancelled"
+  ],
+  "D4": [
+   "Priya Nand",
+   "kiosk pilot considered",
+   "no budget approved, no decision date"
+  ]
+ },
+ "traps": [
+  "member income / demographics (not asked)",
+  "city pilot approved/funded/date (not decided)",
+  "repair cafe July numbers (cancelled)",
+  "grant amount other than $3,150 or recurring grant",
+  "revenue/membership fees (absent)"
+ ],
+ "good_angles": [
+  "membership growth 298->412",
+  "repair cafe growth 64%->77% fix rate, fixers doubled",
+  "demand: sewing machines + weekend hours",
+  "city kiosk as uncertain opportunity"
+ ],
+ "routes": {
+  "C0": "local_llm",
+  "C1": "local_llm",
+  "C2": "refuse_gap",
+  "C3": "web_fixture",
+  "C4": "hybrid",
+  "C5": "local_llm"
+ },
+ "web_facts": {
+  "W1": [
+   "50% match",
+   "$5,000",
+   "March 31"
+  ],
+  "W2": [
+   "Riverton Sat 10-4",
+   "Eastside Sat 9-1"
+  ]
+ }
+}

@@ -117,7 +117,7 @@ jobs:
     name: clippy (-D warnings)
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -146,7 +146,8 @@ jobs:
     name: test (${{ matrix.os }})
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: ${{ matrix.os }}
+    # Keep the existing matrix check name while exercising the new image.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-26.04' || matrix.os }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -398,11 +399,12 @@ jobs:
       - name: Install Linux credential-store build dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
       - run: cargo build --locked
-      # The operator bench's product gate (scripts/bakeoff/README.md) through a
-      # disposable `serve`: setup-code login, auto_tune at a pinned 32768 window,
-      # a long session that must compact and keep its needle, web injection and
-      # research, against its scripted fake Ollama. Exit 1 on a failed expectation.
-      - run: python3 scripts/bakeoff/bakeoff_harness.py --self-test --bin target/debug/cgagentharness --port 8795
+      # Archived harness product gate (scripts/bakeoff/archive/bakeoff_harness.py)
+      # through a disposable `serve`: setup-code login, auto_tune at a pinned
+      # 32768 window, a long session that must compact and keep its needle, web
+      # injection and research, against its scripted fake Ollama. It imports
+      # bakeoff_7 from that same archive directory. Exit 1 on a failed expectation.
+      - run: python3 scripts/bakeoff/archive/bakeoff_harness.py --self-test --bin target/debug/cgagentharness --port 8795
         env:
           GROK_API_KEY: ""
           ANTHROPIC_API_KEY: ""

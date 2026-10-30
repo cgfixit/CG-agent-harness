@@ -1,18 +1,25 @@
-# scripts/bakeoff
+# bakeoff10: research routing bakeoff
 
-Local-model bench, versions 7.1 / h1.2. [Recorded results](../../docs/bakeoff/local-model-bakeoff-2026-10-10.md)
-explain the measured window guidance; rerun before making current model claims.
+Scores whether a model answers from private notes, the frozen local "internet", both, or says the answer is absent.
 
-- [`bakeoff_7.py`](bakeoff_7.py): direct Ollama lanes (tag contract, speed,
-  long context, the `/v1` wire check) plus the scripted fake Ollama and the
-  probe corpus the harness lane imports. Pulls nothing, picks no winner.
-- [`bakeoff_harness.py`](bakeoff_harness.py): the product gate through a
-  disposable `cgagentharness serve`: setup-code login, `auto_tune` at a pinned
-  32768 window, a long session that must compact and keep its needle, web
-  injection, HVAC research. `--self-test` runs it against the fake Ollama; the
-  `bakeoff-self-test` CI job runs that backend gate, not native UI acceptance.
+Prior bakeoff open report: https://brush-monarch-slate-dove.grok.me
 
-Run on a Mac: `python3 scripts/bakeoff/bakeoff_harness.py --models <tag> --bin
-target/release/cgagentharness`. `--models` only filters the built-in profile
-list; a new tag needs `--extra-model <tag> --models <tag>`. Uses Python's standard
-library and the built binary; real runs also need running Ollama and installed tags.
+## Layout
+- `corpus/` private notes D1 to D4 (.txt).
+- `web_fixture/` offline web pages W1 to W3, searched by keyword. No network.
+- `cases.json` cases C0 to C5 with gold route, allowed tools, expected cites.
+- `gold.json` facts, traps, routes, web facts.
+- `bakeoff10.py` runner and scorer. C0 is the original stuffed HTML task.
+
+## Run
+```
+python3 bakeoff10.py --dry-run
+python3 bakeoff10.py --quick
+python3 bakeoff10.py --cases C1,C5 --models a,b --out out2
+python3 bakeoff10.py --score out/A
+```
+Writes `out/<label>/<case>.score.json` and `summary.json`.
+
+Judge on route_ok and leak first, then cites and facts. Wall time is secondary.
+
+CI self-test invokes the archived harness runner at `scripts/bakeoff/archive/bakeoff_harness.py`.

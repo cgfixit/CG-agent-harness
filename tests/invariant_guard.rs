@@ -1197,6 +1197,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved (2026-10-14) install-macos.sh and start-macos.sh lines, then the operator-requested
     // Terminal-walkthrough, user-guide and init.sh lines; 564 words plus about 2%, rounded up to the next 10.
     ("scripts/README.md", Guide, 780),
+    // why: operator-approved (2026-10-30) three-run bakeoff10 matrix beside the script; 1782 words, rounded up to the next 100.
+    ("scripts/bakeoff/report.md", Guide, 1800),
     ("src/agentic/README.md", Guide, 550),
     ("src/common/README.md", Guide, 600),
     // why: README audit removes three words; retain the existing headroom.
