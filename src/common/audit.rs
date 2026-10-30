@@ -333,11 +333,27 @@ impl Audit {
     /// Enable the per-line HMAC chain with a 32-byte key (see
     /// [`resolve_hmac_key`] for key provisioning). The chain is stamped over
     /// the redacted record before queueing; `Audit::log` remains infallible.
+    ///
+    /// The chain continues from the last valid chained line already in the
+    /// audit file, so a server restart does not look like tampering. A
+    /// historical break is not re-anchored away: new lines continue from the
+    /// last MAC before the break and verification keeps flagging it.
     pub fn with_hmac_chain(mut self, key: [u8; 32]) -> Self {
-        self.chain = Some(Arc::new(Mutex::new(MacState {
-            prev: hmac_sha256(&key, AUDIT_CHAIN_GENESIS),
-            key,
-        })));
+        let mut prev = hmac_sha256(&key, AUDIT_CHAIN_GENESIS);
+        match chain_anchor(&self.path, &key) {
+            Ok(Some(anchor)) => {
+                if let Some(line) = anchor.broken_at {
+                    tracing::warn!(
+                        "existing audit chain has a break at line {line}; \
+                         new lines continue from the last valid MAC and verification keeps flagging the break"
+                    );
+                }
+                prev = anchor.mac;
+            }
+            Ok(None) => {}
+            Err(e) => tracing::warn!("audit chain anchor unreadable ({e}); starting a new genesis segment"),
+        }
+        self.chain = Some(Arc::new(Mutex::new(MacState { prev, key })));
         self
     }
 
@@ -669,15 +685,23 @@ pub struct ChainReport {
     pub first_bad_line: Option<u64>,
 }
 
-/// Verify the HMAC chain in an audit JSONL file. Only the subsequence of
-/// lines carrying `audit_mac` forms the chain: lines written by processes
-/// without the key (the agentic child, MCP key minting) are counted as
-/// `unchained` and skipped. Deleting chained TAIL lines is not detectable —
-/// each line anchors only to its predecessor; that is a deliberate scope
-/// limit (cg-researcher's signed head file is not ported).
-pub fn verify_hmac_chain(path: &Path, key: &[u8; 32]) -> std::io::Result<ChainReport> {
-    let text = std::fs::read_to_string(path)?;
-    let mut prev = hmac_sha256(key, AUDIT_CHAIN_GENESIS);
+/// The last valid chain point in an existing audit file, used to re-anchor
+/// the chain across a server restart (or across a log-rotation generation).
+/// `broken_at` is set when the historical chain has a break before the
+/// anchor: new lines still continue from `mac`, and verification keeps
+/// flagging the historical break, so tampering is never re-anchored away.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChainAnchor {
+    pub mac: [u8; 32],
+    pub broken_at: Option<u64>,
+}
+
+/// Scan one audit text, returning the report and the last valid chain MAC
+/// (the seed value a subsequent chain segment must continue from). `seed`
+/// is the previous segment's last MAC — [`AUDIT_CHAIN_GENESIS`] for a file
+/// that starts a chain.
+fn scan_chain(text: &str, key: &[u8; 32], seed: [u8; 32]) -> (ChainReport, [u8; 32]) {
+    let mut prev = seed;
     let mut report = ChainReport {
         ok: true,
         chained: 0,
@@ -709,7 +733,11 @@ pub fn verify_hmac_chain(path: &Path, key: &[u8; 32]) -> std::io::Result<ChainRe
         let mut canonical_map = obj.clone();
         canonical_map.remove("audit_mac");
         canonical_map.remove("audit_prev");
-        let canonical = serde_json::to_string(&Value::Object(canonical_map)).map_err(std::io::Error::other)?;
+        let Ok(canonical) = serde_json::to_string(&Value::Object(canonical_map)) else {
+            report.ok = false;
+            report.first_bad_line = Some(n);
+            break;
+        };
         let mut msg = Vec::with_capacity(32 + canonical.len());
         msg.extend_from_slice(&prev);
         msg.extend_from_slice(canonical.as_bytes());
@@ -721,7 +749,47 @@ pub fn verify_hmac_chain(path: &Path, key: &[u8; 32]) -> std::io::Result<ChainRe
         prev = stored_mac;
         report.chained += 1;
     }
-    Ok(report)
+    (report, prev)
+}
+
+/// Verify the HMAC chain in an audit JSONL file. Only the subsequence of
+/// lines carrying `audit_mac` forms the chain: lines written by processes
+/// without the key (the agentic child, MCP key minting) are counted as
+/// `unchained` and skipped. Deleting chained TAIL lines is not detectable —
+/// each line anchors only to its predecessor; that is a deliberate scope
+/// limit (cg-researcher's signed head file is not ported).
+///
+/// Log rotation (`logging.max_file_bytes`, two generations) starts a new
+/// file that continues the chain; verify a post-rotation generation with
+/// [`verify_hmac_chain_seeded`], seeded from `chain_anchor` of the previous
+/// generation.
+pub fn verify_hmac_chain(path: &Path, key: &[u8; 32]) -> std::io::Result<ChainReport> {
+    let text = std::fs::read_to_string(path)?;
+    Ok(scan_chain(&text, key, hmac_sha256(key, AUDIT_CHAIN_GENESIS)).0)
+}
+
+/// Like [`verify_hmac_chain`], but the chain is seeded from `seed` (the
+/// previous rotation generation's last MAC) instead of the genesis MAC.
+pub fn verify_hmac_chain_seeded(path: &Path, key: &[u8; 32], seed: &[u8; 32]) -> std::io::Result<ChainReport> {
+    let text = std::fs::read_to_string(path)?;
+    Ok(scan_chain(&text, key, *seed).0)
+}
+
+/// Anchor for continuing the chain in `path`: the last valid chained MAC,
+/// plus where the historical chain broke (if it did). A missing or empty
+/// file anchors at genesis (no chain yet).
+pub fn chain_anchor(path: &Path, key: &[u8; 32]) -> std::io::Result<Option<ChainAnchor>> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Ok(None);
+    };
+    let (report, mac) = scan_chain(&text, key, hmac_sha256(key, AUDIT_CHAIN_GENESIS));
+    if report.chained == 0 && report.unchained == 0 {
+        return Ok(None);
+    }
+    Ok(Some(ChainAnchor {
+        mac,
+        broken_at: report.first_bad_line,
+    }))
 }
 
 impl Sink {
@@ -1262,6 +1330,84 @@ mod tests {
         let report = verify_hmac_chain(&path, &key).unwrap();
         assert!(report.ok, "each line anchors only to its predecessor");
         assert_eq!(report.chained, 2);
+    }
+
+    #[test]
+    fn a_restart_continues_the_chain_from_the_files_last_valid_mac() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = [17u8; 32];
+        // Session one writes and drops, like a server shutting down.
+        {
+            let (first, _path) = chained_audit(dir.path(), key);
+            first.log(json!({"event":"one"}));
+            first.log(json!({"event":"two"}));
+        }
+        // Session two is a restart with the same persisted key: it must
+        // re-anchor from the file, not from genesis.
+        let (second, path) = chained_audit(dir.path(), key);
+        second.log(json!({"event":"three"}));
+        let report = verify_hmac_chain(&path, &key).unwrap();
+        assert!(report.ok, "a plain restart must not read as tampering");
+        assert_eq!(report.chained, 3);
+        let anchor = chain_anchor(&path, &key).unwrap().expect("anchor");
+        assert_eq!(anchor.broken_at, None);
+        let last_mac = written(&path).last().unwrap()["audit_mac"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(super::super::hex_lower(&anchor.mac), last_mac);
+    }
+
+    #[test]
+    fn a_historical_break_is_not_reanchored_away_by_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = [19u8; 32];
+        let (audit, path) = chained_audit(dir.path(), key);
+        audit.log(json!({"event":"one"}));
+        audit.log(json!({"event":"two"}));
+        drop(audit);
+        // Tamper with the first line, then "restart".
+        let text = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, text.replace("\"one\"", "\"tampered\"")).unwrap();
+        let (restarted, path) = chained_audit(dir.path(), key);
+        restarted.log(json!({"event":"three"}));
+        let report = verify_hmac_chain(&path, &key).unwrap();
+        assert!(!report.ok, "the historical break stays visible");
+        assert_eq!(report.first_bad_line, Some(1));
+        // With the break at the very first chained line, the anchor stays at
+        // genesis: the new line must not chain onto tampered history.
+        let lines = written(&path);
+        let genesis = hmac_sha256(&key, AUDIT_CHAIN_GENESIS);
+        assert_eq!(lines.last().unwrap()["audit_prev"], super::super::hex_lower(&genesis));
+    }
+
+    #[test]
+    fn a_rotated_generation_verifies_against_the_previous_generations_anchor() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = [23u8; 32];
+        let current = dir.path().join("audit.jsonl");
+        let cfg = AppConfig::from_str("{}", &dir.path().join("c.yaml")).unwrap();
+        let audit = Audit::new(current.clone(), &cfg).with_hmac_chain(key);
+        audit.log(json!({"event":"one"}));
+        // Model bounded_log rotation: content moves to the .1 generation and
+        // the current path restarts empty. The live writer keeps chaining.
+        let retired = dir.path().join("audit.jsonl.1");
+        std::fs::rename(&current, &retired).unwrap();
+        std::fs::write(&current, "").unwrap();
+        let prev_anchor = chain_anchor(&retired, &key)
+            .unwrap()
+            .expect("previous generation anchor");
+        audit.log(json!({"event":"two"}));
+        // Unseeded verification of the new generation fails at its first line...
+        let naive = verify_hmac_chain(&current, &key).unwrap();
+        assert!(!naive.ok, "a continued generation does not verify from genesis alone");
+        // ...and the seeded verification passes.
+        let seeded = verify_hmac_chain_seeded(&current, &key, &prev_anchor.mac).unwrap();
+        assert!(seeded.ok);
+        assert_eq!(seeded.chained, 1);
+        // The post-rotation line anchors to the retired generation's tail.
+        let lines = written(&current);
+        assert_eq!(lines[0]["audit_prev"], super::super::hex_lower(&prev_anchor.mac));
     }
 
     #[derive(Default)]

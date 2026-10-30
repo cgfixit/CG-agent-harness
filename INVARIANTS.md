@@ -442,8 +442,14 @@ the redacted record at submission, keyed by a 32-byte `AUDIT_CHAIN_KEY` in the
 OS credential store, created on first enable. `common::audit::verify_hmac_chain`
 recomputes the chain and flags an edited line or a middle deletion; lines
 written by processes without the key (the agentic child) carry no MAC and are
-skipped, and a removed chained tail is not detectable by design. A store
-problem disables the chain with a warning — the never-fails audit contract wins.
+skipped, and a removed chained tail is not detectable by design. At startup
+the chain re-anchors from the last valid chained line in the existing file,
+so a restart does not read as tampering; a historical break is never
+re-anchored away. Rotation (`logging.max_file_bytes`) starts a new generation
+that continues the chain; verify a later generation with
+`verify_hmac_chain_seeded`, seeded from `chain_anchor` of the previous one. A
+store problem disables the chain with a warning — the never-fails audit
+contract wins.
 
 - Locked by: `tests/common_layer.rs`, `tests/panels.rs`, `tests/chat_and_sessions.rs`,
   `src/common/audit.rs` units,
