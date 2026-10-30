@@ -303,28 +303,30 @@ fn decide_refuses_combined_push_or_publish_before_any_gate_or_record_read() {
     ] {
         armed(dir.path(), &extra);
         for flag in ["--push", "--publish"] {
-            let args = [
-                "real-repo-run-decide",
-                &idarg,
-                "--decision=approve",
-                "--reason=reviewed",
-                "--confirm",
-                flag,
-            ];
-            let (code, out, err) = run_agentic(&ctx.config_path, &args, &env, dir.path());
-            assert_eq!(code, 4, "{policy} {flag}: {out} {err}");
-            assert!(
-                format!("{out}{err}").contains("approve only commits locally"),
-                "{policy} {flag}: {out} {err}"
-            );
-            assert_eq!(
-                std::fs::read(&record).unwrap(),
-                before,
-                "{policy} {flag}: record changed"
-            );
-            assert!(!log.exists(), "{policy} {flag}: refusal must precede gh invocation");
-            assert_eq!(git(&["rev-parse", "HEAD"], &dest), head);
-            assert!(git(&["branch", "--list", "codex/*"], &bare).is_empty());
+            for idarg in [&idarg, &format!("--run-id={}", "c".repeat(32))] {
+                let args = [
+                    "real-repo-run-decide",
+                    idarg,
+                    "--decision=approve",
+                    "--reason=reviewed",
+                    "--confirm",
+                    flag,
+                ];
+                let (code, out, err) = run_agentic(&ctx.config_path, &args, &env, dir.path());
+                assert_eq!(code, 4, "{policy} {flag}: {out} {err}");
+                assert!(
+                    format!("{out}{err}").contains("approve only commits locally"),
+                    "{policy} {flag}: {out} {err}"
+                );
+                assert_eq!(
+                    std::fs::read(&record).unwrap(),
+                    before,
+                    "{policy} {flag}: record changed"
+                );
+                assert!(!log.exists(), "{policy} {flag}: refusal must precede gh invocation");
+                assert_eq!(git(&["rev-parse", "HEAD"], &dest), head);
+                assert!(git(&["branch", "--list", "codex/*"], &bare).is_empty());
+            }
         }
     }
 }
@@ -424,6 +426,8 @@ async fn browser_api_requires_explicit_intent_and_shim_rechecks_disk_policy() {
     save_run(&ctx.runs_dir(), &mut pending).unwrap();
     let clone = Path::new(&rec.dest);
     let head = git(&["rev-parse", "HEAD"], clone);
+    let target = std::fs::read(clone.join("target.txt")).unwrap();
+    let index = std::fs::read(clone.join(".git/index")).unwrap();
     let (status, response) = s
         .post_json(
             &format!("/api/agent/runs/{}/decision", pending.run_id),
@@ -432,6 +436,8 @@ async fn browser_api_requires_explicit_intent_and_shim_rechecks_disk_policy() {
         .await;
     assert_eq!(status, 200, "{response}");
     assert_eq!(response["exit_code"], 4, "{response}");
+    assert_eq!(std::fs::read(clone.join("target.txt")).unwrap(), target);
+    assert_eq!(std::fs::read(clone.join(".git/index")).unwrap(), index);
     assert_eq!(
         git(&["rev-parse", "HEAD"], clone),
         head,
