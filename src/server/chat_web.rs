@@ -243,6 +243,7 @@ pub async fn run_stream(
     web_mode: super::sessions::GoalWebMode,
     sized_tuned: bool,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
+    usage_snapshot: &std::sync::Mutex<Option<(crate::llm::spend::UsageTokens, u64)>>,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let lease = web.chat_turn.start(owner)?;
     let mut usage = None;
@@ -252,7 +253,7 @@ pub async fn run_stream(
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
         // A turn of several tool rounds gets more than one call's deadline; each
         // model call keeps its own (`ChatClient::timeout_for`).
-        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, output, &mut usage, &mut known_completion_tokens)) =>
+        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, output, &mut usage, &mut known_completion_tokens, usage_snapshot)) =>
             result.unwrap_or_else(|_| Err(error("WEB_TIMEOUT", "chat web turn deadline exceeded"))),
     };
     result.map_err(|failure| match usage {
@@ -281,6 +282,7 @@ async fn run_inner(
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
     usage: &mut Option<crate::llm::spend::UsageTokens>,
     known_completion_tokens: &mut u64,
+    usage_snapshot: &std::sync::Mutex<Option<(crate::llm::spend::UsageTokens, u64)>>,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let mut messages: Vec<Value> = history
         .iter()
@@ -392,6 +394,7 @@ async fn run_inner(
                 .zip(usage.get(field).filter(|v| v.is_number()))
                 .map(|(sum, count)| sum.saturating_add(crate::llm::openai_chat::token_count(Some(count))));
         }
+        *usage_snapshot.lock().unwrap() = Some((totals.clone(), *known_completion_tokens));
         if turn == 0 {
             initial_prompt_tokens = crate::llm::openai_chat::initial_prompt_tokens(&response);
         }

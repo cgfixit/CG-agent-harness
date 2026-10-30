@@ -1280,15 +1280,20 @@ async fn web_chat_sizes_a_tool_free_follow_up_without_the_tool_definitions() {
 
 #[tokio::test]
 async fn cancel_during_fetch_prevents_followup_model_call_and_releases_turn() {
-    check_fetch_cancel(false).await;
+    check_fetch_cancel(false, false).await;
 }
 
 #[tokio::test]
 async fn loop_cancel_during_fetch_releases_turn_and_allows_recovery() {
-    check_fetch_cancel(true).await;
+    check_fetch_cancel(true, false).await;
 }
 
-async fn check_fetch_cancel(loop_turn: bool) {
+#[tokio::test]
+async fn cancel_during_fetch_preserves_missing_usage_dimension() {
+    check_fetch_cancel(false, true).await;
+}
+
+async fn check_fetch_cancel(loop_turn: bool, partial_usage: bool) {
     let started = Arc::new(tokio::sync::Notify::new());
     let signal = started.clone();
     let router = Router::new().route(
@@ -1306,7 +1311,11 @@ async fn check_fetch_cancel(loop_turn: bool) {
     let address = listener.local_addr().unwrap();
     let page_server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let model = common::start_mock_model().await;
-    model.set_reply(json!({"choices":[{"finish_reason":"tool_calls","message":{"content":null,"tool_calls":[{"id":"slow","type":"function","function":{"name":"web_fetch","arguments":"{\"url\":\"http://docs.example/slow\"}"}}]}}],"usage":{"prompt_tokens":10,"completion_tokens":2}}));
+    let mut response = json!({"choices":[{"finish_reason":"tool_calls","message":{"content":null,"tool_calls":[{"id":"slow","type":"function","function":{"name":"web_fetch","arguments":"{\"url\":\"http://docs.example/slow\"}"}}]}}],"usage":{"prompt_tokens":10,"completion_tokens":2}});
+    if partial_usage {
+        response["usage"].as_object_mut().unwrap().remove("completion_tokens");
+    }
+    model.set_reply(response);
     let s = common::spawn_server(
         &model.base_url(),
         common::ServerOptions {
@@ -1329,16 +1338,80 @@ async fn check_fetch_cancel(loop_turn: bool) {
         started.notified().await;
         s.post_json("/api/chat/cancel", json!({})).await
     };
-    let ((status, reply), (cancel_status, _)) = tokio::join!(read, cancel);
+    let ((status, reply), (cancel_status, _)) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), async { tokio::join!(read, cancel) })
+            .await
+            .expect("cancellation must not wait for the slow operation");
     assert_eq!(status, 502);
     assert_eq!(common::code(&reply), "WEB_CANCELLED");
     assert_eq!(cancel_status, 200);
+    assert_eq!(
+        reply["detail"]["details"]["known_completion_tokens"],
+        if partial_usage { 0 } else { 2 }
+    );
+    assert_eq!(model.requests.lock().unwrap().len(), 1, "no follow-up model call");
+    s.state.audit.flush_async().await;
+    let ledger = std::fs::read_to_string(s.home.join("logs/spend.jsonl")).unwrap();
+    let rows: Vec<Value> = ledger.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(rows.len(), 1, "one failed logical turn: {ledger}");
+    assert_eq!(rows[0]["provider"], "local");
+    assert_eq!(rows[0]["source"], if loop_turn { "loop" } else { "chat" });
+    assert_eq!(rows[0]["outcome"], "failed_after_billing");
+    assert_eq!(rows[0]["input_tokens"], 10);
+    if partial_usage {
+        assert!(rows[0]["output_tokens"].is_null());
+    } else {
+        assert_eq!(rows[0]["output_tokens"], 2);
+    }
+    assert_eq!(rows[0]["usage_missing"], partial_usage);
+    for private in ["Read slow URL", "docs.example", "arguments", &s.api_key] {
+        assert!(!ledger.contains(private));
+    }
+    assert!(!s.state.generation_gate.is_held());
+    let (_, cancelled_session) = s.get_json(&format!("/api/sessions/{sid}")).await;
+    assert_eq!(cancelled_session["tokens"]["exchanges"], 0);
     model.set_reply(common::ok_reply("ready again", 10, 2));
     assert_eq!(
         s.post_json("/api/chat", json!({"message":"hello"})).await.1["reply"],
         "ready again"
     );
+    s.state.audit.flush_async().await;
+    let ledger = std::fs::read_to_string(s.home.join("logs/spend.jsonl")).unwrap();
+    assert_eq!(ledger.lines().count(), 2, "recovery records only its own success");
     page_server.abort();
+}
+
+#[tokio::test]
+async fn cancel_before_model_response_does_not_invent_spend() {
+    let model = common::start_mock_model().await;
+    model.set_delay_ms(30_000);
+    let s = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
+    let read = s.post_json("/api/chat", json!({"message":"hello"}));
+    let cancel = async {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while model.requests.lock().unwrap().is_empty() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("model request started");
+        s.post_json("/api/chat/cancel", json!({})).await
+    };
+    let ((status, reply), (cancel_status, _)) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), async { tokio::join!(read, cancel) })
+            .await
+            .expect("cancellation must not wait for the slow operation");
+    assert_eq!(status, 502, "{reply}");
+    assert_eq!(common::code(&reply), "WEB_CANCELLED");
+    assert_eq!(cancel_status, 200);
+    s.state.audit.flush_async().await;
+    assert!(!s.home.join("logs/spend.jsonl").exists());
+    assert!(!s.state.generation_gate.is_held());
+    model.set_delay_ms(0);
+    assert_eq!(
+        s.post_json("/api/chat", json!({"message":"hello"})).await.1["reply"],
+        "pong"
+    );
 }
 
 #[tokio::test]
