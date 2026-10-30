@@ -1,18 +1,28 @@
-# scripts/bakeoff
+# bakeoff10 — private-corpus research infographic
 
-Local-model bench, versions 7.1 / h1.2. [Recorded results](../../docs/bakeoff/local-model-bakeoff-2026-10-10.md)
-explain the measured window guidance; rerun before making current model claims.
+Compares three local `-cg` Ollama tags on the cg-researcher private-document workflow: fixed corpus → cited claims → bounded connections → one research task → single-file HTML infographic.
 
-- [`bakeoff_7.py`](bakeoff_7.py): direct Ollama lanes (tag contract, speed,
-  long context, the `/v1` wire check) plus the scripted fake Ollama and the
-  probe corpus the harness lane imports. Pulls nothing, picks no winner.
-- [`bakeoff_harness.py`](bakeoff_harness.py): the product gate through a
-  disposable `cgagentharness serve`: setup-code login, `auto_tune` at a pinned
-  32768 window, a long session that must compact and keep its needle, web
-  injection, HVAC research. `--self-test` runs it against the fake Ollama; the
-  `bakeoff-self-test` CI job runs that backend gate, not native UI acceptance.
+## Models
+- `gemma4-26b-a4b:ud-q4_k_xl-cg`
+- `qwen3.8:27b-mlx-cg`
+- `qwen3.6:35b-a3b-cg`
 
-Run on a Mac: `python3 scripts/bakeoff/bakeoff_harness.py --models <tag> --bin
-target/release/cgagentharness`. `--models` only filters the built-in profile
-list; a new tag needs `--extra-model <tag> --models <tag>`. Uses Python's standard
-library and the built binary; real runs also need running Ollama and installed tags.
+## Wire
+Ollama `POST /v1/chat/completions` at temperature 0.2. Do not send `reasoning_effort`. Strip `<think>` and channel leaks after. Context stays at the Modelfile 32k unless truncation is observed.
+
+## Run
+```bash
+cd scripts/bakeoff
+python3 bakeoff10.py --dry-run
+python3 bakeoff10.py                 # all three, serial
+python3 bakeoff10.py --quick         # first model only
+python3 bakeoff10.py --score out
+```
+Prints `starting A=...` immediately, then a JSON meta line after each model. Expect ~3–4 minutes total on M5 Pro 48GB (ballpark from one probe run).
+
+## Scoring (judge-facing)
+0–3 each: citation correctness, useful synthesis, restraint, task selection, format compliance, operational cost.
+Pass gate for promoting a model: at least 2 of 3 clear citation+restraint+valid HTML on the fixed corpus. Auto `--score` is a hint only; read trap hits in context.
+
+## Pending results
+A Mac re-run of `python bakeoff10.py` was started ~2026-10-29 19:54 ET. Update `results.json` and the PR once that `out/` lands. Probe baseline numbers live in `results.json` under status `probe_complete_pending_rerun`.

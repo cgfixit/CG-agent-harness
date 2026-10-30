@@ -1,0 +1,87 @@
+{
+  "status": "rerun_complete",
+  "goal": "Pick best local -cg model for cg-researcher private-doc \u2192 cited HTML research-infographic.",
+  "runs": [
+    {
+      "id": "probe",
+      "et": "2026-10-29 ~19:41",
+      "note": "first probe under _probe/out"
+    },
+    {
+      "id": "rerun",
+      "et": "2026-10-29 ~19:54-19:58",
+      "note": "Chris python bakeoff10.py under out/"
+    }
+  ],
+  "one_run_ballpark": false,
+  "n_runs_per_model": 2,
+  "limiter": "model token generation on GPU; prompt <610 tokens",
+  "latest": [
+    {
+      "label": "A",
+      "model": "gemma4-26b-a4b:ud-q4_k_xl-cg",
+      "wall_s": 73.7,
+      "prompt_tokens": 606,
+      "completion_tokens": 4134,
+      "html_chars": 6190,
+      "finish": "stop",
+      "think_leak": false,
+      "score_facts": "9/18",
+      "cites_bracket": 16,
+      "notes": "Still weak fact coverage; income correctly hedged; no Priya/Lena; no 298/n=87/cafe counts"
+    },
+    {
+      "label": "B",
+      "model": "qwen3.8:27b-mlx-cg",
+      "wall_s": 144.4,
+      "prompt_tokens": 584,
+      "completion_tokens": 7144,
+      "html_chars": 17425,
+      "finish": "stop",
+      "think_leak": false,
+      "score_facts": "17/18",
+      "cites_bracket": 0,
+      "notes": "Best fact coverage this run including Priya; missed Lena; used bare D1 not [D1] so bracket cite score 0 \u2014 format miss"
+    },
+    {
+      "label": "C",
+      "model": "qwen3.6:35b-a3b-cg",
+      "wall_s": 56.6,
+      "prompt_tokens": 584,
+      "completion_tokens": 5088,
+      "html_chars": 13537,
+      "finish": "stop",
+      "think_leak": false,
+      "score_facts": "16/18",
+      "cites_bracket": 13,
+      "notes": "Strong + correct [Dn] cites; missed Lena+Priya; fastest wall this run"
+    }
+  ],
+  "probe_for_compare": [
+    {
+      "label": "A",
+      "wall_s": 53.2,
+      "facts": "9/18",
+      "cites": 16
+    },
+    {
+      "label": "B",
+      "wall_s": 110.1,
+      "facts": "16/18",
+      "cites": 27
+    },
+    {
+      "label": "C",
+      "wall_s": 60.9,
+      "facts": "16/18",
+      "cites": 18
+    }
+  ],
+  "verdict_judgment": "Still prefer C as default for this workflow: 16/18 facts, proper [Dn] cites, 56.6s. B has richest facts (17/18) and named Priya this run but dropped bracket citations (format miss) and is slowest (144s). A still fails the usefulness bar (9/18). Two runs only \u2014 not locked.",
+  "implications": [
+    "Two-run consistency: A weak both times; C strong both times; B strong facts but citation format unstable",
+    "Ask for named people + require [Dn] brackets in prompt if B is a contender",
+    "Need >=3 repeats before locking production default",
+    "Human still needed for task-selection score"
+  ]
+}
