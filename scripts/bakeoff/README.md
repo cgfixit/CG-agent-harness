@@ -2,6 +2,8 @@
 
 Scores whether a model answers from private notes, the frozen local "internet", both, or says the answer is absent.
 
+Prior bakeoff open report: https://brush-monarch-slate-dove.grok.me
+
 ## Layout
 - `corpus/` private notes D1 to D4 (.txt).
 - `web_fixture/` offline web pages W1 to W3, searched by keyword. No network.
