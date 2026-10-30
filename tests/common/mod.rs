@@ -412,7 +412,16 @@ pub async fn start_mock_model() -> MockModel {
                     if ms > 0 {
                         tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
                     }
-                    let reply = r.lock().unwrap().clone();
+                    let reply = {
+                        let mut queued = r.lock().unwrap();
+                        if queued.as_array().is_some_and(|items| items.len() > 1) {
+                            queued.as_array_mut().unwrap().remove(0)
+                        } else if let Some(items) = queued.as_array() {
+                            items.first().cloned().unwrap_or_else(|| json!({}))
+                        } else {
+                            queued.clone()
+                        }
+                    };
                     if let Some(status) = reply.get("__status").and_then(|s| s.as_u64()) {
                         return (
                             axum::http::StatusCode::from_u16(status as u16).unwrap(),

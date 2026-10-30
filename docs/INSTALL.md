@@ -581,6 +581,7 @@ on first run. Common operator settings follow:
 | `models.cloud_chat.enabled` | true | Allows `/model use grok` / `claude`; each provider has its own `enabled` and `model` |
 | `models.cloud_chat.max_tokens` / `timeout_sec` | 10000 / 360 | Cloud reply ceiling and timeout; boot refuses 0 or >32768 tokens, or a timeout outside 1–720 s |
 | `models.local_llm.max_tokens` | 4096 | Local reply ceiling: 1–25904 with resolved Ollama and explicit reasoning `none`; otherwise 1–12952, with twice the ceiling reserved for completion. Invalid combinations fail startup with `CONFIG_ERROR` |
+| `models.local_llm.tool_max_tokens` | 512 | Tool hops in local chat. Integer 64–2048, sent with temperature 0. The final answer keeps `max_tokens` and `temperature`. Missing key uses 512. Restart-only |
 | `models.local_llm.reasoning_effort` | `none` | Sent only to resolved Ollama: `none`, `low`, `medium`, `high`, `max`. Missing/empty omits the field and uses the doubled reservation |
 | `models.local_llm.timeout_sec` | 1800 | Local fallback deadline; missing uses 720 s; auto-tune replaces it when a speed sample is available |
 | `chat.compact_prompt_tokens` / `compact_keep_messages` | 24000 / 10 | Calibrated next-prompt trigger and recent messages retained (2–40); the prompt cap is the hard limit past it. Threshold floor/cap and web interaction: [compaction](CONSOLE.md#local-history-compaction) |

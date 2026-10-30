@@ -28,6 +28,123 @@ pub fn tools() -> Vec<Value> {
     ]
 }
 
+const OUTSIDE_SOURCE_PHRASES: &[&str] = &[
+    "search the web",
+    "search the internet",
+    "web search",
+    "on the internet",
+    "from the internet",
+    "from the web",
+    "outside source",
+    "outside sources",
+    "internet source",
+    "internet sources",
+    "look online",
+    "search online",
+    "web source",
+    "web sources",
+];
+
+const LOCAL_READ_TOOLS: &[&str] = &[
+    "notes_read",
+    "read_notes",
+    "notes_corpus",
+    "local_corpus",
+    "read_corpus",
+    "private_notes",
+    "lookup_note",
+];
+
+fn is_web_search_name(name: &str) -> bool {
+    matches!(name, "web_search" | "search_web" | "websearch")
+}
+
+fn is_local_read_name(name: &str) -> bool {
+    LOCAL_READ_TOOLS
+        .iter()
+        .any(|tool| tool.eq_ignore_ascii_case(name.trim()))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StickyRoute {
+    local_answered: bool,
+    user_asked_outside: bool,
+}
+
+impl StickyRoute {
+    fn from_user_message(message: &str) -> Self {
+        let lower = message.to_ascii_lowercase();
+        Self {
+            local_answered: false,
+            user_asked_outside: OUTSIDE_SOURCE_PHRASES.iter().any(|phrase| lower.contains(phrase)),
+        }
+    }
+
+    fn observe_notes_in_prompt(&mut self, system: &str) {
+        if system.contains("source=notes_corpus") {
+            self.local_answered = true;
+        }
+    }
+
+    fn observe_tool_result(&mut self, name: &str, ok: bool) {
+        if ok && is_local_read_name(name) {
+            self.local_answered = true;
+        }
+    }
+
+    fn allows_web_search(&self) -> bool {
+        !self.local_answered || self.user_asked_outside
+    }
+}
+
+fn narrow_tools(definitions: &[Value], route: &StickyRoute) -> Vec<Value> {
+    definitions
+        .iter()
+        .filter(|tool| {
+            let name = tool["function"]["name"].as_str().unwrap_or("");
+            !is_web_search_name(name) || route.allows_web_search()
+        })
+        .cloned()
+        .collect()
+}
+
+fn hop_kind(loop_turn: bool, tools_offered: bool) -> crate::llm::openai_chat::TurnKind {
+    if loop_turn || !tools_offered {
+        crate::llm::openai_chat::TurnKind::Synthesis
+    } else {
+        crate::llm::openai_chat::TurnKind::Tool
+    }
+}
+
+fn truncated_answer_needs_synthesis(
+    hop_max_tokens: u64,
+    synthesis_max_tokens: u64,
+    has_calls: bool,
+    finish_reason: Option<&str>,
+) -> bool {
+    hop_max_tokens < synthesis_max_tokens && !has_calls && finish_reason == Some("length")
+}
+
+fn response_has_calls(response: &Value) -> bool {
+    match response["choices"][0]["message"].get("tool_calls") {
+        None | Some(Value::Null) => false,
+        Some(Value::Array(calls)) => !calls.is_empty(),
+        Some(_) => true,
+    }
+}
+
+fn latest_user_message(history: &[ChatMessage]) -> &str {
+    history
+        .iter()
+        .rev()
+        .find(|message| message.role == "user")
+        .map(|message| message.content.as_str())
+        .unwrap_or("")
+}
+
+const WEB_SEARCH_CLOSED: &str =
+    "web search stays closed after a local notes or corpus read unless the message asks for outside sources";
+
 // Small local models (Llama 3.x 8B, Qwen 7B) often write a number as a string
 // (`"count":"5"`), send `null` for an optional field, or add a key the schema
 // does not name. Only `query`/`url` and `count` are ever read, so an unnamed key
@@ -249,6 +366,7 @@ pub async fn run_stream(
     token_ratio: f64,
     web_mode: super::sessions::GoalWebMode,
     sized_tuned: bool,
+    loop_turn: bool,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
     usage_snapshot: &std::sync::Mutex<UsageSnapshot>,
 ) -> Result<(ChatResult, Vec<Value>)> {
@@ -260,7 +378,7 @@ pub async fn run_stream(
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
         // A turn of several tool rounds gets more than one call's deadline; each
         // model call keeps its own (`ChatClient::timeout_for`).
-        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, output, &mut usage, &mut known_completion_tokens, usage_snapshot)) =>
+        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, loop_turn, output, &mut usage, &mut known_completion_tokens, usage_snapshot)) =>
             result.unwrap_or_else(|_| Err(error("WEB_TIMEOUT", "chat web turn deadline exceeded"))),
     };
     result.map_err(|failure| match usage {
@@ -286,6 +404,7 @@ async fn run_inner(
     token_ratio: f64,
     web_mode: super::sessions::GoalWebMode,
     sized_tuned: bool,
+    loop_turn: bool,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
     usage: &mut Option<crate::llm::spend::UsageTokens>,
     known_completion_tokens: &mut u64,
@@ -303,16 +422,24 @@ async fn run_inner(
     let mut completion_tokens = 0u64;
     let mut initial_prompt_tokens = None;
     let definitions = tools_for(web_mode);
-    let definition_json = serde_json::to_string(&definitions)?;
-    let definition_bytes = definition_json.len();
-    let definition_tokens = super::compaction::estimate_tokens(&definition_json);
+    let mut route = StickyRoute::from_user_message(latest_user_message(history));
+    route.observe_notes_in_prompt(system);
+    let tool_key = "models.local_llm.tool_max_tokens";
+    let tool_max = crate::llm::openai_chat::parse_tool_max_tokens(
+        state.cfg.get(tool_key).and_then(|value| value.as_u64()),
+        state.cfg.get(tool_key).is_some(),
+    )?;
     let mut peak_extra = 0u64;
     let mut tools_withheld = false;
     let mut initial_prompt_tools = false;
     for turn in 0..=web.limits.chat_tool_calls {
         check_evidence(state, owner, &sources)?;
+        let offered = narrow_tools(&definitions, &route);
+        let offered_json = serde_json::to_string(&offered)?;
+        let offered_bytes = offered_json.len();
+        let offered_tokens = super::compaction::estimate_tokens(&offered_json);
         let sent = system.len() + serde_json::to_vec(&messages)?.len();
-        let with_tools = prompt_estimate(sent + definition_bytes, token_ratio);
+        let with_tools = prompt_estimate(sent + offered_bytes, token_ratio);
         let reservation = super::compaction::reply_reservation(&state.backend, cap);
         let remaining = web.limits.chat_tool_calls - used_calls;
         // A tool round is two calls: this one, whose reply carries the tool calls,
@@ -334,7 +461,7 @@ async fn run_inner(
                 <= web.limits.total_tokens;
         // Charge what is sent: the tool definitions only when tools are offered.
         let (available, estimate) = if round_fits {
-            (definitions.as_slice(), with_tools)
+            (offered.as_slice(), with_tools)
         } else {
             (&[][..], prompt_estimate(sent, token_ratio))
         };
@@ -359,22 +486,23 @@ async fn run_inner(
         }
         // A middle round can be the largest request: earlier results plus the
         // definitions, which the final round may no longer carry.
-        let extra =
-            appended_tokens(&messages[history.len()..]) + if available.is_empty() { 0 } else { definition_tokens };
+        let extra = appended_tokens(&messages[history.len()..]) + if available.is_empty() { 0 } else { offered_tokens };
         peak_extra = peak_extra.max(extra);
         let validate = || check_evidence(state, owner, &sources);
         // A tool round may run long: the window must still allow this budget.
         state
             .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
             .await?;
-        let response = state
+        let kind = hop_kind(loop_turn, !available.is_empty());
+        let sampling = crate::llm::openai_chat::sampling_for(kind, cap, temperature, tool_max);
+        let mut response = state
             .chat
             .chat_with_tools_stream(
                 system,
                 &messages,
                 model,
-                cap,
-                temperature,
+                sampling.max_tokens,
+                sampling.temperature,
                 available,
                 output.map(|sender| crate::llm::openai_stream::Output {
                     sender,
@@ -387,10 +515,10 @@ async fn run_inner(
             output_tokens: Some(0),
             ..Default::default()
         });
-        let usage = &response["usage"];
-        if usage["completion_tokens"].is_number() {
+        let reported = &response["usage"];
+        if reported["completion_tokens"].is_number() {
             *known_completion_tokens = known_completion_tokens
-                .saturating_add(crate::llm::openai_chat::token_count(usage.get("completion_tokens")));
+                .saturating_add(crate::llm::openai_chat::token_count(reported.get("completion_tokens")));
         }
         // An unknown round makes that dimension's total unknown, never zero.
         for (total, field) in [
@@ -398,7 +526,7 @@ async fn run_inner(
             (&mut totals.output_tokens, "completion_tokens"),
         ] {
             *total = total
-                .zip(usage.get(field).filter(|v| v.is_number()))
+                .zip(reported.get(field).filter(|v| v.is_number()))
                 .map(|(sum, count)| sum.saturating_add(crate::llm::openai_chat::token_count(Some(count))));
         }
         *usage_snapshot.lock().unwrap() = UsageSnapshot {
@@ -408,10 +536,59 @@ async fn run_inner(
         if turn == 0 {
             initial_prompt_tokens = crate::llm::openai_chat::initial_prompt_tokens(&response);
         }
-        prompt_tokens = prompt_tokens.saturating_add(crate::llm::openai_chat::token_count(usage.get("prompt_tokens")));
+        prompt_tokens =
+            prompt_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("prompt_tokens")));
         completion_tokens =
-            completion_tokens.saturating_add(crate::llm::openai_chat::token_count(usage.get("completion_tokens")));
+            completion_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("completion_tokens")));
         check_evidence(state, owner, &sources)?;
+        let mut final_tools = !available.is_empty();
+        let synthesis = crate::llm::openai_chat::sampling_for(
+            crate::llm::openai_chat::TurnKind::Synthesis,
+            cap,
+            temperature,
+            tool_max,
+        );
+        if truncated_answer_needs_synthesis(
+            sampling.max_tokens,
+            synthesis.max_tokens,
+            response_has_calls(&response),
+            response["choices"][0]["finish_reason"].as_str(),
+        ) {
+            response = state
+                .chat
+                .chat_with_tools_stream(
+                    system,
+                    &messages,
+                    model,
+                    synthesis.max_tokens,
+                    synthesis.temperature,
+                    &[],
+                    output.map(|sender| crate::llm::openai_stream::Output {
+                        sender,
+                        validate: &validate,
+                    }),
+                )
+                .await?;
+            let reported = &response["usage"];
+            if reported["completion_tokens"].is_number() {
+                *known_completion_tokens = known_completion_tokens
+                    .saturating_add(crate::llm::openai_chat::token_count(reported.get("completion_tokens")));
+            }
+            for (total, field) in [
+                (&mut totals.input_tokens, "prompt_tokens"),
+                (&mut totals.output_tokens, "completion_tokens"),
+            ] {
+                *total = total
+                    .zip(reported.get(field).filter(|v| v.is_number()))
+                    .map(|(sum, count)| sum.saturating_add(crate::llm::openai_chat::token_count(Some(count))));
+            }
+            *usage_snapshot.lock().unwrap() = Some((totals.clone(), *known_completion_tokens));
+            prompt_tokens =
+                prompt_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("prompt_tokens")));
+            completion_tokens = completion_tokens
+                .saturating_add(crate::llm::openai_chat::token_count(reported.get("completion_tokens")));
+            final_tools = false;
+        }
         let choice = &response["choices"][0];
         let message = &choice["message"];
         // `"tool_calls": null` (sent by some servers on a plain answer) is no calls.
@@ -429,7 +606,7 @@ async fn run_inner(
             reply.reported_completion_tokens = totals.output_tokens;
             reply.initial_prompt_tokens = initial_prompt_tokens;
             reply.initial_prompt_tools = initial_prompt_tools;
-            reply.final_prompt_tools = !available.is_empty();
+            reply.final_prompt_tools = final_tools;
             reply.peak_prompt_extra_tokens = peak_extra;
             return Ok((reply, events));
         }
@@ -454,6 +631,7 @@ async fn run_inner(
         // Validate the whole protocol batch before the first request. In
         // particular a malformed trailing call cannot hide behind a valid read.
         let mut call_ids = std::collections::BTreeSet::new();
+        let mut closed_search = false;
         for call in calls {
             let id = call["id"]
                 .as_str()
@@ -469,27 +647,37 @@ async fn run_inner(
                     "duplicate identifier or unsupported call type",
                 ));
             }
+            let name = call["function"]["name"].as_str().unwrap_or("");
             let args = call["function"]["arguments"]
                 .as_str()
                 .filter(|s| s.len() <= 4096)
                 .ok_or_else(|| error("WEB_TOOL_ARGUMENTS", "invalid tool arguments"))?;
-            if !web_mode.allows(call["function"]["name"].as_str().unwrap_or("")) {
+            if is_web_search_name(name) && !route.allows_web_search() {
+                closed_search = true;
+                continue;
+            }
+            if !web_mode.allows(name) {
                 return Err(error(
                     "WEB_TOOL_DENIED",
                     "model requested a tool excluded by the goal web mode",
                 ));
             }
-            match call["function"]["name"].as_str() {
-                Some("web_search") => {
+            match name {
+                "web_search" => {
                     serde_json::from_str::<SearchArgs>(args)
                         .map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid search arguments"))?;
                 }
-                Some("web_fetch") => {
+                "web_fetch" => {
                     serde_json::from_str::<FetchArgs>(args)
                         .map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid fetch arguments"))?;
                 }
                 _ => return Err(error("WEB_TOOL_DENIED", "model requested an unavailable tool")),
             }
+        }
+        if closed_search {
+            tools_withheld = true;
+            events.push(json!({"tool":"web_search","ok":false,"code":"WEB_TOOL_DENIED","message":WEB_SEARCH_CLOSED}));
+            continue;
         }
         // The follow-up resends this prompt with the batch and a result for each
         // call; the model may batch every call it has left. Each call needs room for
@@ -547,60 +735,64 @@ async fn run_inner(
             let target = argv.first().cloned().unwrap_or_default();
             assert_allowed(name, &argv, &chat_callable_names(web_mode), &state.audit)
                 .map_err(|e| error("WEB_TOOL_DENIED", &e.message))?;
-            let result = match name {
-                "web_search" => {
-                    let args: SearchArgs = serde_json::from_str(args)
-                        .map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid search arguments"))?;
-                    // The tool contract bounds the RAW query length; enforce it before
-                    // whitespace normalisation and the intent rewrite so neither can
-                    // shrink a long instruction under the limit. The count was already
-                    // clamped to 1–10 when parsed. A refused argument is an ordinary
-                    // tool failure (bounded reply, usage recorded), not a run error:
-                    // the model already spent the turn that produced it.
-                    let raw_len = args.query.chars().count();
-                    let query = args.query.split_whitespace().collect::<Vec<_>>().join(" ");
-                    let planned =
-                        if !(1..=10).contains(&args.count) || raw_len > crate::server::schemas::MAX_WEB_QUERY_LEN {
-                            Err(error(
-                                "WEB_BAD_QUERY",
-                                "search needs a query of 1–200 characters and 1–10 results",
-                            ))
-                        } else {
-                            match crate::server::web_intent::parse_with_count(&query, args.count) {
-                                crate::server::web_intent::WebIntentParse::Rewrite(intent) => {
-                                    Ok((intent.query(), intent.count))
-                                }
-                                crate::server::web_intent::WebIntentParse::PassThrough => Ok((query, args.count)),
-                                crate::server::web_intent::WebIntentParse::Invalid(message) => {
-                                    Err(error("WEB_BAD_QUERY", &message))
-                                }
-                            }
-                        };
-                    match planned {
-                        Err(failure) => Err(failure),
-                        Ok((query, count)) => {
-                            let key = (query.to_lowercase(), count);
-                            if let Some(result) = searches.get(&key) {
-                                Ok(Value::clone(result))
+            let result = if is_web_search_name(name) && !route.allows_web_search() {
+                Err(error("WEB_TOOL_DENIED", WEB_SEARCH_CLOSED))
+            } else {
+                match name {
+                    "web_search" => {
+                        let args: SearchArgs = serde_json::from_str(args)
+                            .map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid search arguments"))?;
+                        // The tool contract bounds the RAW query length; enforce it before
+                        // whitespace normalisation and the intent rewrite so neither can
+                        // shrink a long instruction under the limit. The count was already
+                        // clamped to 1–10 when parsed. A refused argument is an ordinary
+                        // tool failure (bounded reply, usage recorded), not a run error:
+                        // the model already spent the turn that produced it.
+                        let raw_len = args.query.chars().count();
+                        let query = args.query.split_whitespace().collect::<Vec<_>>().join(" ");
+                        let planned =
+                            if !(1..=10).contains(&args.count) || raw_len > crate::server::schemas::MAX_WEB_QUERY_LEN {
+                                Err(error(
+                                    "WEB_BAD_QUERY",
+                                    "search needs a query of 1–200 characters and 1–10 results",
+                                ))
                             } else {
-                                let result = web.google_search(&query, count, true, &state.audit).await;
-                                if let Ok(value) = &result {
-                                    searches.insert(key, value.clone());
+                                match crate::server::web_intent::parse_with_count(&query, args.count) {
+                                    crate::server::web_intent::WebIntentParse::Rewrite(intent) => {
+                                        Ok((intent.query(), intent.count))
+                                    }
+                                    crate::server::web_intent::WebIntentParse::PassThrough => Ok((query, args.count)),
+                                    crate::server::web_intent::WebIntentParse::Invalid(message) => {
+                                        Err(error("WEB_BAD_QUERY", &message))
+                                    }
                                 }
-                                result
+                            };
+                        match planned {
+                            Err(failure) => Err(failure),
+                            Ok((query, count)) => {
+                                let key = (query.to_lowercase(), count);
+                                if let Some(result) = searches.get(&key) {
+                                    Ok(Value::clone(result))
+                                } else {
+                                    let result = web.google_search(&query, count, true, &state.audit).await;
+                                    if let Ok(value) = &result {
+                                        searches.insert(key, value.clone());
+                                    }
+                                    result
+                                }
                             }
                         }
                     }
-                }
-                "web_fetch" => {
-                    let args: FetchArgs = serde_json::from_str(args)
-                        .map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid fetch arguments"))?;
-                    web.fetch(&args.url, true, &state.audit, owner).await.map(|page| {
+                    "web_fetch" => {
+                        let args: FetchArgs = serde_json::from_str(args)
+                            .map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid fetch arguments"))?;
+                        web.fetch(&args.url, true, &state.audit, owner).await.map(|page| {
                     json!({"url":page["url"],"title":page["title"],"text":crate::common::clip_chars(page["text"].as_str().unwrap_or(""), (web.limits.evidence_tokens * 4) as usize),
                         "source_chars":page["chars"],"notice":FETCH_NOTICE})
                 })
+                    }
+                    _ => return Err(error("WEB_TOOL_DENIED", "model requested an unavailable tool")),
                 }
-                _ => return Err(error("WEB_TOOL_DENIED", "model requested an unavailable tool")),
             };
             // The follow-up call sends everything again: cut the result to the room
             // web.total_tokens has left for it, keeping a minimal result's room for
@@ -642,6 +834,7 @@ async fn run_inner(
                 }
             };
             if result.get("error").is_none() {
+                route.observe_tool_result(name, true);
                 // Provider listings (SerpAPI, loopback SearXNG) are not URL evidence.
                 if !matches!(result["provider"].as_str(), Some("google-serpapi" | "searxng")) {
                     if let Some(source) = result
@@ -695,6 +888,82 @@ async fn run_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_loop_turn_keeps_the_loop_budget_and_a_truncated_answer_asks_again_at_synthesis() {
+        let tool = crate::llm::openai_chat::sampling_for(
+            hop_kind(false, true),
+            4096,
+            0.1,
+            crate::llm::openai_chat::DEFAULT_TOOL_MAX_TOKENS,
+        );
+        let synthesis = crate::llm::openai_chat::sampling_for(
+            hop_kind(false, false),
+            4096,
+            0.1,
+            crate::llm::openai_chat::DEFAULT_TOOL_MAX_TOKENS,
+        );
+        let loop_hop = crate::llm::openai_chat::sampling_for(
+            hop_kind(true, true),
+            2048,
+            0.1,
+            crate::llm::openai_chat::DEFAULT_TOOL_MAX_TOKENS,
+        );
+        assert_eq!((tool.max_tokens, tool.temperature), (512, 0.0));
+        assert_eq!((synthesis.max_tokens, synthesis.temperature), (4096, 0.1));
+        assert_eq!(
+            (loop_hop.max_tokens, loop_hop.temperature),
+            (2048, 0.1),
+            "loop turns use the loop token budget"
+        );
+        assert!(truncated_answer_needs_synthesis(512, 4096, false, Some("length")));
+        assert!(!truncated_answer_needs_synthesis(512, 4096, true, Some("length")));
+        assert!(!truncated_answer_needs_synthesis(512, 4096, false, Some("stop")));
+        assert!(
+            !truncated_answer_needs_synthesis(loop_hop.max_tokens, loop_hop.max_tokens, false, Some("length")),
+            "a loop turn already ran at its answer budget"
+        );
+        let fallback =
+            crate::llm::openai_chat::sampling_for(crate::llm::openai_chat::TurnKind::Synthesis, 4096, 0.1, 512);
+        assert_eq!(fallback.max_tokens, 4096);
+        assert_eq!(fallback.temperature, 0.1);
+    }
+
+    #[test]
+    fn sticky_route_denies_web_search_after_a_local_read() {
+        let mut route = StickyRoute::from_user_message("What does my note say about cedar?");
+        assert!(route.allows_web_search());
+        route.observe_tool_result("notes_corpus", true);
+        assert!(!route.allows_web_search());
+        assert!(narrow_tools(&tools(), &route)
+            .iter()
+            .all(|tool| tool["function"]["name"] != "web_search"));
+        assert!(narrow_tools(&tools(), &route)
+            .iter()
+            .any(|tool| tool["function"]["name"] == "web_fetch"));
+        route.observe_tool_result("web_search", true);
+        assert!(!route.allows_web_search(), "a web hit does not reopen search");
+        let mut failed = StickyRoute::from_user_message("What does my note say about cedar?");
+        failed.observe_tool_result("read_notes", false);
+        assert!(failed.allows_web_search());
+        let mut asked = StickyRoute::from_user_message("Please search the web for cedar prices");
+        asked.observe_tool_result("private_notes", true);
+        asked.observe_notes_in_prompt("source=notes_corpus\ncedar: 5");
+        assert!(asked.allows_web_search());
+        let mut sources = StickyRoute::from_user_message("Compare my notes with web sources.");
+        sources.observe_notes_in_prompt("source=notes_corpus\ncedar: 5");
+        assert!(sources.allows_web_search());
+        assert!(narrow_tools(&tools(), &sources)
+            .iter()
+            .any(|tool| tool["function"]["name"] == "web_search"));
+        assert!(narrow_tools(&tools(), &asked)
+            .iter()
+            .any(|tool| tool["function"]["name"] == "web_search"));
+        for alias in ["web_search", "search_web", "websearch"] {
+            assert!(is_web_search_name(alias));
+            assert!(!route.allows_web_search());
+        }
+    }
 
     #[test]
     fn web_search_tool_tells_the_model_not_to_retry_a_paced_or_cooldown_reply() {

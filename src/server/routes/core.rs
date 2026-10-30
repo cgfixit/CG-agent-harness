@@ -1571,6 +1571,7 @@ pub(crate) async fn chat_inner(
             ratio,
             chat_web_mode,
             sized_tuned,
+            req.loop_turn,
             output,
             &local_usage,
         )
