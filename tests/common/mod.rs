@@ -31,6 +31,16 @@ pub fn isolate_write_kill_switch() {
     std::env::remove_var(cgagentharness::agentic::writer::WRITE_DISABLE_ENV);
 }
 
+/// The string at `dotted` in the shipped `assets/config.default.yaml`. A test
+/// that asserts a shipped default reads it here instead of copying it (#685).
+pub fn shipped_str(dotted: &str) -> String {
+    let cfg = AppConfig::from_str(AppConfig::embedded_default(), Path::new("config.yaml")).unwrap();
+    match cfg.get(dotted) {
+        Some(serde_yaml_ng::Value::String(value)) => value.clone(),
+        other => panic!("shipped {dotted} is not a string: {other:?}"),
+    }
+}
+
 /// A config built from the shipped default with YAML overrides applied as
 /// dotted `key: value` replacements (simple scalar overrides only).
 pub fn config_with(dir: &Path, overrides: &[(&str, &str)]) -> AppConfig {

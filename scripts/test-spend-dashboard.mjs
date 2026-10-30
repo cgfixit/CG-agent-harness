@@ -41,7 +41,7 @@ console.log('spend dashboard: completeness, unknown/local costs, stale rates, li
 
 const elements = Object.fromEntries(['predictSpend', 'spendPrediction', 'analyticsDialog'].map(id => [id, {textContent:'', disabled:false, open:true}]));
 const input = {value:'a draft'};
-let response = {model:'grok-4.6', usd:0.01, input_tokens:2, reserved_output_tokens:16, estimate_source:'heuristic', max_usd_per_call:0.005, budget_applies:true, budget_exceeded:true, priced_as_of:'2026-09-19'};
+let response = {model:'fixture-cloud-model', usd:0.01, input_tokens:2, reserved_output_tokens:16, estimate_source:'heuristic', max_usd_per_call:0.005, budget_applies:true, budget_exceeded:true, priced_as_of:'2026-09-19'};
 let calls = 0;
 const predictionContext = vm.createContext({input, $: id => elements[id], api: async (path, method, body) => {
   assert.equal(path, '/api/spend/predict'); assert.equal(method, 'POST'); assert.equal(body.message, 'a draft'); ++calls; return response;

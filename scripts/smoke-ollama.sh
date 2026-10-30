@@ -48,10 +48,10 @@ from urllib.parse import urlsplit
 url=sys.argv[2].rstrip('/')
 assert urlsplit(url).hostname in ('127.0.0.1','localhost','::1')  # DevSkim: ignore DS162092 because this refuses any non-loopback model URL.
 p=Path(sys.argv[1]);text=p.read_text()
-old='base_url: "http://127.0.0.1:11434/v1"'  # DevSkim: ignore DS162092 because this is the seeded loopback Ollama URL.
-# The first match is models.local_llm (agentic.deepagent_github repeats base_url later).
-assert old in text,'seeded config changed; update smoke-ollama.sh: '+old
-text=text.replace(old,'base_url: '+json.dumps(url+'/v1'),1)  # DevSkim: ignore DS137138 because this is the operator's loopback URL.
+# Match the key, not the seeded value. The first match is models.local_llm
+# (agentic.deepagent_github repeats base_url later).
+text,n=re.subn(r'(?m)^    base_url: [^\n]*$',lambda _:'    base_url: '+json.dumps(url+'/v1'),text,count=1)  # DevSkim: ignore DS137138 because this is the operator's loopback URL.
+assert n==1,'seeded config changed; update smoke-ollama.sh: local_llm base_url'
 # Pin greedy decoding whatever the shipped default is; the first match is models.local_llm.
 text,n=re.subn(r'(?m)^    temperature: [0-9.]+[^\n]*$','    temperature: 0',text,count=1)
 assert n==1,'seeded config changed; update smoke-ollama.sh: local_llm temperature'

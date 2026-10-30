@@ -12,17 +12,11 @@ use common::*;
 use reqwest::Method;
 use serde_json::{json, Value};
 
-/// `models.local_llm.model` in `assets/config.default.yaml`; the fixture Ollama serves it.
-const SHIPPED_MODEL: &str = "gemma4-26b-a4b:ud-q4_k_xl-cg";
-
-#[test]
-fn shipped_model_constant_matches_the_shipped_config() {
-    let line = format!("model: \"{SHIPPED_MODEL}\"");
-    let yaml = cgagentharness::common::config::AppConfig::embedded_default();
-    assert!(
-        yaml.lines().any(|l| l.trim_start().starts_with(&line)),
-        "update SHIPPED_MODEL to the new models.local_llm.model default"
-    );
+/// `models.local_llm.model` in `assets/config.default.yaml`; the fixture Ollama
+/// serves it, so a changed default needs no edit here (#685).
+fn shipped_model() -> &'static str {
+    static MODEL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    MODEL.get_or_init(|| shipped_str("models.local_llm.model"))
 }
 
 struct NativeOllama {
@@ -67,11 +61,11 @@ async fn start_native_ollama() -> NativeOllama {
     let app = Router::new()
         .route(
             "/v1/models",
-            get(|| async { Json(json!({"data": [{"id": SHIPPED_MODEL}]})) }),
+            get(|| async { Json(json!({"data": [{"id": shipped_model()}]})) }),
         )
         .route(
             "/api/tags",
-            get(|| async { Json(json!({"models": [{"name": SHIPPED_MODEL, "size": 1}, {"name": "tinyllama:latest", "size": 2}]})) }),
+            get(|| async { Json(json!({"models": [{"name": shipped_model(), "size": 1}, {"name": "tinyllama:latest", "size": 2}]})) }),
         )
         .route(
             "/api/pull",
@@ -116,7 +110,7 @@ async fn start_native_ollama() -> NativeOllama {
                         })),
                     );
                 }
-                if body.get("num_ctx").is_some() || body["model"] != SHIPPED_MODEL {
+                if body.get("num_ctx").is_some() || body["model"] != shipped_model() {
                     return (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": "fixture-private-missing"})));
                 }
                 (
@@ -137,7 +131,7 @@ async fn start_native_ollama() -> NativeOllama {
                 let window = *w2.lock().unwrap();
                 async move {
                     let mut models = vec![
-                        json!({"name": SHIPPED_MODEL, "context_length": 32768, "size": 20, "size_vram": 20}),
+                        json!({"name": shipped_model(), "context_length": 32768, "size": 20, "size_vram": 20}),
                         json!({"name": "humanizer:q8", "context_length": 16384, "size": 13, "size_vram": 13}),
                     ];
                     if window > 0 {
@@ -166,7 +160,7 @@ async fn start_native_ollama() -> NativeOllama {
                     }
                     let timed = body["raw"] == true;
                     let ms = *s.lock().unwrap();
-                    if timed && ms > 0 && body["model"] == SHIPPED_MODEL {
+                    if timed && ms > 0 && body["model"] == shipped_model() {
                         tokio::time::sleep(Duration::from_millis(ms)).await;
                     }
                     // Warmup sends an empty prompt; the auto_tune sample is raw and
@@ -751,18 +745,19 @@ async fn a_reload_at_a_smaller_window_scales_the_lifted_trigger_down_with_it() {
         &ollama.openai_url(),
         ServerOptions::default()
             .with("models.local_llm.auto_tune", "true")
+            .with("chat.compact_prompt_tokens", "24000")
             .with("api.rate_limit.max_requests", "1000"),
     )
     .await;
     s.post_json("/api/web", json!({"enabled": false})).await;
     let (status, body) = s.post_json("/api/model", json!({"model": "longctx:q8"})).await;
     assert_eq!(status, 200, "{body}");
-    // The shipped 24000 trigger lifts to the 96000 proposed for 131072.
+    // The configured 24000 trigger lifts to the 96000 proposed for 131072.
     let body = wait_for_tuning(&s, 131_072).await;
     assert_eq!(body["in_force"]["prompt_limit"], 96000, "{body}");
     // Ollama restarted smaller, or unloaded it, while the tuning still says
     // 131072: the trigger follows the verified window in proportion, below its
-    // prompt cap, and an unknown window keeps the shipped 24000.
+    // prompt cap, and an unknown window keeps the configured 24000.
     for (window, cap, trigger) in [(65_536, 60000, 48000), (32_768, 30000, 24000), (0, 30000, 24000)] {
         *ollama.longctx_window.lock().unwrap() = window;
         let (_, body) = s.get_json("/api/ollama/profile").await;
@@ -812,7 +807,7 @@ async fn a_planner_on_the_tuned_model_budgets_runs_with_its_measured_timeout() {
             .with("models.local_llm.auto_tune", "true")
             .with("agentic.enabled", "true")
             .with("agentic.deepagent_github.enabled", "true")
-            .with("agentic.deepagent_github.model", &format!("\"{SHIPPED_MODEL}\""))
+            .with("agentic.deepagent_github.model", &format!("\"{}\"", shipped_model()))
             .with("api.rate_limit.max_requests", "1000")
             .with("agentic.deepagent_github.base_url", &planner_url),
     )
@@ -883,7 +878,7 @@ async fn planner_endpoint_defaults_and_aliases_keep_sync_and_job_budgets_consist
                 .with("models.local_llm.auto_tune", "true")
                 .with("api.rate_limit.max_requests", "1000")
                 .with("agentic.repo", "fixture/repository")
-                .with("agentic.deepagent_github.model", &format!("\"{SHIPPED_MODEL}\""))
+                .with("agentic.deepagent_github.model", &format!("\"{}\"", shipped_model()))
                 .with("agentic.deepagent_github.planner_timeout_sec", "720"),
         )
         .await;
@@ -1025,12 +1020,12 @@ async fn startup_reconciles_saved_selection_before_warmup_and_tuning() {
     // Changed config wins; unchanged config retains an explicit selection.
     // A legacy mismatch is reset, while a legacy matching tag is migrated.
     for (saved, previous, expected) in [
-        ("longctx:q8", Some("old:q8"), SHIPPED_MODEL),
-        ("longctx:q8", Some(SHIPPED_MODEL), "longctx:q8"),
-        ("longctx:q8", None, SHIPPED_MODEL),
-        (SHIPPED_MODEL, None, SHIPPED_MODEL),
-        ("", None, SHIPPED_MODEL),
-        ("grok", Some(SHIPPED_MODEL), SHIPPED_MODEL),
+        ("longctx:q8", Some("old:q8"), shipped_model()),
+        ("longctx:q8", Some(shipped_model()), "longctx:q8"),
+        ("longctx:q8", None, shipped_model()),
+        (shipped_model(), None, shipped_model()),
+        ("", None, shipped_model()),
+        ("grok", Some(shipped_model()), shipped_model()),
     ] {
         let ollama = start_native_ollama().await;
         let prepared = prepare_server(
@@ -1067,7 +1062,7 @@ async fn startup_reconciles_saved_selection_before_warmup_and_tuning() {
             .all(|g| g["model"] == expected && !g.to_string().contains("num_ctx")));
         let persisted: Value =
             serde_json::from_str(&std::fs::read_to_string(s.home.join("harness.json")).unwrap()).unwrap();
-        assert_eq!(persisted["selected_model_config"], SHIPPED_MODEL);
+        assert_eq!(persisted["selected_model_config"], shipped_model());
         let status: Value = s
             .req(Method::GET, "/api/status")
             .send()
@@ -1076,13 +1071,13 @@ async fn startup_reconciles_saved_selection_before_warmup_and_tuning() {
             .json()
             .await
             .unwrap();
-        assert_eq!(status["configured_model"], SHIPPED_MODEL);
-        assert_eq!(status["selection_overrides_config"], expected != SHIPPED_MODEL);
+        assert_eq!(status["configured_model"], shipped_model());
+        assert_eq!(status["selection_overrides_config"], expected != shipped_model());
         let (code, body) = s.post_json("/api/model", json!({"model": "longctx:q8"})).await;
         assert_eq!(code, 200, "{body}");
         let saved = cgagentharness::common::home::HarnessSettings::load(&s.state.home).unwrap();
         assert_eq!(saved.selected_model, "longctx:q8");
-        assert_eq!(saved.selected_model_config.as_deref(), Some(SHIPPED_MODEL));
+        assert_eq!(saved.selected_model_config.as_deref(), Some(shipped_model()));
     }
 }
 
@@ -1099,13 +1094,13 @@ async fn status_distinguishes_automatic_fallback_from_a_saved_model_override() {
                 "models.local_llm.fallback.base_url",
                 &format!("\"{}\"", ollama.openai_url()),
             )
-            .with("models.local_llm.fallback.model", SHIPPED_MODEL),
+            .with("models.local_llm.fallback.model", shipped_model()),
     )
     .await;
     assert_eq!(s.state.backend.source, "fallback");
     let (code, status) = s.get_json("/api/status").await;
     assert_eq!(code, 200);
-    assert_eq!(status["model"], SHIPPED_MODEL);
+    assert_eq!(status["model"], shipped_model());
     assert_eq!(status["configured_model"], "missing-primary:fixture");
     assert_eq!(status["selection_overrides_config"], false);
     assert!(s.state.settings.lock().unwrap().selected_model.is_empty());
@@ -1123,7 +1118,7 @@ async fn pull_refuses_a_progress_line_over_max_response_bytes() {
     let app = Router::new()
         .route(
             "/v1/models",
-            get(|| async { Json(json!({"data": [{"id": SHIPPED_MODEL}]})) }),
+            get(|| async { Json(json!({"data": [{"id": shipped_model()}]})) }),
         )
         .route(
             "/api/tags",
