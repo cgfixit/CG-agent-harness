@@ -41,6 +41,7 @@ models:
     # `ollama serve` and verify context_length on /api/ps (docs/MODELS.md).
     # The harness sends no num_ctx and inherits that window.
     max_tokens: 4096 # 1–25904 with Ollama reasoning=none; otherwise 1–12952 with a 2x reservation
+    tool_max_tokens: 512 # 64–2048; missing uses 512; restart-only
     temperature: 0.1  #funsies but really dont go higher 
     timeout_sec: 1800
     # Explicit local inventory only; no inference, cloud probes or model downloads.

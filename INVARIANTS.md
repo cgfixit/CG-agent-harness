@@ -219,7 +219,7 @@ edits between an authorization check and an OS operation is claimed.
 Chat exposes only two read-only model tools while web is enabled: Google keyword
 search and permitted URL fetch. The dispatcher bounds calls, tokens, time and
 arguments and rechecks current account/URL permissions before reads and evidence
-delivery. It cannot mutate policy, credentials, accounts or repositories, including
+delivery. A turn that already holds a notes-corpus read (`source=notes_corpus`), or a successful private-notes tool result, does not offer or run `web_search` or the `search_web` alias unless that user message asks for outside, web, or internet sources. `web.chat_tool_calls` (default 30, range 1–30) remains the tool-round ceiling. Tool hops use `models.local_llm.tool_max_tokens` (default 512) and temperature 0. The answer hop keeps the chat token ceiling and temperature. It cannot mutate policy, credentials, accounts or repositories, including
 local `/loop` turns. Search-provider snippets are listings, not fetched
 linked pages; each content fetch still requires its own URL permission. A
 restart-only `web.search.provider` picks the backend: `auto` lets a configured SerpAPI
