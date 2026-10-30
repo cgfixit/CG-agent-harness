@@ -236,16 +236,15 @@ async fn rejected_local_replies_record_usage_once_without_saving_an_exchange() {
             assert_eq!(rows.len(), index + 1, "one row per rejected logical turn");
             let row = rows.last().unwrap();
             assert_eq!(row["outcome"], "failed_after_billing");
+            // A truncated tool hop is asked again at the synthesis budget, so both requests bill.
+            let billed = if web && finish == "length" { 2 } else { 1 };
             for (source, dest) in [
                 ("prompt_tokens", "input_tokens"),
                 ("completion_tokens", "output_tokens"),
             ] {
-                assert_eq!(row[dest].as_u64(), usage[source].as_u64(), "{row}");
-                assert_eq!(
-                    reply["detail"]["details"][source].as_u64(),
-                    usage[source].as_u64(),
-                    "{reply}"
-                );
+                let expected = usage[source].as_u64().map(|n| n * billed);
+                assert_eq!(row[dest].as_u64(), expected, "{row}");
+                assert_eq!(reply["detail"]["details"][source].as_u64(), expected, "{reply}");
             }
             assert_eq!(
                 row["usage_missing"],
@@ -254,7 +253,7 @@ async fn rejected_local_replies_record_usage_once_without_saving_an_exchange() {
             if web && (finish == "length" || !content.is_string()) {
                 assert_eq!(
                     reply["detail"]["details"]["known_completion_tokens"].as_u64(),
-                    Some(usage["completion_tokens"].as_u64().unwrap_or(0))
+                    Some(usage["completion_tokens"].as_u64().unwrap_or(0) * billed)
                 );
             }
             for private in ["PRIVATE_PROMPT", "REJECTED_TEXT", "PRIVATE_REASONING", &s.api_key] {

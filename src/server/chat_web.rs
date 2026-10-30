@@ -116,8 +116,13 @@ fn hop_kind(loop_turn: bool, tools_offered: bool) -> crate::llm::openai_chat::Tu
     }
 }
 
-fn truncated_answer_needs_synthesis(tools_offered: bool, has_calls: bool, finish_reason: Option<&str>) -> bool {
-    tools_offered && !has_calls && finish_reason == Some("length")
+fn truncated_answer_needs_synthesis(
+    hop_max_tokens: u64,
+    synthesis_max_tokens: u64,
+    has_calls: bool,
+    finish_reason: Option<&str>,
+) -> bool {
+    hop_max_tokens < synthesis_max_tokens && !has_calls && finish_reason == Some("length")
 }
 
 fn response_has_calls(response: &Value) -> bool {
@@ -527,17 +532,18 @@ async fn run_inner(
             completion_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("completion_tokens")));
         check_evidence(state, owner, &sources)?;
         let mut final_tools = !available.is_empty();
+        let synthesis = crate::llm::openai_chat::sampling_for(
+            crate::llm::openai_chat::TurnKind::Synthesis,
+            cap,
+            temperature,
+            tool_max,
+        );
         if truncated_answer_needs_synthesis(
-            !available.is_empty(),
+            sampling.max_tokens,
+            synthesis.max_tokens,
             response_has_calls(&response),
             response["choices"][0]["finish_reason"].as_str(),
         ) {
-            let synthesis = crate::llm::openai_chat::sampling_for(
-                crate::llm::openai_chat::TurnKind::Synthesis,
-                cap,
-                temperature,
-                tool_max,
-            );
             response = state
                 .chat
                 .chat_with_tools_stream(
@@ -900,9 +906,13 @@ mod tests {
             (2048, 0.1),
             "loop turns use the loop token budget"
         );
-        assert!(truncated_answer_needs_synthesis(true, false, Some("length")));
-        assert!(!truncated_answer_needs_synthesis(true, true, Some("length")));
-        assert!(!truncated_answer_needs_synthesis(true, false, Some("stop")));
+        assert!(truncated_answer_needs_synthesis(512, 4096, false, Some("length")));
+        assert!(!truncated_answer_needs_synthesis(512, 4096, true, Some("length")));
+        assert!(!truncated_answer_needs_synthesis(512, 4096, false, Some("stop")));
+        assert!(
+            !truncated_answer_needs_synthesis(loop_hop.max_tokens, loop_hop.max_tokens, false, Some("length")),
+            "a loop turn already ran at its answer budget"
+        );
         let fallback =
             crate::llm::openai_chat::sampling_for(crate::llm::openai_chat::TurnKind::Synthesis, 4096, 0.1, 512);
         assert_eq!(fallback.max_tokens, 4096);
