@@ -7,12 +7,19 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
+    groups:
+      # init, analyze and upload-sarif share one SHA; one PR keeps them in step.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
     ignore:
       # Workflows select explicit Rust versions with `with.toolchain`.
       # Keep rust-toolchain action-SHA upgrades manual; Cargo and other
       # Actions dependencies still get weekly PRs.
       - dependency-name: dtolnay/rust-toolchain
   - package-ecosystem: cargo
+    # tests/fixtures/cargo-sandbox is left out on purpose: tests/macos_cargo.rs
+    # expects its exact serde pin. cargo deny still audits it.
     directories:
       - /
       - /desktop
@@ -21,3 +28,9 @@ updates:
     open-pull-requests-limit: 5
     cooldown:
       default-days: 7
+    groups:
+      # One PR per crate across both lockfiles, not one per directory.
+      shared-crates:
+        group-by: dependency-name
+        patterns:
+          - "*"
