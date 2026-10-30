@@ -43,6 +43,18 @@ fn shipped_web_and_workspace_settings_validate_for_a_fresh_home() {
 }
 
 #[test]
+fn shipped_tool_hop_budget_validates_and_stays_under_the_answer_budget() {
+    let cfg = shipped();
+    let key = "models.local_llm.tool_max_tokens";
+    assert!(cfg.get(key).is_some(), "the seed documents the key");
+    let tool =
+        cgagentharness::llm::openai_chat::parse_tool_max_tokens(cfg.get(key).and_then(|value| value.as_u64()), true)
+            .unwrap();
+    assert_eq!(tool, cgagentharness::llm::openai_chat::DEFAULT_TOOL_MAX_TOKENS);
+    assert!(tool < cfg.u64_or("models.local_llm.max_tokens", 4096));
+}
+
+#[test]
 fn shipped_tuning_values_are_preserved() {
     let cfg = shipped();
     assert_eq!(cgagentharness::server::compaction::summary_max_tokens(&cfg), 2048);

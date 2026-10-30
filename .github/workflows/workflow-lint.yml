@@ -3,9 +3,9 @@ name: Workflows - Syntax and security lint
 on:
   push:
     branches: [main]
-    paths: [".github/workflows/**", "scripts/*release-plan.py", "scripts/test-review-gate.mjs"]
+    paths: [".github/workflows/**", ".github/actionlint.yaml", ".github/dependabot.yml", "scripts/*release-plan.py", "scripts/test-review-gate.mjs"]
   pull_request:
-    paths: [".github/workflows/**", "scripts/*release-plan.py", "scripts/test-review-gate.mjs"]
+    paths: [".github/workflows/**", ".github/actionlint.yaml", ".github/dependabot.yml", "scripts/*release-plan.py", "scripts/test-review-gate.mjs"]
   workflow_dispatch:
 
 permissions: {}
