@@ -228,6 +228,13 @@ fn check_evidence(state: &AppState, owner: &str, sources: &[String]) -> Result<(
     Ok(())
 }
 
+/// Taking the pending row must not erase the subtotal used by loop budgets.
+#[derive(Default)]
+pub struct UsageSnapshot {
+    pub(crate) pending: Option<crate::llm::spend::UsageTokens>,
+    pub(crate) known_completion_tokens: u64,
+}
+
 /// Cancellation covers model calls AND reads. The caller owns the generation gate.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_stream(
@@ -243,7 +250,7 @@ pub async fn run_stream(
     web_mode: super::sessions::GoalWebMode,
     sized_tuned: bool,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
-    usage_snapshot: &std::sync::Mutex<Option<(crate::llm::spend::UsageTokens, u64)>>,
+    usage_snapshot: &std::sync::Mutex<UsageSnapshot>,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let lease = web.chat_turn.start(owner)?;
     let mut usage = None;
@@ -282,7 +289,7 @@ async fn run_inner(
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
     usage: &mut Option<crate::llm::spend::UsageTokens>,
     known_completion_tokens: &mut u64,
-    usage_snapshot: &std::sync::Mutex<Option<(crate::llm::spend::UsageTokens, u64)>>,
+    usage_snapshot: &std::sync::Mutex<UsageSnapshot>,
 ) -> Result<(ChatResult, Vec<Value>)> {
     let mut messages: Vec<Value> = history
         .iter()
@@ -394,7 +401,10 @@ async fn run_inner(
                 .zip(usage.get(field).filter(|v| v.is_number()))
                 .map(|(sum, count)| sum.saturating_add(crate::llm::openai_chat::token_count(Some(count))));
         }
-        *usage_snapshot.lock().unwrap() = Some((totals.clone(), *known_completion_tokens));
+        *usage_snapshot.lock().unwrap() = UsageSnapshot {
+            pending: Some(totals.clone()),
+            known_completion_tokens: *known_completion_tokens,
+        };
         if turn == 0 {
             initial_prompt_tokens = crate::llm::openai_chat::initial_prompt_tokens(&response);
         }

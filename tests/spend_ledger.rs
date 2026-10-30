@@ -225,7 +225,7 @@ async fn rejected_local_replies_record_usage_once_without_saving_an_exchange() {
         .into_iter()
         .enumerate()
         {
-            model.set_reply(json!({"choices":[{"finish_reason":finish,"message":{"content":content}}],"usage":usage}));
+            model.set_reply(json!({"model":"served-local-model","choices":[{"finish_reason":finish,"message":{"content":content}}],"usage":usage}));
             let (status, reply) = s
                 .post_json("/api/chat", json!({"session_id":id,"message":"PRIVATE_PROMPT"}))
                 .await;
@@ -264,6 +264,12 @@ async fn rejected_local_replies_record_usage_once_without_saving_an_exchange() {
             assert_eq!(saved["tokens"]["exchanges"], 0);
             assert_eq!(saved["tokens"]["total"], 0);
             assert_eq!(saved["messages"], json!([]));
+            if finish == "stop" && content.is_string() {
+                assert_eq!(
+                    row["model"], "served-local-model",
+                    "empty replies retain the parsed model"
+                );
+            }
         }
     }
 }

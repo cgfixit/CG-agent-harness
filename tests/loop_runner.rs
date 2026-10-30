@@ -73,6 +73,150 @@ async fn loop_status(s: &common::TestServer, run_id: &str) -> Value {
     body["run"].clone()
 }
 
+/// Pause the read made after inference, rather than guessing when to cancel.
+async fn window_check_fixture() -> (
+    common::TestServer,
+    std::sync::Arc<tokio::sync::Notify>,
+    tokio::task::JoinHandle<()>,
+) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let checking = std::sync::Arc::new(tokio::sync::Notify::new());
+    let signal = checking.clone();
+    let inferred = Arc::new(AtomicBool::new(false));
+    let completed = inferred.clone();
+    let first_check = Arc::new(AtomicBool::new(true));
+    let app = axum::Router::new()
+        .route(
+            "/v1/chat/completions",
+            axum::routing::post(move || {
+                completed.store(true, Ordering::SeqCst);
+                async { axum::Json(ok_reply("private completed answer", 100, 220)) }
+            }),
+        )
+        .route(
+            "/api/ps",
+            axum::routing::get(move || {
+                let signal = signal.clone();
+                let inferred = inferred.clone();
+                let first_check = first_check.clone();
+                async move {
+                    assert!(inferred.load(Ordering::SeqCst), "window read must follow inference");
+                    if first_check.swap(false, Ordering::SeqCst) {
+                        signal.notify_one();
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    }
+                    axum::Json(json!({"models":[]}))
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture binds only an ephemeral loopback port.
+    let addr = listener.local_addr().unwrap();
+    let mock = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let s = spawn_server(
+        &format!("http://{addr}/v1"), // DevSkim: ignore DS137138 because this synthetic model uses no credentials and binds only to loopback.
+        ServerOptions::default().with("models.local_llm.model", "mock-model"),
+    )
+    .await;
+    (s, checking, mock)
+}
+
+async fn assert_cancelled_spend(s: &common::TestServer, sid: &str, source: &str) {
+    s.state.audit.flush_async().await;
+    let ledger = std::fs::read_to_string(s.home.join("logs/spend.jsonl")).unwrap();
+    let rows: Vec<Value> = ledger.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+    assert_eq!(rows.len(), 1, "{ledger}");
+    assert_eq!(rows[0]["source"], source);
+    assert_eq!(rows[0]["input_tokens"], 100);
+    assert_eq!(rows[0]["output_tokens"], 220);
+    assert_eq!(rows[0]["outcome"], "failed_after_billing", "{ledger}");
+    for private in ["private completed answer", "private request", &s.api_key] {
+        assert!(!ledger.contains(private));
+    }
+    assert_eq!(s.state.store.for_owner("local").get(sid).unwrap().tally.exchanges, 0);
+    assert!(!s.state.generation_gate.is_held());
+    assert!(s.state.loop_inflight.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn late_cancellation_preserves_chat_and_loop_usage() {
+    for web in [true, false] {
+        for loop_turn in [false, true] {
+            let (s, checking, mock) = window_check_fixture().await;
+            assert_eq!(s.post_json("/api/web", json!({"enabled":web})).await.0, 200);
+            let sid = session_with_goal(&s).await;
+            let read = s.post_json(
+                "/api/chat",
+                json!({
+                    "message":"private request", "session_id":sid, "loop":loop_turn
+                }),
+            );
+            let cancel = async {
+                checking.notified().await;
+                assert_eq!(s.post_json("/api/chat/cancel", json!({})).await.0, 200);
+            };
+            let ((status, reply), ()) =
+                tokio::time::timeout(std::time::Duration::from_secs(5), async { tokio::join!(read, cancel) })
+                    .await
+                    .expect("cancel must not wait for the window read");
+            assert_eq!(status, 502, "{reply}");
+            assert_eq!(code(&reply), "WEB_CANCELLED");
+            assert_cancelled_spend(&s, &sid, if loop_turn { "loop" } else { "chat" }).await;
+            assert_eq!(
+                reply["detail"]["details"]["known_completion_tokens"], 220,
+                "web={web}, loop={loop_turn}: {reply}"
+            );
+            let (status, recovery) = s
+                .post_json("/api/chat", json!({"message":"recovery", "session_id":sid}))
+                .await;
+            assert_eq!(status, 200, "{recovery}");
+            s.state.audit.flush_async().await;
+            let ledger = std::fs::read_to_string(s.home.join("logs/spend.jsonl")).unwrap();
+            assert_eq!(
+                ledger.lines().count(),
+                2,
+                "recovery must add only its own row: {ledger}"
+            );
+            assert_eq!(s.state.store.for_owner("local").get(&sid).unwrap().tally.exchanges, 1);
+            mock.abort();
+        }
+    }
+}
+
+#[tokio::test]
+async fn late_cancellation_counts_toward_detached_loop_budget() {
+    let (s, checking, mock) = window_check_fixture().await;
+    let sid = session_with_goal(&s).await;
+    let (status, body) = s
+        .post_json(
+            "/api/loop/start",
+            json!({
+                "session_id":sid,"max_turns":3,"max_total_completion_tokens":200,"max_failures":3,"cooldown_ms":0
+            }),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let run_id = body["run"]["run_id"].as_str().unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), checking.notified())
+        .await
+        .unwrap();
+    assert_eq!(s.post_json("/api/chat/cancel", json!({})).await.0, 200);
+    let run = wait_for(&s, run_id, "the cancelled turn's accounting", |run| {
+        run["stats"]["consecutive_failures"].as_u64().unwrap_or(0) > 0
+    })
+    .await;
+    assert_eq!(run["stats"]["total_completion_tokens"], 220, "{run}");
+    let run = wait_for(&s, run_id, "cancelled inference exhausts the budget", |run| {
+        run["state"] == "done" || run["state"] == "failed"
+    })
+    .await;
+    assert_eq!(run["stats"]["turns_completed"], 0, "{run}");
+    assert_eq!(run["stats"]["consecutive_failures"], 1, "{run}");
+    assert_eq!(run["state"], "done", "{run}");
+    assert_cancelled_spend(&s, &sid, "loop").await;
+    mock.abort();
+}
+
 #[tokio::test]
 async fn failed_loop_turn_counts_compaction_before_the_rejected_reply() {
     use std::sync::atomic::{AtomicUsize, Ordering};
