@@ -252,15 +252,17 @@ fn response_think_leak(parsed: &Value) -> bool {
         .is_some_and(|content| residual_think_leak(strip_leading_reasoning(content)))
 }
 
-fn merge_usage(mut kept: Value, discarded: &Value) -> Value {
-    for field in ["prompt_tokens", "completion_tokens"] {
-        let Some(extra) = discarded["usage"][field].as_u64() else {
-            continue;
-        };
-        let Some(base) = kept["usage"][field].as_u64() else {
-            continue;
-        };
-        kept["usage"][field] = json!(base.saturating_add(extra));
+fn merge_usage(mut kept: Value, first: &Value) -> Value {
+    if let (Some(extra), Some(base)) = (
+        first["usage"]["completion_tokens"].as_u64(),
+        kept["usage"]["completion_tokens"].as_u64(),
+    ) {
+        kept["usage"]["completion_tokens"] = json!(base.saturating_add(extra));
+    }
+    if let Some(prompt) = first["usage"]["prompt_tokens"].as_u64() {
+        if kept.get("usage").is_some() {
+            kept["usage"]["prompt_tokens"] = json!(prompt);
+        }
     }
     kept
 }
@@ -962,12 +964,12 @@ mod tests {
             axum::routing::post(move || {
                 let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 async move {
-                    let body = if n == 0 {
-                        "Planning is distinct.\n</think>\nThe answer."
+                    let (body, prompt, completion) = if n == 0 {
+                        ("Planning is distinct.\n</think>\nThe answer.", 10, 2)
                     } else {
-                        "The cedar count is 5."
+                        ("The cedar count is 5.", 40, 3)
                     };
-                    axum::Json(reply(body))
+                    axum::Json(json!({"choices":[{"finish_reason":"stop","message":{"content":body}}],"usage":{"prompt_tokens":prompt,"completion_tokens":completion}}))
                 }
             }),
         );
@@ -978,8 +980,10 @@ mod tests {
         let parsed = client.chat("s", &[], None, 4096, 0.2).await.unwrap();
         assert_eq!(parsed.body_text, "The cedar count is 5.");
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
-        assert_eq!(parsed.prompt_tokens, 6);
-        assert_eq!(parsed.completion_tokens, 4);
+        assert_eq!(parsed.prompt_tokens, 10, "calibration keeps the first prompt count");
+        assert_eq!(parsed.initial_prompt_tokens, Some(10));
+        assert_ne!(parsed.initial_prompt_tokens, Some(50));
+        assert_eq!(parsed.completion_tokens, 5);
 
         hits.store(0, std::sync::atomic::Ordering::SeqCst);
         let counter = hits.clone();

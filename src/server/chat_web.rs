@@ -41,6 +41,8 @@ const OUTSIDE_SOURCE_PHRASES: &[&str] = &[
     "internet sources",
     "look online",
     "search online",
+    "web source",
+    "web sources",
 ];
 
 const LOCAL_READ_TOOLS: &[&str] = &[
@@ -104,6 +106,26 @@ fn narrow_tools(definitions: &[Value], route: &StickyRoute) -> Vec<Value> {
         })
         .cloned()
         .collect()
+}
+
+fn hop_kind(loop_turn: bool, tools_offered: bool) -> crate::llm::openai_chat::TurnKind {
+    if loop_turn || !tools_offered {
+        crate::llm::openai_chat::TurnKind::Synthesis
+    } else {
+        crate::llm::openai_chat::TurnKind::Tool
+    }
+}
+
+fn truncated_answer_needs_synthesis(tools_offered: bool, has_calls: bool, finish_reason: Option<&str>) -> bool {
+    tools_offered && !has_calls && finish_reason == Some("length")
+}
+
+fn response_has_calls(response: &Value) -> bool {
+    match response["choices"][0]["message"].get("tool_calls") {
+        None | Some(Value::Null) => false,
+        Some(Value::Array(calls)) => !calls.is_empty(),
+        Some(_) => true,
+    }
 }
 
 fn latest_user_message(history: &[ChatMessage]) -> &str {
@@ -332,6 +354,7 @@ pub async fn run_stream(
     token_ratio: f64,
     web_mode: super::sessions::GoalWebMode,
     sized_tuned: bool,
+    loop_turn: bool,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
     usage_snapshot: &std::sync::Mutex<Option<(crate::llm::spend::UsageTokens, u64)>>,
 ) -> Result<(ChatResult, Vec<Value>)> {
@@ -343,7 +366,7 @@ pub async fn run_stream(
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
         // A turn of several tool rounds gets more than one call's deadline; each
         // model call keeps its own (`ChatClient::timeout_for`).
-        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, output, &mut usage, &mut known_completion_tokens, usage_snapshot)) =>
+        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, loop_turn, output, &mut usage, &mut known_completion_tokens, usage_snapshot)) =>
             result.unwrap_or_else(|_| Err(error("WEB_TIMEOUT", "chat web turn deadline exceeded"))),
     };
     result.map_err(|failure| match usage {
@@ -369,6 +392,7 @@ async fn run_inner(
     token_ratio: f64,
     web_mode: super::sessions::GoalWebMode,
     sized_tuned: bool,
+    loop_turn: bool,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
     usage: &mut Option<crate::llm::spend::UsageTokens>,
     known_completion_tokens: &mut u64,
@@ -457,13 +481,9 @@ async fn run_inner(
         state
             .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
             .await?;
-        let kind = if available.is_empty() {
-            crate::llm::openai_chat::TurnKind::Synthesis
-        } else {
-            crate::llm::openai_chat::TurnKind::Tool
-        };
+        let kind = hop_kind(loop_turn, !available.is_empty());
         let sampling = crate::llm::openai_chat::sampling_for(kind, cap, temperature, tool_max);
-        let response = state
+        let mut response = state
             .chat
             .chat_with_tools_stream(
                 system,
@@ -483,10 +503,10 @@ async fn run_inner(
             output_tokens: Some(0),
             ..Default::default()
         });
-        let usage = &response["usage"];
-        if usage["completion_tokens"].is_number() {
+        let reported = &response["usage"];
+        if reported["completion_tokens"].is_number() {
             *known_completion_tokens = known_completion_tokens
-                .saturating_add(crate::llm::openai_chat::token_count(usage.get("completion_tokens")));
+                .saturating_add(crate::llm::openai_chat::token_count(reported.get("completion_tokens")));
         }
         // An unknown round makes that dimension's total unknown, never zero.
         for (total, field) in [
@@ -494,17 +514,65 @@ async fn run_inner(
             (&mut totals.output_tokens, "completion_tokens"),
         ] {
             *total = total
-                .zip(usage.get(field).filter(|v| v.is_number()))
+                .zip(reported.get(field).filter(|v| v.is_number()))
                 .map(|(sum, count)| sum.saturating_add(crate::llm::openai_chat::token_count(Some(count))));
         }
         *usage_snapshot.lock().unwrap() = Some((totals.clone(), *known_completion_tokens));
         if turn == 0 {
             initial_prompt_tokens = crate::llm::openai_chat::initial_prompt_tokens(&response);
         }
-        prompt_tokens = prompt_tokens.saturating_add(crate::llm::openai_chat::token_count(usage.get("prompt_tokens")));
+        prompt_tokens =
+            prompt_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("prompt_tokens")));
         completion_tokens =
-            completion_tokens.saturating_add(crate::llm::openai_chat::token_count(usage.get("completion_tokens")));
+            completion_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("completion_tokens")));
         check_evidence(state, owner, &sources)?;
+        let mut final_tools = !available.is_empty();
+        if truncated_answer_needs_synthesis(
+            !available.is_empty(),
+            response_has_calls(&response),
+            response["choices"][0]["finish_reason"].as_str(),
+        ) {
+            let synthesis = crate::llm::openai_chat::sampling_for(
+                crate::llm::openai_chat::TurnKind::Synthesis,
+                cap,
+                temperature,
+                tool_max,
+            );
+            response = state
+                .chat
+                .chat_with_tools_stream(
+                    system,
+                    &messages,
+                    model,
+                    synthesis.max_tokens,
+                    synthesis.temperature,
+                    &[],
+                    output.map(|sender| crate::llm::openai_stream::Output {
+                        sender,
+                        validate: &validate,
+                    }),
+                )
+                .await?;
+            let reported = &response["usage"];
+            if reported["completion_tokens"].is_number() {
+                *known_completion_tokens = known_completion_tokens
+                    .saturating_add(crate::llm::openai_chat::token_count(reported.get("completion_tokens")));
+            }
+            for (total, field) in [
+                (&mut totals.input_tokens, "prompt_tokens"),
+                (&mut totals.output_tokens, "completion_tokens"),
+            ] {
+                *total = total
+                    .zip(reported.get(field).filter(|v| v.is_number()))
+                    .map(|(sum, count)| sum.saturating_add(crate::llm::openai_chat::token_count(Some(count))));
+            }
+            *usage_snapshot.lock().unwrap() = Some((totals.clone(), *known_completion_tokens));
+            prompt_tokens =
+                prompt_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("prompt_tokens")));
+            completion_tokens = completion_tokens
+                .saturating_add(crate::llm::openai_chat::token_count(reported.get("completion_tokens")));
+            final_tools = false;
+        }
         let choice = &response["choices"][0];
         let message = &choice["message"];
         // `"tool_calls": null` (sent by some servers on a plain answer) is no calls.
@@ -522,7 +590,7 @@ async fn run_inner(
             reply.reported_completion_tokens = totals.output_tokens;
             reply.initial_prompt_tokens = initial_prompt_tokens;
             reply.initial_prompt_tools = initial_prompt_tools;
-            reply.final_prompt_tools = !available.is_empty();
+            reply.final_prompt_tools = final_tools;
             reply.peak_prompt_extra_tokens = peak_extra;
             return Ok((reply, events));
         }
@@ -806,6 +874,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_loop_turn_keeps_the_loop_budget_and_a_truncated_answer_asks_again_at_synthesis() {
+        let tool = crate::llm::openai_chat::sampling_for(
+            hop_kind(false, true),
+            4096,
+            0.1,
+            crate::llm::openai_chat::DEFAULT_TOOL_MAX_TOKENS,
+        );
+        let synthesis = crate::llm::openai_chat::sampling_for(
+            hop_kind(false, false),
+            4096,
+            0.1,
+            crate::llm::openai_chat::DEFAULT_TOOL_MAX_TOKENS,
+        );
+        let loop_hop = crate::llm::openai_chat::sampling_for(
+            hop_kind(true, true),
+            2048,
+            0.1,
+            crate::llm::openai_chat::DEFAULT_TOOL_MAX_TOKENS,
+        );
+        assert_eq!((tool.max_tokens, tool.temperature), (512, 0.0));
+        assert_eq!((synthesis.max_tokens, synthesis.temperature), (4096, 0.1));
+        assert_eq!(
+            (loop_hop.max_tokens, loop_hop.temperature),
+            (2048, 0.1),
+            "loop turns use the loop token budget"
+        );
+        assert!(truncated_answer_needs_synthesis(true, false, Some("length")));
+        assert!(!truncated_answer_needs_synthesis(true, true, Some("length")));
+        assert!(!truncated_answer_needs_synthesis(true, false, Some("stop")));
+        let fallback =
+            crate::llm::openai_chat::sampling_for(crate::llm::openai_chat::TurnKind::Synthesis, 4096, 0.1, 512);
+        assert_eq!(fallback.max_tokens, 4096);
+        assert_eq!(fallback.temperature, 0.1);
+    }
+
+    #[test]
     fn sticky_route_denies_web_search_after_a_local_read() {
         let mut route = StickyRoute::from_user_message("What does my note say about cedar?");
         assert!(route.allows_web_search());
@@ -826,6 +930,12 @@ mod tests {
         asked.observe_tool_result("private_notes", true);
         asked.observe_notes_in_prompt("source=notes_corpus\ncedar: 5");
         assert!(asked.allows_web_search());
+        let mut sources = StickyRoute::from_user_message("Compare my notes with web sources.");
+        sources.observe_notes_in_prompt("source=notes_corpus\ncedar: 5");
+        assert!(sources.allows_web_search());
+        assert!(narrow_tools(&tools(), &sources)
+            .iter()
+            .any(|tool| tool["function"]["name"] == "web_search"));
         assert!(narrow_tools(&tools(), &asked)
             .iter()
             .any(|tool| tool["function"]["name"] == "web_search"));
