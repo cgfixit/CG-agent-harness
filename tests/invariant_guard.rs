@@ -796,6 +796,14 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
     assert!(!research.enabled);
     assert!(research.corpus_dir.is_empty());
     assert!(research.embeddings_url.is_empty());
+    assert!(
+        !cfg.flag_is_true("logging.audit_hmac"),
+        "audit hmac chain must ship disabled"
+    );
+    assert!(
+        !cgagentharness::server::config_reload::RELOADABLE.contains(&"logging.audit_hmac"),
+        "audit hmac opt-in is restart-only"
+    );
 }
 
 #[test]

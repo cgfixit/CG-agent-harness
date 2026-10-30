@@ -20,10 +20,11 @@ use std::time::{Duration, Instant};
 
 use regex::Regex;
 use serde_json::Value;
+use sha2::Digest;
 
 use super::config::AppConfig;
 
-const AUDIT_SKIP_KEYS: [&str; 3] = ["query_hash", "timestamp", "event"];
+const AUDIT_SKIP_KEYS: [&str; 5] = ["query_hash", "timestamp", "event", "audit_prev", "audit_mac"];
 const DEFAULT_AUDIT_FILE: &str = "logs/audit.jsonl";
 /// Default `logging.audit_queue_lines`: lines waiting for the writer thread. A
 /// full queue drops the new line with a warning, the same outcome as a lease
@@ -250,6 +251,17 @@ pub struct Audit {
     queue_lines: usize,
     flush_wait: Duration,
     writer: Option<Writer>,
+    /// Opt-in HMAC chain (`logging.audit_hmac`). Stamped in `log`, before
+    /// queueing, so chain order is submission order.
+    chain: Option<Arc<Mutex<MacState>>>,
+}
+
+/// Keyed state for the per-line tamper-evidence chain. `prev` starts at the
+/// genesis MAC, so even the first chained line anchors to the key.
+#[derive(Debug)]
+struct MacState {
+    key: [u8; 32],
+    prev: [u8; 32],
 }
 
 /// The appending half, shared with the writer thread.
@@ -314,7 +326,19 @@ impl Audit {
             queue_lines: queue_lines(cfg),
             flush_wait: FLUSH_WAIT,
             writer: None,
+            chain: None,
         }
+    }
+
+    /// Enable the per-line HMAC chain with a 32-byte key (see
+    /// [`resolve_hmac_key`] for key provisioning). The chain is stamped over
+    /// the redacted record before queueing; `Audit::log` remains infallible.
+    pub fn with_hmac_chain(mut self, key: [u8; 32]) -> Self {
+        self.chain = Some(Arc::new(Mutex::new(MacState {
+            prev: hmac_sha256(&key, AUDIT_CHAIN_GENESIS),
+            key,
+        })));
+        self
     }
 
     /// See [`Redactors::with_literal_secrets`].
@@ -466,11 +490,40 @@ impl Audit {
             }
         }
         record.insert("timestamp".to_string(), Value::String(super::iso_now()));
-        let line = match serde_json::to_string(&Value::Object(record)) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!("audit_log failed to serialize event: {e}");
-                return;
+        let line = if let Some(chain) = &self.chain {
+            // The MAC covers the redacted, query-hashed record exactly as it
+            // will sit in the file, minus the two chain fields themselves.
+            // serde_json's Map is a BTreeMap here (no preserve_order), so key
+            // order is sorted and this serialization is canonical.
+            let canonical = match serde_json::to_string(&Value::Object(record.clone())) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!("audit_log failed to serialize event: {e}");
+                    return;
+                }
+            };
+            let mut state = chain.lock().unwrap_or_else(|p| p.into_inner());
+            let mut msg = Vec::with_capacity(32 + canonical.len());
+            msg.extend_from_slice(&state.prev);
+            msg.extend_from_slice(canonical.as_bytes());
+            let mac = hmac_sha256(&state.key, &msg);
+            record.insert("audit_prev".to_string(), Value::String(super::hex_lower(&state.prev)));
+            record.insert("audit_mac".to_string(), Value::String(super::hex_lower(&mac)));
+            state.prev = mac;
+            match serde_json::to_string(&Value::Object(record)) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!("audit_log failed to serialize chained event: {e}");
+                    return;
+                }
+            }
+        } else {
+            match serde_json::to_string(&Value::Object(record)) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!("audit_log failed to serialize event: {e}");
+                    return;
+                }
             }
         };
         // Deadline is stamped at submission, before any in-process wait, so
@@ -523,6 +576,152 @@ impl Drop for Audit {
         }
         let _ = thread.join();
     }
+}
+
+/// Config flag and credential-store name for the opt-in audit chain.
+pub const AUDIT_HMAC_FLAG: &str = "logging.audit_hmac";
+pub const AUDIT_CHAIN_KEY_NAME: &str = "AUDIT_CHAIN_KEY";
+/// Domain separation for the first chained line's `audit_prev`.
+const AUDIT_CHAIN_GENESIS: &[u8] = b"cgagentharness-audit-genesis";
+
+/// RFC 2104 HMAC-SHA256 over the repo's `sha2` (the `hmac` crate on crates.io
+/// pairs with sha2 0.10, this tree pins sha2 0.11, so the two passes are
+/// spelled out here; validated against RFC 4231 vectors in the tests).
+fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
+    const BLOCK: usize = 64;
+    let mut k = [0u8; BLOCK];
+    if key.len() > BLOCK {
+        let d = sha2::Sha256::digest(key);
+        k[..32].copy_from_slice(&d);
+    } else {
+        k[..key.len()].copy_from_slice(key);
+    }
+    let mut inner = Vec::with_capacity(BLOCK + msg.len());
+    inner.extend(k.iter().map(|b| b ^ 0x36));
+    inner.extend_from_slice(msg);
+    let ih = sha2::Sha256::digest(&inner);
+    let mut outer = Vec::with_capacity(BLOCK + 32);
+    outer.extend(k.iter().map(|b| b ^ 0x5c));
+    outer.extend_from_slice(&ih);
+    let oh = sha2::Sha256::digest(&outer);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&oh);
+    out
+}
+
+fn hex_decode_32(value: &str) -> Option<[u8; 32]> {
+    if !super::is_lower_hex(value, 64) {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+        let hi = (chunk[0] as char).to_digit(16)?;
+        let lo = (chunk[1] as char).to_digit(16)?;
+        out[i] = ((hi << 4) | lo) as u8;
+    }
+    Some(out)
+}
+
+/// Resolve (or create) the audit-chain key when `logging.audit_hmac` is the
+/// literal boolean true. Never fails: a missing store, an unreadable entry,
+/// or a value that is not 64 lower-hex chars disables the chain with a
+/// warning — the audit sink's never-fails contract wins over tamper evidence.
+pub fn resolve_hmac_key(
+    cfg: &AppConfig,
+    store: &dyn crate::common::credential_store::CredentialStore,
+) -> Option<[u8; 32]> {
+    if !cfg.flag_is_true(AUDIT_HMAC_FLAG) {
+        return None;
+    }
+    match store.get(AUDIT_CHAIN_KEY_NAME) {
+        Ok(Some(value)) => match hex_decode_32(&value) {
+            Some(key) => Some(key),
+            None => {
+                tracing::warn!("{AUDIT_CHAIN_KEY_NAME} is not 64 lower-hex chars; audit chain disabled");
+                None
+            }
+        },
+        Ok(None) => {
+            let value = super::random_hex(32);
+            match store.set(AUDIT_CHAIN_KEY_NAME, &value) {
+                Ok(()) => hex_decode_32(&value),
+                Err(e) => {
+                    tracing::warn!("cannot persist {AUDIT_CHAIN_KEY_NAME} ({e:?}); audit chain disabled");
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!("credential store unavailable ({e:?}); audit chain disabled");
+            None
+        }
+    }
+}
+
+/// Outcome of [`verify_hmac_chain`]. `first_bad_line` is the 1-based JSONL
+/// line where the chain broke (tampered content, swapped MAC, or a deleted
+/// chained line detected via the successor's `audit_prev`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChainReport {
+    pub ok: bool,
+    pub chained: u64,
+    pub unchained: u64,
+    pub first_bad_line: Option<u64>,
+}
+
+/// Verify the HMAC chain in an audit JSONL file. Only the subsequence of
+/// lines carrying `audit_mac` forms the chain: lines written by processes
+/// without the key (the agentic child, MCP key minting) are counted as
+/// `unchained` and skipped. Deleting chained TAIL lines is not detectable —
+/// each line anchors only to its predecessor; that is a deliberate scope
+/// limit (cg-researcher's signed head file is not ported).
+pub fn verify_hmac_chain(path: &Path, key: &[u8; 32]) -> std::io::Result<ChainReport> {
+    let text = std::fs::read_to_string(path)?;
+    let mut prev = hmac_sha256(key, AUDIT_CHAIN_GENESIS);
+    let mut report = ChainReport {
+        ok: true,
+        chained: 0,
+        unchained: 0,
+        first_bad_line: None,
+    };
+    for (i, line) in text.lines().enumerate() {
+        let n = (i + 1) as u64;
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            report.unchained += 1;
+            continue;
+        };
+        let Some(obj) = value.as_object() else {
+            report.unchained += 1;
+            continue;
+        };
+        let (Some(mac_hex), Some(prev_hex)) = (
+            obj.get("audit_mac").and_then(Value::as_str),
+            obj.get("audit_prev").and_then(Value::as_str),
+        ) else {
+            report.unchained += 1;
+            continue;
+        };
+        let Some(stored_mac) = hex_decode_32(mac_hex) else {
+            report.ok = false;
+            report.first_bad_line = Some(n);
+            break;
+        };
+        let mut canonical_map = obj.clone();
+        canonical_map.remove("audit_mac");
+        canonical_map.remove("audit_prev");
+        let canonical = serde_json::to_string(&Value::Object(canonical_map)).map_err(std::io::Error::other)?;
+        let mut msg = Vec::with_capacity(32 + canonical.len());
+        msg.extend_from_slice(&prev);
+        msg.extend_from_slice(canonical.as_bytes());
+        if stored_mac != hmac_sha256(key, &msg) || prev_hex != super::hex_lower(&prev) {
+            report.ok = false;
+            report.first_bad_line = Some(n);
+            break;
+        }
+        prev = stored_mac;
+        report.chained += 1;
+    }
+    Ok(report)
 }
 
 impl Sink {
@@ -905,5 +1104,201 @@ mod tests {
         assert!(inline.writer.is_none());
         inline.log(json!({"event":"inline"}));
         assert_eq!(written(inline.path())[0]["event"], "inline");
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        super::super::hex_lower(bytes)
+    }
+
+    fn chained_audit(dir: &Path, key: [u8; 32]) -> (Audit, PathBuf) {
+        let a = audit(dir, "{}").with_hmac_chain(key);
+        let path = a.path().to_path_buf();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        (a, path)
+    }
+
+    #[test]
+    fn hmac_sha256_matches_rfc4231_vectors() {
+        // Case 1: key 0x0b x20, data "Hi There"
+        let mac = hmac_sha256(&[0x0b; 20], b"Hi There");
+        assert_eq!(
+            hex(&mac),
+            "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7"
+        );
+        // Case 2: key "Jefe", data "what do ya want for nothing?"
+        let mac = hmac_sha256(b"Jefe", b"what do ya want for nothing?");
+        assert_eq!(
+            hex(&mac),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+        // Case 3: key 0xaa x20, data 0xdd x50
+        let mac = hmac_sha256(&[0xaa; 20], &[0xdd; 50]);
+        assert_eq!(
+            hex(&mac),
+            "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe"
+        );
+        // Key longer than the block is hashed first (case 6)
+        let mac = hmac_sha256(&[0xaa; 131], b"Test Using Larger Than Block-Size Key - Hash Key First");
+        assert_eq!(
+            hex(&mac),
+            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
+        );
+    }
+
+    #[test]
+    fn chained_lines_verify_and_carry_the_genesis_anchor() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = [7u8; 32];
+        let (chained, path) = chained_audit(dir.path(), key);
+        let genesis = hmac_sha256(&key, AUDIT_CHAIN_GENESIS);
+        chained.log(json!({"event":"one", "n":1}));
+        chained.log(json!({"event":"two", "n":2}));
+        chained.log(json!({"event":"three", "n":3}));
+        let lines = written(&path);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0]["audit_prev"], hex(&genesis));
+        for line in &lines {
+            assert!(line["audit_mac"].as_str().unwrap().len() == 64);
+        }
+        let report = verify_hmac_chain(&path, &key).unwrap();
+        assert!(report.ok);
+        assert_eq!(report.chained, 3);
+        assert_eq!(report.unchained, 0);
+        assert_eq!(report.first_bad_line, None);
+        // Chain-off audits write no mac fields (backward compatibility). The
+        // plain audit shares this test's file with the chained one, so its
+        // line is the last, not the first.
+        let plain = audit(dir.path(), "{}");
+        plain.log(json!({"event":"plain"}));
+        let plain_lines = written(plain.path());
+        let last = plain_lines.last().unwrap();
+        assert_eq!(last["event"], "plain");
+        assert!(last.get("audit_mac").is_none());
+        assert!(last.get("audit_prev").is_none());
+    }
+
+    #[test]
+    fn tampering_with_a_line_breaks_the_chain_at_that_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = [9u8; 32];
+        let (audit, path) = chained_audit(dir.path(), key);
+        audit.log(json!({"event":"one"}));
+        audit.log(json!({"event":"two"}));
+        audit.log(json!({"event":"three"}));
+        let text = std::fs::read_to_string(&path).unwrap();
+        let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+        // Edit the middle line's payload but keep valid JSON.
+        lines[1] = lines[1].replace("\"two\"", "\"tampered\"");
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        let report = verify_hmac_chain(&path, &key).unwrap();
+        assert!(!report.ok);
+        assert_eq!(report.first_bad_line, Some(2));
+    }
+
+    #[test]
+    fn deleting_a_middle_chained_line_is_detected_by_the_successor() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = [3u8; 32];
+        let (audit, path) = chained_audit(dir.path(), key);
+        audit.log(json!({"event":"one"}));
+        audit.log(json!({"event":"two"}));
+        audit.log(json!({"event":"three"}));
+        let text = std::fs::read_to_string(&path).unwrap();
+        let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+        lines.remove(1);
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        let report = verify_hmac_chain(&path, &key).unwrap();
+        assert!(!report.ok);
+        assert_eq!(report.first_bad_line, Some(2));
+    }
+
+    #[test]
+    fn unchained_interleaved_lines_are_tolerated() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = [5u8; 32];
+        let (audit, path) = chained_audit(dir.path(), key);
+        // A second Audit without the chain (the agentic child's shape) shares
+        // the same file between chained lines.
+        let plain = Audit::new(
+            path.clone(),
+            &AppConfig::from_str("{}", &dir.path().join("c.yaml")).unwrap(),
+        );
+        audit.log(json!({"event":"one"}));
+        plain.log(json!({"event":"child_inline"}));
+        audit.log(json!({"event":"two"}));
+        let report = verify_hmac_chain(&path, &key).unwrap();
+        assert!(report.ok);
+        assert_eq!(report.chained, 2);
+        assert_eq!(report.unchained, 1);
+    }
+
+    #[test]
+    fn the_mac_covers_the_redacted_query_hashed_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = [11u8; 32];
+        let (audit, path) = chained_audit(dir.path(), key);
+        let secret = format!("ghp_{}", "a1".repeat(18));
+        audit.log(json!({"event":"search", "query":"my secret search words", "token": secret}));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("my secret search words"), "query must be hashed");
+        assert!(!text.contains(&secret), "secret must be redacted");
+        assert!(text.contains("query_hash"));
+        let report = verify_hmac_chain(&path, &key).unwrap();
+        assert!(report.ok, "mac computed over the redacted, query-hashed record");
+    }
+
+    #[test]
+    fn removing_the_chained_tail_is_not_detected_by_design() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = [13u8; 32];
+        let (audit, path) = chained_audit(dir.path(), key);
+        audit.log(json!({"event":"one"}));
+        audit.log(json!({"event":"two"}));
+        audit.log(json!({"event":"three"}));
+        let text = std::fs::read_to_string(&path).unwrap();
+        let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+        lines.pop();
+        std::fs::write(&path, lines.join("\n")).unwrap();
+        let report = verify_hmac_chain(&path, &key).unwrap();
+        assert!(report.ok, "each line anchors only to its predecessor");
+        assert_eq!(report.chained, 2);
+    }
+
+    #[derive(Default)]
+    struct MapStore(std::sync::Mutex<std::collections::BTreeMap<String, String>>);
+
+    use super::super::credential_store::CredentialStore;
+
+    impl super::super::credential_store::CredentialStore for MapStore {
+        fn get(&self, name: &str) -> Result<Option<String>, super::super::credential_store::StoreError> {
+            Ok(self.0.lock().unwrap().get(name).cloned())
+        }
+        fn set(&self, name: &str, value: &str) -> Result<(), super::super::credential_store::StoreError> {
+            self.0.lock().unwrap().insert(name.to_string(), value.to_string());
+            Ok(())
+        }
+        fn delete(&self, name: &str) -> Result<(), super::super::credential_store::StoreError> {
+            self.0.lock().unwrap().remove(name);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn resolve_hmac_key_is_flag_gated_and_store_backed() {
+        let dir = tempfile::tempdir().unwrap();
+        let on = AppConfig::from_str("logging:\n  audit_hmac: true\n", &dir.path().join("c.yaml")).unwrap();
+        let off = AppConfig::from_str("{}", &dir.path().join("c.yaml")).unwrap();
+        // Flag off: no store access at all.
+        assert!(resolve_hmac_key(&off, &MapStore::default()).is_none());
+        // Flag on, empty store: a key is generated and persisted, and reads back.
+        let store = MapStore::default();
+        let key = resolve_hmac_key(&on, &store).expect("generated");
+        let stored = store.get(AUDIT_CHAIN_KEY_NAME).unwrap().expect("stored");
+        assert_eq!(stored.len(), 64);
+        let again = resolve_hmac_key(&on, &store).expect("reused");
+        assert_eq!(key, again, "an existing key is reused, not rotated");
+        // A corrupted store value disables the chain instead of crashing.
+        store.set(AUDIT_CHAIN_KEY_NAME, "not-hex").unwrap();
+        assert!(resolve_hmac_key(&on, &store).is_none());
     }
 }

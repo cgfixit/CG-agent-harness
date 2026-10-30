@@ -190,6 +190,17 @@ pub async fn build_app_with_sources(
     let audit = Audit::from_home(&home.root, &cfg)
         .with_literal_secrets(crate::common::audit::known_secret_values(&cfg))
         .with_writer_thread();
+    // Opt-in tamper evidence: the key lives in the OS credential store and
+    // any store problem disables the chain, never the audit sink.
+    let audit = if cfg.flag_is_true(crate::common::audit::AUDIT_HMAC_FLAG) {
+        let store = crate::common::credential_store::OsCredentialStore::for_home(&home.root);
+        match crate::common::audit::resolve_hmac_key(&cfg, &store) {
+            Some(key) => audit.with_hmac_chain(key),
+            None => audit,
+        }
+    } else {
+        audit
+    };
     let configured_model = cfg.str_or("models.local_llm.model", &backend.model).trim().to_string();
     let mut cloud_chat = CloudChat::from_config(&cfg)?;
     let cloud_reset = cloud_chat.is_cloud_selection(&settings.selected_model);

@@ -292,6 +292,14 @@ logging:
   # wait on the file; a full queue drops new lines with a warning. 0 appends
   # inline on the request instead.
   audit_queue_lines: 4096 # 0, or clamped to 64–65536
+  # Literal-true stamps every server audit line with an HMAC-SHA256 chain
+  # (audit_prev/audit_mac fields): editing a line or deleting one from the
+  # middle breaks the chain and is detectable by verify_hmac_chain. The key
+  # is created in the OS credential store as AUDIT_CHAIN_KEY on first enable.
+  # Lines the agentic child writes are not chained; a removed chained tail is
+  # not detectable. Store problems disable the chain with a warning; the
+  # audit sink itself never fails. Restart-only.
+  audit_hmac: false
   audit_fields:
     # False omits the top-level query instead of storing its hash.
     include_query_hash: true

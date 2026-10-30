@@ -436,6 +436,15 @@ and on Ctrl-C/SIGTERM, so a child's lines follow the server lines the flush
 landed; a dropped line or an expired flush does not stop the spawn. Other
 callers append inline.
 
+With `logging.audit_hmac: true` (ships false, restart-only) each server audit
+line also carries `audit_prev`/`audit_mac`: an HMAC-SHA256 chain stamped over
+the redacted record at submission, keyed by a 32-byte `AUDIT_CHAIN_KEY` in the
+OS credential store, created on first enable. `common::audit::verify_hmac_chain`
+recomputes the chain and flags an edited line or a middle deletion; lines
+written by processes without the key (the agentic child) carry no MAC and are
+skipped, and a removed chained tail is not detectable by design. A store
+problem disables the chain with a warning — the never-fails audit contract wins.
+
 - Locked by: `tests/common_layer.rs`, `tests/panels.rs`, `tests/chat_and_sessions.rs`,
   `src/common/audit.rs` units,
   `tests/shim_and_agent_routes.rs::an_agentic_child_starts_after_the_audit_line_that_authorized_it`,
