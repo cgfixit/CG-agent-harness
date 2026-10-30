@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 function scripts(file) {
-  const text = readFileSync(new URL(`../.github/workflows/${file}`, import.meta.url), 'utf8');
+  const text = readFileSync(new URL(`../.github/workflows/${file}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   return [...text.matchAll(/^          script: \|\n((?:            .*\n|\n)+)/gm)]
     .map(match => new AsyncFunction('github', 'context', 'core', 'process',
       match[1].split('\n').map(line => line.slice(12)).join('\n')));
