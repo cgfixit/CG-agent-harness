@@ -111,6 +111,167 @@ pub fn strip_leading_reasoning(text: &str) -> &str {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnKind {
+    Tool,
+    Synthesis,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TurnSampling {
+    pub max_tokens: u64,
+    pub temperature: f64,
+}
+
+pub const DEFAULT_TOOL_MAX_TOKENS: u64 = 512;
+const TOOL_MAX_TOKENS_MIN: u64 = 64;
+const TOOL_MAX_TOKENS_MAX: u64 = 2048;
+
+pub fn parse_tool_max_tokens(number: Option<u64>, key_present: bool) -> Result<u64> {
+    if !key_present {
+        return Ok(DEFAULT_TOOL_MAX_TOKENS);
+    }
+    match number {
+        Some(n) if (TOOL_MAX_TOKENS_MIN..=TOOL_MAX_TOKENS_MAX).contains(&n) => Ok(n),
+        _ => Err(HarnessError::config(
+            "models.local_llm.tool_max_tokens must be an integer from 64 to 2048",
+        )),
+    }
+}
+
+pub fn sampling_for(
+    kind: TurnKind,
+    synthesis_max_tokens: u64,
+    synthesis_temperature: f64,
+    tool_max_tokens: u64,
+) -> TurnSampling {
+    match kind {
+        TurnKind::Tool => TurnSampling {
+            max_tokens: tool_max_tokens.min(synthesis_max_tokens).max(1),
+            temperature: 0.0,
+        },
+        TurnKind::Synthesis => TurnSampling {
+            max_tokens: synthesis_max_tokens,
+            temperature: synthesis_temperature,
+        },
+    }
+}
+
+/// The `/chat/completions` body both chat paths send. `tool_protocol` is the
+/// tool loop: an empty tool list forces `tool_choice=none`.
+pub fn completion_payload(
+    model: &str,
+    messages: &[Value],
+    sampling: TurnSampling,
+    tools: &[Value],
+    tool_protocol: bool,
+    json_mode: bool,
+    reasoning_effort: Option<&str>,
+) -> Value {
+    let mut payload = json!({
+        "model": model,
+        "messages": messages,
+        "max_tokens": sampling.max_tokens,
+        "temperature": sampling.temperature,
+        "stream": false,
+    });
+    if tool_protocol && !tools.is_empty() {
+        payload["tools"] = json!(tools);
+        payload["tool_choice"] = json!("auto");
+        payload["parallel_tool_calls"] = json!(true);
+    } else if tool_protocol {
+        payload["tool_choice"] = json!("none");
+    }
+    if json_mode {
+        payload["response_format"] = json!({"type": "json_object"});
+    }
+    if let Some(effort) = reasoning_effort {
+        payload["reasoning_effort"] = json!(effort);
+    }
+    payload
+}
+
+fn is_json_object(text: &str) -> bool {
+    let text = text.trim();
+    text.starts_with('{')
+        && text.ends_with('}')
+        && serde_json::from_str::<Value>(text).ok().is_some_and(|v| v.is_object())
+}
+
+fn looks_like_plan(text: &str) -> bool {
+    let lower = text.trim().to_ascii_lowercase();
+    const MARKERS: &[&str] = &[
+        "thinking process",
+        "thinking:",
+        "let me think",
+        "my plan",
+        "plan:",
+        "planning",
+        "i should",
+        "i need to",
+        "i will",
+        "the user",
+        "step 1",
+        "reasoning",
+    ];
+    MARKERS.iter().any(|marker| lower.contains(marker))
+}
+
+/// True when text that survived [`strip_leading_reasoning`] is still a plan,
+/// not a JSON object and not an answer. Identical text around a bare close
+/// is already one copy, so this does not see that shape.
+pub fn residual_think_leak(stripped: &str) -> bool {
+    let trimmed = stripped.trim();
+    if trimmed.is_empty() || is_json_object(trimmed) {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("thinking process") || lower.starts_with("thinking:") {
+        return true;
+    }
+    if let Some(rest) = trimmed.strip_prefix("<think>") {
+        if looks_like_plan(rest) {
+            return true;
+        }
+    }
+    if let Some(start) = lower.find("<think>") {
+        if let Some(end) = lower[start + "<think>".len()..].find("</think>") {
+            let inner_start = start + "<think>".len();
+            let inner = &trimmed[inner_start..inner_start + end];
+            if looks_like_plan(inner) {
+                return true;
+            }
+        }
+    }
+    if let Some((before, after)) = stripped.split_once("\n</think>\n") {
+        let before = before.trim();
+        let after = after.trim();
+        if !before.is_empty() && before != after && looks_like_plan(before) {
+            return true;
+        }
+    }
+    false
+}
+
+fn response_think_leak(parsed: &Value) -> bool {
+    parsed["choices"][0]["message"]["content"]
+        .as_str()
+        .is_some_and(|content| residual_think_leak(strip_leading_reasoning(content)))
+}
+
+fn merge_usage(mut kept: Value, discarded: &Value) -> Value {
+    for field in ["prompt_tokens", "completion_tokens"] {
+        let Some(extra) = discarded["usage"][field].as_u64() else {
+            continue;
+        };
+        let Some(base) = kept["usage"][field].as_u64() else {
+            continue;
+        };
+        kept["usage"][field] = json!(base.saturating_add(extra));
+    }
+    kept
+}
+
 /// The JSON object a small model wrapped in prose or a Markdown fence:
 /// `Here is the JSON: ```json {…} ``` ` yields `{…}`. Text that does not hold a
 /// `{` … `}` span is returned unchanged so the caller's parser reports it. This
@@ -163,7 +324,13 @@ pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatR
         .to_string();
     let incomplete = |message: &str| incomplete(message).detail("output_bytes", body_text.len());
     match first.get("finish_reason").and_then(Value::as_str) {
-        Some("stop") => {}
+        Some("stop") => {
+            if residual_think_leak(&body_text) {
+                return Err(llm_err("model reply looked like leaked thinking and was not saved")
+                    .detail("think_leak", true)
+                    .detail("output_bytes", body_text.len()));
+            }
+        }
         Some("length") => return Err(incomplete("model output was truncated; reduce the requested output or adjust the configured token budget before retrying").detail("truncated", true)),
         _ => return Err(incomplete("model response did not report a normal completion (finish_reason=stop required)")),
     }
@@ -348,21 +515,40 @@ impl ChatClient {
         for m in messages {
             all.push(json!({"role": m.role, "content": m.content}));
         }
-        let mut payload = json!({
-            "model": use_model,
-            "messages": all,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "stream": false,
-        });
-        if json_mode {
-            payload["response_format"] = json!({"type": "json_object"});
-        }
-        if let Some(effort) = &self.reasoning_effort {
-            payload["reasoning_effort"] = Value::String(effort.clone());
-        }
-        let parsed = self.send_payload(payload, output, deadline).await?;
+        let payload = completion_payload(
+            &use_model,
+            &all,
+            TurnSampling {
+                max_tokens,
+                temperature,
+            },
+            &[],
+            false,
+            json_mode,
+            self.reasoning_effort.as_deref(),
+        );
+        let parsed = self.post_without_think_leak(payload, output, deadline).await?;
         parse_chat_response(&parsed, &use_model)
+    }
+
+    async fn post_without_think_leak(
+        &self,
+        payload: Value,
+        output: Option<super::openai_stream::Output<'_>>,
+        deadline: Option<f64>,
+    ) -> Result<Value> {
+        let first = self.send_payload(payload.clone(), output, deadline).await?;
+        if !response_think_leak(&first) {
+            return Ok(first);
+        }
+        let second = self.send_payload(payload, output, deadline).await?;
+        if response_think_leak(&second) {
+            return Err(
+                llm_err("model reply still looked like leaked thinking after one retry; it was not saved")
+                    .detail("think_leak", true),
+            );
+        }
+        Ok(merge_usage(second, &first))
     }
 
     /// Standard OpenAI tool protocol; the server validates and executes the
@@ -380,29 +566,25 @@ impl ChatClient {
     ) -> Result<Value> {
         let mut all = vec![json!({"role":"system","content":system})];
         all.extend_from_slice(messages);
-        let mut payload = json!({"model":model,"messages":all,"max_tokens":max_tokens,
-            "temperature":temperature,"stream":false});
-        if !tools.is_empty() {
-            payload["tools"] = json!(tools);
-            payload["tool_choice"] = json!("auto");
-            // The dispatcher accepts a bounded batch and checks each read's
-            // authority. This permits multiple calls, not unbounded execution.
-            payload["parallel_tool_calls"] = json!(true);
-        } else {
-            // Tool history can still induce calls when definitions are omitted.
-            // The final bounded synthesis must explicitly disable them.
-            payload["tool_choice"] = json!("none");
-        }
-        if let Some(effort) = &self.reasoning_effort {
-            payload["reasoning_effort"] = json!(effort);
-        }
+        let payload = completion_payload(
+            model,
+            &all,
+            TurnSampling {
+                max_tokens,
+                temperature,
+            },
+            tools,
+            true,
+            false,
+            self.reasoning_effort.as_deref(),
+        );
         // Some local servers replay historical tool calls at the end of an SSE
         // synthesis even with tool_choice=none. Their complete JSON response
         // correctly finishes with stop. Buffer only this tool-free final call;
         // the caller still validates completion, authority and any returned calls
         // before delivery, and cancellation/deadlines remain in send_payload.
         let output = if tools.is_empty() { None } else { output };
-        self.send_payload(payload, output, None).await
+        self.post_without_think_leak(payload, output, None).await
     }
 
     async fn send_payload(
@@ -707,7 +889,6 @@ mod tests {
             assert_eq!(reply_json_text(&repeated), answer);
         }
         for kept in [
-            "Planning is distinct.\n</think>\nThe answer.",
             "7</think>7", // a literal inline delimiter is not this provider shape
             "</think>\n7",
             "\n</think>\n",                 // no complete answer to recover
@@ -719,5 +900,113 @@ mod tests {
                 kept
             );
         }
+    }
+
+    #[test]
+    fn a_residual_plan_after_the_think_close_is_not_appendable() {
+        let plan = "Planning is distinct.\n</think>\nThe answer.";
+        let err = parse_chat_response(&reply(plan), "qwen3.8").unwrap_err();
+        let shown = format!("{err:?} {}", err.to_json());
+        assert_eq!(err.details["think_leak"], true);
+        assert!(!shown.contains("Planning is distinct"), "{shown}");
+        assert!(!shown.contains("The answer"), "{shown}");
+        assert!(residual_think_leak(plan));
+        assert!(!residual_think_leak("The cedar count is 5."));
+        assert!(!residual_think_leak(
+            r#"{"name":"web_search","arguments":{"query":"cedar"}}"#
+        ));
+        let repeated = "The cedar count is 5.\n</think>\n\nThe cedar count is 5.";
+        assert_eq!(
+            parse_chat_response(&reply(repeated), "qwen3.8").unwrap().body_text,
+            "The cedar count is 5."
+        );
+        assert!(residual_think_leak("Thinking process: read the notes, then answer."));
+        assert!(residual_think_leak(
+            "I need to check the notes.\n</think>\nThe count is 5."
+        ));
+        assert!(!residual_think_leak("Use <think>…</think> tags."));
+    }
+
+    #[test]
+    fn tool_and_synthesis_payloads_use_different_budgets() {
+        let messages = [json!({"role":"user","content":"count the cedars"})];
+        let tool = sampling_for(TurnKind::Tool, 4096, 0.2, DEFAULT_TOOL_MAX_TOKENS);
+        let synthesis = sampling_for(TurnKind::Synthesis, 4096, 0.2, DEFAULT_TOOL_MAX_TOKENS);
+        let tool_payload = completion_payload("qwen3.8:27b-mlx-cg", &messages, tool, &[], true, false, Some("none"));
+        let synthesis_payload = completion_payload(
+            "qwen3.8:27b-mlx-cg",
+            &messages,
+            synthesis,
+            &[],
+            true,
+            false,
+            Some("none"),
+        );
+        assert_eq!(tool_payload["max_tokens"], 512);
+        assert_eq!(tool_payload["temperature"].as_f64(), Some(0.0));
+        assert_eq!(tool_payload["reasoning_effort"], "none");
+        assert_eq!(tool_payload["tool_choice"], "none");
+        assert_eq!(synthesis_payload["max_tokens"], 4096);
+        assert_eq!(synthesis_payload["temperature"].as_f64(), Some(0.2));
+        assert_eq!(synthesis_payload["reasoning_effort"], "none");
+        let shipped = sampling_for(TurnKind::Synthesis, 4096, 0.1, DEFAULT_TOOL_MAX_TOKENS);
+        assert_eq!(
+            (shipped.max_tokens, shipped.temperature),
+            (4096, 0.1),
+            "synthesis keeps the configured chat budget"
+        );
+        assert_eq!(parse_tool_max_tokens(None, false).unwrap(), 512);
+        assert!(parse_tool_max_tokens(Some(32), true).is_err());
+        assert_eq!(parse_tool_max_tokens(Some(1024), true).unwrap(), 1024);
+    }
+
+    #[tokio::test]
+    async fn a_think_leak_is_retried_once_and_not_returned() {
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = hits.clone();
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(move || {
+                let n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    let body = if n == 0 {
+                        "Planning is distinct.\n</think>\nThe answer."
+                    } else {
+                        "The cedar count is 5."
+                    };
+                    axum::Json(reply(body))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only ephemeral loopback.
+        let url = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this fixture uses no credentials and binds only to loopback.
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ChatClient::new(&url, "qwen3.8:27b-mlx-cg", 5.0, "", Some("none".into())).unwrap();
+        let parsed = client.chat("s", &[], None, 4096, 0.2).await.unwrap();
+        assert_eq!(parsed.body_text, "The cedar count is 5.");
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(parsed.prompt_tokens, 6);
+        assert_eq!(parsed.completion_tokens, 4);
+
+        hits.store(0, std::sync::atomic::Ordering::SeqCst);
+        let counter = hits.clone();
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(move || {
+                let _n = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move { axum::Json(reply("Planning is distinct.\n</think>\nThe answer.")) }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only ephemeral loopback.
+        let url = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this fixture uses no credentials and binds only to loopback.
+        let server_both = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ChatClient::new(&url, "qwen3.8:27b-mlx-cg", 5.0, "", Some("none".into())).unwrap();
+        let err = client.chat("s", &[], None, 512, 0.0).await.unwrap_err();
+        let shown = format!("{err:?} {}", err.to_json());
+        assert!(err.message.contains("not saved"), "{err:?}");
+        assert!(!shown.contains("Planning is distinct"), "{shown}");
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        server.abort();
+        server_both.abort();
     }
 }
