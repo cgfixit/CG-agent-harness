@@ -1063,8 +1063,14 @@ async fn history_compaction_cannot_shrink_below_the_trigger_is_sent_within_the_h
 async fn a_middle_smaller_than_the_summary_scaffold_sends_the_turn_uncompacted_within_the_hard_limit() {
     use cgagentharness::server::{compaction, routes::core::prompt_history};
     let (url, requests) = summary_model(Some("Facts and constraints from the user:\n- None")).await;
-    // Shipped 32k limits: trigger 24000, hard limit 30000, one 4096-token reply.
-    let s = spawn_server(&url, ServerOptions::default()).await;
+    // 32k limits: trigger 24000, hard limit 30000, one 4096-token reply.
+    let s = spawn_server(
+        &url,
+        ServerOptions::default()
+            .with("chat.compact_prompt_tokens", "24000")
+            .with("models.local_llm.max_tokens", "4096"),
+    )
+    .await;
     s.post_json("/api/web", json!({"enabled":false})).await;
     let (_, created) = s.post_json("/api/sessions", json!({})).await;
     let sid = created["session_id"].as_str().unwrap();
@@ -1243,7 +1249,14 @@ async fn a_truncated_tools_offered_answer_is_retried_at_the_synthesis_budget() {
         {"model":"mock-model","choices":[{"finish_reason":"length","message":{"role":"assistant","content":"partial"}}],"usage":{"prompt_tokens":10,"completion_tokens":512}},
         {"model":"mock-model","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"full answer"}}],"usage":{"prompt_tokens":11,"completion_tokens":8}}
     ]));
-    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("models.local_llm.max_tokens", "4096")
+            .with("models.local_llm.tool_max_tokens", "512")
+            .with("models.local_llm.temperature", "0.1"),
+    )
+    .await;
     let (status, body) = s.post_json("/api/chat", json!({"message": "explain the notes"})).await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["reply"], "full answer");

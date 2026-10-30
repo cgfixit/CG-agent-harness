@@ -88,7 +88,14 @@ async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secr
     for local_tag in ["xai-custom-local", "sk-ant-small-local"] {
         assert_eq!(switch(&missing, local_tag, false, 200).await["model"], local_tag);
     }
-    for alias in ["ClAuDe", "ANTHROPIC", "grok", "XAI", "claude-opus-5-5", "grok-4.6"] {
+    let configured = [
+        shipped_str("models.cloud_chat.claude.model"),
+        shipped_str("models.cloud_chat.grok.model"),
+    ];
+    for alias in ["ClAuDe", "ANTHROPIC", "grok", "XAI"]
+        .into_iter()
+        .chain(configured.iter().map(String::as_str))
+    {
         let body = switch(&missing, alias, true, 409).await;
         assert_eq!(code(&body), "MODEL_PROVIDER_NOT_READY");
         assert!(body.to_string().contains("API Keys"));
@@ -193,7 +200,8 @@ async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secr
         "selection and status must not probe providers"
     );
     let chosen = switch(&s, "XAI", true, 200).await;
-    assert_eq!(chosen["model"], "grok-4.6");
+    let grok_model = shipped_str("models.cloud_chat.grok.model");
+    assert_eq!(chosen["model"], grok_model);
     assert_eq!(chosen["tuning"], "profile");
     let (_, status) = s.get_json("/api/status").await;
     no_secret(&status);
@@ -226,7 +234,7 @@ async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secr
     assert_eq!(code_status, 200, "{body}");
     no_secret(&body);
     let sent = requests.lock().unwrap().last().unwrap().clone();
-    assert_eq!(sent["model"], "grok-4.6");
+    assert_eq!(sent["model"], grok_model);
     assert_eq!(sent["max_output_tokens"], 16);
     assert_eq!(sent["temperature"].as_f64(), Some(1.0));
     assert_eq!(sent["input"].as_array().unwrap().len(), 1);

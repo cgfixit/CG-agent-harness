@@ -562,7 +562,12 @@ fn home_layout_seeds_config_registry_and_skills_once() {
     assert!(cfg.flag_is_true("auth.enabled"));
     assert!(cfg.flag_is_true("tls.enabled"));
     assert!(!cfg.flag_is_true("agentic.deepagent_github.allow_git_write_tools"));
-    assert_eq!(cfg.str_or("models.local_llm.base_url", ""), "http://127.0.0.1:11434/v1");
+    assert_eq!(
+        cfg.str_or("models.local_llm.base_url", ""),
+        AppConfig::from_str(AppConfig::embedded_default(), Path::new("config.yaml"))
+            .unwrap()
+            .str_or("models.local_llm.base_url", "unset")
+    );
 
     let mut s = HarnessSettings::load(&home).unwrap();
     assert!(s.soul_enabled);

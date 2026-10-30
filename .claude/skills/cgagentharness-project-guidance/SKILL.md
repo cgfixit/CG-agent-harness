@@ -13,7 +13,7 @@ authorization to push, merge, or release.
 ## 1. Truth order (always)
 
 1. Code under `src/`
-2. `assets/config.default.yaml` (every tunable; no hardcoded tunables elsewhere)
+2. `assets/config.default.yaml` (every tunable; read, never copied elsewhere)
 3. `INVARIANTS.md`
 4. `AGENTS.md`
 5. `README.md` (then `SECURITY.md` as needed)
