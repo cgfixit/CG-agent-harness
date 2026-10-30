@@ -39,6 +39,7 @@ pub mod notifications;
 pub mod passage_index;
 pub mod prompts;
 pub mod request_log;
+pub mod research;
 pub mod retrieval;
 mod retrieval_ranking;
 pub mod routes;
@@ -273,6 +274,17 @@ pub async fn build_app_with_sources(
         None
     };
     let structured_gates = crate::server::structured_memory::OperatorGates::load(&home);
+    // Validated even when disabled, so a malformed research section fails
+    // boot instead of silently reading as the defaults.
+    let research_config = crate::server::research::ResearchConfig::from_config(&cfg)?;
+    let research = if research_config.enabled {
+        Some(crate::server::research::ResearchStore::open(
+            &home.research_db_path(),
+            &research_config,
+        )?)
+    } else {
+        None
+    };
     let attachments = crate::server::attachments::AttachmentStore::open(&home.attachments_dir())?;
     let notes_limits = crate::server::notes_corpus::NotesLimits::from_config(&cfg)?;
     let self_knowledge = crate::server::self_manual::SelfKnowledge::new(&cfg)?;
@@ -319,6 +331,7 @@ pub async fn build_app_with_sources(
         notes: MemoryNotes::new(&home.memory_dir()),
         structured_memory,
         structured_gates: Mutex::new(structured_gates),
+        research,
         web,
         chat_owner: web_research::ResearchState::default(),
         shutdown: tokio_util::sync::CancellationToken::new(),

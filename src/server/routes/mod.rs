@@ -12,6 +12,7 @@ pub mod notifications;
 pub mod ollama;
 pub mod panels;
 pub mod persona;
+pub mod research;
 pub mod session_io;
 pub mod skills;
 pub mod structured_memory;
@@ -28,7 +29,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 116] = [
+pub const REGISTERED_PATHS: [&str; 119] = [
     "/api/analytics/summary",
     "/api/config/reload",
     "/",
@@ -84,6 +85,9 @@ pub const REGISTERED_PATHS: [&str; 116] = [
     "/api/structured-memory/consolidation",
     "/api/structured-memory/consolidation/{id}",
     "/api/structured-memory/consolidation/{id}/cancel",
+    "/api/research/status",
+    "/api/research/search",
+    "/api/research/reindex",
     "/api/spend/summary",
     "/api/spend/predict",
     "/api/sessions",
@@ -310,6 +314,9 @@ pub fn build_router(state: Arc<AppState>) -> Router {
             "/api/structured-memory/consolidation/{id}/cancel",
             post(structured_memory::cancel_consolidation),
         )
+        .route("/api/research/status", get(research::status))
+        .route("/api/research/search", post(research::search))
+        .route("/api/research/reindex", post(research::reindex))
         .route("/api/spend/summary", get(core::spend_summary))
         .route("/api/analytics/summary", get(core::analytics_summary))
         .route("/api/spend/predict", post(core::spend_predict))
@@ -450,7 +457,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 116);
+        assert_eq!(REGISTERED_PATHS.len(), 119);
 
         let all = registered_paths();
         assert!(

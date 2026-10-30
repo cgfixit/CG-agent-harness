@@ -687,6 +687,7 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "netconnect.throughput",
         "netconnect.anomaly_detection",
         "netconnect.home_automation",
+        "research.enabled",
         "notifications.enabled",
         "agentic.deepagent_github.retrieval.enabled",
         "diagnostics.logs_enabled",
@@ -791,6 +792,10 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         assert!(!netconnect.tier_enabled(tier));
         assert!(!netconnect.tier_may_run(tier));
     }
+    let research = cgagentharness::server::research::ResearchConfig::from_config(&cfg).unwrap();
+    assert!(!research.enabled);
+    assert!(research.corpus_dir.is_empty());
+    assert!(research.embeddings_url.is_empty());
 }
 
 #[test]

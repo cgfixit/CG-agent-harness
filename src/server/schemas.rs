@@ -91,6 +91,42 @@ fn len_ok(s: &str, min: usize, max: usize) -> bool {
     n >= min && n <= max
 }
 
+pub const MAX_RESEARCH_QUERY_CHARS: usize = 1024;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResearchSearchRequest {
+    pub query: String,
+    #[serde(default)]
+    pub top_k: Option<u64>,
+}
+
+impl Validate for ResearchSearchRequest {
+    fn validate(&self) -> Vec<String> {
+        let mut bad = Vec::new();
+        if !len_ok(&self.query, 1, MAX_RESEARCH_QUERY_CHARS) || self.query.trim().is_empty() {
+            bad.push("query".into());
+        }
+        if self.top_k.is_some_and(|k| !(1..=50).contains(&k)) {
+            bad.push("top_k".into());
+        }
+        bad
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResearchReindexRequest {
+    #[serde(default)]
+    pub confirm: bool,
+}
+
+impl Validate for ResearchReindexRequest {
+    fn validate(&self) -> Vec<String> {
+        Vec::new()
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StructuredFactSelection {

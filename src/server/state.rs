@@ -145,6 +145,8 @@ pub struct AppState {
     pub structured_memory: Option<StructuredMemoryStore>,
     /// Home-local administrator overrides for structured-memory sub-gates.
     pub structured_gates: Mutex<crate::server::structured_memory::OperatorGates>,
+    /// Present only when `research.enabled` is the literal boolean true.
+    pub research: Option<crate::server::research::ResearchStore>,
     /// Test hook: when set, replaces the closed tool allowlists (empty = deny all).
     pub tool_allowlist_override: Option<BTreeSet<String>>,
     /// Test hook for MCP only. Independent of `tool_allowlist_override`.

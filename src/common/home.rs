@@ -17,6 +17,7 @@
 //!   tools/             web allowlist + last extract
 //!   memory/            operator /memory notes; structured.sqlite3 only if enabled
 //!   data/agentic/      skills_registry.json, workspaces/, harness_optimizer/runs/
+//!   data/research/     rag.sqlite3 research-corpus index (only when research.enabled)
 //!   logs/              audit.jsonl, spend.jsonl
 //!   attachments/       owner-scoped chat upload blobs (UUID names, 0600)
 //!   notes_corpus/      owner-jailed .md/.txt notes for local chat (UUID names, 0600)
@@ -39,7 +40,7 @@ pub const DEFAULT_HOST: &str = "127.0.0.1";
 pub const DEFAULT_PORT: u16 = 8790;
 pub const MIN_USER_PORT: u16 = 1024;
 
-const SUBDIRS: [&str; 13] = [
+const SUBDIRS: [&str; 14] = [
     "sessions",
     "styles",
     "skills",
@@ -53,6 +54,7 @@ const SUBDIRS: [&str; 13] = [
     "exports",
     "attachments",
     "notes_corpus",
+    "data/research",
 ];
 
 const EMBEDDED_SKILLS: [(&str, &str); 2] = [
@@ -145,6 +147,10 @@ impl Home {
     }
     pub fn data_dir(&self) -> PathBuf {
         self.root.join("data")
+    }
+    /// Dedicated research-corpus index. Created only when research is enabled.
+    pub fn research_db_path(&self) -> PathBuf {
+        self.data_dir().join("research").join("rag.sqlite3")
     }
     pub fn logs_dir(&self) -> PathBuf {
         self.root.join("logs")

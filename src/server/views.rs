@@ -104,7 +104,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 75] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 78] = [
     ("analytics", "/analytics", "GET", "/api/analytics/summary", "retained session, token and coding-run analytics"),
     ("config-reload", "(Reload limits button)", "POST", "/api/config/reload", "administrator-only atomic reload of supported non-secret limits"),
     (
@@ -575,6 +575,27 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 75] = [
         "cancel your active research request",
     ),
     (
+        "research-status",
+        "/api/research/status",
+        "GET",
+        "/api/research/status",
+        "operator research-corpus index status; the feature ships disabled",
+    ),
+    (
+        "research-search",
+        "/api/research/search",
+        "POST",
+        "/api/research/search",
+        "hybrid FTS5 + cosine search over the read-only operator corpus; untrusted context only",
+    ),
+    (
+        "research-reindex",
+        "/api/research/reindex",
+        "POST",
+        "/api/research/reindex",
+        "confirm-gated rebuild of the research index; corpus is never written",
+    ),
+    (
         "keys",
         "/api",
         "GET",
@@ -870,7 +891,7 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 75);
+        assert_eq!(HARNESS_SURFACES.len(), 78);
         let report = list_wired_tools(&registered);
         assert_eq!(report["total"], HARNESS_SURFACES.len());
         assert_eq!(report["wired"], HARNESS_SURFACES.len(), "a catalog surface is unwired");

@@ -606,6 +606,31 @@ netconnect:
   mqtt_endpoint: null
   untrusted_string_max_chars: 64
 
+# Local research corpus retrieval. Ships off. When `enabled` is the literal
+# boolean true, the console indexes `corpus_dir` read-only (symlinks are never
+# followed; only .md, .markdown, .txt and .docx files are read) into
+# data/research/rag.sqlite3 and answers /api/research/search with hybrid
+# FTS5 + cosine hits fused by RRF. Hits are untrusted background context; they
+# are never injected into a prompt by these routes alone. `corpus_dir` is
+# used exactly as written; an absolute path is recommended. Embeddings are
+# optional: an empty embeddings_url is keyword-only, and a non-loopback URL is
+# a config error when the feature is enabled. Reindex requires an explicit
+# confirm. These keys are restart-only.
+research:
+  enabled: false
+  corpus_dir: ""
+  embeddings_url: ""
+  embeddings_model: "all-minilm"
+  embeddings_timeout_sec: 120   # 5–3600; also bounds one reindex run
+  chunk_chars: 900              # 100–8000
+  chunk_overlap: 120            # 0–4000; must stay below chunk_chars
+  top_k: 5                      # 1–50
+  min_score: 0.028              # 0–10
+  min_semantic_score: 0.30      # 0–1
+  max_db_bytes: 536870912       # 16777216–2147483648
+  max_file_bytes: 1048576       # 1024–16777216; oversized files are skipped
+  max_total_bytes: 67108864     # 65536–268435456; one reindex reads at most this
+
 # Durable schedules: restart-only tuning, never execution/write authority.
 # New interval and cron schedules require an owner-bound preview receipt.
 scheduling:

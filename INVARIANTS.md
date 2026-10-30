@@ -888,3 +888,20 @@ input never becomes a command. `GET /api/netconnect/diag` uses the same guards.
   `invariant_guard::netconnect_dials_only_through_the_budgeted_dialer`,
   `tests/panels.rs`, and
   `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.
+
+## Research retrieval is fail-closed, loopback-embedded, and read-only
+
+`research.enabled` ships false; quoted `"true"` is off. The corpus directory
+is read exactly as configured, walked without following symlinks, and only
+`.md`, `.markdown`, `.txt` and `.docx` files are read, under per-file and
+per-reindex byte caps; a missing directory is `RESEARCH_NO_CORPUS`, not an
+empty success. Embeddings are optional and loopback-only: a non-loopback
+`embeddings_url` is a config error when the feature is enabled, and a search
+whose embedding call fails is `RESEARCH_EMBED_FAILED` (502), never silently
+keyword-only. Reindex requires a literal `confirm: true` and degrades to
+keyword-only on embedder failure. Search hits are `untrusted_background_context`:
+these routes never inject corpus text into a prompt. The audit record carries
+`query_hash`, never the query. These keys are outside `RELOADABLE`.
+
+- Locked by: `src/server/research` tests, `tests/research.rs`, and
+  `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.
