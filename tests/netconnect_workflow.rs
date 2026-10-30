@@ -95,7 +95,7 @@ fn top_level_permissions_are_empty_and_the_trigger_is_not_pull_request_target() 
         .expect("matrix os");
     let names: Vec<&str> = os.iter().filter_map(Value::as_str).collect();
     assert_eq!(names, vec!["ubuntu-latest", "macos-latest"]);
-    assert_eq!(syscall.get("runs-on").and_then(Value::as_str), Some("ubuntu-latest"));
+    assert_eq!(syscall.get("runs-on").and_then(Value::as_str), Some("ubuntu-26.04"));
     assert_syscall_proof_cannot_skip(syscall);
 }
 
