@@ -41,8 +41,7 @@ models:
     # `ollama serve` and verify context_length on /api/ps (docs/MODELS.md).
     # The harness sends no num_ctx and inherits that window.
     max_tokens: 4096 # 1–25904 with Ollama reasoning=none; otherwise 1–12952 with a 2x reservation
-    # Tool hops only. Synthesis keeps max_tokens and temperature. 64–2048. Missing uses 512. Restart-only.
-    tool_max_tokens: 512
+    tool_max_tokens: 512 # 64–2048; missing uses 512; restart-only
     temperature: 0.1  #funsies but really dont go higher 
     timeout_sec: 1800
     # Explicit local inventory only; no inference, cloud probes or model downloads.
@@ -146,7 +145,7 @@ loop:
 # Bounded public content reads; fresh harness.json enables web with an empty URL allowlist.
 # Missing values in existing homes use these defaults; invalid values fail boot.
 web:
-  chat_tool_calls: 30 # 1–30 read-only calls per chat or local /loop turn; this is the tool-round ceiling. Bakeoff benches use 8 steps; the shipped default stays 30. web.total_tokens usually binds first
+  chat_tool_calls: 30 # 1–30 read-only calls per chat or local /loop turn; web.total_tokens usually binds first
   carry_forward_sources: 0 # 0 (off) or 1–50 earlier reads (URL/query only, no page text) listed in web turns; reloadable
   goal_web_default: all # off|fetch|all; restart-only. The mode a /goal gets without --web.
   # fetch reads permitted URLs only; all also lets unattended /loop turns pick web_search

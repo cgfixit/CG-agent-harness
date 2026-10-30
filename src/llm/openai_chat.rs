@@ -157,8 +157,6 @@ pub fn sampling_for(
     }
 }
 
-/// The `/chat/completions` body both chat paths send. `tool_protocol` is the
-/// tool loop: an empty tool list forces `tool_choice=none`.
 pub fn completion_payload(
     model: &str,
     messages: &[Value],
@@ -217,9 +215,6 @@ fn looks_like_plan(text: &str) -> bool {
     MARKERS.iter().any(|marker| lower.contains(marker))
 }
 
-/// True when text that survived [`strip_leading_reasoning`] is still a plan,
-/// not a JSON object and not an answer. Identical text around a bare close
-/// is already one copy, so this does not see that shape.
 pub fn residual_think_leak(stripped: &str) -> bool {
     let trimmed = stripped.trim();
     if trimmed.is_empty() || is_json_object(trimmed) {
@@ -243,10 +238,8 @@ pub fn residual_think_leak(stripped: &str) -> bool {
             }
         }
     }
-    if let Some((before, after)) = stripped.split_once("\n</think>\n") {
-        let before = before.trim();
-        let after = after.trim();
-        if !before.is_empty() && before != after && looks_like_plan(before) {
+    if let Some((before, _)) = stripped.split_once("\n</think>\n") {
+        if !before.trim().is_empty() && looks_like_plan(before) {
             return true;
         }
     }

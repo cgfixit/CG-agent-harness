@@ -296,7 +296,7 @@ and `web_fetch` (an exact permitted public URL). They use OpenAI-compatible tool
 receive the retrieved content.
 No repository, shell, policy, account, key or mutation tool is exposed. Invalid names, arguments and excess tool requests are refused; batches are
 validated before their first read and run sequentially. A turn allows at most
-`web.chat_tool_calls` (1–30, default 30) across all rounds. That key is the tool-round ceiling. Tool hops send `models.local_llm.tool_max_tokens` (default 512) at temperature 0. The final answer keeps the chat token ceiling and temperature. After a notes-corpus read, `web_search` stays closed unless the user asked for outside sources. The turn gets the chat timeout
+`web.chat_tool_calls` (1–30, default 30) across all rounds. Tool hops send `models.local_llm.tool_max_tokens` (default 512) at temperature 0. The final answer keeps the chat token ceiling and temperature. After a notes-corpus read, `web_search` stays closed unless the user asked for outside sources. The turn gets the chat timeout
 plus a measured tool-round allowance (at most twice it), and checks each call's
 prompt against `web.total_tokens`, charged once. Tools are offered only while
 the prompt, its definitions, one reply and a minimal result (≥256 calibrated
