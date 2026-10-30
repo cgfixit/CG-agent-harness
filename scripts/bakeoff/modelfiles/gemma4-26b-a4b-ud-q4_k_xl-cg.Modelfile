@@ -1,0 +1,12 @@
+# Bakeoff tag: gemma4-26b-a4b:ud-q4_k_xl-cg
+# MTP: draft_num_predict 2 (Ollama rejects draft_num_ctx; that name is invalid)
+# Think-off is request-time only on Ollama 0.40.x (PARAMETER think rejected).
+# Bakeoff + harness: /v1 reasoning_effort "none". Native /api/chat: think:false.
+FROM hf.co/unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_XL
+PARAMETER num_ctx 32768
+PARAMETER temperature 0
+PARAMETER stop <bos>
+PARAMETER stop <|turn>
+PARAMETER stop <turn|>
+PARAMETER stop <|turn>user
+PARAMETER draft_num_predict 2
