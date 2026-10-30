@@ -7,7 +7,7 @@ verify newer builds. `slash-single-line-note.txt` is an operator aside.
 
 ## Series index
 
-- `console-chat-signed-in-*`, `console-sign-in-first-run-*`: README hero and first-run sign-in (below).
+- `console-chat-2026-10-30`, `console-chat-signed-in-*`, `console-sign-in-first-run-*`: README hero, the former hero and first-run sign-in (below).
 - `console-ux-*-{before,after}-*-chromium`: console UX pass, desktop and phone.
 - `0N-browser-*`, `0N-native-*`, `0N-help-*`: browser and native acceptance, help overlay.
 - `0N-session-*`, `05-independent-spend-ledger`: per-session spend isolation.
@@ -22,7 +22,10 @@ verify newer builds. `slash-single-line-note.txt` is an operator aside.
 [CG-Agent-Mobile.png](CG-Agent-Mobile.png), [CG-mobile.png](CG-mobile.png),
 [app-ss.png](app-ss.png), [former README hero](image.png).
 
-2026-10-05 loopback-fixture chat: [README hero](console-chat-signed-in-2026-10-05.png)
+2026-10-30 loopback-fixture chat: [README hero](console-chat-2026-10-30.png)
+(1440×900 at 2x, Linux Chromium, fresh home, fake Ollama reply, no provider key).
+
+2026-10-05 loopback-fixture chat: [former hero](console-chat-signed-in-2026-10-05.png)
 (1440×900), [390px](console-chat-signed-in-390-2026-10-05.png),
 [first-run sign-in](console-sign-in-first-run-2026-10-05.png).
 
