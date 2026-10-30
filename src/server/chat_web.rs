@@ -582,7 +582,10 @@ async fn run_inner(
                     .zip(reported.get(field).filter(|v| v.is_number()))
                     .map(|(sum, count)| sum.saturating_add(crate::llm::openai_chat::token_count(Some(count))));
             }
-            *usage_snapshot.lock().unwrap() = Some((totals.clone(), *known_completion_tokens));
+            *usage_snapshot.lock().unwrap() = UsageSnapshot {
+                pending: Some(totals.clone()),
+                known_completion_tokens: *known_completion_tokens,
+            };
             prompt_tokens =
                 prompt_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("prompt_tokens")));
             completion_tokens = completion_tokens
