@@ -1068,6 +1068,11 @@ pub(crate) async fn chat_inner(
             },
         );
     };
+    let _pending_spend = PendingLocalSpend {
+        usage: &local_usage,
+        model: &model,
+        record: &record_local_failure,
+    };
     let result = tokio::select! {
         biased;
         _ = chat_owner.token.cancelled() => {
@@ -1869,6 +1874,23 @@ async fn loaded_window(state: &AppState, model: &str) -> Option<u64> {
         .live_window(model)
         .await
         .or_else(|| state.tuning_for(model).map(|tuning| tuning.window))
+}
+
+/// A reset can drop the entire handler, bypassing its cancellation select.
+/// Only usage not already consumed by success/failure accounting is recorded.
+struct PendingLocalSpend<'a> {
+    usage: &'a std::sync::Mutex<crate::server::chat_web::UsageSnapshot>,
+    model: &'a str,
+    record: &'a (dyn Fn(crate::llm::spend::UsageTokens, &str) + Sync),
+}
+
+impl Drop for PendingLocalSpend<'_> {
+    fn drop(&mut self) {
+        let pending = self.usage.lock().unwrap_or_else(|p| p.into_inner()).pending.take();
+        if let Some(tokens) = pending {
+            (self.record)(tokens, self.model);
+        }
+    }
 }
 
 /// Drops the per-session loop in-flight claim on every exit path.

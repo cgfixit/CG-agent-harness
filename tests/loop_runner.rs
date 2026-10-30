@@ -184,6 +184,29 @@ async fn late_cancellation_preserves_chat_and_loop_usage() {
 }
 
 #[tokio::test]
+async fn dropping_chat_handler_preserves_completed_usage() {
+    let (s, checking, mock) = window_check_fixture().await;
+    let sid = session_with_goal(&s).await;
+    // HTTP/2 RST_STREAM drops a pending handler instead of calling /chat/cancel.
+    let chat = tokio::spawn(cgagentharness::server::routes::core::chat(
+        axum::extract::State(s.state.clone()),
+        axum::extract::ConnectInfo(s.addr),
+        None,
+        axum::http::HeaderMap::new(),
+        cgagentharness::server::schemas::ValidJson(
+            serde_json::from_value(json!({"message":"private request", "session_id":sid})).unwrap(),
+        ),
+    ));
+    tokio::time::timeout(std::time::Duration::from_secs(5), checking.notified())
+        .await
+        .unwrap();
+    chat.abort();
+    assert!(chat.await.expect_err("handler was dropped").is_cancelled());
+    assert_cancelled_spend(&s, &sid, "chat").await;
+    mock.abort();
+}
+
+#[tokio::test]
 async fn late_cancellation_counts_toward_detached_loop_budget() {
     let (s, checking, mock) = window_check_fixture().await;
     let sid = session_with_goal(&s).await;
