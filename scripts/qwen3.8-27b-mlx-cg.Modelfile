@@ -1,3 +1,5 @@
+# PARAMETER think is rejected on Ollama 0.40.x.
+# Think-off is request-time via /v1 reasoning_effort "none" (CG-agent-harness local_llm).
 FROM qwen3.8:27b-mlx
 PARAMETER num_ctx 32768
 PARAMETER temperature 0.2
@@ -6,3 +8,4 @@ PARAMETER top_k 20
 PARAMETER min_p 0
 PARAMETER presence_penalty 0
 PARAMETER repeat_penalty 1
+PARAMETER draft_num_predict 2

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """bakeoff10: research-routing bakeoff. Private notes (corpus/) vs frozen local web (web_fixture/).
 C0 = original stuffed HTML infographic. C1..C5 = tool-loop cases from cases.json.
-Wire: Ollama /v1/chat/completions, temp 0.2, no reasoning_effort; strip think/channel leaks."""
+Wire: Ollama /v1/chat/completions, temp 0.2, reasoning_effort "none" (matches CG-agent-harness local_llm); strip think/channel leaks."""
 import argparse,json,re,time,pathlib,urllib.request,subprocess
 H=pathlib.Path(__file__).parent
 CORPUS=H/"corpus"; WEB=H/"web_fixture"
@@ -117,7 +117,7 @@ def score_case(case,rec):
 
 # ---- model calls ----
 def chat(model,messages,mt):
-    body={"model":model,"messages":messages,"temperature":0.2,"max_tokens":mt}
+    body={"model":model,"messages":messages,"temperature":0.2,"max_tokens":mt,"reasoning_effort":"none"}
     req=urllib.request.Request(URL,json.dumps(body).encode(),{"Content-Type":"application/json"})
     r=json.load(urllib.request.urlopen(req,timeout=1800))
     return r,strip_leaks((r.get("choices") or [{}])[0].get("message",{}).get("content","") or "")
