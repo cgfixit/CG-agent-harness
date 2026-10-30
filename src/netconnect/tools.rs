@@ -573,11 +573,11 @@ netconnect:
         // diagnostics has a tool in this build.
         const TIER_TOOLS: [usize; 7] = [0, 0, 0, 1, 0, 0, 0];
         let base = HARNESS_SURFACES.len();
-        assert_eq!(base, 75);
+        assert_eq!(base, 78);
         let shipped = app(AppConfig::embedded_default());
         let passive = app(ENABLED_PASSIVE);
         // Named rows. Removing `enabled-passive` fails the lookup below.
-        let wired_rows = [("default", &shipped, 75usize), ("enabled-passive", &passive, 77usize)];
+        let wired_rows = [("default", &shipped, 78usize), ("enabled-passive", &passive, 80usize)];
         for name in ["default", "enabled-passive"] {
             assert!(
                 wired_rows.iter().any(|(row, _, _)| *row == name),
@@ -637,7 +637,7 @@ netconnect:
         let report = list_wired_tools_with(&crate::server::routes::registered_paths(), &rows);
         assert_eq!(report["wired"], base + PASSIVE.len() + 1);
         let diag_only = app(&yaml(true, true, [false, false, false, true, false, false, false]));
-        assert_eq!(wired_count(base, &diag_only), 78);
+        assert_eq!(wired_count(base, &diag_only), base + PASSIVE.len() + 1);
         let diag_rows = catalog_rows(&diag_only);
         assert_eq!(diag_rows[2]["name"], "netconnect_diag");
         assert_eq!(diag_rows[2]["path"], "/api/netconnect/diag");

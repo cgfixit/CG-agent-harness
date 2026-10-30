@@ -25,6 +25,15 @@ pub struct EmbedClient {
 
 impl EmbedClient {
     pub fn new(config: &ResearchConfig) -> Result<Self> {
+        // Defense in depth: ResearchConfig already validates loopback at
+        // parse time; re-check here so a misordered caller still cannot arm
+        // an egress endpoint.
+        if !crate::llm::backend::is_loopback_url(&config.embeddings_url) {
+            return Err(HarnessError::new(
+                EMBED_FAILED,
+                "research.embeddings_url must point at a loopback host",
+            ));
+        }
         let client = crate::llm::ollama::http_client(std::time::Duration::from_secs(config.embeddings_timeout_sec))
             .map_err(|e| HarnessError::new(EMBED_FAILED, e.message))?;
         Ok(Self {
@@ -37,6 +46,8 @@ impl EmbedClient {
     /// One batch of embeddings, in input order.
     pub async fn embed(&self, inputs: &[String]) -> Result<Vec<Vec<f32>>> {
         let url = format!("{}/embeddings", self.base);
+        // codeql[rust/request-forgery] -- `base` is operator config, validated
+        // loopback-only at parse time and re-checked in EmbedClient::new.
         let request = self
             .client
             .post(&url)

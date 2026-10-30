@@ -323,8 +323,12 @@ fn collect_files(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) -> std::io::R
     if depth > 8 || !dir.is_dir() {
         return Ok(());
     }
+    // codeql[rust/path-injection] -- `dir` derives from operator-configured
+    // research.corpus_dir (a symlinked root is refused at ResearchStore::open).
     for e in std::fs::read_dir(dir)? {
         let e = e?;
+        // codeql[rust/path-injection] -- entry metadata inside the bounded,
+        // symlink-refusing corpus walk; not request-controlled.
         let ft = e.file_type()?;
         if ft.is_symlink() {
             continue; // never follow links out of the corpus
@@ -368,6 +372,8 @@ fn collect_pieces(
     max_file_bytes: u64,
     max_total_bytes: u64,
 ) -> Result<(usize, Vec<Piece>)> {
+    // codeql[rust/path-injection] -- `corpus` is operator-configured
+    // research.corpus_dir, never request input.
     if !corpus.is_dir() {
         return Err(HarnessError::new(
             RESEARCH_NO_CORPUS,
@@ -668,6 +674,15 @@ impl ResearchStore {
     /// Open (creating on first use) the index at `db`. An existing file over
     /// `config.max_db_bytes` is refused rather than grown further.
     pub fn open(db: &Path, config: &ResearchConfig) -> Result<Self> {
+        if !config.corpus_dir.is_empty() {
+            if let Ok(meta) = std::fs::symlink_metadata(&config.corpus_dir) {
+                if meta.file_type().is_symlink() {
+                    return Err(HarnessError::config(
+                        "research.corpus_dir must not be a symlink; resolve it in the configuration",
+                    ));
+                }
+            }
+        }
         if let Ok(meta) = std::fs::symlink_metadata(db) {
             if meta.len() > config.max_db_bytes {
                 return Err(HarnessError::new(
@@ -749,6 +764,8 @@ impl ResearchStore {
         let max_db_bytes = self.config.max_db_bytes;
         let stored = off_worker(move || -> Result<usize> {
             let stored = write_index(&db, &rows, &embed_model)?;
+            // codeql[rust/path-injection] -- `db` is the harness-home research
+            // index path built by the server, never request-controlled.
             let size = std::fs::symlink_metadata(&db).map(|m| m.len()).unwrap_or(0);
             if size > max_db_bytes {
                 return Err(HarnessError::new(
