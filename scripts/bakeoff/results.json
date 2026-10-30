@@ -83,5 +83,18 @@
     "Ask for named people + require [Dn] brackets in prompt if B is a contender",
     "Need >=3 repeats before locking production default",
     "Human still needed for task-selection score"
-  ]
+  ],
+  "routing_v2": {
+    "status": "script_updated_2026-10-29",
+    "cases": [
+      "C0",
+      "C1",
+      "C2",
+      "C3",
+      "C4",
+      "C5"
+    ],
+    "note": "Added cases.json + web_fixture + route/leak/cite scoring. Model matrix not re-run yet.",
+    "run_cmd": "python3 bakeoff10.py --quick --cases C0,C1,C5"
+  }
 }

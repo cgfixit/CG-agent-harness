@@ -1,28 +1,21 @@
-# bakeoff10 — private-corpus research infographic
+# bakeoff10: research routing bakeoff
 
-Compares three local `-cg` Ollama tags on the cg-researcher private-document workflow: fixed corpus → cited claims → bounded connections → one research task → single-file HTML infographic.
+Scores whether a model answers from private notes, the frozen local "internet", both, or says the answer is absent.
 
-## Models
-- `gemma4-26b-a4b:ud-q4_k_xl-cg`
-- `qwen3.8:27b-mlx-cg`
-- `qwen3.6:35b-a3b-cg`
-
-## Wire
-Ollama `POST /v1/chat/completions` at temperature 0.2. Do not send `reasoning_effort`. Strip `<think>` and channel leaks after. Context stays at the Modelfile 32k unless truncation is observed.
+## Layout
+- `corpus/` private notes D1 to D4 (.txt).
+- `web_fixture/` offline web pages W1 to W3, searched by keyword. No network.
+- `cases.json` cases C0 to C5 with gold route, allowed tools, expected cites.
+- `gold.json` facts, traps, routes, web facts.
+- `bakeoff10.py` runner and scorer. C0 is the original stuffed HTML task.
 
 ## Run
-```bash
-cd scripts/bakeoff
-python3 bakeoff10.py --dry-run
-python3 bakeoff10.py                 # all three, serial
-python3 bakeoff10.py --quick         # first model only
-python3 bakeoff10.py --score out
 ```
-Prints `starting A=...` immediately, then a JSON meta line after each model. Expect ~3–4 minutes total on M5 Pro 48GB (ballpark from one probe run).
+python3 bakeoff10.py --dry-run
+python3 bakeoff10.py --quick
+python3 bakeoff10.py --cases C1,C5 --models a,b --out out2
+python3 bakeoff10.py --score out/A
+```
+Writes `out/<label>/<case>.score.json` and `summary.json`.
 
-## Scoring (judge-facing)
-0–3 each: citation correctness, useful synthesis, restraint, task selection, format compliance, operational cost.
-Pass gate for promoting a model: at least 2 of 3 clear citation+restraint+valid HTML on the fixed corpus. Auto `--score` is a hint only; read trap hits in context.
-
-## Pending results
-A Mac re-run of `python bakeoff10.py` was started ~2026-10-29 19:54 ET. Update `results.json` and the PR once that `out/` lands. Probe baseline numbers live in `results.json` under status `probe_complete_pending_rerun`.
+Judge on route_ok and leak first, then cites and facts. Wall time is secondary.
