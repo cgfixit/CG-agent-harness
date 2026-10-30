@@ -18,7 +18,7 @@ preparation are separate from the application's offline Cargo verification.
 | `scraper` 0.27, `html5ever` 0.39, `robotstxt` 0.3 | HTML extraction and permitted robots handling; no browser execution |
 | `tantivy` 0.27 | Embedded BM25 passage retrieval; bounded derived index, no daemon or embeddings |
 | `rmcp = "=3.5.1"` | Inbound MCP memory server (streamable HTTP); exact pin, bumped deliberately |
-| `zip` 9.0.5, `quick-xml` 0.42 | DOCX attachment reader: in-memory ZIP, deflate only; namespace-aware XML. No PDF reader or parser subprocess; limits in [CONSOLE.md](CONSOLE.md#docx-attachments) |
+| `zip` 9.1.3, `quick-xml` 0.42 | DOCX attachment reader: in-memory ZIP, deflate only; namespace-aware XML. No PDF reader or parser subprocess; limits in [CONSOLE.md](CONSOLE.md#docx-attachments) |
 | `objc2` / Foundation / WebKit / Security bindings | Native authentication-challenge handling for the exact owned loopback certificate |
 | Keyring ecosystem 1.x stores | OS store for managed provider keys: macOS Keychain, Windows Credential Manager and the maintained D-Bus Linux Secret Service backend |
 
@@ -29,7 +29,7 @@ service; it never replaces public-web trust. Feature review is manual: cargo-den
 does not certify safe runtime use of a crate or inspect arbitrary feature names.
 
 Reqwest's `rustls` feature enables AWS-LC alongside the explicit ring provider.
-Locked `aws-lc-sys` 0.46.0 normally builds with a C compiler; its Rust `cmake`
+Locked `aws-lc-sys` 0.47.0 normally builds with a C compiler; its Rust `cmake`
 build dependency does not itself require a CMake executable. See
 [source-build prerequisites](INSTALL.md#51-standalone-backend) for alternate builds.
 
@@ -43,7 +43,7 @@ build dependency does not itself require a CMake executable. See
   overrides. `uuid` 1.26 stays for the same reason (1.28 needs Rust 1.89).
 - Incompatible major lines are separate API migrations, not drift: backend
   `base64` 0.22, `rand` 0.8, `scrypt` 0.11, `html5ever` 0.39, `windows-sys`
-  0.59 and the `rmcp` pin; desktop `toml` 0.8.2 and `brotli-decompressor` 6.0,
+  0.59 and the `rmcp` pin; desktop `toml` 0.8.2 and `brotli-decompressor` 6.2,
   held by upstream constraints with `generic-array` and `matchit`. Newer
   available versions alone do not make a valid lockfile stale or justify
   expanding a security refresh into a framework/toolchain migration.
@@ -110,13 +110,14 @@ point-in-time advisory/license/source check, not proof of vulnerability absence.
 Workflow action pins live in `.github/workflows/` and move with those files,
 not with the lockfiles.
 
-## Last synchronization (2026-10-24)
+## Last synchronization (2026-10-30)
 
-Both locks took every compatible MSRV-aware release, including shared ICU 2.4 (`icu_*`,
-`zerovec`, `yoke`, `tinystr`), `cc` 1.10, `smallvec` 1.16.4 and
-`webpki-root-certs` 1.0.11; backend `bon` 3.10.3 and `memmap2` 0.9.12; desktop
-Tauri sub-crates (`tauri-build`/`-codegen`/`-macros` 2.7.4, `tauri-runtime-wry`
-2.12.3, `wry` 0.57.1, `tao` 0.37.2), `uuid` 1.29 and `ico` 0.6, which drops the
-duplicate `png` 0.17. `tauri` stays `=2.12.4`; no manifest, feature, toolchain or
-advisory exception changed. Dated results describe that pass only; rerun the
-checks above before trusting them.
+Both locks took every compatible MSRV-aware release: shared `aws-lc-sys` 0.47.0
+with `aws-lc-rs` 1.19.0, `rustix` 1.1.6, `log` 0.4.35, the `wasm-bindgen` 0.2.130
+family, `utf8_iter` 1.1 (which adds `utf_types`), `erased-serde` 0.4.11 and
+`openssl-probe` 0.2.2; backend `zip` 9.1.3 (with `typed-path` 0.13) and
+`sketches-ddsketch` 0.4.2; desktop `brotli` 9.1.1 with `brotli-decompressor`
+6.2.0, `rfd` 0.17.2 and `tauri-plugin-dialog` 2.8.4, which also drops the desktop
+lock's duplicate `windows-sys` 0.60 and `windows-targets` 0.53 line. `tauri`
+stays `=2.12.4`; no manifest, feature, toolchain or advisory exception changed.
+Dated results describe that pass only; rerun the checks above before trusting them.
