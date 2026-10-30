@@ -117,7 +117,7 @@ jobs:
     name: clippy (-D warnings)
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -146,7 +146,8 @@ jobs:
     name: test (${{ matrix.os }})
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: ${{ matrix.os }}
+    # Keep the existing matrix check name while exercising the new image.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-26.04' || matrix.os }}
     timeout-minutes: 45
     permissions:
       contents: read
