@@ -38,9 +38,9 @@ impl std::fmt::Debug for ResolvedLocalBackend {
     }
 }
 
-/// `is_loopback_url` accepts the name `localhost`, which the system resolver
-/// answers. Local model clients install this resolver so a `localhost` lookup
-/// is used only when every answer is a loopback address; reqwest then connects
+/// `is_loopback_url` accepts a loopback host *name* from `LOOPBACK_HOSTS`, which
+/// the system resolver answers. Local model clients install this resolver so a
+/// name lookup is used only when every answer is a loopback address; reqwest then connects
 /// to exactly those addresses. IP-literal URLs never reach a resolver.
 pub struct LoopbackOnlyDns;
 
