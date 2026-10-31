@@ -40,13 +40,16 @@ build dependency does not itself require a CMake executable. See
   `.cargo/config.toml` sets `resolver.incompatible-rust-versions = "fallback"`
   for both crates: plain `cargo update` prefers releases within each crate's
   `rust-version`, and `--ignore-rust-version` or `--precise` remain explicit
-  overrides. `uuid` 1.26 stays for the same reason (1.28 needs Rust 1.89).
+  overrides. `uuid` 1.26 and `rusqlite` 0.40 stay for the same reason (`uuid`
+  1.27 and `rusqlite` 0.41 need Rust 1.89).
 - Incompatible major lines are separate API migrations, not drift: backend
-  `base64` 0.22, `rand` 0.8, `scrypt` 0.11, `html5ever` 0.39, `windows-sys`
-  0.59 and the `rmcp` pin; desktop `toml` 0.8.2 and `brotli-decompressor` 6.2,
+  `base64` 0.22, `rand` 0.8, `scrypt` 0.11, `scraper` 0.27 with `html5ever`
+  0.39, `windows-sys` 0.59 and the `rmcp` pin; desktop `toml` 0.8.2 and `brotli-decompressor` 6.2,
   held by upstream constraints with `generic-array` and `matchit`. Newer
   available versions alone do not make a valid lockfile stale or justify
   expanding a security refresh into a framework/toolchain migration.
+- Manual refreshes follow Dependabot's 7-day cooldown (`.github/dependabot.yml`):
+  a compatible release younger than a week is not drift yet.
 - The backend license allowlist names only identifiers the locked graph uses.
   Add an identifier deliberately, with the crate that needs it, rather than
   keeping unused allowances that would admit a future dependency silently.
