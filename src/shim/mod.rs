@@ -27,7 +27,7 @@ pub const REAL_REPO_RUN_CHECK_SEC: u64 = 120;
 /// Fixed per-run cost outside planner and check time: the gh version check,
 /// the repository context reads and the clone (each read retrying with
 /// backoff at the shipped `gh_timeout_sec`/`gh_retries`), the origin check and
-/// the acceptance manifest HEAD. The child's own bounds sum to 795 s with the
+/// the acceptance manifest HEAD. The child's own bounds sum to 835 s with the
 /// shipped config; a smaller value turns a slow gh into a 504 with no child
 /// record. `tests/shim_and_agent_routes.rs` pins the sum.
 pub const REAL_REPO_RUN_OVERHEAD_SEC: u64 = 900;

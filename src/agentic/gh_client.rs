@@ -23,9 +23,14 @@ pub const MAX_DIFF_CHARS: usize = 200_000;
 pub const CLONE_DEPTH: u32 = 1;
 pub const DEFAULT_CLONE_TIMEOUT_SEC: u64 = 120;
 /// `gh --version` runs once per child process: this many attempts, each
-/// bounded by the timeout, with the delay between them.
+/// bounded by the timeout, with the delay between them. The deadline is a
+/// ceiling for a hung binary, not an expected duration: a cold `gh.exe` on a
+/// contended Windows CI runner has exceeded 10 s on both attempts twice
+/// (#700's first Windows run and `main` at bfb50d4), failing an unrelated
+/// PR. `tests/shim_and_agent_routes.rs` pins the sum of these bounds under
+/// `shim::REAL_REPO_RUN_OVERHEAD_SEC`.
 pub const VERSION_CHECK_ATTEMPTS: u32 = 2;
-pub const VERSION_CHECK_TIMEOUT_SEC: u64 = 10;
+pub const VERSION_CHECK_TIMEOUT_SEC: u64 = 30;
 pub const VERSION_CHECK_RETRY_DELAY_SEC: u64 = 1;
 const MAX_BACKOFF_SEC: f64 = 30.0;
 
