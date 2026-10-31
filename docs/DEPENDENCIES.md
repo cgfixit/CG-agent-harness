@@ -17,7 +17,7 @@ preparation are separate from the application's offline Cargo verification.
 | `rcgen` 0.14, `x509-parser` 0.18 | Local P-256 certificate generation and validity/key/name checks; no OpenSSL subprocess |
 | `scraper` 0.27, `html5ever` 0.39, `robotstxt` 0.3 | HTML extraction and permitted robots handling; no browser execution |
 | `tantivy` 0.27 | Embedded BM25 passage retrieval; bounded derived index, no daemon or embeddings |
-| `rmcp = "=3.5.1"` | Inbound MCP memory server (streamable HTTP); exact pin, bumped deliberately |
+| `rmcp = "=3.7.0"` | Inbound MCP memory server (streamable HTTP); exact pin, bumped deliberately (from 3.5.1 on 2026-10-31) |
 | `zip` 9.1.3, `quick-xml` 0.42 | DOCX attachment reader: in-memory ZIP, deflate only; namespace-aware XML. No PDF reader or parser subprocess; limits in [CONSOLE.md](CONSOLE.md#docx-attachments) |
 | `objc2` / Foundation / WebKit / Security bindings | Native authentication-challenge handling for the exact owned loopback certificate |
 | Keyring ecosystem 1.x stores | OS store for managed provider keys: macOS Keychain, Windows Credential Manager and the maintained D-Bus Linux Secret Service backend |
@@ -120,4 +120,6 @@ family, `utf8_iter` 1.1 (which adds `utf_types`), `erased-serde` 0.4.11 and
 6.2.0, `rfd` 0.17.2 and `tauri-plugin-dialog` 2.8.4, which also drops the desktop
 lock's duplicate `windows-sys` 0.60 and `windows-targets` 0.53 line. `tauri`
 stays `=2.12.4`; no manifest, feature, toolchain or advisory exception changed.
+On 2026-10-31 the backend `rmcp` pin moved deliberately from 3.5.1 to 3.7.0
+(its graph gains `libc`, already locked); nothing else moved.
 Dated results describe that pass only; rerun the checks above before trusting them.
