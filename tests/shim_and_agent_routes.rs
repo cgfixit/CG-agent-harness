@@ -202,8 +202,8 @@ fn decide_status_and_setup_budgets_exceed_child_bounds() {
 
     // `real-repo-run` before the planner (`commands::cmd_real_repo_run`), with
     // the shipped gh timeout and retry count: one `gh --version` check, then
-    // `fetch_repo_context` (repo_view plus the list ops the shipped config
-    // allows), the clone, and the origin check; after acceptance, one more
+    // the PR context (pr_view plus pr_diff, the largest fetched shape; a
+    // repo-level run fetches none), the clone, and the origin check; after acceptance, one more
     // `git_head` for the manifest. Every gh read retries on transient errors
     // and timeouts with backoff. The budget formula gives this phase only
     // `REAL_REPO_RUN_OVERHEAD_SEC`; planner and check time are budgeted
@@ -218,10 +218,7 @@ fn decide_status_and_setup_budgets_exceed_child_bounds() {
     let clone = attempts * gh_client::DEFAULT_CLONE_TIMEOUT_SEC + backoff;
     let version_check = u64::from(gh_client::VERSION_CHECK_ATTEMPTS) * gh_client::VERSION_CHECK_TIMEOUT_SEC
         + u64::from(gh_client::VERSION_CHECK_ATTEMPTS - 1) * gh_client::VERSION_CHECK_RETRY_DELAY_SEC;
-    let context_reads = 1 + ["pr_list", "issue_list"]
-        .iter()
-        .filter(|op| acfg.allowed_read_ops.iter().any(|allowed| allowed == *op))
-        .count() as u64;
+    let context_reads = 2;
     let setup_bounds = version_check + context_reads * gh_read + clone + git_op + git_op;
     if shim::REAL_REPO_RUN_OVERHEAD_SEC <= setup_bounds {
         short.push(format!(
