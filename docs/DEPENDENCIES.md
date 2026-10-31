@@ -66,6 +66,13 @@ build dependency does not itself require a CMake executable. See
   `unsafe-libyaml` leaves the backend lockfile, after both dependency policies
   and configuration parsing checks pass. Unused-ignore warnings do not detect
   available replacements.
+- `block-buffer` 0.10.4 (GHSA-qwgh-2vcv-g2f7, fixed in 0.12.1) is an accepted
+  residual in both locks. It needs a panic partway through hashing; `digest`
+  0.10 reaches only `scrypt`/`pbkdf2`/`hmac`, the keyring's `hkdf`, and desktop
+  build-time `tauri-codegen`. Harness `sha2` hashing uses 0.11. This is a
+  call-graph inference, not an audit. cargo-deny does not flag it yet; add a
+  `deny.toml` ignore only when a RUSTSEC ID fails it. Revisit when `scrypt`
+  ships on `digest` 0.11.
 - Duplicate versions are warnings under the existing policy. Advisories,
   unapproved licenses, wildcard requirements and unknown sources remain blocking.
 - Both `deny.toml` files ban push-telemetry and analytics SDK crates
@@ -112,14 +119,11 @@ not with the lockfiles.
 
 ## Last synchronization (2026-10-30)
 
-Both locks took every compatible MSRV-aware release: shared `aws-lc-sys` 0.47.0
-with `aws-lc-rs` 1.19.0, `rustix` 1.1.6, `log` 0.4.35, the `wasm-bindgen` 0.2.130
-family, `utf8_iter` 1.1 (which adds `utf_types`), `erased-serde` 0.4.11 and
-`openssl-probe` 0.2.2; backend `zip` 9.1.3 (with `typed-path` 0.13) and
-`sketches-ddsketch` 0.4.2; desktop `brotli` 9.1.1 with `brotli-decompressor`
-6.2.0, `rfd` 0.17.2 and `tauri-plugin-dialog` 2.8.4, which also drops the desktop
-lock's duplicate `windows-sys` 0.60 and `windows-targets` 0.53 line. `tauri`
-stays `=2.12.4`; no manifest, feature, toolchain or advisory exception changed.
-On 2026-10-31 the backend `rmcp` pin moved deliberately from 3.5.1 to 3.7.0
-(its graph gains `libc`, already locked); nothing else moved.
+Both locks took every compatible MSRV-aware release, including `aws-lc-rs`
+1.19.0, `rustix` 1.1.6 and the `wasm-bindgen` 0.2.130 family; backend `zip`
+9.1.3; desktop `brotli` 9.1.1, `rfd` 0.17.2 and `tauri-plugin-dialog` 2.8.4,
+which drops the duplicate `windows-sys` 0.60 line. `tauri` stays `=2.12.4` by
+design. On 2026-10-31 the backend `rmcp` pin moved deliberately from 3.5.1 to
+3.7.0 and the `block-buffer` residual above was recorded, completing the
+2026-10-26 drift snapshot (#681).
 Dated results describe that pass only; rerun the checks above before trusting them.
