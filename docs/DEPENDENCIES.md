@@ -49,7 +49,9 @@ build dependency does not itself require a CMake executable. See
   available versions alone do not make a valid lockfile stale or justify
   expanding a security refresh into a framework/toolchain migration.
 - Manual refreshes follow Dependabot's 7-day cooldown (`.github/dependabot.yml`):
-  a compatible release younger than a week is not drift yet.
+  a compatible release younger than a week is not drift yet. A release that
+  fixes an advisory against a locked crate skips the wait, as Dependabot
+  security updates do.
 - The backend license allowlist names only identifiers the locked graph uses.
   Add an identifier deliberately, with the crate that needs it, rather than
   keeping unused allowances that would admit a future dependency silently.
