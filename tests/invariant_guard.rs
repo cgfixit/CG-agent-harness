@@ -378,6 +378,15 @@ fn netconnect_dials_only_through_the_budgeted_dialer() {
     // nothing under src/netconnect may resolve a host name.
     const SOCKETS: &[&str] = &["TcpStream", "TcpSocket", "UdpSocket", "socket2", "RawSocket"];
     const LOOKUPS: &[&str] = &["lookup_host", "ToSocketAddrs", "to_socket_addrs", "getaddrinfo"];
+    const LISTENERS: &[&str] = &[
+        "TcpListener",
+        "UnixListener",
+        "UnixStream",
+        "UnixDatagram",
+        "SOCK_RAW",
+        "SOCK_DGRAM",
+        "SOCK_STREAM",
+    ];
     for (path, text) in read_tree(&root().join("netconnect")) {
         let dialer = path.replace('\\', "/").ends_with("netconnect/connect.rs");
         for needle in LOOKUPS {
@@ -388,6 +397,15 @@ fn netconnect_dials_only_through_the_budgeted_dialer() {
                 assert!(
                     !text.contains(needle),
                     "{path} opens a socket via {needle:?}; dial through netconnect::Dialer"
+                );
+            }
+            // Listeners and raw libc sockets (every `libc::socket` call names a
+            // SOCK_* type). Production syntax only: cli.rs tests bind fixtures.
+            let production = scan_syntax(&path, &text, true);
+            for needle in LISTENERS {
+                assert!(
+                    !production.paths.iter().any(|p| p == needle),
+                    "{path} opens a socket via {needle:?}; only connect.rs may"
                 );
             }
         }
