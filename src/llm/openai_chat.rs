@@ -955,6 +955,19 @@ mod tests {
         assert_eq!(parse_tool_max_tokens(Some(1024), true).unwrap(), 1024);
     }
 
+    #[test]
+    fn the_tool_budget_accepts_only_integers_inside_its_bounds() {
+        for (value, ok) in [(63, false), (64, true), (2048, true), (2049, false), (0, false)] {
+            assert_eq!(parse_tool_max_tokens(Some(value), true).is_ok(), ok, "{value}");
+        }
+        // A present key that is not an integer (quoted, float, null) reaches the
+        // parser as None and must fail closed instead of using the default.
+        assert!(parse_tool_max_tokens(None, true).is_err());
+        let hop = sampling_for(TurnKind::Tool, 256, 0.1, 2048);
+        assert_eq!(hop.max_tokens, 256, "a hop never exceeds the answer ceiling");
+        assert_eq!(hop.temperature, 0.0);
+    }
+
     #[tokio::test]
     async fn a_think_leak_is_retried_once_and_not_returned() {
         let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
