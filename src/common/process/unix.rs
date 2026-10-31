@@ -275,7 +275,6 @@ pub(super) fn run(spec: RunSpec<'_>, cancelled: &AtomicBool) -> Result<Output, P
                 status: exit.code(),
                 stdout: String::from_utf8_lossy(&out).into_owned(),
                 stderr: String::from_utf8_lossy(&err).into_owned(),
-                timed_out: false,
             });
         }
         if total == before {

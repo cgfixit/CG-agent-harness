@@ -29,12 +29,10 @@ fn validated_run_id(run_id: &str) -> ApiResult<String> {
     Ok(run_id.to_string())
 }
 
-async fn agentic_call(state: &AppState, req: OpsRequest) -> ApiResult<Json<Value>> {
-    let action = req.action.clone();
-    // The child appends to the audit file directly. Land the server's queued
-    // lines first, such as the broker decision that authorized this run.
-    state.audit.flush_async().await;
-    let result = shim::run_agentic_op(&state.shim, &req).await.map_err(|e| match e {
+/// One mapping for every shim failure: a spawn or temp-file failure is the
+/// shim's, not the request's (502); a budget overrun is a typed 504.
+fn shim_error(state: &AppState, action: &str, e: ShimError) -> ApiError {
+    match e {
         ShimError::Ops(msg) => ApiError::bad_request("AGENTIC_ERROR", state.audit.redact(&msg)),
         ShimError::Timeout { action, timeout_sec } => ApiError::new(
             StatusCode::GATEWAY_TIMEOUT,
@@ -47,7 +45,17 @@ async fn agentic_call(state: &AppState, req: OpsRequest) -> ApiResult<Json<Value
             "SHIM_IO_ERROR",
             format!("{action} shim failed: {}", state.audit.redact(&msg)),
         ),
-    })?;
+    }
+}
+
+async fn agentic_call(state: &AppState, req: OpsRequest) -> ApiResult<Json<Value>> {
+    let action = req.action.clone();
+    // The child appends to the audit file directly. Land the server's queued
+    // lines first, such as the broker decision that authorized this run.
+    state.audit.flush_async().await;
+    let result = shim::run_agentic_op(&state.shim, &req)
+        .await
+        .map_err(|e| shim_error(state, &action, e))?;
     if result.is_disabled_layer_success() {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
@@ -63,20 +71,7 @@ pub async fn github_status(State(state): State<Arc<AppState>>) -> ApiResult<Json
     state.audit.flush_async().await;
     let result = shim::run_agentic_op(&state.shim, &OpsRequest::new("status"))
         .await
-        .map_err(|e| match e {
-            ShimError::Timeout { action, timeout_sec } => ApiError::new(
-                StatusCode::GATEWAY_TIMEOUT,
-                "AGENTIC_TIMEOUT",
-                format!("agentic {action} exceeded its {timeout_sec}s budget"),
-            ),
-            // A spawn or temp-file failure is the shim's, not the request's: 502, as agentic_call.
-            ShimError::Io(msg) => ApiError::new(
-                StatusCode::BAD_GATEWAY,
-                "SHIM_IO_ERROR",
-                format!("status shim failed: {}", state.audit.redact(&msg)),
-            ),
-            other => ApiError::bad_request("AGENTIC_ERROR", state.audit.redact(&other.to_string())),
-        })?;
+        .map_err(|e| shim_error(&state, "status", e))?;
     Ok(Json(result.to_json(state.audit.redactors())))
 }
 

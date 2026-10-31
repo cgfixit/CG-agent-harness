@@ -114,7 +114,7 @@ fn read_fixed_argv(argv: &[&str]) -> Result<String> {
         stdin: None,
     })
     .map_err(|_| HarnessError::new("NETCONNECT_IO", "cannot read a local network table"))?;
-    if output.timed_out || output.status != Some(0) {
+    if output.status != Some(0) {
         return Err(HarnessError::new("NETCONNECT_IO", "cannot read a local network table"));
     }
     Ok(output.stdout)
