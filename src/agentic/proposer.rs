@@ -56,6 +56,7 @@ impl<'a> LocalProposerClient<'a> {
     ) -> Result<Self> {
         let http = reqwest::blocking::Client::builder()
             .no_proxy()
+            .dns_resolver(std::sync::Arc::new(crate::llm::backend::LoopbackOnlyDns))
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(timeout_sec.max(1)))
             .build()

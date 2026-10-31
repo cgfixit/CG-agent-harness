@@ -142,6 +142,10 @@ uses it as the sole connection anchor with hostname, time and trust checks.
 The server checks origin, HTTP/2 `:authority` and HTTP/1 Host, taking the scheme
 from trusted listener metadata. The app changes no global trust. HTTPS
 cookies are Secure, HttpOnly, and SameSite=Strict; logout uses the same attributes.
+Browsers do not isolate cookies by port, and an IP address is one site, so any
+other service on the same loopback address receives the session cookie when the
+browser visits it. On a shared host, another account's loopback server could
+replay it.
 Public fetch uses public trust, and the model URL remains separate.
 
 Print only the public certificate, or explicitly renew generated material:

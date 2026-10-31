@@ -482,6 +482,11 @@ pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result
         let _reload = config_reload::install_sighup(&state)?;
         let transport = transport::Transport::load(&state.home, &state.cfg, &host)?;
         let listener = tokio::net::TcpListener::bind((host.as_str(), port)).await?;
+        // The host check above matches names; `localhost` is resolved by the system.
+        anyhow::ensure!(
+            listener.local_addr()?.ip().is_loopback(),
+            "harness binds loopback only, but {host} resolved to a non-loopback address"
+        );
         tracing::info!(
             "CGagentHarness console on {}://{}/ (home {})",
             transport.scheme(),

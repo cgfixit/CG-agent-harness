@@ -38,6 +38,34 @@ impl std::fmt::Debug for ResolvedLocalBackend {
     }
 }
 
+/// `is_loopback_url` accepts the name `localhost`, which the system resolver
+/// answers. Local model clients install this resolver so a `localhost` lookup
+/// is used only when every answer is a loopback address; reqwest then connects
+/// to exactly those addresses. IP-literal URLs never reach a resolver.
+pub struct LoopbackOnlyDns;
+
+impl reqwest::dns::Resolve for LoopbackOnlyDns {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            let answers: Vec<std::net::SocketAddr> =
+                tokio::net::lookup_host((host.as_str(), 0)).await?.take(33).collect();
+            let pinned = loopback_only(answers)?;
+            Ok(Box::new(pinned.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
+/// Keep a DNS answer only when it is non-empty, bounded and loopback-only.
+fn loopback_only(answers: Vec<std::net::SocketAddr>) -> std::io::Result<Vec<std::net::SocketAddr>> {
+    if answers.is_empty() || answers.len() > 32 || answers.iter().any(|a| !a.ip().is_loopback()) {
+        return Err(std::io::Error::other(
+            "local model host did not resolve to loopback addresses only",
+        ));
+    }
+    Ok(answers)
+}
+
 /// Whether `url`'s host is one of the supported loopback names. `host_str()`
 /// keeps IPv6 brackets (`[::1]`), so strip them before matching, as the
 /// request-authority guards do; the url crate already lowercases hosts.
@@ -167,6 +195,22 @@ pub async fn resolve_local_backend(cfg: &AppConfig) -> Result<ResolvedLocalBacke
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
+
+    #[test]
+    fn loopback_resolver_keeps_only_all_loopback_answers() {
+        let v4 = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+        let v6 = SocketAddr::from((Ipv6Addr::LOCALHOST, 0));
+        let lan = SocketAddr::from((Ipv4Addr::new(192, 168, 1, 20), 0));
+        assert_eq!(super::loopback_only(vec![v4, v6]).unwrap(), vec![v4, v6]);
+        assert!(super::loopback_only(vec![]).is_err());
+        assert!(
+            super::loopback_only(vec![v4, lan]).is_err(),
+            "one non-loopback answer refuses the lookup"
+        );
+        assert!(super::loopback_only(vec![v4; 33]).is_err());
+    }
+
     use super::*;
     use crate::common::config::AppConfig;
 
