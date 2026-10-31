@@ -112,7 +112,8 @@ pub async fn status(
             && settings.selected_model != state.cfg.str_or("models.local_llm.model", &state.backend.model).trim(),
         "provider": state.provider_for(&model),
         "model_status": model_status,
-        "api_key_optional": state.api_key_optional,
+        // Compatibility field: `security.api_key_optional` is never read (INVARIANTS.md).
+        "api_key_optional": true,
         "base_url": if cloud { Value::Null } else { json!(state.backend.base_url) },
         "soul_enabled": settings.soul_enabled,
         "soul": soul_status(&state, settings.soul_enabled),

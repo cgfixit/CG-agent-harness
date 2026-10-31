@@ -123,7 +123,6 @@ pub struct AppState {
     /// `CSP_NONCE_PLACEHOLDER` occurrence, so each request joins segments with a
     /// fresh nonce instead of re-scanning and reallocating the full ~130KB page.
     pub console_html_segments: Vec<String>,
-    pub api_key_optional: bool,
     /// Snapshot of `CGAGENTHARNESS_API_KEY` at build time (tests inject it).
     pub api_key: Option<String>,
     pub key_file_sources: BTreeSet<String>,
