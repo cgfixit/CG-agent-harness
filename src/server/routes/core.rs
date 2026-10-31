@@ -1051,16 +1051,16 @@ pub(crate) async fn chat_inner(
 
     let mut summary_completion_tokens = 0u64;
     let spend_source = if req.loop_turn { "loop" } else { "chat" };
-    // The outer cancellation drops the web future; retain only completed-round usage.
-    let web_usage = std::sync::Mutex::new(None);
-    let record_local_failure = |tokens| {
+    // Cancellation can drop inference or post-response work; retain completed usage.
+    let local_usage = std::sync::Mutex::new(crate::server::chat_web::UsageSnapshot::default());
+    let record_local_failure = |tokens, billed_model: &str| {
         crate::llm::spend::record(
             Some(&state.audit),
             &state.spend_file,
             crate::common::bounded_log::limit(&state.cfg),
             crate::llm::spend::SpendEvent {
                 provider: "local",
-                model: &model,
+                model: billed_model,
                 served_model: None,
                 source: spend_source,
                 tokens,
@@ -1068,16 +1068,19 @@ pub(crate) async fn chat_inner(
             },
         );
     };
+    let _pending_spend = PendingLocalSpend {
+        usage: &local_usage,
+        model: &model,
+        record: &record_local_failure,
+    };
     let result = tokio::select! {
         biased;
         _ = chat_owner.token.cancelled() => {
-            let usage = web_usage.lock().unwrap().take();
-            if let Some((tokens, known_completion_tokens)) = usage {
-                record_local_failure(tokens);
-                Err(cancelled().details(json!({"known_completion_tokens": known_completion_tokens})))
-            } else {
-                Err(cancelled())
+            let mut usage = local_usage.lock().unwrap();
+            if let Some(tokens) = usage.pending.take() {
+                record_local_failure(tokens, &model);
             }
+            Err(cancelled().details(json!({"known_completion_tokens": usage.known_completion_tokens})))
         },
         result = async {
     let surface = if cloud_selected {
@@ -1527,12 +1530,12 @@ pub(crate) async fn chat_inner(
     let local_failure = |e: crate::common::errors::HarnessError| {
         // Usage metadata is attached only after receiving a model response.
         if e.details.get("usage_reported").is_some() {
-            web_usage.lock().unwrap().take();
+            local_usage.lock().unwrap().pending.take();
             record_local_failure(crate::llm::spend::UsageTokens {
                 input_tokens: e.details["prompt_tokens"].as_u64(),
                 output_tokens: e.details["completion_tokens"].as_u64(),
                 ..Default::default()
-            });
+            }, &model);
         }
         ApiError::from_err(llm_status(&e), &e)
     };
@@ -1570,7 +1573,7 @@ pub(crate) async fn chat_inner(
             sized_tuned,
             req.loop_turn,
             output,
-            &web_usage,
+            &local_usage,
         )
         .await
         .map_err(local_failure)?
@@ -1604,28 +1607,20 @@ pub(crate) async fn chat_inner(
     reply.body_text = crate::server::tool_inventory::ground_assistant_text(&reply.body_text, &inventory);
 
     if !cloud_selected {
-        // Once the normal path records usage, cancellation must not record it again.
-        web_usage.lock().unwrap().take();
         let tokens = crate::llm::spend::UsageTokens {
             input_tokens: reply.reported_prompt_tokens,
             output_tokens: reply.reported_completion_tokens,
             ..crate::llm::spend::UsageTokens::default()
         };
-        let empty = reply.body_text.trim().is_empty();
-        crate::llm::spend::record(
-            Some(&state.audit),
-            &state.spend_file,
-            crate::common::bounded_log::limit(&state.cfg),
-            crate::llm::spend::SpendEvent {
-                provider: "local",
-                model: &reply.model,
-                served_model: None,
-                source: spend_source,
-                tokens,
-                outcome: empty.then_some("failed_after_billing"),
-            },
-        );
-        if empty {
+        // Plain chat needs the same protection as completed web rounds while
+        // loaded_window awaits Ollama. Unknown dimensions remain unknown.
+        *local_usage.lock().unwrap() = crate::server::chat_web::UsageSnapshot {
+            pending: Some(tokens.clone()),
+            known_completion_tokens: reply.completion_tokens,
+        };
+        if reply.body_text.trim().is_empty() {
+            local_usage.lock().unwrap().pending.take();
+            record_local_failure(tokens, &reply.model);
             return Err(ApiError::new(
                 StatusCode::BAD_GATEWAY,
                 "EMPTY_MODEL_RESPONSE",
@@ -1635,6 +1630,7 @@ pub(crate) async fn chat_inner(
                 // Per-field counts; the caller adds summary_completion_tokens once (known_completion_tokens).
                 "prompt_tokens": reply.reported_prompt_tokens,
                 "completion_tokens": reply.reported_completion_tokens,
+                "known_completion_tokens": reply.completion_tokens,
                 "usage_reported": reply.usage_reported,
             })));
         }
@@ -1699,6 +1695,24 @@ pub(crate) async fn chat_inner(
                         a derived tag needs its own num_ctx raised; the harness sends no num_ctx.")})
             })
     };
+    if !cloud_selected {
+        // The cancellable window read finished. Consume only the pending row:
+        // later cancellation still needs the known subtotal for loop budgets.
+        let tokens = local_usage.lock().unwrap().pending.take().expect("completed local usage");
+        crate::llm::spend::record(
+            Some(&state.audit),
+            &state.spend_file,
+            crate::common::bounded_log::limit(&state.cfg),
+            crate::llm::spend::SpendEvent {
+                provider: "local",
+                model: &reply.model,
+                served_model: None,
+                source: spend_source,
+                tokens,
+                outcome: None,
+            },
+        );
+    }
     let recorded = state.store.for_owner(&owner).record_exchange_inner(
         &session.session_id,
         &req.message,
@@ -1861,6 +1875,23 @@ async fn loaded_window(state: &AppState, model: &str) -> Option<u64> {
         .live_window(model)
         .await
         .or_else(|| state.tuning_for(model).map(|tuning| tuning.window))
+}
+
+/// A reset can drop the entire handler, bypassing its cancellation select.
+/// Only usage not already consumed by success/failure accounting is recorded.
+struct PendingLocalSpend<'a> {
+    usage: &'a std::sync::Mutex<crate::server::chat_web::UsageSnapshot>,
+    model: &'a str,
+    record: &'a (dyn Fn(crate::llm::spend::UsageTokens, &str) + Sync),
+}
+
+impl Drop for PendingLocalSpend<'_> {
+    fn drop(&mut self) {
+        let pending = self.usage.lock().unwrap_or_else(|p| p.into_inner()).pending.take();
+        if let Some(tokens) = pending {
+            (self.record)(tokens, self.model);
+        }
+    }
 }
 
 /// Drops the per-session loop in-flight claim on every exit path.
