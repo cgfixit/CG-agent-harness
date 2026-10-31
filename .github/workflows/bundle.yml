@@ -87,7 +87,8 @@ jobs:
           # returns: the step idles until timeout-minutes and briefly exposes a
           # real listener on 0.0.0.0. Watch it instead. BSD userland has no
           # coreutils `timeout`, so this is a plain background watchdog.
-          "$BIN" serve --host 0.0.0.0 --port 8790 & probe=$!
+          serve_err=$(mktemp)
+          "$BIN" serve --host 0.0.0.0 --port 8790 2>"$serve_err" & probe=$!
           ( sleep 20; kill -9 "$probe" 2>/dev/null ) & watchdog=$!
           code=0; wait "$probe" || code=$?
           kill "$watchdog" 2>/dev/null || true
@@ -95,6 +96,11 @@ jobs:
             0)   echo "non-loopback bind must be refused, but serve exited 0"; exit 1 ;;
             137) echo "non-loopback bind must be refused, but serve kept listening"; exit 1 ;;
           esac
+          # Any other non-zero exit (a panic, or a home/settings failure before
+          # the host check) is not the refusal: require the refusal itself.
+          if [ "$code" -ne 1 ] || ! grep -q 'binds loopback only' "$serve_err"; then
+            echo "expected the loopback refusal (exit 1), got exit $code:"; cat "$serve_err"; exit 1
+          fi
           # Ported from ci.yml's deleted release-build job: a missing config is
           # exit 3 (env/config), not a generic failure.
           set +e
