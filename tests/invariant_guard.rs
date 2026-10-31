@@ -378,6 +378,15 @@ fn netconnect_dials_only_through_the_budgeted_dialer() {
     // nothing under src/netconnect may resolve a host name.
     const SOCKETS: &[&str] = &["TcpStream", "TcpSocket", "UdpSocket", "socket2", "RawSocket"];
     const LOOKUPS: &[&str] = &["lookup_host", "ToSocketAddrs", "to_socket_addrs", "getaddrinfo"];
+    const LISTENERS: &[&str] = &[
+        "TcpListener",
+        "UnixListener",
+        "UnixStream",
+        "UnixDatagram",
+        "SOCK_RAW",
+        "SOCK_DGRAM",
+        "SOCK_STREAM",
+    ];
     for (path, text) in read_tree(&root().join("netconnect")) {
         let dialer = path.replace('\\', "/").ends_with("netconnect/connect.rs");
         for needle in LOOKUPS {
@@ -388,6 +397,15 @@ fn netconnect_dials_only_through_the_budgeted_dialer() {
                 assert!(
                     !text.contains(needle),
                     "{path} opens a socket via {needle:?}; dial through netconnect::Dialer"
+                );
+            }
+            // Listeners and raw libc sockets (every `libc::socket` call names a
+            // SOCK_* type). Production syntax only: cli.rs tests bind fixtures.
+            let production = scan_syntax(&path, &text, true);
+            for needle in LISTENERS {
+                assert!(
+                    !production.paths.iter().any(|p| p == needle),
+                    "{path} opens a socket via {needle:?}; only connect.rs may"
                 );
             }
         }
@@ -1142,7 +1160,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
     // why: the 2026-10-20 dep-sync folded the dated 2026-09 audit notes into Retained constraints; 944 words, keep the cut.
     // why: operator-approved +200 (2026-10-22) so dated advisory notes such as RUSTSEC-2026-0384 fit without trimming history.
-    ("docs/DEPENDENCIES.md", Guide, 1150),
+    // why: operator-approved +50 (2026-10-31) after the block-buffer residual entry left 54 words of headroom.
+    ("docs/DEPENDENCIES.md", Guide, 1200),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     ("docs/DESKTOP.md", Guide, 2553),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.

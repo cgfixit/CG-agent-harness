@@ -413,23 +413,29 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     if let Some(code) = refuse_if_injected(ctx, &instruction, "instruction", "run") {
         return Ok(code);
     }
-    let bundle = match fetch_bundle(ctx, opts, true) {
-        Ok(b) => b,
-        Err(e) => {
-            err(&e.message);
-            return Ok(exit_code_for(&e));
+    // Only PR/issue text feeds the planner (`bundle_context_text`); a repo
+    // bundle would cost gh reads and refuse on titles the model never sees.
+    let context_text = if opts.get("pr").is_some() || opts.get("issue").is_some() {
+        let bundle = match fetch_bundle(ctx, opts, true) {
+            Ok(b) => b,
+            Err(e) => {
+                err(&e.message);
+                return Ok(exit_code_for(&e));
+            }
+        };
+        let blocking = blocking_context_findings(&bundle);
+        if !blocking.is_empty() {
+            err(&format!(
+                "refusing to run: {} injection finding(s) in the fetched context ({})",
+                blocking.len(),
+                describe_findings(&blocking)
+            ));
+            return Ok(EXIT_FAIL);
         }
+        bundle_context_text(&bundle)
+    } else {
+        None
     };
-    let blocking = blocking_context_findings(&bundle);
-    if !blocking.is_empty() {
-        err(&format!(
-            "refusing to run: {} injection finding(s) in the fetched context ({})",
-            blocking.len(),
-            describe_findings(&blocking)
-        ));
-        return Ok(EXIT_FAIL);
-    }
-    let context_text = bundle_context_text(&bundle);
     let checks = match load_checks_file(&checks_file) {
         Ok(c) => c,
         Err(e) => {

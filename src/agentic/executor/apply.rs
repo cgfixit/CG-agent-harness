@@ -6,8 +6,6 @@ use std::path::Path;
 
 use crate::common::errors::{HarnessError, Result};
 
-use super::manifest::build_manifest;
-
 fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
     for entry in walkdir::WalkDir::new(src).follow_links(false) {
         let entry = entry?;
@@ -58,24 +56,5 @@ pub fn prove_disposable_copy(
         HarnessError::agentic("disposable-copy proof: failed to copy candidate tree")
             .detail("error", crate::common::clip_chars(&e.to_string(), 200))
     })?;
-    if expected_digest.len() != 64 {
-        return Err(
-            HarnessError::agentic("run record is missing a valid acceptance_digest; refusing approve")
-                .detail("run_id", run_id),
-        );
-    }
-    let live = super::manifest::git_head(&dest)?;
-    if live != base_head {
-        return Err(
-            HarnessError::agentic("worktree HEAD drifted from the accepted base; refusing approve")
-                .detail("run_id", run_id),
-        );
-    }
-    let (_, digest) = build_manifest(&dest, paths, run_id, base_head)?;
-    if digest != expected_digest {
-        return Err(
-            HarnessError::agentic("acceptance manifest digest mismatch; refusing approve").detail("run_id", run_id),
-        );
-    }
-    Ok(digest)
+    super::manifest::verify_manifest(&dest, paths, run_id, base_head, expected_digest)
 }
