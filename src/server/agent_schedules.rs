@@ -122,6 +122,7 @@ pub struct ScheduleStore {
     previews: Mutex<BTreeMap<String, Preview>>,
 }
 
+#[cfg(test)]
 impl Default for ScheduleStore {
     fn default() -> Self {
         Self {
@@ -134,10 +135,12 @@ impl Default for ScheduleStore {
 }
 
 impl ScheduleStore {
+    #[cfg(test)]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn open(path: &Path) -> Result<Self> {
         Self::open_at(path, crate::common::now_ts(), Settings::default())
     }
@@ -233,7 +236,8 @@ impl ScheduleStore {
         Ok(())
     }
 
-    /// Internal interval constructor; HTTP activation always requires a preview.
+    /// Test-only interval constructor; HTTP activation always requires a preview.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn create(&self, interval_secs: u64, request: Value, owner: &str, now: f64) -> Result<Schedule> {
         self.create_spec(
             ScheduleSpec::Interval { seconds: interval_secs },

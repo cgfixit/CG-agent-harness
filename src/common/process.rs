@@ -25,7 +25,6 @@ pub struct Output {
     pub status: Option<i32>,
     pub stdout: String,
     pub stderr: String,
-    pub timed_out: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -144,7 +143,6 @@ pub fn run(spec: RunSpec<'_>) -> Result<Output, ProcessError> {
             status: s.code(),
             stdout,
             stderr,
-            timed_out: false,
         }),
         None => Err(ProcessError::Timeout {
             timeout_sec: spec.timeout.as_secs_f64(),

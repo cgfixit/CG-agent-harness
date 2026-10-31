@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use crate::common::audit::Audit;
 use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
-use crate::llm::backend::{is_loopback_url, ResolvedLocalBackend};
+use crate::llm::backend::ResolvedLocalBackend;
 use crate::llm::inventory::{local_endpoint, model_readiness, InventoryLimits};
 
 pub const OLLAMA_ERROR: &str = "OLLAMA_UNAVAILABLE";
@@ -45,7 +45,7 @@ pub fn clamped(cfg: &AppConfig, path: &str, default: u64, min: u64, max: u64) ->
 
 /// Origin used for `/api/tags`, `/api/pull`, `/api/generate`. Strips a trailing `/v1`.
 pub fn native_base_url(endpoint: &str) -> Option<String> {
-    if !local_endpoint(endpoint) && !native_endpoint(endpoint) {
+    if !local_endpoint(endpoint) {
         return None;
     }
     let url = url::Url::parse(endpoint).ok()?;
@@ -76,21 +76,6 @@ pub fn native_base_url(endpoint: &str) -> Option<String> {
     } else {
         None
     }
-}
-
-fn native_endpoint(raw: &str) -> bool {
-    url::Url::parse(raw).is_ok_and(|url| {
-        matches!(url.scheme(), "http" | "https")
-            && is_loopback_url(raw)
-            && url.username().is_empty()
-            && url.password().is_none()
-            && url.query().is_none()
-            && url.fragment().is_none()
-            && {
-                let path = url.path().trim_end_matches('/');
-                path.is_empty() || path == "/" || path == "/v1"
-            }
-    })
 }
 
 /// Ollama library names: `name`, `ns/name`, optional `:tag`. No URLs or paths.
@@ -315,32 +300,12 @@ pub async fn run_warmup(backend: &ResolvedLocalBackend, model: &str, cfg: &AppCo
     }
     let keep_alive = clamped(cfg, "models.local_llm.warmup.keep_alive_sec", 300, 1, 3600);
     let timeout = Duration::from_secs(clamped(cfg, "models.local_llm.warmup.timeout_sec", 30, 1, 120));
-    let payload = warmup_payload(model, keep_alive);
-    debug_assert!(!payload.to_string().contains("num_ctx"));
-    let result = async {
-        let client = http_client(timeout)?;
-        let response = client
-            .post(format!("{native}/api/generate"))
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|_| static_err("warmup request failed"))?;
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(static_err("warmup refused"))
-        }
-    }
-    .await;
-    match result {
-        Ok(()) => {
-            tracing::info!(model = model, "ollama keep_alive warmup ok");
-            audit.log(json!({"event":"ollama_warmup_ok","model":model}));
-        }
-        Err(_) => {
-            tracing::warn!(model = model, "ollama keep_alive warmup degraded");
-            audit.log(json!({"event":"ollama_warmup_degraded","model":model}));
-        }
+    if load_model(&native, model, keep_alive, timeout).await {
+        tracing::info!(model = model, "ollama keep_alive warmup ok");
+        audit.log(json!({"event":"ollama_warmup_ok","model":model}));
+    } else {
+        tracing::warn!(model = model, "ollama keep_alive warmup degraded");
+        audit.log(json!({"event":"ollama_warmup_degraded","model":model}));
     }
 }
 
