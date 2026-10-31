@@ -65,7 +65,8 @@ env:
 jobs:
   flags-and-scope:
     name: netconnect flags and scope (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    # Keep the existing matrix check name while exercising the new image.
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-26.04' || matrix.os }}
     timeout-minutes: 30
     concurrency:
       group: netconnect-flags-${{ github.workflow }}-${{ github.ref }}-${{ matrix.os }}
@@ -97,7 +98,7 @@ jobs:
 
   syscall-proof:
     name: netconnect default status sends no packets
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     concurrency:
       group: netconnect-syscall-${{ github.workflow }}-${{ github.ref }}

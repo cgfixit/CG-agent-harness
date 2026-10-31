@@ -29,7 +29,7 @@ jobs:
   # runs all jobs.
   changes:
     name: classify changed paths
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -59,7 +59,7 @@ jobs:
 
   chat-browser:
     name: chat slash-command browser acceptance
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -99,7 +99,7 @@ jobs:
 
   fmt:
     name: rustfmt
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -349,7 +349,7 @@ jobs:
   # budget (DOCS_BUDGET), and docs-only pull requests are what it polices.
   invariant-guard:
     name: invariant guard (I6 source scan)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -380,7 +380,7 @@ jobs:
     name: bakeoff harness self-test (fake Ollama)
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -413,7 +413,7 @@ jobs:
 
   deny:
     name: cargo deny (advisories, licenses, bans)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: read
