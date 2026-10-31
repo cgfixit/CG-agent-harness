@@ -10,7 +10,9 @@ Shared test fixtures, `#[path]`-included by the integration tests.
 
 `config_with` starts from the shipped YAML but overrides tuning and compaction
 for stable protocol fixtures. [`../shipped_config.rs`](../shipped_config.rs) checks
-actual defaults separately. `prepare_server` builds options without listening;
+actual defaults separately, and fails by name on a quoted shipped model tag in
+tests or scripts. A test asserting a default pins it with `.with(...)` or reads it
+with `shipped_str`; scripts edit config by key, never by matching a value. `prepare_server` builds options without listening;
 `spawn_server` starts the owned loopback server.
 
 Not to be confused with [`../common_layer.rs`](../common_layer.rs), which tests `src/common`.

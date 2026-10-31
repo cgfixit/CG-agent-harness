@@ -1,4 +1,5 @@
 //! Exercise the actual seed, without the protocol fixture's budget overrides.
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use cgagentharness::common::config::AppConfig;
@@ -75,5 +76,71 @@ fn configured_regexes_match_normal_whitespace() {
     assert_eq!(
         redactors.redact("Bearer harmless_review_canary_123"),
         "[REDACTED_SECRET]"
+    );
+}
+
+fn model_tags(node: &serde_yaml_ng::Value, out: &mut BTreeSet<String>) {
+    match node {
+        serde_yaml_ng::Value::Mapping(map) => {
+            for (key, value) in map {
+                match (key.as_str(), value.as_str()) {
+                    (Some("model"), Some(tag)) if !tag.is_empty() => {
+                        out.insert(tag.to_string());
+                    }
+                    _ => model_tags(value, out),
+                }
+            }
+        }
+        serde_yaml_ng::Value::Sequence(items) => items.iter().for_each(|item| model_tags(item, out)),
+        _ => {}
+    }
+}
+
+fn source_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            // Bakeoff reports and corpora record which tags were measured.
+            if !path.ends_with("scripts/bakeoff") {
+                source_files(&path, out);
+            }
+        } else if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ["rs", "py", "sh", "mjs", "js"].contains(&ext))
+        {
+            out.push(path);
+        }
+    }
+}
+
+/// A shipped model change fails here, once, by name (#685). Tests and scripts
+/// read tags from the config (`common::shipped_str`, or a key-matching edit in
+/// scripts) instead of quoting them.
+#[test]
+fn shipped_model_tags_are_read_from_the_config_not_copied() {
+    let mut tags = BTreeSet::new();
+    model_tags(&shipped().raw, &mut tags);
+    assert!(tags.len() >= 3, "{tags:?}");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    source_files(&root.join("tests"), &mut files);
+    source_files(&root.join("scripts"), &mut files);
+    let mut copies = Vec::new();
+    for file in files {
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        for (index, line) in text.lines().enumerate() {
+            for tag in &tags {
+                if ['"', '\'', '`'].iter().any(|q| line.contains(&format!("{q}{tag}{q}"))) {
+                    let path = file.strip_prefix(root).unwrap().display();
+                    copies.push(format!("{path}:{}: {tag}", index + 1));
+                }
+            }
+        }
+    }
+    assert!(
+        copies.is_empty(),
+        "read these shipped model tags from assets/config.default.yaml instead of copying them:\n{}",
+        copies.join("\n")
     );
 }

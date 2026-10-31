@@ -11,7 +11,7 @@ Reading scope: never open `docs/learning/*` unless the operator asks. Open other
 
 ## Where truth lives
 
-1. Code. 2. `assets/config.default.yaml` (every tunable; no hardcoded tunables
+1. Code. 2. `assets/config.default.yaml` (every tunable; read, never copied
 elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
 When prose contradicts code, fix the prose in the same PR.
 

@@ -88,6 +88,30 @@ HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 SHIPPED_CONFIG = Path(__file__).resolve().parent.parent / 'assets/config.default.yaml'
 
 
+def set_config(text, dotted, value):
+    """Set the scalar at a dotted path whatever its shipped value, as tests/common's
+    override_yaml does. Matching a literal default instead breaks on every default
+    change (#685). Fails when the key is gone; drops that line's comment."""
+    parts = dotted.split('.')
+    lines = text.split('\n')
+    parents = []
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        indent = len(line) - len(stripped)
+        while parents and indent <= parents[-1]:
+            parents.pop()
+        key = stripped.split(':', 1)[0].strip()
+        if len(parents) < len(parts) and key == parts[len(parents)] \
+                and indent == (parents[-1] + 2 if parents else 0):
+            if len(parents) == len(parts) - 1:
+                lines[i] = f'{line[:indent]}{key}: {value}'
+                return '\n'.join(lines)
+            parents.append(indent)
+    raise AssertionError(f'shipped config lost {dotted}')
+
+
 def seed_home(home):
     """Seed a new home as ensure_layout does, with model startup probes off.
 
@@ -97,10 +121,8 @@ def seed_home(home):
     missing, so it is written here too; the binary's own fresh-home seeding is
     covered by tests/panels.rs web_tool_is_allowlist_only_ssrf_safe_and_bounded."""
     config = SHIPPED_CONFIG.read_text()
-    for needle in ('warmup:\n      enabled: true', 'auto_tune: true'):
-        if needle not in config:
-            raise AssertionError(f'shipped config lost {needle!r}')
-        config = config.replace(needle, needle.replace('true', 'false'), 1)
+    for key in ('models.local_llm.warmup.enabled', 'models.local_llm.auto_tune'):
+        config = set_config(config, key, 'false')
     (home / 'tools').mkdir(parents=True, exist_ok=True)
     (home / 'tools/web_allowlist.json').write_text(json.dumps({'version': 1, 'rules': []}))
     (home / 'config.yaml').touch(mode=0o600)
@@ -276,23 +298,18 @@ class DesktopBoundary(unittest.TestCase):
         if not (self.home / 'config.yaml').is_file():
             self.start().close()
         config = self.home / 'config.yaml'
-        text = config.read_text()
-        needle = 'allow_plaintext_key_file: false'
-        if needle not in text:
-            raise AssertionError('shipped config lost allow_plaintext_key_file: false')
-        config.write_text(text.replace(needle, 'allow_plaintext_key_file: true', 1))
+        config.write_text(set_config(config.read_text(), 'security.allow_plaintext_key_file', 'true'))
 
     def test_private_models_command_distinguishes_chat_and_planner_tags(self):
         self.start().close()
         fixture = ModelFixture()
         try:
             config = self.home / 'config.yaml'
-            config.write_text(config.read_text()
-                .replace('http://127.0.0.1:11434/v1', fixture.base)
-                # Match complete tags; a prefix replacement invents fixture-chat-cg.
-                .replace('"qwen3.8:27b-mlx"', '"fixture-chat"')
-                .replace('"qwen3.8:27b-mlx-cg"', '"fixture-chat"')
-                .replace('"gemma4-26b-a4b:ud-q4_k_xl-cg"', '"fixture-chat"'))
+            text = config.read_text()
+            for section in ('models.local_llm', 'agentic.deepagent_github'):
+                text = set_config(text, f'{section}.base_url', f'"{fixture.base}"')
+                text = set_config(text, f'{section}.model', '"fixture-chat"')
+            config.write_text(text)
             child = self.start()
             child.send({'command': 'models'})
             result = child.read()
@@ -315,9 +332,8 @@ class DesktopBoundary(unittest.TestCase):
     def test_headless_loads_private_dotenv_with_explicit_environment_precedence(self):
         self.start().close()
         config = self.home / 'config.yaml'
-        config.write_text(config.read_text()
-            .replace('api_key_optional: true', 'api_key_optional: false')
-            .replace('allow_plaintext_key_file: false', 'allow_plaintext_key_file: true', 1))
+        text = set_config(config.read_text(), 'security.api_key_optional', 'false')
+        config.write_text(set_config(text, 'security.allow_plaintext_key_file', 'true'))
         file_key = secrets.token_hex(32)
         override_key = secrets.token_hex(32)
         marker = self.home / 'must-not-be-created'
@@ -504,7 +520,7 @@ class DesktopBoundary(unittest.TestCase):
         seed = self.start(key=key)
         seed.close()
         config = self.home / 'config.yaml'
-        config.write_text(config.read_text().replace('api_key_optional: true', 'api_key_optional: false'))
+        config.write_text(set_config(config.read_text(), 'security.api_key_optional', 'false'))
         child = self.start()
         self.assertTrue(child.hello["api_key_optional"])
         self.assertEqual(child.hello["challenge"], child.challenge)
@@ -563,10 +579,10 @@ class DesktopBoundary(unittest.TestCase):
         seed = self.start()
         seed.close()
         config = self.home / 'config.yaml'
-        original = config.read_text()
-        endpoint = 'base_url: "http://127.0.0.1:11434/v1"'
-        self.assertIn(endpoint, original)
-        config.write_text(original.replace(endpoint, f'base_url: "{model.base}"'))
+        text = config.read_text()
+        for section in ('models.local_llm', 'agentic.deepagent_github'):
+            text = set_config(text, f'{section}.base_url', f'"{model.base}"')
+        config.write_text(text)
 
         def headers_for(child):
             self.assertTrue(child.hello['api_key_optional'])
@@ -653,12 +669,10 @@ class DesktopBoundary(unittest.TestCase):
         self.addCleanup(model.close)
         seed_home(self.home)
         config = self.home / 'config.yaml'
-        config.write_text(config.read_text().replace(
-            'base_url: "http://127.0.0.1:11434/v1"', f'base_url: "{model.base}"', 1
-        ).replace('suggestion_idle_ms: 2000', 'suggestion_idle_ms: 10').replace(
-            'suggestion_supported: [{ model: "qwen3.8:27b-mlx-cg"',
-            'suggestion_supported: [{ model: "fixture-memory-local"', 1,
-        ))
+        text = set_config(config.read_text(), 'models.local_llm.base_url', f'"{model.base}"')
+        text = set_config(text, 'structured_memory.suggestion_idle_ms', '10')
+        config.write_text(set_config(text, 'structured_memory.suggestion_supported',
+            '[{ model: "fixture-memory-local", modes: [summaries, insights, both] }]'))
         child = self.start()
         headers = child.authorize()
 
@@ -765,8 +779,8 @@ class DesktopBoundary(unittest.TestCase):
         child = self.start(key=key)
         child.close()
         config = self.home / 'config.yaml'
-        config.write_text(config.read_text().replace('agentic:\n  enabled: false', 'agentic:\n  enabled: true')
-                          .replace('repo: ""', 'repo: "fixture/repository"'))
+        text = set_config(config.read_text(), 'agentic.enabled', 'true')
+        config.write_text(set_config(text, 'agentic.repo', '"fixture/repository"'))
         runs = self.home / 'data/agentic/workspaces/runs'
         runs.mkdir(parents=True, exist_ok=True)
         run_id = 'a' * 32
