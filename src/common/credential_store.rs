@@ -14,6 +14,9 @@ use subtle::ConstantTimeEq;
 
 pub const SERVICE: &str = "CGagentHarness";
 pub const PLAINTEXT_KEY_FILE: &str = "security.allow_plaintext_key_file";
+/// Shown on every startup while the plaintext opt-in is literal true. It names
+/// the setting and the file, never a key name or value.
+pub const PLAINTEXT_STARTUP_WARNING: &str = "security.allow_plaintext_key_file is true, so managed keys are read from and saved to the private home .env file instead of the OS credential store. To move them into the store, unlock it, set the option to false and restart.";
 pub const OS_STORE_LABEL: &str = "os-credential-store";
 
 // A legacy read may rewrite its entry; serialize it with saves/clears across store instances.
@@ -919,7 +922,10 @@ mod windows_private {
             let store = MockStore::new();
             let plaintext = env_keys::load_startup(&path, true, &store).unwrap();
             assert_eq!(plaintext.values, values);
-            assert!(plaintext.warnings.is_empty());
+            assert_eq!(
+                plaintext.warnings,
+                [crate::common::credential_store::PLAINTEXT_STARTUP_WARNING]
+            );
             assert!(store.values.lock().unwrap().is_empty());
             assert_eq!(read_private_text(&path).unwrap(), original);
             let migrated = env_keys::load_startup(&path, false, &store).unwrap();

@@ -194,6 +194,10 @@ pub async fn build_app_with_sources(
     let audit = Audit::from_home(&home.root, &cfg)
         .with_literal_secrets(crate::common::audit::known_secret_values(&cfg))
         .with_writer_thread();
+    if cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE) {
+        // Value-free record that this process keeps managed keys in the home .env.
+        audit.log(serde_json::json!({"event": "credential_plaintext_key_file_enabled"}));
+    }
     let configured_model = cfg.str_or("models.local_llm.model", &backend.model).trim().to_string();
     let mut cloud_chat = CloudChat::from_config(&cfg)?;
     let cloud_reset = cloud_chat.is_cloud_selection(&settings.selected_model);
