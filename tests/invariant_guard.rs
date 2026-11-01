@@ -1142,7 +1142,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     // why: dependency refresh removed five stale Linux prerequisite words; keep the cut.
-    ("README.md", Root, 1686),
+    // why: the 2026-11-01 README refresh trimmed it to 1,507 words; lowered so the cut stays cut.
+    ("README.md", Root, 1520),
     ("SECURITY.md", Root, 690),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
     // why: the sandboxed HTML preview route row; measured 1840 words.
