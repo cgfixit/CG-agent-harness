@@ -725,10 +725,11 @@ mod tests {
         let sent = sent.lock().unwrap().clone();
         assert_eq!(sent.len(), 2);
         // The fixture sees arrivals, which trail each send by connect and write
-        // jitter; the exact floor is asserted on the send stamp (`gap_ms`) below.
-        // Pacing before the permit wait would shorten this gap by about 2 s.
+        // jitter (over 300 ms on a loaded macOS runner); the exact floor is asserted
+        // on the send stamp (`gap_ms`) below. Pacing before the permit wait would
+        // shorten this gap by about 2 s, so a 600 ms tolerance still catches it.
         assert!(
-            sent[1] - sent[0] >= Duration::from_millis(PUBLIC_SEARCH_PACE_FLOOR_MS - 100),
+            sent[1] - sent[0] >= Duration::from_millis(PUBLIC_SEARCH_PACE_FLOOR_MS - 600),
             "sends {:?} apart; permit queueing must not shorten the floor",
             sent[1] - sent[0]
         );
