@@ -60,10 +60,11 @@ When prose contradicts code, fix the prose in the same PR.
   `tests/invariant_guard.rs` fails if you do, including aliased `use` forms.
   Cross the boundary only through `src/shim` and the CLI whitelist.
 - Duplicated on purpose, kept in sync by tests: `RUN_ID_PATTERN` (server
-  `agent_policy` vs agentic `run_store`), the planner/check timeout constants
-  (shim vs agentic), the iteration default. Do not "deduplicate" them.
+  `agent_policy` vs agentic `run_store`), the planner/check timeout and
+  setup-budget constants (shim vs agentic), the iteration default. Never
+  deduplicate them.
 - Gates read through `flag_is_true`: only literal YAML `true` is on; quoted
-  `"true"` and a missing key are off. Note a missing key is not the shipped
+  `"true"` and a missing key are off. A missing key is not the shipped
   value: several gates ship `true` (structured memory, Ollama warmup, auth, TLS).
 - Write gates `agentic.enabled`, `deepagent_github.enabled` and
   `deepagent_github.allow_git_write_tools` ship false. `confirm` is never

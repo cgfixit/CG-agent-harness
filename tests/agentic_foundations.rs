@@ -89,6 +89,11 @@ fn agentic_config_validation() {
         ("agentic.deepagent_github.workspace_root", "\"../outside\"", "data/"),
         ("agentic.deepagent_github.max_write_budget_bytes", "0", "positive"),
         ("agentic.deepagent_github.planner_timeout_sec", "-1", "positive"),
+        // Shipped 30 s x (2 retries + 1) bounds the pre-planner phase at 835 s under
+        // the shim's 900 s setup budget; one more retry (943 s) or a 60 s timeout
+        // (1,019 s) would end a slow gh as a shim kill, so the child refuses them.
+        ("agentic.gh_retries", "3", "setup budget"),
+        ("agentic.gh_timeout_sec", "60", "setup budget"),
         ("agentic.writes_enabled", "\"true\"", "boolean"),
         (
             "agentic.deepagent_github.allow_cloud_providers",
