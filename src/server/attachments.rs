@@ -670,22 +670,37 @@ pub(crate) fn wrap_fence(sections: &[String], source: SourceKind) -> String {
 pub(crate) fn whole_file_fence(verified: &[VerifiedAttachment], budget: usize, source: SourceKind) -> String {
     let mut sections = Vec::new();
     let mut remaining = budget;
+    let mut omitted = 0;
     for item in verified {
+        if remaining == 0 {
+            omitted += 1;
+            continue;
+        }
         sections.push(blob_section(item, item.text.as_str(), remaining, source));
-        let shown = shown_chars_in_section(&item.text, remaining);
+        let shown = crate::common::clip_chars(&item.text, remaining).chars().count();
         remaining = remaining.saturating_sub(shown);
     }
+    sections.extend(omitted_section(omitted, source));
     wrap_fence(&sections, source)
 }
 
-fn shown_chars_in_section(text: &str, remaining: usize) -> usize {
-    if remaining == 0 {
-        0
-    } else {
-        crate::common::clip_chars(text, remaining).chars().count()
-    }
+/// Files past the body budget share one line, so a large notes corpus does not
+/// add a header per unread file to every prompt.
+pub(crate) fn omitted_section(count: usize, source: SourceKind) -> Option<String> {
+    let plural = match source {
+        SourceKind::Attachment => "attachments",
+        SourceKind::NotesCorpus => "notes",
+    };
+    let files = if count == 1 { "file was" } else { "files were" };
+    (count > 0).then(|| {
+        format!(
+            "### {plural} omitted (count={count}, source={}, omitted=true)\n\n[omitted: the prompt budget for {plural} is exhausted; {count} {files} not read]",
+            source.as_str()
+        )
+    })
 }
 
+/// Callers pass a nonzero `remaining`; files past the budget go to [`omitted_section`].
 pub(crate) fn blob_section(
     item: &VerifiedAttachment,
     shown_text: &str,
@@ -693,17 +708,11 @@ pub(crate) fn blob_section(
     source: SourceKind,
 ) -> String {
     let blob = &item.blob;
-    let (label, plural) = match source {
-        SourceKind::Attachment => ("attachment", "attachments"),
-        SourceKind::NotesCorpus => ("note", "notes"),
+    let label = match source {
+        SourceKind::Attachment => "attachment",
+        SourceKind::NotesCorpus => "note",
     };
     let source = source.as_str();
-    if remaining == 0 {
-        return format!(
-            "### {label} {} ({}, sha256={}, bytes={}, source={source}, omitted=true)\n\n[omitted: the prompt budget for {plural} is exhausted; this file was not read]",
-            blob.id, blob.magic_mime, blob.sha256, blob.byte_len
-        );
-    }
     let total_chars = item.text.chars().count();
     let body = crate::common::clip_chars(shown_text, remaining);
     let shown_chars = body.chars().count();

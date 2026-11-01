@@ -501,9 +501,33 @@ mod tests {
         assert!(fence.contains("NEEDLE_RESULT"));
         assert!(fence.contains("OTHER_NOTE_CONTENT"));
         let bounded = store.fence_for_query("alice", "NEEDLE_RESULT", 48).unwrap();
-        assert!(bounded.contains(&format!("### note {}", notes[1].id)));
-        assert!(bounded.contains("omitted=true"));
+        assert!(bounded.contains("### notes omitted (count=1, source=notes_corpus, omitted=true)"));
+        assert!(!bounded.contains(&notes[1].id));
         assert!(!bounded.contains("OTHER_NOTE_CONTENT"));
+    }
+
+    #[test]
+    fn notes_past_the_budget_share_one_omission_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = NotesCorpus::open(&dir.path().join("notes"), limits()).unwrap();
+        let lead = format!("SHARED_NEEDLE {}", "x".repeat(64));
+        store.store("alice", &[file("lead.md", &lead)]).unwrap();
+        for batch in 0..2 {
+            let files: Vec<IncomingFile> = (0..8)
+                .map(|i| file(&format!("n{batch}{i}.md"), &format!("unrelated note {batch}{i}")))
+                .collect();
+            store.store("alice", &files).unwrap();
+        }
+        for query in ["SHARED_NEEDLE", "unmatchedneedle"] {
+            let fence = store.fence_for_query("alice", query, 16).unwrap();
+            assert_eq!(fence.matches("omitted=true").count(), 1, "query={query:?}: {fence}");
+            assert!(
+                fence.contains("(count=16, source=notes_corpus"),
+                "query={query:?}: {fence}"
+            );
+            assert!(fence.contains("16 files were not read"), "query={query:?}: {fence}");
+            assert_eq!(fence.matches("### note ").count(), 1, "query={query:?}: {fence}");
+        }
     }
 
     #[test]

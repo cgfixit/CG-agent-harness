@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::common::errors::Result;
-use crate::server::attachments::{blob_section, wrap_fence, AttachmentStore, VerifiedAttachment};
+use crate::server::attachments::{blob_section, omitted_section, wrap_fence, AttachmentStore, VerifiedAttachment};
 use crate::server::passage_index::{chunk_text, retrieve_passages, PassageDoc, SourceKind};
 use crate::server::prompts::MAX_WEB_CHARS;
 
@@ -74,8 +74,13 @@ pub(crate) fn passage_fence(
     let hit_ids: BTreeSet<&str> = hits.iter().map(|h| h.source_id.as_str()).collect();
     let mut sections = Vec::new();
     let mut remaining = budget;
+    let mut omitted = 0;
     for item in verified {
         if let Some(passages) = by_blob.get(item.blob.id.as_str()) {
+            if remaining == 0 {
+                omitted += 1;
+                continue;
+            }
             let mut body = String::new();
             for (i, p) in passages.iter().enumerate() {
                 if i > 0 {
@@ -98,10 +103,15 @@ pub(crate) fn passage_fence(
         if hit_ids.contains(item.blob.id.as_str()) {
             continue;
         }
+        if remaining == 0 {
+            omitted += 1;
+            continue;
+        }
         sections.push(blob_section(item, item.text.as_str(), remaining, source));
         let shown = crate::common::clip_chars(&item.text, remaining).chars().count();
         remaining = remaining.saturating_sub(shown);
     }
+    sections.extend(omitted_section(omitted, source));
     Ok(Some(wrap_fence(&sections, source)))
 }
 
@@ -222,7 +232,8 @@ mod tests {
         let huge = "A".repeat(crate::server::prompts::MAX_WEB_CHARS + 80);
         let (_dir, store, ids) = store_with("local", &[("a.md", &huge), ("b.md", "SECOND_BLOB_TOKEN")]);
         let fence = fence_for_query(&store, "local", &ids, "no-match-zzzz").unwrap();
-        assert!(fence.contains("omitted=true"));
-        assert!(fence.contains(&ids[1]) || fence.contains("this file was not read"));
+        assert!(fence.contains("### attachments omitted (count=1, source=attachment, omitted=true)"));
+        assert!(fence.contains("1 file was not read"));
+        assert!(!fence.contains("SECOND_BLOB_TOKEN"));
     }
 }
