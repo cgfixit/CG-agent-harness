@@ -196,7 +196,7 @@ fn decide_status_and_setup_budgets_exceed_child_bounds() {
     }
 
     // Status renders the pending diff (`commands::render_pending_diff`): `git
-    // diff` then `git status`, each through the same validated boundary.
+    // diff` then `git ls-files`, each through the same validated boundary.
     let status_bounds = 2 * validated_git_call_sec(workspace::DEFAULT_GIT_WRITE_TIMEOUT_SEC);
     let status = shim::timeout_for(&c, &OpsRequest::new("real-repo-run-status")).as_secs();
     if status <= status_bounds {

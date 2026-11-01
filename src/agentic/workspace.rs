@@ -925,12 +925,16 @@ impl<'a> RepoWorkspace<'a> {
         Ok(())
     }
 
+    /// Worktree (or index) diff for review. `--text` keeps a `-diff` or
+    /// `binary` attribute from collapsing a changed file to "Binary files
+    /// differ": the review contract is the raw bytes approve will commit, and
+    /// the planner only writes bounded UTF-8, so the text form is the content.
     pub fn diff(&self, cached: bool) -> Result<String> {
         let tool = "diff";
         let args: &[&str] = if cached {
-            &["diff", "--no-ext-diff", "--no-textconv", "--cached"]
+            &["diff", "--no-ext-diff", "--no-textconv", "--text", "--cached"]
         } else {
-            &["diff", "--no-ext-diff", "--no-textconv"]
+            &["diff", "--no-ext-diff", "--no-textconv", "--text"]
         };
         let out = self.run_git(tool, args, DEFAULT_GIT_WRITE_TIMEOUT_SEC, &[])?;
         self.audit
@@ -953,6 +957,26 @@ impl<'a> RepoWorkspace<'a> {
         self.audit
             .log(json!({"event": "agentic_repo_workspace_git_op", "op": tool, "count": paths.len()}));
         Ok(paths)
+    }
+
+    /// Which of `paths` the index knows (the clone's HEAD; approval refuses a
+    /// pre-staged index). A changed path missing here is a new file whatever
+    /// `.gitignore` says: `status` hides ignored paths, `ls-files -- <path>`
+    /// does not consult ignore rules, and approve stages by `--cacheinfo`,
+    /// which ignores them too. Pathspecs are literal (`git::raw` passes
+    /// `--literal-pathspecs`), so glob characters in a name match themselves.
+    pub fn tracked_files(&self, paths: &[String]) -> Result<Vec<String>> {
+        if paths.is_empty() {
+            return Ok(Vec::new());
+        }
+        let tool = "ls-files";
+        let mut args = vec!["ls-files", "-z", "--cached", "--"];
+        args.extend(paths.iter().map(String::as_str));
+        let out = self.run_git(tool, &args, DEFAULT_GIT_WRITE_TIMEOUT_SEC, &[])?;
+        let tracked: Vec<String> = out.split('\0').filter(|p| !p.is_empty()).map(str::to_string).collect();
+        self.audit
+            .log(json!({"event": "agentic_repo_workspace_git_op", "op": tool, "count": tracked.len()}));
+        Ok(tracked)
     }
 
     /// Delete the clone (its parent temp directory) from disk.

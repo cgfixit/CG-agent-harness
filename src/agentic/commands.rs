@@ -593,23 +593,27 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     Ok(EXIT_OK)
 }
 
-fn render_pending_diff(ctx: &AgenticCtx, dest: &str, changed_files: &[String]) -> String {
-    let tools = match RepoWorkspace::attach(ctx, Path::new(dest)) {
-        Ok(t) => t,
-        Err(e) => return format!("[diff unavailable: {}]", e.message),
-    };
+/// The review text for a pending candidate: the `--text` worktree diff of
+/// every tracked change, then the full content of every changed path the
+/// index does not know (a new file, ignored or not). Approve commits exactly
+/// `changed_files`, so each one must appear here or the text must say the
+/// diff is unavailable; the console withholds `/agent approve` on that prefix
+/// and on the truncation marker (`isReviewableAgentDiff`), never on a diff
+/// that merely looks complete.
+pub fn render_pending_diff(tools: &RepoWorkspace<'_>, changed_files: &[String]) -> String {
     let mut parts = Vec::new();
     match tools.diff(false) {
         Ok(d) if !d.is_empty() => parts.push(d),
         Ok(_) => {}
         Err(e) => return format!("[diff unavailable: {}]", e.message),
     }
-    let untracked = match tools.untracked_files() {
-        Ok(u) => u,
+    let tracked = match tools.tracked_files(changed_files) {
+        Ok(t) => t,
         Err(e) => return format!("[diff unavailable: {}]", e.message),
     };
-    let mut new_files: Vec<&String> = untracked.iter().filter(|u| changed_files.contains(u)).collect();
+    let mut new_files: Vec<&String> = changed_files.iter().filter(|p| !tracked.contains(p)).collect();
     new_files.sort();
+    new_files.dedup();
     for path in new_files {
         match tools.read_file(path) {
             Ok(content) => parts.push(format!("--- new file: {path} ---\n{content}")),
@@ -683,7 +687,10 @@ fn cmd_real_repo_run_status(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     super::run_store::reconcile_run(&ctx.runs_dir(), &mut record)?;
     let mut payload = record.to_json();
     if record.status == PENDING_DECISION || record.status == "interrupted" {
-        payload["diff"] = json!(render_pending_diff(ctx, &record.dest, &record.changed_files));
+        payload["diff"] = json!(match RepoWorkspace::attach(ctx, Path::new(&record.dest)) {
+            Ok(tools) => render_pending_diff(&tools, &record.changed_files),
+            Err(e) => format!("[diff unavailable: {}]", e.message),
+        });
     }
     print_json(&payload);
     Ok(EXIT_OK)
