@@ -224,8 +224,8 @@ local `/loop` turns. Search-provider snippets are listings, not fetched
 linked pages; each content fetch still requires its own URL permission. A
 restart-only `web.search.provider` picks the backend: `auto` lets a configured SerpAPI
 key select the fixed Google-results API transport and no active key public Google;
-`google-public`, `serpapi` or loopback `searxng` force one. Fallback hops ship off and follow
-searxng → serpapi → google-public within one deadline and search slot; they are audited
+`google-public`, `serpapi` or loopback `searxng` force one. Fallback hops follow
+searxng → serpapi → google-public (the hop to public Google ships on, the hop to SerpAPI off) within one deadline and search slot; they are audited
 with the provider that answered. A hop moves on only when it cannot answer: an unusable provider, a spent SerpAPI quota (public Google is the next hop and costs nothing) or a SearXNG listing with no rows whose engines were silent. A rejected key, a refused query, a clean zero-result answer and a partial answer never fall through. SerpAPI listings require enabled web and current
 account authority, independently of page URL grants; public Google and linked-page
 fetches retain URL policy checks. Saved SerpAPI changes apply on the next search;
