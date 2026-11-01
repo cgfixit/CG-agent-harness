@@ -638,7 +638,9 @@ The pane displays masked **Saved** and **Active** values separately, their sourc
 Clearing a saved value leaves a currently active value running until restart;
 an explicit process environment override still wins after restart. If the OS
 store is unavailable, save is refused. Set `security.allow_plaintext_key_file`
-to literal `true` and restart only to keep the private legacy file. `/registry`
+to literal `true` and restart only to keep the private legacy file. While it is
+true, every startup logs a warning, shows it in **API Keys** and the desktop
+handshake, and audits `credential_plaintext_key_file_enabled`. `/registry`
 and **View registry** preserve inventory access. Do not source `.env` as a shell
 script or put secrets in soul, memory, skill files or shared prompts.
 
