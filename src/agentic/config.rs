@@ -61,6 +61,14 @@ pub const DEFAULT_MAX_WRITE_BUDGET_BYTES: u64 = 100_000;
 pub const DEFAULT_MAX_HANDOFF_CHARS: usize = 200_000;
 pub const DEFAULT_PLANNER_TIMEOUT_SEC: u64 = 720;
 pub const DEFAULT_PLANNER_MAX_TOKENS: u64 = 3072;
+/// The console shim gives one `real-repo-run` a fixed budget for everything
+/// outside planner and check time (`shim::REAL_REPO_RUN_OVERHEAD_SEC`; the
+/// two are pinned equal by `tests/invariant_guard.rs`, I6 forbids importing
+/// it). The child's pre-planner bounds (`setup_bounds_sec`) must stay below
+/// it, or a slow gh ends as a shim kill (504 `AGENTIC_TIMEOUT`) with no child
+/// record. `gh_timeout_sec` and `gh_retries` are the only operator inputs to
+/// that sum, so a pair whose bounds reach the budget is refused at load.
+pub const REAL_REPO_RUN_SETUP_BUDGET_SEC: u64 = 900;
 pub const VALID_DEEPAGENT_PROVIDERS: [&str; 2] = ["ollama", "openai_compatible"];
 pub const CLOUD_PROVIDERS: [&str; 2] = ["grok", "claude"];
 const SHELL_METACHARS: &str = ";|&$`<>(){}[]!*?\"'\\\n\r\t ";
@@ -270,6 +278,39 @@ fn bool_field(cfg: &AppConfig, key: &str, default: bool) -> Result<bool> {
     }
 }
 
+/// Wall-clock bounds of one `real-repo-run` before the planner starts, from
+/// the constants the child uses: the `gh --version` check, the PR context
+/// reads (pr_view plus pr_diff, the largest fetched shape), the clone, each
+/// gh read retrying with backoff, then two validated git calls (the origin
+/// check and the acceptance-manifest HEAD). Saturating: an extreme operator
+/// value must refuse, not wrap. Constant time in `gh_retries`: once the clone
+/// attempts alone reach the setup budget, that lower bound is returned without
+/// summing per-retry backoff, so a `u32::MAX` retry count cannot stall a load.
+pub fn setup_bounds_sec(gh_timeout_sec: u64, gh_retries: u32) -> u64 {
+    use super::gh_client::{
+        retry_backoff_sec, DEFAULT_CLONE_TIMEOUT_SEC, VERSION_CHECK_ATTEMPTS, VERSION_CHECK_RETRY_DELAY_SEC,
+        VERSION_CHECK_TIMEOUT_SEC,
+    };
+    use super::workspace::{DEFAULT_GIT_WRITE_TIMEOUT_SEC, GIT_VALIDATE_TIMEOUT_SEC};
+    let attempts = u64::from(gh_retries) + 1;
+    let clone_floor = attempts.saturating_mul(DEFAULT_CLONE_TIMEOUT_SEC);
+    if clone_floor >= REAL_REPO_RUN_SETUP_BUDGET_SEC {
+        return clone_floor;
+    }
+    let backoff = (1..=gh_retries).map(retry_backoff_sec).sum::<f64>().ceil() as u64;
+    let gh_read = attempts.saturating_mul(gh_timeout_sec).saturating_add(backoff);
+    let clone = attempts
+        .saturating_mul(DEFAULT_CLONE_TIMEOUT_SEC)
+        .saturating_add(backoff);
+    let version_check = u64::from(VERSION_CHECK_ATTEMPTS) * VERSION_CHECK_TIMEOUT_SEC
+        + u64::from(VERSION_CHECK_ATTEMPTS - 1) * VERSION_CHECK_RETRY_DELAY_SEC;
+    let git_op = GIT_VALIDATE_TIMEOUT_SEC + DEFAULT_GIT_WRITE_TIMEOUT_SEC;
+    version_check
+        .saturating_add(gh_read.saturating_mul(2))
+        .saturating_add(clone)
+        .saturating_add(git_op * 2)
+}
+
 fn positive_int(cfg: &AppConfig, key: &str, default: u64) -> Result<u64> {
     match cfg.get(key) {
         None | Some(serde_yaml_ng::Value::Null) => Ok(default),
@@ -320,11 +361,19 @@ pub fn load_agentic_config(cfg: &AppConfig, home_root: &Path) -> Result<AgenticC
     let gh_retries = match cfg.get("agentic.gh_retries") {
         None | Some(serde_yaml_ng::Value::Null) => 2,
         Some(serde_yaml_ng::Value::Number(n)) => match n.as_i64() {
-            Some(v) if v >= 0 => v as u32,
+            Some(v) if (0..=i64::from(u32::MAX)).contains(&v) => v as u32,
             _ => return Err(cfg_err("agentic.gh_retries must be an integer >= 0")),
         },
         Some(_) => return Err(cfg_err("agentic.gh_retries must be an integer >= 0")),
     };
+    let setup_bounds = setup_bounds_sec(gh_timeout_sec, gh_retries);
+    if setup_bounds >= REAL_REPO_RUN_SETUP_BUDGET_SEC {
+        return Err(cfg_err(format!(
+            "agentic.gh_timeout_sec {gh_timeout_sec} with agentic.gh_retries {gh_retries} bounds the \
+             pre-planner gh and git work at {setup_bounds}s or more, not below the console's fixed \
+             {REAL_REPO_RUN_SETUP_BUDGET_SEC}s setup budget; lower one of them"
+        )));
+    }
 
     // deepagent_github
     let d = "agentic.deepagent_github";
