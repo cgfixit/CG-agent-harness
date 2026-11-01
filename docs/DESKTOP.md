@@ -19,8 +19,8 @@ checks need their configured tools. Native acceptance evidence lives in PR bodie
    TLS recovery](SECURE_RESEARCH.md). After restart, `/model use grok` or
    `/model use claude` selects that cloud provider. Local prompt context is
    excluded; the coding planner remains separate.
-5. Web starts enabled with an empty URL allowlist; an administrator grants
-   sources with `/web allow` ([web permissions](SECURE_RESEARCH.md#web-permissions)).
+5. Web starts enabled with one seeded rule, Google search; an administrator grants
+   other sources with `/web allow` ([web permissions](SECURE_RESEARCH.md#web-permissions)).
    Launch fetches no content. With the shipped local model tag installed, chat
    needs no config edit. `/model list` and
    `/model use <exact-tag>` select another installed chat model.

@@ -209,6 +209,14 @@ pub async fn prepare_server(model_url: &str, opts: ServerOptions) -> PreparedSer
     let home_dir = tmp.path().join("home");
     let home = Home::at(home_dir.clone());
     home.ensure_layout().unwrap();
+    // A new home seeds the Google search rule (tests/common_layer.rs covers that
+    // seed). Fixtures start from an empty allowlist so every grant a test relies
+    // on is one it made itself, and `WEB_ALLOWLIST_EMPTY` paths stay reachable.
+    cgagentharness::common::atomic::write_json_atomic(
+        &home.tools_dir().join("web_allowlist.json"),
+        &serde_json::json!({"version": 1, "rules": []}),
+    )
+    .unwrap();
     let mut overrides: Vec<(&str, &str)> = vec![("models.local_llm.base_url", model_url)];
     let quoted = format!("\"{model_url}\"");
     overrides[0] = ("models.local_llm.base_url", &quoted);

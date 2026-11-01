@@ -31,6 +31,25 @@ use super::atomic::{write_atomic, write_json_atomic};
 use super::config::AppConfig;
 use super::errors::{HarnessError, Result};
 
+/// The one allow rule a genuinely new home starts with, so public Google search
+/// works out of the box (operator decision, 2026-11-01). Every other content read
+/// still needs an administrator's `/web allow`, and `/web deny` removes this rule
+/// like any other. Only `ensure_layout` on a brand-new home writes it: existing
+/// homes and a deleted policy file are never re-seeded.
+pub const SEEDED_WEB_RULE: &str = "https://www.google.com/*";
+pub const SEEDED_WEB_GROUP: &str = "default";
+
+/// The seeded `tools/web_allowlist.json`. The rule id duplicates
+/// `server::web_policy::Rule::new` on purpose (common never references server);
+/// `tests/common_layer.rs` keeps the two in sync.
+pub fn seeded_web_policy() -> serde_json::Value {
+    let id = &super::sha256_hex(&format!("{SEEDED_WEB_GROUP}\n{SEEDED_WEB_RULE}"))[..32];
+    serde_json::json!({
+        "version": 1,
+        "rules": [{"id": id, "pattern": SEEDED_WEB_RULE, "group": SEEDED_WEB_GROUP, "seeds": []}]
+    })
+}
+
 pub const DEFAULT_SOUL: &str = include_str!("../../assets/soul.default.md");
 
 pub const HOME_ENV: &str = "CGAGENTHARNESS_HOME";
@@ -176,11 +195,12 @@ impl Home {
         }
         let _ = std::fs::create_dir_all(self.tmp_dir());
         if std::fs::symlink_metadata(self.config_path()).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
-            // Only a genuinely new home is seeded. A missing policy on restart
-            // remains an error instead of silently replacing authoritative data.
+            // Only a genuinely new home is seeded, with the one Google search rule.
+            // A missing policy on restart remains an error instead of silently
+            // replacing authoritative data.
             let policy = self.tools_dir().join("web_allowlist.json");
             if std::fs::symlink_metadata(&policy).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
-                write_json_atomic(&policy, &serde_json::json!({"version": 1, "rules": []}))?;
+                write_json_atomic(&policy, &seeded_web_policy())?;
             }
             // Atomic: a truncated seed that still parses would read as a legacy
             // home with no `auth`/`tls` section, and exists() never re-seeds it.

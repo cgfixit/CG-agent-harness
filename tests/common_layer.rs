@@ -530,6 +530,43 @@ fn auth_manager_bootstrap_login_lockout_and_last_admin() {
 // ---------------------------------------------------------------- home + settings
 
 #[test]
+fn a_new_home_seeds_only_the_google_search_rule_and_never_reseeds() {
+    use cgagentharness::common::home::{SEEDED_WEB_GROUP, SEEDED_WEB_RULE};
+    use cgagentharness::server::web_policy::{Policy, Rule};
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::at(dir.path().join("h"));
+    home.ensure_layout().unwrap();
+    let path = home.tools_dir().join("web_allowlist.json");
+    let policy = Policy::parse(&std::fs::read(&path).unwrap(), 64).unwrap();
+    assert!(!policy.refuses_all(), "a fresh home is not an empty allowlist");
+    assert!(policy.blocked.is_empty());
+    // The hand-written seed is byte-for-byte what the server's constructor builds.
+    let expected = Rule::new(SEEDED_WEB_RULE, SEEDED_WEB_GROUP, &[]).unwrap();
+    assert_eq!(policy.rules.len(), 1);
+    let seeded = &policy.rules[0];
+    assert_eq!(
+        (&seeded.id, &seeded.pattern, &seeded.group, &seeded.seeds),
+        (&expected.id, &expected.pattern, &expected.group, &expected.seeds)
+    );
+    let permits = |u: &str| policy.permits(&url::Url::parse(u).unwrap(), None);
+    assert!(permits("https://www.google.com/search?q=veeam&num=5"));
+    assert!(
+        !permits("https://google.com/search?q=veeam"),
+        "apex is a different host"
+    );
+    assert!(!permits("https://docs.google.com/"), "no subdomain wildcard");
+    assert!(!permits("http://www.google.com/"), "https only");
+    assert!(!permits("https://example.org/"));
+    // Deleting the policy on an existing home is not undone by a later start.
+    std::fs::remove_file(&path).unwrap();
+    home.ensure_layout().unwrap();
+    assert!(
+        !path.exists(),
+        "a missing policy is an error at read time, never re-seeded"
+    );
+}
+
+#[test]
 fn home_layout_seeds_config_registry_and_skills_once() {
     let dir = tempfile::tempdir().unwrap();
     let home = Home::at(dir.path().join("h"));
