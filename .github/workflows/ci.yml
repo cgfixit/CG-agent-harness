@@ -186,9 +186,17 @@ jobs:
           git config --global user.name "CI"
       - name: Grok ACP Phase 0 fake-runtime contract
         if: runner.os != 'Windows' # POSIX process groups; its tests skip on Windows.
+        env:
+          GROK_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
+          DEEPAGENT_API_KEY: ""
         run: python3 scripts/test-grok-acp-probe.py
       - name: Cargo preparation ignores candidate toolchain executables
         if: runner.os != 'Windows' # The adversarial compiler fixture is a POSIX script.
+        env:
+          GROK_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
+          DEEPAGENT_API_KEY: ""
         run: python3 scripts/test-prepare-cargo.py
       - name: Install bubblewrap on Linux
         if: runner.os == 'Linux'

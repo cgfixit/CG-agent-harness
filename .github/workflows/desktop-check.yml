@@ -115,7 +115,7 @@ jobs:
           # Restore-only: the same shared key desktop.yml saves from main, so a
           # PR reuses main's compiled dependencies and never evicts them.
           shared-key: desktop-universal
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: false
           workspaces: |
             . -> target
             desktop -> target
@@ -130,6 +130,10 @@ jobs:
           mkdir -p target/release
           cp target/aarch64-apple-darwin/release/cgagentharness target/release/cgagentharness
       - name: Desktop Clippy and policy tests
+        env:
+          GROK_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
+          DEEPAGENT_API_KEY: ""
         run: |
           cd desktop
           cargo clippy --all-targets --all-features --locked -- -D warnings

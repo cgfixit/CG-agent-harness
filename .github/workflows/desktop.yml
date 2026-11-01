@@ -61,6 +61,10 @@ jobs:
       - name: Build and verify the complete bundle
         run: scripts/package-desktop.sh --universal
       - name: Desktop Clippy and policy tests
+        env:
+          GROK_API_KEY: ""
+          ANTHROPIC_API_KEY: ""
+          DEEPAGENT_API_KEY: ""
         run: |
           cd desktop
           cargo clippy --all-targets --locked -- -D warnings
