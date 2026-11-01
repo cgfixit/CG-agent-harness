@@ -485,14 +485,18 @@ pub fn git(args: &[&str], cwd: &Path) -> String {
 
 /// A bare origin plus a seed commit containing `target.txt` and a small tree.
 pub fn real_bare_repo(dir: &Path) -> PathBuf {
+    real_bare_repo_on(dir, "main")
+}
+
+/// The same seeded origin with another default branch name, for paths that
+/// must follow the clone's branch rather than assume `main`.
+pub fn real_bare_repo_on(dir: &Path, branch: &str) -> PathBuf {
     let bare = dir.join("origin.git");
     let work = dir.join("seed");
+    let initial = format!("--initial-branch={branch}");
     std::fs::create_dir_all(&work).unwrap();
-    git(
-        &["init", "-q", "--bare", "--initial-branch=main", bare.to_str().unwrap()],
-        dir,
-    );
-    git(&["init", "-q", "--initial-branch=main"], &work);
+    git(&["init", "-q", "--bare", &initial, bare.to_str().unwrap()], dir);
+    git(&["init", "-q", &initial], &work);
     git(&["config", "user.email", "seed@example.com"], &work);
     git(&["config", "user.name", "Seed"], &work);
     std::fs::write(work.join("target.txt"), "hello\n").unwrap();
@@ -502,7 +506,7 @@ pub fn real_bare_repo(dir: &Path) -> PathBuf {
     git(&["add", "."], &work);
     git(&["commit", "-q", "-m", "seed"], &work);
     git(&["remote", "add", "origin", bare.to_str().unwrap()], &work);
-    git(&["push", "-q", "origin", "main"], &work);
+    git(&["push", "-q", "origin", branch], &work);
     bare
 }
 

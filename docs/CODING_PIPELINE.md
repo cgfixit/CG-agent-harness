@@ -478,7 +478,8 @@ acceptance contract for both worktree and committed representations.
 
 Run records pin the origin and approved commit. Push refuses changed branches or
 destinations and sends an object-ID refspec to the pinned URL. Publication reads
-the remote branch and refuses mismatches. Every operation rechecks write policy,
+the remote branch, refuses mismatches, and opens the draft against the branch the
+clone checked out (its recorded `origin/HEAD`), not a fixed `main`. Every operation rechecks write policy,
 reason, and confirmation. Older unpinned records cannot be pushed; inspection and cleanup remain available.
 
 `tests/git_approval.rs` uses disposable Git repositories to cover unrelated staged
