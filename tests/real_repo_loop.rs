@@ -798,6 +798,16 @@ fn writer_gates_in_order_and_plan_integrity() {
         "executable_op"
     );
     assert!(build_write_argv("pr_comment", "o/r", &json!({"number": "x"}), "gh").is_err());
+    // `--base` is its own argv element: the value must be a plain branch name.
+    for base in ["", "-x", "--repo", "a b", "x\ny"] {
+        assert!(
+            build_write_argv("pr_create", "o/r", &json!({"head": "codex/x", "base": base}), "gh").is_err(),
+            "base {base:?} must be refused"
+        );
+    }
+    let publish = build_write_argv("pr_create", "o/r", &json!({"head": "codex/x", "base": "trunk"}), "gh").unwrap();
+    let base_at = publish.iter().position(|a| a == "--base").unwrap();
+    assert_eq!(publish[base_at + 1], "trunk");
     for (raw, disables) in [
         ("1", true),
         ("true", true),
@@ -1062,7 +1072,9 @@ fn cloud_proposer_gates_sanitizes_and_retries() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn real_repo_run_smoke_end_to_end() {
     let dir = tempfile::tempdir().unwrap();
-    let bare = real_bare_repo(dir.path());
+    // A default branch that is not `main`: publication must target the branch
+    // the clone checked out, not a fixed name.
+    let bare = real_bare_repo_on(dir.path(), "trunk");
     let bin = install_fake_gh(dir.path(), &bare);
     let path = path_with(&bin);
     let model = start_mock_model().await;
@@ -1320,6 +1332,16 @@ async fn real_repo_run_smoke_end_to_end() {
     assert_eq!(code, 0, "stdout={out} stderr={err}");
     let published: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(published["pr_url"], "https://example.invalid/pull/42");
+    let gh_log = std::fs::read_to_string(dir.path().join("gh.log")).unwrap();
+    let pr_create = gh_log
+        .lines()
+        .find(|line| line.starts_with("pr create "))
+        .unwrap_or_else(|| panic!("fake gh saw no pr create: {gh_log}"));
+    assert!(
+        pr_create.contains("--base trunk"),
+        "the draft must target the clone's default branch: {pr_create}"
+    );
+    assert!(pr_create.contains("--head claude/smoke"), "{pr_create}");
     let (code, _, _) = ra(
         &config,
         &[
