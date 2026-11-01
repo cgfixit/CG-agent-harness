@@ -2,6 +2,30 @@
 const invoke = (command, args = {}) => window.__TAURI_INTERNALS__.invoke(command, args);
 const status = document.getElementById('status');
 const details = document.getElementById('details');
+const codeRow = document.getElementById('codeRow');
+const codeText = document.getElementById('setupCode');
+const copyButton = document.getElementById('copyCode');
+// Rewritten only when the code changes, so a selection survives the 2 s poll.
+function showCode(code) {
+  code = code || '';
+  if (codeText.textContent !== code) { codeText.textContent = code; copyButton.textContent = 'Copy setup code'; }
+  codeRow.hidden = !code;
+}
+// Only on a click: never put the credential on the clipboard unasked.
+async function copyCode() {
+  const code = codeText.textContent;
+  if (!code) return;
+  try { await navigator.clipboard.writeText(code); copyButton.textContent = 'Copied'; return; } catch (_) { /* fall back below */ }
+  try {
+    const range = document.createRange();
+    range.selectNodeContents(codeText);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    if (document.execCommand('copy')) { copyButton.textContent = 'Copied'; return; }
+  } catch (_) { /* leave it for Cmd-C */ }
+  copyButton.textContent = 'Select the code and press Cmd-C';
+}
 let busy = false;
 let failure = '';
 let actionVersion = 0;
@@ -11,7 +35,8 @@ async function refresh() {
   try {
     const data = await invoke('desktop_status');
     if (version !== actionVersion) return;
-    status.textContent = data.setup_code ? `${data.message} First sign-in: user admin, setup code ${data.setup_code}. You then choose a new password.` : data.message;
+    status.textContent = data.message;
+    showCode(data.setup_code);
     details.textContent = data.details;
   }
   catch (_) {
@@ -29,5 +54,6 @@ async function action(command, args) {
 }
 document.getElementById('retry').addEventListener('click', () => action('retry_backend', { initializeKey: null }));
 document.getElementById('prepare').addEventListener('click', () => action('prepare_cargo'));
+copyButton.addEventListener('click', copyCode);
 document.getElementById('models').addEventListener('click', () => action('check_models'));
 refresh(); setInterval(refresh, 2000);

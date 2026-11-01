@@ -96,7 +96,7 @@ Open `https://127.0.0.1:8790/` and trust the local certificate ([certificate gui
 
 ### 3. Sign in and try a conversation
 
-1. Fresh homes open **Set your password**: enter the setup code (app: **Cmd and +** opens **Setup and recovery**; terminal: `<home>/setup-code`) and a new password.
+1. Fresh homes open **Set your password**: enter the setup code (app: **Setup and recovery** stays open with it; terminal: `<home>/setup-code`) and a new password.
 2. `/model list` shows installed tags; `/model use <tag>` selects one and, with `auto_tune` on, measures it and sets per-model limits (`/model profile`).
 3. Run `/status`, send a message, inspect the assembled context with `/prompt`, and browse `/help` (`/help all` is the full catalog).
 
