@@ -408,7 +408,9 @@ or shim imports this agentic helper.
 
 Runs retain their origin from candidate creation and the exact approved commit.
 Push checks those pins, refuses a local branch head that differs from the approved
-commit, and uses an object-ID refspec; publication checks the remote branch.
+commit, and uses an object-ID refspec; publication checks the remote branch and
+targets the branch the clone checked out (its recorded `origin/HEAD`), never a
+fixed name.
 HTTPS credentials use identity-checked `gh`, ambient Git helpers, hooks and prompts
 disabled and `child_env` gh opt-outs forced.
 Accepted SSH origins can use the operator's SSH configuration and keys.

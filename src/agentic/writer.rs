@@ -62,6 +62,24 @@ fn str_param(params: &Value, key: &str, default: &str) -> String {
     params.get(key).and_then(|v| v.as_str()).unwrap_or(default).to_string()
 }
 
+/// `--base` is its own argv element after the flag, so the value must be a
+/// branch name, never something gh could read as an option or a second token.
+fn require_base_branch(op: &str, params: &Value) -> Result<String> {
+    let base = str_param(params, "base", "main");
+    if base.is_empty()
+        || base.len() > 255
+        || base.starts_with('-')
+        || base.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
+        return Err(
+            HarnessError::agentic(format!("op '{op}' requires 'base' to be a plain branch name"))
+                .detail("op", op)
+                .detail("base", crate::common::clip_chars(&base, 120)),
+        );
+    }
+    Ok(base)
+}
+
 /// Index of the `--body` FLAG in an argv built by `build_write_argv`.
 ///
 /// Located by walking flag positions, never by value. `position(|a| a ==
@@ -109,6 +127,7 @@ pub fn build_write_argv(op: &str, repo: &str, params: &Value, gh_bin: &str) -> R
         ])),
         "pr_create" => {
             let head = require_head_branch(op, params)?;
+            let base = require_base_branch(op, params)?;
             Ok(vec![
                 gh_bin.into(),
                 "pr".into(),
@@ -118,7 +137,7 @@ pub fn build_write_argv(op: &str, repo: &str, params: &Value, gh_bin: &str) -> R
                 "--head".into(),
                 head,
                 "--base".into(),
-                str_param(params, "base", "main"),
+                base,
                 "--title".into(),
                 str_param(params, "title", ""),
                 "--body".into(),
