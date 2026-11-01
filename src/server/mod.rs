@@ -356,7 +356,6 @@ pub async fn build_app_with_sources(
         agent_run_gate: GenerationGate::new(),
         csrf_token,
         console_html_segments,
-        api_key_optional: true,
         api_key,
         key_file_sources: opts.key_file_sources,
         credential_store: opts.credential_store,
