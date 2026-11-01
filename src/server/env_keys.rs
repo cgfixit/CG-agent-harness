@@ -309,7 +309,9 @@ pub fn without_inherited(saved: BTreeMap<String, String>, inherited: &BTreeSet<S
         .collect()
 }
 
-/// Plaintext opt-in reads the file and does not touch `store`. Otherwise migrate, then read the store.
+/// Plaintext opt-in reads the file, does not touch `store`, and always returns
+/// [`PLAINTEXT_STARTUP_WARNING`](crate::common::credential_store::PLAINTEXT_STARTUP_WARNING).
+/// Otherwise migrate, then read the store.
 /// Failed migration names are not loaded. Warnings name the key and the reason, never the value.
 pub fn load_startup(
     path: &Path,
@@ -326,7 +328,7 @@ pub fn load_startup(
     if allow_plaintext {
         return Ok(StartupKeys {
             values: assignments,
-            warnings: Vec::new(),
+            warnings: vec![crate::common::credential_store::PLAINTEXT_STARTUP_WARNING.to_string()],
         });
     }
     let report = crate::common::credential_store::migrate_text(&text, &assignments, store);
@@ -528,7 +530,11 @@ mod tests {
             loaded.values.get("DEEPAGENT_API_KEY").map(String::as_str),
             Some("dak-plaintext-opt-in-1234")
         );
-        assert!(loaded.warnings.is_empty());
+        assert_eq!(
+            loaded.warnings,
+            [crate::common::credential_store::PLAINTEXT_STARTUP_WARNING]
+        );
+        assert!(!loaded.warnings[0].contains("dak-plaintext-opt-in-1234"));
     }
 
     #[test]

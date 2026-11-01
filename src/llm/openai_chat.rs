@@ -367,6 +367,7 @@ impl ChatClient {
         }
         let http = reqwest::Client::builder()
             .no_proxy()
+            .dns_resolver(std::sync::Arc::new(super::backend::LoopbackOnlyDns))
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs_f64(timeout_sec.max(1.0)))
             .build()
