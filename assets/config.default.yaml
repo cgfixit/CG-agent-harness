@@ -142,7 +142,8 @@ loop:
   # Pause between turns, so /loop stop can land and the model server breathes.
   cooldown_ms: 2000 # 0–300000
 
-# Bounded public content reads; fresh harness.json enables web with an empty URL allowlist.
+# Bounded public content reads; a fresh home enables web with one seeded allow rule,
+# https://www.google.com/* (public Google search); /web deny removes it.
 # Missing values in existing homes use these defaults; invalid values fail boot.
 web:
   chat_tool_calls: 30 # 1–30 read-only calls per chat or local /loop turn; web.total_tokens usually binds first
@@ -191,7 +192,7 @@ web:
     provider: auto # auto|google-public|serpapi|searxng
     searxng_url: "" # e.g. http://127.0.0.1:8888; validated at boot even when unused
     fallback_to_serpapi: false # literal true: a failed searxng tries SerpAPI when a key is active
-    fallback_to_public_google: true # ships on (operator decision, 2026-11-01); literal false turns it off. A failed earlier hop tries public Google (needs its URL rule in allowlist mode)
+    fallback_to_public_google: true # ships on (operator decision, 2026-11-01); literal false turns it off. A failed earlier hop tries public Google (fresh homes seed its URL rule)
     fallback_alert_per_hour: 20 # 1–1000 SerpAPI fallbacks per clock hour before one web_search_fallback_burst audit line
 
 # Completion webhooks are explicit operator configuration and restart-only.

@@ -182,8 +182,10 @@ See [migration and operation](docs/SECURE_RESEARCH.md).
 
 ## Public web evidence requires current content permission
 
-Fresh web settings are enabled with an empty URL allowlist: content reads need
-an administrator's grant. Only an administrator's confirmed switch
+Fresh web settings are enabled with one seeded allow rule, `https://www.google.com/*`,
+so public Google search listings work before any grant; every other content read
+needs an administrator's grant, `/web deny` removes the seed like any rule, and a
+home whose rules are all removed refuses reads (`WEB_ALLOWLIST_EMPTY`). Only an administrator's confirmed switch
 (`/api/web/mode`, `confirm: true`) selects block-list mode, which reads any
 public URL no blocked rule covers; a named group still narrows to its allow
 rules. Blocked rules cover HTTP and HTTPS and win in both modes; private

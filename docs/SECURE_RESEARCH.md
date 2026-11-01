@@ -1,7 +1,8 @@
 # Accounts, HTTPS and permitted web research
 
 Fresh homes enable HTTPS, role authentication, and web operations. Web content
-needs an explicit URL grant, and the allowlist starts empty.
+needs an explicit URL grant; the allowlist starts with one seeded rule,
+`https://www.google.com/*`, for public Google search.
 Upgrades preserve `config.yaml`; missing legacy auth or TLS switches remain off.
 To adopt the defaults, merge these literal booleans into the active mappings,
 then restart the server:
@@ -360,8 +361,8 @@ results, or silently switch search engines. Challenges, redirects, unreadable
 output and transport failures are explicit failures, so credential-free success
 is not promised. A keyed request's invalid-key, quota or upstream failure also
 stays explicit; public fallback occurs only when the active key is absent or
-`web.search.fallback_to_public_google` is literal true. For
-that keyless fallback in allowlist mode, an administrator first grants Google:
+`web.search.fallback_to_public_google` is literal true. Fresh homes seed that
+grant; a home that removed it grants Google again before keyless search:
 
 ```text
 /web allow https://www.google.com/*
@@ -475,8 +476,8 @@ initiating random account identity, so a recreated username inherits nothing.
 Deleted accounts can leave private selections on disk, inaccessible to replacements.
 
 Chat `web_fetch` reaches URLs permitted by the active mode, bounded by
-`web.chat_tool_calls`. Fresh homes use an empty allowlist and refuse page fetching
-with `WEB_ALLOWLIST_EMPTY`; confirmed denylist mode broadens public access.
+`web.chat_tool_calls`. Fresh homes permit only Google search; a home with no rules
+left refuses page fetching with `WEB_ALLOWLIST_EMPTY`; confirmed denylist mode broadens public access.
 Search listings grant nothing: follow-up reads independently pass current policy,
 account and public-address checks.
 

@@ -11,7 +11,7 @@ This manual is static text bundled with the build and indexed at startup. It is 
 - Local chat: Streaming sessions with search, export, text and DOCX attachments, prompt skills, `/prompt` inspection, and a sandboxed HTML preview. Starts: Ollama on loopback by default; listed, pulled, and tuned from the console.
 - Goal loops: `/goal` and `/loop` keep working on a task, in the console or as a server-side run that outlives the browser, under turn, token, and failure limits. Starts: Budgets unlimited; two consecutive failures stop a run; cloud models refuse loops.
 - Memory: Shared pinned notes plus account-private structured facts, recall, and proposed summaries. Starts: Capture, recall, and retrieval on; applying a proposal needs review (setup).
-- Web research: SerpAPI, public Google, or loopback SearXNG search; permitted fetches; `/web research` under request, time, byte, and token budgets, quotes checked. Starts: On in allowlist mode with an empty allowlist; listings never authorize page reads; a failed SerpAPI search falls back to public Google, which still…
+- Web research: SerpAPI, public Google, or loopback SearXNG search; permitted fetches; `/web research` under request, time, byte, and token budgets, quotes checked. Starts: On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; a failed SerpAPI search falls back to public Google.
 
 ## readme: capability overview (part 2)
 
@@ -55,7 +55,7 @@ Fresh configuration requires `auth.enabled: true` and `tls.enabled: true`; exist
 
 ## invariant: Public web evidence requires current content permission
 
-Fresh web settings are enabled with an empty URL allowlist: content reads need an administrator's grant. Only an administrator's confirmed switch (`/api/web/mode`, `confirm: true`) selects block-list mode, which reads any public URL no blocked rule covers; a named group still narrows to its allow rules. Blocked rules cover HTTP and HTTPS and win in both modes; private addresses stay refused, except the single exact `web.search.searxng_url` loopback grant, used only for search listings. Existing choices persist;…
+Fresh web settings are enabled with one seeded allow rule, `https://www.google.com/*`, so public Google search listings work before any grant; every other content read needs an administrator's grant, `/web deny` removes the seed like any rule, and a home whose rules are all removed refuses reads (`WEB_ALLOWLIST_EMPTY`). Only an administrator's confirmed switch (`/api/web/mode`, `confirm: true`) selects block-list mode, which reads any public URL no blocked rule covers; a named group still narrows to its allow…
 
 ## invariant: The browser never supplies a command
 
@@ -452,7 +452,7 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
 - loop.max_total_completion_tokens: 0 (unlimited) or 1–100000000
   - loop.max_failures: 1–100
   - loop.cooldown_ms: 0–300000
-- web: Bounded public content reads; fresh harness.json enables web with an empty URL allowlist. Missing values in existing homes use these defaults; invalid values fail boot.
+- web: Bounded public content reads; a fresh home enables web with one seeded allow rule, https://www.google.com/* (public Google search); /web deny removes it. Missing values in existing homes use these…
   - web.chat_tool_calls: 1–30 read-only calls per chat or local /loop turn; web.total_tokens usually binds first
   - web.carry_forward_sources: 0 (off) or 1–50 earlier reads (URL/query only, no page text) listed in web turns; reloadable
   - web.goal_web_default: off|fetch|all; restart-only. The mode a /goal gets without --web.
@@ -462,11 +462,11 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - web.concurrency: 1–4 total fetches; restart-only (shared permits)
   - web.max_rules: 1–256 allowlist rules (one per pattern; a grant names 1–32); restart-only; file cap 4 KiB per rule, at least…
   - web.pages: 1–40 per run
-  - web.run_bytes: 1024–8388608 per run
 
 ## config: sections and keys (values omitted) (part 4)
 
-- web.run_seconds: 1–180
+- web.run_bytes: 1024–8388608 per run
+  - web.run_seconds: 1–180
   - web.per_site_pages: 1–20
   - web.pace_ms: 100–5000 between requests to an origin; public Google searches wait at least 3000 (code floor)
   - web.search_cooldown_public_sec: 60–3600 after public Google WEB_GOOGLE_CHALLENGE or WEB_GOOGLE_BLOCKED
