@@ -7,5 +7,6 @@ served by the sidecar.
 
 - [`index.html`](index.html): status, retry/open-console, model inventory,
   offline Cargo preparation and recovery guidance.
-- [`setup.js`](setup.js): invokes the granted Tauri commands and refreshes status; no other API.
+- [`setup.js`](setup.js): invokes the granted Tauri commands and refreshes status; its only
+  other API is the clipboard, written when **Copy setup code** is clicked.
 - [`style.css`](style.css): the single dark stylesheet.

@@ -11,8 +11,10 @@ const node = id => {
 };
 let snapshot = {message: 'Local model inventory checked.', details: '{"chat":"installed"}', setup_code: null};
 let rejectModels, statusResponse, statusUnavailable = false, poll;
+let clipboard = null, clipboardDenied = false;
 const context = vm.createContext({
-  document: {getElementById: node, querySelectorAll: () => ['retry', 'models', 'prepare'].map(node)},
+  navigator: {clipboard: {writeText: async text => { if (clipboardDenied) throw new Error('denied'); clipboard = text; }}},
+  document: {getElementById: node, querySelectorAll: () => ['retry', 'models', 'prepare', 'copyCode'].map(node)},
   window: {__TAURI_INTERNALS__: {invoke(command, args) {
     if (command === 'desktop_status') {
       const response = statusResponse;
@@ -46,10 +48,31 @@ assert.match(node('status').textContent, /timed out/, 'polling must preserve the
 snapshot = {message: 'Backend ready. Sign in to the harness.', details: 'Owned endpoint: https://127.0.0.1:12345', setup_code: 'fixture-code'};
 await node('retry').listeners.click();
 await settle();
-assert.match(node('status').textContent, /user admin, setup code fixture-code/);
+assert.equal(node('status').textContent, snapshot.message);
+assert.equal(node('setupCode').textContent, 'fixture-code');
+assert.equal(node('codeRow').hidden, false, 'the setup code must be visible while it exists');
+assert.equal(clipboard, null, 'the code must never reach the clipboard without a click');
+// The code element is not rewritten by an unchanged poll, so a selection on it survives.
+let writes = 0;
+const code = node('setupCode');
+let codeValue = code.textContent;
+Object.defineProperty(code, 'textContent', {get: () => codeValue, set(v) { writes++; codeValue = v; }, configurable: true});
+await poll();
+assert.equal(writes, 0, 'an unchanged setup code must not be rewritten on refresh');
+await node('copyCode').listeners.click();
+assert.equal(clipboard, 'fixture-code');
+assert.equal(node('copyCode').textContent, 'Copied');
+// Without clipboard access (and no DOM selection API in this fixture) it asks for Cmd-C.
+clipboardDenied = true; clipboard = null;
+await node('copyCode').listeners.click();
+assert.equal(clipboard, null);
+assert.equal(node('copyCode').textContent, 'Select the code and press Cmd-C');
+clipboardDenied = false;
 snapshot = {...snapshot, setup_code: null};
 await poll();
-assert.equal(node('status').textContent, snapshot.message, 'retired first-sign-in guidance must disappear on refresh');
+assert.equal(node('status').textContent, snapshot.message);
+assert.equal(node('codeRow').hidden, true, 'retired first-sign-in guidance must disappear on refresh');
+assert.equal(codeValue, '', 'a spent setup code must be cleared');
 
 // Status requests started before an action cannot overwrite its pending or failed state.
 for (const duringAction of [true, false]) {

@@ -112,8 +112,9 @@ using Rosetta** unchecked. Run every command from the clone, as your user.
    `--trust-cert` asks for your password once so the browser trusts this home's
    certificate. Note the printed `CGagentHarness console: https://127.0.0.1:<port>/`.
 8. **Set your password:** fresh homes open a form for the private setup code
-   and new password. In the focused app, **Cmd and +** (Cmd, Shift and =)
-   opens **Harness → Setup and recovery**, which shows the code. For a terminal
+   and new password. The app keeps **Harness → Setup and recovery** open with the
+   code and a **Copy setup code** button until you do (**Cmd and +**, that is
+   Cmd, Shift and =, reopens it). For a terminal
    server, read `cat ~/.CGagentHarness/setup-code`. Use at least 12
    characters. Until you do, that session can only change its password or log
    out: closing the password dialog leaves a lock card, and the CLI and API
@@ -421,7 +422,7 @@ Fresh homes seed the bundled default `soul.md`; [soul](CONSOLE.md#72-default-sou
 and existing-home behavior.
 
 In the app, the console opens automatically. **Harness → Setup and recovery**
-(**Cmd and +**, that is Cmd, Shift and =) shows the setup code and its owned endpoint and model/tool diagnostics. Use **Check installed
+(**Cmd and +**, that is Cmd, Shift and =) shows the setup code (it stays open until the password is replaced) and its owned endpoint and model/tool diagnostics. Use **Check installed
 chat and planner models** to check configured tag availability without downloading.
 For the standalone server, leave its terminal open and visit:
 

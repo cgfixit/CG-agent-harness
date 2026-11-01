@@ -3,10 +3,11 @@
 <title>CG Agent Harness — Setup</title><link rel="stylesheet" href="style.css"></head>
 <body><main><p class="eyebrow">CG AGENT HARNESS</p><h1>Local work. Governed execution.</h1>
 <p id="status" role="status" aria-live="polite">Starting the owned local backend…</p>
+<p id="codeRow" hidden>First sign-in: user admin, setup code <code id="setupCode"></code> <button id="copyCode">Copy setup code</button><br>Paste it into Set your password in the console window, then choose a new password. This window stays open until you do.</p>
 <pre id="details"></pre>
 <button id="retry">Retry / Open console</button>
 <button id="models">Check installed chat and planner models</button>
-<section><h2>Local account and HTTPS</h2><p>Fresh homes require account login over HTTPS. Sign in as admin with the one-time setup code in the status line above, then replace it immediately with at least 12 characters. From the console window, Cmd and + (Cmd, Shift and =) reopens this window. Existing homes preserve their explicit configuration.</p>
+<section><h2>Local account and HTTPS</h2><p>Fresh homes require account login over HTTPS. Sign in as admin with the one-time setup code shown above, then replace it immediately with at least 12 characters; this window stays open until then. From the console window, Cmd and + (Cmd, Shift and =) reopens it. Existing homes preserve their explicit configuration.</p>
 <p>The native console verifies the exact certificate from its owned backend. No system trust installation is needed. If the certificate expires, quit this home's server and use the bundled CLI's tls renew command; operator-supplied certificates require operator renewal.</p>
 <p>Provider credentials are optional. After login, administrators can save, replace or clear them in API Keys. They take effect after restart; explicit process environment values override the saved file. A harness metadata key never grants account access.</p></section>
 <section><h2>Coding prerequisites</h2><p>Ordinary app startup needs no Rust or Xcode installation. Coding checks require the selected toolchain and prepared Cargo sources. Select a repository to prepare it using the bundled Python 3 helper. This action is offline and never downloads dependencies.</p>

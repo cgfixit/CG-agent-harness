@@ -29,6 +29,9 @@ struct Desktop {
     preparing: AtomicBool,
     cancel_preparation: AtomicBool,
     external_dialog: AtomicBool,
+    /// The setup window stays up beside the console while `<home>/setup-code`
+    /// exists, so the one-time code can be read and copied after startup.
+    code_window: AtomicBool,
 }
 
 #[derive(Serialize)]
@@ -232,7 +235,15 @@ fn launch(app: &tauri::AppHandle, initialize_key: Option<String>) -> Result<(), 
             owner.backend = Some(backend);
             let _ = window.set_focus();
             if let Some(setup) = app.get_webview_window("setup") {
-                let _ = setup.hide();
+                // First sign-in needs the code this window shows, so keep it in
+                // front until admin replaces its password and the file is gone.
+                if setup_code(&home).is_some() {
+                    state.code_window.store(true, Ordering::SeqCst);
+                    let _ = setup.show();
+                    let _ = setup.set_focus();
+                } else {
+                    let _ = setup.hide();
+                }
             }
             Ok(())
         }
@@ -413,6 +424,15 @@ fn main() {
                         }
                     }
                 };
+                // The password was replaced: the code is spent, so retire the window
+                // kept for it. A backend failure above showed it for recovery instead.
+                if state.code_window.load(Ordering::SeqCst)
+                    && handle.get_webview_window("harness").is_some()
+                    && backend::home().ok().and_then(|home| setup_code(&home)).is_none()
+                {
+                    state.code_window.store(false, Ordering::SeqCst);
+                    if let Some(setup) = handle.get_webview_window("setup") { let _ = setup.hide(); }
+                }
             });
             Ok(())
         });
