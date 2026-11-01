@@ -1777,10 +1777,30 @@ async fn chat_public_google_searches_in_one_turn_are_paced_by_the_floor() {
     assert!(tools.iter().all(|t| t["ok"] == true), "{reply}");
     let sent = sent.lock().unwrap().clone();
     assert_eq!(sent.len(), 2);
+    // The fixture stamps arrivals, which trail each send by connect and write
+    // jitter, so an exactly paced pair can arrive a hair under 3 s apart (2.9986 s
+    // was seen on ubuntu CI). The exact floor is asserted on the send stamp below.
+    // Unpaced, or paced by `web.pace_ms` (100 ms) instead of the floor, the
+    // arrivals land well under 1 s apart, so a 2 s bound still catches either.
     let gap = sent[1] - sent[0];
     assert!(
-        gap >= std::time::Duration::from_millis(3000),
+        gap >= std::time::Duration::from_millis(2000),
         "public Google searches {gap:?} apart; the floor is 3 s"
+    );
+    let sends: Vec<Value> = s
+        .audit_log()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|line| line["event"] == "web_search_sent")
+        .collect();
+    assert_eq!(sends.len(), 2, "{sends:?}");
+    assert!(
+        sends[0]["gap_ms"].is_null(),
+        "the first send has no earlier send: {sends:?}"
+    );
+    assert!(
+        sends[1]["gap_ms"].as_u64().unwrap() >= 3000,
+        "the send stamps must be at least the 3 s floor apart: {sends:?}"
     );
     task.abort();
 }
