@@ -81,7 +81,8 @@ pub(crate) fn passage_fence(
                 if i > 0 {
                     body.push_str("\n\n");
                 }
-                if !p.heading.is_empty() {
+                // A chunk that carries its own `# ` line already shows it; only an inherited heading is added.
+                if !p.heading.is_empty() && !p.text.lines().any(|line| line.starts_with("# ")) {
                     body.push_str("# ");
                     body.push_str(&p.heading);
                     body.push('\n');
@@ -196,6 +197,24 @@ mod tests {
         std::fs::write(&path, b"tampered-bytes-xxxx").unwrap();
         let err = fence_for_query(&store, "local", &[id], "original-text").unwrap_err();
         assert_eq!(err.code, "ATTACHMENT_NOT_FOUND");
+    }
+
+    #[test]
+    fn passage_headings_are_inherited_once_and_never_repeated() {
+        let inherited = format!("# Setup\n{}INHERIT_TOKEN tail", "padding ".repeat(350));
+        let (_dir, store, ids) = store_with(
+            "local",
+            &[
+                ("a.md", "# Runbook\nOPENING_TOKEN step one"),
+                ("b.md", "lead MIDCHUNK_TOKEN\n# Later\nbody"),
+                ("c.md", &inherited),
+            ],
+        );
+        let fence = fence_for_query(&store, "local", &ids, "OPENING_TOKEN MIDCHUNK_TOKEN INHERIT_TOKEN").unwrap();
+        assert_eq!(fence.matches("# Runbook").count(), 1, "{fence}");
+        assert_eq!(fence.matches("# Later").count(), 1, "{fence}");
+        assert!(!fence.contains("# Later\nlead"), "{fence}");
+        assert!(fence.contains("# Setup\npadding"), "{fence}");
     }
 
     #[test]
