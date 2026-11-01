@@ -827,3 +827,46 @@ fn gh_client_runs_the_fake_gh_and_enforces_the_version_floor() {
         None => std::env::remove_var("PATH"),
     }
 }
+
+/// Approve commits exactly `changed_files` by `--cacheinfo`, which consults
+/// neither `.gitignore` nor diff attributes, so the review text must show every
+/// one of them: an ignored new file by content (`status` would hide it), a
+/// `-diff` edit as text (plain `git diff` prints "Binary files differ"), and a
+/// path that cannot be read at all turns the whole diff unavailable, the
+/// prefix the console withholds `/agent approve` on.
+#[test]
+fn pending_diff_covers_ignored_new_files_and_attribute_hidden_edits() {
+    use cgagentharness::agentic::commands::render_pending_diff;
+    let dir = tempfile::tempdir().unwrap();
+    let clone = seeded_clone(dir.path());
+    let ctx = enabled_ctx(dir.path(), &[]);
+    let ws = RepoWorkspace::open_existing(&ctx, &clone).unwrap();
+    std::fs::write(clone.join(".gitignore"), "dist/\n").unwrap();
+    std::fs::write(clone.join(".gitattributes"), "target.txt -diff\n").unwrap();
+    std::fs::create_dir_all(clone.join("dist")).unwrap();
+    std::fs::write(clone.join("dist/a.js"), "built output\n").unwrap();
+    std::fs::write(clone.join("target.txt"), "changed\n").unwrap();
+    // The shapes this test exists for: status does not list the ignored file.
+    assert!(!ws.untracked_files().unwrap().iter().any(|p| p == "dist/a.js"));
+    assert_eq!(
+        ws.tracked_files(&["dist/a.js".into(), "target.txt".into()]).unwrap(),
+        ["target.txt"]
+    );
+
+    let changed = ["dist/a.js".to_string(), "target.txt".to_string()];
+    let diff = render_pending_diff(&ws, &changed);
+    assert!(!diff.starts_with('['), "{diff}");
+    assert!(diff.contains("--- new file: dist/a.js ---\nbuilt output\n"), "{diff}");
+    assert!(
+        diff.contains("+changed"),
+        "a -diff attribute must not hide the edit: {diff}"
+    );
+    assert!(!diff.contains("Binary files"), "{diff}");
+
+    // A changed path the clone cannot read is not shown as "complete".
+    let ghost = render_pending_diff(&ws, &["ghost.txt".to_string()]);
+    assert!(ghost.starts_with("[diff unavailable:"), "{ghost}");
+    // Nothing changed and nothing new: the explicit no-diff marker, also withheld.
+    std::fs::write(clone.join("target.txt"), "hello\n").unwrap();
+    assert!(render_pending_diff(&ws, &["target.txt".to_string()]).starts_with("[no diff to show"));
+}
