@@ -771,7 +771,6 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "netconnect.home_automation",
         "notifications.enabled",
         "agentic.deepagent_github.retrieval.enabled",
-        "diagnostics.logs_enabled",
         "diagnostics.model_tool",
         // #647 Phase 2: spending another search provider is opt-in; the free public
         // Google hop ships on (asserted below).
@@ -786,9 +785,14 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "web.search.fallback_to_public_google must ship true"
     );
     // Context about the harness itself ships on as literal booleans; it grants no tool.
+    // why: 2026-11-01, new homes ship /diag log reads on. model_tool stays closed above.
     let knowledge = cgagentharness::server::self_manual::SelfKnowledgeConfig::from_config(&cfg).unwrap();
     assert!(knowledge.self_knowledge && knowledge.live_state);
-    for key in ["diagnostics.self_knowledge", "diagnostics.live_state"] {
+    for key in [
+        "diagnostics.logs_enabled",
+        "diagnostics.self_knowledge",
+        "diagnostics.live_state",
+    ] {
         assert!(cfg.flag_is_true(key), "{key} ships as the literal boolean true");
     }
     assert!(

@@ -26,7 +26,7 @@ Fresh home, loopback fixture model, 2026-10-30. [Silent 60-second demo](docs/scr
 | **Cloud chat** | Optional Grok or Claude. Sends only the new message, never history, memory, skills, attachments, or web context. | Needs a provider key; refused for `/loop`. |
 | **MCP integrations** | Declared external tools and a separate read-only memory gateway with dedicated machine credentials. | Both off. |
 | **LAN observation** | Netconnect reads in-scope interfaces, routes, and neighbors from local tables. | Off with empty scope; only the budgeted `diag` probe sends packets; no scans or device control. |
-| **Self-knowledge and diagnostics** | Bundled harness manual and live status as untrusted local-chat context; `/diag` shows bounded, redacted tails of allowlisted home logs. | Manual on, never sent to cloud chat or loops; `/diag` off, admin or `portal_auditor` only. |
+| **Self-knowledge and diagnostics** | Bundled harness manual and live status as untrusted local-chat context; `/diag` shows bounded, redacted tails of allowlisted home logs. | Manual on, never sent to cloud chat or loops; `/diag` on, admin or `portal_auditor` only. |
 
 Fresh-home states; upgrades keep existing choices ([console guide](docs/CONSOLE.md#what-you-can-do)).
 
