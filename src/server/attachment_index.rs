@@ -1,6 +1,6 @@
-//! BM25 over owner-verified attachment blobs. Bytes still come from
-//! `AttachmentStore`. A failed or empty retrieve falls back to whole-file
-//! `fence_for` so a miss does not claim empty context.
+//! BM25 over owner-verified attachment and notes blobs. Callers read through
+//! their store's jail. A failed or empty retrieve falls back to whole-file
+//! rendering so a miss does not claim empty context.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -25,21 +25,34 @@ pub fn fence_for_query_budget(
     }
     if query.trim().is_empty() {
         let verified = store.verified_texts(owner, ids)?;
-        return Ok(crate::server::attachments::whole_file_fence(&verified, budget));
+        return Ok(crate::server::attachments::whole_file_fence(
+            &verified,
+            budget,
+            SourceKind::Attachment,
+        ));
     }
     let verified = store.verified_texts(owner, ids)?;
-    match passage_fence(&verified, query, budget) {
+    match passage_fence(&verified, query, budget, SourceKind::Attachment) {
         Ok(Some(fence)) => Ok(fence),
-        Ok(None) | Err(_) => Ok(crate::server::attachments::whole_file_fence(&verified, budget)),
+        Ok(None) | Err(_) => Ok(crate::server::attachments::whole_file_fence(
+            &verified,
+            budget,
+            SourceKind::Attachment,
+        )),
     }
 }
 
-fn passage_fence(verified: &[VerifiedAttachment], query: &str, budget: usize) -> Result<Option<String>> {
+pub(crate) fn passage_fence(
+    verified: &[VerifiedAttachment],
+    query: &str,
+    budget: usize,
+    source: SourceKind,
+) -> Result<Option<String>> {
     let mut docs = Vec::new();
     for item in verified {
         for (start, end, heading, text) in chunk_text(&item.text) {
             docs.push(PassageDoc {
-                source: SourceKind::Attachment,
+                source,
                 source_id: item.blob.id.clone(),
                 heading,
                 text,
@@ -75,7 +88,7 @@ fn passage_fence(verified: &[VerifiedAttachment], query: &str, budget: usize) ->
                 }
                 body.push_str(&p.text);
             }
-            sections.push(blob_section(item, &body, remaining));
+            sections.push(blob_section(item, &body, remaining, source));
             let shown = crate::common::clip_chars(&body, remaining).chars().count();
             remaining = remaining.saturating_sub(shown);
         }
@@ -84,11 +97,11 @@ fn passage_fence(verified: &[VerifiedAttachment], query: &str, budget: usize) ->
         if hit_ids.contains(item.blob.id.as_str()) {
             continue;
         }
-        sections.push(blob_section(item, item.text.as_str(), remaining));
+        sections.push(blob_section(item, item.text.as_str(), remaining, source));
         let shown = crate::common::clip_chars(&item.text, remaining).chars().count();
         remaining = remaining.saturating_sub(shown);
     }
-    Ok(Some(wrap_fence(&sections)))
+    Ok(Some(wrap_fence(&sections, source)))
 }
 
 #[cfg(test)]

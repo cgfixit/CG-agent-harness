@@ -14,9 +14,9 @@ use crate::common::errors::{HarnessError, Result};
 use crate::common::injection::Scanner;
 use crate::common::sha256_bytes_hex;
 use crate::server::attachments::{
-    atomic_write_in_jail, blob_section, neutralize_sentinels, unlink_all, wrap_fence, IncomingFile, VerifiedAttachment,
+    atomic_write_in_jail, neutralize_sentinels, unlink_all, whole_file_fence, IncomingFile, VerifiedAttachment,
 };
-use crate::server::passage_index::{chunk_text, retrieve_passages, PassageDoc, SourceKind};
+use crate::server::passage_index::SourceKind;
 
 const INDEX_NAME: &str = "index.json";
 const DEFAULT_MAX_FILES_PER_OWNER: u64 = 64;
@@ -338,11 +338,11 @@ impl NotesCorpus {
             return Ok(String::new());
         }
         if query.trim().is_empty() {
-            return Ok(notes_fence(&verified, budget));
+            return Ok(whole_file_fence(&verified, budget, SourceKind::NotesCorpus));
         }
-        match notes_passage_fence(&verified, query, budget) {
+        match super::attachment_index::passage_fence(&verified, query, budget, SourceKind::NotesCorpus) {
             Ok(Some(fence)) => Ok(fence),
-            Ok(None) | Err(_) => Ok(notes_fence(&verified, budget)),
+            Ok(None) | Err(_) => Ok(whole_file_fence(&verified, budget, SourceKind::NotesCorpus)),
         }
     }
 
@@ -362,76 +362,6 @@ impl NotesCorpus {
             .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot serialize notes index: {e}")))?;
         write_in_jail(&self.jail, Path::new(INDEX_NAME), &payload)
     }
-}
-
-fn notes_fence(verified: &[VerifiedAttachment], budget: usize) -> String {
-    let mut sections = Vec::new();
-    let mut remaining = budget;
-    for item in verified {
-        sections.push(note_section(item, item.text.as_str(), remaining));
-        let shown = crate::common::clip_chars(&item.text, remaining).chars().count();
-        remaining = remaining.saturating_sub(shown);
-    }
-    wrap_notes(&sections)
-}
-
-fn notes_passage_fence(verified: &[VerifiedAttachment], query: &str, budget: usize) -> Result<Option<String>> {
-    let mut docs = Vec::new();
-    for item in verified {
-        for (start, end, heading, text) in chunk_text(&item.text) {
-            docs.push(PassageDoc {
-                source: SourceKind::NotesCorpus,
-                source_id: item.blob.id.clone(),
-                heading,
-                text,
-                sha256: item.blob.sha256.clone(),
-                start,
-                end,
-                score: 0.0,
-            });
-        }
-    }
-    let hits = retrieve_passages(&docs, query, 16)?;
-    if hits.is_empty() {
-        return Ok(None);
-    }
-    let mut by_id: std::collections::BTreeMap<&str, Vec<&PassageDoc>> = std::collections::BTreeMap::new();
-    for hit in &hits {
-        by_id.entry(hit.source_id.as_str()).or_default().push(hit);
-    }
-    let mut sections = Vec::new();
-    let mut remaining = budget;
-    for item in verified {
-        if let Some(passages) = by_id.get(item.blob.id.as_str()) {
-            let mut body = String::new();
-            for (i, p) in passages.iter().enumerate() {
-                if i > 0 {
-                    body.push_str("\n\n");
-                }
-                body.push_str(&p.text);
-            }
-            sections.push(note_section(item, &body, remaining));
-            remaining = remaining.saturating_sub(crate::common::clip_chars(&body, remaining).chars().count());
-        }
-    }
-    Ok(Some(wrap_notes(&sections)))
-}
-
-fn note_section(item: &VerifiedAttachment, shown: &str, remaining: usize) -> String {
-    blob_section(item, shown, remaining)
-        .replace("source=attachment", "source=notes_corpus")
-        .replace("### attachment ", "### note ")
-}
-
-fn wrap_notes(sections: &[String]) -> String {
-    if sections.is_empty() {
-        return String::new();
-    }
-    let inner = wrap_fence(sections);
-    inner.replace(
-        "Operator file attachments (read-only)",
-        "Operator notes corpus (read-only)",
-    )
 }
 
 fn allowed_ext(filename: &str) -> Result<&'static str> {
@@ -542,6 +472,38 @@ mod tests {
             filename: name.into(),
             data: body.as_bytes().to_vec(),
         }
+    }
+
+    #[test]
+    fn rendered_notes_preserve_source_text_in_every_retrieval_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = NotesCorpus::open(&dir.path().join("notes"), limits()).unwrap();
+        let body = "### attachment example\nsource=attachment\nOperator file attachments (read-only)";
+        store.store("alice", &[file("a.md", body)]).unwrap();
+        for query in ["", "unmatchedneedle", "example"] {
+            let fence = store.fence_for_query("alice", query, 4000).unwrap();
+            assert!(fence.contains(body), "query={query:?}: {fence}");
+            assert!(fence.contains("source=notes_corpus"));
+            assert!(fence.contains("## Operator notes corpus (read-only)"));
+        }
+    }
+
+    #[test]
+    fn retrieved_notes_keep_headings_and_account_for_unmatched_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = NotesCorpus::open(&dir.path().join("notes"), limits()).unwrap();
+        let body = format!("# Field notes\n{}NEEDLE_RESULT expected", "padding ".repeat(350));
+        let notes = store
+            .store("alice", &[file("a.md", &body), file("b.md", "OTHER_NOTE_CONTENT")])
+            .unwrap();
+        let fence = store.fence_for_query("alice", "NEEDLE_RESULT", 4000).unwrap();
+        assert!(fence.contains("# Field notes\n"), "{fence}");
+        assert!(fence.contains("NEEDLE_RESULT"));
+        assert!(fence.contains("OTHER_NOTE_CONTENT"));
+        let bounded = store.fence_for_query("alice", "NEEDLE_RESULT", 48).unwrap();
+        assert!(bounded.contains(&format!("### note {}", notes[1].id)));
+        assert!(bounded.contains("omitted=true"));
+        assert!(!bounded.contains("OTHER_NOTE_CONTENT"));
     }
 
     #[test]
