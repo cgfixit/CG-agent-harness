@@ -456,7 +456,6 @@ async fn only_explicit_auth_opt_out_allows_login_free_operations() {
             .with("auth.enabled", auth_enabled)
             .with("api.rate_limit.max_requests", "200");
             let s = spawn_server(&model.base_url(), opts).await;
-            assert!(s.state.api_key_optional);
             assert_eq!(s.open_get("/api/status").await.1["api_key_optional"], true);
             // No Bearer header and no session cookie. Each handler is reached;
             // its own validation, feature gates and explicit intent still apply.

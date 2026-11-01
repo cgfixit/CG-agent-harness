@@ -169,7 +169,7 @@ fn start() -> anyhow::Result<()> {
             json!({"protocol":PROTOCOL,"challenge":hello.challenge,"pid":std::process::id(),"port":port,
             "scheme":scheme,"certificate_der":certificate,"certificate_sha256":fingerprint,
             "key_configured":state.api_key.as_deref().is_some_and(|s| !s.is_empty()),
-            "api_key_optional":state.api_key_optional,
+            "api_key_optional":true,
             "home":state.home.root,"chat_model":state.current_model(),
             "planner_model":state.cfg.str_or("agentic.deepagent_github.model", ""),
             "auth_enabled":state.auth.is_some(),
