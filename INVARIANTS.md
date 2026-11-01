@@ -410,7 +410,9 @@ or shim imports this agentic helper.
 
 Runs retain their origin from candidate creation and the exact approved commit.
 Push checks those pins, refuses a local branch head that differs from the approved
-commit, and uses an object-ID refspec; publication checks the remote branch.
+commit, and uses an object-ID refspec; publication checks the remote branch and
+targets the branch the clone checked out (its recorded `origin/HEAD`), never a
+fixed name.
 HTTPS credentials use identity-checked `gh`, ambient Git helpers, hooks and prompts
 disabled and `child_env` gh opt-outs forced.
 Accepted SSH origins can use the operator's SSH configuration and keys.
@@ -832,9 +834,12 @@ model tools.
 
 ## /diag log inspection never widens authority
 
-`diagnostics.logs_enabled` is literal-true, default-off and restart-only. Routes
-need it and an `admin` or `portal_auditor` account: `DIAG_DISABLED` or
-`DIAG_REFUSED`, never empty success. A request names a `logs_allowed_files` entry
+`diagnostics.logs_enabled` ships as the literal boolean true for a new home and
+is restart-only. A missing or quoted value stays off. Merging a new seed does
+not rewrite an existing home `config.yaml`. `diagnostics.self_knowledge` and
+`diagnostics.live_state` do not open this route. Routes need it and an `admin`
+or `portal_auditor` account: `DIAG_DISABLED` or `DIAG_REFUSED`, never empty
+success. A request names a `logs_allowed_files` entry
 byte for byte (bare names, distinct after case folding, checked at boot); the
 server joins that entry to `<home>/logs/`. Reads refuse linked or non-private
 leaves, stay within `logs_max_bytes` of the tail, drop partial lines, count
@@ -843,8 +848,9 @@ refuses. `/diag inject` stages the last read in memory for the next local chat
 turn of that session, fenced as untrusted; cloud chat and `/agent` refuse while
 staged (`DIAG_SURFACE_FORBIDDEN`), `/loop` never receives it, and clear, logout
 or account changes drop it. Audits hold names, counts, hashes and codes, never
-log text. Chat still exposes exactly two model tools; `diagnostics.model_tool`
-registers nothing.
+log text. Chat still exposes exactly two model tools (`web_search` and
+`web_fetch`); `diagnostics.model_tool` registers nothing and does not enable
+`/diag`. Literal true only warns.
 
 - Locked by: `server::diag_reader` and `server::slash` tests, `tests/diag_routes.rs`,
   `invariant_guard::diag_reads_only_named_files_under_home_logs` and
