@@ -454,3 +454,23 @@ async fn mcp_stdio_child_leads_its_own_session() {
     assert_eq!(pgid, pid, "drop cleanup relies on pgid == pid");
     assert_ne!(sid, own_sid());
 }
+
+#[tokio::test]
+async fn a_signal_death_names_the_signal_instead_of_a_bare_minus_one() {
+    let argv = vec!["/bin/sh".into(), "-c".into(), "printf partial >&2; kill -9 $$".into()];
+    let direct = process::run(process::RunSpec {
+        argv: &argv,
+        cwd: None,
+        env: None,
+        timeout: Duration::from_secs(5),
+        stdin: None,
+    })
+    .unwrap();
+    assert_eq!((direct.status, direct.signal), (None, Some(9)));
+    let (code, _stdout, stderr) = shim::run_argv(&argv, std::path::Path::new("/tmp"), Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert_eq!(code, -1);
+    assert!(stderr.starts_with("partial"), "{stderr}");
+    assert!(stderr.contains("agentic child terminated by signal 9"), "{stderr}");
+}

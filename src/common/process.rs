@@ -23,6 +23,8 @@ pub const MAX_CAPTURE_BYTES: usize = 4 * 1024 * 1024;
 #[derive(Debug, Clone)]
 pub struct Output {
     pub status: Option<i32>,
+    /// Unix: the signal that ended the child when `status` is `None`. Always `None` elsewhere.
+    pub signal: Option<i32>,
     pub stdout: String,
     pub stderr: String,
 }
@@ -141,6 +143,7 @@ pub fn run(spec: RunSpec<'_>) -> Result<Output, ProcessError> {
     match status {
         Some(s) => Ok(Output {
             status: s.code(),
+            signal: None,
             stdout,
             stderr,
         }),

@@ -569,7 +569,18 @@ async fn run_argv_with_env(
         Ok(Ok(Err(error))) => return Err(ShimError::Io(error.to_string())),
         Ok(Err(_)) => return Err(ShimError::Io("subprocess worker failed".into())),
     };
-    Ok((output.status.unwrap_or(-1), output.stdout, output.stderr))
+    let mut stderr = output.stderr;
+    if let (None, Some(signal)) = (output.status, output.signal) {
+        // A signal death has no exit code; name it so a bare -1 is diagnosable.
+        stderr.push_str(&signal_note(signal));
+    }
+    Ok((output.status.unwrap_or(-1), output.stdout, stderr))
+}
+
+/// Harness-authored suffix for a child ended by a signal. Fixed text plus the number only.
+#[cfg(unix)]
+fn signal_note(signal: i32) -> String {
+    format!("\n[cgagentharness] agentic child terminated by signal {signal}\n")
 }
 
 #[cfg(not(unix))]

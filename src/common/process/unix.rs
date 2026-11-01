@@ -273,6 +273,7 @@ pub(super) fn run(spec: RunSpec<'_>, cancelled: &AtomicBool) -> Result<Output, P
             owner.reaped = true;
             return Ok(Output {
                 status: exit.code(),
+                signal: std::os::unix::process::ExitStatusExt::signal(&exit),
                 stdout: String::from_utf8_lossy(&out).into_owned(),
                 stderr: String::from_utf8_lossy(&err).into_owned(),
             });
