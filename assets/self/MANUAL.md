@@ -23,7 +23,7 @@ This manual is static text bundled with the build and indexed at startup. It is 
 
 ## readme: capability overview (part 3)
 
-- Self-knowledge and diagnostics: Bundled harness manual and live status as untrusted local-chat context; `/diag` shows bounded, redacted tails of allowlisted home logs. Starts: Manual on, never sent to cloud chat or loops; `/diag` off, admin or `portal_auditor` only.
+- Self-knowledge and diagnostics: Bundled harness manual and live status as untrusted local-chat context; `/diag` shows bounded, redacted tails of allowlisted home logs. Starts: Manual on, never sent to cloud chat or loops; `/diag` on, admin or `portal_auditor` only.
 
 ## agents: process and home map
 
@@ -135,7 +135,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 ## invariant: /diag log inspection never widens authority
 
-`diagnostics.logs_enabled` is literal-true, default-off and restart-only. Routes need it and an `admin` or `portal_auditor` account: `DIAG_DISABLED` or `DIAG_REFUSED`, never empty success. A request names a `logs_allowed_files` entry byte for byte (bare names, distinct after case folding, checked at boot); the server joins that entry to `<home>/logs/`. Reads refuse linked or non-private leaves, stay within `logs_max_bytes` of the tail, drop partial lines, count malformed ones, redact, then refuse the whole result…
+`diagnostics.logs_enabled` ships as the literal boolean true for a new home and is restart-only. A missing or quoted value stays off. Merging a new seed does not rewrite an existing home `config.yaml`. `diagnostics.self_knowledge` and `diagnostics.live_state` do not open this route. Routes need it and an `admin` or `portal_auditor` account: `DIAG_DISABLED` or `DIAG_REFUSED`, never empty success. A request names a `logs_allowed_files` entry byte for byte (bare names, distinct after case folding, checked at boot);…
 
 ## invariant: Netconnect is fail-closed and LAN-scoped
 
@@ -561,7 +561,7 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
 - unslop
   - unslop.enabled: opt-in coding-output inspection and rewrite pass
   - unslop.metrics_path
-- diagnostics: Read-only /diag log inspection. Off until logs_enabled is the literal boolean true (quoted "true" is off), and then only for admin and portal_auditor accounts. Reads only the exact names below from…
+- diagnostics: Read-only /diag log inspection. New homes ship logs_enabled as literal true (quoted "true" is off); only admin and portal_auditor accounts may read. An existing home config.yaml is not rewritten.…
   - diagnostics.logs_enabled
   - diagnostics.logs_max_lines: 1–1000 per read
   - diagnostics.logs_max_bytes: 4096–262144 per read
