@@ -1481,9 +1481,16 @@ mod tests {
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let dir = tempfile::tempdir().unwrap();
-        crate::common::home::Home::at(dir.path().to_path_buf())
-            .ensure_layout()
-            .unwrap();
+        let home = crate::common::home::Home::at(dir.path().to_path_buf());
+        home.ensure_layout().unwrap();
+        // A fresh home seeds the Google search rule. This test asserts that a keyed
+        // listing grants nothing and that a keyless search refuses without reaching
+        // google.com, so it starts from the explicit empty allowlist.
+        crate::common::atomic::write_json_atomic(
+            &home.tools_dir().join("web_allowlist.json"),
+            &json!({"version": 1, "rules": []}),
+        )
+        .unwrap();
         let cfg = crate::common::config::AppConfig::from_str("{}", std::path::Path::new("config.yaml")).unwrap();
         let mut web = WebTool::new(&dir.path().join("tools"), &cfg).unwrap();
         web.search_key_from_file = true;
