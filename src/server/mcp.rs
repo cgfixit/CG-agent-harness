@@ -67,16 +67,8 @@ impl McpRuntime {
             Some(value) if value.is_mapping() => {}
             Some(_) => return Err(HarnessError::config("mcp must be a YAML mapping")),
         }
-        let timeout_sec = cfg.u64_or("mcp.timeout_sec", 15);
-        if !(1..=60).contains(&timeout_sec) {
-            return Err(HarnessError::config("mcp.timeout_sec must be an integer from 1 to 60"));
-        }
-        let max_result_bytes = cfg.u64_or("mcp.max_result_bytes", 65_536);
-        if !(1024..=262_144).contains(&max_result_bytes) {
-            return Err(HarnessError::config(
-                "mcp.max_result_bytes must be an integer from 1024 to 262144",
-            ));
-        }
+        let timeout_sec = cfg.u64_in("mcp.timeout_sec", 15, 1..=60)?;
+        let max_result_bytes = cfg.u64_in("mcp.max_result_bytes", 65_536, 1024..=262_144)?;
         Ok(Self {
             enabled: cfg.flag_is_true("mcp.enabled"),
             sse_allow_loopback: cfg.flag_is_true("mcp.sse_allow_loopback"),
@@ -709,6 +701,38 @@ mod config_tests {
 
     fn endpoint_event(data: &str) -> String {
         format!("event: endpoint\ndata: {data}\n\n")
+    }
+
+    #[test]
+    fn rejects_malformed_limits_without_echoing_values() {
+        for key in ["timeout_sec", "max_result_bytes"] {
+            for value in [
+                "'private-canary'",
+                "'15'",
+                "2.5",
+                "-1",
+                "null",
+                "true",
+                "[]",
+                "0",
+                "262145",
+            ] {
+                let cfg = AppConfig::from_str(&format!("mcp: {{{key}: {value}}}"), Path::new("config.yaml")).unwrap();
+                let error = McpRuntime::from_config(&cfg).unwrap_err();
+                assert_eq!(error.code, "CONFIG_ERROR");
+                assert!(error.message.contains(key));
+                assert!(!error.message.contains("private-canary"));
+            }
+        }
+        for text in [
+            "{}",
+            "mcp: {}",
+            "mcp: {timeout_sec: 1, max_result_bytes: 1024}",
+            "mcp: {timeout_sec: 60, max_result_bytes: 262144}",
+        ] {
+            let cfg = AppConfig::from_str(text, Path::new("config.yaml")).unwrap();
+            assert!(McpRuntime::from_config(&cfg).is_ok());
+        }
     }
 
     #[test]

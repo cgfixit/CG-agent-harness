@@ -11,15 +11,13 @@ use std::path::PathBuf;
 
 use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
-use crate::llm::cloud_profile::CloudProfile;
+use crate::llm::cloud_profile::{CloudProfile, DEFAULT_TIMEOUT_SEC};
 use crate::llm::openai_chat::{ChatResult, LLM_ERROR_CODE};
 use crate::llm::spend::{self, UsageTokens};
 
 const GROK_ENDPOINT: &str = "https://api.x.ai/v1/responses";
 const CLAUDE_ENDPOINT: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
-const DEFAULT_TIMEOUT_SEC: f64 = 90.0;
-const DEFAULT_MAX_TOKENS: u64 = 4096;
 #[cfg(feature = "test-support")]
 const TEST_CLOUD_KEY: &str = "cgah-test-synthetic-cloud-key";
 /// Body bound for a paid cloud-provider reply; every cloud client uses it.
@@ -177,32 +175,12 @@ fn test_fixture_configs(
 
 impl CloudChat {
     pub fn from_config(cfg: &AppConfig) -> Result<Self> {
-        let timeout_sec = cfg.f64_or("models.cloud_chat.timeout_sec", DEFAULT_TIMEOUT_SEC);
-        if !timeout_sec.is_finite() || !(1.0..=720.0).contains(&timeout_sec) {
-            return Err(HarnessError::config(
-                "models.cloud_chat.timeout_sec must be from 1 to 720",
-            ));
-        }
-        let max_tokens = cfg.u64_or("models.cloud_chat.max_tokens", DEFAULT_MAX_TOKENS);
-        if !(1..=32768).contains(&max_tokens) {
-            return Err(HarnessError::config(
-                "models.cloud_chat.max_tokens must be from 1 to 32768",
-            ));
-        }
+        let timeout_sec = cfg.f64_in("models.cloud_chat.timeout_sec", DEFAULT_TIMEOUT_SEC, 1.0..=720.0)?;
         let max_usd_per_call = match cfg.get("models.cloud_chat.max_usd_per_call") {
             None | Some(serde_yaml_ng::Value::Null) => None,
             Some(value) => Some(value.as_f64().filter(|n| n.is_finite() && *n > 0.0).ok_or_else(|| {
                 HarnessError::config("models.cloud_chat.max_usd_per_call must be null or a finite positive number")
             })?),
-        };
-        match cfg.get("models.cloud_chat.count_timeout_sec") {
-            None => 2.0,
-            Some(value) => value
-                .as_f64()
-                .filter(|n| n.is_finite() && (0.1..=10.0).contains(n))
-                .ok_or_else(|| {
-                    HarnessError::config("models.cloud_chat.count_timeout_sec must be from 0.1 to 10 seconds")
-                })?,
         };
         let grok = provider_config(cfg, Provider::Grok, "grok-4.6")?;
         let claude = provider_config(cfg, Provider::Claude, "claude-sonnet-5")?;
@@ -861,6 +839,66 @@ mod tests {
         assert_eq!(result.unwrap_err().code, "CLOUD_CHAT_BUDGET");
         assert_eq!(hits.load(Ordering::SeqCst), 0);
         assert!(!ledger.exists());
+    }
+
+    #[test]
+    fn rejects_malformed_limits_without_echoing_values() {
+        for (key, values) in [
+            (
+                "max_tokens",
+                vec![
+                    "'private-canary'",
+                    "'16'",
+                    "2.5",
+                    "-1",
+                    "null",
+                    "true",
+                    "[]",
+                    "0",
+                    "32769",
+                ],
+            ),
+            (
+                "timeout_sec",
+                vec![
+                    "'private-canary'",
+                    "'2'",
+                    "null",
+                    "true",
+                    "[]",
+                    ".nan",
+                    ".inf",
+                    "0",
+                    "721",
+                ],
+            ),
+            (
+                "count_timeout_sec",
+                vec![
+                    "'private-canary'",
+                    "'2'",
+                    "null",
+                    "true",
+                    "[]",
+                    ".nan",
+                    ".inf",
+                    "0",
+                    "11",
+                ],
+            ),
+        ] {
+            for value in values {
+                let cfg = AppConfig::from_str(
+                    &format!("models: {{cloud_chat: {{{key}: {value}}}}}"),
+                    std::path::Path::new("config.yaml"),
+                )
+                .unwrap();
+                let error = CloudChat::from_config(&cfg).unwrap_err();
+                assert_eq!(error.code, "CONFIG_ERROR");
+                assert!(error.message.contains(key));
+                assert!(!error.message.contains("private-canary"));
+            }
+        }
     }
 
     #[test]

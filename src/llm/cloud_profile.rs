@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 
+pub(super) const DEFAULT_TIMEOUT_SEC: f64 = 90.0;
+const DEFAULT_MAX_TOKENS: u64 = 4096;
+const DEFAULT_COUNT_TIMEOUT_SEC: f64 = 2.0;
+
 #[derive(Clone, Debug, Serialize)]
 pub struct CloudProfile {
     pub context_window: Option<u64>,
@@ -59,9 +63,13 @@ impl CloudProfile {
         ] {
             sources.insert(name, if present { "profile" } else { "default" });
         }
-        let shared_output = cfg.u64_or("models.cloud_chat.max_tokens", 4096);
-        let shared_timeout = cfg.f64_or("models.cloud_chat.timeout_sec", 90.0);
-        let shared_count = cfg.f64_or("models.cloud_chat.count_timeout_sec", 2.0);
+        let shared_output = cfg.u64_in("models.cloud_chat.max_tokens", DEFAULT_MAX_TOKENS, 1..=32768)?;
+        let shared_timeout = cfg.f64_in("models.cloud_chat.timeout_sec", DEFAULT_TIMEOUT_SEC, 1.0..=720.0)?;
+        let shared_count = cfg.f64_in(
+            "models.cloud_chat.count_timeout_sec",
+            DEFAULT_COUNT_TIMEOUT_SEC,
+            0.1..=10.0,
+        )?;
         let output = p.max_output_tokens.map(|n| n.clamp(1, 32768));
         let timeout = p.timeout_sec.map(|n| n.clamp(1.0, 720.0));
         let count = p.count_timeout_sec.map(|n| n.clamp(0.1, 10.0));
@@ -87,13 +95,7 @@ impl CloudProfile {
                 field,
                 if uses_profile {
                     "profile"
-                } else if cfg.get(&format!("models.cloud_chat.{shared}")).is_some_and(|v| {
-                    if field == "max_output_tokens" {
-                        v.as_u64().is_some()
-                    } else {
-                        v.as_f64().is_some()
-                    }
-                }) {
+                } else if cfg.get(&format!("models.cloud_chat.{shared}")).is_some() {
                     "config"
                 } else {
                     "default"
@@ -138,8 +140,7 @@ mod tests {
         let fallback = CloudProfile::from_config(&cfg("{}"), "grok").unwrap();
         assert_eq!(fallback.max_output_tokens, 4096);
         assert_eq!(fallback.sources["max_output_tokens"], "default");
-        let fallback = CloudProfile::from_config(&cfg("models: {cloud_chat: {max_tokens: '4096'}}"), "grok").unwrap();
-        assert_eq!(fallback.sources["max_output_tokens"], "default");
+        assert!(CloudProfile::from_config(&cfg("models: {cloud_chat: {max_tokens: '4096'}}"), "grok").is_err());
         let p = CloudProfile::from_config(&cfg("models: {cloud_chat: {max_tokens: 100, timeout_sec: 90, grok: {profile: {max_output_tokens: 99999, timeout_sec: 0.2, count_timeout_sec: 100, temperature: 0.4, rpm: 2}}}}"), "grok").unwrap();
         assert_eq!(p.max_output_tokens, 100);
         assert_eq!(p.timeout_sec, 1.0);
