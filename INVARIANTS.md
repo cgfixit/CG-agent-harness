@@ -613,8 +613,10 @@ user message are preserved, even at `MAX_MESSAGES`. The audits `chat_session_com
 - Linux `linux-netns` is network isolation only. Treat `linux-bwrap` as the
   filesystem-confined backend; do not claim Seatbelt parity when the fallback
   is selected.
-- `security.api_key_optional` on a host fronted by a header-stripping proxy is
-  indistinguishable from no proxy: explicitly set it false there.
+- The direct-loopback check sees only the socket peer and forwarding headers:
+  a same-host proxy that strips them is indistinguishable from local use, so
+  keep `auth.enabled: true` there. `security.api_key_optional` is a
+  compatibility key no code reads; setting it `false` changes nothing.
 
 Unix subprocess capture is deadline- and byte-bounded; descendant cleanup is
 best-effort, not containment ([limits and tests](docs/PROCESS_LIFECYCLE.md)).
