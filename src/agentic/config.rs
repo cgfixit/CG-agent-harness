@@ -283,7 +283,9 @@ fn bool_field(cfg: &AppConfig, key: &str, default: bool) -> Result<bool> {
 /// reads (pr_view plus pr_diff, the largest fetched shape), the clone, each
 /// gh read retrying with backoff, then two validated git calls (the origin
 /// check and the acceptance-manifest HEAD). Saturating: an extreme operator
-/// value must refuse, not wrap.
+/// value must refuse, not wrap. Constant time in `gh_retries`: once the clone
+/// attempts alone reach the setup budget, that lower bound is returned without
+/// summing per-retry backoff, so a `u32::MAX` retry count cannot stall a load.
 pub fn setup_bounds_sec(gh_timeout_sec: u64, gh_retries: u32) -> u64 {
     use super::gh_client::{
         retry_backoff_sec, DEFAULT_CLONE_TIMEOUT_SEC, VERSION_CHECK_ATTEMPTS, VERSION_CHECK_RETRY_DELAY_SEC,
@@ -291,6 +293,10 @@ pub fn setup_bounds_sec(gh_timeout_sec: u64, gh_retries: u32) -> u64 {
     };
     use super::workspace::{DEFAULT_GIT_WRITE_TIMEOUT_SEC, GIT_VALIDATE_TIMEOUT_SEC};
     let attempts = u64::from(gh_retries) + 1;
+    let clone_floor = attempts.saturating_mul(DEFAULT_CLONE_TIMEOUT_SEC);
+    if clone_floor >= REAL_REPO_RUN_SETUP_BUDGET_SEC {
+        return clone_floor;
+    }
     let backoff = (1..=gh_retries).map(retry_backoff_sec).sum::<f64>().ceil() as u64;
     let gh_read = attempts.saturating_mul(gh_timeout_sec).saturating_add(backoff);
     let clone = attempts
@@ -364,7 +370,7 @@ pub fn load_agentic_config(cfg: &AppConfig, home_root: &Path) -> Result<AgenticC
     if setup_bounds >= REAL_REPO_RUN_SETUP_BUDGET_SEC {
         return Err(cfg_err(format!(
             "agentic.gh_timeout_sec {gh_timeout_sec} with agentic.gh_retries {gh_retries} bounds the \
-             pre-planner gh and git work at {setup_bounds}s, not below the console's fixed \
+             pre-planner gh and git work at {setup_bounds}s or more, not below the console's fixed \
              {REAL_REPO_RUN_SETUP_BUDGET_SEC}s setup budget; lower one of them"
         )));
     }

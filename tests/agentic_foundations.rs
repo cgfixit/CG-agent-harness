@@ -94,6 +94,9 @@ fn agentic_config_validation() {
         // (1,019 s) would end a slow gh as a shim kill, so the child refuses them.
         ("agentic.gh_retries", "3", "setup budget"),
         ("agentic.gh_timeout_sec", "60", "setup budget"),
+        // The largest accepted count is refused in constant time, not by
+        // summing four billion backoff terms on every config load.
+        ("agentic.gh_retries", "4294967295", "setup budget"),
         ("agentic.writes_enabled", "\"true\"", "boolean"),
         (
             "agentic.deepagent_github.allow_cloud_providers",
