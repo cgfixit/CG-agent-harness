@@ -147,6 +147,7 @@ pub fn pull_payload(model: &str) -> Value {
 pub(crate) fn http_client(timeout: Duration) -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .no_proxy()
+        .dns_resolver(std::sync::Arc::new(super::backend::LoopbackOnlyDns))
         .redirect(reqwest::redirect::Policy::none())
         .timeout(timeout)
         .build()
