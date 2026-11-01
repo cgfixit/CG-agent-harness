@@ -83,15 +83,20 @@ fn argv_builder_uses_single_element_form_for_dash_leading_values() {
         shim::timeout_for(&c, &req).as_secs(),
         shim::real_repo_run_timeout_sec(150, Some(2), 1)
     );
-    // Push and publish outlast the child's own bounds. Publish runs three git
-    // calls (origin URL 30 s, rev-parse 30 s, ls-remote DEFAULT_PUSH_TIMEOUT_SEC),
-    // each preceded by `git::validate`'s 30 s config read, then the gh version
-    // check (2 x 10 s + 1 s) and gh pr create. Killed earlier, the child never
-    // records an INDETERMINATE publication.
-    let child_bounds = 3 * 30
-        + 2 * 30
+    // Push and publish outlast the child's own bounds. Publish runs four git
+    // calls (origin URL 30 s, rev-parse 30 s, ls-remote DEFAULT_PUSH_TIMEOUT_SEC,
+    // the clone's recorded default branch 30 s), each preceded by
+    // `git::validate`'s 30 s config read, then the gh version check (its
+    // attempts, timeout and delay) and gh pr create. Killed earlier, the child
+    // never records an INDETERMINATE publication.
+    let version_check = u64::from(cgagentharness::agentic::gh_client::VERSION_CHECK_ATTEMPTS)
+        * cgagentharness::agentic::gh_client::VERSION_CHECK_TIMEOUT_SEC
+        + u64::from(cgagentharness::agentic::gh_client::VERSION_CHECK_ATTEMPTS - 1)
+            * cgagentharness::agentic::gh_client::VERSION_CHECK_RETRY_DELAY_SEC;
+    let child_bounds = 4 * 30
+        + 3 * 30
         + cgagentharness::agentic::workspace::DEFAULT_PUSH_TIMEOUT_SEC
-        + 21
+        + version_check
         + cgagentharness::agentic::writer::DEFAULT_WRITE_TIMEOUT_SEC;
     for action in ["real-repo-run-push", "real-repo-run-publish"] {
         let budget = shim::timeout_for(&c, &OpsRequest::new(action)).as_secs();
