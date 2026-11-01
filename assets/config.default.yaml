@@ -450,9 +450,10 @@ unslop:
   enabled: false # opt-in coding-output inspection and rewrite pass
   metrics_path: "logs/unslop.jsonl"
 
-# Read-only /diag log inspection. Off until logs_enabled is the literal boolean
-# true (quoted "true" is off), and then only for admin and portal_auditor
-# accounts. Reads only the exact names below from <home>/logs/: no globs, paths
+# Read-only /diag log inspection. New homes ship logs_enabled as literal true
+# (quoted "true" is off); only admin and portal_auditor accounts may read.
+# An existing home config.yaml is not rewritten. Reads only the exact names
+# below from <home>/logs/: no globs, paths
 # or folding, no symlinks, at most logs_max_bytes from the tail. Output is
 # redacted, then refused whole on an injection-scanner hit. /diag inject stages
 # one excerpt for the next local chat turn of that session only; cloud chat and
@@ -470,7 +471,7 @@ unslop:
 # missing key means on, literal true/false is used as written, and any other
 # value fails boot. Ranges are hard. Restart-only.
 diagnostics:
-  logs_enabled: false
+  logs_enabled: true
   logs_max_lines: 500 # 1–1000 per read
   logs_max_bytes: 69000 # 4096–262144 per read
   logs_inject_max_chars: 18000 # 512–24000 staged into one prompt

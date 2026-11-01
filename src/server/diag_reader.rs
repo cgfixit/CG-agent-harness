@@ -593,12 +593,12 @@ mod tests {
     }
 
     #[test]
-    fn shipped_section_is_closed_and_valid() {
+    fn shipped_section_enables_logs_and_stays_in_range() {
         let shipped = DiagConfig::from_config(
             &AppConfig::from_str(AppConfig::embedded_default(), Path::new("config.yaml")).unwrap(),
         )
         .unwrap();
-        assert!(!shipped.logs_enabled);
+        assert!(shipped.logs_enabled);
         assert_eq!(
             (shipped.max_lines, shipped.max_bytes, shipped.inject_max_chars),
             (500, 69_000, 18_000)
