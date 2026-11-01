@@ -573,6 +573,12 @@ fn duplicated_constants_still_agree() {
         cgagentharness::shim::REAL_REPO_RUN_CHECK_SEC,
         cgagentharness::agentic::executor::DEFAULT_CHECK_TIMEOUT_SEC
     );
+    // The child refuses gh timeout/retry settings whose pre-planner bounds
+    // reach the shim's fixed setup budget; it must refuse against the same number.
+    assert_eq!(
+        cgagentharness::shim::REAL_REPO_RUN_OVERHEAD_SEC,
+        cgagentharness::agentic::config::REAL_REPO_RUN_SETUP_BUDGET_SEC
+    );
     // The server derives --planner-timeout-sec up to its ceiling; the child
     // must accept every value the server can send.
     assert_eq!(
