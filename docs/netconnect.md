@@ -125,7 +125,7 @@ near-misses only suggest and never read tables.
 
 Suggestions are not execution. The console shows `did you mean ...?` and inserts a button you can edit and send. The library evaluator sets `executed` false and exits 2 with code `NETCONNECT_SUGGEST`.
 
-Exact lines do parse as dispatch:
+The library evaluator is a test-only executable specification (`test-support`). Exact lines parse as dispatch:
 
 | Line | Library evaluator | Console (`runSlash`) |
 |---|---|---|
@@ -159,7 +159,7 @@ When `enabled` is false the handler returns HTTP 200 with empty neighbor, interf
 | `enabled` literal `true`, empty or non-empty scope | Two passive rows: `netconnect_status` and `netconnect_devices`. |
 | `diagnostics` with `tier_may_run` true | One additional row: `netconnect_diag` (`path: /api/netconnect/diag`). Other tiers add nothing. |
 
-Each passive row is `method: GET`, `path: /api/netconnect`, `kind: netconnect`, `wired: true`, `registered: true`, `invoked: false`, `ready: null`, and `unavailable_reason: read-only; network names are untrusted data`. `netconnect_status` describes gates and scope and sends no packets. `netconnect_devices` describes in-scope neighbors and says network names are untrusted data, not arguments. Calling either tool while `enabled` is false returns `NETCONNECT_DISABLED`, not an empty success. An unknown netconnect tool name returns `NETCONNECT_REFUSED`.
+Each passive row is `method: GET`, `path: /api/netconnect`, `kind: netconnect`, `wired: true`, `registered: true`, `invoked: false`, `ready: null`, and `unavailable_reason: read-only; network names are untrusted data`. `netconnect_status` describes gates and scope and sends no packets. `netconnect_devices` describes in-scope neighbors and says network names are untrusted data, not arguments. In the test-only evaluator, calling either tool while `enabled` is false returns `NETCONNECT_DISABLED`, not an empty success. An unknown netconnect tool name returns `NETCONNECT_REFUSED`.
 
 ## Security and trust boundaries
 

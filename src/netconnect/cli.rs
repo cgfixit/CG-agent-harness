@@ -146,7 +146,7 @@ fn error_outcome(err: &HarnessError, warnings: Vec<String>) -> Outcome {
     }
 }
 
-fn status_body(cfg: &NetconnectConfig) -> Value {
+pub(super) fn status_body(cfg: &NetconnectConfig) -> Value {
     json!({
         "ok": true,
         "enabled": true,
