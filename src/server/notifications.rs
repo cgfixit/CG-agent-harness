@@ -797,15 +797,7 @@ async fn send_pinned(
     {
         return Err("destination_refused");
     }
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .http1_only()
-        .pool_max_idle_per_host(0)
-        .retry(reqwest::retry::never())
-        .redirect(reqwest::redirect::Policy::none())
-        .dns_resolver(Arc::new(super::web_search::RefuseDns))
-        .resolve_to_addrs(host, addresses)
-        .timeout(timeout)
+    let client = super::web_search::pinned_client_builder(host, addresses, timeout)
         .build()
         .map_err(|_| "client_failed")?;
     let mut request = client

@@ -160,11 +160,25 @@ impl Page {
 }
 
 /// A fresh client has exactly one DNS override and no fallback resolver.
-pub(super) struct RefuseDns;
+struct RefuseDns;
 impl reqwest::dns::Resolve for RefuseDns {
     fn resolve(&self, _: reqwest::dns::Name) -> reqwest::dns::Resolving {
         Box::pin(async { Err(std::io::Error::other("unvalidated DNS refused").into()) })
     }
+}
+
+/// Callers validate the complete address set against their own egress policy first.
+pub(super) fn pinned_client_builder(host: &str, addresses: &[SocketAddr], timeout: Duration) -> reqwest::ClientBuilder {
+    // HTTP/1's finite Hyper header-count/buffer caps precede application header checks.
+    reqwest::Client::builder()
+        .no_proxy()
+        .http1_only()
+        .pool_max_idle_per_host(0)
+        .retry(reqwest::retry::never())
+        .redirect(reqwest::redirect::Policy::none())
+        .dns_resolver(Arc::new(RefuseDns))
+        .resolve_to_addrs(host, addresses)
+        .timeout(timeout)
 }
 
 pub fn validate_addresses(addresses: &[SocketAddr]) -> Result<()> {
@@ -805,17 +819,7 @@ impl WebTool {
                 addresses
             }
         };
-        // New client, no pooling/retries/proxies/redirects, only validated DNS.
-        // HTTP/1's finite Hyper header-count/buffer caps apply before our 16KiB header check.
-        reqwest::Client::builder()
-            .no_proxy()
-            .http1_only()
-            .pool_max_idle_per_host(0)
-            .retry(reqwest::retry::never())
-            .redirect(reqwest::redirect::Policy::none())
-            .dns_resolver(Arc::new(RefuseDns))
-            .resolve_to_addrs(host, &addresses)
-            .timeout(Duration::from_secs(self.limits.request_seconds))
+        pinned_client_builder(host, &addresses, Duration::from_secs(self.limits.request_seconds))
             .user_agent("CGagentHarness-web/1.0")
             .build()
             .map_err(|_| error("WEB_FETCH_FAILED", "HTTP setup failed"))
@@ -826,15 +830,7 @@ impl WebTool {
     /// this; fetch, discovery, research and webhooks keep `pinned_client`.
     pub(super) fn searxng_client(&self, endpoint: &url::Url, socket: SocketAddr) -> Result<reqwest::Client> {
         let host = endpoint.host_str().unwrap_or_default().trim_matches(['[', ']']);
-        reqwest::Client::builder()
-            .no_proxy()
-            .http1_only()
-            .pool_max_idle_per_host(0)
-            .retry(reqwest::retry::never())
-            .redirect(reqwest::redirect::Policy::none())
-            .dns_resolver(Arc::new(RefuseDns))
-            .resolve_to_addrs(host, &[socket])
-            .timeout(Duration::from_secs(self.limits.request_seconds))
+        pinned_client_builder(host, &[socket], Duration::from_secs(self.limits.request_seconds))
             .user_agent("CGagentHarness-web/1.0")
             .build()
             .map_err(|_| error("WEB_FETCH_FAILED", "HTTP setup failed"))
