@@ -669,6 +669,64 @@ fn deny_lists_ban_the_same_telemetry_crates() {
     );
 }
 
+/// `desktop-check.yml` compiles the desktop crate on a pull request only when
+/// its classify regex matches a changed path. The crate also reads files outside
+/// `desktop/` at compile time (`#[path]` includes and `include_bytes!` /
+/// `include_str!` embeds), so each such target must be in the regex: a change
+/// to one that is not would skip the compile job, merge green and break the
+/// next `main` push, which is the failure the workflow header describes.
+#[test]
+fn desktop_check_classifies_every_out_of_tree_compile_input() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let workflow = std::fs::read_to_string(repo.join(".github/workflows/desktop-check.yml")).unwrap();
+    let classifier = regex::Regex::new(r"grep -Eq '([^']+)'").unwrap();
+    let pattern = classifier
+        .captures(&workflow)
+        .expect("desktop-check.yml classify step greps changed paths")
+        .get(1)
+        .unwrap()
+        .as_str()
+        .to_string();
+    let matcher = regex::Regex::new(&pattern).unwrap();
+    let include =
+        regex::Regex::new(r#"(?:include_bytes!|include_str!)\("([^"]+)"\)|#\[path\s*=\s*"([^"]+)"\]"#).unwrap();
+    // `read_tree_raw` hands back absolute paths; build.rs sits beside src/.
+    let mut sources = read_tree_raw(&repo.join("desktop").join("src"));
+    let build_rs = repo.join("desktop").join("build.rs");
+    sources.push((
+        build_rs.display().to_string(),
+        std::fs::read_to_string(&build_rs).unwrap_or_default(),
+    ));
+    let mut inputs = Vec::new();
+    for (path, text) in &sources {
+        let dir = Path::new(path).parent().unwrap();
+        for cap in include.captures_iter(text) {
+            let target = cap.get(1).or_else(|| cap.get(2)).unwrap().as_str();
+            let resolved = dunce::canonicalize(dir.join(target))
+                .unwrap_or_else(|e| panic!("{path} includes {target}, which does not exist: {e}"));
+            let relative = resolved
+                .strip_prefix(dunce::canonicalize(repo).unwrap())
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            if !relative.starts_with("desktop/") {
+                inputs.push((path.clone(), target.to_string(), relative));
+            }
+        }
+    }
+    assert!(
+        inputs.iter().any(|(_, _, rel)| rel == "src/common/local_tls.rs"),
+        "the `#[path]` include of local_tls.rs is the case the workflow header names; the scan must find it"
+    );
+    for (path, target, relative) in &inputs {
+        assert!(
+            matcher.is_match(relative),
+            "{path} compiles {target} ({relative}) but the desktop-check.yml classify regex `{pattern}` \
+             does not match it, so a PR changing only that file skips the desktop compile job"
+        );
+    }
+}
+
 /// rust-toolchain.toml overrides every CI toolchain input, so its channel is
 /// the only compiler CI proves; it must stay the declared MSRV.
 #[test]
