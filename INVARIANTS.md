@@ -391,7 +391,11 @@ CI confinement evidence and remaining process/resource limitations.
 ## Approval is bound to what was reviewed
 
 `pending_decision` records carry an acceptance digest (`run_id + base HEAD +
-path -> sha256 + file mode`). Approval rechecks live files and a disposable copy,
+path -> sha256 + file mode`). `real-repo-run-status` renders every path approve
+would commit: tracked edits as a `--text` diff (a `-diff` or `binary` attribute
+cannot collapse them), every other changed path by full content whatever
+`.gitignore` says, and the diff as unavailable when a path cannot be read; the
+console withholds approve on that text. Approval rechecks live files and a disposable copy,
 then builds an exact tree in a private Git index. A pre-staged change or existing
 index lock refuses approval. The ordinary index lock remains held until the new
 index is installed. No unrelated staged content is incorporated or erased.
@@ -404,7 +408,9 @@ or shim imports this agentic helper.
 
 Runs retain their origin from candidate creation and the exact approved commit.
 Push checks those pins, refuses a local branch head that differs from the approved
-commit, and uses an object-ID refspec; publication checks the remote branch.
+commit, and uses an object-ID refspec; publication checks the remote branch and
+targets the branch the clone checked out (its recorded `origin/HEAD`), never a
+fixed name.
 HTTPS credentials use identity-checked `gh`, ambient Git helpers, hooks and prompts
 disabled and `child_env` gh opt-outs forced.
 Accepted SSH origins can use the operator's SSH configuration and keys.
@@ -415,7 +421,8 @@ See `docs/CODING_PIPELINE.md#git-approval-and-publication` for compatibility cha
 
 - Locked by: `tests/git_approval.rs`, `tests/write_policy.rs`,
   `tests/real_repo_loop.rs::loop_iterates_on_feedback_then_accepts_and_finalizes`,
-  `tests/agentic_foundations.rs::manifest_digest_binds_files_and_head`.
+  `tests/agentic_foundations.rs::manifest_digest_binds_files_and_head`,
+  `tests/agentic_foundations.rs::pending_diff_covers_ignored_new_files_and_attribute_hidden_edits`.
 
 ## Secrets never reach a response or a log line
 
