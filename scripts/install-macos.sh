@@ -126,6 +126,20 @@ gh_app_visible() {
   local p v
   p=$(gh_app_first) && v=$(gh_version "$p") && [ -n "$v" ] && ver_ge "$v" "$gh_min" && printf '%s\n' "$p"
 }
+# A cargo on PATH that is not rustup's proxy (Homebrew's rust formula, a
+# standalone install), so it ignores rust-toolchain.toml. A cargo in the same
+# directory as the rustup on PATH is that rustup's proxy: ~/.cargo/bin, a custom
+# CARGO_HOME, or Homebrew's keg-only /opt/homebrew/opt/rustup/bin, whose cargo
+# and rustup are separate env wrapper scripts. Prints the foreign cargo's path.
+foreign_cargo() {
+  local c r
+  c=$(command -v cargo 2>/dev/null) || return 1
+  [ "$c" != "$cargo_bin/cargo" ] || return 1
+  if r=$(command -v rustup 2>/dev/null); then
+    { [ "${c%/*}" != "${r%/*}" ] && ! [ "$c" -ef "$r" ]; } || return 1
+  fi
+  printf '%s\n' "$c"
+}
 # rustup fails `run` for a component the toolchain lacks.
 lints_ok() {
   rustup run "$toolchain" cargo-clippy --version >/dev/null 2>&1 && rustup run "$toolchain" rustfmt --version >/dev/null 2>&1
@@ -277,8 +291,7 @@ inventory() {
   else
     say 'rustup: MISSING'; missing=1
   fi
-  v=$(command -v cargo || true)
-  case $v in "$cargo_bin/cargo" | '') ;; *) warn "cargo on PATH is $v, not rustup's; it ignores rust-toolchain.toml" ;; esac
+  if v=$(foreign_cargo); then warn "cargo on PATH is $v, not rustup's; it ignores rust-toolchain.toml"; fi
   if [ "$build" = 1 ]; then
     if [ -x "$root/target/release/cgagentharness" ]; then say "backend: $root/target/release/cgagentharness"; else say 'backend: not built'; missing=1; fi
   fi
@@ -389,10 +402,7 @@ elif ! lints_ok; then
   # An existing minimal toolchain can lack the components rust-toolchain.toml lists.
   run rustup component add --toolchain "$toolchain" clippy rustfmt
 fi
-case $(command -v cargo || true) in
-  "$cargo_bin/cargo" | '') ;;
-  *) warn "cargo on PATH is $(command -v cargo), not rustup's; this script builds through rustup" ;;
-esac
+if v=$(foreign_cargo); then warn "cargo on PATH is $v, not rustup's; this script builds through rustup"; fi
 
 # ------------------------------------------------------------------- 4. Ollama
 if [ "$ollama" = 1 ]; then

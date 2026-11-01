@@ -724,11 +724,15 @@ mod tests {
         release.await.unwrap();
         let sent = sent.lock().unwrap().clone();
         assert_eq!(sent.len(), 2);
-        // The fixture sees arrivals, which trail each send by connect and write
-        // jitter; the exact floor is asserted on the send stamp (`gap_ms`) below.
-        // Pacing before the permit wait would shorten this gap by about 2 s.
+        // The fixture sees arrivals, which trail each send stamp by the audit write
+        // and connect, and the first request's lag can exceed the second's by
+        // hundreds of ms on a loaded runner (2.67 s was seen on macOS CI). So the
+        // exact floor is asserted on the send stamp (`gap_ms`) below, and this
+        // arrival check only has to tell the regression apart: pacing before the
+        // permit wait lands the second send about 1 s after the first, correct
+        // pacing about 3 s. A 2 s bound keeps a full second of margin each way.
         assert!(
-            sent[1] - sent[0] >= Duration::from_millis(PUBLIC_SEARCH_PACE_FLOOR_MS - 100),
+            sent[1] - sent[0] >= Duration::from_millis(PUBLIC_SEARCH_PACE_FLOOR_MS - 1000),
             "sends {:?} apart; permit queueing must not shorten the floor",
             sent[1] - sent[0]
         );
