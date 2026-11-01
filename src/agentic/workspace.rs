@@ -892,6 +892,25 @@ impl<'a> RepoWorkspace<'a> {
         Ok(json!({"pushed": branch, "approved_commit": commit}))
     }
 
+    /// The branch the clone checked out, from the remote-tracking HEAD the
+    /// clone recorded (`refs/remotes/origin/HEAD` -> `origin/<branch>`). It is
+    /// never re-fetched, so it names the branch `acceptance_base_head` sits on
+    /// even if the remote's default moved later; publication passes it as the
+    /// pull request base instead of assuming `main`.
+    pub fn cloned_default_branch(&self) -> Result<String> {
+        let out = self.run_git(
+            "default_branch",
+            &["symbolic-ref", "--short", "--quiet", "refs/remotes/origin/HEAD"],
+            DEFAULT_GIT_WRITE_TIMEOUT_SEC,
+            &[],
+        )?;
+        let branch = out.trim().strip_prefix("origin/").unwrap_or("").to_string();
+        if branch.is_empty() || branch.starts_with('-') || branch.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return Err(self.deny("publish", "clone records no usable default branch", None));
+        }
+        Ok(branch)
+    }
+
     pub fn verify_published_source(&self, branch: &str, commit: &str, origin: &str) -> Result<()> {
         self.verify_approved_source(branch, commit, origin)?;
         let reference = format!("refs/heads/{branch}");

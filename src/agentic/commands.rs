@@ -735,9 +735,10 @@ fn publish_record(
     reason: &str,
     confirm: bool,
     body: &str,
+    base: &str,
 ) -> Result<u8> {
     let params = json!({
-        "head": record.branch_name, "title": record.commit_message,
+        "head": record.branch_name, "base": base, "title": record.commit_message,
         "body": body,
     });
     let current = super::writer::current_repository_policy(ctx, "pr_create", reason, confirm)?;
@@ -939,6 +940,9 @@ fn cmd_real_repo_run_publish(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         record.approved_commit.as_deref().unwrap_or(""),
         record.origin_url.as_deref().unwrap_or(""),
     )?;
+    // The reviewed diff was taken against the branch the clone checked out;
+    // the pull request must target that branch, whatever the repository calls it.
+    let base = tools.cloned_default_branch()?;
     let code = publish_record(
         ctx,
         &mut record,
@@ -946,6 +950,7 @@ fn cmd_real_repo_run_publish(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         opts.get("reason").unwrap_or(""),
         true,
         &body,
+        &base,
     )?;
     if code != EXIT_OK {
         return Ok(code);
