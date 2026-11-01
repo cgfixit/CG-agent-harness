@@ -709,12 +709,18 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "agentic.deepagent_github.retrieval.enabled",
         "diagnostics.logs_enabled",
         "diagnostics.model_tool",
-        // #647 Phase 2: spending another search provider is opt-in.
+        // #647 Phase 2: spending another search provider is opt-in; the free public
+        // Google hop ships on (asserted below).
         "web.search.fallback_to_serpapi",
-        "web.search.fallback_to_public_google",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
     }
+    // why: operator decision (2026-11-01): a spent or failing SerpAPI falls back to public
+    // Google, which costs nothing and still needs its URL rule in allowlist mode.
+    assert!(
+        cfg.flag_is_true("web.search.fallback_to_public_google"),
+        "web.search.fallback_to_public_google must ship true"
+    );
     // Context about the harness itself ships on as literal booleans; it grants no tool.
     let knowledge = cgagentharness::server::self_manual::SelfKnowledgeConfig::from_config(&cfg).unwrap();
     assert!(knowledge.self_knowledge && knowledge.live_state);

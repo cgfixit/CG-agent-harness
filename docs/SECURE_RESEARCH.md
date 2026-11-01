@@ -372,8 +372,8 @@ that keyless fallback in allowlist mode, an administrator first grants Google:
 SearXNG uses only `web.search.searxng_url`: a loopback IP literal and explicit port,
 with `json` in its `search.formats`; anything else fails boot. Listings need no URL
 grant; `!`/`:` query tokens are refused, private links dropped, `unresponsive_engines`
-reported as `degraded`. Opt-in `web.search.fallback_to_serpapi` and
-`fallback_to_public_google` try the next hop only when a provider is unusable; the
+reported as `degraded`. `web.search.fallback_to_public_google` (ships true) and the
+opt-in `fallback_to_serpapi` try the next hop only when a provider is unusable; the
 answer carries `fallback_from` and each hop logs `web_search_fallback`.
 
 The exact generated search URL also works; an exact homepage grant is not enough.

@@ -155,8 +155,9 @@ pub(super) fn searxng_results(body: &[u8], limit: usize) -> Result<(Vec<SearchRe
     Ok((rows, degraded))
 }
 
-/// Opt-in hops after the configured provider (#647 Phase 2), restart-only. Both
-/// ship off and read through `flag_is_true`; the order is fixed.
+/// Hops after the configured provider (#647 Phase 2), restart-only. Both read
+/// through `flag_is_true`; the public Google hop ships on, the SerpAPI hop off;
+/// the order is fixed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fallback {
     pub to_serpapi: bool,
