@@ -74,7 +74,11 @@ jobs:
         run: scripts/install-macos.sh --check --app-dir "$RUNNER_TEMP/Applications"
 
       - name: Rerun keeps the installed app
-        run: scripts/install-macos.sh --no-build --app-dir "$RUNNER_TEMP/Applications" | grep 'keeping '
+        # Default shell is `bash -e` without pipefail: the step's status would
+        # be grep's, so an installer failure after it prints `keeping ` passes.
+        run: |
+          set -euo pipefail
+          scripts/install-macos.sh --no-build --app-dir "$RUNNER_TEMP/Applications" | grep 'keeping '
 
       - name: init.sh replaces the admin password, keeps it in Keychain and applies the allowlist
         timeout-minutes: 10

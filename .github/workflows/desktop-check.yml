@@ -2,10 +2,13 @@
 # packages the universal .app but runs only from bundle.yml (main pushes) and
 # release.yml, and desktop/ is not a member of the root Cargo workspace, so the
 # backend fmt, clippy and test jobs never see it. desktop/src/backend.rs also
-# `#[path]`-includes src/common/local_tls.rs. A desktop/**, desktop/Cargo.lock
-# (Dependabot's /desktop updates) or local_tls.rs change therefore merged
-# green and broke the next main push. This workflow compiles, lints and tests
-# the crate the way desktop.yml does, without lipo, codesign or packaging.
+# `#[path]`-includes src/common/local_tls.rs, and desktop/src/web_launcher.rs
+# `include_bytes!`-embeds scripts/start-web.sh. A desktop/**, desktop/Cargo.lock
+# (Dependabot's /desktop updates), local_tls.rs or start-web.sh change
+# therefore merged green and broke the next main push. This workflow compiles,
+# lints and tests the crate the way desktop.yml does, without lipo, codesign
+# or packaging. `tests/invariant_guard.rs` pins every out-of-tree input the
+# crate includes to the classify regex below.
 #
 # Not in the main ruleset. The classify job skips the compile jobs when no
 # desktop path changed, and a skipped job passes branch protection, so the
@@ -71,7 +74,7 @@ jobs:
              paths=$(git diff --no-renames --name-only "$base" HEAD) &&
              [ -n "$paths" ] &&
              ! printf '%s\n' "$paths" |
-               grep -Eq '^(desktop/|src/common/local_tls\.rs$|\.github/workflows/desktop-check\.yml$)'; then
+               grep -Eq '^(desktop/|src/common/local_tls\.rs$|scripts/start-web\.sh$|\.github/workflows/desktop-check\.yml$)'; then
             desktop=false
           fi
           echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
