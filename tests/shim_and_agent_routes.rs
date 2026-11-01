@@ -220,6 +220,14 @@ fn decide_status_and_setup_budgets_exceed_child_bounds() {
         + u64::from(gh_client::VERSION_CHECK_ATTEMPTS - 1) * gh_client::VERSION_CHECK_RETRY_DELAY_SEC;
     let context_reads = 2;
     let setup_bounds = version_check + context_reads * gh_read + clone + git_op + git_op;
+    // The child refuses a `gh_timeout_sec`/`gh_retries` pair at load when its
+    // own model of this sum reaches the budget; that model must be this one.
+    assert_eq!(
+        config::setup_bounds_sec(acfg.gh_timeout_sec, acfg.gh_retries),
+        setup_bounds,
+        "config::setup_bounds_sec drifted from the pre-planner call sequence"
+    );
+    assert_eq!(config::REAL_REPO_RUN_SETUP_BUDGET_SEC, shim::REAL_REPO_RUN_OVERHEAD_SEC);
     if shim::REAL_REPO_RUN_OVERHEAD_SEC <= setup_bounds {
         short.push(format!(
             "REAL_REPO_RUN_OVERHEAD_SEC: {}s <= pre-planner child bounds {setup_bounds}s \
