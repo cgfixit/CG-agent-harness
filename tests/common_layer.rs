@@ -555,7 +555,7 @@ fn a_new_home_seeds_only_the_google_search_rule_and_never_reseeds() {
         "apex is a different host"
     );
     assert!(!permits("https://docs.google.com/"), "no subdomain wildcard");
-    assert!(!permits("http://www.google.com/"), "https only");
+    assert!(!permits("http://www.google.com/"), "https only"); // DevSkim: ignore DS137138 because the test asserts this insecure URL is refused.
     assert!(!permits("https://example.org/"));
     // Deleting the policy on an existing home is not undone by a later start.
     std::fs::remove_file(&path).unwrap();
