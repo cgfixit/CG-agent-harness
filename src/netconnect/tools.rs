@@ -1,10 +1,13 @@
-//! Model-facing netconnect tools.
+//! Netconnect tool catalog rows and the served panel and diagnostics calls.
 //!
 //! `netconnect_status` and `netconnect_devices` register only when
 //! `netconnect.enabled` is literal true. A tier contributes tools only when
 //! [`NetconnectConfig::tier_may_run`] is true. Only `diagnostics` has a tool
 //! in this build (`netconnect_diag`); the other arms of [`tools_for_tier`]
-//! stay empty. A call whose tier may not run returns [`HarnessError`]
+//! stay empty. Registering adds an `/api/tools` row ([`catalog_rows`]); chat
+//! is offered no netconnect tool. Release builds serve [`panel`] and
+//! [`call_diag`]; dispatch by tool name (`call_named`) is test-only. A call
+//! whose tier may not run returns [`HarnessError`]
 //! `NETCONNECT_REFUSED` or `NETCONNECT_DISABLED`. It does not return an
 //! empty success.
 //!

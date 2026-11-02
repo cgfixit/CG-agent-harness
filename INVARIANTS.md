@@ -887,7 +887,10 @@ Outside tests, `src/netconnect` imports only `crate::common` and
 through `common::process::run`. A false master gate exits 4. Invalid
 scope exits 3. `netconnect_status` and `netconnect_devices` register only
 when `enabled` is literal true. A tier's tools register only when
-`tier_may_run` is true; this build registers only `netconnect_diag`. A call whose tier may
+`tier_may_run` is true; this build registers only `netconnect_diag`.
+Registering adds an `/api/tools` row, not a chat tool. Release builds
+dispatch no netconnect tool by name (that evaluator is test-only); they serve
+`/net`, `GET /api/netconnect` and `GET /api/netconnect/diag`. A call whose tier may
 not run returns `NETCONNECT_REFUSED` or `NETCONNECT_DISABLED`, not an empty
 success. `/net` keeps the exact aliases `/netconnect`, `/lan`, `/scan`,
 `/ports`, and `/speed` only when they collide with no existing slash root. Exact `status` and `devices` are read-only. A near-miss only suggests.
@@ -901,5 +904,5 @@ input never becomes a command. `GET /api/netconnect/diag` uses the same guards.
   `tests/netconnect_workflow.rs`, `scripts/netconnect-syscall-proof.sh`,
   `tests/netconnect_syscall.rs`, `invariant_guard::server_side_never_references_agentic`,
   `invariant_guard::netconnect_dials_only_through_the_budgeted_dialer`,
-  `tests/panels.rs`, and
+  `tests/panels.rs`, `tests/chat_web.rs` (the chat tool list), and
   `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.

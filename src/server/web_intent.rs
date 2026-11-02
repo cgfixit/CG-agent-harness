@@ -78,7 +78,7 @@ pub fn parse(text: &str) -> Option<WebIntent> {
     }
 }
 
-/// Like [`parse`], but a request without an explicit `first N` keeps
+/// Like the test-only `parse`, but a request without an explicit `first N` keeps
 /// `fallback_count` exactly as the caller supplied it, so the downstream
 /// range validation still sees an out-of-range caller value.
 pub fn parse_with_count(text: &str, fallback_count: usize) -> WebIntentParse {
