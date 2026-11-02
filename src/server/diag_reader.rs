@@ -62,9 +62,9 @@ impl DiagConfig {
         };
         Ok(Self {
             logs_enabled: cfg.flag_is_true("diagnostics.logs_enabled"),
-            max_lines: bounded(cfg, "diagnostics.logs_max_lines", 200, 1, 1000)? as usize,
-            max_bytes: bounded(cfg, "diagnostics.logs_max_bytes", 65_536, 4096, 262_144)?,
-            inject_max_chars: bounded(cfg, "diagnostics.logs_inject_max_chars", 8000, 512, 24_000)? as usize,
+            max_lines: cfg.u64_in("diagnostics.logs_max_lines", 200, 1..=1000)? as usize,
+            max_bytes: cfg.u64_in("diagnostics.logs_max_bytes", 65_536, 4096..=262_144)?,
+            inject_max_chars: cfg.u64_in("diagnostics.logs_inject_max_chars", 8000, 512..=24_000)? as usize,
             allowed_files,
         })
     }
@@ -76,16 +76,6 @@ impl DiagConfig {
             .iter()
             .map(String::as_str)
             .find(|name| *name == requested)
-    }
-}
-
-fn bounded(cfg: &AppConfig, key: &str, default: u64, min: u64, max: u64) -> Result<u64> {
-    match cfg.get(key) {
-        None => Ok(default),
-        Some(v) => v
-            .as_u64()
-            .filter(|n| (min..=max).contains(n))
-            .ok_or_else(|| HarnessError::config(format!("{key} must be an integer from {min} to {max}"))),
     }
 }
 
