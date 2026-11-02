@@ -145,6 +145,35 @@ impl AppConfig {
         }
     }
 
+    /// A missing limit uses its default; an explicitly malformed limit is refused.
+    pub fn u64_in(&self, key: &str, default: u64, range: std::ops::RangeInclusive<u64>) -> Result<u64> {
+        let value = match self.get(key) {
+            None => Some(default),
+            Some(value) => value.as_u64(),
+        };
+        value.filter(|n| range.contains(n)).ok_or_else(|| {
+            HarnessError::config(format!(
+                "{key} must be an integer from {} to {}",
+                range.start(),
+                range.end()
+            ))
+        })
+    }
+
+    pub fn f64_in(&self, key: &str, default: f64, range: std::ops::RangeInclusive<f64>) -> Result<f64> {
+        let value = match self.get(key) {
+            None => Some(default),
+            Some(value) => value.as_f64(),
+        };
+        value.filter(|n| n.is_finite() && range.contains(n)).ok_or_else(|| {
+            HarnessError::config(format!(
+                "{key} must be a finite number from {} to {}",
+                range.start(),
+                range.end()
+            ))
+        })
+    }
+
     pub fn bool_opt(&self, dotted: &str) -> Option<bool> {
         match self.get(dotted) {
             Some(Value::Bool(b)) => Some(*b),
