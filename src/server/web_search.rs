@@ -434,6 +434,8 @@ pub struct WebTool {
     pub test_public_search: Option<url::Url>,
     pub research: Arc<super::web_research::ResearchState>,
     pub chat_turn: Arc<super::web_research::ResearchState>,
+    /// Detached `/web research` jobs, shared by every snapshot; lost on restart.
+    pub research_jobs: Arc<super::web_research::ResearchJobs>,
 }
 
 impl WebTool {
@@ -457,6 +459,7 @@ impl WebTool {
             test_public_search: None,
             research: Arc::default(),
             chat_turn: Arc::default(),
+            research_jobs: Arc::default(),
         })
     }
     fn allow_path(&self) -> PathBuf {

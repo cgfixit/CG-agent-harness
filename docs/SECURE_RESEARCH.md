@@ -438,13 +438,14 @@ Conditional refresh repeats network checks. Validators reduce bytes, not request
 Research asks the local model for at most 3 subqueries in 2 rounds, runs at most
 one bounded crawl, and synthesizes about 6,000 evidence tokens. Defaults:
 28,000 total model tokens, 1200s discovery including cold load, then 1800s answering (300s each if the keys are absent).
-Preload residency covers both budgets, capped at one hour; cancellation covers
-loading too. Smaller windows: [MODELS.md](MODELS.md#4-select-an-installed-model-and-check-ollama). Provider
+Preload residency covers both budgets, capped at one hour; cancellation includes
+loading. Smaller windows: [MODELS.md](MODELS.md#4-select-an-installed-model-and-check-ollama). Provider
 usage wins; otherwise bytes/4 plus overhead is estimated, charging incomplete
 output conservatively. Synthesis drops unfitting low-ranked passages
 (`WEB_EVIDENCE_TRIMMED`). Bounded JSON output has no commands or privileged tools.
 Retrieval interleaves the question and subqueries without embeddings or reranking.
-`/web cancel` cancels dedicated research.
+Console research runs as a server job outliving the tab (`/web job`,
+`/web jobs`); `/web cancel` stops it.
 
 Answers label support, conflicts, inference, and missing or stale evidence.
 Citation IDs and quotes are checked against passages, but semantic support still

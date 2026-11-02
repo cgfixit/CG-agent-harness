@@ -38,6 +38,9 @@ Process edges; update this map when adding one.
 - **MCP stdio children:** declared servers, spawned by `src/common/mcp.rs` in the
   sandbox wrapper. Strict Linux mode puts the hidden `cgagentharness mcp-stdio-worker`
   byte pump between them, in a transient `systemd-run` service.
+- **Keep-awake child (macOS):** while a `/web research` run holds the model,
+  `src/common/process.rs` runs `/usr/bin/caffeinate -i -w <server pid>` with a fixed
+  argv and empty environment, and kills it when the run ends.
 - **Operator CLI:** `account` and `web` call the portal, `tls` inspects or renews the
   certificate, `mcp-key` manages machine keys by file authority. The server never
   spawns them.
@@ -516,6 +519,19 @@ resurrect a job the operator killed.
 - Locked by: `tests/shim_and_agent_routes.rs::cancelling_a_running_job_aborts_it_and_a_finish_after_cancel_does_not_resurrect_it`,
   `::a_job_holds_the_run_gate_so_a_concurrent_sync_run_is_busy`,
   `src/server/agent_jobs.rs` unit tests.
+
+`POST /api/web/research/jobs` runs `POST /api/web/research`'s run the same way.
+Its task takes the research lease, the search gate and the generation gate, and
+the route answers 202 only once they are held, so validation, policy and busy
+refusals stay synchronous. `POST /api/web/research/cancel` reaches it through the
+owner's lease. Jobs are owner-bound (another account's read is
+`WEB_JOB_NOT_FOUND`), kept in process memory only (at most eight; finished ones
+evicted oldest first) and never written to disk; a restart ends them. On macOS the
+run holds an idle-sleep assertion until it ends; lid-close and manual sleep still
+apply.
+
+- Locked by: `tests/web_research.rs::a_detached_research_job_outlives_its_request_and_refuses_like_the_route`,
+  `src/server/web_research.rs` and `src/common/process.rs` unit tests.
 
 Local `/loop` turns, console or detached, are local-only (cloud refuses
 `CLOUD_CHAT_LOOP`), need a session goal and take the loop rate limit. They reuse

@@ -104,7 +104,7 @@ pub fn full_registry(home: &Home) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 75] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 78] = [
     ("analytics", "/analytics", "GET", "/api/analytics/summary", "retained session, token and coding-run analytics"),
     ("config-reload", "(Reload limits button)", "POST", "/api/config/reload", "administrator-only atomic reload of supported non-secret limits"),
     (
@@ -562,10 +562,31 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 75] = [
     ),
     (
         "web-research",
-        "/web research",
+        "cgagentharness web research",
         "POST",
         "/api/web/research",
-        "bounded local-model research with checked citations",
+        "bounded local-model research with checked citations; waits for the answer",
+    ),
+    (
+        "web-research-job-start",
+        "/web research",
+        "POST",
+        "/api/web/research/jobs",
+        "the same research, detached: a job id once the run holds its gates",
+    ),
+    (
+        "web-research-jobs",
+        "/web jobs",
+        "GET",
+        "/api/web/research/jobs",
+        "your retained research jobs, newest first, without results",
+    ),
+    (
+        "web-research-job",
+        "/web job",
+        "GET",
+        "/api/web/research/jobs/{job_id}",
+        "poll a research job; carries the answer once finished",
     ),
     (
         "web-research-cancel",
@@ -870,7 +891,7 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 75);
+        assert_eq!(HARNESS_SURFACES.len(), 78);
         let report = list_wired_tools(&registered);
         assert_eq!(report["total"], HARNESS_SURFACES.len());
         assert_eq!(report["wired"], HARNESS_SURFACES.len(), "a catalog surface is unwired");

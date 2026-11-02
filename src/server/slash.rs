@@ -549,7 +549,7 @@ fn known_subs(cmd: &str) -> &'static [&'static str] {
         "skill" => &["use", "clear", "status"],
         "web" => &[
             "help", "status", "check", "on", "off", "allow", "deny", "block", "unblock", "mode", "fetch", "search",
-            "pages", "research", "cancel", "inject", "forget",
+            "pages", "research", "cancel", "inject", "forget", "job", "jobs",
         ],
         "agent" => &[
             "run",
@@ -714,7 +714,7 @@ fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Opt
         ("memory", Some("on" | "off" | "clear" | "proposals" | "facts" | "status"))
         | ("soul", Some("on" | "off" | "edit" | "propose"))
         | ("skill", Some("clear"))
-        | ("web", Some("on" | "off" | "inject" | "forget" | "cancel"))
+        | ("web", Some("on" | "off" | "inject" | "forget" | "cancel" | "jobs"))
         | ("agent", Some("cancel"))
         | ("loop", Some("stop"))
         | ("model", Some("list" | "profile" | "status"))
@@ -737,7 +737,8 @@ fn mutation_argument_refusal(cmd: &str, sub: Option<&str>, args: &[&str]) -> Opt
         | ("api", Some("clear"))
         | ("agent", Some("plan" | "iterations" | "pr" | "issue" | "stop" | "discard" | "pr-body"))
         | ("goal", Some("stage"))
-        | ("model", Some("use")) => Some(1),
+        | ("model", Some("use"))
+        | ("web", Some("job")) => Some(1),
         ("skill", None) if args.first().is_some_and(|arg| arg.starts_with("check:")) => Some(1),
         ("web", Some("allow")) => Some(3),
         _ => None,

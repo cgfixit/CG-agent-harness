@@ -66,6 +66,163 @@ impl ResearchState {
     }
 }
 
+pub const JOB_RUNNING: &str = "running";
+pub const JOB_FINISHED: &str = "finished";
+pub const JOB_FAILED: &str = "failed";
+pub const JOB_CANCELLED: &str = "cancelled";
+/// Retained research jobs; the oldest finished ones are evicted first.
+pub const MAX_RESEARCH_JOBS: usize = 8;
+
+/// Detached `/web research` runs (`POST /api/web/research/jobs`). A job takes the
+/// same lease and gates as the synchronous route, but its task holds them, not
+/// the request, so a closed tab or dropped connection does not end the run.
+/// Records stay in this process's memory, owner-scoped and bounded; a restart
+/// loses them, as it loses the run.
+#[derive(Debug, Default)]
+pub struct ResearchJobs(Mutex<Vec<ResearchJob>>);
+
+#[derive(Debug)]
+struct ResearchJob {
+    job_id: String,
+    owner: String,
+    question: String,
+    status: &'static str,
+    created_at: f64,
+    finished_at: Option<f64>,
+    result: Option<Value>,
+    error: Option<Value>,
+}
+
+impl ResearchJob {
+    fn to_json(&self, full: bool) -> Value {
+        let mut v = json!({"job_id": self.job_id, "status": self.status, "question": self.question,
+            "created_at": self.created_at, "finished_at": self.finished_at});
+        if full {
+            if let Some(result) = &self.result {
+                v["result"] = result.clone();
+            }
+            if let Some(error) = &self.error {
+                v["error"] = error.clone();
+            }
+        }
+        v
+    }
+}
+
+impl ResearchJobs {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Vec<ResearchJob>> {
+        self.0.lock().unwrap_or_else(|p| p.into_inner())
+    }
+    fn insert(&self, job: ResearchJob) {
+        let mut jobs = self.lock();
+        jobs.push(job);
+        while jobs.len() > MAX_RESEARCH_JOBS {
+            match jobs.iter().position(|j| j.status != JOB_RUNNING) {
+                Some(oldest) => drop(jobs.remove(oldest)),
+                None => break,
+            }
+        }
+    }
+    fn finish(&self, job_id: &str, outcome: Result<Value>) {
+        let mut jobs = self.lock();
+        let Some(job) = jobs.iter_mut().find(|j| j.job_id == job_id) else {
+            return;
+        };
+        job.finished_at = Some(crate::common::now_ts());
+        match outcome {
+            Ok(result) => {
+                let cancelled = result["warnings"]
+                    .as_array()
+                    .is_some_and(|w| w.iter().any(|c| c == "WEB_CANCELLED"));
+                job.status = if cancelled { JOB_CANCELLED } else { JOB_FINISHED };
+                job.result = Some(result);
+            }
+            Err(e) => {
+                job.status = if e.code == "WEB_CANCELLED" {
+                    JOB_CANCELLED
+                } else {
+                    JOB_FAILED
+                };
+                job.error = Some(json!({"code": e.code, "message": e.message}));
+            }
+        }
+    }
+    /// One of `owner`'s jobs with its result, or `None` for any other account's.
+    pub fn get(&self, owner: &str, job_id: &str) -> Option<Value> {
+        self.lock()
+            .iter()
+            .find(|j| j.owner == owner && j.job_id == job_id)
+            .map(|j| j.to_json(true))
+    }
+    /// `owner`'s retained jobs, newest first, without results.
+    pub fn list(&self, owner: &str) -> Vec<Value> {
+        self.lock()
+            .iter()
+            .rev()
+            .filter(|j| j.owner == owner)
+            .map(|j| j.to_json(false))
+            .collect()
+    }
+}
+
+/// Start a detached research run. Validation and the busy checks run before
+/// this returns, so they still refuse synchronously; once the run holds its
+/// lease and gates, the job is recorded and its id returned. A supervising task
+/// records the outcome even if the run's own task panics.
+pub async fn start_job(
+    state: Arc<AppState>,
+    owner: String,
+    question: String,
+    group: Option<String>,
+    starts: Vec<String>,
+) -> Result<Value> {
+    let jobs = state.web.research_jobs.clone();
+    let job_id = crate::common::random_hex(16);
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+    let (early_tx, early_rx) = tokio::sync::oneshot::channel::<crate::common::errors::HarnessError>();
+    let registered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let on_start = {
+        let (jobs, registered, job) = (
+            jobs.clone(),
+            registered.clone(),
+            ResearchJob {
+                job_id: job_id.clone(),
+                owner: owner.clone(),
+                question: question.clone(),
+                status: JOB_RUNNING,
+                created_at: crate::common::now_ts(),
+                finished_at: None,
+                result: None,
+                error: None,
+            },
+        );
+        move || {
+            jobs.insert(job);
+            registered.store(true, std::sync::atomic::Ordering::SeqCst);
+            let _ = started_tx.send(());
+        }
+    };
+    let id = job_id.clone();
+    tokio::spawn(async move {
+        let run =
+            tokio::spawn(async move { run_with(state, &owner, &question, group.as_deref(), &starts, on_start).await });
+        let outcome = run
+            .await
+            .unwrap_or_else(|_| Err(error("WEB_RESEARCH_FAILED", "the research task ended unexpectedly")));
+        if registered.load(std::sync::atomic::Ordering::SeqCst) {
+            jobs.finish(&id, outcome);
+        } else if let Err(e) = outcome {
+            let _ = early_tx.send(e);
+        }
+    });
+    tokio::select! {
+        biased;
+        Ok(()) = started_rx => Ok(json!({"job_id": job_id, "status": JOB_RUNNING})),
+        Ok(e) = early_rx => Err(e),
+        else => Err(error("WEB_RESEARCH_FAILED", "research did not start")),
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Plan {
@@ -415,6 +572,19 @@ pub async fn run_from(
     group: Option<&str>,
     starts: &[String],
 ) -> Result<Value> {
+    run_with(state, owner, question, group, starts, || {}).await
+}
+
+/// The research run. `on_start` fires once it holds the lease and both gates,
+/// so a detached job is recorded only for a run that actually started.
+async fn run_with(
+    state: Arc<AppState>,
+    owner: &str,
+    question: &str,
+    group: Option<&str>,
+    starts: &[String],
+    on_start: impl FnOnce(),
+) -> Result<Value> {
     if question.trim().is_empty()
         || question.chars().count() > super::schemas::MAX_WEB_RESEARCH_QUESTION_LEN
         || group.is_some_and(|g| !valid_group(g))
@@ -460,6 +630,15 @@ pub async fn run_from(
         .claim("web_research")
         .ok_or_else(|| error("WEB_BUSY", "local model already busy"))?;
     let lease = web.research.start(owner)?;
+    // A long local answer is not cut short by the machine idling to sleep: the
+    // guard holds macOS's idle-sleep assertion until this run ends.
+    let mut awake = crate::common::process::KeepAwake::acquire();
+    if cfg!(target_os = "macos") {
+        state
+            .audit
+            .log(json!({"event":"web_research_keep_awake","owner_id":owner,"held":awake.held()}));
+    }
+    on_start();
     let start = tokio::time::Instant::now();
     let discovery_deadline = start + Duration::from_secs(web.limits.research_seconds);
     let keep_alive = web.limits.research_seconds.saturating_add(web.limits.synthesis_seconds);
@@ -696,6 +875,75 @@ pub async fn run_from(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A closed tab must not end research: the console starts a job and polls it,
+    /// and never holds the synchronous route open.
+    #[test]
+    fn the_console_starts_research_as_a_job_not_a_held_request() {
+        let console = include_str!("../../assets/static/harness.html");
+        assert!(console.contains("api('/api/web/research/jobs', 'POST', body)"));
+        assert!(console.contains("api('/api/web/research/jobs/' + encodeURIComponent(id))"));
+        assert!(
+            !console.contains("api('/api/web/research', 'POST'"),
+            "the console must not hold a research request open"
+        );
+    }
+
+    #[test]
+    fn research_jobs_are_owner_scoped_bounded_and_classify_cancels() {
+        let jobs = ResearchJobs::default();
+        let job = |id: &str, owner: &str| ResearchJob {
+            job_id: id.into(),
+            owner: owner.into(),
+            question: "q".into(),
+            status: JOB_RUNNING,
+            created_at: 0.0,
+            finished_at: None,
+            result: None,
+            error: None,
+        };
+        let running = "a".repeat(32);
+        jobs.insert(job(&running, "alice"));
+        assert!(jobs.get("bob", &running).is_none(), "another account cannot read it");
+        assert!(jobs.list("bob").is_empty());
+        assert_eq!(jobs.get("alice", &running).unwrap()["status"], JOB_RUNNING);
+        for i in 0..MAX_RESEARCH_JOBS + 2 {
+            let id = format!("{i:032x}");
+            jobs.insert(job(&id, "alice"));
+            jobs.finish(&id, Ok(json!({"warnings": []})));
+        }
+        let listed = jobs.list("alice");
+        assert_eq!(
+            listed.len(),
+            MAX_RESEARCH_JOBS,
+            "finished jobs are evicted oldest first"
+        );
+        assert_eq!(
+            listed[0]["job_id"],
+            format!("{:032x}", MAX_RESEARCH_JOBS + 1),
+            "newest first"
+        );
+        assert!(listed.iter().all(|j| j.get("result").is_none()));
+        assert_eq!(
+            jobs.get("alice", &running).unwrap()["status"],
+            JOB_RUNNING,
+            "a running job stays"
+        );
+        jobs.finish(&running, Err(error("WEB_CANCELLED", "research cancelled")));
+        assert_eq!(jobs.get("alice", &running).unwrap()["status"], JOB_CANCELLED);
+        let late = "b".repeat(32);
+        jobs.insert(job(&late, "alice"));
+        jobs.finish(&late, Ok(json!({"warnings": ["WEB_CANCELLED"]})));
+        assert_eq!(jobs.get("alice", &late).unwrap()["status"], JOB_CANCELLED);
+        let failed = "c".repeat(32);
+        jobs.insert(job(&failed, "alice"));
+        jobs.finish(&failed, Err(error("WEB_RESEARCH_FAILED", "boom")));
+        let failed = jobs.get("alice", &failed).unwrap();
+        assert_eq!(
+            (failed["status"].clone(), failed["error"]["code"].clone()),
+            (json!(JOB_FAILED), json!("WEB_RESEARCH_FAILED"))
+        );
+    }
     #[test]
     fn schemas_refuse_privileged_fields_and_invented_or_mismatched_citations() {
         assert!(Plan::parse(r#"{"queries":["a","b"],"gaps":[]}"#, 1).is_err());

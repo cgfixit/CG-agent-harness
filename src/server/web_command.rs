@@ -281,7 +281,14 @@ pub fn parse(sub: Option<&str>, raw: &str) -> Result<WebCommand, String> {
         }
     }
     let body = match action {
-        "status" | "on" | "off" | "inject" | "forget" | "cancel" => {
+        // Read-only views of your detached research jobs; no id lists them,
+        // and `/web job` with no id shows the newest.
+        "job" => match positional.as_slice() {
+            [] => json!({}),
+            [id] if crate::common::is_lower_hex(id, 32) => json!({"job_id": id}),
+            _ => return Err("Use /web job [job id], where the id is 32 lowercase hex characters.".into()),
+        },
+        "status" | "on" | "off" | "inject" | "forget" | "cancel" | "jobs" => {
             if !positional.is_empty() {
                 return Err(format!("/web {action} takes no arguments."));
             }
@@ -662,6 +669,23 @@ mod tests {
             .unwrap_err()
             .contains("with no flags"));
         assert!(parse(Some("search"), "--seed x hvac").unwrap_err().contains("put --"));
+    }
+
+    #[test]
+    fn job_views_take_at_most_one_hex_id_and_no_flags() {
+        assert_eq!(parse(Some("jobs"), "").unwrap().body, json!({}));
+        assert!(parse(Some("jobs"), "extra").is_err());
+        assert_eq!(parse(Some("job"), "").unwrap().body, json!({}));
+        let id = "0123456789abcdef0123456789abcdef";
+        assert_eq!(parse(Some("job"), id).unwrap().body, json!({"job_id": id}));
+        for bad in [
+            "../etc",
+            "0123456789ABCDEF0123456789ABCDEF",
+            "abc",
+            &format!("{id} {id}"),
+        ] {
+            assert!(parse(Some("job"), bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

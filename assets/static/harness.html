@@ -2089,17 +2089,19 @@ const COMMANDS = [
   ['/web [status|help]', 'show shared-home rules, groups and your account-selected context'],
   ['/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]', 'administrator: atomically grant exact URLs or explicit wildcards; repeat --seed for each seed'],
   ['/web block <pattern-or-host> [...]', 'administrator: add block-list entries; a host blocks the site and its subdomains'],
-  ['/web cancel', 'cancel your bounded research request'],
+  ['/web cancel', 'cancel your running research job'],
   ['/web check <URL> [URL ...] [--group name]', 'check exact URL permissions without fetching, DNS lookup or granting access'],
   ['/web deny <id-or-pattern>', 'administrator removal of a URL permission rule'],
   ['/web fetch <URL> [URL ...] [--group name] [--crawl]', 'bounded batch of exact permitted URLs, not wildcard patterns or prose; --crawl also follows permitted links recursively'],
   ['/web forget', 'clear your injected web context'],
   ['/web inject', 'include your last fetched/page-search selection in chat'],
+  ['/web job [job id]', 'show a research job, the newest by default, and keep watching it while it runs'],
+  ['/web jobs', 'list the research jobs this server process retains'],
   ['/web mode allowlist|denylist', 'administrator: only allowed URLs, or every public URL except blocked ones (asks to confirm)'],
   ['/web off', 'administrator: disable web for this home; preserve rules and stored context'],
   ['/web on', 'administrator: enable web for this home; URL permission remains required'],
   ['/web pages [--group name] <query>', 'discover permitted links and search page passages'],
-  ['/web research [--group name] [--url URL ...] <question>', 'multi-page local research with checked citations; repeat --url for each starting URL'],
+  ['/web research [--group name] [--url URL ...] <question>', 'multi-page local research with checked citations, run as a server job that survives closing the tab; repeat --url for each starting URL'],
   ['/web search [--count 1..10] [--engine google|pages] [--group name] <query>', 'Google listings by default; a group selects permitted-page search'],
   ['/web unblock <id-or-pattern>', 'administrator: remove a block-list entry'],
 ];
@@ -2279,7 +2281,9 @@ const COMMAND_MAN = {
   '/web [status|help]': {detail:'Shows web state: on or off, URL rules, groups and your selected context. help opens the web topic of this guide.'},
   '/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]': {detail:'Grants URL patterns in one step, optionally into a named group with seed URLs. An exact URL covers only that page; https://host/* covers that host’s paths; *.example.org excludes the apex. Search listings never grant access.'},
   '/web block <pattern-or-host> [...]': {detail:'Adds block-list entries. A host or pattern with no path (example.com) blocks that host and every subdomain, all paths; a pattern with a path blocks only that. Blocks cover HTTP and HTTPS and win over allow rules in both modes. Administrator only.'},
-  '/web cancel': {detail:'Cancels your running research request.'},
+  '/web cancel': {detail:'Cancels your running research job or request.'},
+  '/web job [job id]': {detail:'Shows one research job: its answer once finished, or keeps watching while it runs. Without an id, the newest job. Jobs live in server memory, so a restart loses them.'},
+  '/web jobs': {detail:'Lists the research jobs this server process retains (up to eight), newest first, with status and question.'},
   '/web check <URL> [URL ...] [--group name]': {detail:'Reports whether each exact URL is permitted and by which rule. Nothing is fetched, resolved or granted.'},
   '/web deny <id-or-pattern>': {detail:'Removes a rule by ID (one rule), or by pattern (that pattern in every group). A pattern without https:// gets it added. Administrator only.'},
   '/web fetch <URL> [URL ...] [--group name]': {detail:'Fetches exact permitted URLs and shows a 2,000-character preview of each with coverage. Patterns and prose are refused.'},
@@ -2289,7 +2293,7 @@ const COMMAND_MAN = {
   '/web off': {detail:'Disables web for this home; rules and stored context are kept. Administrator only.'},
   '/web on': {detail:'Enables web for this home; URLs still need permission rules. Administrator only.'},
   '/web pages [--group name] <query>': {detail:'Finds permitted links and searches passages inside permitted pages. This is not Google; /web search gives listings.'},
-  '/web research [--group name] [--url URL ...] <question>': {detail:'Bounded multi-page research over permitted pages with checked citations, starting from the group or the --url seeds. Shows supported claims, conflicts, inferences, gaps and the sources. Not an exhaustive crawl; /web cancel stops it.'},
+  '/web research [--group name] [--url URL ...] <question>': {detail:'Bounded multi-page research over permitted pages with checked citations, starting from the group or the --url seeds. Shows supported claims, conflicts, inferences, gaps and the sources. Not an exhaustive crawl. It runs as a server job, so closing or reloading the tab does not stop it; /web job shows it again and /web cancel stops it.'},
   '/web unblock <id-or-pattern>': {detail:'Removes a block-list entry by ID or pattern; a host removes the pair /web block added for it. Administrator only.'},
   '/web search [--count 1..10] [--engine google|pages] [--group name] <query>': {detail:'Google result listings by default; --engine pages or a group searches permitted pages instead. Listings grant no permission to read a page. Words starting with a single dash (-tokio) are query text; put -- before query words that start with --.'},
 };
@@ -2544,6 +2548,50 @@ async function watchAgentJob(id) {
     if (stale()) return;
     sys('job monitoring paused; ID retained: ' + id + '. After restoring authentication use /agent job ' + id + '. A server restart loses its in-memory job handle and work may survive. (' + err.message + ')');
   }
+}
+/* /web research runs as a server-side job: the run holds its own gates, so a
+   closed or reloaded tab does not end it. This only polls for the answer. */
+const RESEARCH_POLL_MS = 5000;
+let researchWatchGeneration = 0;
+function renderResearch(result) {
+  const answer = result.answer || {};
+  if (result.model) sys('research answered by ' + result.model);
+  for (const kind of ['supported', 'conflicts', 'inferences']) {
+    const claims = answer[kind] || [];
+    if (claims.length) sys(kind + '\n' + claims.map(c => c.text + '\n' + c.citations.map(x => '[' + x.id + '] “' + x.quote + '”').join('\n')).join('\n\n'));
+  }
+  if ((answer.missing||[]).length || (result.warnings||[]).length) sys('Missing: ' + (answer.missing || []).join('; ') + '\nWarnings: ' + (result.warnings || []).join(', '));
+  const sources=document.createElement('details'), summary=document.createElement('summary'); summary.textContent='Sources and original extracts ('+(result.passages||[]).length+')'; sources.appendChild(summary);
+  sources.appendChild(table((result.passages || []).map(p => [p.id, p.url, p.text]), ['citation', 'source', 'original extract'])); sys(sources);
+  sys(renderWebCoverage(result.coverage),'Bounded research; not an exhaustive site summary.');
+}
+async function watchResearchJob(id) {
+  const generation = ++researchWatchGeneration;
+  let announced = false;
+  try {
+    while (generation === researchWatchGeneration) {
+      const job = await api('/api/web/research/jobs/' + encodeURIComponent(id));
+      if (generation !== researchWatchGeneration) return;
+      if (job.status === 'running') {
+        if (!announced) sys('research job ' + id + ' is running: ' + job.question);
+        announced = true;
+        await new Promise(resolve => setTimeout(resolve, RESEARCH_POLL_MS));
+        continue;
+      }
+      if (job.result) renderResearch(job.result);
+      if (job.status === 'cancelled') sys('research job ' + id + ' was cancelled.');
+      else if (job.error) sys('research job ' + id + ' failed: ' + job.error.code + ': ' + job.error.message);
+      return;
+    }
+  } catch (err) {
+    if (generation !== researchWatchGeneration) return;
+    sys('research monitoring paused; the job keeps running on the server. Use /web job ' + id + ' to resume. (' + err.message + ')');
+  }
+}
+async function resumeResearchJob() {
+  const listed = await api('/api/web/research/jobs');
+  const running = (listed.jobs || []).find(j => j.status === 'running');
+  if (running) watchResearchJob(running.job_id);
 }
 function showPendingAgentRun() {
   if (!pendingAgentRun) return;
@@ -3363,21 +3411,29 @@ async function runSlash(line, webCommand) {
           sys(JSON.stringify(await api('/api/web/research/cancel', 'POST', {})));
           break;
         }
+        if (sub === 'jobs') {
+          const listed = await api('/api/web/research/jobs');
+          const jobs = listed.jobs || [];
+          sys(jobs.length ? table(jobs.map(j => [j.job_id, j.status, j.question]), ['job', 'status', 'question']) : 'No research jobs are retained by this server process.');
+          break;
+        }
+        if (sub === 'job') {
+          let id = body.job_id;
+          if (!id) {
+            const listed = await api('/api/web/research/jobs');
+            id = ((listed.jobs || [])[0] || {}).job_id;
+          }
+          if (!id) { sys('No research jobs are retained by this server process.'); break; }
+          await watchResearchJob(id);
+          break;
+        }
         if (sub === 'search' || sub === 'pages' || sub === 'research') {
           const q = body.query;
           if (sub === 'research') {
-            sys('research started; /web cancel stops your request');
-            const result = await api('/api/web/research', 'POST', body, 3610000); /* research_seconds + synthesis_seconds maxima + 10s */
-            const answer = result.answer || {};
-            if (result.model) sys('research answered by ' + result.model);
-            for (const kind of ['supported', 'conflicts', 'inferences']) {
-              const claims = answer[kind] || [];
-              if (claims.length) sys(kind + '\n' + claims.map(c => c.text + '\n' + c.citations.map(x => '[' + x.id + '] “' + x.quote + '”').join('\n')).join('\n\n'));
-            }
-            if ((answer.missing||[]).length || (result.warnings||[]).length) sys('Missing: ' + (answer.missing || []).join('; ') + '\nWarnings: ' + (result.warnings || []).join(', '));
-            const sources=document.createElement('details'), summary=document.createElement('summary'); summary.textContent='Sources and original extracts ('+(result.passages||[]).length+')'; sources.appendChild(summary);
-            sources.appendChild(table((result.passages || []).map(p => [p.id, p.url, p.text]), ['citation', 'source', 'original extract'])); sys(sources);
-            sys(renderWebCoverage(result.coverage),'Bounded research; not an exhaustive site summary.');
+            const job = await api('/api/web/research/jobs', 'POST', body);
+            if (!job.job_id) throw new Error('server did not return a job ID');
+            sys('research job ' + job.job_id + ' started. It keeps running if you close or reload this tab; /web job shows it, /web cancel stops it.');
+            watchResearchJob(job.job_id);
             break;
           }
           const found = await api('/api/web/search', 'POST', body, 190000);
@@ -6308,6 +6364,7 @@ $('sStyle').addEventListener('change', async () => {
 buildCommands();
 refreshStatus();
 refreshSessions().catch(() => {});
+resumeResearchJob().catch(() => {});
 
 sys('CG Agent Harness — local chat with optional governed coding.');
 sys('Chat starts without an assigned repository or automatic coding skills. /prompt previews context; /skill use selects optional skills.');
