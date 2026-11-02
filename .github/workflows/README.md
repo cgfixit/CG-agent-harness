@@ -38,7 +38,7 @@ on enforcement; the review gate remains advisory.
 | [`script-lint.yml`](script-lint.yml) | ShellCheck, Python compilation, Node syntax and disposable Git-hook behavior checks; filtered pushes/PRs or manual. |
 | [`clippy-sarif.yml`](clippy-sarif.yml) | Clippy findings in Security; separate from CI's Clippy gate; main push, PR, weekly or manual. |
 | [`codeql.yml`](codeql.yml) | Rust and Actions code scanning; main push, PR, weekly or manual. |
-| [`devskim.yml`](devskim.yml) | Source security patterns; main push, PR targeting main or weekly. |
+| [`devskim.yml`](devskim.yml) | Source security patterns; main push, PR targeting main, weekly or manual. |
 | [`gitleaks.yml`](gitleaks.yml) | Full-history secret scan; main push, PR, weekly or manual. |
 | [`dependency-advisories.yml`](dependency-advisories.yml) | RustSec advisories for backend, desktop and the sandbox fixture; daily or manual. |
 | [`netconnect.yml`](netconnect.yml) | Scope/flag tests and Linux no-packet proof; filtered pushes/PRs or manual. |
