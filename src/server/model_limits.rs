@@ -17,7 +17,7 @@ use serde_yaml_ng::Value as Yaml;
 
 use super::compaction::{self, MIN_PROMPT_HEADROOM};
 use super::state::AppState;
-use super::web_search::Limits;
+use super::web_search::{Limits, MAX_SYNTHESIS_SECONDS};
 use crate::common::config::AppConfig;
 use crate::llm::backend::ResolvedLocalBackend;
 use crate::llm::inventory::InventoryLimits;
@@ -74,7 +74,6 @@ const MAX_PLANNER_TIMEOUT_SEC: u64 = crate::shim::REAL_REPO_RUN_MAX_TIMEOUT_SEC
 /// Synthesis prompt tokens beside the evidence: instructions, question, framing.
 const SYNTHESIS_PROMPT_OVERHEAD: u64 = 1_000;
 const MIN_SYNTHESIS_SEC: u64 = 60;
-const MAX_SYNTHESIS_SEC: u64 = 1_800;
 /// Generation-gate owner while the speed sample runs.
 pub const TUNE_OWNER: &str = "model_tune";
 /// A cold load of a large model can take minutes; the sample itself takes seconds.
@@ -166,11 +165,11 @@ pub fn web_turn_deadline_sec(per_call: f64, speed: Option<&Value>, limits: &Limi
 
 /// `/web research`'s answer call at the measured speed: the evidence plus the
 /// answer instructions read, one `web.model_tokens` reply written; doubled,
-/// rounded up to 30 s, kept in 60–1800 (`web.synthesis_seconds` allows 10–1800).
+/// rounded up to 30 s, kept in 60–`MAX_SYNTHESIS_SECONDS` (3600, the configured key's ceiling).
 /// A 27B model on CPU needs far more than the shipped 300 s; a GPU 7B far less.
 fn derived_synthesis(speed: &Value, evidence_tokens: u64, model_tokens: u64) -> Option<u64> {
     let prompt = evidence_tokens.saturating_add(SYNTHESIS_PROMPT_OVERHEAD);
-    padded_seconds(speed, prompt, model_tokens, MIN_SYNTHESIS_SEC, MAX_SYNTHESIS_SEC)
+    padded_seconds(speed, prompt, model_tokens, MIN_SYNTHESIS_SEC, MAX_SYNTHESIS_SECONDS)
 }
 
 /// Load, then `prompt` tokens at prefill speed and `written` at decode speed;
@@ -765,6 +764,12 @@ mod tests {
         let gpu = json!({"prefill_tps": 3000.0, "decode_tps": 120.0});
         assert_eq!(derived_synthesis(&gpu, 3_000, 1_024), Some(MIN_SYNTHESIS_SEC));
         assert!(derived_synthesis(&json!({"decode_tps": 50.0}), 3_000, 1_024).is_none());
+        // A dense model on a slow CPU at the shipped budgets: (6000 + 1000)/10 =
+        // 700 s read, 2048/1.5 = 1365 s written. The unpadded 2065 s alone
+        // overran the old 1800 s ceiling; padded, it is held at one hour.
+        let slow = json!({"prefill_tps": 10.0, "decode_tps": 1.5, "load_seconds": 0.0});
+        assert_eq!(derived_synthesis(&slow, 6_000, 2_048), Some(MAX_SYNTHESIS_SECONDS));
+        assert_eq!(MAX_SYNTHESIS_SECONDS, 3_600);
     }
 
     #[test]

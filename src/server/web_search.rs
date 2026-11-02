@@ -30,6 +30,12 @@ const MAX_CONTEXT: usize = 4000;
 pub const MIN_EVIDENCE_TOKENS: u64 = 256;
 pub const MAX_EVIDENCE_TOKENS: u64 = 6000;
 pub const MAX_MODEL_TOKENS: u64 = 2048;
+/// Ceiling for `web.research_seconds` (discovery and planning) and
+/// `web.synthesis_seconds` (the answer call): one hour each, the longest
+/// deadline the harness gives one local-model call (`MAX_TIMEOUT_SEC`). A slow
+/// CPU model then gets its whole measured answer deadline instead of half.
+pub const MAX_RESEARCH_SECONDS: u64 = super::model_limits::MAX_TIMEOUT_SEC;
+pub const MAX_SYNTHESIS_SECONDS: u64 = super::model_limits::MAX_TIMEOUT_SEC;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Limits {
@@ -94,8 +100,8 @@ impl Limits {
             model_tokens: bound("model_tokens", 1024, 256, MAX_MODEL_TOKENS)?,
             // Held at the model's window cap where it is read (`AppState::model_web_limits`).
             total_tokens: bound("total_tokens", 16000, 2048, super::compaction::MAX_WEB_TOTAL_TOKENS)?,
-            research_seconds: bound("research_seconds", 300, 10, 1800)?,
-            synthesis_seconds: bound("synthesis_seconds", 300, 10, 1800)?,
+            research_seconds: bound("research_seconds", 300, 10, MAX_RESEARCH_SECONDS)?,
+            synthesis_seconds: bound("synthesis_seconds", 300, 10, MAX_SYNTHESIS_SECONDS)?,
             chat_tool_calls: bound("chat_tool_calls", 30, 1, crate::llm::openai_stream::MAX_TOOL_CALLS)? as usize,
             stale_seconds: bound("stale_seconds", 604800, 60, 31_536_000)?,
             carry_forward_sources: bound("carry_forward_sources", 0, 0, 50)? as usize,
@@ -1059,6 +1065,30 @@ mod tests {
             ["https://example.org/news/*"]
         );
         assert_eq!(super::site_patterns("https://example.org/"), ["https://example.org/"]);
+    }
+
+    /// The console waits for `/web research` with a fixed timeout: both
+    /// deadline ceilings plus 10 s, so no accepted config outlives its fetch.
+    #[test]
+    fn console_research_timeout_covers_both_deadline_ceilings() {
+        let ms = (MAX_RESEARCH_SECONDS + MAX_SYNTHESIS_SECONDS + 10) * 1000;
+        let console = include_str!("../../assets/static/harness.html");
+        assert!(
+            console.contains(&format!("api('/api/web/research', 'POST', body, {ms});")),
+            "assets/static/harness.html: /web research timeout must be {ms} ms"
+        );
+        let cfg = AppConfig::from_str(
+            "web:\n  research_seconds: 3600\n  synthesis_seconds: 3600\n",
+            Path::new("t.yaml"),
+        )
+        .unwrap();
+        let limits = Limits::load(&cfg).unwrap();
+        assert_eq!((limits.research_seconds, limits.synthesis_seconds), (3600, 3600));
+        for key in ["research_seconds", "synthesis_seconds"] {
+            let cfg = AppConfig::from_str(&format!("web:\n  {key}: 3601\n"), Path::new("t.yaml")).unwrap();
+            let err = Limits::load(&cfg).unwrap_err().to_string();
+            assert!(err.contains(&format!("web.{key}")) && !err.contains("3601"), "{err}");
+        }
     }
     use super::*;
     use crate::common::atomic::write_json_atomic;

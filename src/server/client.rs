@@ -1,5 +1,6 @@
 //! The terminal is an HTTP client of the same account/policy endpoints as chat.
 //! It neither edits policy files directly nor wraps subprocesses.
+use super::web_search::{MAX_RESEARCH_SECONDS, MAX_SYNTHESIS_SECONDS};
 use crate::common::{
     atomic::write_atomic,
     home::{HarnessSettings, Home},
@@ -167,12 +168,12 @@ impl Portal {
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(
-                cfg.u64_or("web.research_seconds", 300).clamp(10, 1800)
+                cfg.u64_or("web.research_seconds", 300).clamp(10, MAX_RESEARCH_SECONDS)
                     // auto_tune may measure a longer answer deadline than configured.
                     + if cfg.flag_is_true("models.local_llm.auto_tune") {
-                        1800
+                        MAX_SYNTHESIS_SECONDS
                     } else {
-                        cfg.u64_or("web.synthesis_seconds", 300).clamp(10, 1800)
+                        cfg.u64_or("web.synthesis_seconds", 300).clamp(10, MAX_SYNTHESIS_SECONDS)
                     }
                     + 10,
             ));
