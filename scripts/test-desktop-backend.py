@@ -332,8 +332,7 @@ class DesktopBoundary(unittest.TestCase):
     def test_headless_loads_private_dotenv_with_explicit_environment_precedence(self):
         self.start().close()
         config = self.home / 'config.yaml'
-        text = set_config(config.read_text(), 'security.api_key_optional', 'false')
-        config.write_text(set_config(text, 'security.allow_plaintext_key_file', 'true'))
+        config.write_text(set_config(config.read_text(), 'security.allow_plaintext_key_file', 'true'))
         file_key = secrets.token_hex(32)
         override_key = secrets.token_hex(32)
         marker = self.home / 'must-not-be-created'
