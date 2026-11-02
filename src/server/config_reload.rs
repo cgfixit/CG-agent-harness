@@ -51,15 +51,8 @@ pub struct RateBudget {
 
 impl RateBudget {
     fn load(cfg: &AppConfig, prefix: &str, requests: u64, seconds: f64) -> Result<Self> {
-        let max_requests = integer(cfg, &format!("{prefix}.max_requests"), requests, 1, 100_000)? as usize;
-        let key = format!("{prefix}.window_seconds");
-        let window_seconds = match cfg.get(&key) {
-            None => seconds,
-            Some(value) => value.as_f64().ok_or_else(|| invalid_limit(&key))?,
-        };
-        if !window_seconds.is_finite() || !(0.001..=86400.0).contains(&window_seconds) {
-            return Err(invalid_limit(&key));
-        }
+        let max_requests = cfg.u64_in(&format!("{prefix}.max_requests"), requests, 1..=100_000)? as usize;
+        let window_seconds = cfg.f64_in(&format!("{prefix}.window_seconds"), seconds, 0.001..=86400.0)?;
         Ok(Self {
             max_requests,
             window_seconds,
@@ -90,10 +83,10 @@ pub struct LoopLimits {
 impl LoopLimits {
     pub fn load(cfg: &AppConfig) -> Result<Self> {
         Ok(Self {
-            max_turns: integer(cfg, "loop.max_turns", 0, 0, 1_000_000)?,
-            max_total_completion_tokens: integer(cfg, "loop.max_total_completion_tokens", 0, 0, 100_000_000)?,
-            max_failures: integer(cfg, "loop.max_failures", 2, 1, 100)?,
-            cooldown_ms: integer(cfg, "loop.cooldown_ms", 2000, 0, 300_000)?,
+            max_turns: cfg.u64_in("loop.max_turns", 0, 0..=1_000_000)?,
+            max_total_completion_tokens: cfg.u64_in("loop.max_total_completion_tokens", 0, 0..=100_000_000)?,
+            max_failures: cfg.u64_in("loop.max_failures", 2, 1..=100)?,
+            cooldown_ms: cfg.u64_in("loop.cooldown_ms", 2000, 0..=300_000)?,
         })
     }
 }
@@ -112,7 +105,7 @@ impl RuntimeLimits {
     /// the 32768-window cap and the configured reply.
     pub fn load(cfg: &AppConfig, backend: &ResolvedLocalBackend, tuned: Option<TunedBudget>) -> Result<Self> {
         let key = "api.harness_loop_rate_limit.max_tokens";
-        let cap = match integer(cfg, key, 2048, 0, u64::MAX)? {
+        let cap = match cfg.u64_in(key, 2048, 0..=u64::MAX)? {
             0 => 2048,
             n => n,
         };
@@ -146,21 +139,6 @@ impl RuntimeLimits {
             web,
         })
     }
-}
-
-fn invalid_limit(key: &str) -> HarnessError {
-    HarnessError::config(format!("invalid limit: {key}"))
-}
-
-fn integer(cfg: &AppConfig, key: &str, default: u64, min: u64, max: u64) -> Result<u64> {
-    let value = match cfg.get(key) {
-        None => default,
-        Some(v) => v.as_u64().ok_or_else(|| invalid_limit(key))?,
-    };
-    if !(min..=max).contains(&value) {
-        return Err(invalid_limit(key));
-    }
-    Ok(value)
 }
 
 fn remove_path(value: &mut Value, path: &[&str]) {
