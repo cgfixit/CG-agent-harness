@@ -160,6 +160,7 @@ fn refused(message: impl Into<String>) -> HarnessError {
 /// success. This synchronous path never connects: after `check_target` on a
 /// supplied address, an empty [`tools_for_tier`] slice refuses, and an armed
 /// tier with a tool names the route that runs it.
+#[cfg(any(test, feature = "test-support"))]
 pub fn invoke_tier(cfg: &NetconnectConfig, tier: Tier, target: Option<Ipv4Addr>) -> Result<Value> {
     if !cfg.tier_may_run(tier) {
         return Err(refused(format!("netconnect tier {} may not run", tier.key())));
@@ -232,32 +233,17 @@ pub async fn call_diag(cfg: &NetconnectConfig, rate: &RateBucket, connector: imp
 }
 
 /// Config and scope summary. Takes no source, so it cannot load a collector.
+#[cfg(any(test, feature = "test-support"))]
 pub fn call_status(cfg: &NetconnectConfig) -> Result<Value> {
     if !cfg.enabled {
         return Err(disabled());
     }
-    Ok(json!({
-        "ok": true,
-        "tool": STATUS.name,
-        "enabled": true,
-        "scope_empty": cfg.scope.is_empty(),
-        "allowed_cidrs": cfg.scope.entries(),
-        "active_tiers_refused": Tier::ALL.into_iter().any(|tier| cfg.tier_enabled(tier) && !cfg.tier_may_run(tier)),
-        "tiers": tier_rows(cfg),
-        "port_allowlist": cfg.port_allowlist,
-        "host_cap": cfg.host_cap,
-        "rate_limit_per_min": cfg.rate_limit_per_min,
-        "connect_timeout_ms": cfg.connect_timeout_ms,
-        "read_timeout_ms": cfg.read_timeout_ms,
-        "max_dials": cfg.max_dials,
-        "diagnostics_targets": cfg.diagnostics_targets.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        "throughput_endpoint": cfg.throughput_endpoint,
-        "ha_endpoint": cfg.ha_endpoint,
-        "mqtt_endpoint": cfg.mqtt_endpoint,
-        "warnings": cfg.warnings,
-    }))
+    let mut body = super::cli::status_body(cfg);
+    body["tool"] = json!(STATUS.name);
+    Ok(body)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn call_devices(
     cfg: &NetconnectConfig,
     neighbors: &impl NeighborSource,
@@ -313,7 +299,7 @@ fn devices_body(cfg: &NetconnectConfig, report: &PassiveReport) -> Value {
 ///
 /// [`crate::server::build_app`] installs [`PassiveSources::live`] once.
 /// Tests pass fixtures only through [`crate::server::build_app_with_sources`]
-/// before the server listens. `GET /api/netconnect` and [`call_devices`] then
+/// before the server listens. `GET /api/netconnect` and test helpers then
 /// reach rows only through these traits and [`collect_passive`].
 #[derive(Clone)]
 pub struct PassiveSources {

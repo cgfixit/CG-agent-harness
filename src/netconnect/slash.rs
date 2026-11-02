@@ -5,24 +5,24 @@
 //! tables. A near-miss prints `did you mean` and does not read tables or
 //! connect. `device` is exact-only:
 //! fuzzy matching never selects it, and the exact command always refuses.
-//! Active subcommands refuse when [`NetconnectConfig::tier_may_run`] is false
+//! Active subcommands refuse when [`super::config::NetconnectConfig::tier_may_run`] is false
 //! and still do not connect when it is true.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 
-use serde_json::{json, Value};
-
-use crate::common::config::AppConfig;
 use crate::common::edit_distance;
-use crate::common::errors::HarnessError;
-use crate::common::home::Home;
 
-use super::cli::{exit_code_for, EXIT_FAIL, EXIT_OK};
-use super::collect::{InterfaceSource, NeighborSource, RouteSource};
-use super::config::{NetconnectConfig, Tier};
-use super::sources::{LiveInterfaces, LiveNeighbors, LiveRoutes};
-use super::tools;
+#[cfg(any(test, feature = "test-support"))]
+use {
+    super::cli::{exit_code_for, EXIT_FAIL, EXIT_OK},
+    super::collect::{InterfaceSource, NeighborSource, RouteSource},
+    super::config::{NetconnectConfig, Tier},
+    super::sources::{LiveInterfaces, LiveNeighbors, LiveRoutes},
+    super::tools,
+    crate::common::{config::AppConfig, errors::HarnessError, home::Home},
+    serde_json::{json, Value},
+    std::path::PathBuf,
+};
 
 /// Candidate aliases, checked against the slash registry before they are kept.
 pub const CANDIDATE_ALIASES: &[&str] = &["net", "netconnect", "lan", "scan", "ports", "speed"];
@@ -39,6 +39,7 @@ pub enum Intent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(any(test, feature = "test-support"))]
 pub struct Outcome {
     pub code: u8,
     pub executed: bool,
@@ -119,6 +120,7 @@ fn nearby<'a>(token: &str, candidates: &[&'a str]) -> Vec<&'a str> {
     scored.into_iter().map(|(name, _)| name).collect()
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn run(config: Option<PathBuf>, line: &str) -> u8 {
     let outcome = evaluate_path(config, line);
     for line in outcome.notice.lines() {
@@ -136,6 +138,7 @@ pub fn run(config: Option<PathBuf>, line: &str) -> u8 {
     outcome.code
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn evaluate_path(config: Option<PathBuf>, line: &str) -> Outcome {
     let reserved = crate::server::slash::preexisting_slash_names();
     if let Some(Intent::Suggest { notice, suggestions }) = interpret_line(line, &reserved) {
@@ -153,6 +156,7 @@ pub fn evaluate_path(config: Option<PathBuf>, line: &str) -> Outcome {
     evaluate(&cfg, line, &LiveNeighbors, &LiveRoutes, &LiveInterfaces)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn evaluate(
     cfg: &NetconnectConfig,
     line: &str,
@@ -170,6 +174,7 @@ pub fn evaluate(
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn interpret_line(line: &str, reserved: &BTreeSet<&str>) -> Option<Intent> {
     if line.chars().any(|c| c.is_control()) {
         return Some(suggest(vec!["/net status".to_string()]));
@@ -184,6 +189,7 @@ fn interpret_line(line: &str, reserved: &BTreeSet<&str>) -> Option<Intent> {
     interpret(&cmd, &tokens[1..], reserved)
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn dispatch(
     cfg: &NetconnectConfig,
     canonical: &str,
@@ -220,6 +226,7 @@ fn dispatch(
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn suggest_outcome(notice: String, suggestions: Vec<String>) -> Outcome {
     Outcome {
         code: EXIT_FAIL,
@@ -235,6 +242,7 @@ fn suggest_outcome(notice: String, suggestions: Vec<String>) -> Outcome {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn error_outcome(err: &HarnessError) -> Outcome {
     Outcome {
         code: exit_code_for(err),
