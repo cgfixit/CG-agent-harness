@@ -62,7 +62,7 @@ zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2
 quick-xml = "0.42.0"
 dunce = "1"
 cap-std = "4"
-scraper = { version = "0.27", default-features = false }
+scraper = { version = "0.29", default-features = false }
 # Use the same parser as scraper, with incremental cancellation and state bounds.
 html5ever = "0.39"
 robotstxt = "0.3"
