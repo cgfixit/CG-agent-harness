@@ -71,19 +71,8 @@ pub struct Limits {
 
 impl Limits {
     pub fn load(cfg: &AppConfig) -> Result<Self> {
-        let bound = |name: &str, default: u64, min: u64, max: u64| -> Result<u64> {
-            let key = format!("web.{name}");
-            let value = match cfg.get(&key) {
-                None => default,
-                Some(v) => v
-                    .as_u64()
-                    .ok_or_else(|| HarnessError::config(format!("{key} must be an integer")))?,
-            };
-            if !(min..=max).contains(&value) {
-                return Err(HarnessError::config(format!("{key} must be {min}..={max}")));
-            }
-            Ok(value)
-        };
+        let bound =
+            |name: &str, default: u64, min: u64, max: u64| cfg.u64_in(&format!("web.{name}"), default, min..=max);
         Ok(Self {
             response_bytes: bound("response_bytes", MAX_BYTES as u64, 1024, 1_048_576)? as usize,
             request_seconds: bound("request_seconds", 8, 1, 30)?,
