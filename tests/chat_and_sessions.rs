@@ -217,6 +217,32 @@ async fn reply_budget_that_consumes_prompt_headroom_fails_at_startup() {
     }
 }
 
+/// A quoted, fractional, negative or null budget is refused, never read as the default.
+#[tokio::test]
+async fn malformed_reply_and_compaction_budgets_fail_at_startup() {
+    for path in ["models.local_llm.max_tokens", "chat.compact_prompt_tokens"] {
+        for value in ["'4096'", "2.5", "-1", "null"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = cgagentharness::common::home::Home::at(tmp.path().join("home"));
+            home.ensure_layout().unwrap();
+            let mut options = cgagentharness::server::AppOptions::new(home.clone());
+            options.config = Some(config_with(&home.root, &[(path, value)]));
+
+            let err = cgagentharness::server::build_app(options)
+                .await
+                .err()
+                .expect("malformed budget must fail startup");
+
+            assert_eq!(err.code, "CONFIG_ERROR", "{path}={value}");
+            assert_eq!(
+                err.message,
+                format!("{path} must be a non-negative integer"),
+                "{path}={value}"
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn reasoning_and_compatible_backends_enforce_the_effective_reply_reservation() {
     for (provider, effort) in [("ollama", "high"), ("ollama", "null"), ("lmstudio", "none")] {

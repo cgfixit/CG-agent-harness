@@ -119,7 +119,8 @@ impl RuntimeLimits {
         let web = Limits::load(cfg)?;
         // Startup and every reload pass through here, so a web budget that cannot
         // hold a usable chat prompt is reported where the operator changed it.
-        let configured_reply = cfg.u64_or("models.local_llm.max_tokens", super::compaction::DEFAULT_REPLY_TOKENS);
+        let configured_reply =
+            cfg.u64_strict("models.local_llm.max_tokens", super::compaction::DEFAULT_REPLY_TOKENS)?;
         let (ceiling, window, reply) = match tuned {
             Some(tuned) => (tuned.web_ceiling, tuned.window, tuned.max_tokens),
             None => (super::compaction::web_total_cap(None), None, configured_reply),

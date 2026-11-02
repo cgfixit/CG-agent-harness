@@ -160,6 +160,17 @@ impl AppConfig {
         })
     }
 
+    /// A missing integer uses its default; an explicit non-integer is refused.
+    /// For keys whose range is checked separately; names the key, never the value.
+    pub fn u64_strict(&self, key: &str, default: u64) -> Result<u64> {
+        match self.get(key) {
+            None => Ok(default),
+            Some(value) => value
+                .as_u64()
+                .ok_or_else(|| HarnessError::config(format!("{key} must be a non-negative integer"))),
+        }
+    }
+
     pub fn f64_in(&self, key: &str, default: f64, range: std::ops::RangeInclusive<f64>) -> Result<f64> {
         let value = match self.get(key) {
             None => Some(default),
@@ -346,6 +357,33 @@ mod tests {
 
     fn cfg(yaml: &str) -> AppConfig {
         AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap()
+    }
+
+    #[test]
+    fn strict_integer_defaults_only_a_missing_key() {
+        let key = "chat.compact_prompt_tokens";
+        assert_eq!(cfg("{}").u64_strict(key, 24_000).unwrap(), 24_000);
+        assert_eq!(
+            cfg("chat: {compact_prompt_tokens: 0}").u64_strict(key, 24_000).unwrap(),
+            0
+        );
+        assert_eq!(
+            cfg("chat: {compact_prompt_tokens: 8000}")
+                .u64_strict(key, 24_000)
+                .unwrap(),
+            8_000
+        );
+        for value in ["'4096'", "\"4096\"", "2.5", "-1", "null", "''", "[1]", "true"] {
+            let error = cfg(&format!("chat: {{compact_prompt_tokens: {value}}}"))
+                .u64_strict(key, 24_000)
+                .unwrap_err();
+            assert_eq!(error.code, "CONFIG_ERROR", "{value}");
+            assert_eq!(
+                error.message,
+                format!("{key} must be a non-negative integer"),
+                "{value}"
+            );
+        }
     }
 
     #[test]
