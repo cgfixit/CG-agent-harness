@@ -112,7 +112,9 @@ account database to schema 2, which older binaries refuse. A fresh
 (never shipped, never page content); older `admin`/`admin` and pending-password
 homes rotate to one at startup. Until replaced, any client (console, HTTP, CLI)
 may only change the password, read whoami or log out, under shorter session
-limits. The replacement must differ from the code and revokes old sessions. The
+limits. Each `auth.session` timeout outside 60 s–30 days (NIST SP 800-63B-4's
+longest single-factor reauthentication interval) refuses startup; expiry ends
+a session, never an account's detached job or schedule. The replacement must differ from the code and revokes old sessions. The
 last enabled administrator is protected.
 
 SQLite is authoritative after transactional legacy migration; corrupt, empty or
@@ -769,7 +771,13 @@ holds API, web and `loop.*` limits. Startup, reload and disk-policy rechecks use
 private, UTF-8 config reader (1 MiB maximum). Unix checks the open file's owner,
 owner-only mode and single link; symlink files are refused. macOS also refuses
 extended ACL entries. Windows uses the credential reader's owner/DACL checks.
-Seeded and rewritten configs stay private. Parsed limits are fully validated
+Seeded and rewritten configs stay private. Every number the shipped default
+declares must, when present, be an unquoted number of its kind (finite for
+`common::config::FLOAT_KEYS`, else a non-negative integer): a quoted, empty,
+non-finite or wrong-kind value refuses startup, reload and every CLI or child
+load (`AppConfig::load`), naming the key, never the value. A missing key keeps
+its default; ranges stay with each reader, clamped where documented and
+otherwise refused. Parsed limits are fully validated
 before one runtime snapshot is replaced. Any invalid limit,
 malformed YAML, unknown or restart-only change refuses the entire candidate
 and leaves running limits intact. Refusal audit/errors never echo YAML contents.
@@ -786,8 +794,10 @@ operator's file. Fresh-disk coding-policy and URL-permission checks stay
 independent and fail closed.
 
 - Locked by: `tests/secure_portal.rs` (HTTP, actual SIGHUP, role/CSRF,
-  atomic refusal, rate history and web response bounds), `config_reload` units,
-  and the existing web/research tests.
+  atomic refusal, rate history and web response bounds), `config_reload` and
+  `common::config` units, `tests/invariant_guard.rs`
+  (`numeric_config_reads_are_type_checked_at_load`), and the existing
+  web/research tests.
 
 
 ## Private MCP memory server is a separate authority boundary

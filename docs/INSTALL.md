@@ -588,10 +588,10 @@ on first run. Common operator settings follow:
 | `chat.compact_prompt_tokens` / `compact_keep_messages` | 24000 / 10 | Calibrated next-prompt trigger and recent messages retained (2–40); the prompt cap is the hard limit past it. Threshold floor/cap and web interaction: [compaction](CONSOLE.md#local-history-compaction) |
 | `chat.compact_tail_percent` | 25 | Verbatim tail budget as a percent of the trigger, 10–50; whole exchanges, at least the last one |
 | `compaction.summary_max_tokens` | 2048 | Summary output ceiling, clamped 128–2048; missing in an existing home uses 768; sent doubled where the reply is reserved twice |
-| `chat.compact_follow_window` / `compact_max_prefill_sec` | false / 1500 | When enabled, a verified window above 32768 scales the trigger up within this many seconds of measured prefill (30–1800); false keeps it fixed |
+| `chat.compact_follow_window` / `compact_max_prefill_sec` | false / 1500 | When enabled, a verified window above 32768 scales the trigger up within this many seconds of measured prefill (clamped 30–1800); false keeps it fixed |
 | `models.local_llm.inventory.*` | 2.0 s / 262144 bytes | Model-list probe timeout and response cap |
 | `auth.max_concurrent_operations` | 1 | Concurrent scrypt derivations (about 128 MiB each); range 1–4 |
-| `auth.session.idle_timeout_sec` / `absolute_timeout_sec` | 43200 / 604800 | Session expiry without use (recorded at most once a minute), and regardless of use |
+| `auth.session.idle_timeout_sec` / `absolute_timeout_sec` | 43200 / 604800 | Session expiry without use (recorded at most once a minute), and regardless of use; each 60–2592000 (30 days), else startup stops |
 | `auth.session.password_change_idle_timeout_sec` / `password_change_absolute_timeout_sec` | 600 / 1800 | The same limits while the account must still replace its password (setup code); capped at the normal ones |
 | `attachments.max_concurrent_uploads` | 2 | Attachment upload bodies (up to ~45 MiB each) buffered at once; range 1–8, excess requests get 503 `ATTACHMENT_BUSY` |
 | `attachments.body_timeout_sec` | 360 | Deadline for receiving one upload body; range 5–600, expiry gives 408 `ATTACHMENT_TIMEOUT` and frees the permit |
@@ -603,7 +603,7 @@ on first run. Common operator settings follow:
 Upgrades preserve `config.yaml`; missing settings use documented fallbacks.
 Explicit settings win. Restart after edits.
 
-Quoted YAML strings such as `"true"` never arm a gate. See [coding pipeline](CODING_PIPELINE.md) for the
+Quoted YAML strings such as `"true"` never arm a gate, and a quoted, empty or non-finite number stops startup. See [coding pipeline](CODING_PIPELINE.md) for the
 coding-pipeline gates and [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md)
 for every memory key.
 

@@ -123,7 +123,7 @@ Cloud Grok/Claude 2xx responses and local OpenAI-compat usage append one JSONL r
 
 ## invariant: Reload changes limits, not authority
 
-The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` holds API, web and `loop.*` limits. Startup, reload and disk-policy rechecks use the same private, UTF-8 config reader (1 MiB maximum). Unix checks the open file's owner, owner-only mode and single link; symlink files are refused. macOS also refuses extended ACL entries. Windows uses the credential reader's owner/DACL checks. Seeded and rewritten configs stay private. Parsed limits are fully validated before one runtime snapshot is…
+The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` holds API, web and `loop.*` limits. Startup, reload and disk-policy rechecks use the same private, UTF-8 config reader (1 MiB maximum). Unix checks the open file's owner, owner-only mode and single link; symlink files are refused. macOS also refuses extended ACL entries. Windows uses the credential reader's owner/DACL checks. Seeded and rewritten configs stay private. Every number the shipped default declares must, when present, be an…
 
 ## invariant: Private MCP memory server is a separate authority boundary
 
@@ -426,7 +426,7 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - chat.compact_keep_messages: 2–40: at most this many recent messages kept verbatim, whole exchanges only
   - chat.compact_tail_percent: 10–50: verbatim tail budget as a percent of the trigger; at least the last exchange
   - chat.compact_follow_window: an auto_tune-verified window above 32768 scales the trigger up in proportion; literal false keeps it
-  - chat.compact_max_prefill_sec: 30–1800: bounds scaled-trigger prefill only when compact_follow_window is true
+  - chat.compact_max_prefill_sec: clamped to 30–1800: bounds scaled-trigger prefill only when compact_follow_window is true
 - compaction
   - compaction.summary_max_tokens: clamped to 128–2048; existing homes without this key also use 768; sent doubled where the reply is reserved…
 

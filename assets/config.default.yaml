@@ -4,6 +4,9 @@
 # Runtime settings used by the standalone chat and governed coding pipeline.
 # Chat starts without an assigned repository. Select agentic.repo explicitly
 # before enabling coding; master, deepagent and clone-write gates ship closed.
+#
+# Numbers are unquoted. A quoted, empty, non-finite or wrong-kind number stops
+# startup and reload, naming the key; a missing key keeps its default.
 
 app:
   agent_job_poll_ms: 1500  # browser job polling, clamped to 1–30 seconds
@@ -87,7 +90,7 @@ chat:
   compact_keep_messages: 10 # 2–40: at most this many recent messages kept verbatim, whole exchanges only
   compact_tail_percent: 25 # 10–50: verbatim tail budget as a percent of the trigger; at least the last exchange
   compact_follow_window: false # an auto_tune-verified window above 32768 scales the trigger up in proportion; literal false keeps it
-  compact_max_prefill_sec: 1500 # 30–1800: bounds scaled-trigger prefill only when compact_follow_window is true
+  compact_max_prefill_sec: 1500 # clamped to 30–1800: bounds scaled-trigger prefill only when compact_follow_window is true
 
 compaction:
   summary_max_tokens: 2048 # clamped to 128–2048; existing homes without this key also use 768; sent doubled where the reply is reserved twice
@@ -266,6 +269,7 @@ auth:
   # scrypt uses about 128 MiB per derivation; bound a burst to 1–4 operations.
   max_concurrent_operations: 1
   session:
+    # Each 60–2592000 seconds (1 minute to 30 days); outside that, startup stops.
     idle_timeout_sec: 43200
     absolute_timeout_sec: 604800
     # A session that must still replace its password (setup code, forced

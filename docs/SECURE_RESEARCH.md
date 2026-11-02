@@ -95,7 +95,7 @@ not delete them to recreate `admin`.
 Each scrypt derivation uses about 128 MiB. `auth.max_concurrent_operations`
 (default 2, range 1–4) bounds login and password work; extra attempts wait.
 Sessions expire after `auth.session.idle_timeout_sec` (default 43200) without
-use and `auth.session.absolute_timeout_sec` (default 604800) regardless. Chat
+use and `auth.session.absolute_timeout_sec` (default 604800) regardless, each at most 30 days. Chat
 session files under `sessions/` are written atomically with mode 0600 because
 history can carry pasted secrets.
 

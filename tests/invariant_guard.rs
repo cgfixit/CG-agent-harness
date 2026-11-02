@@ -988,6 +988,270 @@ fn writer_kill_switch_is_and_not_or() {
     assert!(writer.contains("CGAGENTHARNESS_AGENTIC_WRITE_DISABLE"));
 }
 
+const NUMERIC_ACCESSORS: &[&str] = &["u64_or", "u64_in", "u64_strict", "f64_or", "f64_in"];
+
+/// Files whose numeric accessor takes a key computed from a literal table in
+/// the same file, which the loader still covers by the full path.
+const COMPUTED_NUMERIC_KEYS: &[&str] = &[
+    "llm/ollama.rs",
+    "server/config_reload.rs",
+    "server/model_limits.rs",
+    "server/web_search.rs",
+];
+
+/// What a numeric accessor or `AppConfig::from_str` call names as its key.
+#[derive(Debug)]
+enum KeyArg {
+    Literal(String),
+    /// A `format!` template such as `{prefix}.window_seconds`.
+    Template(String),
+    Computed,
+}
+
+/// Production numeric config reads and `AppConfig::from_str` inputs, including
+/// those inside macro bodies (`json!`, `format!`), which syn leaves unparsed.
+#[derive(Default)]
+struct ConfigReads {
+    reads: Vec<(String, KeyArg)>,
+    parses: Vec<KeyArg>,
+    /// `let name = "literal";` and `const NAME: &str = "literal";` in this file.
+    bindings: std::collections::BTreeMap<String, String>,
+}
+
+fn key_arg(expr: &syn::Expr) -> KeyArg {
+    match expr {
+        syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(value),
+            ..
+        }) => KeyArg::Literal(value.value()),
+        syn::Expr::Reference(reference) => key_arg(&reference.expr),
+        syn::Expr::Macro(mac) if path_is_last(&mac.mac.path, "format") => {
+            key_tokens(&syn::buffer::TokenBuffer::new2(mac.mac.tokens.clone()), true)
+        }
+        syn::Expr::Call(call) => match &*call.func {
+            syn::Expr::Path(path) if path_is_last(&path.path, "embedded_default") => {
+                KeyArg::Literal("<embedded default>".into())
+            }
+            _ => KeyArg::Computed,
+        },
+        _ => KeyArg::Computed,
+    }
+}
+
+fn path_is_last(path: &syn::Path, name: &str) -> bool {
+    path.segments.last().is_some_and(|s| s.ident.unraw() == name)
+}
+
+/// The first argument of a macro-body call, read from its tokens.
+fn key_tokens(buffer: &syn::buffer::TokenBuffer, template: bool) -> KeyArg {
+    let mut cursor = buffer.begin();
+    if let Some((punct, next)) = cursor.punct() {
+        if punct.as_char() == '&' {
+            cursor = next;
+        }
+    }
+    if let Some((literal, _)) = cursor.literal() {
+        if let Ok(value) = syn::parse_str::<syn::LitStr>(&literal.to_string()) {
+            return if template {
+                KeyArg::Template(value.value())
+            } else {
+                KeyArg::Literal(value.value())
+            };
+        }
+    }
+    if let Some((ident, next)) = cursor.ident() {
+        if ident.unraw() == "format" && next.punct().is_some_and(|(p, _)| p.as_char() == '!') {
+            if let Some((body, _, _, _)) = next.punct().and_then(|(_, after)| after.any_group()) {
+                return key_tokens(&syn::buffer::TokenBuffer::new2(body.token_stream()), true);
+            }
+        }
+    }
+    KeyArg::Computed
+}
+
+impl<'ast> syn::visit::Visit<'ast> for ConfigReads {
+    fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+        if !test_only(&module.attrs) {
+            syn::visit::visit_item_mod(self, module);
+        }
+    }
+
+    fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
+        if !test_only(&function.attrs) {
+            syn::visit::visit_item_fn(self, function);
+        }
+    }
+
+    fn visit_impl_item_fn(&mut self, function: &'ast syn::ImplItemFn) {
+        if !test_only(&function.attrs) {
+            syn::visit::visit_impl_item_fn(self, function);
+        }
+    }
+
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        if let (syn::Pat::Ident(name), Some(init)) = (&local.pat, &local.init) {
+            if let KeyArg::Literal(value) = key_arg(&init.expr) {
+                self.bindings.insert(name.ident.unraw().to_string(), value);
+            }
+        }
+        syn::visit::visit_local(self, local);
+    }
+
+    fn visit_item_const(&mut self, item: &'ast syn::ItemConst) {
+        if let KeyArg::Literal(value) = key_arg(&item.expr) {
+            self.bindings.insert(item.ident.unraw().to_string(), value);
+        }
+        syn::visit::visit_item_const(self, item);
+    }
+
+    fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
+        let method = call.method.unraw().to_string();
+        if NUMERIC_ACCESSORS.contains(&method.as_str()) {
+            if let Some(first) = call.args.first() {
+                let key = match first {
+                    syn::Expr::Path(path) => path
+                        .path
+                        .get_ident()
+                        .and_then(|ident| self.bindings.get(&ident.unraw().to_string()))
+                        .map_or(KeyArg::Computed, |value| KeyArg::Literal(value.clone())),
+                    other => key_arg(other),
+                };
+                self.reads.push((method, key));
+            }
+        }
+        syn::visit::visit_expr_method_call(self, call);
+    }
+
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(path) = &*call.func {
+            let names: Vec<String> = path.path.segments.iter().map(|s| s.ident.unraw().to_string()).collect();
+            if names.ends_with(&["AppConfig".to_string(), "from_str".to_string()]) {
+                if let Some(first) = call.args.first() {
+                    self.parses.push(key_arg(first));
+                }
+            }
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+
+    fn visit_macro(&mut self, node: &'ast syn::Macro) {
+        let buffer = syn::buffer::TokenBuffer::new2(node.tokens.clone());
+        self.macro_reads(buffer.begin());
+        syn::visit::visit_macro(self, node);
+    }
+}
+
+impl ConfigReads {
+    fn macro_reads(&mut self, mut cursor: syn::buffer::Cursor<'_>) {
+        while !cursor.eof() {
+            if let Some((ident, next)) = cursor.ident() {
+                let name = ident.unraw().to_string();
+                if NUMERIC_ACCESSORS.contains(&name.as_str()) {
+                    if let Some((body, _, _, _)) = next.any_group() {
+                        let key = key_tokens(&syn::buffer::TokenBuffer::new2(body.token_stream()), false);
+                        self.reads.push((name, key));
+                    }
+                }
+                cursor = next;
+            } else if let Some((body, _, _, next)) = cursor.any_group() {
+                self.macro_reads(body);
+                cursor = next;
+            } else {
+                cursor = cursor.token_tree().expect("nonempty token cursor").1;
+            }
+        }
+    }
+}
+
+/// A present number must be a number (`AppConfig::load`), so every numeric
+/// read in production has to name a key the loader checks, with the kind the
+/// loader checks for. Operator text reaches `AppConfig` only through `load`:
+/// `from_str` parses the embedded default (or an empty literal) in production.
+#[test]
+fn numeric_config_reads_are_type_checked_at_load() {
+    use cgagentharness::common::config::{shipped_numeric_keys, FLOAT_KEYS};
+    let numeric = shipped_numeric_keys();
+    let is_float = |key: &str| FLOAT_KEYS.contains(&key);
+    let leaf_matches = |template: &str, float: bool| {
+        let leaf = template.rsplit('.').next().unwrap_or(template);
+        numeric
+            .iter()
+            .any(|key| key.ends_with(&format!(".{leaf}")) && is_float(key) == float)
+    };
+    let mut float_reads = Vec::new();
+    let mut production = String::new();
+    for (path, text) in read_tree_raw(&root()) {
+        let relative = Path::new(&path)
+            .strip_prefix(root())
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        let file = syn::parse_file(&text).unwrap_or_else(|error| panic!("{path} does not parse: {error}"));
+        let mut visitor = ConfigReads::default();
+        syn::visit::visit_file(&mut visitor, &file);
+        for (method, key) in visitor.reads {
+            let float = method.starts_with("f64");
+            match key {
+                KeyArg::Literal(key) => {
+                    assert!(
+                        numeric.contains(&key),
+                        "{relative}: {method}(\"{key}\") reads a number the shipped default does not declare, \
+                         so AppConfig::load cannot type-check it. Ship the key in assets/config.default.yaml."
+                    );
+                    assert_eq!(
+                        is_float(&key),
+                        float,
+                        "{relative}: {method}(\"{key}\") disagrees with common::config::FLOAT_KEYS"
+                    );
+                    if float {
+                        float_reads.push(key);
+                    }
+                }
+                KeyArg::Template(template) if template.rsplit('.').next().is_some_and(|leaf| leaf.contains('{')) => {
+                    assert!(
+                        COMPUTED_NUMERIC_KEYS.contains(&relative.as_str()),
+                        "{relative}: {method}(format!(\"{template}\")) computes its key; register the file in \
+                         COMPUTED_NUMERIC_KEYS with the literal table it reads from"
+                    )
+                }
+                KeyArg::Template(template) => {
+                    assert!(
+                        leaf_matches(&template, float),
+                        "{relative}: {method}(format!(\"{template}\")) matches no shipped {} key",
+                        if float { "FLOAT_KEYS" } else { "integer" }
+                    );
+                    if float {
+                        float_reads.push(template);
+                    }
+                }
+                KeyArg::Computed => assert!(
+                    COMPUTED_NUMERIC_KEYS.contains(&relative.as_str()),
+                    "{relative}: {method} takes a computed key; name the key literally or register the file \
+                     in COMPUTED_NUMERIC_KEYS with the literal table it reads from"
+                ),
+            }
+        }
+        for parsed in visitor.parses {
+            assert!(
+                matches!(&parsed, KeyArg::Literal(text) if text == "<embedded default>" || text == "{}"),
+                "{relative}: AppConfig::from_str({parsed:?}) in production; operator config must go \
+                 through AppConfig::load, which type-checks numbers"
+            );
+        }
+        production.push_str(&strip_comment_lines(&text));
+    }
+    for key in FLOAT_KEYS {
+        let leaf = key.rsplit('.').next().unwrap();
+        assert!(
+            float_reads
+                .iter()
+                .any(|read| read == key || read.ends_with(&format!(".{leaf}")) && read.contains('{'))
+                || production.contains(&format!("\"{key}\"")),
+            "FLOAT_KEYS lists {key}, but no production code reads it"
+        );
+    }
+}
+
 #[test]
 fn agent_run_and_jobs_share_prepare_run() {
     let src = include_str!("../src/server/routes/agent.rs");
@@ -1191,7 +1455,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // (gate list, /loop excludes MCP, no job-long gate), plus ~10%, rounded up to the next 50.
     // why: the 2026-10-13 doc-sync cut it to 1441 words; 1490 keeps the ~50-word roadmap allowance above.
     // why: #550/#552 self-manual and red-team guidance grew it to 1459; standing rule is to raise the cap to the reported count, never trim gate text.
-    ("AGENTS.md", Agent, 1452),
+    // why: operator-approved (2026-11-02) raise from 1452 to 1776 for the strict-config trap and the
+    // strict-by-default rule for unspecified lenient-vs-strict choices (#764).
+    ("AGENTS.md", Agent, 1776),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     // why: now `@AGENTS.md` plus Claude-only lines; 183 words, rounded up to the next 100.
     ("CLAUDE.md", Agent, 400),
