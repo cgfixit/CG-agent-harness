@@ -747,7 +747,7 @@ impl Inner {
 
 fn allowed_addresses(addresses: &[SocketAddr], private: bool) -> bool {
     !addresses.is_empty()
-        && addresses.len() <= 32
+        && addresses.len() <= crate::common::dns::MAX_PINNED_ADDRESSES
         && addresses.iter().all(|a| {
             is_public_ip(a.ip())
                 || private
@@ -771,11 +771,9 @@ async fn deliver(
         .ok_or("invalid_url")?
         .trim_matches(['[', ']']);
     let port = destination.url.port_or_known_default().ok_or("invalid_url")?;
-    let addresses: Vec<_> = tokio::net::lookup_host((host, port))
+    let addresses = crate::common::dns::lookup_bounded(host, port)
         .await
-        .map_err(|_| "dns_failed")?
-        .take(33)
-        .collect();
+        .map_err(|_| "dns_failed")?;
     send_pinned(destination, timeout, token, payload, batch_id, &addresses).await
 }
 

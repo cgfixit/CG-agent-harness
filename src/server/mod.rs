@@ -118,21 +118,28 @@ pub struct AppOptions {
     /// Names loaded from the saved store before runtime startup; no values retained here.
     pub key_file_sources: BTreeSet<String>,
     /// Test hook. `None` uses the OS credential store when the plaintext opt-in is off.
+    #[cfg(any(test, feature = "test-support"))]
     pub credential_store: Option<Arc<dyn crate::common::credential_store::CredentialStore>>,
     /// Operator-facing migration warnings. Never secret values.
     pub credential_warnings: Vec<String>,
     /// Test hook: replace the closed tool allowlists (empty set = deny all).
+    #[cfg(any(test, feature = "test-support"))]
     pub tool_allowlist_override: Option<BTreeSet<String>>,
     /// Test hook: replace the MCP broker allowlist only.
+    #[cfg(any(test, feature = "test-support"))]
     pub mcp_tool_allowlist_override: Option<BTreeSet<String>>,
-    /// Test hook: pin a hostname to an address for `/web` fetches.
+    /// Test hook: pin a hostname to an address for `/web` fetches and MCP SSE.
+    #[cfg(any(test, feature = "test-support"))]
     pub web_test_resolve: Option<(String, SocketAddr)>,
-    /// Additional exact hosts for multi-site fixtures; never populated by a serving entrypoint.
+    /// Test hook: additional exact hosts for multi-site fixtures.
+    #[cfg(any(test, feature = "test-support"))]
     pub web_test_resolve_extra: Vec<(String, SocketAddr)>,
-    /// Test hook: replace the public Google search URL with a fixture; never populated by a serving entrypoint.
+    /// Test hook: replace the public Google search URL with a fixture.
+    #[cfg(any(test, feature = "test-support"))]
     pub web_test_public_search: Option<url::Url>,
     /// Test hook: the executable the shim spawns (tests run inside the test
     /// harness binary, whose `current_exe()` is not `cgagentharness`).
+    #[cfg(any(test, feature = "test-support"))]
     pub shim_exe: Option<PathBuf>,
 }
 
@@ -143,13 +150,20 @@ impl AppOptions {
             config: None,
             api_key: None,
             key_file_sources: BTreeSet::new(),
+            #[cfg(any(test, feature = "test-support"))]
             credential_store: None,
             credential_warnings: Vec::new(),
+            #[cfg(any(test, feature = "test-support"))]
             tool_allowlist_override: None,
+            #[cfg(any(test, feature = "test-support"))]
             mcp_tool_allowlist_override: None,
+            #[cfg(any(test, feature = "test-support"))]
             web_test_resolve: None,
+            #[cfg(any(test, feature = "test-support"))]
             web_test_resolve_extra: Vec::new(),
+            #[cfg(any(test, feature = "test-support"))]
             web_test_public_search: None,
+            #[cfg(any(test, feature = "test-support"))]
             shim_exe: None,
         }
     }
@@ -259,20 +273,29 @@ pub async fn build_app_with_sources(
         .or_else(|| std::env::var(crate::common::apikey::API_KEY_ENV).ok());
     let mut web = WebTool::new(&home.tools_dir(), &cfg)?;
     web.search_key_from_file = opts.key_file_sources.contains("SERPAPI_API_KEY");
-    web.test_resolve = opts.web_test_resolve.clone();
-    web.test_resolve_extra = opts.web_test_resolve_extra;
-    web.test_public_search = opts.web_test_public_search;
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        web.test_resolve = opts.web_test_resolve.clone();
+        web.test_resolve_extra = opts.web_test_resolve_extra;
+        web.test_public_search = opts.web_test_public_search;
+    }
     let planner = cfg.u64_or(
         "agentic.deepagent_github.planner_timeout_sec",
         crate::shim::REAL_REPO_RUN_FALLBACK_PLANNER_SEC,
     );
-    let mut shim = ShimContext::new(&cfg.path, &home.root, &home.tmp_dir(), planner)
+    let shim = ShimContext::new(&cfg.path, &home.root, &home.tmp_dir(), planner)
         .map_err(|e| HarnessError::harness_config(format!("cannot locate own executable: {e}")))?;
-    if let Some(exe) = opts.shim_exe {
-        shim.exe = exe;
-    }
-    let mut mcp = McpRuntime::from_config(&cfg)?;
-    mcp.test_resolve = opts.web_test_resolve;
+    #[cfg(any(test, feature = "test-support"))]
+    let shim = match opts.shim_exe {
+        Some(exe) => ShimContext { exe, ..shim },
+        None => shim,
+    };
+    let mcp = McpRuntime::from_config(&cfg)?;
+    #[cfg(any(test, feature = "test-support"))]
+    let mcp = McpRuntime {
+        test_resolve: opts.web_test_resolve,
+        ..mcp
+    };
     let jobs = agent_jobs::JobStore::open(&home.data_dir().join("agentic/console-jobs.json"))?
         .with_notifications(notifications::Notifier::start(&home, &cfg, auth.clone())?);
     let schedules = agent_schedules::ScheduleStore::open_at(
@@ -362,11 +385,14 @@ pub async fn build_app_with_sources(
         console_html_segments,
         api_key,
         key_file_sources: opts.key_file_sources,
+        #[cfg(any(test, feature = "test-support"))]
         credential_store: opts.credential_store,
         credential_warnings: opts.credential_warnings,
         auth,
         auth_operation_permits,
+        #[cfg(any(test, feature = "test-support"))]
         tool_allowlist_override: opts.tool_allowlist_override,
+        #[cfg(any(test, feature = "test-support"))]
         mcp_tool_allowlist_override: opts.mcp_tool_allowlist_override,
         shim,
         jobs,
