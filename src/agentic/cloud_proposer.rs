@@ -171,9 +171,8 @@ impl<'a> CloudProposerClient<'a> {
 
     fn record_spend(&self, usage: Option<&Value>, outcome: Option<&str>) {
         crate::llm::spend::record(
-            Some(self.audit),
+            self.audit,
             &self.spend_file,
-            8 * 1024 * 1024,
             crate::llm::spend::SpendEvent {
                 provider: &self.settings.provider,
                 model: &self.settings.model,
