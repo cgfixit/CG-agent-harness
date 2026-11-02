@@ -38,8 +38,8 @@ impl SelfKnowledgeConfig {
         if cfg.get("diagnostics").is_some_and(|v| !v.is_mapping() && !v.is_null()) {
             return Err(HarnessError::config("diagnostics must be a mapping"));
         }
-        let max_chunks = bounded(cfg, "diagnostics.self_manual_max_chunks", 4, 1, 8)? as usize;
-        let max_chars = bounded(cfg, "diagnostics.self_manual_max_chars", 6000, 512, 16_000)? as usize;
+        let max_chunks = cfg.u64_in("diagnostics.self_manual_max_chunks", 4, 1..=8)? as usize;
+        let max_chars = cfg.u64_in("diagnostics.self_manual_max_chars", 6000, 512..=16_000)? as usize;
         let min_score = match cfg.get("diagnostics.self_manual_min_score") {
             None => 0.0,
             Some(v) => v
@@ -63,16 +63,6 @@ fn missing_on(cfg: &AppConfig, key: &str) -> Result<bool> {
         None => Ok(true),
         Some(serde_yaml_ng::Value::Bool(b)) => Ok(*b),
         Some(_) => Err(HarnessError::config(format!("{key} must be a literal YAML boolean"))),
-    }
-}
-
-fn bounded(cfg: &AppConfig, key: &str, default: u64, min: u64, max: u64) -> Result<u64> {
-    match cfg.get(key) {
-        None => Ok(default),
-        Some(v) => v
-            .as_u64()
-            .filter(|n| (min..=max).contains(n))
-            .ok_or_else(|| HarnessError::config(format!("{key} must be an integer from {min} to {max}"))),
     }
 }
 
