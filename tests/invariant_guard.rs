@@ -597,6 +597,26 @@ fn duplicated_constants_still_agree() {
         cgagentharness::shim::REAL_REPO_RUN_DEFAULT_ITERATIONS,
         cgagentharness::agentic::commands::DEFAULT_MAX_ITERATIONS
     );
+    // A config without agentic.gh_min_version falls back to the code default,
+    // so that default must be the shipped value.
+    let shipped = cgagentharness::common::config::AppConfig::from_str(
+        cgagentharness::common::config::AppConfig::embedded_default(),
+        Path::new("defaults"),
+    )
+    .unwrap();
+    let (major, minor, patch) = cgagentharness::agentic::gh_client::DEFAULT_MIN_GH;
+    assert_eq!(
+        shipped.str_or("agentic.gh_min_version", ""),
+        format!("{major}.{minor}.{patch}")
+    );
+    // The console caps the goal box with its own copy of the server's ceiling.
+    assert!(
+        cgagentharness::server::console::HARNESS_HTML.contains(&format!(
+            "const MAX_GOAL_CHARS = {};",
+            cgagentharness::server::prompts::MAX_GOAL_CHARS
+        )),
+        "console MAX_GOAL_CHARS drifted from server::prompts::MAX_GOAL_CHARS"
+    );
     // The shim whitelist is exactly the CLI's dispatch table (no deepagent-plan, no __sleep),
     // in both directions: an arm missing from ACTIONS would be unreachable through the shim.
     let commands = std::fs::read_to_string(root().join("agentic").join("commands.rs")).unwrap();

@@ -670,7 +670,7 @@ impl ChatClient {
                 }
             }
             // Bound model-controlled JSON independently of the requested tokens.
-            const MAX_RESPONSE_BYTES: usize = 4_194_304;
+            use super::MAX_RESPONSE_BYTES;
             let mut resp = resp;
             let mut body = Vec::new();
             while let Some(chunk) = resp
@@ -725,7 +725,7 @@ mod tests {
     /// JSON body and one server-sent event. Exactly 4 MiB still parses.
     #[tokio::test]
     async fn oversized_local_replies_are_refused_at_the_byte_ceiling() {
-        const LIMIT: usize = 4_194_304;
+        const LIMIT: usize = crate::llm::MAX_RESPONSE_BYTES;
         // A valid completion padded with JSON whitespace to exactly `len` bytes.
         fn padded(len: usize) -> String {
             let body = reply("ok").to_string();
