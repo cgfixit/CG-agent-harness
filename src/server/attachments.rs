@@ -100,65 +100,8 @@ pub struct VerifiedAttachment {
 
 impl AttachmentStore {
     pub fn open(root: &Path) -> Result<Self> {
-        // The home-only write boundary holds only if the root itself is a
-        // real directory: a symlinked `attachments/` would carry every blob
-        // and the index to wherever it points.
-        if std::fs::symlink_metadata(root).is_ok_and(|m| m.file_type().is_symlink()) {
-            return Err(HarnessError::new(
-                "IO_ERROR",
-                "attachments directory must not be a symlink",
-            ));
-        }
-        std::fs::create_dir_all(root)
-            .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot create attachments directory: {e}")))?;
-        // Open the handle relative to the parent (the harness home) through
-        // cap_std rather than by ambient path: cap_std refuses any symlink
-        // that resolves outside the parent on every platform, so even a link
-        // swapped in between the check above and this open cannot hand back
-        // a handle outside the home.
-        let (parent, name) = match (root.parent(), root.file_name()) {
-            (Some(parent), Some(name)) if !parent.as_os_str().is_empty() => (parent, name),
-            _ => {
-                return Err(HarnessError::new(
-                    "IO_ERROR",
-                    "attachments directory must have a parent directory",
-                ))
-            }
-        };
-        let parent_dir = Dir::open_ambient_dir(parent, cap_std::ambient_authority())
-            .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot open attachments parent: {e}")))?;
-        let jail = parent_dir
-            .open_dir(name)
-            .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot open attachments directory: {e}")))?;
-        if std::fs::symlink_metadata(root).is_ok_and(|m| m.file_type().is_symlink()) {
-            return Err(HarnessError::new(
-                "IO_ERROR",
-                "attachments directory must not be a symlink",
-            ));
-        }
-        // On Unix additionally confirm the handle is the directory the path
-        // names right now (device and inode), closing the in-home link case.
-        #[cfg(unix)]
-        {
-            use cap_std::fs::MetadataExt;
-            use std::os::unix::fs::MetadataExt as StdMetadataExt;
-            let path_meta = std::fs::symlink_metadata(root)
-                .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot stat attachments directory: {e}")))?;
-            let dir_meta = jail
-                .dir_metadata()
-                .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot stat attachments directory: {e}")))?;
-            if path_meta.file_type().is_symlink()
-                || StdMetadataExt::dev(&path_meta) != dir_meta.dev()
-                || StdMetadataExt::ino(&path_meta) != dir_meta.ino()
-            {
-                return Err(HarnessError::new(
-                    "IO_ERROR",
-                    "attachments directory must not be a symlink",
-                ));
-            }
-        }
         Ok(Self {
-            jail,
+            jail: open_jail(root, "attachments")?,
             lock: Mutex::new(()),
         })
     }
@@ -935,17 +878,90 @@ fn unquote_param(value: &str) -> String {
     out
 }
 
-/// `<sha256(owner)>/<uuid>` relative to the attachments root. Both components
-/// are rebuilt from validated values (hex digest, parsed UUID), never from the
+/// Opens a store root under the harness home as its capability jail; the
+/// attachments and notes stores share it. `label` names the directory in
+/// errors (`attachments`, `notes_corpus`).
+pub(crate) fn open_jail(root: &Path, label: &str) -> Result<Dir> {
+    // The home-only write boundary holds only if the root itself is a
+    // real directory: a symlinked root would carry every blob and the
+    // index to wherever it points.
+    if std::fs::symlink_metadata(root).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(HarnessError::new(
+            "IO_ERROR",
+            format!("{label} directory must not be a symlink"),
+        ));
+    }
+    std::fs::create_dir_all(root)
+        .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot create {label} directory: {e}")))?;
+    // Open the handle relative to the parent (the harness home) through
+    // cap_std rather than by ambient path: cap_std refuses any symlink
+    // that resolves outside the parent on every platform, so even a link
+    // swapped in between the check above and this open cannot hand back
+    // a handle outside the home.
+    let (parent, name) = match (root.parent(), root.file_name()) {
+        (Some(parent), Some(name)) if !parent.as_os_str().is_empty() => (parent, name),
+        _ => {
+            return Err(HarnessError::new(
+                "IO_ERROR",
+                format!("{label} directory must have a parent directory"),
+            ))
+        }
+    };
+    let parent_dir = Dir::open_ambient_dir(parent, cap_std::ambient_authority())
+        .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot open {label} parent: {e}")))?;
+    let jail = parent_dir
+        .open_dir(name)
+        .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot open {label} directory: {e}")))?;
+    if std::fs::symlink_metadata(root).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(HarnessError::new(
+            "IO_ERROR",
+            format!("{label} directory must not be a symlink"),
+        ));
+    }
+    // On Unix additionally confirm the handle is the directory the path
+    // names right now (device and inode), closing the in-home link case.
+    #[cfg(unix)]
+    {
+        use cap_std::fs::MetadataExt;
+        use std::os::unix::fs::MetadataExt as StdMetadataExt;
+        let path_meta = std::fs::symlink_metadata(root)
+            .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot stat {label} directory: {e}")))?;
+        let dir_meta = jail
+            .dir_metadata()
+            .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot stat {label} directory: {e}")))?;
+        if path_meta.file_type().is_symlink()
+            || StdMetadataExt::dev(&path_meta) != dir_meta.dev()
+            || StdMetadataExt::ino(&path_meta) != dir_meta.ino()
+        {
+            return Err(HarnessError::new(
+                "IO_ERROR",
+                format!("{label} directory must not be a symlink"),
+            ));
+        }
+    }
+    Ok(jail)
+}
+
+/// `<sha256(owner)>/<uuid>` relative to a store root. Both components are
+/// rebuilt from validated values (hex digest, parsed UUID), never from the
 /// raw strings, so the result is always a plain two-segment relative path.
-fn blob_rel(blob: &AttachmentBlob) -> Result<PathBuf> {
-    let id = Uuid::parse_str(blob.id.trim())
-        .map_err(|_| HarnessError::new("ATTACHMENT_NOT_FOUND", "attachment is not readable"))?;
-    let owner_key = crate::common::sha256_hex(&blob.owner);
+/// Any failure is reported as `code`/`message`, the store's not-found error.
+pub(crate) fn owner_rel(owner: &str, id: &str, code: &'static str, message: &'static str) -> Result<PathBuf> {
+    let id = Uuid::parse_str(id.trim()).map_err(|_| HarnessError::new(code, message))?;
+    let owner_key = crate::common::sha256_hex(owner);
     if owner_key.len() != 64 || !owner_key.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(HarnessError::new("ATTACHMENT_NOT_FOUND", "attachment is not readable"));
+        return Err(HarnessError::new(code, message));
     }
     Ok(PathBuf::from(owner_key).join(id.hyphenated().to_string()))
+}
+
+fn blob_rel(blob: &AttachmentBlob) -> Result<PathBuf> {
+    owner_rel(
+        &blob.owner,
+        &blob.id,
+        "ATTACHMENT_NOT_FOUND",
+        "attachment is not readable",
+    )
 }
 
 #[cfg(test)]

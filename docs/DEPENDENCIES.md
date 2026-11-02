@@ -76,8 +76,9 @@ build dependency does not itself require a CMake executable. See
   0.10 reaches only `scrypt`/`pbkdf2`/`hmac`, the keyring's `hkdf`, and desktop
   build-time `tauri-codegen`. Harness `sha2` hashing uses 0.11. This is a
   call-graph inference, not an audit. cargo-deny does not flag it yet; add a
-  `deny.toml` ignore only when a RUSTSEC ID fails it. Revisit when `scrypt`
-  ships on `digest` 0.11.
+  `deny.toml` ignore only when a RUSTSEC ID fails it. `scrypt` 0.12 (on `sha2`
+  0.11 and `pbkdf2` 0.13, MSRV 1.85) would retire it, but it is a `password-hash`
+  0.6 API migration of `src/common/authn.rs`, not a refresh.
 - Duplicate versions are warnings under the existing policy. Advisories,
   unapproved licenses, wildcard requirements and unknown sources remain blocking.
 - Both `deny.toml` files ban push-telemetry and analytics SDK crates
@@ -122,13 +123,14 @@ point-in-time advisory/license/source check, not proof of vulnerability absence.
 Workflow action pins live in `.github/workflows/` and move with those files,
 not with the lockfiles.
 
-## Last synchronization (2026-10-30)
+## Last synchronization (2026-11-02)
 
-Both locks took every compatible MSRV-aware release, including `aws-lc-rs`
-1.19.0, `rustix` 1.1.6 and the `wasm-bindgen` 0.2.130 family; backend `zip`
-9.1.3; desktop `brotli` 9.1.1, `rfd` 0.17.2 and `tauri-plugin-dialog` 2.8.4,
-which drops the duplicate `windows-sys` 0.60 line. `tauri` stays `=2.12.4` by
-design. On 2026-10-31 the backend `rmcp` pin moved deliberately from 3.5.1 to
-3.7.0 and the `block-buffer` residual above was recorded, completing the
-2026-10-26 drift snapshot (#681).
+Both locks were already at every compatible MSRV-aware release older than the
+7-day cooldown, with no advisory against a locked version. Held behind the
+cooldown (all published 2026-11-01): backend `crc32fast` 1.5.4, `zip` 9.2.1,
+`openssl` 0.10.82 with `openssl-sys` 0.9.118 (in the lock only through the
+optional `dbus-secret-service` OpenSSL feature, never compiled), and desktop
+`crc32fast` 1.5.4. `rmcp` 3.8.0 (2026-10-26) and `tauri` 2.12.5 wait on their
+deliberate pins. It follows the 2026-10-30 refresh (#701), the `rmcp` 3.7.0
+bump (#712) and the `block-buffer` note (#714).
 Dated results describe that pass only; rerun the checks above before trusting them.

@@ -57,6 +57,9 @@ That file is `FROM qwen3.8:27b-mlx` with `PARAMETER num_ctx 32768`. Select it
 with `/model use qwen3.8:27b-mlx-cg`. It is local-only: do not pull it.
 `/model profile` reports `declared.modelfile_num_ctx` and
 `loaded.context_length`; chat uses the loaded value. Confirm `/api/ps` is 32768.
+The chat default `gemma4-26b-a4b:ud-q4_k_xl-cg` is built the same way from
+`scripts/bakeoff/modelfiles/gemma4-26b-a4b-ud-q4_k_xl-cg.Modelfile` (`num_ctx 32768`,
+temperature 0, `draft_num_predict 2`) and is `tag_missing` until then.
 
 The recipe does not disable thinking. For provider `ollama`,
 `models.local_llm.reasoning_effort` ships as `none`; absent/empty omits it.

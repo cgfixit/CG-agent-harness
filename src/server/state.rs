@@ -507,7 +507,8 @@ impl AppState {
             .map_or(cap, |budget| cap.min(budget))
     }
 
-    /// `models.local_llm.max_tokens`, lowered to `model`'s tuning.
+    /// `models.local_llm.max_tokens`, lowered to `model`'s tuning. Startup
+    /// refuses a malformed value, so the default stands only for a missing key.
     pub fn chat_max_tokens(&self, model: &str) -> u64 {
         let configured = self
             .cfg
@@ -519,7 +520,8 @@ impl AppState {
     /// `chat.compact_prompt_tokens`, lowered to `model`'s tuning, then scaled
     /// up to a larger verified window unless `chat.compact_follow_window` is
     /// literally false ([`super::model_limits::window_trigger`]). `reply` is the
-    /// turn's reply budget, which the trigger counts.
+    /// turn's reply budget, which the trigger counts. Startup refuses a
+    /// malformed value, so the default stands only for a missing key.
     pub fn compact_prompt_tokens(&self, model: &str, reply: u64) -> u64 {
         let configured = self
             .cfg

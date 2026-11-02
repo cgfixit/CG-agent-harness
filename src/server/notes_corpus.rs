@@ -14,7 +14,8 @@ use crate::common::errors::{HarnessError, Result};
 use crate::common::injection::Scanner;
 use crate::common::sha256_bytes_hex;
 use crate::server::attachments::{
-    atomic_write_in_jail, neutralize_sentinels, unlink_all, whole_file_fence, IncomingFile, VerifiedAttachment,
+    atomic_write_in_jail, neutralize_sentinels, open_jail, owner_rel, unlink_all, whole_file_fence, IncomingFile,
+    VerifiedAttachment,
 };
 use crate::server::passage_index::SourceKind;
 
@@ -90,55 +91,8 @@ pub struct NotesCorpus {
 
 impl NotesCorpus {
     pub fn open(root: &Path, limits: NotesLimits) -> Result<Self> {
-        if std::fs::symlink_metadata(root).is_ok_and(|m| m.file_type().is_symlink()) {
-            return Err(HarnessError::new(
-                "IO_ERROR",
-                "notes_corpus directory must not be a symlink",
-            ));
-        }
-        std::fs::create_dir_all(root)
-            .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot create notes_corpus directory: {e}")))?;
-        let (parent, name) = match (root.parent(), root.file_name()) {
-            (Some(parent), Some(name)) if !parent.as_os_str().is_empty() => (parent, name),
-            _ => {
-                return Err(HarnessError::new(
-                    "IO_ERROR",
-                    "notes_corpus directory must have a parent directory",
-                ))
-            }
-        };
-        let parent_dir = Dir::open_ambient_dir(parent, cap_std::ambient_authority())
-            .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot open notes_corpus parent: {e}")))?;
-        let jail = parent_dir
-            .open_dir(name)
-            .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot open notes_corpus directory: {e}")))?;
-        if std::fs::symlink_metadata(root).is_ok_and(|m| m.file_type().is_symlink()) {
-            return Err(HarnessError::new(
-                "IO_ERROR",
-                "notes_corpus directory must not be a symlink",
-            ));
-        }
-        #[cfg(unix)]
-        {
-            use cap_std::fs::MetadataExt;
-            use std::os::unix::fs::MetadataExt as StdMetadataExt;
-            let path_meta = std::fs::symlink_metadata(root)
-                .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot stat notes_corpus directory: {e}")))?;
-            let dir_meta = jail
-                .dir_metadata()
-                .map_err(|e| HarnessError::new("IO_ERROR", format!("cannot stat notes_corpus directory: {e}")))?;
-            if path_meta.file_type().is_symlink()
-                || StdMetadataExt::dev(&path_meta) != dir_meta.dev()
-                || StdMetadataExt::ino(&path_meta) != dir_meta.ino()
-            {
-                return Err(HarnessError::new(
-                    "IO_ERROR",
-                    "notes_corpus directory must not be a symlink",
-                ));
-            }
-        }
         Ok(Self {
-            jail,
+            jail: open_jail(root, "notes_corpus")?,
             lock: Mutex::new(()),
             limits,
         })
@@ -363,13 +317,7 @@ fn classify_note(data: &[u8], max_bytes: u64) -> Result<String> {
 }
 
 fn note_rel(blob: &NoteBlob) -> Result<PathBuf> {
-    let id =
-        Uuid::parse_str(blob.id.trim()).map_err(|_| HarnessError::new("NOTES_NOT_FOUND", "note is not readable"))?;
-    let owner_key = crate::common::sha256_hex(&blob.owner);
-    if owner_key.len() != 64 || !owner_key.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(HarnessError::new("NOTES_NOT_FOUND", "note is not readable"));
-    }
-    Ok(PathBuf::from(owner_key).join(id.hyphenated().to_string()))
+    owner_rel(&blob.owner, &blob.id, "NOTES_NOT_FOUND", "note is not readable")
 }
 
 #[cfg(test)]
