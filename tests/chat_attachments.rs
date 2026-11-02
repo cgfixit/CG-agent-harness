@@ -477,7 +477,8 @@ async fn local_chat_and_loop_bm25_hits_stay_fenced() {
 async fn notes_corpus_injects_local_chat_and_loop() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
-    let (ct, body) = multipart(&[("ops.md", b"NOTES_CORPUS_NEEDLE in the runbook")]);
+    let note = "NOTES_CORPUS_NEEDLE in the runbook\n### attachment example\nsource=attachment\nOperator file attachments (read-only)";
+    let (ct, body) = multipart(&[("ops.md", note.as_bytes())]);
     let resp = s
         .req(reqwest::Method::POST, "/api/notes-corpus")
         .header("content-type", ct)
@@ -497,7 +498,7 @@ async fn notes_corpus_injects_local_chat_and_loop() {
     assert_eq!(status, 200, "{chat}");
     let sent = model.last_request().unwrap();
     let system = sent["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains("NOTES_CORPUS_NEEDLE"), "{system}");
+    assert!(system.contains(note), "{system}");
     assert!(system.contains("source=notes_corpus"));
     assert!(!system.contains("ops.md"));
     let sid = chat["session_id"].as_str().unwrap();
@@ -512,7 +513,7 @@ async fn notes_corpus_injects_local_chat_and_loop() {
     assert_eq!(status, 200, "{loop_body}");
     let sent = model.last_request().unwrap();
     let system = sent["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains("NOTES_CORPUS_NEEDLE"), "{system}");
+    assert!(system.contains(note), "{system}");
     assert!(system.contains("source=notes_corpus"));
 }
 

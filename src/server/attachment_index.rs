@@ -1,11 +1,11 @@
-//! BM25 over owner-verified attachment blobs. Bytes still come from
-//! `AttachmentStore`. A failed or empty retrieve falls back to whole-file
-//! `fence_for` so a miss does not claim empty context.
+//! BM25 over owner-verified attachment and notes blobs. Callers read through
+//! their store's jail. A failed or empty retrieve falls back to whole-file
+//! rendering so a miss does not claim empty context.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::common::errors::Result;
-use crate::server::attachments::{blob_section, wrap_fence, AttachmentStore, VerifiedAttachment};
+use crate::server::attachments::{blob_section, omitted_section, wrap_fence, AttachmentStore, VerifiedAttachment};
 use crate::server::passage_index::{chunk_text, retrieve_passages, PassageDoc, SourceKind};
 use crate::server::prompts::MAX_WEB_CHARS;
 
@@ -25,21 +25,34 @@ pub fn fence_for_query_budget(
     }
     if query.trim().is_empty() {
         let verified = store.verified_texts(owner, ids)?;
-        return Ok(crate::server::attachments::whole_file_fence(&verified, budget));
+        return Ok(crate::server::attachments::whole_file_fence(
+            &verified,
+            budget,
+            SourceKind::Attachment,
+        ));
     }
     let verified = store.verified_texts(owner, ids)?;
-    match passage_fence(&verified, query, budget) {
+    match passage_fence(&verified, query, budget, SourceKind::Attachment) {
         Ok(Some(fence)) => Ok(fence),
-        Ok(None) | Err(_) => Ok(crate::server::attachments::whole_file_fence(&verified, budget)),
+        Ok(None) | Err(_) => Ok(crate::server::attachments::whole_file_fence(
+            &verified,
+            budget,
+            SourceKind::Attachment,
+        )),
     }
 }
 
-fn passage_fence(verified: &[VerifiedAttachment], query: &str, budget: usize) -> Result<Option<String>> {
+pub(crate) fn passage_fence(
+    verified: &[VerifiedAttachment],
+    query: &str,
+    budget: usize,
+    source: SourceKind,
+) -> Result<Option<String>> {
     let mut docs = Vec::new();
     for item in verified {
         for (start, end, heading, text) in chunk_text(&item.text) {
             docs.push(PassageDoc {
-                source: SourceKind::Attachment,
+                source,
                 source_id: item.blob.id.clone(),
                 heading,
                 text,
@@ -61,21 +74,27 @@ fn passage_fence(verified: &[VerifiedAttachment], query: &str, budget: usize) ->
     let hit_ids: BTreeSet<&str> = hits.iter().map(|h| h.source_id.as_str()).collect();
     let mut sections = Vec::new();
     let mut remaining = budget;
+    let mut omitted = 0;
     for item in verified {
         if let Some(passages) = by_blob.get(item.blob.id.as_str()) {
+            if remaining == 0 {
+                omitted += 1;
+                continue;
+            }
             let mut body = String::new();
             for (i, p) in passages.iter().enumerate() {
                 if i > 0 {
                     body.push_str("\n\n");
                 }
-                if !p.heading.is_empty() {
+                // A chunk that carries its own `# ` line already shows it; only an inherited heading is added.
+                if !p.heading.is_empty() && !p.text.lines().any(|line| line.starts_with("# ")) {
                     body.push_str("# ");
                     body.push_str(&p.heading);
                     body.push('\n');
                 }
                 body.push_str(&p.text);
             }
-            sections.push(blob_section(item, &body, remaining));
+            sections.push(blob_section(item, &body, remaining, source));
             let shown = crate::common::clip_chars(&body, remaining).chars().count();
             remaining = remaining.saturating_sub(shown);
         }
@@ -84,11 +103,16 @@ fn passage_fence(verified: &[VerifiedAttachment], query: &str, budget: usize) ->
         if hit_ids.contains(item.blob.id.as_str()) {
             continue;
         }
-        sections.push(blob_section(item, item.text.as_str(), remaining));
+        if remaining == 0 {
+            omitted += 1;
+            continue;
+        }
+        sections.push(blob_section(item, item.text.as_str(), remaining, source));
         let shown = crate::common::clip_chars(&item.text, remaining).chars().count();
         remaining = remaining.saturating_sub(shown);
     }
-    Ok(Some(wrap_fence(&sections)))
+    sections.extend(omitted_section(omitted, source));
+    Ok(Some(wrap_fence(&sections, source)))
 }
 
 #[cfg(test)]
@@ -186,11 +210,30 @@ mod tests {
     }
 
     #[test]
+    fn passage_headings_are_inherited_once_and_never_repeated() {
+        let inherited = format!("# Setup\n{}INHERIT_TOKEN tail", "padding ".repeat(350));
+        let (_dir, store, ids) = store_with(
+            "local",
+            &[
+                ("a.md", "# Runbook\nOPENING_TOKEN step one"),
+                ("b.md", "lead MIDCHUNK_TOKEN\n# Later\nbody"),
+                ("c.md", &inherited),
+            ],
+        );
+        let fence = fence_for_query(&store, "local", &ids, "OPENING_TOKEN MIDCHUNK_TOKEN INHERIT_TOKEN").unwrap();
+        assert_eq!(fence.matches("# Runbook").count(), 1, "{fence}");
+        assert_eq!(fence.matches("# Later").count(), 1, "{fence}");
+        assert!(!fence.contains("# Later\nlead"), "{fence}");
+        assert!(fence.contains("# Setup\npadding"), "{fence}");
+    }
+
+    #[test]
     fn second_blob_omitted_when_budget_exhausted() {
         let huge = "A".repeat(crate::server::prompts::MAX_WEB_CHARS + 80);
         let (_dir, store, ids) = store_with("local", &[("a.md", &huge), ("b.md", "SECOND_BLOB_TOKEN")]);
         let fence = fence_for_query(&store, "local", &ids, "no-match-zzzz").unwrap();
-        assert!(fence.contains("omitted=true"));
-        assert!(fence.contains(&ids[1]) || fence.contains("this file was not read"));
+        assert!(fence.contains("### attachments omitted (count=1, source=attachment, omitted=true)"));
+        assert!(fence.contains("1 file was not read"));
+        assert!(!fence.contains("SECOND_BLOB_TOKEN"));
     }
 }

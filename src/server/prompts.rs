@@ -440,7 +440,7 @@ pub fn compose_system_prompt_detailed(inputs: &PromptInputs<'_>) -> ComposedProm
         inputs.self_manual,
     ));
     if let Some(fence) = inputs.attachment_fence {
-        // `AttachmentStore::fence_for` already bounds the body to MAX_WEB_CHARS
+        // The shared attachment/notes renderer bounds the body to MAX_WEB_CHARS
         // and closes it with its end marker; clipping again here could cut the
         // closing marker off, so the fence is passed through as built.
         let fence = fence.trim();
