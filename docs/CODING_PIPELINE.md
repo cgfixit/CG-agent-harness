@@ -148,10 +148,12 @@ job association before releasing the worker. A changed goal or duplicate submiss
 is refused; inspect the existing job before deliberately staging another request.
 
 A checked candidate reports **awaiting_review**. `/agent status <run-id>` presents
-the complete diff; `/agent approve <run-id> <reason>` is a separate decision.
-**completed_local** requires checked-tree evidence and an approved commit. It does
-not mean pushed, published, or that every subjective goal has been independently
-proved. Continue with the separate push and PR-body/publication steps in [Run it from the console](#93-run-it-from-the-console).
+the complete diff, ignored and attribute-hidden changes included
+([approval binding](../INVARIANTS.md#approval-is-bound-to-what-was-reviewed));
+`/agent approve <run-id> <reason>` is a separate decision.
+**completed_local** requires checked-tree evidence and an approved commit, not a
+push, publication, or proof of every subjective goal; push and publication are
+separate steps ([Run it from the console](#93-run-it-from-the-console)).
 
 Each session retains one current stage; jobs/runs retain their own evidence within
 their documented limits. Reopening never replays execution or approval. Changing
@@ -320,8 +322,8 @@ assembles, per attempt: the operator's instruction, the approved plan (if
 staged), the prior attempt's check failure feedback, and a bounded excerpt of
 every source file the run declared or read via `/agent read` (within the
 [read ceilings](#bounded-edits); an explicit `#L10-L40` selector sends only
-that window) plus any GitHub
-PR/issue text pulled into session context. A cloud planner never expands that
+that window) plus the GitHub text of a selected `/agent pr` or `/agent issue`,
+fetched and injection-scanned only when selected. A cloud planner never expands that
 read set from model `=== READ ===` output (`apply_model_read_request` refuses
 with `cloud_proposer`); a local planner still refuses denied basenames
 (`sensitive_basename`) after the jail. Requested reads displace rather than
@@ -501,7 +503,8 @@ The HTTP server reaches agentic execution only through twelve actions in
 `src/common` and `src/netconnect` against the agentic tree in both directions:
 literal and direct paths, macro indirection, and `use` bindings including
 grouped, nested, renamed, inline-module and function-local imports. Comments do
-not trigger the guard. Child exit codes are the entire interface
+not trigger the guard. Child exit codes are the entire interface; a signal
+death reports `-1` plus a stderr line naming the signal
 ([I6](../INVARIANTS.md#i6--process-isolation-between-the-console-and-the-agentic-pipeline)).
 
 `writer.rs` is a separate gate from [bounded edits](#bounded-edits): it guards

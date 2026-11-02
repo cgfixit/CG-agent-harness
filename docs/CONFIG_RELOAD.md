@@ -52,9 +52,8 @@ removing a key selects its code fallback.
 | `web.chat_tool_calls` | 1–30 |
 | `web.carry_forward_sources` | 0–50 |
 
-The `loop.*` keys bound the server-side `/loop` runner (turns and aggregate
-tokens per run; consecutive failures before abort; pause between
-turns), which the console reads from `/api/status`.
+The `loop.*` keys bound the server-side `/loop` runner; the console reads
+them from `/api/status`.
 
 `web.concurrency` is **restart-only** (it sizes shared fetch permits), as are `web.goal_web_default`, `web.search*`.
 `web.max_rules` (default 64, 1–256) is restart-only too: a cap below the saved
@@ -63,9 +62,10 @@ TLS, authentication, credentials, `security.allow_plaintext_key_file` (default
 false), models (including cloud profiles), sandbox, coding policy, notifications
 and unknown keys require restart. Cloud profiles are config-owned. Invalid
 `context_window` (must exceed output), `temperature` (0–1) or `rpm` (1–100000
-calls/minute) refuses startup without echoing values; `max_output_tokens`,
+calls/minute) refuses startup without echoing values; profile `max_output_tokens`,
 `timeout_sec` and `count_timeout_sec` clamp to 1–32768, 1–720 and 0.1–10 (zero or
-non-finite refuses). `tool_support` is informational. Absent profiles keep shared
+non-finite refuses), while the shared `models.cloud_chat` limits refuse malformed or
+out-of-range values. `tool_support` is informational. Absent profiles keep shared
 settings; context/RPM stay unset and temperature is omitted. [Anthropic](https://platform.claude.com/docs/en/api/messages/create)
 deprecates temperature for newer models; [xAI](https://docs.x.ai/developers/model-capabilities/text/best-practices)
 supports it.
@@ -78,8 +78,7 @@ An unreadable or [non-private](INSTALL.md#home-and-optional-credentials) file,
 symlink on Unix, non-regular file, invalid UTF-8/YAML, more than 1 MiB of
 config, or an invalid limit returns `CONFIG_RELOAD_INVALID`. A mixed
 candidate changing anything outside the allowlist returns
-`CONFIG_RESTART_REQUIRED`. Both preserve **all** running limits. Restore the edits and retry, or restart
-with a valid configuration. Error messages and audit never
+`CONFIG_RESTART_REQUIRED`. Both preserve **all** running limits; fix the edits and retry. Error messages and audit never
 include raw YAML or secret values.
 
 Audit `config_reloaded` reports source (`http`/`sighup`), revision and whether

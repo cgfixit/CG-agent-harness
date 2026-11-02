@@ -41,6 +41,9 @@ mcp:
           memory_mb: 256
 ```
 
+`timeout_sec` (1–60) and `max_result_bytes` (1024–262144) refuse a malformed or
+out-of-range value at startup without echoing it; a missing key keeps the default.
+
 Replace the example paths with deliberate grants. At most 16 roots are accepted.
 Roots must be absolute, exclude `..` and the filesystem root, and are
 re-canonicalized for each call. Confined policies refuse the harness home and
