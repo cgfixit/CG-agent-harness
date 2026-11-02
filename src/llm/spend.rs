@@ -203,6 +203,7 @@ pub fn parse_claude_usage(usage: Option<&Value>) -> UsageTokens {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn parse_local_usage(usage: Option<&Value>) -> UsageTokens {
     let Some(usage) = usage else {
         return UsageTokens::default();
@@ -217,7 +218,6 @@ pub fn parse_local_usage(usage: Option<&Value>) -> UsageTokens {
 pub fn parse_provider_usage(provider: &str, usage: Option<&Value>) -> UsageTokens {
     match provider {
         "claude" => parse_claude_usage(usage),
-        "local" => parse_local_usage(usage),
         _ => parse_grok_usage(usage),
     }
 }

@@ -33,14 +33,6 @@ impl RateLimiter {
         }
     }
 
-    pub fn max_requests(&self) -> usize {
-        self.max_requests
-    }
-
-    pub fn window_seconds(&self) -> f64 {
-        self.window_seconds
-    }
-
     fn sweep(&self, st: &mut State, now: f64, window_seconds: f64) {
         if now - st.last_sweep < window_seconds {
             return;
@@ -84,6 +76,8 @@ impl RateLimiter {
     }
 
     /// Seconds until enough retained hits expire; 0 when under the limit.
+    /// Test-only: guards pass the live limits to [`Self::retry_after_with_limits`].
+    #[cfg(any(test, feature = "test-support"))]
     pub fn retry_after_sec(&self, client: &str) -> f64 {
         self.retry_after_with_limits(client, self.max_requests, self.window_seconds)
     }

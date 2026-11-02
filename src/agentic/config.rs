@@ -291,7 +291,8 @@ pub fn setup_bounds_sec(gh_timeout_sec: u64, gh_retries: u32) -> u64 {
         retry_backoff_sec, DEFAULT_CLONE_TIMEOUT_SEC, VERSION_CHECK_ATTEMPTS, VERSION_CHECK_RETRY_DELAY_SEC,
         VERSION_CHECK_TIMEOUT_SEC,
     };
-    use super::workspace::{DEFAULT_GIT_WRITE_TIMEOUT_SEC, GIT_VALIDATE_TIMEOUT_SEC};
+    use super::git::VALIDATE_TIMEOUT_SEC as GIT_VALIDATE_TIMEOUT_SEC;
+    use super::workspace::DEFAULT_GIT_WRITE_TIMEOUT_SEC;
     let attempts = u64::from(gh_retries) + 1;
     let clone_floor = attempts.saturating_mul(DEFAULT_CLONE_TIMEOUT_SEC);
     if clone_floor >= REAL_REPO_RUN_SETUP_BUDGET_SEC {
