@@ -5,7 +5,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
@@ -20,7 +19,7 @@ use crate::common::tool_broker::assert_allowed;
 use crate::llm::backend::LOOPBACK_HOSTS;
 
 use super::web_policy::is_public_ip;
-use super::web_search::validate_addresses;
+use super::web_search::{pinned_client_builder, validate_addresses};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Transport {
@@ -433,13 +432,6 @@ fn resolve_mcp_secret(value: &str) -> Result<String> {
     crate::common::config::resolve_secret(value)
 }
 
-struct RefuseDns;
-impl reqwest::dns::Resolve for RefuseDns {
-    fn resolve(&self, _: reqwest::dns::Name) -> reqwest::dns::Resolving {
-        Box::pin(async { Err(std::io::Error::other("unvalidated DNS refused").into()) })
-    }
-}
-
 async fn pinned_client(runtime: &McpRuntime, target: &Url) -> Result<reqwest::Client> {
     let host = target
         .host_str()
@@ -481,15 +473,7 @@ async fn pinned_client(runtime: &McpRuntime, target: &Url) -> Result<reqwest::Cl
             ));
         }
     }
-    reqwest::Client::builder()
-        .no_proxy()
-        .http1_only()
-        .pool_max_idle_per_host(0)
-        .retry(reqwest::retry::never())
-        .redirect(reqwest::redirect::Policy::none())
-        .dns_resolver(Arc::new(RefuseDns))
-        .resolve_to_addrs(&host, &addresses)
-        .timeout(runtime.timeout)
+    pinned_client_builder(&host, &addresses, runtime.timeout)
         .user_agent("CGagentHarness-mcp/1.0")
         .build()
         .map_err(sse_transport_error)
