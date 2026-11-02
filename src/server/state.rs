@@ -31,28 +31,14 @@ pub const AGENT_RUN_TOOL: &str = "agent_run";
 pub const LOOP_INFLIGHT_TTL_SEC: f64 = 900.0;
 
 pub fn auth_operation_concurrency(cfg: &AppConfig) -> Result<usize> {
-    match cfg.get("auth.max_concurrent_operations") {
-        None => Ok(2),
-        Some(value) => value
-            .as_u64()
-            .filter(|value| (1..=4).contains(value))
-            .map(|value| value as usize)
-            .ok_or_else(|| HarnessError::config("auth.max_concurrent_operations must be an integer from 1 to 4")),
-    }
+    Ok(cfg.u64_in("auth.max_concurrent_operations", 2, 1..=4)? as usize)
 }
 
 /// `attachments.max_concurrent_uploads`: bound on upload bodies buffered at
 /// once (each up to `MAX_REQUEST_BYTES`); the per-home byte quota is checked
 /// only after a body is in memory, so this is what caps transient memory.
 pub fn upload_concurrency(cfg: &AppConfig) -> Result<usize> {
-    match cfg.get("attachments.max_concurrent_uploads") {
-        None => Ok(2),
-        Some(value) => value
-            .as_u64()
-            .filter(|value| (1..=8).contains(value))
-            .map(|value| value as usize)
-            .ok_or_else(|| HarnessError::config("attachments.max_concurrent_uploads must be an integer from 1 to 8")),
-    }
+    Ok(cfg.u64_in("attachments.max_concurrent_uploads", 2, 1..=8)? as usize)
 }
 
 /// `attachments.body_timeout_sec`: server-side deadline for reading one
@@ -60,14 +46,11 @@ pub fn upload_concurrency(cfg: &AppConfig) -> Result<usize> {
 /// permit; a body that does not arrive in time is refused and its permit
 /// released.
 pub fn upload_body_timeout(cfg: &AppConfig) -> Result<std::time::Duration> {
-    match cfg.get("attachments.body_timeout_sec") {
-        None => Ok(std::time::Duration::from_secs(120)),
-        Some(value) => value
-            .as_u64()
-            .filter(|value| (5..=600).contains(value))
-            .map(std::time::Duration::from_secs)
-            .ok_or_else(|| HarnessError::config("attachments.body_timeout_sec must be an integer from 5 to 600")),
-    }
+    Ok(std::time::Duration::from_secs(cfg.u64_in(
+        "attachments.body_timeout_sec",
+        120,
+        5..=600,
+    )?))
 }
 
 /// Longest a `/api/ps` window read may take (a turn may hold the generation gate).
