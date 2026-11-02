@@ -177,11 +177,15 @@ pub async fn build_app_with_sources(
         None => home.load_config()?,
     });
     let backend = resolve_local_backend(&cfg).await?;
+    // Both keys are restart-only and `state.cfg` never changes, so the
+    // per-request readers' `u64_or` default can only stand for a missing key.
+    let reply_key = "models.local_llm.max_tokens";
     validate_reply_budget(
-        "models.local_llm.max_tokens",
-        cfg.u64_or("models.local_llm.max_tokens", compaction::DEFAULT_REPLY_TOKENS),
+        reply_key,
+        cfg.u64_strict(reply_key, compaction::DEFAULT_REPLY_TOKENS)?,
         &backend,
     )?;
+    cfg.u64_strict("chat.compact_prompt_tokens", compaction::DEFAULT_PROMPT_TOKENS)?;
     let tool_key = "models.local_llm.tool_max_tokens";
     crate::llm::openai_chat::parse_tool_max_tokens(
         cfg.get(tool_key).and_then(|value| value.as_u64()),
