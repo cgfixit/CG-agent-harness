@@ -17,7 +17,7 @@ use serde_yaml_ng::Value as Yaml;
 
 use super::compaction::{self, MIN_PROMPT_HEADROOM};
 use super::state::AppState;
-use super::web_search::{Limits, MAX_SYNTHESIS_SECONDS};
+use super::web_search::{Limits, MAX_RESEARCH_SECONDS, MAX_SYNTHESIS_SECONDS};
 use crate::common::config::AppConfig;
 use crate::llm::backend::ResolvedLocalBackend;
 use crate::llm::inventory::InventoryLimits;
@@ -74,6 +74,9 @@ const MAX_PLANNER_TIMEOUT_SEC: u64 = crate::shim::REAL_REPO_RUN_MAX_TIMEOUT_SEC
 /// Synthesis prompt tokens beside the evidence: instructions, question, framing.
 const SYNTHESIS_PROMPT_OVERHEAD: u64 = 1_000;
 const MIN_SYNTHESIS_SEC: u64 = 60;
+/// One planning prompt: the planner instructions, the question, earlier queries
+/// and three 160-character evidence excerpts, rounded up generously.
+const PLANNING_PROMPT_TOKENS: u64 = 1_000;
 /// Generation-gate owner while the speed sample runs.
 pub const TUNE_OWNER: &str = "model_tune";
 /// A cold load of a large model can take minutes; the sample itself takes seconds.
@@ -172,15 +175,37 @@ fn derived_synthesis(speed: &Value, evidence_tokens: u64, model_tokens: u64) -> 
     padded_seconds(speed, prompt, model_tokens, MIN_SYNTHESIS_SEC, MAX_SYNTHESIS_SECONDS)
 }
 
+/// `/web research`'s discovery deadline at the measured speed: a cold load and
+/// `rounds` planning calls (a planning prompt read, one `PLAN_MAX_TOKENS` reply
+/// written), doubled, plus one crawl of up to `run_seconds`. The crawl is network
+/// time a speed sample cannot measure, so it is added as configured, unpadded.
+/// Whole seconds, not 30 s steps: it is a floor under the configured value.
+/// Held at `MAX_RESEARCH_SECONDS`.
+fn derived_research(speed: &Value, rounds: u64, run_seconds: u64) -> Option<u64> {
+    let planning = padded_estimate(
+        speed,
+        rounds.saturating_mul(PLANNING_PROMPT_TOKENS),
+        rounds.saturating_mul(super::web_research::PLAN_MAX_TOKENS),
+    )?
+    .min(MAX_RESEARCH_SECONDS as f64) as u64;
+    Some(planning.saturating_add(run_seconds).min(MAX_RESEARCH_SECONDS))
+}
+
 /// Load, then `prompt` tokens at prefill speed and `written` at decode speed;
 /// doubled, rounded up to 30 s and kept in `min..=max`.
 fn padded_seconds(speed: &Value, prompt: u64, written: u64, min: u64, max: u64) -> Option<u64> {
+    let seconds = padded_estimate(speed, prompt, written)?.min(max as f64) as u64;
+    Some((seconds.div_ceil(30) * 30).clamp(min, max))
+}
+
+/// Load, then `prompt` tokens at prefill speed and `written` at decode speed,
+/// doubled and rounded up to a whole second.
+fn padded_estimate(speed: &Value, prompt: u64, written: u64) -> Option<f64> {
     let prefill = speed["prefill_tps"].as_f64().filter(|v| *v > 0.0)?;
     let decode = speed["decode_tps"].as_f64().filter(|v| *v > 0.0)?;
     let load = speed["load_seconds"].as_f64().unwrap_or(0.0).max(0.0);
     let estimate = load + prompt as f64 / prefill + written as f64 / decode;
-    let seconds = (estimate * TIMEOUT_SAFETY).ceil().min(max as f64) as u64;
-    Some((seconds.div_ceil(30) * 30).clamp(min, max))
+    Some((estimate * TIMEOUT_SAFETY).ceil())
 }
 
 /// Proposed limits for the profiled model. `profile` is a `profiled` probe
@@ -310,6 +335,15 @@ pub fn propose(
         set_path(&mut candidate, "web.synthesis_seconds", seconds);
         values.push(json!({"key": "web.synthesis_seconds", "current": web.synthesis_seconds, "proposed": seconds}));
     }
+    // Discovery follows the same sample, but only upward: its crawl is network
+    // time the sample cannot see, so the configured value stays the floor.
+    if let Some(seconds) = speed
+        .and_then(|speed| derived_research(speed, web.rounds as u64, web.run_seconds))
+        .map(|seconds| seconds.max(web.research_seconds))
+    {
+        set_path(&mut candidate, "web.research_seconds", seconds);
+        values.push(json!({"key": "web.research_seconds", "current": web.research_seconds, "proposed": seconds}));
+    }
     // The coding planner, when it runs this model: its prompt at prefill speed
     // and one planner_max_tokens reply at decode speed, padded like chat. A run
     // can carry a PR diff, issue, plan and file contents, so the prompt is sized
@@ -402,6 +436,9 @@ pub struct Tuning {
     pub timeout_sec: Option<u64>,
     /// Measured `/web research` answer deadline; `None` without a speed sample.
     pub synthesis_seconds: Option<u64>,
+    /// Measured `/web research` discovery deadline, never below the configured
+    /// one; `None` without a speed sample.
+    pub research_seconds: Option<u64>,
     /// Set when the coding planner runs this model; agent runs then use it.
     pub planner_timeout_sec: Option<u64>,
     pub speed: Option<Value>,
@@ -426,6 +463,17 @@ impl Tuning {
                 .and_then(|speed| derived_synthesis(speed, limits.evidence_tokens, limits.model_tokens))
             {
                 limits.synthesis_seconds = seconds;
+            }
+        }
+        // Discovery only lengthens: a reload that raises the configured value
+        // keeps it, and one that adds rounds or crawl time lengthens the tuning.
+        if self.research_seconds.is_some() {
+            if let Some(seconds) = self
+                .speed
+                .as_ref()
+                .and_then(|speed| derived_research(speed, limits.rounds as u64, limits.run_seconds))
+            {
+                limits.research_seconds = limits.research_seconds.max(seconds);
             }
         }
     }
@@ -455,6 +503,7 @@ pub fn tuning_from(model: &str, profile: &Value, proposal: &Value, speed: Option
         web,
         timeout_sec: value("models.local_llm.timeout_sec"),
         synthesis_seconds: value("web.synthesis_seconds"),
+        research_seconds: value("web.research_seconds"),
         planner_timeout_sec: value("agentic.deepagent_github.planner_timeout_sec"),
         speed,
         notes: proposal["notes"]
@@ -530,6 +579,7 @@ pub async fn tune(state: Arc<AppState>, model: String) {
         "max_tokens": tuning.max_tokens,
         "timeout_sec": tuning.timeout_sec,
         "synthesis_seconds": tuning.synthesis_seconds,
+        "research_seconds": tuning.research_seconds,
         "decode_tps": tuning.speed.as_ref().map(|s| s["decode_tps"].clone()),
     }));
     state.set_tuning(Some(tuning));
@@ -770,6 +820,39 @@ mod tests {
         let slow = json!({"prefill_tps": 10.0, "decode_tps": 1.5, "load_seconds": 0.0});
         assert_eq!(derived_synthesis(&slow, 6_000, 2_048), Some(MAX_SYNTHESIS_SECONDS));
         assert_eq!(MAX_SYNTHESIS_SECONDS, 3_600);
+    }
+
+    #[test]
+    fn a_slow_model_lengthens_discovery_but_a_fast_one_never_shortens_it() {
+        // Two planning calls on a slow CPU: 60 s load + 2000/10 = 200 s read +
+        // 768/1.5 = 512 s written = 772 s, x2 = 1544, plus a 180 s crawl.
+        let slow = json!({"prefill_tps": 10.0, "decode_tps": 1.5, "load_seconds": 60.0});
+        assert_eq!(derived_research(&slow, 2, 180), Some(1_724));
+        // A GPU model plans in seconds: 2000/3000 + 768/120 = 7.1 s, x2 is 15, plus the crawl.
+        let gpu = json!({"prefill_tps": 3000.0, "decode_tps": 120.0});
+        assert_eq!(derived_research(&gpu, 2, 180), Some(195));
+        let crawl = json!({"prefill_tps": 1.0, "decode_tps": 1.0});
+        assert_eq!(derived_research(&crawl, 2, 180), Some(MAX_RESEARCH_SECONDS));
+        assert!(derived_research(&json!({"decode_tps": 50.0}), 2, 180).is_none());
+
+        let cfg = shipped().unwrap();
+        let web = Limits::load(&cfg).unwrap();
+        assert_eq!((web.research_seconds, web.rounds, web.run_seconds), (1_200, 2, 180));
+        let profile = loaded(16_384);
+        for (speed, expected) in [(slow, 1_724), (gpu, 1_200)] {
+            let proposal = propose(&profile, Some(&speed), &cfg, &web, &backend(Some("none")));
+            assert_eq!(value(&proposal, "web.research_seconds"), expected, "{proposal}");
+            let tuning = tuning_from("m", &profile, &proposal, Some(speed)).unwrap();
+            assert_eq!(tuning.research_seconds, Some(expected));
+            let mut live = web.clone();
+            tuning.apply_web(&mut live);
+            assert_eq!(live.research_seconds, expected);
+            // A reload to a longer configured deadline keeps it.
+            let mut longer = web.clone();
+            longer.research_seconds = 3_000;
+            tuning.apply_web(&mut longer);
+            assert_eq!(longer.research_seconds, 3_000);
+        }
     }
 
     #[test]

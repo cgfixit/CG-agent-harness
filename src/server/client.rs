@@ -168,14 +168,15 @@ impl Portal {
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(
-                cfg.u64_or("web.research_seconds", 300).clamp(10, MAX_RESEARCH_SECONDS)
-                    // auto_tune may measure a longer answer deadline than configured.
-                    + if cfg.flag_is_true("models.local_llm.auto_tune") {
-                        MAX_SYNTHESIS_SECONDS
-                    } else {
-                        cfg.u64_or("web.synthesis_seconds", 300).clamp(10, MAX_SYNTHESIS_SECONDS)
-                    }
-                    + 10,
+                // auto_tune may measure longer research deadlines than configured.
+                if cfg.flag_is_true("models.local_llm.auto_tune") {
+                    MAX_RESEARCH_SECONDS + MAX_SYNTHESIS_SECONDS
+                } else {
+                    cfg.u64_or("web.research_seconds", 300).clamp(10, MAX_RESEARCH_SECONDS)
+                        + cfg
+                            .u64_or("web.synthesis_seconds", 300)
+                            .clamp(10, MAX_SYNTHESIS_SECONDS)
+                } + 10,
             ));
         let certificate_sha256 = if tls {
             let der = certificate(&home, &cfg)?;
