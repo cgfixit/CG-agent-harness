@@ -41,41 +41,21 @@ pub struct NotesLimits {
 impl NotesLimits {
     pub fn from_config(cfg: &AppConfig) -> Result<Self> {
         Ok(Self {
-            max_files_per_owner: bounded_u64(
-                cfg,
-                "notes_corpus.max_files_per_owner",
-                DEFAULT_MAX_FILES_PER_OWNER,
-                1,
-                256,
-            )? as usize,
-            max_file_bytes: bounded_u64(
-                cfg,
-                "notes_corpus.max_file_bytes",
-                DEFAULT_MAX_FILE_BYTES,
-                1024,
-                1_048_576,
-            )?,
-            max_home_bytes: bounded_u64(
-                cfg,
+            max_files_per_owner: cfg.u64_in("notes_corpus.max_files_per_owner", DEFAULT_MAX_FILES_PER_OWNER, 1..=256)?
+                as usize,
+            max_file_bytes: cfg.u64_in("notes_corpus.max_file_bytes", DEFAULT_MAX_FILE_BYTES, 1024..=1_048_576)?,
+            max_home_bytes: cfg.u64_in(
                 "notes_corpus.max_home_bytes",
                 DEFAULT_MAX_HOME_BYTES,
-                1_048_576,
-                33_554_432,
+                1_048_576..=33_554_432,
             )?,
-            max_files_per_request: bounded_u64(
-                cfg,
+            max_files_per_request: cfg.u64_in(
                 "notes_corpus.max_files_per_request",
                 DEFAULT_MAX_FILES_PER_REQUEST,
-                1,
-                16,
+                1..=16,
             )? as usize,
-            max_concurrent_ingests: bounded_u64(
-                cfg,
-                "notes_corpus.max_concurrent_ingests",
-                DEFAULT_MAX_CONCURRENT,
-                1,
-                8,
-            )? as usize,
+            max_concurrent_ingests: cfg.u64_in("notes_corpus.max_concurrent_ingests", DEFAULT_MAX_CONCURRENT, 1..=8)?
+                as usize,
         })
     }
 
@@ -84,25 +64,6 @@ impl NotesLimits {
             .saturating_mul(self.max_file_bytes)
             .saturating_add(NOTES_MULTIPART_OVERHEAD_BYTES);
         usize::try_from(n).unwrap_or(usize::MAX)
-    }
-}
-
-fn bounded_u64(cfg: &AppConfig, key: &str, default: u64, min: u64, max: u64) -> Result<u64> {
-    match cfg.get(key) {
-        None => Ok(default),
-        Some(v) => {
-            let Some(n) = v.as_u64() else {
-                return Err(HarnessError::config(format!(
-                    "{key} must be an integer from {min} to {max}"
-                )));
-            };
-            if n < min || n > max {
-                return Err(HarnessError::config(format!(
-                    "{key} must be an integer from {min} to {max}"
-                )));
-            }
-            Ok(n)
-        }
     }
 }
 
