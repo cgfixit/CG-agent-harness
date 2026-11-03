@@ -174,7 +174,7 @@ pub fn validate_addresses(addresses: &[SocketAddr]) -> Result<()> {
     if addresses.is_empty() {
         return Err(error("WEB_DNS", "DNS returned no addresses"));
     }
-    if addresses.len() > 32 || addresses.iter().any(|a| !is_public_ip(a.ip())) {
+    if addresses.len() > crate::common::dns::MAX_PINNED_ADDRESSES || addresses.iter().any(|a| !is_public_ip(a.ip())) {
         return Err(error("WEB_SSRF_DENIED", "DNS answer includes prohibited addresses"));
     }
     Ok(())
@@ -408,9 +408,12 @@ pub(super) async fn run_web_cpu<T: Send + 'static>(
 #[derive(Debug, Clone)]
 pub struct WebTool {
     pub(super) tools_dir: PathBuf,
-    /// Programmatic fixture hook; no configuration, CLI or HTTP path sets it.
+    /// Test hook: pin a fixture host to an address, skipping the lookup and
+    /// `validate_addresses`. Compiled only with `test-support`.
+    #[cfg(any(test, feature = "test-support"))]
     pub test_resolve: Option<(String, SocketAddr)>,
-    /// Additional exact hosts for bounded multi-site fixtures, never runtime configuration.
+    /// Test hook: more exact fixture hosts. Compiled only with `test-support`.
+    #[cfg(any(test, feature = "test-support"))]
     pub test_resolve_extra: Vec<(String, SocketAddr)>,
     pub(super) search_key_from_file: bool,
     /// Literal `security.allow_plaintext_key_file`. When false, saved search keys come from the OS store.
@@ -429,8 +432,9 @@ pub struct WebTool {
     pub(super) search_provider: super::web_searxng::SearchProvider,
     /// Per-provider pause after a refusal, shared by every snapshot; lost on restart.
     pub(super) search_cooldown: Arc<super::web_google::SearchCooldown>,
-    /// Programmatic fixture hook replacing the public Google search URL; no
-    /// configuration, CLI or HTTP path sets it.
+    /// Test hook replacing the public Google search URL with a fixture.
+    /// Compiled only with `test-support`.
+    #[cfg(any(test, feature = "test-support"))]
     pub test_public_search: Option<url::Url>,
     pub research: Arc<super::web_research::ResearchState>,
     pub chat_turn: Arc<super::web_research::ResearchState>,
@@ -441,7 +445,9 @@ impl WebTool {
         let limits = Limits::load(cfg)?;
         Ok(Self {
             tools_dir: tools_dir.into(),
+            #[cfg(any(test, feature = "test-support"))]
             test_resolve: None,
+            #[cfg(any(test, feature = "test-support"))]
             test_resolve_extra: Vec::new(),
             permits: Arc::new(Semaphore::new(limits.concurrency)),
             limits,
@@ -454,6 +460,7 @@ impl WebTool {
             public_search_sent: Arc::default(),
             search_provider: super::web_searxng::SearchProvider::load(cfg)?,
             search_cooldown: Arc::default(),
+            #[cfg(any(test, feature = "test-support"))]
             test_public_search: None,
             research: Arc::default(),
             chat_turn: Arc::default(),
@@ -788,22 +795,42 @@ impl WebTool {
             .map_err(|e| HarnessError::new("WEB_TOOL_DENIED", e.message).with_details(e.details))
     }
 
-    pub(super) async fn pinned_client(&self, target: &url::Url) -> Result<reqwest::Client> {
-        let host = target.host_str().unwrap().trim_matches(['[', ']']);
-        let port = target.port_or_known_default().unwrap();
-        let addresses = match self
-            .test_resolve
+    /// The address a test pinned for `host`. Release builds have no fixtures,
+    /// so every host is resolved and passes `validate_addresses`.
+    #[cfg(any(test, feature = "test-support"))]
+    fn fixture_address(&self, host: &str) -> Option<SocketAddr> {
+        self.test_resolve
             .iter()
             .chain(self.test_resolve_extra.iter())
             .find(|(test_host, _)| test_host == host)
-        {
-            Some((_, addr)) => vec![*addr],
-            _ => {
-                let addresses: Vec<_> = tokio::net::lookup_host((host, port))
+            .map(|(_, addr)| *addr)
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    fn fixture_address(&self, _host: &str) -> Option<SocketAddr> {
+        None
+    }
+
+    /// The fixture replacing the public Google search URL, when a test set one.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(super) fn public_search_fixture(&self) -> Option<url::Url> {
+        self.test_public_search.clone()
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    pub(super) fn public_search_fixture(&self) -> Option<url::Url> {
+        None
+    }
+
+    pub(super) async fn pinned_client(&self, target: &url::Url) -> Result<reqwest::Client> {
+        let host = target.host_str().unwrap().trim_matches(['[', ']']);
+        let port = target.port_or_known_default().unwrap();
+        let addresses = match self.fixture_address(host) {
+            Some(addr) => vec![addr],
+            None => {
+                let addresses = crate::common::dns::lookup_bounded(host, port)
                     .await
-                    .map_err(|_| error("WEB_DNS", "DNS lookup failed"))?
-                    .take(33)
-                    .collect();
+                    .map_err(|_| error("WEB_DNS", "DNS lookup failed"))?;
                 validate_addresses(&addresses)?;
                 addresses
             }

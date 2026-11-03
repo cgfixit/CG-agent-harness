@@ -27,7 +27,6 @@ const TOPIC: &str = r"[A-Za-z0-9][A-Za-z0-9._/-]{0,79}";
 pub struct Identity {
     pub commit_name: String,
     pub commit_email: String,
-    pub branch_prefix: String,
     pub allowed_prefixes: Vec<String>,
     pub branch_name_re: Regex,
 }
@@ -66,7 +65,6 @@ impl Identity {
         Ok(Self {
             commit_name,
             commit_email,
-            branch_prefix,
             allowed_prefixes: allowed,
             branch_name_re,
         })

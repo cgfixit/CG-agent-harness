@@ -95,7 +95,6 @@ async fn account_routes_refuse_missing_sessions_regardless_of_key() {
     let s = spawn_server(
         &model.base_url(),
         ServerOptions::default()
-            .with("security.api_key_optional", "false")
             .with("auth.enabled", "true")
             .with("api.rate_limit.max_requests", "200"),
     )
@@ -147,11 +146,7 @@ async fn account_routes_refuse_missing_sessions_regardless_of_key() {
 #[tokio::test]
 async fn open_routes_need_nothing_and_leak_no_message_content() {
     let model = start_mock_model().await;
-    let s = spawn_server(
-        &model.base_url(),
-        ServerOptions::default().with("security.api_key_optional", "false"),
-    )
-    .await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
     for path in [
         "/api/status",
         "/api/registry",
@@ -183,7 +178,7 @@ async fn obsolete_key_requirement_does_not_block_explicit_auth_opt_out() {
     let model = start_mock_model().await;
     let opts = ServerOptions {
         api_key: Some(String::new()),
-        ..ServerOptions::default().with("security.api_key_optional", "false")
+        ..ServerOptions::default()
     };
     let s = spawn_server(&model.base_url(), opts).await;
     let resp = s
@@ -199,11 +194,11 @@ async fn obsolete_key_requirement_does_not_block_explicit_auth_opt_out() {
 }
 
 #[tokio::test]
-async fn api_key_optional_bypass_requires_loopback_peer_and_no_proxy_headers() {
+async fn direct_loopback_admits_only_a_loopback_peer_without_forwarding_headers() {
     let model = start_mock_model().await;
     let opts = ServerOptions::default();
     let s = spawn_server(&model.base_url(), opts).await;
-    // Loopback peer, no key: allowed (CSRF still required).
+    // Loopback peer, no forwarding header: admitted (CSRF still required).
     let resp = s
         .client
         .post(s.url("/api/soul"))
@@ -213,7 +208,7 @@ async fn api_key_optional_bypass_requires_loopback_peer_and_no_proxy_headers() {
         .await
         .unwrap();
     assert_eq!(resp.status().as_u16(), 200);
-    // Forwarding header present: the bypass is withheld.
+    // Any forwarding header: `enforce_direct_loopback` refuses.
     for header in [
         "x-forwarded-for",
         "x-forwarded-host",
@@ -232,7 +227,7 @@ async fn api_key_optional_bypass_requires_loopback_peer_and_no_proxy_headers() {
             .unwrap();
         assert_eq!(resp.status().as_u16(), 403, "{header}");
     }
-    // Without CSRF the bypass still does not open the route.
+    // Without CSRF the route stays closed.
     let resp = s
         .client
         .post(s.url("/api/soul"))
@@ -246,11 +241,7 @@ async fn api_key_optional_bypass_requires_loopback_peer_and_no_proxy_headers() {
 #[tokio::test]
 async fn cross_site_and_cross_origin_are_rejected_even_with_a_key() {
     let model = start_mock_model().await;
-    let s = spawn_server(
-        &model.base_url(),
-        ServerOptions::default().with("security.api_key_optional", "false"),
-    )
-    .await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
     let port = s.addr.port();
     let cases: Vec<(&str, &str, u16, &str)> = vec![
         ("sec-fetch-site", "cross-site", 403, "CROSS_SITE_BLOCKED"),
@@ -298,11 +289,7 @@ async fn cross_site_and_cross_origin_are_rejected_even_with_a_key() {
 #[tokio::test]
 async fn csrf_remains_required_regardless_of_optional_key() {
     let model = start_mock_model().await;
-    let s = spawn_server(
-        &model.base_url(),
-        ServerOptions::default().with("security.api_key_optional", "false"),
-    )
-    .await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
     // Right key, no CSRF -> 403.
     let resp = s
         .client
@@ -338,20 +325,14 @@ async fn csrf_remains_required_regardless_of_optional_key() {
         .unwrap();
     assert_eq!(resp.status().as_u16(), 403);
     // Token differs per instance.
-    let s2 = spawn_server(
-        &model.base_url(),
-        ServerOptions::default().with("security.api_key_optional", "false"),
-    )
-    .await;
+    let s2 = spawn_server(&model.base_url(), ServerOptions::default()).await;
     assert_ne!(s.csrf, s2.csrf);
 }
 
 #[tokio::test]
 async fn rate_limit_runs_before_auth_and_reports_retry_after() {
     let model = start_mock_model().await;
-    let opts = ServerOptions::default()
-        .with("security.api_key_optional", "false")
-        .with("api.rate_limit.max_requests", "3");
+    let opts = ServerOptions::default().with("api.rate_limit.max_requests", "3");
     let s = spawn_server(&model.base_url(), opts).await;
     for _ in 0..3 {
         assert_eq!(
@@ -417,11 +398,7 @@ async fn refused_cross_site_requests_do_not_spend_the_shared_rate_budget() {
 #[tokio::test]
 async fn host_header_must_be_loopback() {
     let model = start_mock_model().await;
-    let s = spawn_server(
-        &model.base_url(),
-        ServerOptions::default().with("security.api_key_optional", "false"),
-    )
-    .await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
     for host in ["evil.example", "127.0.0.1.evil.example", "localhost.evil"] {
         let resp = s
             .client
@@ -514,19 +491,24 @@ async fn only_explicit_auth_opt_out_allows_login_free_operations() {
 #[tokio::test]
 async fn obsolete_optional_flag_never_controls_account_permissions() {
     let model = start_mock_model().await;
-    let s = spawn_server(
-        &model.base_url(),
-        ServerOptions::default()
-            .with("security.api_key_optional", "\"true\"")
-            .with("auth.enabled", "true"),
-    )
-    .await;
-    let resp = s
-        .client
-        .get(s.url("/api/keys"))
-        .header(CSRF_HEADER, &s.csrf)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status().as_u16(), 401);
+    // Literal `true` is the shipped value and the one a wired-up key would
+    // honor; `false` and the quoted string must not differ from it.
+    for value in ["true", "false", "\"true\""] {
+        let s = spawn_server(
+            &model.base_url(),
+            ServerOptions::default()
+                .with("security.api_key_optional", value)
+                .with("auth.enabled", "true"),
+        )
+        .await;
+        let resp = s
+            .client
+            .get(s.url("/api/keys"))
+            .header(CSRF_HEADER, &s.csrf)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 401, "api_key_optional: {value}");
+        assert_eq!(s.open_get("/api/status").await.1["api_key_optional"], true, "{value}");
+    }
 }

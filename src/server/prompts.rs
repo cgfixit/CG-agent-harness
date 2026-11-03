@@ -5,6 +5,8 @@
 use serde::Serialize;
 use std::path::Path;
 
+/// The one goal ceiling, in chars: chat validation (`schemas`), `/loop` and the
+/// system prompt all read it. The console mirrors it as `MAX_GOAL_CHARS`.
 pub const MAX_GOAL_CHARS: usize = 2000;
 pub const MAX_WEB_CHARS: usize = 4000;
 pub const MAX_MEMORY_CHARS: usize = 3000;

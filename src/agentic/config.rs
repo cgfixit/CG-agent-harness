@@ -291,7 +291,8 @@ pub fn setup_bounds_sec(gh_timeout_sec: u64, gh_retries: u32) -> u64 {
         retry_backoff_sec, DEFAULT_CLONE_TIMEOUT_SEC, VERSION_CHECK_ATTEMPTS, VERSION_CHECK_RETRY_DELAY_SEC,
         VERSION_CHECK_TIMEOUT_SEC,
     };
-    use super::workspace::{DEFAULT_GIT_WRITE_TIMEOUT_SEC, GIT_VALIDATE_TIMEOUT_SEC};
+    use super::git::VALIDATE_TIMEOUT_SEC as GIT_VALIDATE_TIMEOUT_SEC;
+    use super::workspace::DEFAULT_GIT_WRITE_TIMEOUT_SEC;
     let attempts = u64::from(gh_retries) + 1;
     let clone_floor = attempts.saturating_mul(DEFAULT_CLONE_TIMEOUT_SEC);
     if clone_floor >= REAL_REPO_RUN_SETUP_BUDGET_SEC {
@@ -343,7 +344,8 @@ pub fn load_agentic_config(cfg: &AppConfig, home_root: &Path) -> Result<AgenticC
         return Err(cfg_err("agentic.mode must be 'read' or 'write'").detail("received", mode.clone()));
     }
     let writes_enabled = bool_field(cfg, "agentic.writes_enabled", false)?;
-    let gh_min = cfg.str_or("agentic.gh_min_version", "2.40.0");
+    let (major, minor, patch) = super::gh_client::DEFAULT_MIN_GH;
+    let gh_min = cfg.str_or("agentic.gh_min_version", &format!("{major}.{minor}.{patch}"));
     let parts: Vec<u32> = gh_min.split('.').filter_map(|p| p.parse().ok()).collect();
     if parts.len() != 3 || gh_min.split('.').count() != 3 {
         return Err(cfg_err("agentic.gh_min_version must be 'X.Y.Z'").detail("received", gh_min.clone()));

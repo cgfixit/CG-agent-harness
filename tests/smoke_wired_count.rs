@@ -1,7 +1,8 @@
 //! `scripts/smoke-ollama.sh` greps the compact `GET /api/tools` body for a
 //! wired count. That count is `HARNESS_SURFACES.len()` when every catalog
-//! path is registered (`list_wired_tools`, same function the route uses for
-//! the `wired` field). The grep keeps a `[,}]` terminator so `"wired":690`
+//! path is registered. `list_wired_tools` is the test-only default-config
+//! wrapper over `list_wired_tools_with`, which the route calls with any
+//! config-gated rows. The grep keeps a `[,}]` terminator so `"wired":690`
 //! cannot satisfy a catalog of 69.
 
 use std::path::Path;

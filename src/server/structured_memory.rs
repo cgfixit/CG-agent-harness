@@ -725,17 +725,11 @@ fn invalid(message: impl Into<String>) -> HarnessError {
     HarnessError::new("STRUCTURED_MEMORY_IO", message)
 }
 
-/// CodeQL rust/path-injection treats these `contains` literals as a sink barrier;
-/// `Component::ParentDir` is the real check, so a home named `my..home` still opens.
-/// Reconstruct the path from the checked string so the sanitized value reaches FS APIs.
+/// The shared barrier ([`crate::common::refuse_parent_components`]) with this
+/// store's error; a home named `my..home` still opens.
 fn refuse_parent_components(path: PathBuf) -> Result<PathBuf> {
-    let raw = path.to_string_lossy();
-    if raw.contains("../") || raw.contains("..\\") || path.components().any(|c| c == std::path::Component::ParentDir) {
-        return Err(invalid(
-            "structured memory path must not contain parent-directory components",
-        ));
-    }
-    Ok(PathBuf::from(raw.as_ref()))
+    crate::common::refuse_parent_components(&path)
+        .ok_or_else(|| invalid("structured memory path must not contain parent-directory components"))
 }
 
 fn sql(error: rusqlite::Error) -> HarnessError {
