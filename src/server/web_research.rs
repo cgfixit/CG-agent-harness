@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use tokio::sync::OwnedSemaphorePermit;
 use tokio_util::sync::CancellationToken;
 
+use super::compaction::estimate_tokens;
 use super::state::AppState;
 use super::web_index::{Coverage, Passage};
 use super::web_policy::{error, valid_group};
@@ -241,9 +242,6 @@ pub struct Usage {
 
 /// No tokenizer endpoint is assumed. UTF-8 bytes/4 is explicitly an estimate;
 /// server-reported usage replaces it after each completed model call.
-fn estimate(text: &str) -> u64 {
-    (text.len() as u64).div_ceil(4)
-}
 fn spent(usage: &[Usage]) -> u64 {
     usage
         .iter()
@@ -273,7 +271,9 @@ async fn model_call(
         ));
     }
     let user = serde_json::to_string(body)?;
-    let prompt = estimate(system).saturating_add(estimate(&user)).saturating_add(16);
+    let prompt = estimate_tokens(system)
+        .saturating_add(estimate_tokens(&user))
+        .saturating_add(16);
     if spent(usage).saturating_add(prompt).saturating_add(cap) > total_budget {
         return Err(error("WEB_TOKEN_BUDGET", "no model budget remains"));
     }
@@ -314,7 +314,7 @@ async fn model_call(
             row.completion_tokens = if reply.usage_reported {
                 reply.completion_tokens
             } else {
-                estimate(&reply.body_text)
+                estimate_tokens(&reply.body_text)
             };
             row.estimated = !reply.usage_reported;
             row.outcome = "completed".into();
@@ -362,7 +362,7 @@ async fn lookup(
         }
         let mut total = 0;
         evidence.retain(|p| {
-            let size = estimate(&serde_json::to_string(p).unwrap_or_default());
+            let size = estimate_tokens(&serde_json::to_string(p).unwrap_or_default());
             if total + size > web.limits.evidence_tokens {
                 false
             } else {
@@ -603,7 +603,7 @@ pub async fn run_from(
                         .saturating_sub(spent(&usage))
                         .saturating_sub(web.limits.model_tokens);
                     let synthesis_prompt = |evidence: &[Passage]| {
-                        estimate(ANSWER_SYSTEM) + estimate(&synthesis_input(evidence).to_string()) + 16
+                        estimate_tokens(ANSWER_SYSTEM) + estimate_tokens(&synthesis_input(evidence).to_string()) + 16
                     };
                     let mut keep = evidence.len();
                     while keep > 1 && synthesis_prompt(&evidence[..keep]) > room {

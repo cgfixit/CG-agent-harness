@@ -21,6 +21,7 @@ use crate::common::injection::Scanner;
 use crate::common::sha256_bytes_hex;
 use crate::server::errors::ApiError;
 use crate::server::passage_index::SourceKind;
+#[cfg(any(test, feature = "test-support"))]
 use crate::server::prompts::MAX_WEB_CHARS;
 
 pub const MAX_FILE_BYTES: u64 = 15 * 1024 * 1024;
@@ -243,6 +244,9 @@ impl AttachmentStore {
         Ok(out)
     }
 
+    /// Test-only whole-file fence. Chat goes through
+    /// `attachment_index::fence_for_query_budget`.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn fence_for(&self, owner: &str, ids: &[String]) -> Result<String> {
         let verified = self.verified_texts(owner, ids)?;
         Ok(whole_file_fence(&verified, MAX_WEB_CHARS, SourceKind::Attachment))

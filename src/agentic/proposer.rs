@@ -152,7 +152,7 @@ impl ProposerClient for LocalProposerClient<'_> {
         }
         // Bound model-controlled JSON independently of the requested tokens:
         // the cap the cloud proposer and local chat already apply.
-        let cap = crate::llm::cloud_chat::MAX_RESPONSE_BYTES;
+        let cap = crate::llm::MAX_RESPONSE_BYTES;
         let mut body = Vec::new();
         if resp.take(cap as u64 + 1).read_to_end(&mut body).is_err() {
             failed("ValueError");

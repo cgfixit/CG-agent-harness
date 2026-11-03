@@ -9,7 +9,9 @@ use serde_json::json;
 use crate::common::atomic::write_atomic;
 use crate::common::errors::{HarnessError, Result};
 use crate::common::home::Home;
-use crate::server::sessions::{Message, Session, SESSION_ERROR_CODE};
+#[cfg(any(test, feature = "test-support"))]
+use crate::server::sessions::Message;
+use crate::server::sessions::{Session, SESSION_ERROR_CODE};
 
 const META_OPEN: &str = "<!--cgagentharness-meta ";
 const META_CLOSE: &str = " -->";
@@ -73,6 +75,8 @@ pub fn render(session: &Session, attachment_pins: Vec<ExportAttachmentPin>) -> S
     out
 }
 
+/// Test-only round-trip reader for [`render`]; there is no import route.
+#[cfg(any(test, feature = "test-support"))]
 pub fn parse(md: &str) -> Result<(ExportHeader, Vec<Message>)> {
     let Some(rest) = md.strip_prefix(META_OPEN) else {
         return Err(session_err("missing export header"));
@@ -115,6 +119,7 @@ pub fn parse(md: &str) -> Result<(ExportHeader, Vec<Message>)> {
     Ok((header, messages))
 }
 
+#[cfg(any(test, feature = "test-support"))]
 fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     let key = format!("{name}=\"");
     let start = tag.find(&key)? + key.len();

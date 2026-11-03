@@ -59,7 +59,7 @@ pub fn cloud_key_available(provider: &str) -> bool {
 
 /// A JSON reply within the cloud-chat body bound; oversize or malformed is `None`.
 fn bounded_json(resp: reqwest::blocking::Response) -> Option<Value> {
-    let cap = crate::llm::cloud_chat::MAX_RESPONSE_BYTES;
+    let cap = crate::llm::MAX_RESPONSE_BYTES;
     let mut body = Vec::new();
     resp.take(cap as u64 + 1).read_to_end(&mut body).ok()?;
     if body.len() > cap {
@@ -171,9 +171,8 @@ impl<'a> CloudProposerClient<'a> {
 
     fn record_spend(&self, usage: Option<&Value>, outcome: Option<&str>) {
         crate::llm::spend::record(
-            Some(self.audit),
+            self.audit,
             &self.spend_file,
-            8 * 1024 * 1024,
             crate::llm::spend::SpendEvent {
                 provider: &self.settings.provider,
                 model: &self.settings.model,

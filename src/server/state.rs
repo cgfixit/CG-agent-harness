@@ -109,7 +109,8 @@ pub struct AppState {
     /// Snapshot of `CGAGENTHARNESS_API_KEY` at build time (tests inject it).
     pub api_key: Option<String>,
     pub key_file_sources: BTreeSet<String>,
-    /// Test hook. Production entrypoints leave this empty and use the OS store.
+    /// Test hook replacing the OS credential store. Compiled only with `test-support`.
+    #[cfg(any(test, feature = "test-support"))]
     pub credential_store: Option<Arc<dyn crate::common::credential_store::CredentialStore>>,
     /// Startup migration warnings. Names and reasons only; never secret values.
     pub credential_warnings: Vec<String>,
@@ -128,8 +129,11 @@ pub struct AppState {
     /// Home-local administrator overrides for structured-memory sub-gates.
     pub structured_gates: Mutex<crate::server::structured_memory::OperatorGates>,
     /// Test hook: when set, replaces the closed tool allowlists (empty = deny all).
+    /// Compiled only with `test-support`.
+    #[cfg(any(test, feature = "test-support"))]
     pub tool_allowlist_override: Option<BTreeSet<String>>,
     /// Test hook for MCP only. Independent of `tool_allowlist_override`.
+    #[cfg(any(test, feature = "test-support"))]
     pub mcp_tool_allowlist_override: Option<BTreeSet<String>>,
     /// The only server -> agentic edge (a child process).
     pub shim: crate::shim::ShimContext,
@@ -634,21 +638,50 @@ impl AppState {
     }
 
     pub fn loop_tool_allowlist(&self) -> BTreeSet<String> {
-        self.tool_allowlist_override
-            .clone()
+        self.tool_allowlist_test_override()
             .unwrap_or_else(|| [HARNESS_LOOP_TOOL.to_string()].into_iter().collect())
     }
 
     pub fn agent_run_tool_allowlist(&self) -> BTreeSet<String> {
-        self.tool_allowlist_override
-            .clone()
+        self.tool_allowlist_test_override()
             .unwrap_or_else(|| [AGENT_RUN_TOOL.to_string()].into_iter().collect())
     }
 
     pub fn mcp_tool_allowlist(&self) -> BTreeSet<String> {
-        self.mcp_tool_allowlist_override
-            .clone()
+        self.mcp_tool_allowlist_test_override()
             .unwrap_or_else(|| self.mcp.broker_allowlist())
+    }
+
+    // Test seams. Release builds compile the `None` arms only, so no runtime
+    // path can widen an allowlist or swap the credential store.
+    #[cfg(any(test, feature = "test-support"))]
+    fn tool_allowlist_test_override(&self) -> Option<BTreeSet<String>> {
+        self.tool_allowlist_override.clone()
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    fn tool_allowlist_test_override(&self) -> Option<BTreeSet<String>> {
+        None
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn mcp_tool_allowlist_test_override(&self) -> Option<BTreeSet<String>> {
+        self.mcp_tool_allowlist_override.clone()
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    fn mcp_tool_allowlist_test_override(&self) -> Option<BTreeSet<String>> {
+        None
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn credential_store_test_override(&self) -> Option<&dyn crate::common::credential_store::CredentialStore> {
+        self.credential_store.as_deref()
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    pub fn credential_store_test_override(&self) -> Option<&dyn crate::common::credential_store::CredentialStore> {
+        None
     }
 
     /// 409 `LOOP_IN_FLIGHT` when a turn for this session is still running.
