@@ -17,6 +17,7 @@ use time::Date;
 use crate::common::audit::Audit;
 use crate::common::bounded_log;
 use crate::common::config::AppConfig;
+use crate::common::refuse_parent_components;
 
 pub const TICKS_PER_USD: f64 = 10_000_000_000.0;
 pub const STALE_AFTER_DAYS: i64 = 30;
@@ -203,6 +204,7 @@ pub fn parse_claude_usage(usage: Option<&Value>) -> UsageTokens {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 pub fn parse_local_usage(usage: Option<&Value>) -> UsageTokens {
     let Some(usage) = usage else {
         return UsageTokens::default();
@@ -217,7 +219,6 @@ pub fn parse_local_usage(usage: Option<&Value>) -> UsageTokens {
 pub fn parse_provider_usage(provider: &str, usage: Option<&Value>) -> UsageTokens {
     match provider {
         "claude" => parse_claude_usage(usage),
-        "local" => parse_local_usage(usage),
         _ => parse_grok_usage(usage),
     }
 }
@@ -394,17 +395,6 @@ pub fn spend_path(home: &Path, cfg: &AppConfig) -> PathBuf {
     home.join(PathBuf::from(raw))
 }
 
-/// CodeQL rust/path-injection treats `contains("..") == false` as a sink barrier.
-/// Reconstruct the path from the checked string so the sanitized value reaches FS APIs.
-fn refuse_parent_components(path: &Path) -> Option<PathBuf> {
-    // The `contains` literals are CodeQL's barrier; `ParentDir` is the real check.
-    let raw = path.to_string_lossy();
-    if raw.contains("../") || raw.contains("..\\") || path.components().any(|c| c == std::path::Component::ParentDir) {
-        return None;
-    }
-    Some(PathBuf::from(raw.as_ref()))
-}
-
 fn insert_token(map: &mut Map<String, Value>, key: &str, value: Option<u64>) {
     map.insert(
         key.to_string(),
@@ -459,18 +449,10 @@ pub fn row_from_event(event: &SpendEvent<'_>) -> Value {
 static APPEND_LOCK: Mutex<()> = Mutex::new(());
 
 /// Append one JSONL row. Never raises. Does not write `usd`.
+/// `bounded_log::append_until` refuses parent-directory components before it
+/// creates the parent directory, so a `logs/../x` path creates nothing.
 pub fn append_row(path: &Path, record: &Value, max_bytes: u64) {
     warn_once_if_stale();
-    let Some(path) = refuse_parent_components(path) else {
-        tracing::warn!("spend ledger path refused parent-directory components");
-        return;
-    };
-    if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            tracing::warn!("spend ledger parent dir unavailable: {e}");
-            return;
-        }
-    }
     let line = match serde_json::to_string(record) {
         Ok(s) => s,
         Err(e) => {
@@ -479,25 +461,30 @@ pub fn append_row(path: &Path, record: &Value, max_bytes: u64) {
         }
     };
     let _guard = APPEND_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    if bounded_log::append_until(
-        &path,
+    match bounded_log::append_until(
+        path,
         &line,
         max_bytes,
         Instant::now() + Duration::from_millis(50),
         Duration::from_millis(2),
-    )
-    .is_err()
-    {
-        tracing::warn!("spend sink unavailable, busy, or record exceeds retention bound");
+    ) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => {
+            tracing::warn!("spend ledger path refused parent-directory components");
+        }
+        Err(_) => tracing::warn!("spend sink unavailable, busy, or record exceeds retention bound"),
     }
 }
 
-pub fn record(audit: Option<&Audit>, path: &Path, max_bytes: u64, event: SpendEvent<'_>) {
-    let row = row_from_event(&event);
-    match audit {
-        Some(audit) => audit.append_spend(path, &row),
-        None => append_row(path, &row, max_bytes),
-    }
+/// Record one spend row through the audit writer. The writer's retention bound
+/// (`logging.max_file_bytes`) caps the ledger, so this path takes no size.
+pub fn record(audit: &Audit, path: &Path, event: SpendEvent<'_>) {
+    audit.append_spend(path, &row_from_event(&event));
+}
+
+/// Record one spend row without an audit writer, capped at `max_bytes`.
+pub fn record_direct(path: &Path, max_bytes: u64, event: SpendEvent<'_>) {
+    append_row(path, &row_from_event(&event), max_bytes);
 }
 
 fn tokens_from_row(row: &Value) -> UsageTokens {
@@ -696,28 +683,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn only_parent_components_refuse_a_spend_path() {
-        for allowed in [
-            "logs/spend..old.jsonl",
-            "logs/..spend.jsonl",
-            "data/my..home/logs/spend.jsonl",
-        ] {
-            assert_eq!(
-                refuse_parent_components(Path::new(allowed)),
-                Some(PathBuf::from(allowed))
-            );
-        }
-        for refused in [
-            "../spend.jsonl",
-            "logs/../../spend.jsonl",
-            "logs/..",
-            "logs\\..\\spend.jsonl",
-        ] {
-            assert_eq!(refuse_parent_components(Path::new(refused)), None, "{refused}");
-        }
-    }
-
-    #[test]
     fn grok_responses_fixture_prefers_ticks_and_table_path_matches_hand_arithmetic() {
         let body = json!({
             "model": "grok-4.20-0309-reasoning",
@@ -856,8 +821,7 @@ mod tests {
             "output_tokens_details": {"reasoning_tokens": 246},
             "cost_in_usd_ticks": 37_756_000
         })));
-        record(
-            None,
+        record_direct(
             &path,
             8 * 1024 * 1024,
             SpendEvent {
@@ -869,8 +833,7 @@ mod tests {
                 outcome: None,
             },
         );
-        record(
-            None,
+        record_direct(
             &path,
             8 * 1024 * 1024,
             SpendEvent {
@@ -900,8 +863,7 @@ mod tests {
         let first = summarize_file(&path);
         assert_eq!(first["rows"], 2);
         assert_eq!(first["days"].as_array().unwrap().len(), 2);
-        record(
-            None,
+        record_direct(
             &path,
             8 * 1024 * 1024,
             SpendEvent {
@@ -929,8 +891,7 @@ mod tests {
     fn empty_text_row_carries_failed_after_billing() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("spend.jsonl");
-        record(
-            None,
+        record_direct(
             &path,
             8 * 1024 * 1024,
             SpendEvent {
@@ -1008,6 +969,8 @@ mod tests {
         let evil = dir.path().join("logs").join("..").join("outside.jsonl");
         append_row(&evil, &json!({"provider": "local"}), 1024);
         assert!(!dir.path().join("outside.jsonl").exists());
+        // Refused before the parent directory is created, not after.
+        assert!(!dir.path().join("logs").exists());
         let summary = summarize_file(&evil);
         assert_eq!(summary["rows"], 0);
     }

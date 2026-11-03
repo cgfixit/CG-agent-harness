@@ -27,7 +27,6 @@ pub const MAX_BRANCH_LEN: usize = 88;
 pub const MAX_CHECK_PROFILES: usize = 8;
 pub const MAX_READ_FILES: usize = 8;
 pub const MAX_READ_FILE_LEN: usize = 1024;
-pub const MAX_GOAL_LEN: usize = 2000;
 pub const MAX_WEB_URL_LEN: usize = super::web_policy::MAX_URL_BYTES;
 pub const MAX_WEB_QUERY_LEN: usize = 200;
 pub const MAX_WEB_RESEARCH_QUESTION_LEN: usize = 2000;
@@ -734,7 +733,7 @@ pub struct GoalRequest {
 
 impl Validate for GoalRequest {
     fn validate(&self) -> Vec<String> {
-        if len_ok(&self.goal, 0, MAX_GOAL_LEN) {
+        if len_ok(&self.goal, 0, super::prompts::MAX_GOAL_CHARS) {
             vec![]
         } else {
             vec!["goal".into()]

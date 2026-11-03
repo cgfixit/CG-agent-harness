@@ -21,6 +21,7 @@ impl UntrustedString {
         &self.value
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn is_untrusted(&self) -> bool {
         self.untrusted
     }

@@ -685,6 +685,9 @@ fn render_tools_diagram(tools: &[Value], wired: usize, total: usize) -> String {
     lines.join("\n")
 }
 
+/// Test-only: the default-config report. `/api/tools` calls
+/// [`list_wired_tools_with`] with the config-gated rows.
+#[cfg(any(test, feature = "test-support"))]
 pub fn list_wired_tools(registered: &BTreeSet<String>) -> Value {
     list_wired_tools_with(registered, &[])
 }

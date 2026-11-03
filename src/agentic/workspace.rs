@@ -25,7 +25,9 @@ use super::gh_client::{run_read, ReadRequest, DEFAULT_CLONE_TIMEOUT_SEC};
 
 pub const DEFAULT_MAX_READ_BYTES: u64 = 256_000;
 pub const DEFAULT_MAX_WRITE_BYTES: usize = 256_000;
-/// Re-exported for the shim budget sums; `git` itself stays crate-private.
+/// Re-exported so tests can check the shim budget sums; `git` itself stays
+/// crate-private and `config::setup_bounds_sec` reads it directly.
+#[cfg(any(test, feature = "test-support"))]
 pub const GIT_VALIDATE_TIMEOUT_SEC: u64 = super::git::VALIDATE_TIMEOUT_SEC;
 pub const DEFAULT_GIT_WRITE_TIMEOUT_SEC: u64 = super::git::DEFAULT_OP_TIMEOUT_SEC;
 pub const DEFAULT_PUSH_TIMEOUT_SEC: u64 = 120;
@@ -220,8 +222,6 @@ pub struct RepoWorkspace<'a> {
     dir: cap_std::fs::Dir,
     audit: &'a Audit,
     ctx: &'a AgenticCtx,
-    pub max_read_bytes: u64,
-    pub max_write_bytes: usize,
 }
 
 impl<'a> RepoWorkspace<'a> {
@@ -266,8 +266,6 @@ impl<'a> RepoWorkspace<'a> {
             dir,
             audit: &ctx.audit,
             ctx,
-            max_read_bytes: DEFAULT_MAX_READ_BYTES,
-            max_write_bytes: DEFAULT_MAX_WRITE_BYTES,
         })
     }
 
@@ -302,8 +300,6 @@ impl<'a> RepoWorkspace<'a> {
             dir,
             audit: &ctx.audit,
             ctx,
-            max_read_bytes: DEFAULT_MAX_READ_BYTES,
-            max_write_bytes: DEFAULT_MAX_WRITE_BYTES,
         })
     }
 
@@ -318,8 +314,6 @@ impl<'a> RepoWorkspace<'a> {
             dir,
             audit: &ctx.audit,
             ctx,
-            max_read_bytes: DEFAULT_MAX_READ_BYTES,
-            max_write_bytes: DEFAULT_MAX_WRITE_BYTES,
         })
     }
 
@@ -546,12 +540,12 @@ impl<'a> RepoWorkspace<'a> {
         if !meta.is_file() {
             return Err(self.read_denied(target, "not a regular file"));
         }
-        if meta.len() > self.max_read_bytes {
+        if meta.len() > DEFAULT_MAX_READ_BYTES {
             return Err(self.read_denied(target, "exceeds max_read_bytes"));
         }
-        let data = open_nofollow(&parent, leaf, self.max_read_bytes.saturating_add(1))
+        let data = open_nofollow(&parent, leaf, DEFAULT_MAX_READ_BYTES.saturating_add(1))
             .map_err(|_| self.read_denied(target, "escape or missing"))?;
-        if data.len() as u64 > self.max_read_bytes {
+        if data.len() as u64 > DEFAULT_MAX_READ_BYTES {
             return Err(self.read_denied(target, "exceeds max_read_bytes"));
         }
         self.audit
@@ -591,7 +585,7 @@ impl<'a> RepoWorkspace<'a> {
             if !seen.insert(fs_equiv_path(&landed)) {
                 return Err(self.deny(tool, "duplicate landed destination", Some(raw)));
             }
-            if content.len() > self.max_write_bytes {
+            if content.len() > DEFAULT_MAX_WRITE_BYTES {
                 return Err(self.deny(tool, "write content exceeds max_write_bytes", Some(raw)));
             }
             let expected = proposal
