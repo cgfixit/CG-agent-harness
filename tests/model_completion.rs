@@ -49,7 +49,7 @@ async fn planner_refuses_a_reply_over_the_shared_body_bound() {
     // The cloud proposer and local chat cap model-controlled JSON at
     // `MAX_RESPONSE_BYTES`; the local planner must not buffer past it.
     let model = start_mock_model().await;
-    let over = "x".repeat(cgagentharness::llm::cloud_chat::MAX_RESPONSE_BYTES);
+    let over = "x".repeat(cgagentharness::llm::MAX_RESPONSE_BYTES);
     model.set_reply(json!({"choices": [{"finish_reason": "stop", "message": {"content": over}}]}));
     let base = model.base_url();
     let outcome = tokio::task::spawn_blocking(move || {

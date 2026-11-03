@@ -344,7 +344,8 @@ pub fn load_agentic_config(cfg: &AppConfig, home_root: &Path) -> Result<AgenticC
         return Err(cfg_err("agentic.mode must be 'read' or 'write'").detail("received", mode.clone()));
     }
     let writes_enabled = bool_field(cfg, "agentic.writes_enabled", false)?;
-    let gh_min = cfg.str_or("agentic.gh_min_version", "2.40.0");
+    let (major, minor, patch) = super::gh_client::DEFAULT_MIN_GH;
+    let gh_min = cfg.str_or("agentic.gh_min_version", &format!("{major}.{minor}.{patch}"));
     let parts: Vec<u32> = gh_min.split('.').filter_map(|p| p.parse().ok()).collect();
     if parts.len() != 3 || gh_min.split('.').count() != 3 {
         return Err(cfg_err("agentic.gh_min_version must be 'X.Y.Z'").detail("received", gh_min.clone()));

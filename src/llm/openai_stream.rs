@@ -174,7 +174,7 @@ pub async fn read(mut response: reqwest::Response, output: Output<'_>) -> Result
         .map_err(|_| invalid("model stream interrupted"))?
     {
         bytes = bytes.saturating_add(chunk.len());
-        if bytes > 4_194_304 {
+        if bytes > super::MAX_RESPONSE_BYTES {
             return Err(invalid("model response exceeds limit"));
         }
         for text in decoder.push(&chunk)? {
