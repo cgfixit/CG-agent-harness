@@ -457,7 +457,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 116);
+        assert_eq!(REGISTERED_PATHS.len(), 118);
 
         let all = registered_paths();
         assert!(
