@@ -1026,7 +1026,7 @@ fn cloud_proposer_gates_sanitizes_and_retries() {
         "the key must not be replayed to a redirect target"
     );
     // A reply over the shared cloud body bound is refused, recorded as billed, and not retried.
-    let over = "x".repeat(cgagentharness::llm::cloud_chat::MAX_RESPONSE_BYTES);
+    let over = "x".repeat(cgagentharness::llm::MAX_RESPONSE_BYTES);
     let (big_addr, big_hits) = rt.block_on(mock_provider(claude_reply(over), false));
     c.endpoint_override = Some(format!("http://127.0.0.1:{}/v1/x", big_addr.port())); // DevSkim: ignore DS162092 because this mock provider binds only to loopback.
     let before = std::fs::read_to_string(&spend).unwrap().lines().count();

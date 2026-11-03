@@ -1,5 +1,10 @@
 //! Local OpenAI-compatible backend resolution and the chat client.
 
+/// Byte ceiling for one model reply: the local JSON body, the local SSE
+/// stream and every cloud provider reply stop here, bounding model-controlled
+/// bytes independently of the requested tokens.
+pub const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+
 pub mod backend;
 pub mod cloud_chat;
 pub mod cloud_profile;

@@ -64,7 +64,7 @@ impl Job {
     }
 }
 
-#[derive(Default)]
+#[cfg_attr(any(test, feature = "test-support"), derive(Default))]
 pub struct JobStore {
     inner: Mutex<BTreeMap<String, Job>>,
     path: Option<PathBuf>,
@@ -72,6 +72,8 @@ pub struct JobStore {
 }
 
 impl JobStore {
+    /// Test-only in-memory store; serving opens a durable one with [`Self::open`].
+    #[cfg(any(test, feature = "test-support"))]
     pub fn new() -> Self {
         Self::default()
     }

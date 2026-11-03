@@ -14,14 +14,13 @@ use crate::common::errors::{HarnessError, Result};
 use crate::llm::cloud_profile::{CloudProfile, DEFAULT_TIMEOUT_SEC};
 use crate::llm::openai_chat::{ChatResult, LLM_ERROR_CODE};
 use crate::llm::spend::{self, UsageTokens};
+use crate::llm::MAX_RESPONSE_BYTES;
 
 const GROK_ENDPOINT: &str = "https://api.x.ai/v1/responses";
 const CLAUDE_ENDPOINT: &str = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 #[cfg(feature = "test-support")]
 const TEST_CLOUD_KEY: &str = "cgah-test-synthetic-cloud-key";
-/// Body bound for a paid cloud-provider reply; every cloud client uses it.
-pub const MAX_RESPONSE_BYTES: usize = 4_194_304;
 
 /// Pre-call estimate, never measured usage or a guaranteed invoice ceiling.
 #[derive(Debug, serde::Serialize)]
@@ -570,8 +569,7 @@ impl CloudChat {
             return;
         };
         let served = body.get("model").and_then(Value::as_str);
-        spend::record(
-            None,
+        spend::record_direct(
             path,
             self.spend_max_bytes,
             spend::SpendEvent {
