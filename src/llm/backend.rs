@@ -48,8 +48,7 @@ impl reqwest::dns::Resolve for LoopbackOnlyDns {
     fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
         let host = name.as_str().to_string();
         Box::pin(async move {
-            let answers: Vec<std::net::SocketAddr> =
-                tokio::net::lookup_host((host.as_str(), 0)).await?.take(33).collect();
+            let answers = crate::common::dns::lookup_bounded(&host, 0).await?;
             let pinned = loopback_only(answers)?;
             Ok(Box::new(pinned.into_iter()) as reqwest::dns::Addrs)
         })
@@ -58,7 +57,10 @@ impl reqwest::dns::Resolve for LoopbackOnlyDns {
 
 /// Keep a DNS answer only when it is non-empty, bounded and loopback-only.
 fn loopback_only(answers: Vec<std::net::SocketAddr>) -> std::io::Result<Vec<std::net::SocketAddr>> {
-    if answers.is_empty() || answers.len() > 32 || answers.iter().any(|a| !a.ip().is_loopback()) {
+    if answers.is_empty()
+        || answers.len() > crate::common::dns::MAX_PINNED_ADDRESSES
+        || answers.iter().any(|a| !a.ip().is_loopback())
+    {
         return Err(std::io::Error::other(
             "local model host did not resolve to loopback addresses only",
         ));

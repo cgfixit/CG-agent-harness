@@ -618,8 +618,8 @@ fn with_key_store<T>(
     state: &AppState,
     body: impl FnOnce(&dyn crate::common::credential_store::CredentialStore) -> T,
 ) -> T {
-    if let Some(store) = &state.credential_store {
-        body(store.as_ref())
+    if let Some(store) = state.credential_store_test_override() {
+        body(store)
     } else {
         let store = crate::common::credential_store::OsCredentialStore::for_home(&state.home.root);
         body(&store)

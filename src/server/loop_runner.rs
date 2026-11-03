@@ -26,8 +26,6 @@ use crate::server::config_reload::LoopLimits;
 use crate::server::routes::core::chat_inner;
 use crate::server::schemas::ChatRequest;
 
-/// Mirror of the console `MAX_GOAL_CHARS`.
-pub const MAX_GOAL_CHARS: usize = 2000;
 /// Mirror of the console `LOOP_GOAL_REMINDER_CHARS`: the goal restated next to
 /// every turn's reply, so a small model cannot lose it behind long history.
 const LOOP_GOAL_REMINDER_CHARS: usize = 2000;
@@ -233,10 +231,6 @@ impl LoopManager {
             runs: Mutex::new(HashMap::new()),
             dir: home.join("loops"),
         }
-    }
-
-    pub fn dir(&self) -> &std::path::Path {
-        &self.dir
     }
 
     /// The owner's live (non-terminal) run for `session_id`, when one exists.

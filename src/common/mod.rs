@@ -10,6 +10,7 @@ pub mod bounded_log;
 pub mod child_env;
 pub mod config;
 pub mod credential_store;
+pub mod dns;
 pub mod errors;
 pub mod file_lease;
 pub mod home;
@@ -149,6 +150,22 @@ pub fn is_visibly_blank(text: &str) -> bool {
     text.chars().all(|c| c.is_whitespace() || is_format_control(c))
 }
 
+/// Refuse a path with a parent-directory component, returning a path rebuilt
+/// from the checked text. `Component::ParentDir` is the real check, so names
+/// such as `spend..old.jsonl` or a home called `my..home` stay allowed. The
+/// `contains` literals are what CodeQL's rust/path-injection query recognizes
+/// as a barrier, and handing back the rebuilt value, not the input, is what
+/// carries that barrier to the file APIs. Operator-configured log, spend and
+/// structured-memory paths all pass through here; callers map `None` to their
+/// own error.
+pub fn refuse_parent_components(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let raw = path.to_string_lossy();
+    if raw.contains("../") || raw.contains("..\\") || path.components().any(|c| c == std::path::Component::ParentDir) {
+        return None;
+    }
+    Some(std::path::PathBuf::from(raw.as_ref()))
+}
+
 /// Levenshtein distance in characters, for "did you mean" suggestions.
 pub fn edit_distance(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
@@ -173,6 +190,34 @@ pub const MAX_PR_BODY_BYTES: usize = 65_536;
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
+    /// Parent components refuse, dotted names do not, and the allowed path
+    /// comes back unchanged. Spend, audit and structured memory all rely on it.
+    #[test]
+    fn only_parent_components_refuse_a_path() {
+        for allowed in [
+            "logs/spend..old.jsonl",
+            "logs/..spend.jsonl",
+            "data/my..home/logs/spend.jsonl",
+            "memory/structured..sqlite3",
+        ] {
+            assert_eq!(
+                super::refuse_parent_components(Path::new(allowed)),
+                Some(PathBuf::from(allowed))
+            );
+        }
+        for refused in [
+            "../spend.jsonl",
+            "logs/../../spend.jsonl",
+            "logs/..",
+            "..",
+            "logs\\..\\spend.jsonl",
+        ] {
+            assert_eq!(super::refuse_parent_components(Path::new(refused)), None, "{refused}");
+        }
+    }
+
     #[test]
     fn visibly_blank_covers_white_space_and_format_controls_but_not_text() {
         for blank in [
