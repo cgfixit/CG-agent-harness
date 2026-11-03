@@ -16,6 +16,7 @@ Contracts: [INVARIANTS.md](../../INVARIANTS.md); process rules:
 - [`config.rs`](config.rs): private YAML loading and typed `AppConfig` views; `flag_is_true` requires literal `true`.
 - [`credential_file_writer.rs`](credential_file_writer.rs): Windows-only owner-ACL file writer, included by `credential_store.rs`.
 - [`credential_store.rs`](credential_store.rs): `CredentialStore` trait and the OS store; env wins; one-time `.env` migration.
+- [`dns.rs`](dns.rs): `lookup_bounded`, the one DNS lookup for pinned egress (web, MCP SSE, webhooks, local models), capped at `MAX_PINNED_ADDRESSES` + 1.
 - [`errors.rs`](errors.rs): `HarnessError {code, message, details}` and the constructors the console's `detail.code` relies on.
 - [`file_lease.rs`](file_lease.rs): `FileLease`: OS-held advisory lock; files never deleted, PIDs never authority.
 - [`home.rs`](home.rs): `~/.CGagentHarness` layout, seeding, `harness.json`, `LOOPBACK_HOSTS`, `validate_port`.

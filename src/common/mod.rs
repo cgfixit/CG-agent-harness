@@ -10,6 +10,7 @@ pub mod bounded_log;
 pub mod child_env;
 pub mod config;
 pub mod credential_store;
+pub mod dns;
 pub mod errors;
 pub mod file_lease;
 pub mod home;
