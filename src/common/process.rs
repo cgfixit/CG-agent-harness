@@ -244,7 +244,9 @@ impl KeepAwake {
             .is_some_and(|child| matches!(child.try_wait(), Ok(None)))
     }
 
-    #[cfg(any(target_os = "macos", test))]
+    // Compiled exactly where it is called: production on macOS, and the unit
+    // test on Unix (`keep_awake_tests`). Elsewhere it would be dead code.
+    #[cfg(any(target_os = "macos", all(test, unix)))]
     fn spawn(program: &str, args: &[&str]) -> Self {
         Self(
             Command::new(program)
