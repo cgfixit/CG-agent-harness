@@ -569,8 +569,7 @@ impl CloudChat {
             return;
         };
         let served = body.get("model").and_then(Value::as_str);
-        spend::record(
-            None,
+        spend::record_direct(
             path,
             self.spend_max_bytes,
             spend::SpendEvent {

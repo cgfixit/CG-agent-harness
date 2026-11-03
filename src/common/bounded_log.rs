@@ -67,19 +67,16 @@ pub fn append_until(
     if line.len() as u64 + 1 > max_bytes {
         return Err(std::io::Error::other("log record exceeds retention bound"));
     }
-    // CodeQL rust/path-injection treats these `contains` literals as a barrier;
-    // `Component::ParentDir` is the real check, so a name like `audit..old.jsonl`
-    // stays allowed. The audit path is operator-configured, not an HTTP field;
-    // refuse traversal anyway so a tainted config/home value cannot create
-    // directories elsewhere.
-    let raw = path.to_string_lossy();
-    if raw.contains("../") || raw.contains("..\\") || path.components().any(|c| c == std::path::Component::ParentDir) {
+    // The audit and spend paths are operator-configured, not HTTP fields;
+    // refuse traversal anyway, before creating any directory, so a tainted
+    // config/home value cannot create directories elsewhere.
+    let Some(path) = super::refuse_parent_components(path) else {
         return Err(std::io::Error::new(
             ErrorKind::InvalidInput,
             "log path must not contain parent-directory components",
         ));
-    }
-    let path = Path::new(raw.as_ref());
+    };
+    let path = path.as_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
