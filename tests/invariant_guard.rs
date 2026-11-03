@@ -597,6 +597,26 @@ fn duplicated_constants_still_agree() {
         cgagentharness::shim::REAL_REPO_RUN_DEFAULT_ITERATIONS,
         cgagentharness::agentic::commands::DEFAULT_MAX_ITERATIONS
     );
+    // A config without agentic.gh_min_version falls back to the code default,
+    // so that default must be the shipped value.
+    let shipped = cgagentharness::common::config::AppConfig::from_str(
+        cgagentharness::common::config::AppConfig::embedded_default(),
+        Path::new("defaults"),
+    )
+    .unwrap();
+    let (major, minor, patch) = cgagentharness::agentic::gh_client::DEFAULT_MIN_GH;
+    assert_eq!(
+        shipped.str_or("agentic.gh_min_version", ""),
+        format!("{major}.{minor}.{patch}")
+    );
+    // The console caps the goal box with its own copy of the server's ceiling.
+    assert!(
+        cgagentharness::server::console::HARNESS_HTML.contains(&format!(
+            "const MAX_GOAL_CHARS = {};",
+            cgagentharness::server::prompts::MAX_GOAL_CHARS
+        )),
+        "console MAX_GOAL_CHARS drifted from server::prompts::MAX_GOAL_CHARS"
+    );
     // The shim whitelist is exactly the CLI's dispatch table (no deepagent-plan, no __sleep),
     // in both directions: an arm missing from ACTIONS would be unreachable through the shim.
     let commands = std::fs::read_to_string(root().join("agentic").join("commands.rs")).unwrap();
@@ -844,11 +864,7 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
     // Source of truth: the shipped YAML uses literal booleans (quoted
     // "true" / "false" would be strings and flag_is_true would hide a mistake).
     let yaml = cgagentharness::common::config::AppConfig::embedded_default();
-    for needle in [
-        "api_key_optional: true",
-        "allow_git_write_tools: false",
-        "allow_plaintext_key_file: false",
-    ] {
+    for needle in ["allow_git_write_tools: false", "allow_plaintext_key_file: false"] {
         assert!(yaml.contains(needle), "shipped config lost {needle}");
     }
     assert!(
@@ -868,10 +884,6 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "allow_git_write_tools must ship false"
     );
     assert!(
-        cfg.flag_is_true("security.api_key_optional"),
-        "direct local use must ship without a key requirement"
-    );
-    assert!(
         cfg.str_list("netconnect.allowed_cidrs").is_empty(),
         "netconnect scope must ship empty"
     );
@@ -882,6 +894,31 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
     for tier in cgagentharness::netconnect::Tier::ALL {
         assert!(!netconnect.tier_enabled(tier));
         assert!(!netconnect.tier_may_run(tier));
+    }
+}
+
+/// `security.api_key_optional` is an inert compatibility key (INVARIANTS.md,
+/// "Signals weaker than their name"): account login and the direct-loopback
+/// check never consult it. Its only allowed mention is the JSON compatibility
+/// field emitted as the literal `true`. Reading the key, or deriving that field
+/// from anything, would turn a dead switch into an authentication control, so
+/// it has to arrive as a contract change, not a refactor.
+#[test]
+fn api_key_optional_stays_an_unread_compatibility_key() {
+    const FIELD: &str = "\"api_key_optional\":true";
+    let desktop = Path::new(env!("CARGO_MANIFEST_DIR")).join("desktop/src");
+    for dir in [root(), desktop] {
+        for (path, text) in read_tree(&dir) {
+            for line in text.lines().filter(|line| line.contains("api_key_optional")) {
+                let compact: String = line.chars().filter(|c| !c.is_whitespace()).collect();
+                assert!(
+                    !compact.replace(FIELD, "").contains("api_key_optional"),
+                    "{path}: `{}` reads or derives api_key_optional. It is an inert \
+                     compatibility key; wiring it changes the account contract in INVARIANTS.md",
+                    line.trim()
+                );
+            }
+        }
     }
 }
 

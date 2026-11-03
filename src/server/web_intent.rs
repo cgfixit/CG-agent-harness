@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 const MAX_COUNT: usize = 10;
+#[cfg(any(test, feature = "test-support"))]
 const DEFAULT_COUNT: usize = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +60,9 @@ pub enum WebIntentParse {
 /// Returns None unless the text is a natural-language search request with a
 /// valid count; see [`parse_with_count`] for the three-way outcome.
 ///
+/// Test-only executable spec: production callers use [`parse_with_count`]
+/// with the caller's own count.
+///
 /// Two conditions must hold for a rewrite: the line must be command-shaped
 /// (it starts with `search` after optional politeness words, is
 /// a `/web` remainder, or opens with `first N links|results|...` as the
@@ -66,6 +70,7 @@ pub enum WebIntentParse {
 /// signal, either balanced quoted terms or a `first N <noun>` count outside
 /// those quotes. Ordinary Google syntax such as `site:x "search parser"` or
 /// `vector search benchmarks` therefore never reaches the rewrite.
+#[cfg(any(test, feature = "test-support"))]
 pub fn parse(text: &str) -> Option<WebIntent> {
     match parse_with_count(text, DEFAULT_COUNT) {
         WebIntentParse::Rewrite(intent) => Some(intent),
@@ -73,7 +78,7 @@ pub fn parse(text: &str) -> Option<WebIntent> {
     }
 }
 
-/// Like [`parse`], but a request without an explicit `first N` keeps
+/// Like the test-only `parse`, but a request without an explicit `first N` keeps
 /// `fallback_count` exactly as the caller supplied it, so the downstream
 /// range validation still sees an out-of-range caller value.
 pub fn parse_with_count(text: &str, fallback_count: usize) -> WebIntentParse {

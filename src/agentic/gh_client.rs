@@ -17,6 +17,8 @@ use crate::common::process::{self, RunSpec};
 
 use super::config::repo_re;
 
+/// Oldest `gh` the pipeline accepts when `agentic.gh_min_version` is absent.
+/// The shipped config carries the same value; a test keeps them equal.
 pub const DEFAULT_MIN_GH: (u32, u32, u32) = (2, 40, 0);
 pub const MAX_LIST_LIMIT: u64 = 1000;
 pub const MAX_DIFF_CHARS: usize = 200_000;

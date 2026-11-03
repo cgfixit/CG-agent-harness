@@ -1056,9 +1056,8 @@ pub(crate) async fn chat_inner(
     let local_usage = std::sync::Mutex::new(crate::server::chat_web::UsageSnapshot::default());
     let record_local_failure = |tokens, billed_model: &str| {
         crate::llm::spend::record(
-            Some(&state.audit),
+            &state.audit,
             &state.spend_file,
-            crate::common::bounded_log::limit(&state.cfg),
             crate::llm::spend::SpendEvent {
                 provider: "local",
                 model: billed_model,
@@ -1701,9 +1700,8 @@ pub(crate) async fn chat_inner(
         // later cancellation still needs the known subtotal for loop budgets.
         let tokens = local_usage.lock().unwrap().pending.take().expect("completed local usage");
         crate::llm::spend::record(
-            Some(&state.audit),
+            &state.audit,
             &state.spend_file,
-            crate::common::bounded_log::limit(&state.cfg),
             crate::llm::spend::SpendEvent {
                 provider: "local",
                 model: &reply.model,

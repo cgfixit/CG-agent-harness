@@ -485,7 +485,6 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
     }
     .with("auth.enabled", "true")
     .with("tls.enabled", "true")
-    .with("security.api_key_optional", "false")
     .with("structured_memory.enabled", "true")
     .with("api.rate_limit.max_requests", "1000");
     let server = spawn_server(&model.base_url(), options).await;
@@ -948,7 +947,6 @@ async fn cli_bootstrap_session_can_only_replace_the_password_and_gets_no_machine
     }
     .with("auth.enabled", "true")
     .with("tls.enabled", "true")
-    .with("security.api_key_optional", "false")
     .with("api.rate_limit.max_requests", "1000");
     let server = spawn_server(&model.base_url(), options).await;
     let stderr = |out: &std::process::Output| String::from_utf8_lossy(&out.stderr).into_owned();
