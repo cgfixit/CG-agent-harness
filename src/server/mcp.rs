@@ -56,6 +56,10 @@ pub struct McpRuntime {
     pub timeout: Duration,
     pub max_result_bytes: usize,
     pub servers: Vec<DeclaredServer>,
+    /// Test hook: pin a fixture SSE host to an address instead of resolving it.
+    /// The loopback and public-address checks still apply. Compiled only with
+    /// `test-support`.
+    #[cfg(any(test, feature = "test-support"))]
     pub test_resolve: Option<(String, SocketAddr)>,
 }
 
@@ -74,6 +78,7 @@ impl McpRuntime {
             timeout: Duration::from_secs(timeout_sec),
             max_result_bytes: max_result_bytes as usize,
             servers: parse_servers(cfg)?,
+            #[cfg(any(test, feature = "test-support"))]
             test_resolve: None,
         })
     }
@@ -85,8 +90,23 @@ impl McpRuntime {
             timeout: Duration::from_secs(15),
             max_result_bytes: 65_536,
             servers: Vec::new(),
+            #[cfg(any(test, feature = "test-support"))]
             test_resolve: None,
         }
+    }
+
+    /// The address a test pinned for `host`; release builds always resolve.
+    #[cfg(any(test, feature = "test-support"))]
+    fn fixture_address(&self, host: &str) -> Option<SocketAddr> {
+        self.test_resolve
+            .as_ref()
+            .filter(|(test_host, _)| test_host == host)
+            .map(|(_, addr)| *addr)
+    }
+
+    #[cfg(not(any(test, feature = "test-support")))]
+    fn fixture_address(&self, _host: &str) -> Option<SocketAddr> {
+        None
     }
 
     pub fn broker_allowlist(&self) -> BTreeSet<String> {
@@ -440,17 +460,15 @@ async fn pinned_client(runtime: &McpRuntime, target: &Url) -> Result<reqwest::Cl
             "loopback SSE MCP is disabled (mcp.sse_allow_loopback)",
         ));
     }
-    let addresses = if let Some((test_host, addr)) = &runtime.test_resolve {
-        if test_host == &host {
-            vec![*addr]
-        } else {
-            lookup_sse_addresses(&host, port).await?
-        }
-    } else {
-        lookup_sse_addresses(&host, port).await?
+    let addresses = match runtime.fixture_address(&host) {
+        Some(addr) => vec![addr],
+        None => lookup_sse_addresses(&host, port).await?,
     };
     if loopback_host {
-        if addresses.is_empty() || addresses.len() > 32 || addresses.iter().any(|a| !a.ip().is_loopback()) {
+        if addresses.is_empty()
+            || addresses.len() > crate::common::dns::MAX_PINNED_ADDRESSES
+            || addresses.iter().any(|a| !a.ip().is_loopback())
+        {
             return Err(mcp_err(
                 "MCP_SSRF_DENIED",
                 "loopback SSE DNS answer was not loopback-only",
@@ -490,9 +508,8 @@ fn sse_transport_error(e: reqwest::Error) -> HarnessError {
 }
 
 async fn lookup_sse_addresses(host: &str, port: u16) -> Result<Vec<SocketAddr>> {
-    tokio::net::lookup_host((host, port))
+    crate::common::dns::lookup_bounded(host, port)
         .await
-        .map(|iter| iter.take(33).collect())
         .map_err(|_| mcp_err("MCP_SSE", "DNS lookup failed"))
 }
 

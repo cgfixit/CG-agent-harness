@@ -480,8 +480,8 @@ impl WebTool {
         } else {
             None
         };
-        let bases = match &self.test_public_search {
-            Some(fixture) => vec![fixture.clone()],
+        let bases = match self.public_search_fixture() {
+            Some(fixture) => vec![fixture],
             None => ["https://www.google.com/search", "https://google.com/search"]
                 .into_iter()
                 .map(|base| url::Url::parse(base).unwrap())
