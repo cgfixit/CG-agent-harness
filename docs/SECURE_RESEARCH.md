@@ -444,8 +444,8 @@ usage wins; otherwise bytes/4 plus overhead is estimated, charging incomplete
 output conservatively. Synthesis drops unfitting low-ranked passages
 (`WEB_EVIDENCE_TRIMMED`). Bounded JSON output has no commands or privileged tools.
 Retrieval interleaves the question and subqueries without embeddings or reranking.
-Console research runs as a server job outliving the tab (`/web job`,
-`/web jobs`); `/web cancel` stops it.
+Console research (`/web job`, `/web jobs`) outlives the tab; `/web cancel`
+stops it.
 
 Answers label support, conflicts, inference, and missing or stale evidence.
 Citation IDs and quotes are checked against passages, but semantic support still
