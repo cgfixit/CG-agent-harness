@@ -9,7 +9,7 @@ and [release controls](../../docs/RELEASING.md).
 | File | Purpose and trigger |
 |---|---|
 | [`ci.yml`](ci.yml) | Rust formatting, Clippy, dependency policy, browser, sandbox and lifecycle tests; PR, main push, merge queue and release calls. |
-| [`pr-template-check.yml`](pr-template-check.yml) | PR-body requirements (Cursor and trailing Claude Code footers are stripped) and base-is-main checks; PR open/edit/sync/reopen/ready events. |
+| [`pr-template-check.yml`](pr-template-check.yml) | PR-body requirements (Cursor and trailing Claude Code footers are stripped; verified Dependabot updates are exempt) and base-is-main checks; PR open/edit/sync/reopen/ready events. |
 | [`review-gate-request.yml`](review-gate-request.yml) | Unprivileged wake-up signal from PR, review and review-comment events, including forks. |
 | [`review-gate.yml`](review-gate.yml) | Trusted dispatcher; validates request-run identity or handles Codex summary comments, then calls the evaluator. |
 | [`review-gate-evaluate.yml`](review-gate-evaluate.yml) | Reusable advisory check: unresolved threads/running reviews are neutral; evaluation errors fail. Re-run the dispatcher after resolving threads. |
@@ -38,7 +38,7 @@ on enforcement; the review gate remains advisory.
 | [`script-lint.yml`](script-lint.yml) | ShellCheck, Python compilation, Node syntax and disposable Git-hook behavior checks; filtered pushes/PRs or manual. |
 | [`clippy-sarif.yml`](clippy-sarif.yml) | Clippy findings in Security; separate from CI's Clippy gate; main push, PR, weekly or manual. |
 | [`codeql.yml`](codeql.yml) | Rust and Actions code scanning; main push, PR, weekly or manual. |
-| [`devskim.yml`](devskim.yml) | Source security patterns; main push, PR targeting main or weekly. |
+| [`devskim.yml`](devskim.yml) | Source security patterns; main push, PR targeting main, weekly or manual. |
 | [`gitleaks.yml`](gitleaks.yml) | Full-history secret scan; main push, PR, weekly or manual. |
 | [`dependency-advisories.yml`](dependency-advisories.yml) | RustSec advisories for backend, desktop and the sandbox fixture; daily or manual. |
 | [`netconnect.yml`](netconnect.yml) | Scope/flag tests and Linux no-packet proof; filtered pushes/PRs or manual. |
