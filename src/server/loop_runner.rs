@@ -235,10 +235,6 @@ impl LoopManager {
         }
     }
 
-    pub fn dir(&self) -> &std::path::Path {
-        &self.dir
-    }
-
     /// The owner's live (non-terminal) run for `session_id`, when one exists.
     /// A console that reopens the session uses it to reattach.
     pub fn active_for_session(&self, owner: &str, session_id: &str) -> Option<LoopRun> {
