@@ -2566,12 +2566,13 @@ function renderResearch(result) {
   sys(renderWebCoverage(result.coverage),'Bounded research; not an exhaustive site summary.');
 }
 async function watchResearchJob(id) {
-  const generation = ++researchWatchGeneration;
+  const generation = ++researchWatchGeneration, revision = sessionRevision;
+  const stale = () => generation !== researchWatchGeneration || revision !== sessionRevision;
   let announced = false;
   try {
-    while (generation === researchWatchGeneration) {
+    while (!stale()) {
       const job = await api('/api/web/research/jobs/' + encodeURIComponent(id));
-      if (generation !== researchWatchGeneration) return;
+      if (stale()) return;
       if (job.status === 'running') {
         if (!announced) sys('research job ' + id + ' is running: ' + job.question);
         announced = true;
@@ -2584,7 +2585,7 @@ async function watchResearchJob(id) {
       return;
     }
   } catch (err) {
-    if (generation !== researchWatchGeneration) return;
+    if (stale()) return;
     sys('research monitoring paused; the job keeps running on the server. Use /web job ' + id + ' to resume. (' + err.message + ')');
   }
 }

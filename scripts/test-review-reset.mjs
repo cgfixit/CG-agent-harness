@@ -115,6 +115,20 @@ const watching=context.watchAgentJob('job');await pollStarted.promise;
 assert.equal(calls.at(-1)[0],'/api/agent/jobs/job','the deferred job response must be in flight');
 context.clearTranscript();poll.resolve({status:'finished',result:{parsed:record}});await watching;reset();
 
+// An in-flight research poll must not render the previous account's answer.
+const researchPoll=deferred(), researchStarted=deferred();
+context.respond=path=>{researchStarted.resolve(path);return researchPoll.promise;};
+const researching=context.watchResearchJob('rjob');
+assert.equal(await researchStarted.promise,'/api/web/research/jobs/rjob','the deferred research response must be in flight');
+messages.length=0;context.resetAccountView();
+researchPoll.resolve({status:'finished',question:'old question',result:{model:'old-account-model',answer:{supported:[{text:'old account claim',citations:[]}]},passages:[],warnings:[]}});
+await researching;
+assert.deepEqual(messages.filter(m=>/old|research/.test(String(m))),[],'an account reset drops the old account research reply');
+// Positive control: without a reset the same reply renders.
+context.respond=()=>({status:'finished',question:'q',result:{model:'same-account-model',answer:{},passages:[],warnings:[]}});
+messages.length=0;await context.watchResearchJob('rjob');
+assert.ok(messages.includes('research answered by same-account-model'),'a current research reply still renders: '+JSON.stringify(messages));
+
 // Positive controls: fresh visible review and explicit approval still work.
 context.respond=()=>proposal;await context.runSlash('/soul review proposal');
 assert.equal(context.reviewedSoulProposal.id,'proposal');
