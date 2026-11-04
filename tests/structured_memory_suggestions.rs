@@ -8,11 +8,15 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Mutex,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 struct Model {
     base: String,
     requests: Arc<Mutex<Vec<Value>>>,
+    /// Proposal traffic in order: "request" as one arrives, "reply" once its
+    /// delay has passed and the answer goes out. Tests assert what came first
+    /// here instead of timing the worker.
+    order: Arc<Mutex<Vec<&'static str>>>,
     bad: Arc<AtomicBool>,
     delay: Arc<AtomicU64>,
     reply: Arc<Mutex<String>>,
@@ -20,12 +24,20 @@ struct Model {
 
 async fn model() -> Model {
     let requests = Arc::new(Mutex::new(Vec::new()));
+    let order = Arc::new(Mutex::new(Vec::new()));
     let bad = Arc::new(AtomicBool::new(false));
     let delay = Arc::new(AtomicU64::new(0));
     let reply = Arc::new(Mutex::new("Acknowledged the operator's metric preference.".to_string()));
-    let (seen, invalid, latency, response) = (requests.clone(), bad.clone(), delay.clone(), reply.clone());
+    let (seen, events, invalid, latency, response) = (
+        requests.clone(),
+        order.clone(),
+        bad.clone(),
+        delay.clone(),
+        reply.clone(),
+    );
     let app = axum::Router::new().route("/v1/chat/completions", axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
-        let (seen, invalid, latency, response) = (seen.clone(), invalid.clone(), latency.clone(), response.clone());
+        let (seen, events, invalid, latency, response) =
+            (seen.clone(), events.clone(), invalid.clone(), latency.clone(), response.clone());
         async move {
             if body["messages"][0]["content"].as_str().unwrap_or("").contains("local structured-memory consolidator") {
                 let input: Value = serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
@@ -38,8 +50,10 @@ async fn model() -> Model {
             if !body["messages"][0]["content"].as_str().is_some_and(|s| s.starts_with("You propose memories for human review")) {
                 return axum::Json(ok_reply(&response.lock().unwrap(), 10, 5));
             }
+            events.lock().unwrap().push("request");
             seen.lock().unwrap().push(body.clone());
             tokio::time::sleep(Duration::from_millis(latency.load(Ordering::SeqCst))).await;
+            events.lock().unwrap().push("reply");
             if invalid.load(Ordering::SeqCst) { return axum::Json(ok_reply("not JSON", 10, 5)); }
             let input: Value = serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
             let candidate = |category, content, confidence, source: Value| json!({
@@ -64,6 +78,7 @@ async fn model() -> Model {
     Model {
         base,
         requests,
+        order,
         bad,
         delay,
         reply,
@@ -96,15 +111,34 @@ fn stage(store: &StructuredMemoryStore, owner: &str) -> String {
         .id
 }
 
-async fn settled(s: &TestServer, owner: &str) {
-    for _ in 0..300 {
-        let status = suggest::status(&s.state, owner);
-        if status["queued"] == 0 && status["running"] == false {
-            return;
-        }
+/// Hang guard for every wait below, never the property under test. The worker
+/// reaches each awaited state through several `synchronous=FULL` SQLite commits
+/// on the test's single runtime thread, which a Windows runner can stretch past
+/// a second. A regression shows up as a wrong order or state, not a slow wait.
+const WAIT: Duration = Duration::from_secs(30);
+
+/// Polls `done` every 10 ms until it holds; panics with `what` after `WAIT`.
+async fn until(what: &str, mut done: impl AsyncFnMut() -> bool) {
+    let deadline = Instant::now() + WAIT;
+    while !done().await {
+        assert!(Instant::now() < deadline, "{what}");
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    panic!("suggestion worker did not settle");
+}
+
+async fn requested(model: &Model, count: usize) {
+    until("the model did not receive the suggestion", async || {
+        model.requests.lock().unwrap().len() >= count
+    })
+    .await;
+}
+
+async fn settled(s: &TestServer, owner: &str) {
+    until("suggestion worker did not settle", async || {
+        let status = suggest::status(&s.state, owner);
+        status["queued"] == 0 && status["running"] == false
+    })
+    .await;
 }
 
 #[tokio::test]
@@ -564,12 +598,7 @@ async fn clearing_sessions_cancels_queued_and_inflight_chat_suggestions() {
     let store = s.state.structured_memory.as_ref().unwrap();
     let id = stage(store, "local");
     let active = suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "metric", "reply");
-    for _ in 0..100 {
-        if !model.requests.lock().unwrap().is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    requested(&model, 1).await;
     assert_eq!(model.requests.lock().unwrap().len(), 1);
     let id2 = stage(store, "local");
     suggest::enqueue(&s.state, "local", Source::Chat, Some(&id2), "metric", "reply");
@@ -577,9 +606,13 @@ async fn clearing_sessions_cancels_queued_and_inflight_chat_suggestions() {
         .post_json("/api/sessions/clear", json!({"confirm":true,"reason":"Clear fixture"}))
         .await;
     assert_eq!(code, 200, "{body}");
-    tokio::time::timeout(Duration::from_secs(1), settled(&s, "local"))
-        .await
-        .expect("clearing sessions waited for the model instead of discarding its input");
+    settled(&s, "local").await;
+    // The ten-second call was dropped, not answered: no reply reached the worker.
+    assert_eq!(
+        *model.order.lock().unwrap(),
+        ["request"],
+        "clearing sessions waited for the model instead of discarding its input"
+    );
     assert!(!s.state.generation_gate.is_held());
     assert!(store.list_proposals("local").unwrap().is_empty());
     assert_eq!(model.requests.lock().unwrap().len(), 1);
@@ -611,12 +644,7 @@ async fn clearing_sessions_preserves_coding_and_other_owners_active_suggestions(
         let store = s.state.structured_memory.as_ref().unwrap();
         let episode = stage(store, owner);
         let active = suggest::enqueue(&s.state, owner, source, Some(&episode), "metric", "reply");
-        for _ in 0..100 {
-            if !model.requests.lock().unwrap().is_empty() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        requested(&model, 1).await;
         assert_eq!(model.requests.lock().unwrap().len(), 1);
         let (code, body) = s
             .post_json(
@@ -651,12 +679,7 @@ async fn disabling_a_running_suggestion_records_its_specific_gate() {
         let store = s.state.structured_memory.as_ref().unwrap();
         let episode = stage(store, "local");
         let active = suggest::enqueue(&s.state, "local", Source::Chat, Some(&episode), "metric", "reply");
-        for _ in 0..100 {
-            if !model.requests.lock().unwrap().is_empty() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        requested(&model, 1).await;
         assert_eq!(model.requests.lock().unwrap().len(), 1);
         let (code, body) = s
             .post_json("/api/structured-memory/gates", json!({"gate":gate,"enabled":false}))
@@ -682,12 +705,7 @@ async fn clearing_a_preempted_active_suggestion_records_lost_input_instead_of_a_
     let store = s.state.structured_memory.as_ref().unwrap();
     let id = stage(store, "local");
     let queued = suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "metric", "reply");
-    for _ in 0..100 {
-        if !model.requests.lock().unwrap().is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    requested(&model, 1).await;
     assert_eq!(model.requests.lock().unwrap().len(), 1);
     assert!(suggest::preempt(&s.state));
     suggest::clear_chat_queue(&s.state, "local");
@@ -795,12 +813,7 @@ async fn cancelling_a_queued_receipt_does_not_abort_another_owners_running_sugge
     let store = s.state.structured_memory.as_ref().unwrap();
     let foreign = stage(store, "user_bob");
     let running = suggest::enqueue(&s.state, "user_bob", Source::Chat, Some(&foreign), "metric", "reply");
-    for _ in 0..100 {
-        if !model.requests.lock().unwrap().is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    requested(&model, 1).await;
     assert_eq!(model.requests.lock().unwrap().len(), 1);
     let local = stage(store, "local");
     let queued = suggest::enqueue(&s.state, "local", Source::Chat, Some(&local), "metric", "reply");
@@ -836,12 +849,7 @@ async fn cancelling_a_running_suggestion_releases_the_model_for_the_next_owner()
     let store = s.state.structured_memory.as_ref().unwrap();
     let local = stage(store, "local");
     let first = suggest::enqueue(&s.state, "local", Source::Chat, Some(&local), "metric", "reply");
-    for _ in 0..100 {
-        if !model.requests.lock().unwrap().is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    requested(&model, 1).await;
     assert_eq!(model.requests.lock().unwrap().len(), 1);
     model.delay.store(300, Ordering::SeqCst);
     let foreign = stage(store, "user_bob");
@@ -853,14 +861,14 @@ async fn cancelling_a_running_suggestion_releases_the_model_for_the_next_owner()
     let (code, cancelled) = s.post_json(&path, json!({})).await;
     assert_eq!(code, 200, "{cancelled}");
     assert_eq!(cancelled["state"], "cancelled");
-    // This must release the ten-second call, rather than wait for its reply.
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while model.requests.lock().unwrap().len() < 2 {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .expect("cancelled run kept the model gate");
+    // This must release the ten-second call, rather than wait for its reply:
+    // the next owner's request reaches the model before any reply goes out.
+    requested(&model, 2).await;
+    assert_eq!(
+        model.order.lock().unwrap()[..2],
+        ["request", "request"],
+        "cancelled run kept the model gate until its reply"
+    );
     assert_eq!(
         store
             .get_consolidation_run("user_bob", second["run_id"].as_str().unwrap())
@@ -905,12 +913,7 @@ async fn native_shutdown_interrupts_generation_without_consuming_waiting_inputs(
             "metric",
             "reply",
         );
-        for _ in 0..100 {
-            if !model.requests.lock().unwrap().is_empty() {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        requested(&model, 1).await;
         assert_eq!(model.requests.lock().unwrap().len(), 1);
         let waiting = suggest::enqueue(
             &s.state,
@@ -935,13 +938,16 @@ async fn native_shutdown_interrupts_generation_without_consuming_waiting_inputs(
         // The native control path signals shutdown before aborting the client.
         s.state.shutdown.cancel();
         s.state.abort_chat();
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while s.state.generation_gate.is_held() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
+        until("shutdown kept the model gate", async || {
+            !s.state.generation_gate.is_held()
         })
-        .await
-        .expect("shutdown kept the model gate");
+        .await;
+        // Released by the interruption, not by the ten-second reply.
+        assert_eq!(
+            *model.order.lock().unwrap(),
+            ["request"],
+            "shutdown kept the model gate until its reply ({prior_stop})"
+        );
         let ended = store.get_consolidation_run("local", run_id).unwrap();
         assert_eq!(
             (ended.state.as_str(), ended.error_class.as_deref()),
@@ -970,12 +976,7 @@ async fn chat_preempts_a_running_suggestion_which_requeues_and_finishes_later() 
         .post_json("/api/chat", json!({"message":"I prefer metric units."}))
         .await;
     assert_eq!(code, 200, "{first}");
-    for _ in 0..300 {
-        if !model.requests.lock().unwrap().is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    requested(&model, 1).await;
     assert_eq!(model.requests.lock().unwrap().len(), 1, "the suggestion is generating");
     assert_eq!(s.state.generation_gate.owner(), suggest::GATE_OWNER);
     // Only that in-flight request is slow; a retry would answer at once.
@@ -1079,12 +1080,7 @@ async fn an_owner_cancel_stops_a_preempted_suggestion_from_resuming() {
         .post_json("/api/chat", json!({"message":"I prefer metric units."}))
         .await;
     assert_eq!(code, 200, "{first}");
-    for _ in 0..1000 {
-        if !model.requests.lock().unwrap().is_empty() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    requested(&model, 1).await;
     assert_eq!(model.requests.lock().unwrap().len(), 1, "the suggestion is generating");
     model.delay.store(0, Ordering::SeqCst);
     let (code, second) = s.post_json("/api/chat", json!({"message":"Also use Celsius."})).await;
@@ -1111,16 +1107,7 @@ async fn an_owner_cancel_stops_a_preempted_suggestion_from_resuming() {
     assert_eq!(suggest::status(&s.state, "local")["queued"], 1);
 
     // Only the second chat's queued input remains after the owner's cancel.
-    let mut quiet = false;
-    for _ in 0..1000 {
-        let status = suggest::status(&s.state, "local");
-        if status["queued"] == 0 && status["running"] == false {
-            quiet = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    assert!(quiet, "suggestion worker did not settle");
+    settled(&s, "local").await;
     let run = store
         .list_consolidation_runs("local")
         .unwrap()
@@ -1183,20 +1170,13 @@ async fn synchronous_and_detached_coding_share_pending_only_completion_hook() {
     settled(&s, "local").await;
     let (code, job) = s.post_json("/api/agent/jobs", body.clone()).await;
     assert_eq!(code, 202, "{job}");
-    for _ in 0..100 {
-        let (_, status) = s
-            .get_json(&format!("/api/agent/jobs/{}", job["job_id"].as_str().unwrap()))
-            .await;
-        if status["status"] == "finished" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    let path = format!("/api/agent/jobs/{}", job["job_id"].as_str().unwrap());
+    until("the agent job did not finish", async || {
+        s.get_json(&path).await.1["status"] != "running"
+    })
+    .await;
     settled(&s, "local").await;
-    let completed = s
-        .get_json(&format!("/api/agent/jobs/{}", job["job_id"].as_str().unwrap()))
-        .await
-        .1;
+    let completed = s.get_json(&path).await.1;
     assert_eq!(completed["status"], "finished", "{completed}");
     assert_eq!(completed["result"]["memory_suggestion"]["queued"], true, "{completed}");
     let store = s.state.structured_memory.as_ref().unwrap();
@@ -1229,12 +1209,10 @@ async fn synchronous_and_detached_coding_share_pending_only_completion_hook() {
     let (code, skipped_job) = s.post_json("/api/agent/jobs", body).await;
     assert_eq!(code, 202, "{skipped_job}");
     let path = format!("/api/agent/jobs/{}", skipped_job["job_id"].as_str().unwrap());
-    for _ in 0..100 {
-        if s.get_json(&path).await.1["status"] != "running" {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    until("the agent job did not finish", async || {
+        s.get_json(&path).await.1["status"] != "running"
+    })
+    .await;
     let skipped = s.get_json(&path).await.1;
     assert_eq!(skipped["status"], "finished", "{skipped}");
     assert_eq!(skipped["result"]["memory_suggestion"]["queued"], false, "{skipped}");
@@ -1385,22 +1363,14 @@ async fn shipped_defaults_capture_suggest_consolidate_and_retrieve_reviewed_fact
     store
         .set_episode_summary("local", &episode, "Prefer concise release notes.", "reviewed summary")
         .unwrap();
-    for _ in 0..250 {
-        if store
+    until("the idle consolidator did not propose the summary", async || {
+        store
             .list_pending_proposals("local")
             .unwrap()
             .iter()
             .any(|p| p.content.as_deref() == Some("Prefer concise release notes."))
-        {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    assert!(store
-        .list_pending_proposals("local")
-        .unwrap()
-        .iter()
-        .any(|p| p.content.as_deref() == Some("Prefer concise release notes.")));
+    })
+    .await;
     assert_eq!(
         store.list_facts("local").unwrap().len(),
         1,
