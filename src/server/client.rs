@@ -1,5 +1,6 @@
 //! The terminal is an HTTP client of the same account/policy endpoints as chat.
 //! It neither edits policy files directly nor wraps subprocesses.
+use super::web_search::research_request_timeout_sec;
 use crate::common::{
     atomic::write_atomic,
     home::{HarnessSettings, Home},
@@ -166,16 +167,11 @@ impl Portal {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(
-                cfg.u64_or("web.research_seconds", 300).clamp(10, 1800)
-                    // auto_tune may measure a longer answer deadline than configured.
-                    + if cfg.flag_is_true("models.local_llm.auto_tune") {
-                        1800
-                    } else {
-                        cfg.u64_or("web.synthesis_seconds", 300).clamp(10, 1800)
-                    }
-                    + 10,
-            ));
+            .timeout(Duration::from_secs(research_request_timeout_sec(
+                cfg.u64_or("web.research_seconds", 300),
+                cfg.u64_or("web.synthesis_seconds", 300),
+                cfg.flag_is_true("models.local_llm.auto_tune"),
+            )));
         let certificate_sha256 = if tls {
             let der = certificate(&home, &cfg)?;
             let hash = crate::common::sha256_bytes_hex(&der);

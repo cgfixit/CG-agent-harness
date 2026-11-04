@@ -478,8 +478,8 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - web.evidence_tokens: 256–6000, estimated when no tokenizer is available
   - web.model_tokens: 256–2048 maximum synthesis completion
   - web.total_tokens: 2048–128000, held at 32000 unless auto_tune measured a larger window; sized for a verified 32768-token window
-  - web.research_seconds: 10–1800 discovery and planning deadline
-  - web.synthesis_seconds: 10–1800 answer deadline, started after discovery; missing keys use 300
+  - web.research_seconds: 10–3600 discovery and planning deadline
+  - web.synthesis_seconds: 10–3600 answer deadline, started after discovery; missing keys use 300
 
 ## config: sections and keys (values omitted) (part 5)
 
