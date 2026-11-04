@@ -384,10 +384,16 @@ async fn research_cold_load_obeys_its_deadline_and_releases_the_gate() {
         ServerOptions::default()
             .with("models.local_llm.model", "longctx:q8")
             .with("models.local_llm.auto_tune", "true")
-            .with("web.research_seconds", "10"),
+            .with("web.research_seconds", "10")
+            .with("web.rounds", "1")
+            .with("web.run_seconds", "1"),
     )
     .await;
-    wait_for_tuning(&s, 65536).await;
+    // auto_tune lifts the configured 10 s to one planning call at the fake
+    // model's speed plus the 1 s crawl. The cold load must still end there.
+    let tuned = wait_for_tuning(&s, 65536).await;
+    let deadline = tuned["tuning"]["research_seconds"].as_u64().unwrap();
+    assert!((11..=30).contains(&deadline), "{tuned}");
     assert_eq!(
         s.post_json("/api/web/allow", json!({"url":"https://example.org/*"}))
             .await
@@ -395,10 +401,10 @@ async fn research_cold_load_obeys_its_deadline_and_releases_the_gate() {
         200
     );
     *ollama.longctx_window.lock().unwrap() = 0;
-    *ollama.load_delay_ms.lock().unwrap() = 30_000;
+    *ollama.load_delay_ms.lock().unwrap() = (deadline + 30) * 1000;
     ollama.generates.lock().unwrap().clear();
     let (_, result) = tokio::time::timeout(
-        Duration::from_secs(12),
+        Duration::from_secs(deadline + 5),
         s.post_json("/api/web/research", json!({"query":"cold load deadline"})),
     )
     .await
@@ -426,7 +432,13 @@ async fn research_preload_keeps_the_model_for_both_phase_budgets() {
             .with("web.synthesis_seconds", "60"),
     )
     .await;
-    wait_for_tuning(&s, 65536).await;
+    let tuned = wait_for_tuning(&s, 65536).await;
+    // Both phases as tuned: discovery only rises above the configured 10 s.
+    let phases = ["research_seconds", "synthesis_seconds"]
+        .map(|key| tuned["tuning"][key].as_u64().unwrap())
+        .iter()
+        .sum::<u64>();
+    assert!(phases > 70, "{tuned}");
     assert_eq!(
         s.post_json("/api/web/allow", json!({"url":"https://example.org/*"}))
             .await
@@ -439,7 +451,7 @@ async fn research_preload_keeps_the_model_for_both_phase_budgets() {
         .await;
     let generates = ollama.generates.lock().unwrap();
     assert_eq!(generates.len(), 1, "{generates:?}");
-    assert_eq!(generates[0]["keep_alive"], 70, "{generates:?}");
+    assert_eq!(generates[0]["keep_alive"], phases, "{generates:?}");
     assert_eq!(generates[0]["prompt"], "");
     assert!(generates[0].get("num_ctx").is_none());
 }

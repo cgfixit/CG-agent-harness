@@ -99,9 +99,12 @@ and planner models**. Both use bounded `/models` inventories:
 limits and any tuning; `/model use <tag>` persists it without downloading. Unless
 `models.local_llm.auto_tune: false`, it also loads the model, times one short
 generate and applies per-model limits (budgets only tighten; chat and same-model
-planner timeouts and `web.synthesis_seconds` follow measured speed; a tool-less
-model gets none). Above 32768, proposals scale up; set them in `config.yaml`
-(`auto_tune` only lowers); caps follow the measured window, up to 131072.
+planner timeouts and `web.synthesis_seconds` follow measured speed, up to one
+hour; a tool-less model gets none). `web.research_seconds` only rises, to a
+cold load plus `web.rounds` planning calls at that speed plus one
+`web.run_seconds` crawl.
+Above 32768, proposals scale up; set them in `config.yaml` (`auto_tune` only
+lowers); caps follow the measured window, up to 131072.
 Startup warms/tunes local selection. Changed config models and legacy mismatches
 clear saved selections. `/model use local` restores the configured local backend.
 

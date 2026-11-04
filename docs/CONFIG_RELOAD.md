@@ -46,8 +46,8 @@ removing a key selects its code fallback.
 | `web.evidence_tokens` | 256–6,000 |
 | `web.model_tokens` | 256–2,048 |
 | `web.total_tokens` | 2,048–128,000 (32,000 unless measured larger) |
-| `web.research_seconds` | 10–1,800 |
-| `web.synthesis_seconds` | 10–1,800 |
+| `web.research_seconds` | 10–3,600 |
+| `web.synthesis_seconds` | 10–3,600 |
 | `web.stale_seconds` | 60–31,536,000 |
 | `web.chat_tool_calls` | 1–30 |
 | `web.carry_forward_sources` | 0–50 |
