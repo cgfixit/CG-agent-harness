@@ -621,6 +621,38 @@ async fn a_detached_research_job_outlives_its_request_and_refuses_like_the_route
     assert_eq!(listed["jobs"][0]["job_id"], id.as_str());
     assert!(listed["jobs"][0].get("result").is_none(), "the list carries no answers");
 
+    // A stored answer is saved evidence: every read reloads current policy, and a
+    // revoked source withholds its passages and the answer derived from them.
+    let job_path = format!("/api/web/research/jobs/{id}");
+    assert!(done.to_string().contains("Version one retries"), "{done}");
+    assert_eq!(s.post_json("/api/web/deny", json!({"url":url})).await.0, 200);
+    let (status, revoked) = s.get_json(&job_path).await;
+    assert_eq!(status, 200, "{revoked}");
+    assert_eq!(revoked["status"], "finished");
+    assert_eq!(revoked["result"]["passages"], json!([]), "{revoked}");
+    assert_eq!(revoked["result"]["answer"]["supported"], json!([]), "{revoked}");
+    assert!(
+        revoked["result"]["warnings"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("WEB_POLICY_CHANGED")),
+        "{revoked}"
+    );
+    assert!(
+        !revoked.to_string().contains("Version one retries"),
+        "no extract survives revocation: {revoked}"
+    );
+    // The record itself is unchanged, so a renewed grant reads it again.
+    assert_eq!(s.post_json("/api/web/allow", json!({"url":url})).await.0, 200);
+    let (_, regranted) = s.get_json(&job_path).await;
+    assert_eq!(regranted["result"]["answer"], done["result"]["answer"], "{regranted}");
+    // Disabling web withholds it as well.
+    assert_eq!(s.post_json("/api/web", json!({"enabled":false})).await.0, 200);
+    let (_, disabled) = s.get_json(&job_path).await;
+    assert_eq!(disabled["result"]["passages"], json!([]), "{disabled}");
+    assert!(!disabled.to_string().contains("Version one retries"), "{disabled}");
+    assert_eq!(s.post_json("/api/web", json!({"enabled":true})).await.0, 200);
+
     // /web cancel reaches a detached run through the same lease.
     let (status, second) = s
         .post_json("/api/web/research/jobs", json!({"query":"cancel me"}))

@@ -468,10 +468,7 @@ pub async fn web_research_job(
             "job_id must be 32 lowercase hex characters",
         ));
     }
-    state
-        .web
-        .research_jobs
-        .get(&owner, &job_id)
+    crate::server::web_research::deliver_job(&state, &owner, &job_id)
         .map(Json)
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "WEB_JOB_NOT_FOUND", "no such research job"))
 }

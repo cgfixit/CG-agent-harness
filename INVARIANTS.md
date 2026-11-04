@@ -529,9 +529,11 @@ the route answers 202 only once they are held, so validation, policy and busy
 refusals stay synchronous. `POST /api/web/research/cancel` reaches it through the
 owner's lease. Jobs are owner-bound (another account's read is
 `WEB_JOB_NOT_FOUND`), kept in process memory only (at most eight; finished ones
-evicted oldest first) and never written to disk; a restart ends them. On macOS the
-run holds an idle-sleep assertion until it ends; lid-close and manual sleep still
-apply.
+evicted oldest first) and never written to disk; a restart ends them. Every read
+of a finished job reloads current account and URL policy, as the synchronous route
+does before delivery; a revoked or unproven source withholds the passages and the
+answer (`WEB_POLICY_CHANGED`). On macOS the run holds an idle-sleep assertion until
+it ends; lid-close and manual sleep still apply.
 
 - Locked by: `tests/web_research.rs::a_detached_research_job_outlives_its_request_and_refuses_like_the_route`,
   `src/server/web_research.rs` and `src/common/process.rs` unit tests.

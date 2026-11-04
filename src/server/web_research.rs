@@ -553,12 +553,68 @@ pub(super) fn authorize_owner(state: &AppState, owner: &str) -> Result<()> {
 }
 
 fn authorize_evidence(state: &AppState, evidence: &[Passage], group: Option<&str>, owner: &str) -> Result<()> {
+    authorize_urls(state, evidence.iter().map(|p| p.url.as_str()), group, owner)
+}
+
+fn authorize_urls<'a>(
+    state: &AppState,
+    urls: impl IntoIterator<Item = &'a str>,
+    group: Option<&str>,
+    owner: &str,
+) -> Result<()> {
     authorize_owner(state, owner)?;
     let policy = state.web.policy()?;
-    for p in evidence {
-        policy.authorize(&p.url, group)?;
+    for url in urls {
+        policy.authorize(url, group)?;
     }
     Ok(())
+}
+
+/// A stored result's passage URLs and group, or `None` when its shape does not
+/// show where every passage came from: unproven evidence is withheld.
+fn stored_evidence(result: &Value) -> Option<(Vec<&str>, Option<&str>)> {
+    let group = match &result["group"] {
+        Value::Null => None,
+        Value::String(group) => Some(group.as_str()),
+        _ => return None,
+    };
+    let urls = result["passages"]
+        .as_array()?
+        .iter()
+        .map(|p| p["url"].as_str())
+        .collect::<Option<Vec<_>>>()?;
+    Some((urls, group))
+}
+
+/// What the synchronous route delivers when policy changes under a run: no
+/// passage, no answer derived from one, and `WEB_POLICY_CHANGED`.
+fn withhold_evidence(result: &mut Value) {
+    let question = result["question"].clone();
+    result["passages"] = json!([]);
+    result["answer"] = json!(Answer::default());
+    result["queries"] = json!([question]);
+    result["stale_passages"] = json!([]);
+    match result["warnings"].as_array_mut() {
+        Some(warnings) => warnings.push(json!("WEB_POLICY_CHANGED")),
+        None => result["warnings"] = json!(["WEB_POLICY_CHANGED"]),
+    }
+}
+
+/// One of `owner`'s research jobs, as delivered. A stored answer is saved
+/// evidence, so current account and URL policy is reloaded on every read, as
+/// the synchronous route does before it delivers. A revoked or unproven source
+/// withholds every passage and the answer; the stored record is unchanged, so
+/// a later grant makes it readable again.
+pub fn deliver_job(state: &AppState, owner: &str, job_id: &str) -> Option<Value> {
+    let mut job = state.web.research_jobs.get(owner, job_id)?;
+    if let Some(result) = job.get_mut("result") {
+        let permitted =
+            stored_evidence(result).is_some_and(|(urls, group)| authorize_urls(state, urls, group, owner).is_ok());
+        if !permitted {
+            withhold_evidence(result);
+        }
+    }
+    Some(job)
 }
 
 pub async fn run(state: Arc<AppState>, owner: &str, question: &str, group: Option<&str>) -> Result<Value> {
@@ -887,6 +943,36 @@ mod tests {
             !console.contains("api('/api/web/research', 'POST'"),
             "the console must not hold a research request open"
         );
+    }
+
+    /// Delivery reloads policy over a stored result's sources; a result that does
+    /// not show every source is withheld, like a revoked one.
+    #[test]
+    fn stored_results_name_their_sources_or_are_withheld() {
+        let result = json!({"question":"q","group":null,
+            "passages":[{"url":"https://a.example/x","text":"extract"}],
+            "answer":{"supported":[{"text":"claim","citations":[]}],"conflicts":[],"inferences":[],"missing":[]},
+            "queries":["q","r"],"stale_passages":["p1"],"warnings":["W"]});
+        assert_eq!(stored_evidence(&result), Some((vec!["https://a.example/x"], None)));
+        let grouped = json!({"group":"docs","passages":[]});
+        assert_eq!(stored_evidence(&grouped), Some((vec![], Some("docs"))));
+        for unproven in [
+            json!({"group":null,"passages":[{"text":"extract"}]}),
+            json!({"group":7,"passages":[]}),
+            json!({"group":null}),
+        ] {
+            assert_eq!(stored_evidence(&unproven), None, "{unproven}");
+        }
+        let mut withheld = result.clone();
+        withhold_evidence(&mut withheld);
+        assert_eq!(withheld["passages"], json!([]));
+        assert_eq!(withheld["answer"], json!(Answer::default()));
+        assert_eq!(withheld["queries"], json!(["q"]));
+        assert_eq!(withheld["stale_passages"], json!([]));
+        assert_eq!(withheld["warnings"], json!(["W", "WEB_POLICY_CHANGED"]));
+        let mut bare = json!({"question":"q"});
+        withhold_evidence(&mut bare);
+        assert_eq!(bare["warnings"], json!(["WEB_POLICY_CHANGED"]));
     }
 
     #[test]
