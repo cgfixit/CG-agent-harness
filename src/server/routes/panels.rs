@@ -429,6 +429,50 @@ pub async fn web_research(State(state): State<Arc<AppState>>, req: Request<Body>
         .map_err(|e| web_err(&e))
 }
 
+/// `POST /api/web/research/jobs`: the same research as `/api/web/research`, run
+/// detached. Refusals before the run holds its gates come back here; a started
+/// run answers 202 with its job id.
+pub async fn web_research_job_start(
+    State(state): State<Arc<AppState>>,
+    req: Request<Body>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let owner = super::auth::web_owner(&state, &req)?;
+    let ValidJson(body) = ValidJson::<WebResearchRequest>::from_request(req, &()).await?;
+    if body.engine.as_deref().is_some_and(|v| v != "pages") {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            "WEB_BAD_QUERY",
+            "Dedicated research uses permitted pages",
+        ));
+    }
+    crate::server::web_research::start_job(state, owner, body.query, body.group, body.urls)
+        .await
+        .map(|job| (StatusCode::ACCEPTED, Json(job)))
+        .map_err(|e| web_err(&e))
+}
+
+pub async fn web_research_jobs(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Json<Value>> {
+    let owner = super::auth::web_owner(&state, &req)?;
+    Ok(Json(json!({"jobs": state.web.research_jobs.list(&owner)})))
+}
+
+pub async fn web_research_job(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(job_id): axum::extract::Path<String>,
+    req: Request<Body>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::web_owner(&state, &req)?;
+    if !crate::common::is_lower_hex(&job_id, 32) {
+        return Err(ApiError::bad_request(
+            "INVALID_JOB_ID",
+            "job_id must be 32 lowercase hex characters",
+        ));
+    }
+    crate::server::web_research::deliver_job(&state, &owner, &job_id)
+        .map(Json)
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "WEB_JOB_NOT_FOUND", "no such research job"))
+}
+
 pub async fn web_cancel(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Json<Value>> {
     let owner = super::auth::web_owner(&state, &req)?;
     state

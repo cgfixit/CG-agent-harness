@@ -37,6 +37,20 @@ pub const MAX_MODEL_TOKENS: u64 = 2048;
 pub const MAX_RESEARCH_SECONDS: u64 = super::model_limits::MAX_TIMEOUT_SEC;
 pub const MAX_SYNTHESIS_SECONDS: u64 = super::model_limits::MAX_TIMEOUT_SEC;
 
+/// How long the CLI may wait on synchronous `/api/web/research`. Auto-tune may
+/// raise either deadline to its ceiling, so that path waits for both. Otherwise
+/// the wait is the configured pair, each clamped to its ceiling. Ten extra
+/// seconds let the server's typed timeout finish first. The console does not
+/// use this: it starts a job and polls, so a tab close does not end the run.
+pub(crate) fn research_request_timeout_sec(research_seconds: u64, synthesis_seconds: u64, auto_tune: bool) -> u64 {
+    let spanned = if auto_tune {
+        MAX_RESEARCH_SECONDS + MAX_SYNTHESIS_SECONDS
+    } else {
+        research_seconds.clamp(10, MAX_RESEARCH_SECONDS) + synthesis_seconds.clamp(10, MAX_SYNTHESIS_SECONDS)
+    };
+    spanned + 10
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Limits {
     pub response_bytes: usize,
@@ -444,6 +458,8 @@ pub struct WebTool {
     pub test_public_search: Option<url::Url>,
     pub research: Arc<super::web_research::ResearchState>,
     pub chat_turn: Arc<super::web_research::ResearchState>,
+    /// Detached `/web research` jobs, shared by every snapshot; lost on restart.
+    pub research_jobs: Arc<super::web_research::ResearchJobs>,
 }
 
 impl WebTool {
@@ -470,6 +486,7 @@ impl WebTool {
             test_public_search: None,
             research: Arc::default(),
             chat_turn: Arc::default(),
+            research_jobs: Arc::default(),
         })
     }
     fn allow_path(&self) -> PathBuf {
@@ -1094,15 +1111,27 @@ mod tests {
         assert_eq!(super::site_patterns("https://example.org/"), ["https://example.org/"]);
     }
 
-    /// The console waits for `/web research` with a fixed timeout: both
-    /// deadline ceilings plus 10 s, so no accepted config outlives its fetch.
+    /// The console polls a detached research job, so it does not hold one fetch
+    /// across both deadlines. The CLI client of the synchronous route still
+    /// waits for both ceilings plus 10s: 7_210_000 ms at the one-hour maxima.
     #[test]
-    fn console_research_timeout_covers_both_deadline_ceilings() {
-        let ms = (MAX_RESEARCH_SECONDS + MAX_SYNTHESIS_SECONDS + 10) * 1000;
+    fn research_client_wait_covers_both_deadline_ceilings() {
+        let sec = super::research_request_timeout_sec(MAX_RESEARCH_SECONDS, MAX_SYNTHESIS_SECONDS, false);
+        assert_eq!(sec, MAX_RESEARCH_SECONDS + MAX_SYNTHESIS_SECONDS + 10);
+        assert_eq!(sec * 1000, 7_210_000);
+        assert_eq!(super::research_request_timeout_sec(1200, 1800, false), 3010);
+        assert_eq!(
+            super::research_request_timeout_sec(10, 10, true),
+            MAX_RESEARCH_SECONDS + MAX_SYNTHESIS_SECONDS + 10
+        );
         let console = include_str!("../../assets/static/harness.html");
         assert!(
-            console.contains(&format!("api('/api/web/research', 'POST', body, {ms});")),
-            "assets/static/harness.html: /web research timeout must be {ms} ms"
+            console.contains("api('/api/web/research/jobs', 'POST', body)"),
+            "the console starts research as a job"
+        );
+        assert!(
+            !console.contains("api('/api/web/research', 'POST'"),
+            "the console must not hold a research request for {sec}s"
         );
         let cfg = AppConfig::from_str(
             "web:\n  research_seconds: 3600\n  synthesis_seconds: 3600\n",

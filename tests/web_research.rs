@@ -506,3 +506,179 @@ async fn a_selection_change_mid_run_keeps_the_starting_model() {
     model_task.abort();
     page_task.abort();
 }
+
+/// `/web research` as a detached job: the run holds its own gates, so the
+/// request that started it can end while it continues, and refusals before
+/// the run starts still come back synchronously.
+#[tokio::test]
+async fn a_detached_research_job_outlives_its_request_and_refuses_like_the_route() {
+    let hold = Arc::new(AtomicBool::new(true));
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let release = Arc::new(tokio::sync::Notify::new());
+    let (holding, entering, releasing) = (hold.clone(), entered.clone(), release.clone());
+    let model = Router::new().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
+        let (hold, entered, release) = (holding.clone(), entering.clone(), releasing.clone());
+        async move {
+            let system = request["messages"][0]["content"].as_str().unwrap();
+            let user: Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
+            let answer = if system.starts_with("Return only JSON") {
+                json!({"queries":["retry connections"],"gaps":[]})
+            } else {
+                if hold.load(Ordering::SeqCst) {
+                    entered.notify_one();
+                    release.notified().await;
+                }
+                let page = &user["evidence"][0];
+                let quote: String = page["text"].as_str().unwrap().chars().take(40).collect();
+                json!({"supported":[{"text":"The manual specifies retries.","citations":[{"id":page["id"],"quote":quote}]}],"conflicts":[],"inferences":[],"missing":[]})
+            };
+            Json(json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"content":answer.to_string()}}],"usage":{"prompt_tokens":20,"completion_tokens":10}}))
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let model_url = format!("http://{}/v1", listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(listener, model).await.unwrap() });
+    let pages = Router::new().route(
+        "/one",
+        get(|| async {
+            (
+                [("content-type", "text/plain")],
+                "Version one retries failed connections three times.",
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, pages).await.unwrap() });
+    let mut options = ServerOptions::default().with("web.pace_ms", "100");
+    options.web_resolve = Some(("research.invalid".into(), address));
+    let s = spawn_server(&model_url, options).await;
+    let url = format!("http://research.invalid:{}/one", address.port()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+    assert_eq!(s.post_json("/api/web/allow", json!({"url":url})).await.0, 200);
+    assert_eq!(s.post_json("/api/web", json!({"enabled":true})).await.0, 200);
+
+    // Validation refuses before any job exists.
+    let (status, refused) = s
+        .post_json("/api/web/research/jobs", json!({"query":"界".repeat(2001)}))
+        .await;
+    assert_eq!(status, 422, "{refused}");
+    assert_eq!(s.get_json("/api/web/research/jobs").await.1["jobs"], json!([]));
+
+    // A started run answers 202 at once and keeps running after that request ended.
+    let (status, started) = s
+        .post_json("/api/web/research/jobs", json!({"query":"retry connections"}))
+        .await;
+    assert_eq!(status, 202, "{started}");
+    assert_eq!(started["status"], "running");
+    let id = started["job_id"].as_str().unwrap().to_string();
+    assert!(cgagentharness::common::is_lower_hex(&id, 32));
+    tokio::time::timeout(std::time::Duration::from_secs(30), entered.notified())
+        .await
+        .expect("the detached run reached synthesis");
+    let (_, running) = s.get_json(&format!("/api/web/research/jobs/{id}")).await;
+    assert_eq!(running["status"], "running", "{running}");
+    assert!(running.get("result").is_none());
+    assert!(
+        s.state.generation_gate.is_held(),
+        "the job, not the request, holds the model"
+    );
+
+    // A second start refuses synchronously, like the route, and records nothing.
+    let (status, busy) = s
+        .post_json("/api/web/research/jobs", json!({"query":"second question"}))
+        .await;
+    assert_eq!(status, 409, "{busy}");
+    assert_eq!(busy["detail"]["code"], "WEB_BUSY", "{busy}");
+    assert_eq!(
+        s.get_json("/api/web/research/jobs").await.1["jobs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    release.notify_one();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let done = loop {
+        let (_, job) = s.get_json(&format!("/api/web/research/jobs/{id}")).await;
+        if job["status"] != "running" {
+            break job;
+        }
+        assert!(std::time::Instant::now() < deadline, "the job never finished: {job}");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+    assert_eq!(done["status"], "finished", "{done}");
+    assert_eq!(done["question"], "retry connections");
+    assert_eq!(
+        done["result"]["answer"]["supported"].as_array().unwrap().len(),
+        1,
+        "{done}"
+    );
+    assert_eq!(done["result"]["scope"], "request");
+    assert!(done["finished_at"].as_f64().unwrap() >= done["created_at"].as_f64().unwrap());
+    assert!(!s.state.generation_gate.is_held());
+    let (_, listed) = s.get_json("/api/web/research/jobs").await;
+    assert_eq!(listed["jobs"][0]["job_id"], id.as_str());
+    assert!(listed["jobs"][0].get("result").is_none(), "the list carries no answers");
+
+    // A stored answer is saved evidence: every read reloads current policy, and a
+    // revoked source withholds its passages and the answer derived from them.
+    let job_path = format!("/api/web/research/jobs/{id}");
+    assert!(done.to_string().contains("Version one retries"), "{done}");
+    assert_eq!(s.post_json("/api/web/deny", json!({"url":url})).await.0, 200);
+    let (status, revoked) = s.get_json(&job_path).await;
+    assert_eq!(status, 200, "{revoked}");
+    assert_eq!(revoked["status"], "finished");
+    assert_eq!(revoked["result"]["passages"], json!([]), "{revoked}");
+    assert_eq!(revoked["result"]["answer"]["supported"], json!([]), "{revoked}");
+    assert!(
+        revoked["result"]["warnings"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("WEB_POLICY_CHANGED")),
+        "{revoked}"
+    );
+    assert!(
+        !revoked.to_string().contains("Version one retries"),
+        "no extract survives revocation: {revoked}"
+    );
+    // The record itself is unchanged, so a renewed grant reads it again.
+    assert_eq!(s.post_json("/api/web/allow", json!({"url":url})).await.0, 200);
+    let (_, regranted) = s.get_json(&job_path).await;
+    assert_eq!(regranted["result"]["answer"], done["result"]["answer"], "{regranted}");
+    // Disabling web withholds it as well.
+    assert_eq!(s.post_json("/api/web", json!({"enabled":false})).await.0, 200);
+    let (_, disabled) = s.get_json(&job_path).await;
+    assert_eq!(disabled["result"]["passages"], json!([]), "{disabled}");
+    assert!(!disabled.to_string().contains("Version one retries"), "{disabled}");
+    assert_eq!(s.post_json("/api/web", json!({"enabled":true})).await.0, 200);
+
+    // /web cancel reaches a detached run through the same lease.
+    let (status, second) = s
+        .post_json("/api/web/research/jobs", json!({"query":"cancel me"}))
+        .await;
+    assert_eq!(status, 202, "{second}");
+    let second = second["job_id"].as_str().unwrap().to_string();
+    tokio::time::timeout(std::time::Duration::from_secs(30), entered.notified())
+        .await
+        .expect("the second run reached synthesis");
+    let (_, cancelled) = s.post_json("/api/web/research/cancel", json!({})).await;
+    assert_eq!(cancelled["cancelled"], true, "{cancelled}");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let ended = loop {
+        let (_, job) = s.get_json(&format!("/api/web/research/jobs/{second}")).await;
+        if job["status"] != "running" {
+            break job;
+        }
+        assert!(std::time::Instant::now() < deadline, "the cancel never landed: {job}");
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    };
+    assert_eq!(ended["status"], "cancelled", "{ended}");
+    release.notify_one();
+    assert!(!s.state.generation_gate.is_held());
+
+    let (status, _) = s.get_json(&format!("/api/web/research/jobs/{}", "0".repeat(32))).await;
+    assert_eq!(status, 404);
+    let (status, _) = s.get_json("/api/web/research/jobs/not-a-job").await;
+    assert_eq!(status, 400);
+}

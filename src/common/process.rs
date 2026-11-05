@@ -216,6 +216,96 @@ pub fn pid_alive(pid: u32) -> bool {
     }
 }
 
+/// Keeps the machine from idle-sleeping while alive. On macOS it runs
+/// `/usr/bin/caffeinate -i -w <this pid>`: a fixed argv with an empty
+/// environment and no request input, holding the idle-sleep assertion. Dropping
+/// the guard kills and reaps that child, and `-w` ends it if this process dies
+/// first. Elsewhere it holds nothing and the OS power settings apply. It never
+/// blocks lid-close or manual sleep.
+pub struct KeepAwake(Option<std::process::Child>);
+
+impl KeepAwake {
+    pub fn acquire() -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            let pid = std::process::id().to_string();
+            Self::spawn("/usr/bin/caffeinate", &["-i", "-w", &pid])
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Self(None)
+        }
+    }
+
+    /// True while the assertion child is running.
+    pub fn held(&mut self) -> bool {
+        self.0
+            .as_mut()
+            .is_some_and(|child| matches!(child.try_wait(), Ok(None)))
+    }
+
+    // Compiled exactly where it is called: production on macOS, and the unit
+    // test on Unix (`keep_awake_tests`). Elsewhere it would be dead code.
+    #[cfg(any(target_os = "macos", all(test, unix)))]
+    fn spawn(program: &str, args: &[&str]) -> Self {
+        Self(
+            Command::new(program)
+                .args(args)
+                .env_clear()
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok(),
+        )
+    }
+}
+
+impl Drop for KeepAwake {
+    fn drop(&mut self) {
+        if let Some(child) = &mut self.0 {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod keep_awake_tests {
+    use super::*;
+
+    #[test]
+    fn dropping_the_guard_ends_and_reaps_its_child() {
+        let mut guard = KeepAwake::spawn("/bin/sleep", &["30"]);
+        assert!(guard.held());
+        let pid = guard.0.as_ref().unwrap().id();
+        assert!(pid_alive(pid));
+        drop(guard);
+        assert!(!pid_alive(pid), "the guard must reap its child");
+        assert!(!KeepAwake(None).held());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_holds_an_idle_sleep_assertion_until_dropped() {
+        let mut guard = KeepAwake::acquire();
+        assert!(guard.held(), "caffeinate did not start");
+        let listed = || {
+            let out = Command::new("/usr/bin/pmset")
+                .args(["-g", "assertions"])
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stdout).contains("caffeinate")
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !listed() {
+            assert!(std::time::Instant::now() < deadline, "pmset never listed the assertion");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        drop(guard);
+    }
+}
+
 /// Locate an executable on PATH (like `shutil.which`).
 pub fn which(name: &str) -> Option<std::path::PathBuf> {
     let path_var = std::env::var_os("PATH")?;
