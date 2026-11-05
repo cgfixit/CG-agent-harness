@@ -338,44 +338,44 @@ required.
 ### Google search
 
 Open **API Keys** in the left pane, paste a **SerpAPI** key into **Google results
-(SerpAPI)**, save, then click **Test search**. This is a SerpAPI
-Google-results key, not a Google Cloud/Custom Search key; obtain it through
+(SerpAPI)** or a Tavily key into **Tavily search**, save, then click **Test search**.
+A SerpAPI key is not a Google Cloud/Custom Search key; obtain it through
 [SerpAPI](https://serpapi.com/search-api). No key belongs in the chat transcript
-or `config.yaml`. The field manages `SERPAPI_API_KEY` in the OS credential store
-(legacy `.env` only when the plaintext opt-in is literal true). Saving/clearing
-it applies to the next search immediately; process environment overrides still apply.
+or `config.yaml`. Both fields use the OS credential store (legacy `.env` only when
+the plaintext opt-in is literal true); saving or clearing applies to the next
+search, and process environment overrides still apply.
 
-An active nonempty key selects the fixed `https://serpapi.com/search.json` Google
-backend. The API receives the chosen keyword query, engine, result count and its key;
-it receives neither the full chat history nor harness account credentials.
-The key appears only in the fixed provider's HTTPS request query, never in
-user-facing URLs, model context, returned metadata or error messages. Responses reflecting the credential in extracted listings are refused. The API client retains public
-DNS pinning, shared concurrency, no proxy/redirect/retry/pooling, and finite
-header/body/time bounds. With web enabled, SerpAPI listings need no Google URL
-grant.
+An active nonempty SerpAPI key selects the fixed `https://serpapi.com/search.json`
+Google backend, key in the request query. Keyed providers receive the keyword
+query, result count and their own key, never chat history or account credentials.
+Keys never appear in user-facing URLs, model context, returned metadata or errors;
+listings reflecting a key are refused. The client keeps public DNS pinning, shared
+concurrency, no proxy/redirect/retry/pooling, and finite header/body/time bounds.
+With web enabled, keyed listings need no Google URL grant.
 
 With no active key, the app requests the permitted public Google search URL and
-parses recognizable organic result links in their returned order. It does not
-execute JavaScript, solve CAPTCHA, adopt browser cookies, manufacture missing
-results, or silently switch search engines. Challenges, redirects, unreadable
-output and transport failures are explicit failures, so credential-free success
-is not promised. A keyed request's invalid-key, quota or upstream failure also
-stays explicit; public fallback occurs only when the active key is absent or
-`web.search.fallback_to_public_google` is literal true. Fresh homes seed that
-grant; a home that removed it grants Google again before keyless search:
+parses recognizable organic result links in order. It never runs JavaScript,
+solves CAPTCHA, adopts cookies or invents results; challenges, redirects,
+unreadable output and transport failures are explicit. Fresh homes seed
+the Google grant; a home that removed it re-grants it:
 
 ```text
 /web allow https://www.google.com/*
 /web search veeam software cve
 ```
 
-`web.search.provider` is `auto` (above), `google-public`, `serpapi` or `searxng`.
+`web.search.provider` is `auto` (above), `google-public`, `serpapi`, `tavily` or `searxng`.
+Tavily needs its key and never changes `auto`. Each search is one basic-depth
+request (one credit) to the fixed `https://api.tavily.com/search`, key in the
+Authorization header; `include_answer`, `include_raw_content` and `include_images`
+are pinned off, and only title, URL and snippet are kept. HTTP 429, 432 and 433 are quota refusals.
 SearXNG uses only `web.search.searxng_url`: a loopback IP literal and explicit port,
 with `json` in its `search.formats`; anything else fails boot. Listings need no URL
 grant; `!`/`:` query tokens are refused, private links dropped, `unresponsive_engines`
 reported as `degraded`. `web.search.fallback_to_public_google` (ships true) and the
-opt-in `fallback_to_serpapi` try the next hop only when a provider is unusable; the
-answer carries `fallback_from` and each hop logs `web_search_fallback`.
+opt-in `fallback_to_serpapi` (after SearXNG or Tavily) try the next hop only when a
+provider is unusable; the answer carries `fallback_from` and each hop logs
+`web_search_fallback`.
 
 The exact generated search URL also works; an exact homepage grant is not enough.
 `https://google.com/*` does not grant `www`; the apex endpoint may redirect and
@@ -384,7 +384,7 @@ redirects remain refused. In allowlist mode, an empty policy gives
 Denylist mode needs no Google grant, but blocked Google URLs remain refused.
 
 A challenge or block pauses public Google for `web.search_cooldown_public_sec`; a
-quota refusal pauses SerpAPI for `web.search_cooldown_quota_sec` (0: next clock hour).
+quota refusal pauses SerpAPI or Tavily for `web.search_cooldown_quota_sec` (0: next clock hour).
 Paused search answers `WEB_SEARCH_COOLDOWN` ("cooling down until HH:MM", local time)
 without a request; `/loop` does not count it. Restart clears it; rejected keys never pause.
 

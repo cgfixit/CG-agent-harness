@@ -13,8 +13,8 @@ checks need their configured tools. Native acceptance evidence lives in PR bodie
    button until the password is replaced; **Cmd and +** (Cmd, Shift, =) reopens it. Closing the password form leaves a lock card. Use at least 12 characters.
    The native webview verifies its owned certificate without system trust changes.
    Existing configuration is preserved. That window also shows diagnostics.
-4. Administrators manage provider credentials in **API Keys**. SerpAPI saves
-   apply immediately; other saved values need a restart. Inherited environment values win. A
+4. Administrators manage provider credentials in **API Keys**. Search-key (SerpAPI,
+   Tavily) saves apply immediately; other saved values need a restart. Inherited environment values win. A
    harness metadata key never grants account access. See [migration, roles and
    TLS recovery](SECURE_RESEARCH.md). After restart, `/model use grok` or
    `/model use claude` selects that cloud provider. Local prompt context is
@@ -57,8 +57,8 @@ Desktop and headless `serve` load managed keys from the OS credential store; the
 [key-store contract](../INVARIANTS.md#provider-keys-live-in-the-os-credential-store)
 covers environment precedence, per-home entries, legacy `.env` migration, failure
 handling and the plaintext opt-in. Keys also stay out of user-facing URLs and
-readiness files. SerpAPI sends its key only in that
-fixed provider's HTTPS request query, never to result URLs. Config/key parse
+readiness files. Search keys go only to their provider's fixed HTTPS
+endpoint, never to result URLs. Config/key parse
 failures show a setup error without quoting values. Existing configuration is
 preserved; fresh homes enable accounts and roles. No desktop session elevation exists.
 

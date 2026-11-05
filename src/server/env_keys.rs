@@ -38,7 +38,7 @@ pub struct KeySpec {
 }
 
 /// Every entry is an env var this binary actually reads.
-pub const MANAGED_KEYS: [KeySpec; 7] = [
+pub const MANAGED_KEYS: [KeySpec; 8] = [
     KeySpec {
         name: "CGAGENTHARNESS_WEBHOOK_TOKEN",
         label: "Completion webhook bearer token",
@@ -49,6 +49,12 @@ pub const MANAGED_KEYS: [KeySpec; 7] = [
         name: "SERPAPI_API_KEY",
         label: "Google results (SerpAPI)",
         detail: "SerpAPI key (not a Google Cloud key). Save to use Google keyword search immediately; no Google URL permission is needed. Linked pages still need URL permission.",
+        self_auth: false,
+    },
+    KeySpec {
+        name: "TAVILY_API_KEY",
+        label: "Tavily search",
+        detail: "Used only when web.search.provider is tavily (restart-only). Saved changes apply on the next search. Listings carry snippets, never page bodies; linked pages still need URL permission.",
         self_auth: false,
     },
     KeySpec {
@@ -82,6 +88,9 @@ pub const MANAGED_KEYS: [KeySpec; 7] = [
         self_auth: false,
     },
 ];
+
+/// Search keys read on demand by each search: saving one needs no restart.
+const HOT_RELOAD_KEYS: [&str; 2] = ["SERPAPI_API_KEY", "TAVILY_API_KEY"];
 
 fn err(message: impl Into<String>) -> HarnessError {
     HarnessError::new(ENV_KEY_ERROR, message)
@@ -173,7 +182,7 @@ pub fn status_rows(
     MANAGED_KEYS
         .iter()
         .map(|spec| {
-            let hot_reload = spec.name == "SERPAPI_API_KEY";
+            let hot_reload = HOT_RELOAD_KEYS.contains(&spec.name);
             let from_saved = loaded_from_saved.contains(spec.name) || std::env::var_os(spec.name).is_none();
             let live = if hot_reload && from_saved {
                 stored.get(spec.name).cloned().unwrap_or_default()
@@ -267,7 +276,7 @@ fn result_json(cleaned: &BTreeMap<String, String>, clear: &[String], path: &str)
         "written": written,
         "cleared": clear,
         "path": path,
-        "restart_required": cleaned.keys().any(|name| name != "SERPAPI_API_KEY"),
+        "restart_required": cleaned.keys().any(|name| !HOT_RELOAD_KEYS.contains(&name.as_str())),
         "self_auth_written": self_auth,
     })
 }

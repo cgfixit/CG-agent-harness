@@ -168,7 +168,7 @@ web:
   # In-memory pause per search provider after a refusal, so a /loop stops asking; lost on
   # restart. A paused search answers WEB_SEARCH_COOLDOWN before any request. Restart-only.
   search_cooldown_public_sec: 600 # 60–3600 after public Google WEB_GOOGLE_CHALLENGE or WEB_GOOGLE_BLOCKED
-  search_cooldown_quota_sec: 0 # 0–3600 after SerpAPI WEB_SEARCH_QUOTA; 0 waits for the next clock hour (SerpAPI's hourly cap)
+  search_cooldown_quota_sec: 0 # 0–3600 after SerpAPI or Tavily WEB_SEARCH_QUOTA; 0 waits for the next clock hour (SerpAPI's hourly cap)
   # WEB_SEARCH_KEY_REJECTED never pauses: a bad key stays loud on every search.
   cache_pages: 256 # 1–256; derived cache, oldest documents evicted
   cache_bytes: 16777216 # 1048576–33554432 serialized cache bytes
@@ -182,19 +182,22 @@ web:
   synthesis_seconds: 1800 # 10–3600 answer deadline, started after discovery; missing keys use 300
   stale_seconds: 604800 # 60–31536000; fetch age, not publication-date verification
   # Search backend, restart-only. auto: an active SerpAPI key selects SerpAPI, else public
-  # Google. google-public and serpapi force one. searxng sends listings to searxng_url only:
+  # Google; a Tavily key never changes auto. google-public, serpapi and tavily force one.
+  # tavily needs TAVILY_API_KEY in API Keys and sends one basic search (1 credit) with
+  # include_answer, include_raw_content and include_images pinned off: snippets only, never
+  # a provider answer or page body. searxng sends listings to searxng_url only:
   # one http(s) loopback IP literal with an explicit port (e.g. http://127.0.0.1:8888), whose
   # settings.yml lists json in search.formats. Hostnames, public/LAN IPs or a missing port fail
   # boot; web_fetch of that URL stays refused. Fallback hops run in the fixed order
-  # searxng -> serpapi -> google-public inside one web.request_seconds deadline and one
+  # (searxng | tavily) -> serpapi -> google-public inside one web.request_seconds deadline and one
   # search slot; the hop to public Google ships on, the hop to SerpAPI ships off. A hop falls through only when it cannot answer: its provider is unusable
-  # (transport, timeout, non-200, bad body), SerpAPI's quota is spent (a SerpAPI cooldown is
-  # skipped), or SearXNG returned no rows because its engines were silent. Clean zero results,
-  # an answer with rows and a rejected key (the operator's error) never fall through.
+  # (transport, timeout, non-200, bad body), a SerpAPI or Tavily quota is spent (a keyed
+  # cooldown is skipped), or SearXNG returned no rows because its engines were silent. Clean
+  # zero results, an answer with rows and a rejected or missing key never fall through.
   search:
-    provider: auto # auto|google-public|serpapi|searxng
+    provider: auto # auto|google-public|serpapi|tavily|searxng
     searxng_url: "" # e.g. http://127.0.0.1:8888; validated at boot even when unused
-    fallback_to_serpapi: false # literal true: a failed searxng tries SerpAPI when a key is active
+    fallback_to_serpapi: false # literal true: a failed searxng or tavily tries SerpAPI when a key is active
     fallback_to_public_google: true # ships on (operator decision, 2026-11-01); literal false turns it off. A failed earlier hop tries public Google (fresh homes seed its URL rule)
     fallback_alert_per_hour: 20 # 1–1000 SerpAPI fallbacks per clock hour before one web_search_fallback_burst audit line
 

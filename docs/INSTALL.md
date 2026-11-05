@@ -622,6 +622,7 @@ not a general environment-variable editor or connector credential vault.
 | `ANTHROPIC_API_KEY` | Optional explicit Claude chat and governed cloud coding planner |
 | `DEEPAGENT_API_KEY` | Bearer credential for a configured non-Ollama compatible local planner |
 | `SERPAPI_API_KEY` | Optional fixed search API for chat web search; public Google is the no-key fallback |
+| `TAVILY_API_KEY` | Optional Tavily search, used only when `web.search.provider` is `tavily` (restart-only); snippets only, never page bodies |
 
 Saving a key does not select chat, open coding gates, or install a connector.
 After restart, `/model use grok` or `/model use claude` requests cloud consent;
@@ -629,7 +630,7 @@ coding still needs provider and per-run online approval. Review provider control
 in [the configuration reference](../assets/config.default.yaml). Values must be
 nonempty, at most 4,096 characters, and contain no newline, carriage return, or
 NUL. `/api clear <KEY>` removes only that OS-store credential. Migration retains
-unknown `.env` lines. Restart after changes except `SERPAPI_API_KEY`.
+unknown `.env` lines. Restart after changes except `SERPAPI_API_KEY` and `TAVILY_API_KEY`.
 
 Prefer the **API Keys** pane for pasting secrets; its password inputs are cleared
 after successful save. Use **Clear saved value** to remove a stored credential.

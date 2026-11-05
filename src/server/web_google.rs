@@ -53,7 +53,7 @@ fn blocked() -> crate::common::errors::HarnessError {
 
 /// A provider paused after it refused us, and why.
 #[derive(Debug, Clone)]
-struct Pause {
+pub(super) struct Pause {
     ends: Instant,
     until_unix: u64,
     code: String,
@@ -69,15 +69,16 @@ pub(crate) struct SearchCooldown(Mutex<HashMap<&'static str, Pause>>);
 fn cooldown_seconds(provider: &str, code: &str, now_unix: u64, public_sec: u64, quota_sec: u64) -> Option<u64> {
     match (provider, code) {
         ("google-public", "WEB_GOOGLE_CHALLENGE" | "WEB_GOOGLE_BLOCKED") => Some(public_sec),
-        // SerpAPI caps searches per clock hour: 0 waits for the next hour boundary.
-        ("google-serpapi", "WEB_SEARCH_QUOTA") if quota_sec == 0 => Some(3600 - now_unix % 3600),
-        ("google-serpapi", "WEB_SEARCH_QUOTA") => Some(quota_sec),
+        // Keyed providers cap searches per window (SerpAPI per clock hour): 0 waits
+        // for the next hour boundary.
+        ("google-serpapi" | "tavily", "WEB_SEARCH_QUOTA") if quota_sec == 0 => Some(3600 - now_unix % 3600),
+        ("google-serpapi" | "tavily", "WEB_SEARCH_QUOTA") => Some(quota_sec),
         _ => None,
     }
 }
 
 impl SearchCooldown {
-    fn holding(&self, provider: &str, now: Instant) -> Option<Pause> {
+    pub(super) fn holding(&self, provider: &str, now: Instant) -> Option<Pause> {
         let mut paused = self.0.lock().unwrap_or_else(|p| p.into_inner());
         match paused.get(provider) {
             Some(pause) if pause.ends > now => Some(pause.clone()),
@@ -90,7 +91,7 @@ impl SearchCooldown {
     }
 
     /// Pause `provider` when `code` calls for it; returns the wall-clock end.
-    fn start(
+    pub(super) fn start(
         &self,
         provider: &'static str,
         code: &str,
@@ -118,7 +119,7 @@ impl SearchCooldown {
     }
 }
 
-fn unix_now() -> u64 {
+pub(super) fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
@@ -141,11 +142,11 @@ fn local_hhmm(unix: u64) -> String {
     format!("{:02}:{:02} UTC", unix / 3600 % 24, unix / 60 % 60)
 }
 
-fn cooldown_error(provider: &str, pause: &Pause) -> crate::common::errors::HarnessError {
-    let (label, hint) = if provider == "google-public" {
-        ("Public Google", "; a SerpAPI key in API Keys searches sooner")
-    } else {
-        ("SerpAPI", "")
+pub(super) fn cooldown_error(provider: &str, pause: &Pause) -> crate::common::errors::HarnessError {
+    let (label, hint) = match provider {
+        "google-public" => ("Public Google", "; a SerpAPI key in API Keys searches sooner"),
+        "tavily" => ("Tavily", ""),
+        _ => ("SerpAPI", ""),
     };
     error(
         "WEB_SEARCH_COOLDOWN",
@@ -282,18 +283,27 @@ fn public_results(
 }
 
 impl WebTool {
-    /// Read the saved search key on demand. An explicit process environment still wins
+    /// Read the saved SerpAPI key on demand. An explicit process environment still wins
     /// unless this process loaded the saved value itself (`search_key_from_file`).
     pub(super) fn search_key(&self) -> Result<String> {
+        self.provider_key("SERPAPI_API_KEY", self.search_key_from_file)
+    }
+
+    /// Read the saved Tavily key on demand, under the same precedence as SerpAPI's.
+    pub(super) fn tavily_key(&self) -> Result<String> {
+        self.provider_key("TAVILY_API_KEY", self.tavily_key_from_file)
+    }
+
+    fn provider_key(&self, name: &str, loaded_from_file: bool) -> Result<String> {
         if self.plaintext_key_file {
-            if !self.search_key_from_file {
-                if let Ok(key) = std::env::var("SERPAPI_API_KEY") {
+            if !loaded_from_file {
+                if let Ok(key) = std::env::var(name) {
                     return Ok(key.trim().to_string());
                 }
             }
             let path = self.tools_dir.parent().unwrap_or(&self.tools_dir).join(".env");
             return super::env_keys::read_startup_keys(&path)
-                .map(|mut keys| keys.remove("SERPAPI_API_KEY").unwrap_or_default())
+                .map(|mut keys| keys.remove(name).unwrap_or_default())
                 .map_err(|_| {
                     error(
                         "WEB_SEARCH_KEY_UNAVAILABLE",
@@ -301,13 +311,13 @@ impl WebTool {
                     )
                 });
         }
-        if !self.search_key_from_file {
-            if let Ok(key) = std::env::var("SERPAPI_API_KEY") {
+        if !loaded_from_file {
+            if let Ok(key) = std::env::var(name) {
                 return Ok(key.trim().to_string());
             }
         }
         let home = self.tools_dir.parent().unwrap_or(&self.tools_dir);
-        match crate::common::credential_store::OsCredentialStore::for_home(home).get("SERPAPI_API_KEY") {
+        match crate::common::credential_store::OsCredentialStore::for_home(home).get(name) {
             Ok(value) => Ok(value.unwrap_or_default()),
             Err(crate::common::credential_store::StoreError::Unavailable) => Ok(String::new()),
             Err(_) => Err(error(
@@ -318,8 +328,10 @@ impl WebTool {
     }
 
     /// `web.search.provider` picks the backend; `auto` lets a key choose the fixed
-    /// SerpAPI Google backend. A key is never sent to Google, SearXNG or a returned
-    /// result URL. Fallback hops (`web.search.fallback_*`): public Google ships on, SerpAPI off; see `plan_hops`.
+    /// SerpAPI Google backend. A key is sent only to its own provider's fixed
+    /// endpoint, never to Google, SearXNG, another provider or a returned result
+    /// URL. Fallback hops (`web.search.fallback_*`): public Google ships on,
+    /// SerpAPI off; see `plan_hops`.
     pub async fn google_search(&self, query: &str, count: usize, enabled: bool, audit: &Audit) -> Result<Value> {
         self.google_search_at(
             query,
@@ -352,7 +364,7 @@ impl WebTool {
         // The saved key is read only when a SerpAPI hop could run.
         let reads_key = match &self.search_provider {
             SearchProvider::GooglePublic => false,
-            SearchProvider::Searxng { .. } => self.search_fallback.to_serpapi,
+            SearchProvider::Searxng { .. } | SearchProvider::Tavily => self.search_fallback.to_serpapi,
             SearchProvider::Auto | SearchProvider::Serpapi => true,
         };
         let key = if reads_key { self.search_key()? } else { String::new() };
@@ -363,6 +375,19 @@ impl WebTool {
                 "web.search.provider is serpapi but no SerpAPI key is active; add one in API Keys",
             ));
         }
+        // A forced Tavily provider without its key is the operator's error: loud, no fallback.
+        let tavily_key = if self.search_provider == SearchProvider::Tavily {
+            let tavily = self.tavily_key()?;
+            if tavily.trim().is_empty() {
+                return Err(error(
+                    "WEB_SEARCH_KEY_MISSING",
+                    "web.search.provider is tavily but no Tavily key is active; add one in API Keys",
+                ));
+            }
+            tavily
+        } else {
+            String::new()
+        };
         let hops = plan_hops(&self.search_provider, keyed, &self.search_fallback);
         if hops[0] == Hop::Searxng {
             refuse_searxng_syntax(query)?;
@@ -407,6 +432,10 @@ impl WebTool {
                         self.searxng_listing(query, count, audit, endpoint, *socket).await
                     }
                     (Hop::Searxng, _) => Err(error("WEB_SEARCH_PROVIDER", "SearXNG is not configured")),
+                    (Hop::Tavily, _) => {
+                        self.tavily_listing(query, count, audit, self.tavily_endpoint(), tavily_key.trim())
+                            .await
+                    }
                     (Hop::Serpapi, _) => {
                         self.google_hop(query, count, enabled, audit, endpoint.clone(), key.trim(), expected_key)
                             .await
@@ -597,7 +626,7 @@ impl WebTool {
                 .await
                 .map_err(|_| error("WEB_CANCELLED", "search cancelled"))?;
             let client = self.pinned_client(&endpoint).await?;
-            let mut response = client
+            let response = client
                 .get(endpoint)
                 .query(&[
                     ("engine", "google"),
@@ -620,33 +649,7 @@ impl WebTool {
                     "search provider refused the request; check API Keys and provider quota",
                 ));
             }
-            if response
-                .headers()
-                .iter()
-                .map(|(k, v)| k.as_str().len() + v.len())
-                .sum::<usize>()
-                > 16_384
-            {
-                return Err(error("WEB_HEADERS_TOO_LARGE", "search headers exceed limit"));
-            }
-            if response
-                .headers()
-                .get(reqwest::header::CONTENT_ENCODING)
-                .is_some_and(|v| v != "identity")
-            {
-                return Err(error("WEB_ENCODING_REFUSED", "compressed search response refused"));
-            }
-            let mut body = Vec::new();
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|_| error("WEB_SEARCH_PROVIDER", "search response read failed"))?
-            {
-                if body.len() + chunk.len() > self.limits.response_bytes {
-                    return Err(error("WEB_TOO_LARGE", "search response exceeds limit"));
-                }
-                body.extend_from_slice(&chunk);
-            }
+            let body = listing_body(response, self.limits.response_bytes).await?;
             let rows = api_results(&body, count)?;
             if !key.is_empty() && serde_json::to_string(&rows)?.contains(key) {
                 return Err(error(
@@ -659,6 +662,38 @@ impl WebTool {
         .await
         .map_err(|_| error("WEB_TIMEOUT", "search deadline exceeded"))?
     }
+}
+
+/// A provider listing body: bounded headers, no compression, at most `max` bytes.
+pub(super) async fn listing_body(mut response: reqwest::Response, max: usize) -> Result<Vec<u8>> {
+    if response
+        .headers()
+        .iter()
+        .map(|(k, v)| k.as_str().len() + v.len())
+        .sum::<usize>()
+        > 16_384
+    {
+        return Err(error("WEB_HEADERS_TOO_LARGE", "search headers exceed limit"));
+    }
+    if response
+        .headers()
+        .get(reqwest::header::CONTENT_ENCODING)
+        .is_some_and(|v| v != "identity")
+    {
+        return Err(error("WEB_ENCODING_REFUSED", "compressed search response refused"));
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| error("WEB_SEARCH_PROVIDER", "search response read failed"))?
+    {
+        if body.len() + chunk.len() > max {
+            return Err(error("WEB_TOO_LARGE", "search response exceeds limit"));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
 }
 
 #[cfg(test)]
@@ -1017,6 +1052,48 @@ mod tests {
             serve(router, hits).await
         }
 
+        /// Tavily: Bearer "good" answers, "bad" is 401, "quota" is 432 (plan spent).
+        /// A request that asks for an answer, page bodies, images or auto parameters,
+        /// or carries a key anywhere but the header, is refused with 400.
+        pub(super) async fn tavily() -> Fixture {
+            use axum::{http::HeaderMap, routing::post};
+            let hits = Arc::new(AtomicUsize::new(0));
+            let h = hits.clone();
+            let router = Router::new().route(
+                "/search",
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let h = h.clone();
+                    async move {
+                        h.fetch_add(1, Ordering::SeqCst);
+                        let pinned = [
+                            "include_answer",
+                            "include_raw_content",
+                            "include_images",
+                            "auto_parameters",
+                        ]
+                        .iter()
+                        .all(|flag| body[*flag] == json!(false));
+                        if !pinned || body["search_depth"] != "basic" || body.get("api_key").is_some() {
+                            return (axum::http::StatusCode::BAD_REQUEST, Json(json!({})));
+                        }
+                        let auth = headers.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("");
+                        let status = match auth {
+                            "Bearer good" => axum::http::StatusCode::OK,
+                            "Bearer quota" => axum::http::StatusCode::from_u16(432).unwrap(),
+                            _ => axum::http::StatusCode::UNAUTHORIZED,
+                        };
+                        (
+                            status,
+                            Json(json!({"query":body["query"],"answer":"PROVIDER ANSWER","results":[
+                                {"title":"Tavily row","url":"https://veeam.com/tv","content":"highlight",
+                                 "score":0.9,"raw_content":"FULL PAGE BODY"}]})),
+                        )
+                    }
+                }),
+            );
+            serve(router, hits).await
+        }
+
         pub(super) async fn google() -> Fixture {
             let hits = Arc::new(AtomicUsize::new(0));
             let h = hits.clone();
@@ -1080,6 +1157,24 @@ mod tests {
                 }
             }
 
+            /// Point the Tavily hop at `fixture` and save `key` (empty saves none).
+            pub(super) fn with_tavily(mut self, key: &str, fixture: &Fixture) -> Self {
+                self.web.tavily_key_from_file = true;
+                self.web
+                    .test_resolve_extra
+                    .push(("tavily.fixture".into(), fixture.addr));
+                self.web.test_tavily_search = Some(url::Url::parse("http://tavily.fixture/search").unwrap()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                if !key.is_empty() {
+                    super::super::super::env_keys::update_keys(
+                        &self.dir.path().join(".env"),
+                        &std::collections::BTreeMap::from([("TAVILY_API_KEY".into(), key.into())]),
+                        &[],
+                    )
+                    .unwrap();
+                }
+                self
+            }
+
             pub(super) async fn search(&self, query: &str) -> Result<Value> {
                 self.web
                     .google_search_at(query, 3, true, &self.audit, self.endpoint.clone())
@@ -1108,6 +1203,100 @@ mod tests {
                 "web: {{request_seconds: {request_seconds}, search: {{provider: searxng, searxng_url: 'http://127.0.0.1:{searxng_port}'{extra}}}}}" // DevSkim: ignore DS137138,DS162092 because the SearXNG fixture is loopback-only.
             )
         }
+    }
+
+    const TAVILY_CHAIN: &str = "web: {request_seconds: 10, search: {provider: tavily, fallback_to_serpapi: true, fallback_to_public_google: true}}";
+
+    #[tokio::test]
+    async fn tavily_answers_with_snippets_only_and_spends_no_later_hop() {
+        let tv = chain::tavily().await;
+        let serp = chain::serpapi().await;
+        let google = chain::google().await;
+        let chain = chain::Chain::new(TAVILY_CHAIN, "good", &serp, Some(&google))
+            .await
+            .with_tavily("good", &tv);
+        let value = chain.search("veeam cve").await.unwrap();
+        assert_eq!(value["provider"], "tavily");
+        assert_eq!(value["results"][0]["title"], "Tavily row");
+        assert_eq!(value["results"][0]["snippet"], "highlight");
+        assert!(value.get("fallback_from").is_none());
+        let text = value.to_string();
+        assert!(
+            !text.contains("PROVIDER ANSWER") && !text.contains("FULL PAGE BODY"),
+            "{text}"
+        );
+        assert_eq!(tv.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let audit = std::fs::read_to_string(chain.dir.path().join("audit.jsonl")).unwrap_or_default();
+        assert!(!audit.contains("veeam cve") && !audit.contains("Bearer"), "{audit}");
+    }
+
+    #[tokio::test]
+    async fn a_spent_tavily_plan_falls_back_to_serpapi_then_cools_down() {
+        let tv = chain::tavily().await;
+        let serp = chain::serpapi().await;
+        let chain = chain::Chain::new(TAVILY_CHAIN, "good", &serp, None)
+            .await
+            .with_tavily("quota", &tv);
+        let first = chain.search("veeam cve").await.unwrap();
+        assert_eq!(first["provider"], "google-serpapi");
+        assert_eq!(first["fallback_from"], json!(["tavily"]));
+        let second = chain.search("veeam backup").await.unwrap();
+        assert_eq!(second["provider"], "google-serpapi");
+        assert_eq!(
+            tv.hits.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the cooling Tavily was asked once"
+        );
+        let codes: Vec<Value> = chain
+            .audit_events("web_search_fallback")
+            .iter()
+            .map(|line| line["code"].clone())
+            .collect();
+        assert_eq!(codes, [json!("WEB_SEARCH_QUOTA"), json!("WEB_SEARCH_COOLDOWN")]);
+        let cooldowns = chain.audit_events("web_search_cooldown");
+        assert_eq!(cooldowns.len(), 1);
+        assert_eq!(cooldowns[0]["provider"], "tavily");
+    }
+
+    #[tokio::test]
+    async fn a_rejected_or_missing_tavily_key_stays_loud_and_spends_nothing_else() {
+        let tv = chain::tavily().await;
+        let serp = chain::serpapi().await;
+        let google = chain::google().await;
+        let rejected = chain::Chain::new(TAVILY_CHAIN, "good", &serp, Some(&google))
+            .await
+            .with_tavily("bad", &tv);
+        assert_eq!(
+            rejected.search("veeam cve").await.unwrap_err().code,
+            "WEB_SEARCH_KEY_REJECTED"
+        );
+        assert!(
+            rejected.audit_events("web_search_cooldown").is_empty(),
+            "a bad key never pauses"
+        );
+        let missing = chain::Chain::new(TAVILY_CHAIN, "good", &serp, Some(&google))
+            .await
+            .with_tavily("", &tv);
+        assert_eq!(
+            missing.search("veeam cve").await.unwrap_err().code,
+            "WEB_SEARCH_KEY_MISSING"
+        );
+        assert_eq!(tv.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn a_tavily_key_never_changes_auto() {
+        let tv = chain::tavily().await;
+        let serp = chain::serpapi().await;
+        let chain = chain::Chain::new("{}", "good", &serp, None)
+            .await
+            .with_tavily("good", &tv);
+        assert_eq!(chain.search("veeam cve").await.unwrap()["provider"], "google-serpapi");
+        assert_eq!(tv.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

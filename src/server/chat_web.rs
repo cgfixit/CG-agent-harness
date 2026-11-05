@@ -838,8 +838,11 @@ async fn run_inner(
             };
             if result.get("error").is_none() {
                 route.observe_tool_result(name, true);
-                // Provider listings (SerpAPI, loopback SearXNG) are not URL evidence.
-                if !matches!(result["provider"].as_str(), Some("google-serpapi" | "searxng")) {
+                // Provider listings (SerpAPI, Tavily, loopback SearXNG) are not URL evidence.
+                if !matches!(
+                    result["provider"].as_str(),
+                    Some("google-serpapi" | "tavily" | "searxng")
+                ) {
                     if let Some(source) = result
                         .get("search_url")
                         .or_else(|| result.get("url"))

@@ -436,6 +436,8 @@ pub struct WebTool {
     #[cfg(any(test, feature = "test-support"))]
     pub test_resolve_extra: Vec<(String, SocketAddr)>,
     pub(super) search_key_from_file: bool,
+    /// Whether this process loaded `TAVILY_API_KEY` from the saved store itself.
+    pub(super) tavily_key_from_file: bool,
     /// Literal `security.allow_plaintext_key_file`. When false, saved search keys come from the OS store.
     pub(super) plaintext_key_file: bool,
     pub limits: Limits,
@@ -456,6 +458,10 @@ pub struct WebTool {
     /// Compiled only with `test-support`.
     #[cfg(any(test, feature = "test-support"))]
     pub test_public_search: Option<url::Url>,
+    /// Test hook replacing the fixed Tavily endpoint with a fixture.
+    /// Compiled only with `test-support`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub test_tavily_search: Option<url::Url>,
     pub research: Arc<super::web_research::ResearchState>,
     pub chat_turn: Arc<super::web_research::ResearchState>,
     /// Detached `/web research` jobs, shared by every snapshot; lost on restart.
@@ -474,6 +480,7 @@ impl WebTool {
             permits: Arc::new(Semaphore::new(limits.concurrency)),
             limits,
             search_key_from_file: false,
+            tavily_key_from_file: false,
             plaintext_key_file: cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE),
             mutation: Arc::new(Mutex::new(())),
             search_gate: Arc::new(Semaphore::new(1)),
@@ -484,6 +491,8 @@ impl WebTool {
             search_cooldown: Arc::default(),
             #[cfg(any(test, feature = "test-support"))]
             test_public_search: None,
+            #[cfg(any(test, feature = "test-support"))]
+            test_tavily_search: None,
             research: Arc::default(),
             chat_turn: Arc::default(),
             research_jobs: Arc::default(),

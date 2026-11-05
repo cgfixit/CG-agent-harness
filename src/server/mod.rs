@@ -68,6 +68,7 @@ pub mod web_policy;
 pub mod web_research;
 pub mod web_search;
 mod web_searxng;
+mod web_tavily;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -273,6 +274,7 @@ pub async fn build_app_with_sources(
         .or_else(|| std::env::var(crate::common::apikey::API_KEY_ENV).ok());
     let mut web = WebTool::new(&home.tools_dir(), &cfg)?;
     web.search_key_from_file = opts.key_file_sources.contains("SERPAPI_API_KEY");
+    web.tavily_key_from_file = opts.key_file_sources.contains("TAVILY_API_KEY");
     #[cfg(any(test, feature = "test-support"))]
     {
         web.test_resolve = opts.web_test_resolve.clone();

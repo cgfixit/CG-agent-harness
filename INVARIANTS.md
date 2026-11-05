@@ -234,16 +234,18 @@ local `/loop` turns. Search-provider snippets are listings, not fetched
 linked pages; each content fetch still requires its own URL permission. A
 restart-only `web.search.provider` picks the backend: `auto` lets a configured SerpAPI
 key select the fixed Google-results API transport and no active key public Google;
-`google-public`, `serpapi` or loopback `searxng` force one. Fallback hops follow
-searxng → serpapi → google-public (the hop to public Google ships on, the hop to SerpAPI off) within one deadline and search slot; they are audited
-with the provider that answered. A hop moves on only when it cannot answer: an unusable provider, a spent SerpAPI quota (public Google is the next hop and costs nothing) or a SearXNG listing with no rows whose engines were silent. A rejected key, a refused query, a clean zero-result answer and a partial answer never fall through. SerpAPI listings require enabled web and current
+a Tavily key never changes `auto`. `google-public`, `serpapi`, `tavily` or loopback
+`searxng` force one. Fallback hops follow (searxng | tavily) → serpapi → google-public (the hop to public Google ships on, the hop to SerpAPI off) within one deadline and search slot; they are audited
+with the provider that answered. A hop moves on only when it cannot answer: an unusable provider, a spent SerpAPI or Tavily quota (the next hop costs less or nothing) or a SearXNG listing with no rows whose engines were silent. A rejected or missing key, a refused query, a clean zero-result answer and a partial answer never fall through. Keyed listings (SerpAPI, Tavily) require enabled web and current
 account authority, independently of page URL grants; public Google and linked-page
-fetches retain URL policy checks. Saved SerpAPI changes apply on the next search;
-explicit environment values retain precedence. Challenges and provider failures never become
+fetches retain URL policy checks. Tavily requests pin `include_answer`,
+`include_raw_content` and `include_images` off and keep only title, URL and snippet,
+so no provider-written answer or page body enters a listing. Saved SerpAPI and Tavily
+keys apply on the next search; explicit environment values retain precedence. Challenges and provider failures never become
 fabricated results. A provider refusal starts a bounded cooldown: a public Google
-challenge or block (an answer, not a failed connection), or a SerpAPI quota refusal, pauses
+challenge or block (an answer, not a failed connection), or a SerpAPI or Tavily quota refusal, pauses
 that provider in memory and later searches answer `WEB_SEARCH_COOLDOWN` before any request; a
-rejected key, transport failure (including an interrupted body) or timeout never pauses. A SearXNG answer with rows is reported with its silent engines, never retried elsewhere. Keys remain server-side and never enter model context.
+rejected key, transport failure (including an interrupted body) or timeout never pauses. A SearXNG answer with rows is reported with its silent engines, never retried elsewhere. Keys remain server-side, go only to their own provider's fixed endpoint and never enter model context.
 
 Content permission grants no account or provider-configuration authority, and
 none of these substitutes for coding/write/publication gates. Page text is
@@ -473,7 +475,7 @@ zizmor-linted; Rust pins: 1.88 backend, 1.90 desktop.
 ## Provider keys live in the OS credential store
 
 Managed keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`,
-`SERPAPI_API_KEY`, `GH_TOKEN`, `CGAGENTHARNESS_API_KEY`, and
+`SERPAPI_API_KEY`, `TAVILY_API_KEY`, `GH_TOKEN`, `CGAGENTHARNESS_API_KEY`, and
 `CGAGENTHARNESS_WEBHOOK_TOKEN`) use macOS Keychain, Linux Secret Service, or
 Windows Credential Manager. Inherited environment values, including empty, win.
 Legacy home `.env` migration removes only store-verified assignments;
