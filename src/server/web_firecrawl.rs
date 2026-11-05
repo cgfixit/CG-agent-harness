@@ -6,6 +6,7 @@
 //! back unchanged: a redirect anywhere is refused, as for the pinned fetch. The
 //! URL leaves the machine, so each read is counted against
 //! `web.firecrawl.max_per_hour`.
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -143,38 +144,79 @@ impl WebTool {
     /// The pinned read, then, when `web.firecrawl.enabled` and the read qualifies
     /// (`escalates`), one Firecrawl read. A Firecrawl failure keeps the pinned
     /// outcome: the thin page, or the original error with a `fallback` code.
+    ///
+    /// Both reads are charged: a returned page's `transfer_bytes` covers the pinned
+    /// read and the fallback, and an error carries `charged_bytes` once a fallback
+    /// was sent. A failed pinned read counts as a full `web.response_bytes`, as a
+    /// batch already charges failures. `budget`, the bytes a batch has left, skips a
+    /// fallback that could not fit a second full response; single reads pass `None`.
     pub(super) async fn get_or_fallback(
         &self,
         raw: &str,
         group: Option<&str>,
         cached: Option<&Page>,
         audit: &Audit,
+        budget: Option<usize>,
     ) -> Result<Page> {
         let pinned = self.get_raw(raw, group, cached).await;
         if !self.firecrawl.enabled || !escalates(&pinned) {
             return pinned.map(|(page, _)| page);
         }
+        let pinned_charge = match &pinned {
+            Ok((page, _)) => page.transfer_bytes,
+            Err(_) => self.limits.response_bytes,
+        };
         // Codes only: never the URL, a key or provider text.
         let from = match &pinned {
             Ok(_) => "WEB_THIN_EXTRACT".to_string(),
             Err(failure) => failure.code.clone(),
         };
-        match self.firecrawl_read(raw, group, audit).await {
-            Ok(page) => {
+        let fallback_charge = AtomicUsize::new(0);
+        let read = if budget.is_some_and(|left| pinned_charge + self.limits.response_bytes > left) {
+            Err(error(
+                "WEB_FALLBACK_BUDGET",
+                "web.run_bytes cannot cover a fallback read",
+            ))
+        } else {
+            self.firecrawl_read(raw, group, audit, &fallback_charge).await
+        };
+        let fallback_charge = fallback_charge.load(Ordering::SeqCst);
+        match read {
+            Ok(mut page) => {
                 audit.log(json!({"event":"web_fetch_fallback","provider":PROVIDER,"from":from,"ok":true}));
+                page.transfer_bytes = pinned_charge + fallback_charge;
                 Ok(page)
             }
             Err(failure) => {
                 audit.log(json!({"event":"web_fetch_fallback","provider":PROVIDER,"from":from,
                     "ok":false,"code":failure.code}));
-                pinned
-                    .map(|(page, _)| page)
-                    .map_err(|original| original.detail("fallback", failure.code))
+                match pinned {
+                    Ok((mut page, _)) => {
+                        page.transfer_bytes += fallback_charge;
+                        Ok(page)
+                    }
+                    Err(original) => {
+                        let original = original.detail("fallback", failure.code);
+                        Err(if fallback_charge > 0 {
+                            original.detail("charged_bytes", pinned_charge + fallback_charge)
+                        } else {
+                            original
+                        })
+                    }
+                }
             }
         }
     }
 
-    async fn firecrawl_read(&self, raw: &str, group: Option<&str>, audit: &Audit) -> Result<Page> {
+    /// `charged` records what this read spent: nothing before the request leaves,
+    /// a full `web.response_bytes` once it is sent, then the answer's actual size.
+    async fn firecrawl_read(
+        &self,
+        raw: &str,
+        group: Option<&str>,
+        audit: &Audit,
+        charged: &AtomicUsize,
+    ) -> Result<Page> {
         if self.search_cooldown.holding(PROVIDER, Instant::now()).is_some() {
             return Err(error(
                 "WEB_FALLBACK_PAUSED",
@@ -207,6 +249,17 @@ impl WebTool {
                 .await
                 .map_err(|_| error("WEB_CANCELLED", "fetch cancelled"))?;
             let client = self.pinned_client(&endpoint).await?;
+            // Permission may change while this waits for a permit or DNS: recheck it
+            // immediately before the URL leaves the machine, as the pinned fetch does.
+            let current = self.policy()?;
+            current.authorize_read(target.as_str(), group)?;
+            if current.revision != policy.revision {
+                return Err(error(
+                    "WEB_POLICY_CHANGED",
+                    "policy changed before the fallback read; nothing was sent",
+                ));
+            }
+            charged.store(self.limits.response_bytes, Ordering::SeqCst);
             let response = client
                 .post(endpoint)
                 .bearer_auth(&key)
@@ -225,6 +278,7 @@ impl WebTool {
                 ));
             }
             let body = listing_body(response, self.limits.response_bytes).await?;
+            charged.store(body.len(), Ordering::SeqCst);
             let (title, text, status) = firecrawl_page(&body, &target)?;
             if text.contains(&key) || title.contains(&key) {
                 return Err(error(
@@ -435,6 +489,10 @@ mod tests {
             pub audit: Audit,
             pub dir: tempfile::TempDir,
             pub hits: Arc<AtomicUsize>,
+            /// `/gate` notifies `gate_hit` from inside the pinned read, then answers
+            /// 403 only after `gate_go`.
+            pub gate_hit: Arc<tokio::sync::Notify>,
+            pub gate_go: Arc<tokio::sync::Notify>,
             tasks: Vec<tokio::task::JoinHandle<()>>,
         }
         impl Drop for Rig {
@@ -470,7 +528,21 @@ mod tests {
         /// reports a redirect for /moves. A request that asks for more than
         /// markdown, keeps the page in Firecrawl's cache or uses a costly proxy is 400.
         pub(super) async fn rig(yaml: &str, key: &str) -> Rig {
+            let gate_hit = Arc::new(tokio::sync::Notify::new());
+            let gate_go = Arc::new(tokio::sync::Notify::new());
+            let (hit, go) = (gate_hit.clone(), gate_go.clone());
             let site = Router::new()
+                .route(
+                    "/gate",
+                    get(move || {
+                        let (hit, go) = (hit.clone(), go.clone());
+                        async move {
+                            hit.notify_one();
+                            go.notified().await;
+                            (StatusCode::FORBIDDEN, "blocked")
+                        }
+                    }),
+                )
                 .route("/wall", get(|| async { (StatusCode::FORBIDDEN, "blocked") }))
                 .route("/moves", get(|| async { (StatusCode::FORBIDDEN, "blocked") }))
                 .route("/missing", get(|| async { (StatusCode::NOT_FOUND, "gone") }))
@@ -555,6 +627,8 @@ mod tests {
                 audit,
                 dir,
                 hits,
+                gate_hit,
+                gate_go,
                 tasks: vec![site_task, fc_task],
             }
         }
@@ -645,6 +719,101 @@ mod tests {
         assert_eq!(keyless.hits(), 0);
         // A thin page whose fallback fails is still returned as the pinned read.
         assert!(keyless.fetch("shell").await.unwrap().get("via").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_rule_revoked_while_the_fallback_waits_is_never_sent() {
+        let rig = fixture::rig(
+            "web: {concurrency: 1, firecrawl: {enabled: true, max_per_hour: 4}}",
+            "good",
+        )
+        .await;
+        let web = rig.web.clone();
+        let cfg = AppConfig::from_str("{}", std::path::Path::new("config.yaml")).unwrap();
+        let audit = Audit::new(rig.dir.path().join("audit-race.jsonl"), &cfg);
+        let read = tokio::spawn(async move {
+            web.fetch("http://site.fixture/gate", true, &audit, "local") // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                .await
+        });
+        // The pinned read holds the only permit inside the site handler. Queue for
+        // that permit first (a first poll registers the waiter), then let it finish.
+        rig.gate_hit.notified().await;
+        let held = rig.web.permits.clone().acquire_owned();
+        tokio::pin!(held);
+        tokio::select! {
+            biased;
+            _ = &mut held => unreachable!("the pinned read holds the only permit"),
+            _ = tokio::task::yield_now() => {}
+        }
+        rig.gate_go.notify_one();
+        let held = held.await.unwrap();
+        // The fallback has authorized the URL and taken its hourly slot; it now waits
+        // for the permit. Revoke the rule, then let it run.
+        while rig.web.firecrawl_spent.0.lock().unwrap().1 == 0 {
+            tokio::task::yield_now().await;
+        }
+        rig.web.deny("http://site.fixture/*", true).unwrap(); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        drop(held);
+        let failure = read.await.unwrap().unwrap_err();
+        assert_eq!(failure.code, "WEB_FETCH_FAILED");
+        assert!(
+            matches!(
+                failure.details["fallback"].as_str(),
+                Some("WEB_HOST_DENIED" | "WEB_ALLOWLIST_EMPTY" | "WEB_POLICY_CHANGED")
+            ),
+            "the fallback stopped at the permission recheck"
+        );
+        assert!(failure.details.get("charged_bytes").is_none(), "nothing was sent");
+        assert_eq!(rig.hits(), 0, "a revoked URL never reaches Firecrawl");
+    }
+
+    #[tokio::test]
+    async fn a_batch_charges_both_reads_and_skips_a_fallback_its_budget_cannot_cover() {
+        let shell_bytes = "<html><body><div id=app></div><script></script></body></html>".len() + 4000;
+        let shell = vec!["http://site.fixture/shell".to_string()]; // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        let wall = vec!["http://site.fixture/wall".to_string()]; // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        let roomy = "web: {response_bytes: 65536, run_bytes: 1048576, firecrawl: {enabled: true, max_per_hour: 4}}";
+
+        let rig = fixture::rig(roomy, "good").await;
+        let batch = rig
+            .web
+            .fetch_many(&shell, None, true, &rig.audit, "local")
+            .await
+            .unwrap();
+        assert_eq!(batch["pages"][0]["via"], "firecrawl");
+        let charged = batch["coverage"]["charged_bytes"].as_u64().unwrap() as usize;
+        assert_eq!(charged, batch["pages"][0]["transfer_bytes"].as_u64().unwrap() as usize);
+        assert!(
+            charged > shell_bytes && charged < shell_bytes + 1024,
+            "the pinned shell and the Firecrawl answer are both charged"
+        );
+
+        // A fallback refused after it was sent charges a full allowance on top of the
+        // failed pinned read.
+        let spent = fixture::rig(roomy, "quota").await;
+        let batch = spent
+            .web
+            .fetch_many(&wall, None, true, &spent.audit, "local")
+            .await
+            .unwrap();
+        assert_eq!(batch["coverage"]["failed"][0]["code"], "WEB_FETCH_FAILED");
+        assert_eq!(batch["coverage"]["charged_bytes"], 2 * 65536);
+
+        // One allowance plus the shell: room for the pinned read, not for a second one.
+        let tight = format!(
+            "web: {{response_bytes: 65536, run_bytes: {}, firecrawl: {{enabled: true, max_per_hour: 4}}}}",
+            65536 + 2048
+        );
+        let rig = fixture::rig(&tight, "good").await;
+        let batch = rig
+            .web
+            .fetch_many(&shell, None, true, &rig.audit, "local")
+            .await
+            .unwrap();
+        assert!(batch["pages"][0].get("via").is_none(), "the pinned page is kept");
+        assert_eq!(batch["coverage"]["charged_bytes"], shell_bytes);
+        assert_eq!(rig.hits(), 0, "a fallback the budget cannot cover is never sent");
+        assert!(rig.audit_text().contains("WEB_FALLBACK_BUDGET"));
     }
 
     #[test]

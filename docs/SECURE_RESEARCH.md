@@ -414,7 +414,8 @@ characters and under 5% of the markup), the authorized URL goes to Firecrawl's f
 once: basic proxy, markdown only, `storeInCache: false`. The answer must name the
 requested URL as final, or it is refused as a redirect; no links are kept, so it
 cannot widen a crawl. The page carries `via: firecrawl`. `web.firecrawl.max_per_hour`
-(default 20) caps reads; HTTP 402 or 429 pauses Firecrawl like a search quota. A
+(default 20) caps reads, and batches charge both reads to `web.run_bytes`; HTTP 402
+or 429 pauses Firecrawl like a search quota. A
 failed fallback keeps the original result, with its code in `details.fallback`.
 The HTML parser removes executable/hidden/navigation content and retains headings,
 paragraphs, tables, lists and code. Extracts keep canonical URLs, hashes, fetch

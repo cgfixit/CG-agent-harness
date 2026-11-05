@@ -490,9 +490,14 @@ impl WebTool {
         last.insert(origin, Instant::now());
         let cached = self.read_page(&self.cache_path(url), group).ok();
         // Only exact batch reads (`fetch_many`) may use the Firecrawl fallback; discovery never does.
+        // It may spend what the run has left, so a second read cannot overrun `web.run_bytes`.
+        let left = self.limits.run_bytes.saturating_sub(coverage.charged_bytes);
         let read = async {
             match fallback {
-                Some(audit) => self.get_or_fallback(url, group, cached.as_ref(), audit).await,
+                Some(audit) => {
+                    self.get_or_fallback(url, group, cached.as_ref(), audit, Some(left))
+                        .await
+                }
                 None => self.get(url, group, cached.as_ref()).await,
             }
         };
@@ -504,8 +509,19 @@ impl WebTool {
             }
             failed => {
                 // Failed/aborted streams may have transferred bytes. Charge the
-                // full reserved response allowance rather than undercount them.
-                coverage.charged_bytes += self.limits.response_bytes;
+                // full reserved response allowance rather than undercount them; a
+                // sent Firecrawl fallback reports both reads as `charged_bytes`, and
+                // a deadline that may have cut one off charges both allowances.
+                let one = self.limits.response_bytes;
+                coverage.charged_bytes += match &failed {
+                    Ok(Err(e)) => e
+                        .details
+                        .get("charged_bytes")
+                        .and_then(Value::as_u64)
+                        .map_or(one, |charged| charged as usize),
+                    _ if fallback.is_some() && self.firecrawl.enabled => one * 2,
+                    _ => one,
+                };
                 let code = match failed {
                     Ok(Err(e)) => e.code,
                     _ => "WEB_TIMEOUT".into(),
