@@ -1228,8 +1228,12 @@ mod tests {
         assert_eq!(tv.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        // The message never echoes the audit text: a failure here means it may hold a credential.
         let audit = std::fs::read_to_string(chain.dir.path().join("audit.jsonl")).unwrap_or_default();
-        assert!(!audit.contains("veeam cve") && !audit.contains("Bearer"), "{audit}");
+        assert!(
+            !audit.contains("veeam cve") && !audit.contains("Bearer"),
+            "audit log recorded the query or an Authorization header"
+        );
     }
 
     #[tokio::test]
