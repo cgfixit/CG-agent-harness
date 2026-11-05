@@ -76,9 +76,9 @@ settings guidance](INSTALL.md#which-settings-take-effect-where).
 
 An unreadable or [non-private](INSTALL.md#home-and-optional-credentials) file,
 symlink on Unix, non-regular file, invalid UTF-8/YAML, more than 1 MiB of
-config, or an invalid limit returns `CONFIG_RELOAD_INVALID`. A mixed
+config, or a malformed number or limit returns `CONFIG_RELOAD_INVALID`. A mixed
 candidate changing anything outside the allowlist returns
-`CONFIG_RESTART_REQUIRED`. Both preserve **all** running limits; fix the edits and retry. Error messages and audit never
+`CONFIG_RESTART_REQUIRED`. Both preserve **all** running limits; fix and retry. Error messages and audit never
 include raw YAML or secret values.
 
 Audit `config_reloaded` reports source (`http`/`sighup`), revision and whether

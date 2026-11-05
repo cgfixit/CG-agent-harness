@@ -48,12 +48,74 @@ pub(crate) fn resolve_secret(value: &str) -> Result<String> {
 /// Switches that read as on when the key is missing (`server::self_manual::SelfKnowledgeConfig`).
 pub const MISSING_MEANS_ON: &[&str] = &["diagnostics.self_knowledge", "diagnostics.live_state"];
 
+/// Shipped numbers the code reads as floating point. [`AppConfig::load`]
+/// requires a finite number for these and an unquoted non-negative integer
+/// for every other number in the shipped default. `tests/invariant_guard.rs`
+/// keeps this list equal to the keys read through `f64_or`/`f64_in`, plus the
+/// two `read_timeout` paths in `llm/inventory.rs` and `self_manual_min_score`.
+pub const FLOAT_KEYS: &[&str] = &[
+    "api.harness_loop_rate_limit.window_seconds",
+    "api.rate_limit.window_seconds",
+    "auth.session.absolute_timeout_sec",
+    "auth.session.idle_timeout_sec",
+    "auth.session.password_change_absolute_timeout_sec",
+    "auth.session.password_change_idle_timeout_sec",
+    "diagnostics.self_manual_min_score",
+    "models.cloud_chat.count_timeout_sec",
+    "models.cloud_chat.timeout_sec",
+    "models.local_llm.fallback.probe_timeout_sec",
+    "models.local_llm.inventory.timeout_sec",
+    "models.local_llm.temperature",
+    "models.local_llm.timeout_sec",
+    "structured_memory.min_consolidation_confidence",
+];
+
+/// Dotted path of every number in the shipped default. Only mappings are
+/// walked; numbers inside sequences belong to the module that reads them.
+pub fn shipped_numeric_keys() -> &'static [String] {
+    static KEYS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    KEYS.get_or_init(|| {
+        let mut out = Vec::new();
+        if let Ok(root) = serde_yaml_ng::from_str::<Value>(AppConfig::embedded_default()) {
+            collect_numbers(&root, String::new(), &mut out);
+        }
+        out
+    })
+}
+
 impl AppConfig {
+    /// The operator's file. Unlike [`Self::from_str`], which parses the
+    /// embedded default and test fixtures, this also refuses a malformed
+    /// number ([`Self::check_numbers`]) before any module reads one.
     pub fn load(path: &Path) -> Result<Self> {
         let text = super::credential_store::read_private_config(path, MAX_CONFIG_BYTES)
             .map_err(|_| HarnessError::config("config file must be a bounded private regular file owned by this user (0600), without links or extra ACL grants"))?
             .ok_or_else(|| HarnessError::config("cannot read config file: file is missing"))?;
-        Self::from_str(&text, path)
+        let config = Self::from_str(&text, path)?;
+        config.check_numbers()?;
+        Ok(config)
+    }
+
+    /// Every number the shipped default declares must, when present, be one:
+    /// a finite number for [`FLOAT_KEYS`], otherwise an unquoted non-negative
+    /// integer. A quoted number, an empty value (null), `.inf`, `.nan` or any
+    /// other type is refused, so a typo can never become a silent default. A
+    /// missing key keeps its default, and ranges stay with each reader (some
+    /// clamp, some refuse). The error names the key, never the value.
+    pub fn check_numbers(&self) -> Result<()> {
+        for key in shipped_numeric_keys() {
+            let Some(value) = self.get(key) else { continue };
+            if FLOAT_KEYS.contains(&key.as_str()) {
+                if !value.as_f64().is_some_and(f64::is_finite) {
+                    return Err(HarnessError::config(format!("{key} must be an unquoted finite number")));
+                }
+            } else if value.as_u64().is_none() {
+                return Err(HarnessError::config(format!(
+                    "{key} must be an unquoted non-negative integer"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Create or replace config without exposing its literal secrets while staged.
@@ -267,6 +329,23 @@ fn collect_true_flags(node: &Value, prefix: String, out: &mut Vec<String>) {
     }
 }
 
+fn collect_numbers(node: &Value, prefix: String, out: &mut Vec<String>) {
+    let Value::Mapping(map) = node else { return };
+    for (key, value) in map {
+        let Some(key) = key.as_str() else { continue };
+        let path = if prefix.is_empty() {
+            key.to_string()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        match value {
+            Value::Number(_) => out.push(path),
+            Value::Mapping(_) => collect_numbers(value, path, out),
+            _ => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,6 +462,49 @@ mod tests {
                 format!("{key} must be a non-negative integer"),
                 "{value}"
             );
+        }
+    }
+
+    #[test]
+    fn a_loaded_number_must_be_a_number_of_the_right_kind() {
+        let keys = shipped_numeric_keys();
+        assert!(keys.len() > 100, "the shipped default declares the numeric keys");
+        assert!(FLOAT_KEYS.iter().all(|key| keys.iter().any(|k| k == key)));
+        cfg(AppConfig::embedded_default()).check_numbers().unwrap();
+        cfg("{}").check_numbers().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let load = |text: &str| {
+            AppConfig::write_private(&path, text).unwrap();
+            AppConfig::load(&path)
+        };
+        let int = "structured_memory.max_facts_per_owner";
+        let float = "auth.session.idle_timeout_sec";
+        // Out of range is the reader's business; type is the loader's.
+        load("structured_memory: {max_facts_per_owner: 1000}\n").unwrap();
+        load("auth: {session: {idle_timeout_sec: 900.5}}\n").unwrap();
+        load("structured_memory: true\n").unwrap();
+        for value in [
+            "\"64\"", "'64'", "2.5", "-1", "", "null", "~", ".inf", "abc", "[1]", "true",
+        ] {
+            let error = load(&format!("structured_memory: {{max_facts_per_owner: {value}}}\n")).unwrap_err();
+            assert_eq!(error.code, "CONFIG_ERROR", "{value}");
+            assert_eq!(
+                error.message,
+                format!("{int} must be an unquoted non-negative integer"),
+                "{value}"
+            );
+        }
+        for value in [
+            "\"15m\"", "'900'", "", "null", ".inf", "-.inf", ".nan", "1e999", "[1]", "false",
+        ] {
+            let error = load(&format!("auth: {{session: {{idle_timeout_sec: {value}}}}}\n")).unwrap_err();
+            assert_eq!(
+                error.message,
+                format!("{float} must be an unquoted finite number"),
+                "{value}"
+            );
+            assert!(!error.message.contains("15m") && !error.message.contains("900"));
         }
     }
 

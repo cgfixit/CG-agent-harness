@@ -18,6 +18,11 @@ const DEFAULT_IDLE_TIMEOUT_SEC: f64 = 43200.0;
 const DEFAULT_ABSOLUTE_TIMEOUT_SEC: f64 = 604800.0;
 const DEFAULT_RESTRICTED_IDLE_TIMEOUT_SEC: f64 = 600.0;
 const DEFAULT_RESTRICTED_ABSOLUTE_TIMEOUT_SEC: f64 = 1800.0;
+/// Session timeouts an operator may set, in seconds: one minute to 30 days.
+/// 30 days is NIST SP 800-63B-4's longest reauthentication interval for a
+/// single-factor (AAL1) session. Sessions only gate requests; detached jobs
+/// and research runs belong to the account and outlive any one session.
+const SESSION_TIMEOUT_RANGE_SEC: std::ops::RangeInclusive<f64> = 60.0..=2_592_000.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -127,6 +132,31 @@ impl std::fmt::Debug for AuthManager {
 
 impl AuthManager {
     pub fn open(path: &Path, cfg: &AppConfig) -> Result<Self> {
+        // Refuse an out-of-range timeout before the store is opened or migrated.
+        let idle_timeout_sec = cfg.f64_in(
+            "auth.session.idle_timeout_sec",
+            DEFAULT_IDLE_TIMEOUT_SEC,
+            SESSION_TIMEOUT_RANGE_SEC,
+        )?;
+        let absolute_timeout_sec = cfg.f64_in(
+            "auth.session.absolute_timeout_sec",
+            DEFAULT_ABSOLUTE_TIMEOUT_SEC,
+            SESSION_TIMEOUT_RANGE_SEC,
+        )?;
+        let restricted_idle_timeout_sec = cfg
+            .f64_in(
+                "auth.session.password_change_idle_timeout_sec",
+                DEFAULT_RESTRICTED_IDLE_TIMEOUT_SEC,
+                SESSION_TIMEOUT_RANGE_SEC,
+            )?
+            .min(idle_timeout_sec);
+        let restricted_absolute_timeout_sec = cfg
+            .f64_in(
+                "auth.session.password_change_absolute_timeout_sec",
+                DEFAULT_RESTRICTED_ABSOLUTE_TIMEOUT_SEC,
+                SESSION_TIMEOUT_RANGE_SEC,
+            )?
+            .min(absolute_timeout_sec);
         let (mut connection, mut db, fresh) = sqlite::open(path)?;
         // Two older first-run states move to a setup code. Homes created before
         // setup codes shipped `admin` / `admin`: while that account still must
@@ -156,24 +186,12 @@ impl AuthManager {
                 db = rotated;
             }
         }
-        let idle_timeout_sec = cfg.f64_or("auth.session.idle_timeout_sec", DEFAULT_IDLE_TIMEOUT_SEC);
-        let absolute_timeout_sec = cfg.f64_or("auth.session.absolute_timeout_sec", DEFAULT_ABSOLUTE_TIMEOUT_SEC);
         let mgr = Self {
             path: path.to_path_buf(),
             idle_timeout_sec,
             absolute_timeout_sec,
-            restricted_idle_timeout_sec: cfg
-                .f64_or(
-                    "auth.session.password_change_idle_timeout_sec",
-                    DEFAULT_RESTRICTED_IDLE_TIMEOUT_SEC,
-                )
-                .min(idle_timeout_sec),
-            restricted_absolute_timeout_sec: cfg
-                .f64_or(
-                    "auth.session.password_change_absolute_timeout_sec",
-                    DEFAULT_RESTRICTED_ABSOLUTE_TIMEOUT_SEC,
-                )
-                .min(absolute_timeout_sec),
+            restricted_idle_timeout_sec,
+            restricted_absolute_timeout_sec,
             state: Mutex::new((connection, db)),
             fresh_bootstrap: std::sync::atomic::AtomicBool::new(fresh),
             clock: Box::new(super::now_ts),
@@ -611,5 +629,35 @@ fn revoke_sessions_for(db: &mut AuthDb, username: &str) {
         if row.username == username {
             row.revoked = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_timeouts_outside_one_minute_to_thirty_days_refuse_before_the_store_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        for (key, value) in [
+            ("idle_timeout_sec", "59"),
+            ("absolute_timeout_sec", "2592001"),
+            ("password_change_idle_timeout_sec", "0"),
+            ("password_change_absolute_timeout_sec", "-1"),
+        ] {
+            let yaml = format!("auth: {{session: {{{key}: {value}}}}}");
+            let cfg = AppConfig::from_str(&yaml, Path::new("config.yaml")).unwrap();
+            let error = AuthManager::open(&dir.path().join("auth.json"), &cfg).unwrap_err();
+            assert_eq!(error.code, "CONFIG_ERROR", "{yaml}");
+            assert_eq!(
+                error.message,
+                format!("auth.session.{key} must be a finite number from 60 to 2592000")
+            );
+        }
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            0,
+            "a refused timeout creates no account store"
+        );
     }
 }

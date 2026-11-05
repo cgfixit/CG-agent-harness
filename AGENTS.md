@@ -63,9 +63,18 @@ When prose contradicts code, fix the prose in the same PR.
   `agent_policy` vs agentic `run_store`), the planner/check timeout and
   setup-budget constants (shim vs agentic), the iteration default. Never
   deduplicate them.
-- Gates read through `flag_is_true`: only literal YAML `true` is on; quoted
-  `"true"` and a missing key are off. A missing key is not the shipped
-  value: several gates ship `true` (structured memory, Ollama warmup, auth, TLS).
+- Config is strict by type. Gates read through `flag_is_true`: only literal
+  YAML `true` is on; quoted `"true"` and a missing key are off. A missing key
+  is not the shipped value: several gates ship `true` (structured memory,
+  Ollama warmup, auth, TLS). `AppConfig::load` refuses a present number that
+  is quoted, empty, non-finite or the wrong kind (`FLOAT_KEYS`). Read numbers
+  through the `AppConfig` accessors with a literal key, and operator text only
+  through `load`; `tests/invariant_guard.rs` enforces both.
+- When the operator has not chosen between lenient (fall back to a default)
+  and strict (refuse) handling of malformed input, choose strict: refuse at
+  the earliest parse point, name the field and never the value, keep
+  missing-means-default, and record the choice in the PR. Lenient handling
+  needs a recorded operator decision.
 - Write gates `agentic.enabled`, `deepagent_github.enabled` and
   `deepagent_github.allow_git_write_tools` ship false. `confirm` is never
   defaulted on; `reason` is never optional on a write.

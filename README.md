@@ -120,7 +120,7 @@ Six public commands, each with `--help`: `serve` starts the console; `account` c
 
 ## Configuration and verification
 
-First launch seeds the home's `config.yaml` from [the defaults](assets/config.default.yaml); edit that copy. Gates require literal YAML `true`; quoted `"true"` or a missing key is off, and startup logs any shipped-`true` setting your file lacks. Most settings need a restart; selected limits [reload live](docs/CONFIG_RELOAD.md).
+First launch seeds the home's `config.yaml` from [the defaults](assets/config.default.yaml); edit that copy. Gates require literal YAML `true`; quoted `"true"` or a missing key is off, and startup logs any shipped-`true` setting your file lacks. Malformed or quoted numbers stop startup. Most settings need a restart; selected limits [reload live](docs/CONFIG_RELOAD.md).
 
 Before contributing, run `bash scripts/ensure-githooks.sh` ([hook guide](docs/GITHOOKS.md)) and follow [AGENTS.md](AGENTS.md) for focused verification; `SKIP_LIVE=1 scripts/verify-local.sh` runs the comprehensive checks and CI adds invariant guards, browser acceptance, sandbox and MCP lifecycle checks, and security scanning ([Tests and CI/CD](docs/INSTALL.md#tests-and-cicd)).
 
