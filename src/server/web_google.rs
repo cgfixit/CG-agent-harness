@@ -1220,15 +1220,16 @@ mod tests {
         assert_eq!(value["results"][0]["title"], "Tavily row");
         assert_eq!(value["results"][0]["snippet"], "highlight");
         assert!(value.get("fallback_from").is_none());
+        // Fixed failure messages: neither the listing nor the audit text is echoed, since a
+        // failure here means either may hold provider or credential data.
         let text = value.to_string();
         assert!(
             !text.contains("PROVIDER ANSWER") && !text.contains("FULL PAGE BODY"),
-            "{text}"
+            "listing carried the provider answer or a page body"
         );
         assert_eq!(tv.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
-        // The message never echoes the audit text: a failure here means it may hold a credential.
         let audit = std::fs::read_to_string(chain.dir.path().join("audit.jsonl")).unwrap_or_default();
         assert!(
             !audit.contains("veeam cve") && !audit.contains("Bearer"),
