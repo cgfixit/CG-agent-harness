@@ -11,7 +11,7 @@ This manual is static text bundled with the build and indexed at startup. It is 
 - Local chat: Streaming sessions with search, export, text and DOCX attachments, prompt skills, `/prompt` inspection, and a sandboxed HTML preview. Starts: Ollama on loopback by default; listed, pulled, and tuned from the console.
 - Goal loops: `/goal` and `/loop` keep working on a task, in the console or as a server-side run that outlives the browser, under turn, token, and failure limits. Starts: Budgets unlimited; two consecutive failures stop a run; cloud models refuse loops.
 - Memory: Shared pinned notes plus account-private structured facts, recall, and proposed summaries. Starts: Capture, recall, and retrieval on; applying a proposal needs review (setup).
-- Web research: SerpAPI, public Google, or loopback SearXNG search; permitted fetches; `/web research` under request, time, byte, and token budgets, quotes checked. Starts: On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; a failed SerpAPI search falls back to public Google.
+- Web research: SerpAPI, Tavily, public Google, or loopback SearXNG search; permitted fetches; `/web research` under request, time, byte, and token budgets, quotes… Starts: On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; failed keyed searches fall back to public Google.
 
 ## readme: capability overview (part 2)
 
@@ -87,7 +87,7 @@ Audit records are redacted recursively (emails, IPs, secret shapes, startup-load
 
 ## invariant: Provider keys live in the OS credential store
 
-Managed keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`, `SERPAPI_API_KEY`, `GH_TOKEN`, `CGAGENTHARNESS_API_KEY`, and `CGAGENTHARNESS_WEBHOOK_TOKEN`) use macOS Keychain, Linux Secret Service, or Windows Credential Manager. Inherited environment values, including empty, win. Legacy home `.env` migration removes only store-verified assignments; unknown/failed lines stay. Failures warn without values and leave keys unloaded. Settings save/clear use the store and fail closed when unavailable.…
+Managed keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`, `SERPAPI_API_KEY`, `TAVILY_API_KEY`, `GH_TOKEN`, `CGAGENTHARNESS_API_KEY`, and `CGAGENTHARNESS_WEBHOOK_TOKEN`) use macOS Keychain, Linux Secret Service, or Windows Credential Manager. Inherited environment values, including empty, win. Legacy home `.env` migration removes only store-verified assignments; unknown/failed lines stay. Failures warn without values and leave keys unloaded. Settings save/clear use the store and fail closed when…
 
 ## invariant: A detached run cannot outlive its gates
 
@@ -470,7 +470,7 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - web.per_site_pages: 1–20
   - web.pace_ms: 100–5000 between requests to an origin; public Google searches wait at least 3000 (code floor)
   - web.search_cooldown_public_sec: 60–3600 after public Google WEB_GOOGLE_CHALLENGE or WEB_GOOGLE_BLOCKED
-  - web.search_cooldown_quota_sec: 0–3600 after SerpAPI WEB_SEARCH_QUOTA; 0 waits for the next clock hour (SerpAPI's hourly cap)
+  - web.search_cooldown_quota_sec: 0–3600 after SerpAPI or Tavily WEB_SEARCH_QUOTA; 0 waits for the next clock hour (SerpAPI's hourly cap)
   - web.cache_pages: 1–256; derived cache, oldest documents evicted
   - web.cache_bytes: 1048576–33554432 serialized cache bytes
   - web.subqueries: 1–5 total model-selected subqueries

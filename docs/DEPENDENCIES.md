@@ -85,7 +85,7 @@ build dependency does not itself require a CMake executable. See
   (OpenTelemetry, Sentry, PostHog, Segment, Mixpanel, Amplitude, Datadog,
   Honeycomb, Bugsnag, RudderStack, Statsig, LaunchDarkly, minitrace) by exact
   name, the CI half of the otel-hardening skill's T5 pattern sweep.
-- Optional runtime services (Google, SerpAPI, Ollama, cloud providers) are not
+- Optional runtime services (Google, SerpAPI, Tavily, Ollama, cloud providers) are not
   Cargo dependencies; a live-service check is not a dependency or test pass.
 
 ## Check and synchronize

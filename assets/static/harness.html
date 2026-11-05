@@ -1354,7 +1354,7 @@ function renderSkillsDiagram(skills, wired, total) {
   return lines.join('\n');
 }
 
-const SEARCH_PROVIDER_LABELS = {'google-public': 'public Google', 'google-serpapi': 'SerpAPI', searxng: 'SearXNG'};
+const SEARCH_PROVIDER_LABELS = {'google-public': 'public Google', 'google-serpapi': 'SerpAPI', tavily: 'Tavily', searxng: 'SearXNG'};
 /* "via SearXNG (google did not answer)", or after a fallback hop "via public Google
    (SearXNG did not answer)"; other providers keep their raw name. Own keys only, so
    "constructor" or "__proto__" never resolve through Object.prototype. */
@@ -1412,7 +1412,7 @@ function renderWebStatus(data) {
     ['policy mode', deny ? 'block list — every public URL except blocked rules; /web block adds one' : 'allowlist — only permitted URLs; the globe button or /web mode denylist switches'],
     ['blocked rules', String((data.blocked || []).length)],
     ['permission rules', (data.allowlist || []).length + (Number.isInteger(data.max_allow) ? ' of ' + data.max_allow + ' (web.max_rules)' : '') + ' — see groups below; empty denies content reads' + (data.policy_missing ? ' (no policy file yet; the first /web allow creates it)' : '')],
-    ['keyword search', (data.search_provider || 'Google; /web pages for permitted-page passages') + (/serpapi|searxng/i.test(data.search_provider || '')
+    ['keyword search', (data.search_provider || 'Google; /web pages for permitted-page passages') + (/serpapi|tavily|searxng/i.test(data.search_provider || '')
       ? ' — /web search needs no URL rule; reading a listed page does'
       : ' — needs /web allow https://www.google.com/* or a SerpAPI key in API Keys')],
     ['web calls per chat', Number.isInteger(data.limits?.chat_tool_calls) ? data.limits.chat_tool_calls + ' maximum; token and time limits also apply' : 'unknown'],
@@ -1726,7 +1726,7 @@ async function refreshReadiness(s) {
   } else {
     const rules = Array.isArray(web.allowlist) ? web.allowlist.length : 0;
     if (rules) paintChip('hWeb', 'ok', rules + (rules === 1 ? ' URL rule' : ' URL rules'), 'Search is on; pages matching the permitted URL rules can be read.');
-    else if (/serpapi/i.test(web.search_provider || '')) paintChip('hWeb', 'warn', 'search only', 'Search is on, but no page URLs are permitted yet. Grant one with /web allow <url>.');
+    else if (/serpapi|tavily/i.test(web.search_provider || '')) paintChip('hWeb', 'warn', 'search only', 'Search is on, but no page URLs are permitted yet. Grant one with /web allow <url>.');
     else paintChip('hWeb', 'warn', 'not configured', 'No URL rules and no SerpAPI key: search and page reads both need setup. Add a SerpAPI key in API Keys, or /web allow https://www.google.com/* and the sites to read.');
   }
 }
@@ -1993,8 +1993,8 @@ async function refreshKeys() {
     });
     clear.addEventListener('click', () => { field.value = ''; change({clear: [key.name]}); });
     form.append(label, detail, status, field, save, clear, feedback);
-    if (key.name === 'SERPAPI_API_KEY') {
-      /* Tests whichever provider web.search.provider selects (SerpAPI, public Google or SearXNG). */
+    if (key.name === 'SERPAPI_API_KEY' || key.name === 'TAVILY_API_KEY') {
+      /* Tests whichever provider web.search.provider selects (SerpAPI, Tavily, public Google or SearXNG). */
       const test = document.createElement('button'); test.type = 'button'; test.textContent = 'Test search';
       test.addEventListener('click', async () => {
         test.disabled = true; feedback.textContent = 'Searching…';

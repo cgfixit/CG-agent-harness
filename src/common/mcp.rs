@@ -38,6 +38,7 @@ pub const SECRET_ENV: &[&str] = &[
     "GROK_API_KEY",
     "OPENAI_API_KEY",
     "SERPAPI_API_KEY",
+    "TAVILY_API_KEY",
     "XAI_API_KEY",
 ];
 

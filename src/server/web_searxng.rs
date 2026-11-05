@@ -1,4 +1,4 @@
-//! Search provider choice and loopback SearXNG listings. The configured SearXNG
+//! Search provider choice, the fallback hop plan and loopback SearXNG listings. The configured SearXNG
 //! URL is one exact loopback socket used only for search listings; it never
 //! becomes a fetch, discovery, research or webhook target.
 use std::collections::BTreeSet;
@@ -15,12 +15,13 @@ use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 
 /// `web.search.provider`, restart-only. `Auto` is today's rule: an active SerpAPI
-/// key selects SerpAPI, otherwise public Google.
+/// key selects SerpAPI, otherwise public Google. A Tavily key never changes `Auto`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchProvider {
     Auto,
     GooglePublic,
     Serpapi,
+    Tavily,
     Searxng { endpoint: url::Url, socket: SocketAddr },
 }
 
@@ -42,6 +43,7 @@ impl SearchProvider {
             "" | "auto" => Ok(Self::Auto),
             "google-public" => Ok(Self::GooglePublic),
             "serpapi" => Ok(Self::Serpapi),
+            "tavily" => Ok(Self::Tavily),
             "searxng" => {
                 let (endpoint, socket) = searxng.ok_or_else(|| {
                     HarnessError::config("web.search.searxng_url is required when web.search.provider is searxng")
@@ -49,7 +51,7 @@ impl SearchProvider {
                 Ok(Self::Searxng { endpoint, socket })
             }
             _ => Err(HarnessError::config(
-                "web.search.provider must be auto, google-public, serpapi or searxng",
+                "web.search.provider must be auto, google-public, serpapi, tavily or searxng",
             )),
         }
     }
@@ -60,6 +62,7 @@ impl SearchProvider {
             Self::Auto if keyed => "Google via SerpAPI",
             Self::Auto | Self::GooglePublic => "public Google (may require JavaScript/CAPTCHA)",
             Self::Serpapi => "Google via SerpAPI (web.search.provider: serpapi)",
+            Self::Tavily => "Tavily (web.search.provider: tavily)",
             Self::Searxng { .. } => "SearXNG on loopback",
         }
     }
@@ -157,7 +160,7 @@ pub(super) fn searxng_results(body: &[u8], limit: usize) -> Result<(Vec<SearchRe
 
 /// Hops after the configured provider (#647 Phase 2), restart-only. Both read
 /// through `flag_is_true`; the public Google hop ships on, the SerpAPI hop off;
-/// the order is fixed.
+/// the order is fixed. The SerpAPI hop follows a SearXNG or Tavily first hop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fallback {
     pub to_serpapi: bool,
@@ -188,6 +191,7 @@ impl Fallback {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Hop {
     Searxng,
+    Tavily,
     Serpapi,
     GooglePublic,
 }
@@ -196,6 +200,7 @@ impl Hop {
     pub(super) fn name(self) -> &'static str {
         match self {
             Self::Searxng => "searxng",
+            Self::Tavily => "tavily",
             Self::Serpapi => "google-serpapi",
             Self::GooglePublic => "google-public",
         }
@@ -203,16 +208,17 @@ impl Hop {
 }
 
 /// The hops a search tries, in order: the configured provider, then each
-/// enabled later hop of searxng → google-serpapi → google-public. A SerpAPI
-/// fallback needs an active key; a forced provider is always tried first.
+/// enabled later hop of (searxng | tavily) → google-serpapi → google-public. A
+/// SerpAPI fallback needs an active key; a forced provider is always tried first.
 pub(super) fn plan_hops(provider: &SearchProvider, keyed: bool, fallback: &Fallback) -> Vec<Hop> {
     let mut hops = match provider {
         SearchProvider::Searxng { .. } => vec![Hop::Searxng],
+        SearchProvider::Tavily => vec![Hop::Tavily],
         SearchProvider::Serpapi => vec![Hop::Serpapi],
         SearchProvider::Auto if keyed => vec![Hop::Serpapi],
         SearchProvider::Auto | SearchProvider::GooglePublic => return vec![Hop::GooglePublic],
     };
-    if hops[0] == Hop::Searxng && fallback.to_serpapi && keyed {
+    if matches!(hops[0], Hop::Searxng | Hop::Tavily) && fallback.to_serpapi && keyed {
         hops.push(Hop::Serpapi);
     }
     if fallback.to_public_google {
@@ -225,11 +231,11 @@ pub(super) fn plan_hops(provider: &SearchProvider, keyed: bool, fallback: &Fallb
 pub(super) const SEARXNG_SILENT: &str = "WEB_SEARCH_DEGRADED";
 
 /// Whether a hop's failure moves the search to the next hop. A hop that cannot
-/// answer does: an unusable provider, a SerpAPI quota that is spent (public
-/// Google is the next hop and costs nothing) and a SearXNG answer whose engines
-/// all stayed silent. A clean zero-result answer, a partial answer, a refused
-/// query and a rejected key (the operator's error, loud on every search) do not.
-/// A SerpAPI cooldown is skipped without a request.
+/// answer does: an unusable provider, a keyed quota that is spent (the next hop
+/// costs less or nothing) and a SearXNG answer whose engines all stayed silent.
+/// A clean zero-result answer, a partial answer, a refused query and a rejected
+/// key (the operator's error, loud on every search) do not. A keyed provider's
+/// cooldown is skipped without a request.
 pub(super) fn falls_through(hop: Hop, code: &str) -> bool {
     match hop {
         Hop::Searxng => matches!(
@@ -242,7 +248,7 @@ pub(super) fn falls_through(hop: Hop, code: &str) -> bool {
                 | "WEB_ENCODING_REFUSED"
                 | SEARXNG_SILENT
         ),
-        Hop::Serpapi => matches!(
+        Hop::Tavily | Hop::Serpapi => matches!(
             code,
             "WEB_SEARCH_PROVIDER" | "WEB_TIMEOUT" | "WEB_SEARCH_COOLDOWN" | "WEB_SEARCH_QUOTA"
         ),
@@ -305,7 +311,7 @@ impl WebTool {
                 .await
                 .map_err(|_| error("WEB_CANCELLED", "search cancelled"))?;
             let client = self.searxng_client(endpoint, socket)?;
-            let mut response = client
+            let response = client
                 .get(endpoint.clone())
                 .query(&[
                     ("q", query),
@@ -329,33 +335,7 @@ impl WebTool {
                     "SearXNG refused the request; check that search.formats includes json",
                 ));
             }
-            if response
-                .headers()
-                .iter()
-                .map(|(k, v)| k.as_str().len() + v.len())
-                .sum::<usize>()
-                > 16_384
-            {
-                return Err(error("WEB_HEADERS_TOO_LARGE", "search headers exceed limit"));
-            }
-            if response
-                .headers()
-                .get(reqwest::header::CONTENT_ENCODING)
-                .is_some_and(|v| v != "identity")
-            {
-                return Err(error("WEB_ENCODING_REFUSED", "compressed search response refused"));
-            }
-            let mut body = Vec::new();
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|_| error("WEB_SEARCH_PROVIDER", "search response read failed"))?
-            {
-                if body.len() + chunk.len() > self.limits.response_bytes {
-                    return Err(error("WEB_TOO_LARGE", "search response exceeds limit"));
-                }
-                body.extend_from_slice(&chunk);
-            }
+            let body = super::web_google::listing_body(response, self.limits.response_bytes).await?;
             searxng_results(&body, count)
         })
         .await
@@ -399,6 +379,10 @@ mod tests {
             load("web: {search: {provider: serpapi}}").unwrap(),
             SearchProvider::Serpapi
         );
+        assert_eq!(
+            load("web: {search: {provider: tavily}}").unwrap(),
+            SearchProvider::Tavily
+        );
         for (raw, socket) in [
             ("http://127.0.0.1:8888", "127.0.0.1:8888"), // DevSkim: ignore DS137138,DS162092 because this tests the loopback-only SearXNG grant.
             ("http://127.0.0.1:8888/search", "127.0.0.1:8888"), // DevSkim: ignore DS137138,DS162092 because this tests the loopback-only SearXNG grant.
@@ -417,6 +401,7 @@ mod tests {
             "web: {search: {provider: searxng}}",
             "web: {search: {provider: searxng, searxng_url: ''}}",
             "web: {search: {provider: bing}}",
+            "web: {search: {provider: Tavily}}",
             "web: {search: {provider: true}}",
             "web: {search: {provider: searxng, searxng_url: 'http://localhost:8888'}}", // DevSkim: ignore DS137138,DS162092 because this asserts a loopback hostname is refused.
             "web: {search: {provider: searxng, searxng_url: 'http://searx.example:8888'}}", // DevSkim: ignore DS137138 because this asserts a hostname is refused.
@@ -541,6 +526,16 @@ mod tests {
             "today's keyless auto"
         );
         assert_eq!(plan_hops(&SearchProvider::GooglePublic, true, &on), [GooglePublic]);
+        assert_eq!(plan_hops(&SearchProvider::Tavily, true, &off), [Tavily]);
+        assert_eq!(
+            plan_hops(&SearchProvider::Tavily, true, &on),
+            [Tavily, Serpapi, GooglePublic]
+        );
+        assert_eq!(
+            plan_hops(&SearchProvider::Tavily, false, &on),
+            [Tavily, GooglePublic],
+            "no SerpAPI key, no SerpAPI hop"
+        );
     }
 
     #[test]
@@ -559,21 +554,23 @@ mod tests {
             assert!(!falls_through(Hop::Searxng, code), "{code}");
         }
         assert!(falls_through(Hop::Searxng, SEARXNG_SILENT));
-        for code in [
-            "WEB_SEARCH_PROVIDER",
-            "WEB_TIMEOUT",
-            "WEB_SEARCH_COOLDOWN",
-            "WEB_SEARCH_QUOTA",
-        ] {
-            assert!(falls_through(Hop::Serpapi, code), "{code}");
-        }
-        for code in [
-            "WEB_SEARCH_KEY_REJECTED",
-            "WEB_SEARCH_RESPONSE",
-            "WEB_SEARCH_KEY_CHANGED",
-            "WEB_SEARCH_KEY_UNAVAILABLE",
-        ] {
-            assert!(!falls_through(Hop::Serpapi, code), "{code}");
+        for hop in [Hop::Serpapi, Hop::Tavily] {
+            for code in [
+                "WEB_SEARCH_PROVIDER",
+                "WEB_TIMEOUT",
+                "WEB_SEARCH_COOLDOWN",
+                "WEB_SEARCH_QUOTA",
+            ] {
+                assert!(falls_through(hop, code), "{hop:?} {code}");
+            }
+            for code in [
+                "WEB_SEARCH_KEY_REJECTED",
+                "WEB_SEARCH_RESPONSE",
+                "WEB_SEARCH_KEY_CHANGED",
+                "WEB_SEARCH_KEY_UNAVAILABLE",
+            ] {
+                assert!(!falls_through(hop, code), "{hop:?} {code}");
+            }
         }
         assert!(!falls_through(Hop::GooglePublic, "WEB_GOOGLE_CHALLENGE"));
         assert!(!falls_through(Hop::GooglePublic, "WEB_TIMEOUT"));
