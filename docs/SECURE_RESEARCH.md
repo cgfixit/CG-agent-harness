@@ -405,6 +405,17 @@ claiming complete success.
 Every content request is DNS-pinned to checked public addresses with TLS hostname
 validation and no reuse, retries, proxies, redirects, compression or cookies
 ([contract](../INVARIANTS.md#public-web-evidence-requires-current-content-permission)).
+
+Opt-in `web.firecrawl.enabled` (ships off; needs **Firecrawl page reader** in API
+Keys) is the one exception, for exact reads only: `fetch`, chat `web_fetch` and
+batches, never discovery, crawl or search. When the pinned read gets a server's
+403, 429 or 503, or a script shell (scripted HTML whose text is under 200
+characters and under 5% of the markup), the authorized URL goes to Firecrawl's fixed `https://api.firecrawl.dev/v2/scrape`
+once: basic proxy, markdown only, `storeInCache: false`. The answer must name the
+requested URL as final, or it is refused as a redirect; no links are kept, so it
+cannot widen a crawl. The page carries `via: firecrawl`. `web.firecrawl.max_per_hour`
+(default 20) caps reads; HTTP 402 or 429 pauses Firecrawl like a search quota. A
+failed fallback keeps the original result, with its code in `details.fallback`.
 The HTML parser removes executable/hidden/navigation content and retains headings,
 paragraphs, tables, lists and code. Extracts keep canonical URLs, hashes, fetch
 age, validators, extraction version and original passage offsets.

@@ -1521,7 +1521,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     // why: dependency refresh removed five stale Linux prerequisite words; keep the cut.
     // why: the 2026-11-01 README refresh trimmed it to 1,507 words; lowered so the cut stays cut.
-    ("README.md", Root, 1520),
+    // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
+    ("README.md", Root, 1523),
     ("SECURITY.md", Root, 690),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
     // why: the sandboxed HTML preview route row; measured 1840 words.
@@ -1536,14 +1537,16 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
     // why: the HTML editor preview sentence; measured 6229 words.
-    ("docs/CONSOLE.md", Guide, 6224),
+    // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
+    ("docs/CONSOLE.md", Guide, 6225),
     // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
     // why: the 2026-10-20 dep-sync folded the dated 2026-09 audit notes into Retained constraints; 944 words, keep the cut.
     // why: operator-approved +200 (2026-10-22) so dated advisory notes such as RUSTSEC-2026-0384 fit without trimming history.
     // why: operator-approved +50 (2026-10-31) after the block-buffer residual entry left 54 words of headroom.
     ("docs/DEPENDENCIES.md", Guide, 1200),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
-    ("docs/DESKTOP.md", Guide, 2553),
+    // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
+    ("docs/DESKTOP.md", Guide, 2554),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
     // why: hook behavior review trims duplicated reuse instructions; retain the smaller budget.
     ("docs/GITHOOKS.md", Guide, 1400),
@@ -1567,7 +1570,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
     // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
     // why: operator-approved (2026-10-24) raise to 4000 so #649 and #651 fit together without trimming contract text.
-    ("docs/SECURE_RESEARCH.md", Guide, 3990),
+    // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
+    ("docs/SECURE_RESEARCH.md", Guide, 4121),
     // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here; 2157 words, cap set to 2750 for room to grow.
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2750),
     // why: #244 made this the one memory contract: a gate table, and the #87
@@ -1589,7 +1593,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("src/common/README.md", Guide, 600),
     // why: README audit removes three words; retain the existing headroom.
     ("src/netconnect/README.md", Guide, 387),
-    ("src/server/README.md", Guide, 740),
+    // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
+    ("src/server/README.md", Guide, 748),
     ("src/server/routes/README.md", Guide, 390),
     ("tests/README.md", Guide, 930),
 ];

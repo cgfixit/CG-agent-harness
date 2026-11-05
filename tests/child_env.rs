@@ -1,12 +1,13 @@
 use cgagentharness::{agentic::gh_client::gh_env, common::process, shim};
 use std::{process::Command, time::Duration};
 
-const PROVIDER_KEYS: [&str; 5] = [
+const PROVIDER_KEYS: [&str; 6] = [
     "ANTHROPIC_API_KEY",
     "GROK_API_KEY",
     "DEEPAGENT_API_KEY",
     "SERPAPI_API_KEY",
     "TAVILY_API_KEY",
+    "FIRECRAWL_API_KEY",
 ];
 
 fn fixture_argv(test: &str) -> Vec<String> {

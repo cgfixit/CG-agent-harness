@@ -200,6 +200,16 @@ web:
     fallback_to_serpapi: false # literal true: a failed searxng or tavily tries SerpAPI when a key is active
     fallback_to_public_google: true # ships on (operator decision, 2026-11-01); literal false turns it off. A failed earlier hop tries public Google (fresh homes seed its URL rule)
     fallback_alert_per_hour: 20 # 1–1000 SerpAPI fallbacks per clock hour before one web_search_fallback_burst audit line
+  # Firecrawl, restart-only: an opt-in second reader for exact permitted URLs (/web fetch, the
+  # chat web_fetch tool, batch reads; never discovery, crawl or search). It runs only after the
+  # pinned fetch got a server's 403, 429 or 503, or a script shell (scripted HTML whose text is under
+  # 200 chars and under 5% of the markup), and then sends that URL to Firecrawl: one basic scrape,
+  # markdown only, not kept in Firecrawl's cache, no links taken.
+  # A result whose final URL differs from the request is refused like any redirect. A failed
+  # fallback keeps the original outcome, with its code in details.fallback. Needs FIRECRAWL_API_KEY.
+  firecrawl:
+    enabled: false # flag_is_true; literal true sends qualifying URLs to api.firecrawl.dev
+    max_per_hour: 20 # 1–1000 Firecrawl reads per clock hour; a 402 or 429 also pauses it for search_cooldown_quota_sec
 
 # Completion webhooks are explicit operator configuration and restart-only.
 notifications:

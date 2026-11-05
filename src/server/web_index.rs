@@ -359,6 +359,7 @@ impl WebTool {
                             &mut site_counts,
                             &mut site_last,
                             true,
+                            None,
                         )
                         .await
                         .map(|p| p.text);
@@ -409,6 +410,7 @@ impl WebTool {
                     &mut site_counts,
                     &mut site_last,
                     false,
+                    None,
                 )
                 .await
             {
@@ -454,6 +456,7 @@ impl WebTool {
         counts: &mut BTreeMap<String, usize>,
         last: &mut BTreeMap<String, Instant>,
         quiet: bool,
+        fallback: Option<&Audit>,
     ) -> Option<Page> {
         let origin = canonical_url(url).ok()?.origin().ascii_serialization();
         let budget = if coverage.requests >= self.limits.pages {
@@ -486,7 +489,14 @@ impl WebTool {
         coverage.requests += 1;
         last.insert(origin, Instant::now());
         let cached = self.read_page(&self.cache_path(url), group).ok();
-        match tokio::time::timeout_at(deadline, self.get(url, group, cached.as_ref())).await {
+        // Only exact batch reads (`fetch_many`) may use the Firecrawl fallback; discovery never does.
+        let read = async {
+            match fallback {
+                Some(audit) => self.get_or_fallback(url, group, cached.as_ref(), audit).await,
+                None => self.get(url, group, cached.as_ref()).await,
+            }
+        };
+        match tokio::time::timeout_at(deadline, read).await {
             Ok(Ok(page)) => {
                 coverage.transferred_bytes += page.transfer_bytes;
                 coverage.charged_bytes += page.transfer_bytes;
@@ -543,7 +553,16 @@ impl WebTool {
         let mut pages = Vec::new();
         for (index, target) in targets.iter().enumerate() {
             if let Some(page) = self
-                .crawl_get(target, group, deadline, &mut coverage, &mut counts, &mut last, false)
+                .crawl_get(
+                    target,
+                    group,
+                    deadline,
+                    &mut coverage,
+                    &mut counts,
+                    &mut last,
+                    false,
+                    Some(audit),
+                )
                 .await
             {
                 self.cache_page(&page, group)?;
@@ -910,6 +929,7 @@ mod tests {
             policy_revision: "a".repeat(64),
             etag: None,
             last_modified: None,
+            via: None,
         };
         web.cache_page(&page, Some("wild")).unwrap();
         let second = web.discover(Some("wild")).await.unwrap();
@@ -1047,6 +1067,7 @@ mod tests {
             policy_revision: policy.revision.clone(),
             etag: None,
             last_modified: None,
+            via: None,
         };
         let parts = passages(&page, &policy);
         for part in &parts {
@@ -1141,6 +1162,7 @@ mod tests {
             policy_revision: policy.revision.clone(),
             etag: None,
             last_modified: None,
+            via: None,
         };
         let parts = passages(&page, &policy);
         assert!(parts.len() >= 2, "{}", parts.len());
