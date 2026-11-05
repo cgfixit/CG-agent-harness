@@ -386,7 +386,7 @@ mod tests {
         for moved in [
             "https://example.org/docs/b",
             "https://www.example.org/docs/a",
-            "http://example.org/docs/a",
+            "http://example.org/docs/a", // DevSkim: ignore DS137138 because this asserts a scheme downgrade of the target is refused.
             "https://example.org/docs/a?x=1",
         ] {
             assert_eq!(
@@ -448,7 +448,7 @@ mod tests {
             }
             pub(super) async fn fetch(&self, path: &str) -> Result<Value> {
                 self.web
-                    .fetch(&format!("http://site.fixture/{path}"), true, &self.audit, "local")
+                    .fetch(&format!("http://site.fixture/{path}"), true, &self.audit, "local") // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
                     .await
             }
             pub(super) fn audit_text(&self) -> String {
