@@ -3,9 +3,9 @@
 [![CI](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml)
 [![Bundle](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml)
 
-**Your own AI workstation, under your rules.** CG Agent Harness is one loopback-only Rust service for a single operator: private chat with a local model, web research fenced by URL rules you write, and an AI coding loop that edits in isolated clones and cannot commit, push, or open a pull request without your approval. Everything ships closed: cloud models, repository writes, external tools, and LAN observation stay off until you turn each one on, and the boundaries are enforced by CI tests, not prose.
+**A private research desk on your own machine.** CG Agent Harness is one loopback-only Rust service for long-form research with a local model: page reads fenced by URL rules you write, citations and quotes checked against fetched passages, jobs that outlive the tab, and goal loops, memory, and Markdown export for work spanning many turns. Cloud models, repository writes, external tools, and LAN observation ship off; CI tests, not prose, enforce the boundaries.
 
-Built for developers and security-minded operators who want agentic tooling on their own machine with the audit trail and least privilege they expect of any other process.
+Built for researchers and security-minded operators who expect an audit trail and least privilege from any local process.
 
 [![Console after sign-in: status chips, a local reply with token counts, searchable command guide](docs/screenshots/console-chat-2026-10-30.png)](docs/screenshots/console-chat-2026-10-30.png)
 
@@ -17,35 +17,34 @@ Fresh home, loopback fixture model, 2026-10-30. [Silent 60-second demo](docs/scr
 
 | Capability | What it provides | Starting state |
 |---|---|---|
-| **Local chat** | Streaming sessions with search, export, text and DOCX attachments, prompt skills, `/prompt` inspection, and a sandboxed HTML preview. | Ollama on loopback by default; listed, pulled, and tuned from the console. |
-| **Goal loops** | `/goal` and `/loop` keep working on a task as a console or server-side run outliving the browser, under turn, token and failure limits. | 50 turns, 200,000 tokens or two failed turns end a run; cloud models refuse loops. |
-| **Memory** | Shared pinned notes plus account-private structured facts, recall, and proposed summaries. | Capture, recall, and retrieval on; applying a proposal needs review ([setup](docs/INSTALL.md#memory-setup)). |
-| **Web research** | SerpAPI, Tavily, or public Google search; permitted fetches (opt-in Firecrawl fallback); `/web research` under request, time, byte, and token budgets, quotes checked. | On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; failed keyed searches fall back to public Google. |
-| **Reviewed coding** | Planner/executor loop, isolated clones, sandboxed checks, full diff review, separate Git decisions; detached jobs and schedules reuse the same gates. | Off until configured for a selected repository. |
+| **Web research** | SerpAPI, Tavily, or public Google search; permitted fetches and crawls (opt-in Firecrawl fallback); `/web research` jobs with planned subqueries and checked quotes. | On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; failed keyed searches fall back to public Google. |
+| **Goal loops** | `/goal` and `/loop` continue a long piece as a run outliving the browser, under turn, token and failure limits. | 50 turns, 200,000 tokens or two failed turns end a run; cloud models refuse loops. |
+| **Memory** | Shared pinned notes plus account-private facts, recall, and proposed summaries that carry findings between sessions. | Capture, recall, and retrieval on; applying a proposal needs review ([setup](docs/INSTALL.md#memory-setup)). |
+| **Local chat** | Streaming sessions with search, Markdown export, text and DOCX attachments, prompt skills, `/prompt` inspection, and a sandboxed HTML preview. | Ollama on loopback by default; listed, pulled, and tuned from the console. |
 | **Analytics** | Session, token, and run history with USD where rates exist, plus **Estimate draft** before a cloud call. | On after sign-in; read-only; local inference unpriced. |
 | **Cloud chat** | Optional Grok or Claude. Sends only the new message, never history, memory, skills, attachments, or web context. | Needs a provider key; refused for `/loop`. |
 | **MCP integrations** | Declared external tools and a separate read-only memory gateway with dedicated machine credentials. | Both off. |
+| **Reviewed coding** | Optional edits in isolated clones; sandboxed checks, diff review, separate Git approval. | Off until configured for a selected repository. |
 | **LAN observation** | Netconnect reads in-scope interfaces, routes, and neighbors from local tables. | Off with empty scope; only the budgeted `diag` probe sends packets; no scans or device control. |
 | **Self-knowledge and diagnostics** | Bundled harness manual and live status as untrusted local-chat context; `/diag` shows bounded, redacted tails of allowlisted home logs. | Manual on, never sent to cloud chat or loops; `/diag` on, admin or `portal_auditor` only. |
 
 Fresh-home states; upgrades keep existing choices ([console guide](docs/CONSOLE.md#what-you-can-do)).
 
-## How reviewed coding works
+## How long-form research works
 
-1. **Scope.** Select a repository, configure the coding gates, prepare its toolchain.
-2. **Stage and confirm.** Give the instruction, branch, allowed reads, and check profile.
-3. **Generate and verify.** Bounded edits land in the pipeline's own clone; checks run in a sandbox.
-4. **Review.** Inspect the full diff and check results; explicit approval commits.
-5. **Publish deliberately.** Push and draft PR creation each need their own reason and confirmation.
+1. **Set the boundary.** `/web allow <pattern> --group <name>` grants a topic's sites; search listings never authorize page reads.
+2. **Start a job.** `/web research --group <name> <question>` plans up to 3 subqueries over 2 rounds, crawls once, and ranks about 6,000 evidence tokens. `/web job` follows it after the tab closes; `/web cancel` stops it.
+3. **Read a checked answer.** Support, conflicts, inference, and missing or stale evidence are labeled; a claim whose citation or quote fails is dropped.
+4. **Build the long piece.** One answer is at most 2,048 tokens (`web.model_tokens`), so longer work spans runs: `/goal`, `/loop`, memory pins, then Markdown export.
+5. **Fit your hardware.** Discovery and answering have separate deadlines (1,200 s and 1,800 s, up to an hour each); `auto_tune` sizes them.
 
-Passing checks never authorize publication ([Coding pipeline](docs/CODING_PIPELINE.md), [Git approval](docs/CODING_PIPELINE.md#git-approval-and-publication)).
+Rank is not truth, and bounded runs never claim completeness ([research](docs/SECURE_RESEARCH.md#fetch-discovery-and-research), [transcripts](docs/CONSOLE.md#search-and-export-session-transcripts); coding: [pipeline](docs/CODING_PIPELINE.md)).
 
 ## Engineering choices
 
 | Decision | Purpose | Explore |
 |---|---|---|
 | Separate console and coding processes | Coding runs behind an allowlisted subprocess interface. | [Shim](src/shim/mod.rs), [invariant tests](tests/invariant_guard.rs) |
-| Bind approval to reviewed changes | Content, modes, destination, and commit are rechecked at every Git step. | [Git approval](docs/CODING_PIPELINE.md#git-approval-and-publication), [tests](tests/git_approval.rs) |
 | Separate memory proposals from facts | Models suggest; canonical facts change only on approval. | [Memory guide](docs/MEMORY_GUIDE.md), [tests](tests/structured_memory.rs) |
 | Contracts as tests | Isolation, shipped gates, routes, and doc size fail `cargo test`, not review. | [Invariants](INVARIANTS.md), [guard](tests/invariant_guard.rs) |
 
@@ -99,8 +98,7 @@ Open `https://127.0.0.1:8790/` and trust the local certificate ([certificate gui
 1. Fresh homes open **Set your password**: enter the setup code (app: **Setup and recovery** stays open with it; terminal: `<home>/setup-code`) and a new password.
 2. `/model list` shows installed tags; `/model use <tag>` selects one and tunes its limits ([profiles](docs/MODELS.md#exact-model-diagnostics-and-optional-fallback)).
 3. Run `/status`, send a message, inspect the assembled context with `/prompt`, and browse `/help`.
-
-Start coding only after the separate [coding setup](docs/CODING_PIPELINE.md).
+4. Research: `/web allow https://example.org/*`, then `/web research <question>` ([research setup](docs/SECURE_RESEARCH.md#search-fetch-and-research)).
 
 ## Security and defaults
 
