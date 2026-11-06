@@ -110,7 +110,7 @@ Open `https://127.0.0.1:8790/` and trust the local certificate ([certificate gui
 - **Data scope:** structured memory and sessions are account-owned; other home state is [shared](SECURITY.md#local-authority-and-shared-resources), so this is not tenant isolation.
 - **Credentials and records:** provider keys default to the OS credential store, with a startup warning while plaintext storage is on; audit records are redacted and stay in the home.
 
-Target: a local operator workstation; Windows is CI-tested but has no release. Details: [Security](SECURITY.md), [Invariants](INVARIANTS.md), [Secure research](docs/SECURE_RESEARCH.md).
+Windows has [focused PR checks and full `main` CI](docs/INSTALL.md#tests-and-cicd), with no release. Details: [Security](SECURITY.md), [Invariants](INVARIANTS.md), [Secure research](docs/SECURE_RESEARCH.md).
 
 ## Command line
 

@@ -780,7 +780,7 @@ tokens, fresh CSRF, and no replay.
 
 | Gate | Evidence and scope |
 |---|---|
-| [Backend CI](../.github/workflows/ci.yml) | On PRs, `main`, and reusable release calls: rustfmt, warning-denied Clippy, `cargo deny`, the pinned 1.88 toolchain (equal to `rust-version`), I6 scan, Chrome commands, Linux/macOS/Windows tests, and real-repo smoke. Linux jobs run on Ubuntu 26.04; the bubblewrap and MCP lifecycle jobs stay on 24.04. Bundle owns release builds and CLI packaging; Release rebuilds before publication. |
+| [Backend CI](../.github/workflows/ci.yml) | Rust 1.88 (`rust-version`), rustfmt, warning-denied Clippy, `cargo deny`, I6, Chrome, Linux/macOS tests and real-repo smoke. Code PRs run focused Windows lifecycle and credential tests; `main`, merge queue and release calls also run the full Windows suite. Linux uses Ubuntu 26.04 (bubblewrap and MCP lifecycle: 24.04). Bundle packages the CLI; Release rebuilds before publication. |
 | Coding and chat regression tests | Revocation, exact edits, clone jail, reviewed trees, job cancellation, session and goal gates, loop budgets, and failed-chat claim release. See [`tests/`](../tests/). |
 | Native Cargo acceptance | macOS tests prepare locked dependencies, then test Seatbelt and fixed Cargo checks. Linux uses bubblewrap when present; `unshare --net` and Windows Job Object do not provide equivalent confinement. |
 | [Desktop CI](../.github/workflows/desktop.yml) | Bundle, releases, and manual runs build the universal app on Rust 1.90, test desktop policy and packaged backend, verify signatures, checksums, and extraction, then retain ZIP and checksums. |

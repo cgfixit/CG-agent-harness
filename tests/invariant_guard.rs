@@ -1738,7 +1738,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // Setup memory guidance replaces repeated setup/verification prose; keep the cut.
     // why: operator-approved (2026-10-14) automated macOS install (section 1) and browser access (section 7); 5188 words plus about 1%, rounded up to the next 50.
     // why: operator-approved (2026-10-14) raise to 7500 for room to grow the install guide after #491 and #496 together hit 5250; the Guide group cap still bounds it.
-    ("docs/INSTALL.md", Guide, 6522),
+    ("docs/INSTALL.md", Guide, 6521),
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     ("docs/MCP_CLIENT.md", Guide, 894),
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
