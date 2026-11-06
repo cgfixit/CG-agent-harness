@@ -41,6 +41,16 @@ pub fn shipped_str(dotted: &str) -> String {
     }
 }
 
+/// The unsigned integer at `dotted` in the shipped `assets/config.default.yaml`;
+/// the numeric twin of [`shipped_str`] for the same reason (#685).
+pub fn shipped_u64(dotted: &str) -> u64 {
+    let cfg = AppConfig::from_str(AppConfig::embedded_default(), Path::new("config.yaml")).unwrap();
+    match cfg.get(dotted).and_then(|value| value.as_u64()) {
+        Some(value) => value,
+        None => panic!("shipped {dotted} is not an unsigned integer"),
+    }
+}
+
 /// A config built from the shipped default with YAML overrides applied as
 /// dotted `key: value` replacements (simple scalar overrides only).
 pub fn config_with(dir: &Path, overrides: &[(&str, &str)]) -> AppConfig {
