@@ -47,6 +47,14 @@ case-insensitive aliases, so declared or inherited values cannot re-enable
 telemetry on Windows. This proves delivery, not that an arbitrary child honors
 `DO_NOT_TRACK`.
 
+One more child carries no request data: `process::KeepAwake` runs
+`/usr/bin/caffeinate -i -w <pid>` on macOS with a fixed argv and an empty
+environment while a detached web research job answers, so idle sleep does not
+cut a long local answer short. Dropping the guard kills and reaps it, `-w` ends
+it if the server dies first, and it never blocks lid-close or manual sleep.
+Elsewhere it holds nothing. A child ended by a signal reports `signal` in
+`process::Output` with `status` unset, not a bare `-1`.
+
 ## MCP stdio diagnostics
 
 MCP stdio has a separate Tokio child owner. It drains stderr continuously,

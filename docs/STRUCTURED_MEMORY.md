@@ -130,7 +130,8 @@ local model and mode listed in `suggestion_supported`; otherwise the receipt and
 A missing key supports nothing, so existing homes add it to keep suggestions:
 `suggestion_supported: [{ model: "<tag>", modes: [summaries, insights, both] }]`.
 Only Ollama aliases bare names to `:latest`; other local backends require exact IDs.
-Fresh homes list the shipped local model. `"*"` matches any model and opts out
+Fresh homes seed `qwen3.8:27b-mlx-cg`, not the shipped chat default
+([why](MEMORY_GUIDE.md#automatic-suggestions-and-review)). `"*"` matches any model and opts out
 of the corpus rule; a malformed list refuses (`invalid_supported_models`).
 `completion-suggestions-v1` reads bounded, redacted current
 completion evidence in RAM for the initiating account. It neither scans shared
@@ -280,8 +281,9 @@ background context. Preview describes local chat. Cloud chat omits memory;
   Temporary plans, jokes, tool/status dumps, errands, and unsupported guesses
   are non-candidates; an empty candidate array is valid. Negation and attribution
   must survive. Secrets/injection-like text remain reject sensitivity.
-  `structured_memory.min_consolidation_confidence` defaults to **0.40**, clamps
-  to [0, 1], and falls back to 0.40 for invalid/nonfinite configuration. A supplied
+  `structured_memory.min_consolidation_confidence` defaults to **0.40** and clamps
+  to [0, 1]; a quoted, empty or non-finite `config.yaml` value refuses at load
+  (`FLOAT_KEYS`). A supplied
   confidence below the floor is counted as rejected. Missing confidence remains
   accepted without inventing a value. Confidence never bypasses human review.
 - **Local model only.** The existing generation gate is claimed; tools and web

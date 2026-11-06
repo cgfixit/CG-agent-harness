@@ -150,8 +150,9 @@ links resolve. Truth order for every claim is code, then
   native trust, terminal access, web permissions, and search, fetch and research.
   Closes with the security boundaries and reproducible evidence. The reference
   for a home's trust posture and permitted web.
-  Owns: `src/server/{guards,headers,transport,env_keys,web_policy,web_search,
-  web_research,chat_web}.rs`, `src/common/{authn,auth_store,local_tls,credential_store}.rs`.
+  Owns: `src/server/{guards,headers,transport,env_keys,chat_web}.rs`, every
+  `src/server/web_*.rs` (policy, provider, search, Google, Tavily, Firecrawl,
+  research, ledger), `src/common/{authn,auth_store,local_tls,credential_store}.rs`.
   Tests: `tests/auth_guards.rs`, `tests/secure_portal.rs`, `tests/security_headers.rs`,
   `scripts/test-first-run-password.mjs`, `tests/owner_isolation.rs`, `tests/chat_web.rs`, `tests/web_research.rs`,
   `tests/web_phase2_redteam.rs`.
@@ -202,7 +203,7 @@ links resolve. Truth order for every claim is code, then
   Owns: `Cargo.toml`, `Cargo.lock`, `deny.toml`, `rust-toolchain.toml`, their
   `desktop/` twins, [.cargo/config.toml](../.cargo/README.md). Checked by:
   `.github/workflows/dependency-advisories.yml`, the `ci.yml` deny job, the `dep-sync` skill.
-- [RELEASING.md](RELEASING.md): the scheduled `release` workflow (08:17 and
+- [RELEASING.md](RELEASING.md): the scheduled `release.yml` workflow (08:17 and
   20:17 UTC). How the tree is compared with the latest release, the Bundle
   gate, patch version selection, draft-then-Latest publication, changing the
   timing, running or previewing by hand, and verification limits.

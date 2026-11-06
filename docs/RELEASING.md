@@ -45,7 +45,7 @@ version-selection path. Adding only the trigger fails because the planner accept
 
 ## Run now or preview
 
-In GitHub, open **Actions → release → Run workflow**:
+In GitHub, open **Actions → Release - Plan, verify and publish → Run workflow**:
 
 - Leave **publish** unchecked for a read-only plan. The run summary shows the
   candidate tag, source commit, changed flag, and `should_release: false`.

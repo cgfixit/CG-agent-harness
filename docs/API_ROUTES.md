@@ -1,13 +1,12 @@
 # HTTP route inventory
 
 `registered_paths()` in `src/server/routes/mod.rs` combines `REGISTERED_PATHS`
-with authentication routes. Its unit test checks coverage; `GET /api/tools`
-reports catalog wiring. Code is authoritative.
+with authentication routes; `GET /api/tools` reports wiring.
 
-All console routes use the [guard chain](../INVARIANTS.md): same-origin,
-direct loopback/no forwarding headers, rate limit, account/RBAC, mutation
-CSRF (`X-CyClaw-CSRF`). Public routes retain early guards. Agent requests carry
-check-profile names and run IDs, never browser-supplied commands.
+Console routes pass the [guard chain](../INVARIANTS.md): same-origin, direct
+loopback, rate limit, account/RBAC, mutation CSRF (`X-CyClaw-CSRF`); public
+routes keep only the early guards.
+Agent requests carry check-profile names and run IDs, never commands.
 
 ## Console and status
 
@@ -19,7 +18,7 @@ check-profile names and run IDs, never browser-supplied commands.
 | GET | `/api/status` | Public minimal status; operational `model`, `configured_model`, `selection_overrides_config` require account access |
 | GET | `/api/tools` | Wired-route and tool inventory |
 | GET | `/api/netconnect` | Read-only LAN panel (query ignored; see [netconnect.md](netconnect.md)) |
-| GET | `/api/netconnect/diag` | Budgeted TCP probe of configured diagnostics targets; 409 unless the tier may run (see [netconnect.md](netconnect.md#diagnostics)) |
+| GET | `/api/netconnect/diag` | Budgeted TCP probe of configured targets; 409 unless the tier may run ([diagnostics](netconnect.md#diagnostics)) |
 | GET | `/api/registry` | Skill/persona registry listing |
 | GET | `/api/audit` | Audit events (any role) |
 | GET | `/api/diag` | `/diag` gate, allowlisted log files, last read and staged excerpt (admin or `portal_auditor`; 409 `DIAG_DISABLED` while off) |
@@ -45,15 +44,14 @@ check-profile names and run IDs, never browser-supplied commands.
 | POST | `/api/auth/users/{username}/role` | Change a role (administrator) |
 | GET, POST | `/api/keys` | Managed-key presence (masked tail) and `/api set <KEY> <value>` |
 
-See [SECURE_RESEARCH.md](SECURE_RESEARCH.md) for roles, scrypt bounds and
-session timeouts.
+Roles, scrypt bounds and session timeouts: [SECURE_RESEARCH.md](SECURE_RESEARCH.md).
 
 ## Chat, model and chat sessions
 
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/chat` | One turn; streams SSE when `Accept: text/event-stream` |
-| POST | `/api/chat/attachments` | Upload up to 3 txt/md/json/csv/log/docx files, 15 MB each; home quota 64 MB/512 blobs. Concurrent bodies use `attachments.max_concurrent_uploads`, else 503. UUID blobs use `0600`. Retention and refused surfaces: [attachments](CONSOLE.md#text-file-attachments-and-prompt-preview). |
+| POST | `/api/chat/attachments` | Upload up to 3 txt/md/json/csv/log/docx files, 15 MB each; home quota 64 MB/512 blobs; beyond `attachments.max_concurrent_uploads` returns 503; blobs are `0600` ([retention](CONSOLE.md#text-file-attachments-and-prompt-preview)) |
 | GET | `/api/notes-corpus` | List owned jailed `.md`/`.txt` metadata (ID, MIME, SHA prefix, bytes), without bodies or host paths. |
 | POST | `/api/notes-corpus` | Copy/classify `.md`/`.txt` into `notes_corpus/<owner-digest>/` under `notes_corpus.*` caps; local prompt retrieval. |
 | DELETE | `/api/notes-corpus/{id}` | Unlink one owner-owned note. |
@@ -62,8 +60,8 @@ session timeouts.
 | POST | `/api/loop/stop` | Stop by `run_id` |
 | GET | `/api/loop/status` | One run (`?run_id=`) or a session's run (`?session_id=`) |
 | GET | `/api/loop/events/{run_id}` | SSE per-turn progress ([server loops](CONSOLE.md#71-sessions-and-bounded-chat-continuation)) |
-| POST | `/api/sessions/{session_id}/prompt-history` | Owner-scoped: save one submitted composer line (`{text}`) for ArrowUp recall, refused or not; last 50 kept, an immediate repeat once. The console omits `/api set` values. |
-| DELETE | `/api/sessions/{session_id}/attachment-pins` | Owner-scoped unpin; keeps blobs/messages; refuses during generation. Session GET reports `live_attachment_pins`. |
+| POST | `/api/sessions/{session_id}/prompt-history` | Owner-scoped: save one submitted composer line (`{text}`) for ArrowUp recall, refused or not; last 50 kept, immediate repeats once; `/api set` lines omitted |
+| DELETE | `/api/sessions/{session_id}/attachment-pins` | Owner-scoped unpin; keeps blobs/messages; refuses during generation; session GET reports `live_attachment_pins` |
 | POST | `/api/model` | Select the local model or `grok` / `claude` (`/model use`) |
 | GET | `/api/ollama/inventory` | Live loopback tags (`/model list`) plus configured-model readiness |
 | GET | `/api/ollama/profile` | Selected-model facts (`/model profile`) |
@@ -76,7 +74,7 @@ session timeouts.
 | GET, POST | `/api/sessions` | List your sessions or create an owned one |
 | GET | `/api/sessions/legacy` | Administrator metadata inventory of unassigned legacy sessions |
 | POST | `/api/sessions/{session_id}/adopt` | Administrator adopts into own account with confirmation/reason; clears prior goal-stage approval |
-| POST | `/api/sessions/search` | Owned local transcript search off async workers; case-insensitive literal phrases cross chunk boundaries; Unicode-safe snippets ≤160 characters |
+| POST | `/api/sessions/search` | Owned local transcript search; case-insensitive literal phrases across chunk boundaries; snippets ≤160 characters |
 | POST | `/api/sessions/clear` | Delete owned sessions; retain foreign, legacy, corrupt and staged files |
 | GET | `/api/sessions/{session_id}` | Load one owned session, with its `web_sources` read ledger |
 | GET | `/api/sessions/{session_id}/export` | Markdown export; also written 0o600 under home/exports |
@@ -143,12 +141,12 @@ Confirmation and gate rules are in [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 | POST | `/api/web/check` | Check exact URL permissions locally, without fetching or granting access |
 | POST | `/api/web/search` | Page search; `engine:"google"` uses `web.search.provider` |
 | POST | `/api/web/research` | Research permitted sources; question ≤2,000 characters, optional group/URLs |
-| POST | `/api/web/research/cancel` | Cancel research |
+| POST | `/api/web/research/cancel` | Cancel the owner's running research, detached or not |
+| POST, GET | `/api/web/research/jobs` | Start a detached owner-bound research job (`/web job`) or list owned jobs; `GET …/jobs/{job_id}` reads one ([research](SECURE_RESEARCH.md#fetch-discovery-and-research)) |
 | POST | `/api/web/inject` | Inject a read into the session context |
 | POST | `/api/web/forget` | Drop injected reads |
 
-The `cgagentharness web` CLI family drives these same routes through the
-running portal.
+The `cgagentharness web` CLI drives these routes through the running portal.
 
 ## Private MCP memory server
 

@@ -204,7 +204,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET `/api/status`: Public minimal status; operational `model`, `configured_model`,…
 - GET `/api/tools`: Wired-route and tool inventory
 - GET `/api/netconnect`: Read-only LAN panel (query ignored; see netconnect.md)
-- GET `/api/netconnect/diag`: Budgeted TCP probe of configured diagnostics targets; 409 unless the tier may run (see…
+- GET `/api/netconnect/diag`: Budgeted TCP probe of configured targets; 409 unless the tier may run (diagnostics)
 - GET `/api/registry`: Skill/persona registry listing
 - GET `/api/audit`: Audit events (any role)
 - GET `/api/diag`: `/diag` gate, allowlisted log files, last read and staged excerpt (admin or…
@@ -228,7 +228,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/auth/users/{username}/role`: Change a role (administrator)
 - GET, POST `/api/keys`: Managed-key presence (masked tail) and `/api set <KEY> <value>`
 - POST `/api/chat`: One turn; streams SSE when `Accept: text/event-stream`
-- POST `/api/chat/attachments`: Upload up to 3 txt/md/json/csv/log/docx files, 15 MB each; home quota 64 MB/512 blobs.…
+- POST `/api/chat/attachments`: Upload up to 3 txt/md/json/csv/log/docx files, 15 MB each; home quota 64 MB/512 blobs;…
 
 ## api: registered routes (part 3)
 
@@ -241,7 +241,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET `/api/loop/status`: One run (`?run_id=`) or a session's run (`?session_id=`)
 - GET `/api/loop/events/{run_id}`: SSE per-turn progress (server loops)
 - POST `/api/sessions/{session_id}/prompt-history`: Owner-scoped: save one submitted composer line (`{text}`) for ArrowUp recall, refused or…
-- DELETE `/api/sessions/{session_id}/attachment-pins`: Owner-scoped unpin; keeps blobs/messages; refuses during generation. Session GET reports…
+- DELETE `/api/sessions/{session_id}/attachment-pins`: Owner-scoped unpin; keeps blobs/messages; refuses during generation; session GET reports…
 - POST `/api/model`: Select the local model or `grok` / `claude` (`/model use`)
 - GET `/api/ollama/inventory`: Live loopback tags (`/model list`) plus configured-model readiness
 
@@ -257,7 +257,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET, POST `/api/sessions`: List your sessions or create an owned one
 - GET `/api/sessions/legacy`: Administrator metadata inventory of unassigned legacy sessions
 - POST `/api/sessions/{session_id}/adopt`: Administrator adopts into own account with confirmation/reason; clears prior goal-stage…
-- POST `/api/sessions/search`: Owned local transcript search off async workers; case-insensitive literal phrases cross…
+- POST `/api/sessions/search`: Owned local transcript search; case-insensitive literal phrases across chunk boundaries;…
 - POST `/api/sessions/clear`: Delete owned sessions; retain foreign, legacy, corrupt and staged files
 
 ## api: registered routes (part 5)
@@ -313,10 +313,11 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/web/check`: Check exact URL permissions locally, without fetching or granting access
 - POST `/api/web/search`: Page search; `engine:"google"` uses `web.search.provider`
 - POST `/api/web/research`: Research permitted sources; question ≤2,000 characters, optional group/URLs
-- POST `/api/web/research/cancel`: Cancel research
 
 ## api: registered routes (part 8)
 
+- POST `/api/web/research/cancel`: Cancel the owner's running research, detached or not
+- POST, GET `/api/web/research/jobs`: Start a detached owner-bound research job (`/web job`) or list owned jobs; `GET…
 - POST `/api/web/inject`: Inject a read into the session context
 - POST `/api/web/forget`: Drop injected reads
 - GET `/api/mcp`: Declared MCP servers, namespaced tools and versioned stdio capability policies; does not…
@@ -329,11 +330,11 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/agent/jobs/{job_id}/cancel`: Cancel a job
 - GET `/api/notifications`: Owned destinations and retained delivery metadata; no URLs, credentials or job content
 - POST `/api/notifications/{delivery_id}/replay`: Confirmed owner replay within current grants/limits; never reruns a job
-- POST `/api/agent/schedules/preview`: Preview five interval/cron occurrences; return bounded owner-bound receipt
-- GET, POST `/api/agent/schedules`: List owned schedules or activate the exact previewed, owned reviewed-goal request
 
 ## api: registered routes (part 9)
 
+- POST `/api/agent/schedules/preview`: Preview five interval/cron occurrences; return bounded owner-bound receipt
+- GET, POST `/api/agent/schedules`: List owned schedules or activate the exact previewed, owned reviewed-goal request
 - GET `/api/agent/schedules/{schedule_id}`: One schedule
 - POST `/api/agent/schedules/{schedule_id}/cancel`: Cancel a schedule
 - GET `/api/agent/runs`: Retained run metadata (gate below)
@@ -395,7 +396,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 ## troubleshooting: symptom to fix (part 6)
 
-- Managed-key save or legacy migration fails → Keep plaintext opt-in off unless deliberately required. Check credential privacy and recovery; do not broaden file access. Windows sharing locks can…
+- Managed-key save or legacy migration fails → Keep plaintext opt-in off unless required. Check credential privacy and recovery; do not broaden file access. Windows sharing locks can block…
 - `/diag` says `DIAG_DISABLED` → Set it to `true` in `config.yaml`, then restart `serve`
 - `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` → Use an admin or `portal_auditor` account
 - A read or `/diag inject` says `DIAG_SCANNER_REFUSED` → Narrow with `--event`, `--since` or `--last`; nothing from it is shown or staged
