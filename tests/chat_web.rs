@@ -1805,11 +1805,11 @@ async fn chat_public_google_searches_in_one_turn_are_paced_by_the_floor() {
     task.abort();
 }
 
-/// #647 Phase 2: with SearXNG down and the opt-in public Google hop on, a loop
-/// turn's search is answered by the next hop, the tool result says so, and the
-/// turn's `chat_web_turn` audit line records the provider and the fallback.
+/// #647 Phase 2: with Tavily down and the public Google hop on, a loop turn's
+/// search is answered by the next hop, the tool result says so, and the turn's
+/// `chat_web_turn` audit line records the provider and the fallback.
 #[tokio::test]
-async fn loop_search_falls_back_from_a_down_searxng_and_audits_the_provider() {
+async fn loop_search_falls_back_from_a_down_tavily_and_audits_the_provider() {
     let google_hits = Arc::new(AtomicUsize::new(0));
     let g = google_hits.clone();
     let fixture = Router::new()
@@ -1840,23 +1840,31 @@ async fn loop_search_falls_back_from_a_down_searxng_and_audits_the_provider() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
-    // A loopback port with nothing listening: SearXNG is down.
+    // A loopback port with nothing listening: Tavily is down.
     let down = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
-    let down_port = down.local_addr().unwrap().port();
+    let down_addr = down.local_addr().unwrap();
     drop(down);
     let s = common::spawn_server(
         &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
         common::ServerOptions {
             web_resolve: Some(("google.fixture".into(), address)),
             public_search: Some(url::Url::parse("http://google.fixture/search").unwrap()), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            resolve_extra: vec![("tavily.fixture".into(), down_addr)],
+            tavily_search: Some(url::Url::parse("http://tavily.fixture/search").unwrap()), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the refused loopback port.
             ..common::ServerOptions::default()
                 .with("logging.audit_queue_lines", "0")
-                .with("web.search.provider", "searxng")
-                .with("web.search.searxng_url", &format!("\"http://127.0.0.1:{down_port}\"")) // DevSkim: ignore DS137138,DS162092 because the SearXNG URL is a loopback test port.
+                .with("security.allow_plaintext_key_file", "true")
+                .with("web.search.provider", "tavily")
                 .with("web.search.fallback_to_public_google", "true")
         },
     )
     .await;
+    // The key is read on each search, so saving it after boot is enough.
+    cgagentharness::server::env_keys::write_keys(
+        &s.home.join(".env"),
+        &std::collections::BTreeMap::from([("TAVILY_API_KEY".into(), "fixture-tavily-key".into())]),
+    )
+    .unwrap();
     assert_eq!(
         s.post_json("/api/web/allow", json!({"url":"http://google.fixture/*"})) // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
             .await
@@ -1877,7 +1885,7 @@ async fn loop_search_falls_back_from_a_down_searxng_and_audits_the_provider() {
     assert_eq!(reply["reply"], "Answered from the fallback listing.", "{reply}");
     let result = &reply["web_tools"][0]["result"];
     assert_eq!(result["provider"], "google-public", "{reply}");
-    assert_eq!(result["fallback_from"], json!(["searxng"]), "{reply}");
+    assert_eq!(result["fallback_from"], json!(["tavily"]), "{reply}");
     assert_eq!(google_hits.load(Ordering::SeqCst), 1);
     let audit = std::fs::read_to_string(s.home.join("logs").join("audit.jsonl")).unwrap();
     let lines: Vec<Value> = audit
@@ -1886,7 +1894,7 @@ async fn loop_search_falls_back_from_a_down_searxng_and_audits_the_provider() {
         .collect();
     let fallback: Vec<&Value> = lines.iter().filter(|l| l["event"] == "web_search_fallback").collect();
     assert_eq!(fallback.len(), 1, "{audit}");
-    assert_eq!(fallback[0]["from"], "searxng");
+    assert_eq!(fallback[0]["from"], "tavily");
     assert_eq!(fallback[0]["to"], "google-public");
     let turn = lines
         .iter()

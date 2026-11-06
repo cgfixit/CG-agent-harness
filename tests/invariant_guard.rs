@@ -1523,7 +1523,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: dependency refresh removed five stale Linux prerequisite words; keep the cut.
     // why: the 2026-11-01 README refresh trimmed it to 1,507 words; lowered so the cut stays cut.
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
-    ("README.md", Root, 1523),
+    // why: SearXNG removal (phase 3 of web search) trimmed it to 1,521 words; lowered so the cut stays cut.
+    ("README.md", Root, 1521),
     ("SECURITY.md", Root, 690),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
     // why: the sandboxed HTML preview route row; measured 1840 words.
@@ -1572,7 +1573,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
     // why: operator-approved (2026-10-24) raise to 4000 so #649 and #651 fit together without trimming contract text.
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
-    ("docs/SECURE_RESEARCH.md", Guide, 4128),
+    // why: SearXNG removal (phase 3 of web search) trimmed it to 4,102 words; lowered so the cut stays cut.
+    ("docs/SECURE_RESEARCH.md", Guide, 4102),
     // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here; 2157 words, cap set to 2750 for room to grow.
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2750),
     // why: #244 made this the one memory contract: a gate table, and the #87
