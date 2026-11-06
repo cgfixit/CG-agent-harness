@@ -193,6 +193,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/web mode allowlist|denylist`, `/web block <pattern-or-host> [...]`, `/web unblock <id-or-pattern>`: Administrator. The header globe (red X) switches modes after a confirmation dialog. `denylist` reads every public URL except blocked rules; a host…
 - `/web check <URL> [URL ...] [--group name]`: Exact permission diagnostic, with no network request or grant
 - `/web cancel`, `/web fetch <URL> [URL ...] [--group name] [--crawl]`, `/web forget`, `/web inject`: Cancel research; fetch permitted URLs (`--crawl` follows links); clear/select extracts
+- `/web job [id]`, `/web jobs`: Show the newest or one owned detached research job, or list them; jobs outlive the tab, not a restart (research)
 - `/web pages [--group name] <query>`, `/web research [--group name] [--url URL ...] <question>`: Permitted-page discovery or local-model research; repeat `--url` per starting point; no new authority
 - `/web search [--count 1..10] [--engine google|pages] [--group name] <query>`: Google listings by default; a group selects permitted-page search
 
@@ -201,7 +202,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET `/`: Console page (`assets/static/harness.html` with CSRF/CSP placeholders filled)
 - GET `/preview/html`: Sandboxed inline-only HTML preview, no network.
 - GET `/static/{name}`: Static console assets
-- GET `/api/status`: Public minimal status; operational `model`, `configured_model`,…
+- GET `/api/status`: Public minimal status; model fields require account access
 - GET `/api/tools`: Wired-route and tool inventory
 - GET `/api/netconnect`: Read-only LAN panel (query ignored; see netconnect.md)
 - GET `/api/netconnect/diag`: Budgeted TCP probe of configured targets; 409 unless the tier may run (diagnostics)
@@ -215,7 +216,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 ## api: registered routes (part 2)
 
-- POST `/api/config/reload`: Reload the non-secret limits allowlist (administrator, CSRF-guarded; see CONFIG_RELOAD.md)
+- POST `/api/config/reload`: Reload the limits allowlist (administrator; CONFIG_RELOAD.md)
 - GET `/api/auth/setup-status`: `setup_code` while the one-time code works; public
 - POST `/api/auth/login`: Login; public with early guards
 - POST `/api/auth/logout`: Revoke the current session
@@ -228,43 +229,42 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/auth/users/{username}/role`: Change a role (administrator)
 - GET, POST `/api/keys`: Managed-key presence (masked tail) and `/api set <KEY> <value>`
 - POST `/api/chat`: One turn; streams SSE when `Accept: text/event-stream`
-- POST `/api/chat/attachments`: Upload up to 3 txt/md/json/csv/log/docx files, 15 MB each; home quota 64 MB/512 blobs;…
+- POST `/api/chat/attachments`: Upload up to 3 txt/md/json/csv/log/docx files (15 MB each; home quota 64 MB/512 blobs;…
 
 ## api: registered routes (part 3)
 
-- GET `/api/notes-corpus`: List owned jailed `.md`/`.txt` metadata (ID, MIME, SHA prefix, bytes), without bodies or…
-- POST `/api/notes-corpus`: Copy/classify `.md`/`.txt` into `notes_corpus/<owner-digest>/` under `notes_corpus.*`…
-- DELETE `/api/notes-corpus/{id}`: Unlink one owner-owned note.
+- GET, POST `/api/notes-corpus`: List owned jailed `.md`/`.txt` metadata (no bodies or host paths), or ingest files under…
+- DELETE `/api/notes-corpus/{id}`: Unlink one owned note
 - POST `/api/chat/cancel`: Cancel the active turn (`/loop stop`)
 - POST `/api/loop/start`: Start an owner-bound server-side `/loop` run: `session_id`, optional `goal`/`web_mode`,…
 - POST `/api/loop/stop`: Stop by `run_id`
 - GET `/api/loop/status`: One run (`?run_id=`) or a session's run (`?session_id=`)
 - GET `/api/loop/events/{run_id}`: SSE per-turn progress (server loops)
-- POST `/api/sessions/{session_id}/prompt-history`: Owner-scoped: save one submitted composer line (`{text}`) for ArrowUp recall, refused or…
-- DELETE `/api/sessions/{session_id}/attachment-pins`: Owner-scoped unpin; keeps blobs/messages; refuses during generation; session GET reports…
+- POST `/api/sessions/{session_id}/prompt-history`: Owner-scoped composer history line (`{text}`) for ArrowUp recall; last 50 kept, `/api…
+- DELETE `/api/sessions/{session_id}/attachment-pins`: Owner-scoped unpin; keeps blobs; refused during generation
 - POST `/api/model`: Select the local model or `grok` / `claude` (`/model use`)
 - GET `/api/ollama/inventory`: Live loopback tags (`/model list`) plus configured-model readiness
+- GET `/api/ollama/profile`: Selected-model facts (`/model profile`)
+- POST `/api/ollama/pull`: Operator/admin abortable pull; SSE when `Accept: text/event-stream`
 
 ## api: registered routes (part 4)
 
-- GET `/api/ollama/profile`: Selected-model facts (`/model profile`)
-- POST `/api/ollama/pull`: Operator/admin abortable pull; SSE when `Accept: text/event-stream`
 - POST `/api/ollama/pull/cancel`: Abort the in-flight pull
 - POST `/api/prompt/preview`: Show the assembled system prompt (`/prompt`)
 - POST `/api/slash/parse`: Suggest-don't-guess slash normalizer; never executes mutations
-- GET `/api/spend/summary`: Guarded retained spend, completeness, file statuses, skipped rows and read-time USD
+- GET `/api/spend/summary`: Retained spend summary with completeness and read-time USD
 - POST `/api/spend/predict`: Estimate unsent cloud cost (Analytics → Tokens and cost → Estimate draft; details)
 - GET, POST `/api/sessions`: List your sessions or create an owned one
 - GET `/api/sessions/legacy`: Administrator metadata inventory of unassigned legacy sessions
-- POST `/api/sessions/{session_id}/adopt`: Administrator adopts into own account with confirmation/reason; clears prior goal-stage…
-- POST `/api/sessions/search`: Owned local transcript search; case-insensitive literal phrases across chunk boundaries;…
+- POST `/api/sessions/{session_id}/adopt`: Administrator adoption with confirmation and reason; clears prior goal-stage approval
+- POST `/api/sessions/search`: Owned local transcript search (bounds)
 - POST `/api/sessions/clear`: Delete owned sessions; retain foreign, legacy, corrupt and staged files
-
-## api: registered routes (part 5)
-
 - GET `/api/sessions/{session_id}`: Load one owned session, with its `web_sources` read ledger
 - GET `/api/sessions/{session_id}/export`: Markdown export; also written 0o600 under home/exports
 - POST `/api/sessions/{session_id}/rename`: Rename
+
+## api: registered routes (part 5)
+
 - POST `/api/sessions/{session_id}/goal`: Set goal; optional `web_mode` `off`/`fetch`/`all`, else `web.goal_web_default` (ships…
 - GET, POST `/api/sessions/{session_id}/goal-stage`: Goal staging status and transitions
 - GET, POST `/api/sessions/{session_id}/skills`: Skill selection for the session
@@ -277,13 +277,13 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET `/api/skills`: List skills
 - POST `/api/skills/check`: Validate a skill
 - GET, POST `/api/memory`: Pinned-note status and on/off toggle
-
-## api: registered routes (part 6)
-
 - POST `/api/memory/add`: Save a literal note
 - POST `/api/memory/forget`: Remove one note
 - POST `/api/memory/clear`: Remove all notes
 - GET `/api/structured-memory`: Truthful status and effective gates
+
+## api: registered routes (part 6)
+
 - POST `/api/structured-memory/gates`: Administrator gate override, persisted in `memory/structured_gates.json`
 - GET `/api/structured-memory/search`: Facts-only FTS candidates
 - GET, POST `/api/structured-memory/facts`: List active facts or add one (confirm)
@@ -296,16 +296,16 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET `/api/structured-memory/episodes/{id}`: One episode
 - POST `/api/structured-memory/episodes/{id}/summary`: Attach a human semantic summary (confirm + reason)
 - POST `/api/structured-memory/episodes/{id}/delete`: Delete one episode
-
-## api: registered routes (part 7)
-
 - GET, POST `/api/structured-memory/consolidation`: List or start consolidation
 - GET `/api/structured-memory/consolidation/{id}`: Consolidation status
 - POST `/api/structured-memory/consolidation/{id}/cancel`: Cancel
+
+## api: registered routes (part 7)
+
 - GET `/api/structured-memory/export`: Export the owner's memory
 - POST `/api/structured-memory/purge`: Purge the owner's memory
 - GET, POST `/api/web`: Status and on/off toggle
-- POST `/api/web/allow`: Atomically grant exact URLs or explicit wildcards, with group/optional seeds
+- POST `/api/web/allow`: Atomically grant exact URLs or explicit wildcards with group and seeds
 - POST `/api/web/deny`: Remove a grant
 - POST `/api/web/mode`: Administrator selects allowlist/denylist; denylist requires confirmation
 - POST `/api/web/block`, `/api/web/unblock`: Administrator adds/removes blocks
@@ -313,12 +313,12 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/web/check`: Check exact URL permissions locally, without fetching or granting access
 - POST `/api/web/search`: Page search; `engine:"google"` uses `web.search.provider`
 - POST `/api/web/research`: Research permitted sources; question ≤2,000 characters, optional group/URLs
-
-## api: registered routes (part 8)
-
 - POST `/api/web/research/cancel`: Cancel the owner's running research, detached or not
 - POST, GET `/api/web/research/jobs`: Start a detached owner-bound research job (`/web job`) or list owned jobs; `GET…
 - POST `/api/web/inject`: Inject a read into the session context
+
+## api: registered routes (part 8)
+
 - POST `/api/web/forget`: Drop injected reads
 - GET `/api/mcp`: Declared MCP servers, namespaced tools and versioned stdio capability policies; does not…
 - POST `/api/mcp/call`: Call one declared MCP tool; `confirm` is never defaulted
@@ -330,12 +330,12 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/agent/jobs/{job_id}/cancel`: Cancel a job
 - GET `/api/notifications`: Owned destinations and retained delivery metadata; no URLs, credentials or job content
 - POST `/api/notifications/{delivery_id}/replay`: Confirmed owner replay within current grants/limits; never reruns a job
+- POST `/api/agent/schedules/preview`: Preview five occurrences and return an owner-bound receipt
+- GET, POST `/api/agent/schedules`: List owned schedules or activate the exact previewed request
+- GET `/api/agent/schedules/{schedule_id}`: One schedule
 
 ## api: registered routes (part 9)
 
-- POST `/api/agent/schedules/preview`: Preview five interval/cron occurrences; return bounded owner-bound receipt
-- GET, POST `/api/agent/schedules`: List owned schedules or activate the exact previewed, owned reviewed-goal request
-- GET `/api/agent/schedules/{schedule_id}`: One schedule
 - POST `/api/agent/schedules/{schedule_id}/cancel`: Cancel a schedule
 - GET `/api/agent/runs`: Retained run metadata (gate below)
 - GET `/api/agent/runs/{run_id}`: One run and its diff
@@ -346,60 +346,57 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 ## troubleshooting: symptom to fix
 
-- Analytics lacks spend, or completeness is unknown → Check the installed source commit against feature requirements; refresh after upgrading
 - Spend reports partial, unreadable, too large or invalid UTF-8 → Preserve the ledger; inspect permissions, corruption and size. Missing evidence is not zero spend
 - A job finished but no webhook arrived → Check **Job webhooks**, `notification_delivery`/`notification_dropped` audit and `/agent job <id>`. Use guarded delivery replay, never rerun the job
 - Webhook receiver reports duplicates → Deduplicate stable `delivery_id`; retry batch membership can change. Each delivery/replay has at most three attempts
 - MCP stderr log is absent or diagnostics are short → Expected: 2 KiB retained, ≤512 Unicode diagnostic characters. Inspect child/timeout; capture limits
 - A command such as `/prompt`, `/goal stage`, `/memory consolidate` or `/memory auto-consolidate` is unknown,… → Check `/help` and bundle `Resources/COMMIT`; use Latest or a successful main Bundle
+- Local coding loop never fetches a file the planner asked for → Pre-stage ordinary files with `/agent read`. Operator/model READ both refuse sensitive basenames (`sensitive_basename`). Cloud refuses all model…
 
 ## troubleshooting: symptom to fix (part 2)
 
-- Local coding loop never fetches a file the planner asked for → Pre-stage ordinary files with `/agent read`. Operator/model READ both refuse sensitive basenames (`sensitive_basename`). Cloud refuses all model…
 - New sessions appear to share old context → Inspect `/prompt`. `/session new` separates history while retaining shared context
 - Chat denies memory exists or claims it can run `gh` → Inspect `/memory`, `/tools` and `/prompt`; prose cannot run a commands
 - `/memory search` reports retrieval disabled → Enable the store, restart, then `/memory retrieval on`. Search never injects; `/memory retrieve` selects one prompt
 - Automatic completion suggestions do not appear → Inspect `/api/structured-memory` effective `automatic_suggestions`, run status and audit. Check `/memory capture` and `/memory auto-suggest-chat
 - `/memory save` reports store closed → Enable the store and restart; automatic generation and capture may stay off. A prose request is not a save command
+- `/memory consolidate` or auto-consolidator reports the gate off → Enable the store, restart, then `/memory consolidation on`; auto also needs `/memory auto-consolidate on`. Fresh defaults are on; explicit off…
 
 ## troubleshooting: symptom to fix (part 3)
 
-- `/memory consolidate` or auto-consolidator reports the gate off → Enable the store, restart, then `/memory consolidation on`; auto also needs `/memory auto-consolidate on`. Fresh defaults are on; explicit off…
-- Clear my session history reports a storage error → Fix active-home storage access and retry
 - Model inventory says `tag_missing`, or fallback is selected unexpectedly → Compare inventory/config and persisted `/model` with the resolved endpoint; restart to reevaluate fallback
 - Soul says missing → Valid existing-home state; use `/soul edit` to create persona, then `/soul on` and `/prompt`
 - Soul saved but is not in chat → Confirm Setup home, `/soul status`, editor result and `/prompt`; reload a stale editor before saving again
 - Persona/proposal save conflicts or history is full → Review current content/history; deliberately archive records if needed. Never blindly retry or delete active persona
 - Selected skill prevents chat → Restore `<home>/skills/<id>/SKILL.md` or `/skill clear`; inspect `/prompt`
 - `/loop` does not edit the repository → Use the explicitly configured goal-to-coding workflow in goal staging
+- Goal task is stale/interrupted/unavailable → Inspect `/goal task`, `/agent jobs` and `/agent runs`; never infer approval or replay work from `GOAL_DONE`
+- App asks for Rosetta or shows Intel-only kind → Verify the installed universal copy and both executable slices; see hardware before changing the OS
 
 ## troubleshooting: symptom to fix (part 4)
 
-- Goal task is stale/interrupted/unavailable → Inspect `/goal task`, `/agent jobs` and `/agent runs`; never infer approval or replay work from `GOAL_DONE`
-- App asks for Rosetta or shows Intel-only kind → Verify the installed universal copy and both executable slices; see hardware before changing the OS
 - `401 Unauthorized` on harness requests → Sign in again; a fresh bootstrap account must replace its password. A harness key cannot grant access
 - App reports a home ownership conflict → Quit that owner normally before retrying; do not delete its lock
 - App waits at startup → Check macOS prompts; quit, move the complete app to Applications and retry; inspect Setup without deleting the home
 - Changing config appears to do nothing → Use Reload limits for supported fields; otherwise Cmd-Q/relaunch or restart `serve`. Window close only hides it
 - Offline preparation fails in the app → Inspect Setup and offline Cargo verification; the app does not download dependencies
 - Chat takes too long or times out → Check inventory, `/model` and Setup diagnostics; cancel with `/loop stop`. Avoid repeated submissions
+- Chat reports `502 HARNESS_LLM_ERROR` with `model server returned HTTP ...` → Check upstream status, endpoint/model and model-server diagnostics. Harness drops error bodies unread, omits them from debug logs and releases the…
 
 ## troubleshooting: symptom to fix (part 5)
 
-- Chat reports `502 HARNESS_LLM_ERROR` with `model server returned HTTP ...` → Check upstream status, endpoint/model and model-server diagnostics. Harness drops error bodies unread, omits them from debug logs and releases the…
 - `cgagentharness: harness binds loopback only` and the server refuses to start → Only loopback is accepted. Omit `--host` or use `127.0.0.1`
 - `Address already in use` when starting `serve` → Use `lsof -i :8790`; stop only the known owner or choose another `--port`. Concurrent servers need separate homes
-- First build/Clippy waits on "downloading components" → Let initial download finish; check network access if stalled
 - `gh: command not found` when trying `/agent` commands → `brew install gh && gh auth login`
 - `/agent` commands report "Agentic layer disabled" → Follow coding config, then restart `serve`
 - A write action is refused → Re-read coding console steps and the kill switch; check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE`
-
-## troubleshooting: symptom to fix (part 6)
-
 - Managed-key save or legacy migration fails → Keep plaintext opt-in off unless required. Check credential privacy and recovery; do not broaden file access. Windows sharing locks can block…
 - `/diag` says `DIAG_DISABLED` → Set it to `true` in `config.yaml`, then restart `serve`
 - `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` → Use an admin or `portal_auditor` account
 - A read or `/diag inject` says `DIAG_SCANNER_REFUSED` → Narrow with `--event`, `--since` or `--last`; nothing from it is shown or staged
+
+## troubleshooting: symptom to fix (part 6)
+
 - Chat says `DIAG_SURFACE_FORBIDDEN` → Send a local turn first, or `/diag forget`
 - `/diag unslop` says `DIAG_NOT_FOUND` → `/diag` reads only `<home>/logs/unslop.jsonl`
 
@@ -407,7 +404,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 MCP requires declared servers and enabled `mcp.enabled`. Calls need an authenticated operator/admin, CSRF, a declared namespaced tool in the broker allowlist, and literal `confirm: true`. Discovery, models and repositories cannot expand declarations. `/loop` has no MCP tools. The client is separate from the read-only memory gateway, whose listener, keys and tool grants are independent.
 Migrate a stdio declaration: Stdio declarations need `capabilities` or startup refuses. Review paths and lifecycle policy; upgrades grant no ambient access. Disabled, undeclared MCP stays off. Declarations require restart, outside `RELOADABLE`.
-Lifecycle choices: Strict mode requires `processes` 8–128, `memory_mb` 64–4096, systemd 254 or newer with `--expand-environment=no`, and cgroup v2. Counts include supervisor and runtime processes; memory covers the cgroup. Linux uses the existing user service manager, or the system manager for root. The harness does not invoke sudo, install services, or change host namespace…
+Lifecycle choices: Strict mode requires `processes` 8–128, `memory_mb` 64–4096, systemd 254 or newer with `--expand-environment=no`, and cgroup v2. Counts include supervisor and runtime processes; memory covers the cgroup. The harness uses the existing user (or root's system) service manager, never sudo or host namespace changes; missing controllers or permissions refuse.
 
 ## mcp: external client capabilities (part 2)
 

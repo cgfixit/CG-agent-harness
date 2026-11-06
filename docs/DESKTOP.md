@@ -32,18 +32,14 @@ This build is **ad-hoc signed, universal (Apple Silicon + Intel), and not notari
 Its signature checks integrity, not publisher identity. Gatekeeper may require per-app approval
 through macOS Privacy & Security, or reject it under managed policy. Do not
 change global Gatekeeper settings or strip quarantine as a blanket workaround.
-The bundle targets macOS 12 or newer; the 2026-09-21 development acceptance ran
-on macOS 27.0 (26A428).
-Older supported versions remain untested.
+The bundle targets macOS 12 or newer; older supported versions remain untested.
 
 ## Spend and job notifications
 
-The packaged console exposes [spend and optional completion webhooks](SPEND_AND_NOTIFICATIONS.md).
-**Tokens and cost** reads the ledger;
-**Estimate draft** counts the selected cloud draft without generation. Claude
-counting sends that draft to the provider. Webhook settings and saved bearer
-changes require Cmd-Q and relaunch. The private outbox persists pending
-deliveries across quit and rechecks grants before resuming.
+The packaged console exposes [spend, estimates and completion
+webhooks](SPEND_AND_NOTIFICATIONS.md). Webhook settings and bearer changes need
+Cmd-Q and relaunch; the private outbox keeps pending deliveries across quit and
+rechecks grants before resuming.
 
 ## Home and credentials
 
@@ -53,14 +49,11 @@ Application Support. Config, sessions, notes, persona, keys, and run evidence
 stay outside the bundle. Check the home in the footer or Setup, and record it
 separately from `Contents/Resources/COMMIT` when comparing app copies.
 
-Desktop and headless `serve` load managed keys from the OS credential store; the
-[key-store contract](../INVARIANTS.md#provider-keys-live-in-the-os-credential-store)
-covers environment precedence, per-home entries, legacy `.env` migration, failure
-handling and the plaintext opt-in. Keys also stay out of user-facing URLs and
-readiness files. Web keys go only to their provider's fixed HTTPS
-endpoint, never to result URLs. Config/key parse
-failures show a setup error without quoting values. Existing configuration is
-preserved; fresh homes enable accounts and roles. No desktop session elevation exists.
+Desktop and headless `serve` load managed keys from the OS credential store
+([key-store contract](../INVARIANTS.md#provider-keys-live-in-the-os-credential-store)).
+Keys stay out of user-facing URLs, readiness files and result links, and
+config or key parse failures show a setup error without quoting values. No
+desktop session elevation exists.
 
 A SerpAPI key selects API-backed Google results without a Google page grant;
 linked pages still require URL permission. Without a key, public Google may hit
@@ -93,10 +86,9 @@ The endpoint applies account, origin, CSRF, and rate checks.
 
 The setup window reaches the shell through four Tauri commands in `desktop/src/main.rs`:
 `desktop_status`, `retry_backend`, `check_models`, and `prepare_cargo`. They accept
-no command line; the backend HTTP API remains the operational surface.
-Explicit legacy HTTP configuration is preserved. A readiness
-challenge provides no operator API authority. `serve --port …` and worker CLI
-behavior remain available independently.
+no command line; the backend HTTP API remains the operational surface. A
+readiness challenge grants no API authority; `serve` and the CLI remain
+available independently.
 
 The globe beside **CG Agent / harness** requests native confirmation, then runs
 bundled `start-web.sh` in Terminal to open the owned server in the default browser.
@@ -168,9 +160,8 @@ or models. Setup discards tool output and shows bounded static results. Missing 
 operator preparation; online preparation remains an explicit CLI helper option.
 The app has no automatic toolchain installation.
 
-The app adds no automatic cloud inference, model pull, authenticated external
-probe, or telemetry. Existing web, GitHub, and cloud features retain their gates.
-A loopback model endpoint does not prove its separate service stays offline.
+The app adds no automatic cloud inference, model pull, external probe or
+telemetry; a loopback model endpoint does not prove its service stays offline.
 
 ## Closing, quitting and recovery
 
@@ -250,8 +241,8 @@ It produces `.app`, ZIP, optional DMG, and SHA256SUMS in `dist/`; the bundle's
 committed. Universal archives are named `CG-Agent-Harness-macos-universal.zip`;
 omitting `--universal` retains an arm64 development build. Tagged releases wait for
 both backend CI and this desktop job before attaching CLI and app packages.
-Cross-building Intel is not native Intel acceptance. Packaging is repeatable;
-byte-identical rebuilds across environments are not claimed.
+Cross-building Intel is not native Intel acceptance, and byte-identical
+rebuilds are not claimed.
 
 Reusable Desktop CI checks both architectures, system linkage, nested signatures,
 resources, CLI/worker dispatch, policy tests, extracted ZIP, and dependencies. Artifacts retain
@@ -261,11 +252,9 @@ through `#[path]`) run `desktop-check.yml` instead: fmt, clippy, tests and deny 
 packaging. Backend CI stays separate. A successful build is not
 GUI acceptance.
 
-Desktop Rust 1.90 and backend Rust 1.88 remain independently pinned. Each crate
-owns its lockfile; [dependency maintenance](DEPENDENCIES.md#retained-constraints)
-tracks Tauri's pin and the maintained ICU replacement for rust-unic. Desktop
-dependency policy uses the same advisory/license/source rules, scoped to both
-shipped macOS targets, with no Git source in the lock and no advisory exceptions.
+Desktop Rust 1.90 and backend Rust 1.88 stay independently pinned, each crate
+with its own lockfile and `deny.toml`
+([dependency maintenance](DEPENDENCIES.md#retained-constraints)).
 
 ## Update, recovery and uninstall
 

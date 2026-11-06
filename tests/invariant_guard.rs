@@ -1524,66 +1524,85 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the 2026-11-01 README refresh trimmed it to 1,507 words; lowered so the cut stays cut.
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
     // why: SearXNG removal (phase 3 of web search) trimmed it to 1,521 words; lowered so the cut stays cut.
-    ("README.md", Root, 1521),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("README.md", Root, 1450),
     ("SECURITY.md", Root, 690),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
     // why: the sandboxed HTML preview route row; measured 1840 words.
-    ("docs/API_ROUTES.md", Guide, 1839),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/API_ROUTES.md", Guide, 1756),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
-    ("docs/CODING_PIPELINE.md", Guide, 3710),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/CODING_PIPELINE.md", Guide, 3549),
     // why: operator-approved (2026-10-23) measured count for the public Google search pace floor, merged with the #649 cooldown keys.
     // why: the 2026-11-02 doc sync trimmed it to 597 words; lowered so the cut stays cut.
-    ("docs/CONFIG_RELOAD.md", Guide, 597),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/CONFIG_RELOAD.md", Guide, 535),
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
     // why: the HTML editor preview sentence; measured 6229 words.
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
-    ("docs/CONSOLE.md", Guide, 6225),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/CONSOLE.md", Guide, 5921),
     // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
     // why: the 2026-10-20 dep-sync folded the dated 2026-09 audit notes into Retained constraints; 944 words, keep the cut.
     // why: operator-approved +200 (2026-10-22) so dated advisory notes such as RUSTSEC-2026-0384 fit without trimming history.
     // why: the +50 (2026-10-31) for the block-buffer residual is reverted; the advisory no longer matches. 1139 words.
-    ("docs/DEPENDENCIES.md", Guide, 1150),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/DEPENDENCIES.md", Guide, 1077),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
-    ("docs/DESKTOP.md", Guide, 2554),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/DESKTOP.md", Guide, 2429),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
     // why: hook behavior review trims duplicated reuse instructions; retain the smaller budget.
-    ("docs/GITHOOKS.md", Guide, 1400),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/GITHOOKS.md", Guide, 1282),
     // why: credentials table now describes the OS store and the plaintext opt-in; 5571 words, rounded up to the next 100.
     // Setup memory guidance replaces repeated setup/verification prose; keep the cut.
     // why: operator-approved (2026-10-14) automated macOS install (section 1) and browser access (section 7); 5188 words plus about 1%, rounded up to the next 50.
     // why: operator-approved (2026-10-14) raise to 7500 for room to grow the install guide after #491 and #496 together hit 5250; the Guide group cap still bounds it.
     ("docs/INSTALL.md", Guide, 7412),
-    ("docs/MCP_CLIENT.md", Guide, 1087),
-    ("docs/MCP_SERVER.md", Guide, 1230),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/MCP_CLIENT.md", Guide, 894),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/MCP_SERVER.md", Guide, 951),
     // why: #244 folded MEMORY_SETUP.md and the user manual's memory sections in here.
-    ("docs/MEMORY_GUIDE.md", Guide, 1950),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/MEMORY_GUIDE.md", Guide, 1686),
     // why: #237 documented refused truncated cloud replies.
-    ("docs/MODELS.md", Guide, 1163),
-    ("docs/PROCESS_LIFECYCLE.md", Guide, 1360),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/MODELS.md", Guide, 983),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/PROCESS_LIFECYCLE.md", Guide, 1167),
     // why: operator-requested per-file index of docs/ (3-5 sentences each) replaces the 150-word folder stub; 1103 words, rounded up to the next 100.
     // why: operator-requested reading paths plus an owning-code and tests line per doc; size plus about 5%, rounded up to the next 50.
     // why: README audit removes 44 words; retain the existing headroom.
-    ("docs/README.md", Guide, 1653),
-    ("docs/RELEASING.md", Guide, 900),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/README.md", Guide, 1364),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/RELEASING.md", Guide, 685),
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
     // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
     // why: operator-approved (2026-10-24) raise to 4000 so #649 and #651 fit together without trimming contract text.
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
     // why: SearXNG removal (phase 3 of web search) trimmed it to 4,102 words; lowered so the cut stays cut.
-    ("docs/SECURE_RESEARCH.md", Guide, 4102),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/SECURE_RESEARCH.md", Guide, 3914),
     // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here; 2157 words, cap set to 2750 for room to grow.
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2750),
     // why: #244 made this the one memory contract: a gate table, and the #87
     // closeout facts it lacked.
-    ("docs/STRUCTURED_MEMORY.md", Guide, 3640),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/STRUCTURED_MEMORY.md", Guide, 3442),
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
-    ("docs/TROUBLESHOOTING.md", Guide, 1555),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/TROUBLESHOOTING.md", Guide, 1468),
     // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
-    ("docs/netconnect.md", Guide, 3488),
+    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
+    ("docs/netconnect.md", Guide, 3115),
     ("docs/screenshots/README.md", Evidence, 387),
     // why: the seven folder-README rows below are operator-requested per-file indexes (one line per file);
     // each is its size plus about 10%, rounded up to the next 10.

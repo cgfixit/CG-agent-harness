@@ -26,7 +26,7 @@ OLLAMA_CONTEXT_LENGTH=32768 ollama serve
 
 For the Ollama.app GUI, set the same variable on the app's process (for example
 `launchctl setenv OLLAMA_CONTEXT_LENGTH 32768`), then fully quit and relaunch
-the app. Do not import a CyClaw Ollama env file into this repository.
+the app.
 
 After you choose a tag (below) and send a short generate, confirm the loaded
 window. Do not send `num_ctx` in the generate body:
@@ -124,13 +124,10 @@ limits; spend gates remain unchanged. Profiles require restart, never sampling.
 A reply must finish normally (Claude `end_turn`, Grok `completed`); truncation
 fails with 502 and is not saved.
 
-**Grok Build ACP is not shipped.** `scripts/grok-acp-probe.py` and its CI test
-check only a fake runtime's launch contract: isolated profile, answer-only ACP, no
-MCP servers, no API-key fallback. Before any connection UI or subscription-billing
-claim, test sign-in, entitlement and overage with a chosen account, prove two real
-profiles stay isolated, and rerun `grok inspect --json` before each live run.
-Runtime 1.0.34 advertised only the `grok.com` auth method, unlike xAI's
-`cached_token`/`xai.api_key` example; recheck it for every runtime version.
+**Grok Build ACP is not shipped.** `scripts/grok-acp-probe.py` checks only a
+fake runtime's launch contract (isolated profile, answer-only ACP, no MCP
+servers, no API-key fallback); any connection or billing claim first needs live
+sign-in, entitlement and profile-isolation tests against the current runtime.
 
 Optional chat fallback ships disabled. If you already run another compatible
 local server, merge its real endpoint and exact inventory ID into these existing
@@ -157,5 +154,3 @@ separate configuration. Restart to reevaluate fallback after changing services.
 Inventory and fallback probes are bounded by `models.local_llm.inventory` and
 `probe_timeout_sec`, without proxies or redirects. See the
 [resolver](../src/llm/backend.rs) and [inventory checks](../src/llm/inventory.rs).
-
-See [desktop details](DESKTOP.md).

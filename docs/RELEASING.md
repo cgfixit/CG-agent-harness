@@ -1,8 +1,7 @@
 # Release controls
 
-The `release` workflow checks `main` at **08:17 and 20:17 UTC**
-(04:17/16:17 New York in summer, 03:17/15:17 in winter). GitHub can delay
-scheduled runs. The default-branch workflow owns this schedule. See [schedule events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+The `release` workflow checks `main` at **08:17 and 20:17 UTC**; GitHub can
+delay scheduled runs. The default-branch workflow owns this schedule. See [schedule events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
 
 It compares the source tree with the latest regular release. Identical trees
 skip all builds and publication, including when commit IDs differ after a
@@ -37,11 +36,9 @@ Edit `on.schedule` in `.github/workflows/release.yml` through a PR. Cron fields
 are minute, hour (UTC), day of month, month, day of week. For example,
 `17 8 * * 1` checks Mondays at 08:17 UTC.
 
-**Bundle** runs only on pushes to `main`, including merges, and produces downloadable
-artifacts without publishing releases. To release after every merge instead of
-the 12-hour check, replace the schedule with `push.branches: [main]` alongside the
-existing `push.tags`, and extend the planner's push handling to use the main
-version-selection path. Adding only the trigger fails because the planner accepts tag pushes only.
+**Bundle** runs only on pushes to `main` and publishes nothing. To release after
+every merge instead, replace the schedule with `push.branches: [main]` and extend
+the planner's push handling, which today accepts tag pushes only.
 
 ## Run now or preview
 

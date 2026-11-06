@@ -17,25 +17,19 @@ are not all false. Inspect the complete policy before enabling its master gates.
 
 ### 9.1 Install and authenticate the GitHub CLI
 
-If you skipped [GitHub CLI](INSTALL.md#26-optional-for-the-coding-pipeline-only-github-cli), do it now:
+Install the [GitHub CLI](INSTALL.md#26-optional-for-the-coding-pipeline-only-github-cli)
+if you skipped it, then sign in (browser login is simplest) and confirm:
 
 ```bash
-brew install gh
 gh auth login
-```
-
-Follow the interactive prompts (browser-based login is the simplest option). Confirm it worked:
-
-```bash
 gh auth status
 ```
 
 ### 9.2 Edit the configuration file
 
-Restart after editing console local planner model, endpoint, provider, timeout, output limit or
-reasoning settings. Console runs, jobs and schedules bind their budget to the
-startup values; the child refuses changed settings with exit 3 (restart required)
-before repository work, including edits made while the request was preparing.
+Restart after editing the planner model, endpoint, provider, timeout, output
+limit or reasoning settings: runs, jobs and schedules bind to the startup
+values, and the child refuses changed settings with exit 3 before repository work.
 
 The first `serve` creates `~/.CGagentHarness/config.yaml` from
 `assets/config.default.yaml`. Open it:
@@ -71,6 +65,9 @@ All five write gates must permit an operation, and approval, push and
 publication each need their own reason and confirmation
 ([contract](../INVARIANTS.md#every-write-to-a-repository-is-gated)). Keep
 cloud-provider child flags false when their parent allow flag is false.
+`agentic.gh_timeout_sec` (ships 30) and `gh_retries` (ships 2) bound each
+`gh` call; a pair whose worst case reaches the 900-second run setup budget is
+refused at load.
 
 Quit/relaunch the app, or stop/restart `serve`, to load the changed configuration.
 
@@ -85,16 +82,12 @@ python3 scripts/prepare-cargo.py /path/to/selected/repository "$HOME/.CGagentHar
 ```
 
 In the app, **Harness → Setup and recovery → Choose repository and prepare
-offline** uses the bundled helper and a native folder chooser. Python 3, Cargo,
-the selected repository's Rust toolchain, SDK, Cargo.lock and cached dependencies
-are still prerequisites. No source checkout of the harness is needed for that
-bundled action. Setup discovers standard tool locations; custom paths use the
-private `desktop-tools.json` described in [desktop setup](DESKTOP.md).
-
-Preparation defaults to offline. If locked dependencies are missing, review the
-repository and rerun with `--online` while allowing dependency access. Checks
-remain offline, with fresh bounded writable locations and read-only prepared
-sources. See [offline Cargo verification](#offline-cargo-verification).
+offline** runs the same bundled helper with a native folder chooser;
+prerequisites and custom tool paths are in
+[desktop setup](DESKTOP.md#finder-setup-and-local-inference). Preparation
+defaults to offline; rerun with `--online` only after reviewing which locked
+dependencies are missing. Checks stay offline
+([offline Cargo verification](#offline-cargo-verification)).
 
 Back in the app or browser console:
 
@@ -120,9 +113,9 @@ active cancellation; observed native descendants are cleaned up, but escaped or
 interrupted work may survive. `/agent reject <run-id>` rejects a pending candidate;
 `/agent discard <run-id>` cleans up a terminal run.
 
-Direct CLI writes require `--reason=<why> --confirm`. Publication additionally
-requires a reviewed `--body-file`. API writes require `reason` and `confirm: true`;
-publication also requires `body`. Combined approval/push/publication is refused.
+CLI writes need `--reason=<why> --confirm` (publication also a reviewed
+`--body-file`); API writes need `reason`, `confirm: true` and, for publication,
+`body`. Combined approval/push/publication is refused.
 See [Git approval and publication](#git-approval-and-publication).
 
 ### 9.4 Stage a session goal as a coding task
@@ -137,8 +130,7 @@ After preparing the repository, tools and deliberate write configuration above:
 /agent iterations 1
 ```
 
-Replace the sample file window with real relevant lines in your selected
-repository. Staging stores a reviewable goal/branch request; it creates no worker.
+Staging stores a reviewable goal/branch request; it creates no worker.
 Review the request before `/agent confirm <reason>`. One iteration is the default;
 retries remain bounded by the coding pipeline's configured/requested limits.
 
@@ -246,17 +238,13 @@ failed rollback is fatal, quarantines the run and preserves its recovery backup.
 Checks see the resulting batch only after successful application. Failed Cargo
 checks include bounded stdout and stderr in the next attempt's feedback.
 
-This is not crash-atomic multi-file commit or atomic compare-and-swap against an
-adversarial concurrent writer: comparison and rename are separate syscalls, and
-an externally relocated directory remains reachable through its open handle.
-Do not concurrently edit an active disposable clone. Empty newly-created parent
-directories may remain after staging failure.
+This is not crash-atomic or safe against a concurrent writer: comparison and
+rename are separate syscalls. Do not edit an active disposable clone; empty new
+parent directories may remain after a staging failure.
 
-`tests/exact_edits.rs` drives a greater-than-12-KB Rust edit through a real
-offline Seatbelt Cargo failure and exact correction while preserving unrelated
-bytes. Other tests cover multi-file edits, stale state, protected aliases,
-budgets, parser refusal, and rollback after the first rename. Scripted planners
-test execution semantics; real-Qwen acceptance remains separate.
+`tests/exact_edits.rs` drives a real offline Seatbelt Cargo failure and exact
+correction; other tests cover multi-file edits, stale state, protected aliases,
+budgets, parser refusal and rollback. Real-model acceptance remains separate.
 
 ## Optional repository retrieval
 
@@ -364,11 +352,9 @@ produces a separate source snapshot under
 never overwritten; use a separate disposable home to reprepare. Do not place the
 home or snapshot inside the candidate. The snapshot records the concrete
 toolchain and macOS SDK/linker/runtime paths. Moving/removing those
-installations requires preparation again. Preparation adds no Rust
-dependencies. Python 3 standard-library availability is an explicit setup
-requirement; Cargo remains responsible for lock/checksum validation. See
-upstream [Cargo vendor](https://doc.rust-lang.org/cargo/commands/cargo-vendor.html)
-and [Cargo configuration](https://doc.rust-lang.org/cargo/reference/config.html).
+installations requires preparation again. The helper needs only Python 3's
+standard library; Cargo still validates locks and checksums
+([Cargo vendor](https://doc.rust-lang.org/cargo/commands/cargo-vendor.html)).
 
 Run the harness with `CGAGENTHARNESS_HOME` set to that application home. Keep
 Cargo.lock unchanged in proposals; new dependencies require separately reviewed
@@ -412,14 +398,11 @@ GROK_API_KEY= ANTHROPIC_API_KEY= DEEPAGENT_API_KEY= CARGO_NET_OFFLINE=true \
   cargo test --test macos_cargo --locked --offline -- --nocapture
 ```
 
-Run on macOS outside an outer sandbox that prohibits nested Seatbelt. Missing
-sandbox capability fails this gate. The tests compile minimal and serde-bearing
-fixtures, execute build scripts/unit tests/doctests, deny synthetic outside and
-symlink reads, deny candidate/Git/cache/outside writes, deny access to an active
-loopback listener, repeat execution, check scratch cleanup and fail on stale or
-missing prepared inputs. Synthetic markers contain no real secrets. This gate
-proves Cargo execution and tested boundaries, not complete harness or real-model
-acceptance.
+Run on macOS outside an outer sandbox that prohibits nested Seatbelt; missing
+sandbox capability fails the gate. The tests build real fixtures and verify
+denied outside, symlink, candidate, Git and cache access, a blocked loopback
+listener, scratch cleanup and refusal of stale prepared inputs, using synthetic
+markers. They prove Cargo execution and tested boundaries, not real-model acceptance.
 
 **Linux confinement evidence.** Linux CI (`CI=true`) fails if `bwrap` is missing.
 The ordinary test matrix may report a classified confinement skip when a
@@ -433,9 +416,7 @@ not a production gate. Python 3 probes must execute successfully, demonstrate
 candidate reads and scratch writes, and explicitly observe denied secret/symlink
 reads and candidate writes. The network probe first connects to an owned host
 listener outside the sandbox, then requires a different network namespace and
-connection denial inside it. No public endpoint or generic nonzero exit serves as
-network proof. The job changes no host sysctl and preserves the production backend
-ladder.
+connection denial inside it; no public endpoint or generic nonzero exit counts.
 
 ## Git approval and publication
 
@@ -484,11 +465,9 @@ the remote branch, refuses mismatches, and opens the draft against the branch th
 clone checked out (its recorded `origin/HEAD`), not a fixed `main`. Every operation rechecks write policy,
 reason, and confirmation. Older unpinned records cannot be pushed; inspection and cleanup remain available.
 
-`tests/git_approval.rs` uses disposable Git repositories to cover unrelated staged
-changes, glob filenames, hooks, filters, index locks, file modes, branch and
-destination drift, and replacement objects. Other tests cover policy revocation,
-inspection, CLI and API paths, and local-bare operation. This is not an exhaustive
-Git security audit.
+`tests/git_approval.rs` covers staged changes, glob filenames, hooks, filters,
+index locks, modes, branch and destination drift and replacement objects in
+disposable repositories. It is not an exhaustive Git security audit.
 
 The index lock coordinates normal Git writers, not a hostile process that ignores
 locks and races filesystem metadata. Remote readback is point in time; another
