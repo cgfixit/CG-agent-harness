@@ -60,6 +60,7 @@ pub mod tool_inventory;
 pub mod transport;
 pub mod views;
 mod web_command;
+mod web_firecrawl;
 mod web_google;
 pub mod web_index;
 pub mod web_intent;
@@ -275,6 +276,7 @@ pub async fn build_app_with_sources(
     let mut web = WebTool::new(&home.tools_dir(), &cfg)?;
     web.search_key_from_file = opts.key_file_sources.contains("SERPAPI_API_KEY");
     web.tavily_key_from_file = opts.key_file_sources.contains("TAVILY_API_KEY");
+    web.firecrawl_key_from_file = opts.key_file_sources.contains("FIRECRAWL_API_KEY");
     #[cfg(any(test, feature = "test-support"))]
     {
         web.test_resolve = opts.web_test_resolve.clone();

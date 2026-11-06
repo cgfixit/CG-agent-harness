@@ -38,7 +38,7 @@ pub struct KeySpec {
 }
 
 /// Every entry is an env var this binary actually reads.
-pub const MANAGED_KEYS: [KeySpec; 8] = [
+pub const MANAGED_KEYS: [KeySpec; 9] = [
     KeySpec {
         name: "CGAGENTHARNESS_WEBHOOK_TOKEN",
         label: "Completion webhook bearer token",
@@ -55,6 +55,12 @@ pub const MANAGED_KEYS: [KeySpec; 8] = [
         name: "TAVILY_API_KEY",
         label: "Tavily search",
         detail: "Used only when web.search.provider is tavily (restart-only). Saved changes apply on the next search. Listings carry snippets, never page bodies; linked pages still need URL permission.",
+        self_auth: false,
+    },
+    KeySpec {
+        name: "FIRECRAWL_API_KEY",
+        label: "Firecrawl page reader",
+        detail: "Used only when web.firecrawl.enabled is true (restart-only): re-reads a permitted page the built-in fetch could not, and sends that URL to Firecrawl. Saved changes apply on the next read.",
         self_auth: false,
     },
     KeySpec {
@@ -89,8 +95,8 @@ pub const MANAGED_KEYS: [KeySpec; 8] = [
     },
 ];
 
-/// Search keys read on demand by each search: saving one needs no restart.
-const HOT_RELOAD_KEYS: [&str; 2] = ["SERPAPI_API_KEY", "TAVILY_API_KEY"];
+/// Web provider keys read on demand by each search or read: saving one needs no restart.
+const HOT_RELOAD_KEYS: [&str; 3] = ["SERPAPI_API_KEY", "TAVILY_API_KEY", "FIRECRAWL_API_KEY"];
 
 fn err(message: impl Into<String>) -> HarnessError {
     HarnessError::new(ENV_KEY_ERROR, message)

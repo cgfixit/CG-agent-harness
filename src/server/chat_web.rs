@@ -790,8 +790,13 @@ async fn run_inner(
                         let args: FetchArgs = serde_json::from_str(args)
                             .map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid fetch arguments"))?;
                         web.fetch(&args.url, true, &state.audit, owner).await.map(|page| {
-                    json!({"url":page["url"],"title":page["title"],"text":crate::common::clip_chars(page["text"].as_str().unwrap_or(""), (web.limits.evidence_tokens * 4) as usize),
-                        "source_chars":page["chars"],"notice":FETCH_NOTICE})
+                    let mut read = json!({"url":page["url"],"title":page["title"],"text":crate::common::clip_chars(page["text"].as_str().unwrap_or(""), (web.limits.evidence_tokens * 4) as usize),
+                        "source_chars":page["chars"],"notice":FETCH_NOTICE});
+                    // A fallback read names its reader; the pinned fetch adds nothing.
+                    if let Some(via) = page.get("via") {
+                        read["via"] = via.clone();
+                    }
+                    read
                 })
                     }
                     _ => return Err(error("WEB_TOOL_DENIED", "model requested an unavailable tool")),

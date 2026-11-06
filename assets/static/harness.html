@@ -1388,7 +1388,7 @@ function renderChatWebTools(events) {
     if (!event.ok || event.code === 'WEB_TOOLS_WITHHELD') { sys(event.tool + ': ' + event.code + ' — ' + event.message, WEB_TOOL_NEXT_STEP[event.code]); continue; }
     const result = event.result || {};
     if (result.results) sys(renderSearchResults(result));
-    else sys(renderSearchResults({provider:event.tool,results:[{title:result.title || result.url,url:result.url}],notice:result.notice}), (result.source_chars || 0) + ' source characters');
+    else sys(renderSearchResults({provider:event.tool,results:[{title:result.title || result.url,url:result.url}],notice:result.notice}), (result.source_chars || 0) + ' source characters' + (result.via === 'firecrawl' ? ' · read via Firecrawl' : ''));
   }
 }
 
@@ -1956,7 +1956,7 @@ async function refreshSessions() {
 async function refreshKeys() {
   const pane = $('pane-api-keys'); pane.replaceChildren();
   const note = document.createElement('p');
-  note.textContent = 'Administrator access required. Saved values go to the OS credential store. SerpAPI changes apply immediately; other saved values load after restart. Explicit process environment values take precedence. Harness metadata never grants account access.';
+  note.textContent = 'Administrator access required. Saved values go to the OS credential store. SerpAPI, Tavily and Firecrawl key changes apply on the next search or read; other saved values load after restart. Explicit process environment values take precedence. Harness metadata never grants account access.';
   pane.appendChild(note);
   const registry = document.createElement('button'); registry.textContent = 'View registry';
   registry.addEventListener('click', () => runSlash('/registry')); pane.appendChild(registry);
@@ -3404,7 +3404,7 @@ async function runSlash(line, webCommand) {
         }
         if (sub === 'fetch') {
           const result = await api('/api/web/fetch', 'POST', body, 190000);
-          for (const page of result.pages || []) sys((page.text || '').slice(0,2000),page.url+' · '+(page.chars||0)+' source chars · preview limited to 2,000 chars');
+          for (const page of result.pages || []) sys((page.text || '').slice(0,2000),page.url+' · '+(page.chars||0)+' source chars'+(page.via === 'firecrawl' ? ' · read via Firecrawl' : '')+' · preview limited to 2,000 chars');
           sys(renderWebCoverage(result.coverage),result.notice);
           break;
         }

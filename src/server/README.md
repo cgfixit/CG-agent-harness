@@ -60,6 +60,7 @@ The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs) and
 - [`views.rs`](views.rs): `HARNESS_SURFACES` registry, tools and skills views; the wired check behind `/api/tools`.
 - [`web_command.rs`](web_command.rs): pure `/web` slash grammar parser; infers no URLs.
 - [`web_google.rs`](web_google.rs): `WebTool::google_search` hop chain; [`web_tavily.rs`](web_tavily.rs) and [`web_searxng.rs`](web_searxng.rs) add providers.
+- [`web_firecrawl.rs`](web_firecrawl.rs): opt-in Firecrawl re-read of a failed exact fetch.
 - [`web_index.rs`](web_index.rs): rebuildable Tantivy passage index over the authorized web cache.
 - [`web_intent.rs`](web_intent.rs): natural-language search intent parser (engine, count, quoted terms).
 - [`web_ledger.rs`](web_ledger.rs): per-session web read ledger: targets and counts, no page text, never prompted.
