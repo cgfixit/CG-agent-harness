@@ -8,7 +8,7 @@ Docs-only classification can skip compile jobs. CI expectations: [docs/INSTALL.m
 
 ## Structure and contracts
 
-- [`invariant_guard.rs`](invariant_guard.rs): I6 source boundary, shim whitelist, duplicated constants, shipped defaults, console asset, `DOCS_BUDGET`; includes the focused Markdown-budget check.
+- [`invariant_guard.rs`](invariant_guard.rs): I6 source boundary, shim whitelist, duplicated constants, shipped defaults, typed numeric config reads, console asset, `DOCS_BUDGET`; includes the focused Markdown-budget check.
 - [`shipped_config.rs`](shipped_config.rs): validates actual seeded model, web, workspace and tuning settings without protocol-fixture overrides.
 - [`contract_locks.rs`](contract_locks.rs): binary exit codes, confirm and reason flags, kill switch, shim redaction, raw listener authority.
 - [`common_layer.rs`](common_layer.rs): `src/common` primitives (not this folder's `common/`): atomic write, rate limit, auth records, redaction, `flag_is_true`.
@@ -35,7 +35,7 @@ Docs-only classification can skip compile jobs. CI expectations: [docs/INSTALL.m
 - [`chat_stream.rs`](chat_stream.rs): streaming chat shares guards, tools, session commit and the generation gate with JSON chat.
 - [`chat_attachments.rs`](chat_attachments.rs): text and DOCX attachments and the notes corpus: limits, magic, prompt fence.
 - [`chat_web.rs`](chat_web.rs): chat `web_fetch`/`web_search` rounds: URL permission, token budgets, cancel, revoked sources.
-- [`web_commands.rs`](web_commands.rs), [`web_research.rs`](web_research.rs), [`web_phase2_redteam.rs`](web_phase2_redteam.rs): `/web` grammar, the deterministic research controller, and the non-empty allowlist red-team.
+- [`web_commands.rs`](web_commands.rs), [`web_research.rs`](web_research.rs), [`web_phase2_redteam.rs`](web_phase2_redteam.rs): `/web` grammar, the deterministic research controller and detached research jobs, and the non-empty allowlist red-team.
 - [`session_export.rs`](session_export.rs), [`retrieval_ranking.rs`](retrieval_ranking.rs): export is CSRF-guarded and 0600; golden BM25 ranking order.
 - [`self_manual.rs`](self_manual.rs): generator drift, scanner cleanliness and local-only manual/live-state prompt context.
 - [`cloud_model_selection.rs`](cloud_model_selection.rs): guarded cloud switching, profiles, budgets, cancellation and restart reset with synthetic loopback providers.

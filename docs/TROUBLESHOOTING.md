@@ -12,7 +12,7 @@ See [setup](../README.md), [models](MODELS.md) and [coding](CODING_PIPELINE.md).
 | Webhook receiver reports duplicates | A response was lost and the same batch was retried | Deduplicate stable `delivery_id`; retry batch membership can change. Each delivery/replay has at most three attempts |
 | MCP stderr log is absent or diagnostics are short | Bounded pipe capture is active | Expected: 2 KiB retained, ≤512 Unicode diagnostic characters. Inspect child/timeout; [capture limits](PROCESS_LIFECYCLE.md#mcp-stdio-diagnostics) |
 | A command such as `/prompt`, `/goal stage`, `/memory consolidate` or `/memory auto-consolidate` is unknown, or Clear my session history is absent | Installed build predates the feature | Check `/help` and bundle `Resources/COMMIT`; use [Latest](https://github.com/cgfixit/CG-agent-harness/releases/latest) or a successful main Bundle |
-| Local coding loop never fetches a file the planner asked for | Cloud planner, clone-jail refusal, `denied_read_basenames` (`.env`, keys, credentials), 6-read cap, or unclosed FILE/EDITS block swallowing `=== READ ===` | Pre-stage ordinary files with `/agent read`. Operator/model READ both refuse sensitive basenames (`sensitive_basename`). Cloud refuses all model READs. Local refusals audit `agentic_real_repo_read_request_refused`. Neither the deny-list nor jail guarantees secret detection. |
+| Local coding loop never fetches a file the planner asked for | Cloud planner, clone-jail refusal, `denied_read_basenames` (`.env`, keys, credentials), 6-read cap, or unclosed FILE/EDITS block swallowing `=== READ ===` | Pre-stage ordinary files with `/agent read`. Operator/model READ both refuse sensitive basenames (`sensitive_basename`). Cloud refuses all model READs; local refusals audit `agentic_real_repo_read_request_refused`. Neither deny-list nor jail detects every secret. |
 | New sessions appear to share old context | Shared notes/persona and account web context remain by design | Inspect `/prompt`. `/session new` separates history while retaining shared context |
 | Chat denies memory exists or claims it can run `gh` | Model output conflicts with the app's capability contract | Inspect `/memory`, `/tools` and `/prompt`; prose cannot execute commands |
 | `/memory search` reports retrieval disabled | `structured_memory.retrieval` (and the store) are off | Enable the store, restart, then `/memory retrieval on`. Search never injects; `/memory retrieve` selects one prompt |
@@ -41,7 +41,7 @@ See [setup](../README.md), [models](MODELS.md) and [coding](CODING_PIPELINE.md).
 | `gh: command not found` when trying `/agent` commands | GitHub CLI missing; required only for the [optional coding pipeline](CODING_PIPELINE.md) | `brew install gh && gh auth login` |
 | `/agent` commands report "Agentic layer disabled" | `agentic.enabled` is still `false` in `config.yaml` | Follow [coding config](CODING_PIPELINE.md#92-edit-the-configuration-file), then restart `serve` |
 | A write action is refused | A current policy gate is closed, reason/confirm is absent, publication has no reviewed body, or the emergency switch is set | Re-read [coding console steps](CODING_PIPELINE.md#93-run-it-from-the-console) and [the kill switch](CODING_PIPELINE.md#95-the-kill-switch); check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` |
-| Managed-key save or legacy migration fails | OS store unavailable, unsafe legacy file, or Windows replacement denied | Keep plaintext opt-in off unless deliberately required. Check [credential privacy and recovery](INSTALL.md#8-persistence-optional-keys-and-recovery); do not broaden file access. Windows sharing locks can block replacement; the existing destination remains intact |
+| Managed-key save or legacy migration fails | OS store unavailable, unsafe legacy file, or Windows replacement denied | Keep plaintext opt-in off unless required. Check [credential privacy and recovery](INSTALL.md#8-persistence-optional-keys-and-recovery); do not broaden file access. Windows sharing locks can block replacement; the existing destination remains intact |
 
 ## Read-only host inspection
 
@@ -61,14 +61,14 @@ yourself; each call needs `confirm: true`.
 ## Diagnostics
 
 `/diag` reads allowlisted logs under `<home>/logs/` for an admin or `portal_auditor`
-account once `diagnostics.logs_enabled` is the literal boolean `true` (restart).
-Output is redacted, then refused whole on an injection-scanner hit. It stays
-untrusted text; `/diag inject` stages it for one local chat turn. Contract:
-[INVARIANTS.md](../INVARIANTS.md).
+account once `diagnostics.logs_enabled` is literal `true` (restart).
+Output is redacted, or refused whole on an injection-scanner hit, and stays
+untrusted text; `/diag inject` stages it for one local chat turn
+([contract](../INVARIANTS.md)).
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/diag` says `DIAG_DISABLED` | `diagnostics.logs_enabled` is missing, quoted or false | Set it to `true` in `config.yaml`, then restart `serve` |
+| `/diag` says `DIAG_DISABLED` | `diagnostics.logs_enabled` is missing, quoted or false (new homes seed `true`) | Set it to `true` in `config.yaml`, then restart `serve` |
 | `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` | The account is `operator` or `audit` | Use an admin or `portal_auditor` account |
 | A read or `/diag inject` says `DIAG_SCANNER_REFUSED` | The redacted excerpt matched the injection scanner | Narrow with `--event`, `--since` or `--last`; nothing from it is shown or staged |
 | Chat says `DIAG_SURFACE_FORBIDDEN` | An excerpt is staged and the turn is cloud chat or `/agent` | Send a local turn first, or `/diag forget` |
