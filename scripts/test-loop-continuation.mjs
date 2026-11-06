@@ -112,8 +112,8 @@ console.log('Loop command preflight loads goal and starts the owned loop.');
 for (const server of [false, true]) {
   for (const unbounded of [true, false]) {
     const notes=[];
-    const c=vm.createContext({rest:['2'],loopState:null,loopAuto:server,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,
-      api:async path=>path==='/api/status'?{provider:'ollama',server_loop:server,loop:{max_turns:unbounded?0:50,max_total_completion_tokens:0,unbounded}}:{goal:'stored goal'},
+    const c=vm.createContext({rest:['2'],loopState:null,loopAuto:server,serverLoopSupported:server,MAX_LOOP_TURNS:unbounded?0:50,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,
+      api:async path=>path==='/api/status'?{provider:'ollama',loop:{unbounded}}:{goal:'stored goal'},
       paintGoalLoop(){},sys:line=>notes.push(line),ran:'',runLoopTurns:async()=>{c.ran='browser';},runServerLoop:async()=>{c.ran='server';}});
     await runLoopCase(c);
     assert.equal(c.ran,server?'server':'browser','a warning never blocks either loop path');
@@ -184,6 +184,17 @@ console.log('Loop goal derivation takes the last own prompt and stays bounded.')
   assert.equal(posts.length,1,'the derived goal and the requested mode land in one write');
   assert.equal(JSON.stringify(posts[0].body),JSON.stringify({goal:'fix the parser',web_mode:'fetch'}));
   assert.equal(atomic.ran,true);
+  const reloaded=loopFixture(['2'],{api:async(path,method,body)=>{
+    if(path==='/api/status')return {provider:'ollama',loop:{max_turns:0,max_total_completion_tokens:0,unbounded:true}};
+    if(method==='POST'){
+      // A status refresh applies the new limits while the goal write is in flight.
+      reloaded.applyLoopConfig({loop:{max_turns:1,max_total_completion_tokens:100,unbounded:false}});
+      return {goal:body.goal};
+    }
+    return {goal:'',prompt_history:['fix the parser']};
+  }});
+  await run(reloaded);
+  assert.equal(reloaded.loopState.remaining,1,'an older preflight reply must not undo the reloaded turn cap');
   const stoppedSlash=loopFixture(['2']);
   stoppedSlash.during=(path,method)=>{if(method==='POST')stoppedSlash.loopCancelGeneration++;};
   await run(stoppedSlash);
