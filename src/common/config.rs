@@ -78,6 +78,9 @@ pub enum OutOfRange {
     Clamp,
     /// As [`OutOfRange::Clamp`], except `0`, which turns the feature off.
     ClampKeepZero,
+    /// [`AppConfig::check_numbers`] refuses the value at load, naming the key
+    /// and range, so startup, reload, every CLI and the agentic child stop.
+    Refuse,
 }
 
 /// A numeric tunable read through [`AppConfig::limit`] or
@@ -102,14 +105,36 @@ const fn clamp(key: &'static str, default: u64, min: u64, max: u64) -> Limit<u64
     }
 }
 
+const fn refuse(key: &'static str, default: u64, min: u64, max: u64) -> Limit<u64> {
+    Limit {
+        out_of_range: OutOfRange::Refuse,
+        ..clamp(key, default, min, max)
+    }
+}
+
+const fn refuse_f64(key: &'static str, default: f64, min: f64, max: f64) -> Limit<f64> {
+    Limit {
+        key,
+        default,
+        min,
+        max,
+        out_of_range: OutOfRange::Refuse,
+    }
+}
+
 const KIB: u64 = 1024;
 const MIB: u64 = 1024 * KIB;
 
-/// Every integer limit that clamps instead of refusing. A key's range and
-/// missing-key default live here once; readers call [`AppConfig::limit`].
-/// `tests/invariant_guard.rs` keeps each `config.default.yaml` "clamped to"
-/// comment equal to its row and refuses a `u64_or(..).clamp(..)` read.
+/// Integer limits read through [`AppConfig::limit`]: a key's range, policy
+/// and missing-key default live here once. `tests/invariant_guard.rs` keeps
+/// each `config.default.yaml` "clamped to" / "refused outside" comment equal
+/// to its row, pins the defaults and ceilings a row mirrors, and refuses a
+/// `u64_or(..).clamp(..)` read.
 pub const NUMERIC_LIMITS: &[Limit<u64>] = &[
+    // Ceiling: the child's `--planner-timeout-sec` bound (3600).
+    refuse("agentic.deepagent_github.planner_timeout_sec", 720, 1, 3600),
+    // Ceiling: no reply outlives the largest window the caps scale to.
+    refuse("agentic.deepagent_github.planner_max_tokens", 3072, 1, 131_072),
     clamp("app.agent_job_poll_ms", 1500, 1000, 30_000),
     clamp("chat.compact_keep_messages", 8, 2, 40),
     clamp("chat.compact_max_prefill_sec", 120, 30, 1800),
@@ -129,6 +154,8 @@ pub const NUMERIC_LIMITS: &[Limit<u64>] = &[
     clamp("models.local_llm.warmup.timeout_sec", 30, 1, 120),
     clamp("personality.prompt_skill_max_chars", 6000, 1, 32_768),
     clamp("personality.prompt_skills_total_chars", 16_000, 1, 65_536),
+    // `0` would refuse every persona save; the ceiling is `SOUL_CHARS_HARD_CAP`.
+    clamp("personality.soul_max_chars", 8000, 1, 65_536),
     clamp("structured_memory.auto_consolidation_idle_ms", 2000, 20, 60_000),
     clamp(
         "structured_memory.episode_ttl_secs",
@@ -163,14 +190,21 @@ pub const NUMERIC_LIMITS: &[Limit<u64>] = &[
     clamp("structured_memory.suggestion_queue_ttl_secs", 300, 1, 3600),
 ];
 
-/// Floating-point limits that clamp; every key is also in [`FLOAT_KEYS`].
-pub const FLOAT_LIMITS: &[Limit<f64>] = &[Limit {
-    key: "structured_memory.min_consolidation_confidence",
-    default: 0.40,
-    min: 0.0,
-    max: 1.0,
-    out_of_range: OutOfRange::Clamp,
-}];
+/// Floating-point limits, read through [`AppConfig::limit_f64`]; every key
+/// is also in [`FLOAT_KEYS`].
+pub const FLOAT_LIMITS: &[Limit<f64>] = &[
+    Limit {
+        key: "structured_memory.min_consolidation_confidence",
+        default: 0.40,
+        min: 0.0,
+        max: 1.0,
+        out_of_range: OutOfRange::Clamp,
+    },
+    // The OpenAI-compatible range; tool turns and the planner send 0 anyway.
+    refuse_f64("models.local_llm.temperature", 0.3, 0.0, 2.0),
+    // Ceiling: `server::model_limits::MAX_TIMEOUT_SEC`, one local-model call.
+    refuse_f64("models.local_llm.timeout_sec", 720.0, 1.0, 3600.0),
+];
 
 impl Limit<u64> {
     fn apply(&self, value: u64) -> u64 {
@@ -222,8 +256,9 @@ impl AppConfig {
     /// a finite number for [`FLOAT_KEYS`], otherwise an unquoted non-negative
     /// integer. A quoted number, an empty value (null), `.inf`, `.nan` or any
     /// other type is refused, so a typo can never become a silent default. A
-    /// missing key keeps its default, and ranges stay with each reader (some
-    /// clamp, some refuse). The error names the key, never the value.
+    /// missing key keeps its default. A present [`OutOfRange::Refuse`] row
+    /// outside its range is refused here too; other ranges stay with each
+    /// reader (clamp rows, `u64_in`). The error names the key, never the value.
     pub fn check_numbers(&self) -> Result<()> {
         for key in shipped_numeric_keys() {
             let Some(value) = self.get(key) else { continue };
@@ -234,6 +269,34 @@ impl AppConfig {
             } else if value.as_u64().is_none() {
                 return Err(HarnessError::config(format!(
                     "{key} must be an unquoted non-negative integer"
+                )));
+            }
+        }
+        let refused = |limit: &Limit<u64>| limit.out_of_range == OutOfRange::Refuse;
+        for limit in NUMERIC_LIMITS.iter().filter(|limit| refused(limit)) {
+            if self
+                .get(limit.key)
+                .and_then(Value::as_u64)
+                .is_some_and(|n| !(limit.min..=limit.max).contains(&n))
+            {
+                return Err(HarnessError::config(format!(
+                    "{} must be an integer from {} to {}",
+                    limit.key, limit.min, limit.max
+                )));
+            }
+        }
+        for limit in FLOAT_LIMITS
+            .iter()
+            .filter(|limit| limit.out_of_range == OutOfRange::Refuse)
+        {
+            if self
+                .get(limit.key)
+                .and_then(Value::as_f64)
+                .is_some_and(|n| !(limit.min..=limit.max).contains(&n))
+            {
+                return Err(HarnessError::config(format!(
+                    "{} must be a finite number from {} to {}",
+                    limit.key, limit.min, limit.max
                 )));
             }
         }
@@ -354,16 +417,23 @@ impl AppConfig {
     /// the bound used, never the configured value. Malformed values are left
     /// to [`Self::check_numbers`].
     pub fn clamped_limits(&self) -> Vec<String> {
-        let ints = NUMERIC_LIMITS.iter().filter_map(|limit| {
-            let value = self.get(limit.key)?.as_u64()?;
-            let used = limit.apply(value);
-            (used != value).then(|| format!("{} is outside {}–{}; using {used}", limit.key, limit.min, limit.max))
-        });
-        let floats = FLOAT_LIMITS.iter().filter_map(|limit| {
-            let value = self.get(limit.key)?.as_f64().filter(|v| v.is_finite())?;
-            let used = value.clamp(limit.min, limit.max);
-            (used != value).then(|| format!("{} is outside {}–{}; using {used}", limit.key, limit.min, limit.max))
-        });
+        let clamps = |policy: OutOfRange| policy != OutOfRange::Refuse;
+        let ints = NUMERIC_LIMITS
+            .iter()
+            .filter(|l| clamps(l.out_of_range))
+            .filter_map(|limit| {
+                let value = self.get(limit.key)?.as_u64()?;
+                let used = limit.apply(value);
+                (used != value).then(|| format!("{} is outside {}–{}; using {used}", limit.key, limit.min, limit.max))
+            });
+        let floats = FLOAT_LIMITS
+            .iter()
+            .filter(|l| clamps(l.out_of_range))
+            .filter_map(|limit| {
+                let value = self.get(limit.key)?.as_f64().filter(|v| v.is_finite())?;
+                let used = value.clamp(limit.min, limit.max);
+                (used != value).then(|| format!("{} is outside {}–{}; using {used}", limit.key, limit.min, limit.max))
+            });
         ints.chain(floats).collect()
     }
 
@@ -746,6 +816,62 @@ mod tests {
             cfg("structured_memory: {min_consolidation_confidence: 0.75}").limit_f64(float),
             0.75
         );
+    }
+
+    #[test]
+    fn a_refuse_row_outside_its_range_stops_load_naming_key_and_range_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let load = |text: &str| {
+            AppConfig::write_private(&path, text).unwrap();
+            AppConfig::load(&path)
+        };
+        let planner = "agentic.deepagent_github.planner_timeout_sec";
+        for value in ["0", "3601", "7777"] {
+            let error = load(&format!(
+                "agentic: {{deepagent_github: {{planner_timeout_sec: {value}}}}}\n"
+            ))
+            .unwrap_err();
+            assert_eq!(error.code, "CONFIG_ERROR");
+            assert_eq!(
+                error.message,
+                format!("{planner} must be an integer from 1 to 3600"),
+                "{value}"
+            );
+        }
+        let temperature = "models.local_llm.temperature";
+        for value in ["-0.5", "2.5", "9"] {
+            let error = load(&format!("models: {{local_llm: {{temperature: {value}}}}}\n")).unwrap_err();
+            assert_eq!(
+                error.message,
+                format!("{temperature} must be a finite number from 0 to 2"),
+                "{value}"
+            );
+            assert!(!error.message.contains(value), "{value}");
+        }
+        let error = load("models: {local_llm: {timeout_sec: 0.5}}\n").unwrap_err();
+        assert_eq!(
+            error.message,
+            "models.local_llm.timeout_sec must be a finite number from 1 to 3600"
+        );
+        // Bounds are inclusive, a missing key keeps its default, and a refuse
+        // row never appears among the clamped lines.
+        let edge = load(
+            "models: {local_llm: {temperature: 2, timeout_sec: 3600}}\n\
+             agentic: {deepagent_github: {planner_timeout_sec: 1, planner_max_tokens: 131072}}\n",
+        )
+        .unwrap();
+        assert_eq!(edge.limit_f64(temperature), 2.0);
+        assert_eq!(edge.limit(planner), 1);
+        assert!(edge.clamped_limits().is_empty());
+        let missing = load("{}\n").unwrap();
+        assert_eq!(missing.limit_f64(temperature), 0.3);
+        assert_eq!(missing.limit_f64("models.local_llm.timeout_sec"), 720.0);
+        assert_eq!(missing.limit("agentic.deepagent_github.planner_max_tokens"), 3072);
+        // Through from_str (fixtures) a refuse row is held to its range, unreported.
+        let fixture = cfg("models: {local_llm: {temperature: 9}}");
+        assert_eq!(fixture.limit_f64(temperature), 2.0);
+        assert!(fixture.clamped_limits().is_empty());
     }
 
     #[test]

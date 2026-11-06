@@ -7,7 +7,8 @@
 #
 # Numbers are unquoted. A quoted, empty, non-finite or wrong-kind number stops
 # startup and reload, naming the key; a missing key keeps its default. A value
-# outside a "clamped to" range uses the nearest bound; serve names the key.
+# outside a "clamped to" range uses the nearest bound; serve names the key. One
+# outside a "refused outside" range stops startup, reload and every CLI.
 
 app:
   agent_job_poll_ms: 1500  # browser job polling in ms, clamped to 1000–30000
@@ -46,8 +47,8 @@ models:
     # The harness sends no num_ctx and inherits that window.
     max_tokens: 4096 # 1–25904 with Ollama reasoning=none; otherwise 1–12952 with a 2x reservation
     tool_max_tokens: 512 # 64–2048; missing uses 512; restart-only
-    temperature: 0.1  #funsies but really dont go higher 
-    timeout_sec: 1800
+    temperature: 0.1  # refused outside 0–2; chat answers only (tool turns and the planner send 0). funsies but really dont go higher
+    timeout_sec: 1800 # refused outside 1–3600 seconds per chat call
     # Explicit local inventory only; no inference, cloud probes or model downloads.
     inventory:
       timeout_sec: 2.0 # finite 0.1–30 seconds
@@ -373,7 +374,7 @@ policy:
       - "xai-[a-zA-Z0-9]{20,}"
 
 personality:
-  soul_max_chars: 8000
+  soul_max_chars: 8000 # clamped to 1–65536
   prompt_skill_max_chars: 6000 # clamped to 1–32768
   prompt_skills_total_chars: 16000 # clamped to 1–65536
 
@@ -398,9 +399,9 @@ agentic:
     provider: "ollama"
     base_url: "http://127.0.0.1:11434/v1"  # DevSkim: ignore DS162092 - Ollama loopback only; non-loopback refused at runtime
     model: "qwen3.8:27b-mlx-cg"
-    planner_timeout_sec: 720
+    planner_timeout_sec: 720 # refused outside 1–3600
     # ~24k-char planner prompt + planner_max_tokens 3072 now fits comfortably in 32k (previously tight against a 16k window).
-    planner_max_tokens: 3072
+    planner_max_tokens: 3072 # refused outside 1–131072
     allow_git_write_tools: false
     protected_write_paths:
       - "tests/"

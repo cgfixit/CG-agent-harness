@@ -21,7 +21,6 @@ use super::web_search::{Limits, MAX_RESEARCH_SECONDS, MAX_SYNTHESIS_SECONDS};
 use crate::common::config::AppConfig;
 use crate::llm::backend::ResolvedLocalBackend;
 use crate::llm::inventory::InventoryLimits;
-use crate::llm::openai_chat::DEFAULT_CHAT_TIMEOUT_SEC;
 use crate::llm::profile;
 
 /// The loaded window the shipped budgets were sized for.
@@ -81,7 +80,6 @@ const MEASURE_TIMEOUT: Duration = Duration::from_secs(180);
 /// retried every half second for up to two minutes.
 const GATE_ATTEMPTS: u32 = 240;
 const GATE_RETRY: Duration = Duration::from_millis(500);
-const DEFAULT_PLANNER_MAX_TOKENS: u64 = 3_072;
 
 /// Settings scaled with the window: (key, rounding step, minimum).
 const SCALED: [(&str, u64, u64); 6] = [
@@ -308,9 +306,7 @@ pub fn propose(
             proposed("web.chat_tool_calls").unwrap_or(0),
         )
     }) {
-        let configured = cfg
-            .f64_or("models.local_llm.timeout_sec", DEFAULT_CHAT_TIMEOUT_SEC)
-            .round() as u64;
+        let configured = cfg.limit_f64("models.local_llm.timeout_sec").round() as u64;
         values.push(json!({"key": "models.local_llm.timeout_sec", "current": configured, "proposed": seconds}));
     }
     // Research's answer deadline follows the same sample. It replaces the
@@ -349,20 +345,14 @@ pub fn propose(
         .as_str()
         .is_some_and(|model| crate::llm::profile::same_model(model, &planner_model))
     {
-        let planner_reply = cfg.u64_or(
-            "agentic.deepagent_github.planner_max_tokens",
-            DEFAULT_PLANNER_MAX_TOKENS,
-        );
+        let planner_reply = cfg.limit("agentic.deepagent_github.planner_max_tokens");
         // Held where one iteration with one check still fits the run cap:
         // a longer planner timeout would make every coding run unbudgetable.
         if let Some(seconds) = speed
             .and_then(|speed| derived_timeout(speed, compaction::prompt_cap(Some(window)), planner_reply, 0))
             .map(|seconds| seconds.min(MAX_PLANNER_TIMEOUT_SEC))
         {
-            let configured = cfg.u64_or(
-                "agentic.deepagent_github.planner_timeout_sec",
-                crate::shim::REAL_REPO_RUN_FALLBACK_PLANNER_SEC,
-            );
+            let configured = cfg.limit("agentic.deepagent_github.planner_timeout_sec");
             values.push(json!({"key": "agentic.deepagent_github.planner_timeout_sec", "current": configured, "proposed": seconds}));
         }
     }

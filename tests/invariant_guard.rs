@@ -558,6 +558,47 @@ fn agentic_side_never_references_server_or_shim() {
     assert_no_use_crosses(&root().join("agentic"), &["server", "shim"]);
 }
 
+/// A `common::config` limit row copies a default or ceiling that another
+/// module (or the agentic child, which reads the same keys) also names. The
+/// row is what `AppConfig::load` enforces, so the copies must not drift.
+#[test]
+fn limit_rows_agree_with_the_constants_they_mirror() {
+    use cgagentharness::common::config::{OutOfRange, FLOAT_LIMITS, NUMERIC_LIMITS};
+    let int = |key: &str| NUMERIC_LIMITS.iter().find(|row| row.key == key).unwrap();
+    let float = |key: &str| FLOAT_LIMITS.iter().find(|row| row.key == key).unwrap();
+    let timeout = int("agentic.deepagent_github.planner_timeout_sec");
+    assert_eq!(
+        timeout.default,
+        cgagentharness::agentic::config::DEFAULT_PLANNER_TIMEOUT_SEC
+    );
+    assert_eq!(
+        timeout.default,
+        cgagentharness::shim::REAL_REPO_RUN_FALLBACK_PLANNER_SEC
+    );
+    assert_eq!(timeout.max, cgagentharness::agentic::commands::MAX_PLANNER_TIMEOUT_SEC);
+    assert_eq!(timeout.max, cgagentharness::shim::REAL_REPO_RUN_MAX_TIMEOUT_SEC);
+    let tokens = int("agentic.deepagent_github.planner_max_tokens");
+    assert_eq!(
+        tokens.default,
+        cgagentharness::agentic::config::DEFAULT_PLANNER_MAX_TOKENS
+    );
+    assert_eq!(tokens.max, cgagentharness::server::compaction::MAX_WINDOW);
+    assert_eq!(
+        int("personality.soul_max_chars").max,
+        cgagentharness::server::prompts::SOUL_CHARS_HARD_CAP
+    );
+    let chat = float("models.local_llm.timeout_sec");
+    assert_eq!(chat.default, cgagentharness::llm::openai_chat::DEFAULT_CHAT_TIMEOUT_SEC);
+    assert_eq!(chat.max, cgagentharness::server::model_limits::MAX_TIMEOUT_SEC as f64);
+    for row in [timeout, tokens] {
+        assert_eq!(row.out_of_range, OutOfRange::Refuse, "{}", row.key);
+        assert_eq!(row.min, 1, "the child's positive_int floor: {}", row.key);
+    }
+    for row in [chat, float("models.local_llm.temperature")] {
+        assert_eq!(row.out_of_range, OutOfRange::Refuse, "{}", row.key);
+    }
+}
+
 #[test]
 fn duplicated_constants_still_agree() {
     assert_eq!(
@@ -1345,13 +1386,16 @@ fn numeric_config_reads_are_type_checked_at_load() {
 }
 
 /// Every `NUMERIC_LIMITS` / `FLOAT_LIMITS` row is documented in the shipped
-/// default as "clamped to A–B" on its key's line, and every such comment
-/// matches a row, so the YAML cannot drift from the range the code applies.
-/// `KiB`/`MiB` scale a bound; "0, or clamped to" is the row that keeps `0`.
+/// default on its key's line, as "clamped to A–B" or "refused outside A–B"
+/// per its policy, and every such comment matches a row, so the YAML cannot
+/// drift from the range the code applies. `KiB`/`MiB` scale a bound;
+/// "0, or clamped to" is the row that keeps `0`.
 #[test]
 fn clamped_config_comments_match_their_limit_rows() {
     use cgagentharness::common::config::{AppConfig, OutOfRange, FLOAT_LIMITS, NUMERIC_LIMITS};
-    let range = regex::Regex::new(r"(0, or )?clamped to ([0-9.]+) ?(KiB|MiB)?[–-]([0-9.]+) ?(KiB|MiB)?").unwrap();
+    let range =
+        regex::Regex::new(r"(0, or )?(clamped to|refused outside) ([0-9.]+) ?(KiB|MiB)?[–-]([0-9.]+) ?(KiB|MiB)?")
+            .unwrap();
     let scale = |unit: Option<regex::Match<'_>>| match unit.map(|u| u.as_str()) {
         Some("KiB") => 1024.0,
         Some("MiB") => 1024.0 * 1024.0,
@@ -1372,18 +1416,19 @@ fn clamped_config_comments_match_their_limit_rows() {
             continue;
         };
         let key = path.iter().map(|(_, k)| k.as_str()).collect::<Vec<_>>().join(".");
-        let min = caps[2].parse::<f64>().unwrap() * scale(caps.get(3));
-        let max = caps[4].parse::<f64>().unwrap() * scale(caps.get(5));
-        let keeps_zero = caps.get(1).is_some();
+        let min = caps[3].parse::<f64>().unwrap() * scale(caps.get(4));
+        let max = caps[5].parse::<f64>().unwrap() * scale(caps.get(6));
+        let policy = match (caps.get(1).is_some(), &caps[2]) {
+            (true, "clamped to") => OutOfRange::ClampKeepZero,
+            (false, "clamped to") => OutOfRange::Clamp,
+            (false, _) => OutOfRange::Refuse,
+            (true, _) => panic!("{key}: \"0, or refused outside\" is not a policy"),
+        };
         assert!(documented.insert(key.clone()), "{key} is documented twice");
         if let Some(row) = NUMERIC_LIMITS.iter().find(|row| row.key == key) {
             assert_eq!(
-                (
-                    row.min as f64,
-                    row.max as f64,
-                    row.out_of_range == OutOfRange::ClampKeepZero
-                ),
-                (min, max, keeps_zero),
+                (row.min as f64, row.max as f64, row.out_of_range),
+                (min, max, policy),
                 "config.default.yaml documents {key} as {}; its NUMERIC_LIMITS row says {}–{} ({:?})",
                 &caps[0],
                 row.min,
@@ -1391,7 +1436,12 @@ fn clamped_config_comments_match_their_limit_rows() {
                 row.out_of_range
             );
         } else if let Some(row) = FLOAT_LIMITS.iter().find(|row| row.key == key) {
-            assert_eq!((row.min, row.max, keeps_zero), (min, max, false), "{key}: {}", &caps[0]);
+            assert_eq!(
+                (row.min, row.max, row.out_of_range),
+                (min, max, policy),
+                "{key}: {}",
+                &caps[0]
+            );
         } else {
             panic!(
                 "config.default.yaml says {key} is {}, but it has no limit row",
@@ -1406,7 +1456,7 @@ fn clamped_config_comments_match_their_limit_rows() {
     {
         assert!(
             documented.contains(key),
-            "{key} clamps, but its config.default.yaml line has no \"clamped to\" comment"
+            "{key} has a limit row, but its config.default.yaml line has no \"clamped to\" or \"refused outside\" comment"
         );
     }
 }

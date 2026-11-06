@@ -539,7 +539,7 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - policy.prompt_filter
   - policy.privacy
 - personality
-  - personality.soul_max_chars
+  - personality.soul_max_chars: clamped to 1–65536
   - personality.prompt_skill_max_chars: clamped to 1–32768
   - personality.prompt_skills_total_chars: clamped to 1–65536
 - agentic
@@ -549,11 +549,11 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - agentic.writes_enabled: writes need mode=write AND this AND reason AND confirm
   - agentic.gh_min_version
   - agentic.gh_timeout_sec
-  - agentic.gh_retries
 
 ## config: sections and keys (values omitted) (part 8)
 
-- agentic.registry_path: must stay under the home data/ tree
+- agentic.gh_retries
+  - agentic.registry_path: must stay under the home data/ tree
   - agentic.allowed_read_ops
   - agentic.deepagent_github
 - unslop
