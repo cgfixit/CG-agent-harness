@@ -41,7 +41,7 @@ impl Validate for StyleRequest {
 }
 
 fn max_chars(state: &AppState) -> usize {
-    effective_soul_max_chars(state.cfg.u64_or("personality.soul_max_chars", 8000))
+    effective_soul_max_chars(&state.cfg)
 }
 
 fn catalog_json(state: &AppState) -> Vec<Value> {

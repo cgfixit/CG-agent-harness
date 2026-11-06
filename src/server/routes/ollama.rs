@@ -18,7 +18,7 @@ use crate::server::schemas::{OllamaPullRequest, ValidJson};
 use crate::server::state::AppState;
 
 pub async fn inventory(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
-    let refresh = ollama::clamped(&state.cfg, "models.local_llm.inventory.refresh_sec", 30, 1, 3600);
+    let refresh = state.cfg.limit("models.local_llm.inventory.refresh_sec");
     if let Some(cached) = state.ollama.cached_inventory(refresh) {
         return Ok(Json(cached));
     }

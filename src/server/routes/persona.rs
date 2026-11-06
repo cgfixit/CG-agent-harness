@@ -101,7 +101,7 @@ fn write(dir: &Dir, name: &str, content: &[u8]) -> ApiResult<()> {
     result.map_err(|_| io_error())
 }
 fn max_chars(state: &AppState) -> usize {
-    crate::server::prompts::effective_soul_max_chars(state.cfg.u64_or("personality.soul_max_chars", 8000))
+    crate::server::prompts::effective_soul_max_chars(&state.cfg)
 }
 fn validate_content(state: &AppState, text: &str) -> ApiResult<()> {
     if text.trim().is_empty() || text.chars().count() > max_chars(state) || text.contains('\0') {

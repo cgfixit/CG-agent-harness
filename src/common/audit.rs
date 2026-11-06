@@ -25,10 +25,6 @@ use super::config::AppConfig;
 
 const AUDIT_SKIP_KEYS: [&str; 3] = ["query_hash", "timestamp", "event"];
 const DEFAULT_AUDIT_FILE: &str = "logs/audit.jsonl";
-/// Default `logging.audit_queue_lines`: lines waiting for the writer thread. A
-/// full queue drops the new line with a warning, the same outcome as a lease
-/// that stays busy past its wait.
-const QUEUE_LINES: u64 = 4096;
 /// Longest a flush waits, queueing its barrier included, and longest dropping
 /// the last handle waits for the writer to drain. Every queued line's own wait
 /// already ends at its submission deadline, so a drain normally takes
@@ -292,12 +288,11 @@ fn write_jobs(sink: Arc<Sink>, jobs: Receiver<Job>) {
     }
 }
 
-/// `logging.audit_queue_lines`; 0 keeps appends inline.
+/// `logging.audit_queue_lines`: lines waiting for the writer thread; 0 keeps
+/// appends inline. A full queue drops the new line with a warning, the same
+/// outcome as a lease that stays busy past its wait.
 fn queue_lines(cfg: &AppConfig) -> usize {
-    match cfg.u64_or("logging.audit_queue_lines", QUEUE_LINES) {
-        0 => 0,
-        lines => lines.clamp(64, 65_536) as usize,
-    }
+    cfg.limit("logging.audit_queue_lines") as usize
 }
 
 impl Audit {

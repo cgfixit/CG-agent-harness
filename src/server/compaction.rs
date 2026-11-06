@@ -20,7 +20,6 @@ use serde::{Deserialize, Serialize};
 
 pub const COMPACT_PREFIX: &str = "[session-compacted]\n";
 pub const DEFAULT_PROMPT_TOKENS: u64 = 24_000;
-pub const DEFAULT_KEEP_MESSAGES: u64 = 8;
 pub const DEFAULT_REPLY_TOKENS: u64 = 4_096;
 pub const MIN_PROMPT_HEADROOM: u64 = 4_096;
 pub const MAX_PROMPT_TOKENS: u64 = 30_000;
@@ -33,9 +32,6 @@ pub const BASE_WEB_TOTAL_TOKENS: u64 = 32_000;
 pub const MAX_WINDOW: u64 = 131_072;
 /// `web.total_tokens` ceiling at [`MAX_WINDOW`]: what config may set.
 pub const MAX_WEB_TOTAL_TOKENS: u64 = BASE_WEB_TOTAL_TOKENS * (MAX_WINDOW / BASE_WINDOW);
-pub const DEFAULT_SUMMARY_MAX_TOKENS: u64 = 768;
-/// Default share of the turn prompt limit the verbatim tail may use.
-pub const DEFAULT_TAIL_PERCENT: u64 = 25;
 const SUMMARY_INPUT_CHARS: usize = 24_000;
 const SUMMARY_TURN_CHARS: usize = 800;
 /// Bounds on the read-only pinned context the summarizer sees.
@@ -260,14 +256,12 @@ pub fn prompt_limit_remedy(
 }
 
 pub fn summary_max_tokens(cfg: &crate::common::config::AppConfig) -> u64 {
-    cfg.u64_or("compaction.summary_max_tokens", DEFAULT_SUMMARY_MAX_TOKENS)
-        .clamp(128, 2048)
+    cfg.limit("compaction.summary_max_tokens")
 }
 
 /// `chat.compact_tail_percent`: the verbatim tail's share of the turn limit.
 pub fn tail_percent(cfg: &crate::common::config::AppConfig) -> u64 {
-    cfg.u64_or("chat.compact_tail_percent", DEFAULT_TAIL_PERCENT)
-        .clamp(10, 50)
+    cfg.limit("chat.compact_tail_percent")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

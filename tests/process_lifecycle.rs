@@ -5,7 +5,11 @@ use std::time::{Duration, Instant};
 
 #[test]
 fn inherited_pipe_cannot_outlive_the_operation_deadline() {
-    let argv = vec!["/bin/sh".into(), "-c".into(), "sleep 2 & exit 0".into()];
+    // A drain that waited for the backgrounded holder would take its full 30 s.
+    // The 10 s bound sits far from both that and the 100 ms deadline, so a busy
+    // runner spawning this binary's parallel tests (1.02 s on macOS CI once)
+    // cannot fail it while the escape still can. The group kill ends the holder.
+    let argv = vec!["/bin/sh".into(), "-c".into(), "sleep 30 & exit 0".into()];
     let start = Instant::now();
     let result = process::run(process::RunSpec {
         argv: &argv,
@@ -15,7 +19,7 @@ fn inherited_pipe_cannot_outlive_the_operation_deadline() {
         stdin: None,
     });
     assert!(
-        start.elapsed() < Duration::from_secs(1),
+        start.elapsed() < Duration::from_secs(10),
         "pipe drain escaped the deadline"
     );
     assert!(result.is_err(), "incomplete pipe capture cannot be success");

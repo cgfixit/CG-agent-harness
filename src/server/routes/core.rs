@@ -37,8 +37,6 @@ pub async fn slash_parse(
     Json(parsed)
 }
 
-const DEFAULT_TEMPERATURE: f64 = 0.3;
-
 pub async fn reload_config(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
@@ -557,7 +555,7 @@ fn soul_status(state: &AppState, enabled: bool) -> Value {
         &state.home.root,
         std::path::Path::new("soul.md"),
         enabled,
-        crate::server::prompts::effective_soul_max_chars(state.cfg.u64_or("personality.soul_max_chars", 8000))
+        crate::server::prompts::effective_soul_max_chars(&state.cfg)
     ))
 }
 
@@ -757,7 +755,7 @@ fn model_status(state: &AppState, owner: &str, model: &str) -> Value {
     };
     json!({"model":model,"provider":state.provider_for(model),"cloud":false,"key_present":null,
         "tuning_profile":{"context_window":tuning.as_ref().map(|t| t.window),"max_output_tokens":state.chat_max_tokens(model),
-            "temperature":state.cfg.f64_or("models.local_llm.temperature",DEFAULT_TEMPERATURE),"timeout_sec":state.chat_timeout_sec(model),
+            "temperature":state.cfg.limit_f64("models.local_llm.temperature"),"timeout_sec":state.chat_timeout_sec(model),
             "count_timeout_sec":null,"tool_support":!state.chat_tools_unsupported(model),"rpm":null,
             "sources":{"model":"config","context_window":if tuning.is_some() {"profile"} else {"default"},
                 "max_output_tokens":source("models.local_llm.max_tokens", tuning.as_ref().is_some_and(|t| t.max_tokens <= state.cfg.u64_or("models.local_llm.max_tokens", super::super::compaction::DEFAULT_REPLY_TOKENS))),
@@ -1214,9 +1212,7 @@ pub(crate) async fn chat_inner(
             soul_enabled: settings.soul_enabled && !portal_auditor,
             soul_override: None,
             soul_path: &state.home.soul_path(),
-            soul_max_chars: crate::server::prompts::effective_soul_max_chars(
-                state.cfg.u64_or("personality.soul_max_chars", 8000),
-            ),
+            soul_max_chars: crate::server::prompts::effective_soul_max_chars(&state.cfg),
             style_name: session.style.as_deref(),
             goal: Some(&session.goal),
             web_context: Some(&web_context),
@@ -1343,13 +1339,7 @@ pub(crate) async fn chat_inner(
                 "reply_reservation_tokens": reply,
             }))
         };
-        let keep_max = state
-            .cfg
-            .u64_or(
-                "chat.compact_keep_messages",
-                crate::server::compaction::DEFAULT_KEEP_MESSAGES,
-            )
-            .clamp(2, 40) as usize;
+        let keep_max = state.cfg.limit("chat.compact_keep_messages") as usize;
         // Every backend reaches the trigger at the same input size: it counts one
         // reply. The hard limit, the window checks and dispatch keep the
         // effective reservation, twice where hidden reasoning may spend it, so
@@ -1517,7 +1507,7 @@ pub(crate) async fn chat_inner(
         role: "user".into(),
         content: req.message.clone(),
     });
-    let temperature = state.cfg.f64_or("models.local_llm.temperature", DEFAULT_TEMPERATURE);
+    let temperature = state.cfg.limit_f64("models.local_llm.temperature");
     // Compaction can take a while: the window must still allow what this turn
     // was sized for before the reply is requested, even if tuning was cleared.
     if !cloud_selected {

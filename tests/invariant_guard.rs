@@ -558,6 +558,47 @@ fn agentic_side_never_references_server_or_shim() {
     assert_no_use_crosses(&root().join("agentic"), &["server", "shim"]);
 }
 
+/// A `common::config` limit row copies a default or ceiling that another
+/// module (or the agentic child, which reads the same keys) also names. The
+/// row is what `AppConfig::load` enforces, so the copies must not drift.
+#[test]
+fn limit_rows_agree_with_the_constants_they_mirror() {
+    use cgagentharness::common::config::{OutOfRange, FLOAT_LIMITS, NUMERIC_LIMITS};
+    let int = |key: &str| NUMERIC_LIMITS.iter().find(|row| row.key == key).unwrap();
+    let float = |key: &str| FLOAT_LIMITS.iter().find(|row| row.key == key).unwrap();
+    let timeout = int("agentic.deepagent_github.planner_timeout_sec");
+    assert_eq!(
+        timeout.default,
+        cgagentharness::agentic::config::DEFAULT_PLANNER_TIMEOUT_SEC
+    );
+    assert_eq!(
+        timeout.default,
+        cgagentharness::shim::REAL_REPO_RUN_FALLBACK_PLANNER_SEC
+    );
+    assert_eq!(timeout.max, cgagentharness::agentic::commands::MAX_PLANNER_TIMEOUT_SEC);
+    assert_eq!(timeout.max, cgagentharness::shim::REAL_REPO_RUN_MAX_TIMEOUT_SEC);
+    let tokens = int("agentic.deepagent_github.planner_max_tokens");
+    assert_eq!(
+        tokens.default,
+        cgagentharness::agentic::config::DEFAULT_PLANNER_MAX_TOKENS
+    );
+    assert_eq!(tokens.max, cgagentharness::server::compaction::MAX_WINDOW);
+    assert_eq!(
+        int("personality.soul_max_chars").max,
+        cgagentharness::server::prompts::SOUL_CHARS_HARD_CAP
+    );
+    let chat = float("models.local_llm.timeout_sec");
+    assert_eq!(chat.default, cgagentharness::llm::openai_chat::DEFAULT_CHAT_TIMEOUT_SEC);
+    assert_eq!(chat.max, cgagentharness::server::model_limits::MAX_TIMEOUT_SEC as f64);
+    for row in [timeout, tokens] {
+        assert_eq!(row.out_of_range, OutOfRange::Refuse, "{}", row.key);
+        assert_eq!(row.min, 1, "the child's positive_int floor: {}", row.key);
+    }
+    for row in [chat, float("models.local_llm.temperature")] {
+        assert_eq!(row.out_of_range, OutOfRange::Refuse, "{}", row.key);
+    }
+}
+
 #[test]
 fn duplicated_constants_still_agree() {
     assert_eq!(
@@ -1025,12 +1066,19 @@ fn writer_kill_switch_is_and_not_or() {
     assert!(writer.contains("CGAGENTHARNESS_AGENTIC_WRITE_DISABLE"));
 }
 
-const NUMERIC_ACCESSORS: &[&str] = &["u64_or", "u64_in", "u64_strict", "f64_or", "f64_in"];
+const NUMERIC_ACCESSORS: &[&str] = &[
+    "u64_or",
+    "u64_in",
+    "u64_strict",
+    "f64_or",
+    "f64_in",
+    "limit",
+    "limit_f64",
+];
 
 /// Files whose numeric accessor takes a key computed from a literal table in
 /// the same file, which the loader still covers by the full path.
 const COMPUTED_NUMERIC_KEYS: &[&str] = &[
-    "llm/ollama.rs",
     "server/config_reload.rs",
     "server/model_limits.rs",
     "server/web_search.rs",
@@ -1051,6 +1099,9 @@ enum KeyArg {
 struct ConfigReads {
     reads: Vec<(String, KeyArg)>,
     parses: Vec<KeyArg>,
+    /// `u64_or(..).clamp(..)` and `f64_or(..).clamp(..)`: a range kept at the
+    /// read site instead of in `common::config::NUMERIC_LIMITS`.
+    lenient_clamps: Vec<KeyArg>,
     /// `let name = "literal";` and `const NAME: &str = "literal";` in this file.
     bindings: std::collections::BTreeMap<String, String>,
 }
@@ -1143,6 +1194,14 @@ impl<'ast> syn::visit::Visit<'ast> for ConfigReads {
 
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         let method = call.method.unraw().to_string();
+        if method == "clamp" {
+            if let syn::Expr::MethodCall(read) = &*call.receiver {
+                if ["u64_or", "f64_or"].contains(&read.method.unraw().to_string().as_str()) {
+                    self.lenient_clamps
+                        .push(read.args.first().map_or(KeyArg::Computed, key_arg));
+                }
+            }
+        }
         if NUMERIC_ACCESSORS.contains(&method.as_str()) {
             if let Some(first) = call.args.first() {
                 let key = match first {
@@ -1184,8 +1243,15 @@ impl ConfigReads {
             if let Some((ident, next)) = cursor.ident() {
                 let name = ident.unraw().to_string();
                 if NUMERIC_ACCESSORS.contains(&name.as_str()) {
-                    if let Some((body, _, _, _)) = next.any_group() {
+                    if let Some((body, _, _, after)) = next.any_group() {
                         let key = key_tokens(&syn::buffer::TokenBuffer::new2(body.token_stream()), false);
+                        let clamped = after.punct().is_some_and(|(dot, rest)| {
+                            dot.as_char() == '.' && rest.ident().is_some_and(|(ident, _)| ident.unraw() == "clamp")
+                        });
+                        if clamped && (name == "u64_or" || name == "f64_or") {
+                            self.lenient_clamps
+                                .push(key_tokens(&syn::buffer::TokenBuffer::new2(body.token_stream()), false));
+                        }
                         self.reads.push((name, key));
                     }
                 }
@@ -1206,8 +1272,11 @@ impl ConfigReads {
 /// `from_str` parses the embedded default (or an empty literal) in production.
 #[test]
 fn numeric_config_reads_are_type_checked_at_load() {
-    use cgagentharness::common::config::{shipped_numeric_keys, FLOAT_KEYS};
+    use cgagentharness::common::config::{shipped_numeric_keys, FLOAT_KEYS, FLOAT_LIMITS, NUMERIC_LIMITS};
     let numeric = shipped_numeric_keys();
+    let int_row = |key: &str| NUMERIC_LIMITS.iter().any(|limit| limit.key == key);
+    let float_row = |key: &str| FLOAT_LIMITS.iter().any(|limit| limit.key == key);
+    let mut computed_files = std::collections::BTreeSet::new();
     let is_float = |key: &str| FLOAT_KEYS.contains(&key);
     let leaf_matches = |template: &str, float: bool| {
         let leaf = template.rsplit('.').next().unwrap_or(template);
@@ -1226,10 +1295,31 @@ fn numeric_config_reads_are_type_checked_at_load() {
         let file = syn::parse_file(&text).unwrap_or_else(|error| panic!("{path} does not parse: {error}"));
         let mut visitor = ConfigReads::default();
         syn::visit::visit_file(&mut visitor, &file);
+        assert!(
+            visitor.lenient_clamps.is_empty(),
+            "{relative}: {:?} clamped where read; give each key a row in \
+             common::config::NUMERIC_LIMITS (or FLOAT_LIMITS) and read it with cfg.limit",
+            visitor.lenient_clamps
+        );
         for (method, key) in visitor.reads {
-            let float = method.starts_with("f64");
+            let float = method.starts_with("f64") || method == "limit_f64";
+            if matches!(key, KeyArg::Computed | KeyArg::Template(_)) {
+                computed_files.insert(relative.clone());
+            }
             match key {
                 KeyArg::Literal(key) => {
+                    match method.as_str() {
+                        "limit" => assert!(int_row(&key), "{relative}: limit(\"{key}\") has no NUMERIC_LIMITS row"),
+                        "limit_f64" => assert!(
+                            float_row(&key),
+                            "{relative}: limit_f64(\"{key}\") has no FLOAT_LIMITS row"
+                        ),
+                        _ => assert!(
+                            !int_row(&key) && !float_row(&key),
+                            "{relative}: {method}(\"{key}\") bypasses the key's common::config limit row; \
+                             read it with cfg.limit or cfg.limit_f64"
+                        ),
+                    }
                     assert!(
                         numeric.contains(&key),
                         "{relative}: {method}(\"{key}\") reads a number the shipped default does not declare, \
@@ -1277,6 +1367,12 @@ fn numeric_config_reads_are_type_checked_at_load() {
         }
         production.push_str(&strip_comment_lines(&text));
     }
+    for file in COMPUTED_NUMERIC_KEYS {
+        assert!(
+            computed_files.contains(*file),
+            "COMPUTED_NUMERIC_KEYS lists {file}, which no longer computes a numeric key"
+        );
+    }
     for key in FLOAT_KEYS {
         let leaf = key.rsplit('.').next().unwrap();
         assert!(
@@ -1285,6 +1381,82 @@ fn numeric_config_reads_are_type_checked_at_load() {
                 .any(|read| read == key || read.ends_with(&format!(".{leaf}")) && read.contains('{'))
                 || production.contains(&format!("\"{key}\"")),
             "FLOAT_KEYS lists {key}, but no production code reads it"
+        );
+    }
+}
+
+/// Every `NUMERIC_LIMITS` / `FLOAT_LIMITS` row is documented in the shipped
+/// default on its key's line, as "clamped to A–B" or "refused outside A–B"
+/// per its policy, and every such comment matches a row, so the YAML cannot
+/// drift from the range the code applies. `KiB`/`MiB` scale a bound;
+/// "0, or clamped to" is the row that keeps `0`.
+#[test]
+fn clamped_config_comments_match_their_limit_rows() {
+    use cgagentharness::common::config::{AppConfig, OutOfRange, FLOAT_LIMITS, NUMERIC_LIMITS};
+    let range =
+        regex::Regex::new(r"(0, or )?(clamped to|refused outside) ([0-9.]+) ?(KiB|MiB)?[–-]([0-9.]+) ?(KiB|MiB)?")
+            .unwrap();
+    let scale = |unit: Option<regex::Match<'_>>| match unit.map(|u| u.as_str()) {
+        Some("KiB") => 1024.0,
+        Some("MiB") => 1024.0 * 1024.0,
+        _ => 1.0,
+    };
+    let mut path: Vec<(usize, String)> = Vec::new();
+    let mut documented = std::collections::BTreeSet::new();
+    for line in AppConfig::embedded_default().lines() {
+        let body = line.trim_start();
+        if body.is_empty() || body.starts_with('#') || body.starts_with('-') {
+            continue;
+        }
+        let indent = line.len() - body.len();
+        let Some((key, _)) = body.split_once(':') else { continue };
+        path.retain(|(depth, _)| *depth < indent);
+        path.push((indent, key.trim().to_string()));
+        let Some(caps) = line.split_once('#').and_then(|(_, comment)| range.captures(comment)) else {
+            continue;
+        };
+        let key = path.iter().map(|(_, k)| k.as_str()).collect::<Vec<_>>().join(".");
+        let min = caps[3].parse::<f64>().unwrap() * scale(caps.get(4));
+        let max = caps[5].parse::<f64>().unwrap() * scale(caps.get(6));
+        let policy = match (caps.get(1).is_some(), &caps[2]) {
+            (true, "clamped to") => OutOfRange::ClampKeepZero,
+            (false, "clamped to") => OutOfRange::Clamp,
+            (false, _) => OutOfRange::Refuse,
+            (true, _) => panic!("{key}: \"0, or refused outside\" is not a policy"),
+        };
+        assert!(documented.insert(key.clone()), "{key} is documented twice");
+        if let Some(row) = NUMERIC_LIMITS.iter().find(|row| row.key == key) {
+            assert_eq!(
+                (row.min as f64, row.max as f64, row.out_of_range),
+                (min, max, policy),
+                "config.default.yaml documents {key} as {}; its NUMERIC_LIMITS row says {}–{} ({:?})",
+                &caps[0],
+                row.min,
+                row.max,
+                row.out_of_range
+            );
+        } else if let Some(row) = FLOAT_LIMITS.iter().find(|row| row.key == key) {
+            assert_eq!(
+                (row.min, row.max, row.out_of_range),
+                (min, max, policy),
+                "{key}: {}",
+                &caps[0]
+            );
+        } else {
+            panic!(
+                "config.default.yaml says {key} is {}, but it has no limit row",
+                &caps[0]
+            );
+        }
+    }
+    for key in NUMERIC_LIMITS
+        .iter()
+        .map(|row| row.key)
+        .chain(FLOAT_LIMITS.iter().map(|row| row.key))
+    {
+        assert!(
+            documented.contains(key),
+            "{key} has a limit row, but its config.default.yaml line has no \"clamped to\" or \"refused outside\" comment"
         );
     }
 }

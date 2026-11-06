@@ -11,9 +11,7 @@ use std::time::Duration;
 use serde_json::json;
 
 use crate::server::state::AppState;
-use crate::server::structured_memory::{
-    auto_consolidation_available, current_gates, ConsolidationRun, StructuredMemoryStore,
-};
+use crate::server::structured_memory::{auto_consolidation_available, current_gates, ConsolidationRun};
 use crate::server::structured_memory_consolidate::run_manual;
 
 /// Process-local handle. Feature-off never spawns. Disable stops new claims.
@@ -146,7 +144,7 @@ fn idle_ms(state: &AppState) -> u64 {
         .structured_memory
         .as_ref()
         .map(|store| store.limits().auto_consolidation_idle_ms)
-        .unwrap_or(StructuredMemoryStore::default_auto_idle_ms())
+        .unwrap_or_else(|| state.cfg.limit("structured_memory.auto_consolidation_idle_ms"))
 }
 
 fn audit_run(state: &AppState, run: &ConsolidationRun) {

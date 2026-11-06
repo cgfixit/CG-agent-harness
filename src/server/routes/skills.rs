@@ -30,14 +30,8 @@ pub fn resolve(state: &AppState, ids: &[String]) -> ApiResult<Vec<(String, Strin
             "Select at most four prompt skills",
         ));
     }
-    let per_skill = state
-        .cfg
-        .u64_or("personality.prompt_skill_max_chars", 6000)
-        .clamp(1, 32768) as usize;
-    let total = state
-        .cfg
-        .u64_or("personality.prompt_skills_total_chars", 16000)
-        .clamp(1, 65536) as usize;
+    let per_skill = state.cfg.limit("personality.prompt_skill_max_chars") as usize;
+    let total = state.cfg.limit("personality.prompt_skills_total_chars") as usize;
     let mut out = Vec::new();
     let mut used = 0;
     for id in ids {

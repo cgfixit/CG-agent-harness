@@ -36,30 +36,6 @@ pub const PUBLIC_ID_LEN: usize = 32;
 pub const SUMMARIZER_VERSION: &str = "consolidator-v2";
 const MARKER_BODY: &[u8] = b"sqlite3-v1\n";
 
-const DEFAULT_MAX_FACTS: u64 = 64;
-const DEFAULT_MAX_FACT_CHARS: u64 = 1000;
-const DEFAULT_MAX_CATEGORY_CHARS: u64 = 64;
-const DEFAULT_MAX_PROPOSALS: u64 = 32;
-const DEFAULT_MAX_REASON_CHARS: u64 = 1000;
-const DEFAULT_MAX_EPISODES: u64 = 128;
-const DEFAULT_MAX_EPISODE_SUMMARY_CHARS: u64 = 500;
-const DEFAULT_MAX_EPISODE_BYTES: u64 = 65_536;
-const DEFAULT_EPISODE_TTL_SECS: u64 = 2_592_000;
-const DEFAULT_MAX_EXPORT_BYTES: u64 = 262_144;
-const DEFAULT_MAX_SELECTED_FACTS: u64 = 8;
-const DEFAULT_MAX_SEARCH_QUERY_CHARS: u64 = 64;
-const DEFAULT_MAX_SEARCH_RESULTS: u64 = 32;
-const DEFAULT_MAX_RETRIEVAL_RESULTS: u64 = 4;
-const DEFAULT_MAX_RETRIEVAL_TOKENS: u64 = 8;
-const DEFAULT_MAX_RETRIEVAL_TOKEN_CHARS: u64 = 32;
-const DEFAULT_MAX_SEARCH_TIME_MS: u64 = 250;
-const DEFAULT_PINNED_PROMPT_CHARS: u64 = 1500;
-const DEFAULT_SELECTED_FACT_PROMPT_CHARS: u64 = 1500;
-const DEFAULT_MAX_CONSOLIDATION_EPISODES: u64 = 8;
-const DEFAULT_MAX_CONSOLIDATION_CANDIDATES: u64 = 8;
-const DEFAULT_MIN_CONSOLIDATION_CONFIDENCE: f64 = 0.40;
-const DEFAULT_AUTO_CONSOLIDATION_IDLE_MS: u64 = 2_000;
-
 const FACTS_PROPOSALS_DDL: &str = "
 CREATE TABLE facts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -210,106 +186,30 @@ pub struct Limits {
 
 impl Limits {
     pub fn from_config(cfg: &AppConfig) -> Self {
-        let confidence = cfg.f64_or(
-            "structured_memory.min_consolidation_confidence",
-            DEFAULT_MIN_CONSOLIDATION_CONFIDENCE,
-        );
         Self {
-            max_facts_per_owner: cfg
-                .u64_or("structured_memory.max_facts_per_owner", DEFAULT_MAX_FACTS)
-                .clamp(1, 256) as usize,
-            max_fact_chars: cfg
-                .u64_or("structured_memory.max_fact_chars", DEFAULT_MAX_FACT_CHARS)
-                .clamp(1, 4000) as usize,
-            max_category_chars: cfg
-                .u64_or("structured_memory.max_category_chars", DEFAULT_MAX_CATEGORY_CHARS)
-                .clamp(1, 64) as usize,
-            max_proposals_per_owner: cfg
-                .u64_or("structured_memory.max_proposals_per_owner", DEFAULT_MAX_PROPOSALS)
-                .clamp(1, 128) as usize,
-            max_reason_chars: cfg
-                .u64_or("structured_memory.max_reason_chars", DEFAULT_MAX_REASON_CHARS)
-                .clamp(1, 1000) as usize,
-            max_episodes_per_owner: cfg
-                .u64_or("structured_memory.max_episodes_per_owner", DEFAULT_MAX_EPISODES)
-                .clamp(1, 1024) as usize,
-            max_episode_summary_chars: cfg
-                .u64_or(
-                    "structured_memory.max_episode_summary_chars",
-                    DEFAULT_MAX_EPISODE_SUMMARY_CHARS,
-                )
-                .clamp(32, 4000) as usize,
-            max_episode_bytes_per_owner: cfg
-                .u64_or(
-                    "structured_memory.max_episode_bytes_per_owner",
-                    DEFAULT_MAX_EPISODE_BYTES,
-                )
-                .clamp(256, 8 * 1024 * 1024) as usize,
-            episode_ttl_secs: cfg
-                .u64_or("structured_memory.episode_ttl_secs", DEFAULT_EPISODE_TTL_SECS)
-                .clamp(60, 366 * 24 * 3600) as i64,
-            max_export_bytes: cfg
-                .u64_or("structured_memory.max_export_bytes", DEFAULT_MAX_EXPORT_BYTES)
-                .clamp(1024, 8 * 1024 * 1024) as usize,
-            max_selected_facts: cfg
-                .u64_or("structured_memory.max_selected_facts", DEFAULT_MAX_SELECTED_FACTS)
-                .clamp(1, 32) as usize,
-            max_search_query_chars: cfg
-                .u64_or(
-                    "structured_memory.max_search_query_chars",
-                    DEFAULT_MAX_SEARCH_QUERY_CHARS,
-                )
-                .clamp(1, 256) as usize,
-            max_search_results: cfg
-                .u64_or("structured_memory.max_search_results", DEFAULT_MAX_SEARCH_RESULTS)
-                .clamp(1, 64) as usize,
-            max_retrieval_results: cfg
-                .u64_or("structured_memory.max_retrieval_results", DEFAULT_MAX_RETRIEVAL_RESULTS)
-                .clamp(1, 16) as usize,
-            max_retrieval_tokens: cfg
-                .u64_or("structured_memory.max_retrieval_tokens", DEFAULT_MAX_RETRIEVAL_TOKENS)
-                .clamp(1, 16) as usize,
-            max_retrieval_token_chars: cfg
-                .u64_or(
-                    "structured_memory.max_retrieval_token_chars",
-                    DEFAULT_MAX_RETRIEVAL_TOKEN_CHARS,
-                )
-                .clamp(1, 64) as usize,
-            max_search_time_ms: cfg
-                .u64_or("structured_memory.max_search_time_ms", DEFAULT_MAX_SEARCH_TIME_MS)
-                .clamp(10, 5_000),
-            pinned_prompt_chars: cfg
-                .u64_or("structured_memory.pinned_prompt_chars", DEFAULT_PINNED_PROMPT_CHARS)
-                .clamp(1, 3000) as usize,
-            selected_fact_prompt_chars: cfg
-                .u64_or(
-                    "structured_memory.selected_fact_prompt_chars",
-                    DEFAULT_SELECTED_FACT_PROMPT_CHARS,
-                )
-                .clamp(1, 3000) as usize,
-            max_consolidation_episodes: cfg
-                .u64_or(
-                    "structured_memory.max_consolidation_episodes",
-                    DEFAULT_MAX_CONSOLIDATION_EPISODES,
-                )
-                .clamp(1, 16) as usize,
-            max_consolidation_candidates: cfg
-                .u64_or(
-                    "structured_memory.max_consolidation_candidates",
-                    DEFAULT_MAX_CONSOLIDATION_CANDIDATES,
-                )
-                .clamp(1, 16) as usize,
-            min_consolidation_confidence: if confidence.is_finite() {
-                confidence.clamp(0.0, 1.0)
-            } else {
-                DEFAULT_MIN_CONSOLIDATION_CONFIDENCE
-            },
-            auto_consolidation_idle_ms: cfg
-                .u64_or(
-                    "structured_memory.auto_consolidation_idle_ms",
-                    DEFAULT_AUTO_CONSOLIDATION_IDLE_MS,
-                )
-                .clamp(20, 60_000),
+            max_facts_per_owner: cfg.limit("structured_memory.max_facts_per_owner") as usize,
+            max_fact_chars: cfg.limit("structured_memory.max_fact_chars") as usize,
+            max_category_chars: cfg.limit("structured_memory.max_category_chars") as usize,
+            max_proposals_per_owner: cfg.limit("structured_memory.max_proposals_per_owner") as usize,
+            max_reason_chars: cfg.limit("structured_memory.max_reason_chars") as usize,
+            max_episodes_per_owner: cfg.limit("structured_memory.max_episodes_per_owner") as usize,
+            max_episode_summary_chars: cfg.limit("structured_memory.max_episode_summary_chars") as usize,
+            max_episode_bytes_per_owner: cfg.limit("structured_memory.max_episode_bytes_per_owner") as usize,
+            episode_ttl_secs: cfg.limit("structured_memory.episode_ttl_secs") as i64,
+            max_export_bytes: cfg.limit("structured_memory.max_export_bytes") as usize,
+            max_selected_facts: cfg.limit("structured_memory.max_selected_facts") as usize,
+            max_search_query_chars: cfg.limit("structured_memory.max_search_query_chars") as usize,
+            max_search_results: cfg.limit("structured_memory.max_search_results") as usize,
+            max_retrieval_results: cfg.limit("structured_memory.max_retrieval_results") as usize,
+            max_retrieval_tokens: cfg.limit("structured_memory.max_retrieval_tokens") as usize,
+            max_retrieval_token_chars: cfg.limit("structured_memory.max_retrieval_token_chars") as usize,
+            max_search_time_ms: cfg.limit("structured_memory.max_search_time_ms"),
+            pinned_prompt_chars: cfg.limit("structured_memory.pinned_prompt_chars") as usize,
+            selected_fact_prompt_chars: cfg.limit("structured_memory.selected_fact_prompt_chars") as usize,
+            max_consolidation_episodes: cfg.limit("structured_memory.max_consolidation_episodes") as usize,
+            max_consolidation_candidates: cfg.limit("structured_memory.max_consolidation_candidates") as usize,
+            min_consolidation_confidence: cfg.limit_f64("structured_memory.min_consolidation_confidence"),
+            auto_consolidation_idle_ms: cfg.limit("structured_memory.auto_consolidation_idle_ms"),
         }
     }
 
@@ -1971,10 +1871,6 @@ impl StructuredMemoryStore {
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
         Ok(rows)
-    }
-
-    pub fn default_auto_idle_ms() -> u64 {
-        DEFAULT_AUTO_CONSOLIDATION_IDLE_MS
     }
 
     pub fn latest_completed_episode(&self, owner: &str) -> Result<Option<Episode>> {

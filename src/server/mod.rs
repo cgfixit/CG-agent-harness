@@ -86,7 +86,7 @@ use crate::common::home::{is_loopback_host, validate_port, HarnessSettings, Home
 use crate::common::ratelimit::RateLimiter;
 use crate::llm::backend::resolve_local_backend;
 use crate::llm::cloud_chat::CloudChat;
-use crate::llm::openai_chat::{ChatClient, DEFAULT_CHAT_TIMEOUT_SEC};
+use crate::llm::openai_chat::ChatClient;
 use crate::shim::ShimContext;
 
 use generation_gate::GenerationGate;
@@ -256,7 +256,7 @@ pub async fn build_app_with_sources(
     let chat = ChatClient::new(
         &backend.base_url,
         &backend.model,
-        cfg.f64_or("models.local_llm.timeout_sec", DEFAULT_CHAT_TIMEOUT_SEC),
+        cfg.limit_f64("models.local_llm.timeout_sec"),
         &backend.api_key,
         backend.reasoning_effort.clone(),
     )?;
@@ -289,10 +289,7 @@ pub async fn build_app_with_sources(
         web.test_public_search = opts.web_test_public_search;
         web.test_tavily_search = opts.web_test_tavily_search;
     }
-    let planner = cfg.u64_or(
-        "agentic.deepagent_github.planner_timeout_sec",
-        crate::shim::REAL_REPO_RUN_FALLBACK_PLANNER_SEC,
-    );
+    let planner = cfg.limit("agentic.deepagent_github.planner_timeout_sec");
     let shim = ShimContext::new(&cfg.path, &home.root, &home.tmp_dir(), planner)
         .map_err(|e| HarnessError::harness_config(format!("cannot locate own executable: {e}")))?;
     #[cfg(any(test, feature = "test-support"))]
@@ -499,6 +496,10 @@ pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result
             drift.len(),
             drift.join(", ")
         );
+    }
+    // None of these is reloadable, so a restart is the only time one changes.
+    for clamped in cfg.clamped_limits() {
+        tracing::warn!("config.yaml: {clamped}");
     }
     let plaintext = cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE);
     let store = crate::common::credential_store::OsCredentialStore::for_home(&home.root);

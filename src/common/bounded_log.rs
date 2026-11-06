@@ -24,8 +24,7 @@ fn acquire_lease(path: &Path, deadline: Instant, retry: Duration) -> std::io::Re
 }
 
 pub fn limit(cfg: &AppConfig) -> u64 {
-    cfg.u64_or("logging.max_file_bytes", 8 * 1024 * 1024)
-        .clamp(64 * 1024, 64 * 1024 * 1024)
+    cfg.limit("logging.max_file_bytes")
 }
 
 /// Retention bound plus the lease-wait policy for one JSONL sink, from the
@@ -42,8 +41,8 @@ pub struct Retention {
 pub fn retention(cfg: &AppConfig) -> Retention {
     Retention {
         max_bytes: limit(cfg),
-        lease_wait: Duration::from_millis(cfg.u64_or("logging.audit_lease_wait_ms", 50).clamp(0, 5_000)),
-        lease_retry: Duration::from_millis(cfg.u64_or("logging.audit_lease_retry_ms", 2).clamp(1, 1_000)),
+        lease_wait: Duration::from_millis(cfg.limit("logging.audit_lease_wait_ms")),
+        lease_retry: Duration::from_millis(cfg.limit("logging.audit_lease_retry_ms")),
     }
 }
 fn adjacent(path: &Path, suffix: &str) -> PathBuf {

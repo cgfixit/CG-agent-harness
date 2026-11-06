@@ -13,9 +13,11 @@ pub const MAX_MEMORY_CHARS: usize = 3000;
 /// Hard cap shared by chat, preview, and persona save so those paths cannot diverge.
 pub const SOUL_CHARS_HARD_CAP: u64 = 65_536;
 
-/// One effective persona limit for `/api/chat`, `/api/soul`, and `/api/prompt/preview`.
-pub fn effective_soul_max_chars(configured: u64) -> usize {
-    configured.min(SOUL_CHARS_HARD_CAP) as usize
+/// One effective persona limit for `/api/chat`, `/api/soul`, and `/api/prompt/preview`:
+/// `personality.soul_max_chars`, clamped to 1..=[`SOUL_CHARS_HARD_CAP`] by its
+/// `common::config::NUMERIC_LIMITS` row.
+pub fn effective_soul_max_chars(cfg: &crate::common::config::AppConfig) -> usize {
+    cfg.limit("personality.soul_max_chars") as usize
 }
 
 const HEADER: &str = "You are CG Agent Harness, an assistant for general conversation and optional coding help. \
@@ -476,9 +478,19 @@ mod tests {
 
     #[test]
     fn soul_limit_is_the_configured_value_until_the_shared_hard_cap() {
-        assert_eq!(effective_soul_max_chars(8_000), 8_000);
-        assert_eq!(effective_soul_max_chars(65_536), 65_536);
-        assert_eq!(effective_soul_max_chars(100_000), 65_536);
+        let cfg = |yaml: &str| crate::common::config::AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap();
+        assert_eq!(effective_soul_max_chars(&cfg("{}")), 8_000);
+        assert_eq!(
+            effective_soul_max_chars(&cfg("personality: {soul_max_chars: 65536}")),
+            65_536
+        );
+        assert_eq!(
+            effective_soul_max_chars(&cfg("personality: {soul_max_chars: 100000}")),
+            65_536
+        );
+        assert_eq!(super::SOUL_CHARS_HARD_CAP, 65_536, "the soul_max_chars row's ceiling");
+        // 0 would refuse every persona save; it is held at 1 instead.
+        assert_eq!(effective_soul_max_chars(&cfg("personality: {soul_max_chars: 0}")), 1);
     }
 
     #[test]

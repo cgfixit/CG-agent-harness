@@ -163,13 +163,16 @@ impl Portal {
             url.scheme() == if tls { "https" } else { "http" },
             "portal scheme must match tls.enabled; HTTP downgrade refused"
         );
+        // The server's own reader: a web block the server would refuse stops
+        // the CLI too, instead of sizing the wait from a silent default.
+        let web = super::web_search::Limits::load(&cfg)?;
         let mut client = Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(research_request_timeout_sec(
-                cfg.u64_or("web.research_seconds", 300),
-                cfg.u64_or("web.synthesis_seconds", 300),
+                web.research_seconds,
+                web.synthesis_seconds,
                 cfg.flag_is_true("models.local_llm.auto_tune"),
             )));
         let certificate_sha256 = if tls {

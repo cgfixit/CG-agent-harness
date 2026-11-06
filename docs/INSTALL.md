@@ -558,7 +558,7 @@ on first run. Common operator settings follow:
 | `models.local_llm.max_tokens` | 4096 | Local reply ceiling: 1–25904 with resolved Ollama and explicit reasoning `none`; otherwise 1–12952, with twice the ceiling reserved for completion. Invalid combinations fail startup with `CONFIG_ERROR` |
 | `models.local_llm.tool_max_tokens` | 512 | Tool hops in local chat. Integer 64–2048, sent with temperature 0. The final answer keeps `max_tokens` and `temperature`. Missing key uses 512. Restart-only |
 | `models.local_llm.reasoning_effort` | `none` | Sent only to resolved Ollama: `none`, `low`, `medium`, `high`, `max`. Missing/empty omits the field and uses the doubled reservation |
-| `models.local_llm.timeout_sec` | 1800 | Local fallback deadline; missing uses 720 s; auto-tune replaces it when a speed sample is available |
+| `models.local_llm.timeout_sec` | 1800 | Local fallback deadline, refused outside 1–3600; missing uses 720 s; auto-tune replaces it when a speed sample is available |
 | `chat.compact_prompt_tokens` / `compact_keep_messages` | 24000 / 10 | Calibrated next-prompt trigger and recent messages retained (2–40); the prompt cap is the hard limit past it. Threshold floor/cap and web interaction: [compaction](CONSOLE.md#local-history-compaction) |
 | `chat.compact_tail_percent` | 25 | Verbatim tail budget as a percent of the trigger, 10–50; whole exchanges, at least the last one |
 | `compaction.summary_max_tokens` | 2048 | Summary output ceiling, clamped 128–2048; missing in an existing home uses 768; sent doubled where the reply is reserved twice |
@@ -570,8 +570,8 @@ on first run. Common operator settings follow:
 | `attachments.max_concurrent_uploads` | 2 | Attachment upload bodies (up to ~45 MiB each) buffered at once; range 1–8, excess requests get 503 `ATTACHMENT_BUSY` |
 | `attachments.body_timeout_sec` | 360 | Deadline for receiving one upload body; range 5–600, expiry gives 408 `ATTACHMENT_TIMEOUT` and frees the permit |
 | `structured_memory.*` | see file | Per-owner caps (facts, proposals, episodes, bytes), search/retrieval limits, suggestion queue and consolidation thresholds |
-| `web.evidence_tokens` | 6000 | Evidence budget when no tokenizer is available, clamped 256–6000. Keep 3000 if the Ollama window is smaller than 32768 or unverified |
-| `web.model_tokens` | 2048 | Maximum synthesis completion, clamped 256–2048 |
+| `web.evidence_tokens` | 6000 | Evidence budget when no tokenizer is available, refused outside 256–6000. Keep 3000 if the Ollama window is smaller than 32768 or unverified |
+| `web.model_tokens` | 2048 | Maximum synthesis completion, refused outside 256–2048 |
 | `web.total_tokens` | 28000 | Planning and synthesis budget, 2048–128000 (32000 without a larger measured window); sized for a **verified** 32768-token Ollama window ([model setup](MODELS.md)). Keep 16000 if `/api/ps` shows a smaller `context_length` |
 
 Quoted YAML strings such as `"true"` never arm a gate, and a quoted, empty or non-finite number stops startup. See [coding pipeline](CODING_PIPELINE.md) for the

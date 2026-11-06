@@ -6,10 +6,12 @@
 # before enabling coding; master, deepagent and clone-write gates ship closed.
 #
 # Numbers are unquoted. A quoted, empty, non-finite or wrong-kind number stops
-# startup and reload, naming the key; a missing key keeps its default.
+# startup and reload, naming the key; a missing key keeps its default. A value
+# outside a "clamped to" range uses the nearest bound; serve names the key. One
+# outside a "refused outside" range stops startup, reload and every CLI.
 
 app:
-  agent_job_poll_ms: 1500  # browser job polling, clamped to 1–30 seconds
+  agent_job_poll_ms: 1500  # browser job polling in ms, clamped to 1000–30000
 
 models:
   # Remote chat is opt-in per model selection. A cloud turn sends only its newly
@@ -45,20 +47,20 @@ models:
     # The harness sends no num_ctx and inherits that window.
     max_tokens: 4096 # 1–25904 with Ollama reasoning=none; otherwise 1–12952 with a 2x reservation
     tool_max_tokens: 512 # 64–2048; missing uses 512; restart-only
-    temperature: 0.1  #funsies but really dont go higher 
-    timeout_sec: 1800
+    temperature: 0.1  # refused outside 0–2; chat answers only (tool turns and the planner send 0). funsies but really dont go higher
+    timeout_sec: 1800 # refused outside 1–3600 seconds per chat call
     # Explicit local inventory only; no inference, cloud probes or model downloads.
     inventory:
       timeout_sec: 2.0 # finite 0.1–30 seconds
       max_response_bytes: 262144 # integer 1024–1048576
-      refresh_sec: 30 # 1–3600; GET /api/ollama/inventory cache. Missing keys keep this default.
+      refresh_sec: 30 # clamped to 1–3600; GET /api/ollama/inventory cache. Missing keys keep this default.
     pull:
-      timeout_sec: 600 # 1–3600; abortable POST /api/ollama/pull (SSE when Accept is text/event-stream)
-      max_response_bytes: 1048576 # 1024–4194304 streamed NDJSON bound
+      timeout_sec: 600 # clamped to 1–3600; abortable POST /api/ollama/pull (SSE when Accept is text/event-stream)
+      max_response_bytes: 1048576 # clamped to 1 KiB–4 MiB; streamed NDJSON bound
     warmup:
       enabled: true # flag_is_true; missing in old homes is off. Failure is a logged degrade, never a crash.
-      keep_alive_sec: 300 # 1–3600 seconds sent as keep_alive; never num_ctx
-      timeout_sec: 45 # 1–120; bounded background POST /api/generate with an empty prompt
+      keep_alive_sec: 300 # clamped to 1–3600; seconds sent as keep_alive; never num_ctx
+      timeout_sec: 45 # clamped to 1–120; bounded background POST /api/generate with an empty prompt
     # Per-model tuning (flag_is_true; quoted "true" is off; false restores the
     # fixed limits). On /model use and at startup: one short raw /api/generate
     # times this loopback Ollama (no num_ctx; it loads the model like warmup) and
@@ -87,8 +89,8 @@ models:
 # lifetime TokenTally.total. System prompt and session.goal are never compacted.
 chat:
   compact_prompt_tokens: 24000 # floor=max_tokens + 4096 (hard-limit floor: effective reply reservation + 4096), capped at 30000 (more for a larger window auto_tune measured)
-  compact_keep_messages: 10 # 2–40: at most this many recent messages kept verbatim, whole exchanges only
-  compact_tail_percent: 25 # 10–50: verbatim tail budget as a percent of the trigger; at least the last exchange
+  compact_keep_messages: 10 # clamped to 2–40: at most this many recent messages kept verbatim, whole exchanges only
+  compact_tail_percent: 25 # clamped to 10–50: verbatim tail budget as a percent of the trigger; at least the last exchange
   compact_follow_window: false # an auto_tune-verified window above 32768 scales the trigger up in proportion; literal false keeps it
   compact_max_prefill_sec: 1500 # clamped to 30–1800: bounds scaled-trigger prefill only when compact_follow_window is true
 
@@ -374,9 +376,9 @@ policy:
       - "xai-[a-zA-Z0-9]{20,}"
 
 personality:
-  soul_max_chars: 8000
-  prompt_skill_max_chars: 6000
-  prompt_skills_total_chars: 16000
+  soul_max_chars: 8000 # clamped to 1–65536
+  prompt_skill_max_chars: 6000 # clamped to 1–32768
+  prompt_skills_total_chars: 16000 # clamped to 1–65536
 
 agentic:
   enabled: false                 # master switch; CLI no-ops (exit 0) while false
@@ -399,9 +401,9 @@ agentic:
     provider: "ollama"
     base_url: "http://127.0.0.1:11434/v1"  # DevSkim: ignore DS162092 - Ollama loopback only; non-loopback refused at runtime
     model: "qwen3.8:27b-mlx-cg"
-    planner_timeout_sec: 720
+    planner_timeout_sec: 720 # refused outside 1–3600
     # ~24k-char planner prompt + planner_max_tokens 3072 now fits comfortably in 32k (previously tight against a 16k window).
-    planner_max_tokens: 3072
+    planner_max_tokens: 3072 # refused outside 1–131072
     allow_git_write_tools: false
     protected_write_paths:
       - "tests/"
@@ -559,35 +561,35 @@ structured_memory:
   # listed until its corpus run passes, so its suggestions report
   # unsupported_model_mode. Restart-only.
   suggestion_supported: [{ model: "qwen3.8:27b-mlx-cg", modes: [summaries, insights, both] }]
-  suggestion_max_input_chars: 8000 # total across input/output, split equally
-  suggestion_max_queue: 8 # queued inputs; one additional generation may be running
-  suggestion_queue_ttl_secs: 300 # volatile inputs expire; restart drops them
-  suggestion_idle_ms: 2000
-  status_poll_ms: 30000 # visible Memory pane only; 250–30000
-  max_facts_per_owner: 64
-  max_fact_chars: 1000
-  max_category_chars: 64
-  max_proposals_per_owner: 50
-  max_reason_chars: 1000
-  max_episodes_per_owner: 128
-  max_episode_summary_chars: 500
-  max_episode_bytes_per_owner: 65536
-  episode_ttl_secs: 2592000
-  max_export_bytes: 262144
-  max_selected_facts: 8
-  max_search_query_chars: 64
-  max_search_results: 32
-  max_retrieval_results: 4
-  max_retrieval_tokens: 8
-  max_retrieval_token_chars: 32
-  max_search_time_ms: 250
-  pinned_prompt_chars: 1500
-  selected_fact_prompt_chars: 1500
-  max_consolidation_episodes: 8
-  max_consolidation_candidates: 8
+  suggestion_max_input_chars: 8000 # clamped to 256–32000; total across input/output, split equally
+  suggestion_max_queue: 8 # clamped to 1–32; queued inputs; one additional generation may be running
+  suggestion_queue_ttl_secs: 300 # clamped to 1–3600; volatile inputs expire; restart drops them
+  suggestion_idle_ms: 2000 # clamped to 10–30000
+  status_poll_ms: 30000 # clamped to 250–30000; visible Memory pane only
+  max_facts_per_owner: 64 # clamped to 1–256
+  max_fact_chars: 1000 # clamped to 1–4000
+  max_category_chars: 64 # clamped to 1–64
+  max_proposals_per_owner: 50 # clamped to 1–128
+  max_reason_chars: 1000 # clamped to 1–1000
+  max_episodes_per_owner: 128 # clamped to 1–1024
+  max_episode_summary_chars: 500 # clamped to 32–4000
+  max_episode_bytes_per_owner: 65536 # clamped to 256–8 MiB
+  episode_ttl_secs: 2592000 # clamped to 60–31622400 (366 days)
+  max_export_bytes: 262144 # clamped to 1 KiB–8 MiB
+  max_selected_facts: 8 # clamped to 1–32
+  max_search_query_chars: 64 # clamped to 1–256
+  max_search_results: 32 # clamped to 1–64
+  max_retrieval_results: 4 # clamped to 1–16
+  max_retrieval_tokens: 8 # clamped to 1–16
+  max_retrieval_token_chars: 32 # clamped to 1–64
+  max_search_time_ms: 250 # clamped to 10–5000
+  pinned_prompt_chars: 1500 # clamped to 1–3000
+  selected_fact_prompt_chars: 1500 # clamped to 1–3000
+  max_consolidation_episodes: 8 # clamped to 1–16
+  max_consolidation_candidates: 8 # clamped to 1–16
   # Drop lower-confidence candidates; omitted model confidence remains accepted.
-  min_consolidation_confidence: 0.40
-  auto_consolidation_idle_ms: 2000
+  min_consolidation_confidence: 0.40 # clamped to 0–1
+  auto_consolidation_idle_ms: 2000 # clamped to 20–60000
 
 # LAN observation. Every gate ships false. A tier is effective only when
 # `enabled` and that tier's flag are both the literal boolean true; quoted

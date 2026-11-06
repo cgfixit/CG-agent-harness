@@ -414,14 +414,14 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
 ## config: sections and keys (values omitted)
 
 - app
-  - app.agent_job_poll_ms: browser job polling, clamped to 1–30 seconds
+  - app.agent_job_poll_ms: browser job polling in ms, clamped to 1000–30000
 - models
   - models.cloud_chat
   - models.local_llm
 - chat: Local chat prompt compaction. Trigger is estimated next-prompt size, not lifetime TokenTally.total. System prompt and session.goal are never compacted.
   - chat.compact_prompt_tokens: floor=max_tokens + 4096 (hard-limit floor: effective reply reservation + 4096), capped at 30000 (more for a…
-  - chat.compact_keep_messages: 2–40: at most this many recent messages kept verbatim, whole exchanges only
-  - chat.compact_tail_percent: 10–50: verbatim tail budget as a percent of the trigger; at least the last exchange
+  - chat.compact_keep_messages: clamped to 2–40: at most this many recent messages kept verbatim, whole exchanges only
+  - chat.compact_tail_percent: clamped to 10–50: verbatim tail budget as a percent of the trigger; at least the last exchange
   - chat.compact_follow_window: an auto_tune-verified window above 32768 scales the trigger up in proportion; literal false keeps it
   - chat.compact_max_prefill_sec: clamped to 30–1800: bounds scaled-trigger prefill only when compact_follow_window is true
 - compaction
@@ -539,9 +539,9 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - policy.prompt_filter
   - policy.privacy
 - personality
-  - personality.soul_max_chars
-  - personality.prompt_skill_max_chars
-  - personality.prompt_skills_total_chars
+  - personality.soul_max_chars: clamped to 1–65536
+  - personality.prompt_skill_max_chars: clamped to 1–32768
+  - personality.prompt_skills_total_chars: clamped to 1–65536
 - agentic
   - agentic.enabled: master switch; CLI no-ops (exit 0) while false
   - agentic.repo: set owner/name explicitly before enabling coding
@@ -549,11 +549,11 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - agentic.writes_enabled: writes need mode=write AND this AND reason AND confirm
   - agentic.gh_min_version
   - agentic.gh_timeout_sec
-  - agentic.gh_retries
 
 ## config: sections and keys (values omitted) (part 8)
 
-- agentic.registry_path: must stay under the home data/ tree
+- agentic.gh_retries
+  - agentic.registry_path: must stay under the home data/ tree
   - agentic.allowed_read_ops
   - agentic.deepagent_github
 - unslop
@@ -588,40 +588,40 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - structured_memory.auto_suggest_coding
   - structured_memory.suggestion_mode: summaries | insights | both; invalid values disable suggestions
   - structured_memory.suggestion_supported
-  - structured_memory.suggestion_max_input_chars: total across input/output, split equally
-  - structured_memory.suggestion_max_queue: queued inputs; one additional generation may be running
-  - structured_memory.suggestion_queue_ttl_secs: volatile inputs expire; restart drops them
-  - structured_memory.suggestion_idle_ms
-  - structured_memory.status_poll_ms: visible Memory pane only; 250–30000
+  - structured_memory.suggestion_max_input_chars: clamped to 256–32000; total across input/output, split equally
+  - structured_memory.suggestion_max_queue: clamped to 1–32; queued inputs; one additional generation may be running
+  - structured_memory.suggestion_queue_ttl_secs: clamped to 1–3600; volatile inputs expire; restart drops them
+  - structured_memory.suggestion_idle_ms: clamped to 10–30000
 
 ## config: sections and keys (values omitted) (part 10)
 
-- structured_memory.max_facts_per_owner
-  - structured_memory.max_fact_chars
-  - structured_memory.max_category_chars
-  - structured_memory.max_proposals_per_owner
-  - structured_memory.max_reason_chars
-  - structured_memory.max_episodes_per_owner
-  - structured_memory.max_episode_summary_chars
-  - structured_memory.max_episode_bytes_per_owner
-  - structured_memory.episode_ttl_secs
-  - structured_memory.max_export_bytes
-  - structured_memory.max_selected_facts
-  - structured_memory.max_search_query_chars
-  - structured_memory.max_search_results
-  - structured_memory.max_retrieval_results
-  - structured_memory.max_retrieval_tokens
-  - structured_memory.max_retrieval_token_chars
-  - structured_memory.max_search_time_ms
-  - structured_memory.pinned_prompt_chars
-  - structured_memory.selected_fact_prompt_chars
-  - structured_memory.max_consolidation_episodes
-  - structured_memory.max_consolidation_candidates
-  - structured_memory.min_consolidation_confidence
-  - structured_memory.auto_consolidation_idle_ms
+- structured_memory.status_poll_ms: clamped to 250–30000; visible Memory pane only
+  - structured_memory.max_facts_per_owner: clamped to 1–256
+  - structured_memory.max_fact_chars: clamped to 1–4000
+  - structured_memory.max_category_chars: clamped to 1–64
+  - structured_memory.max_proposals_per_owner: clamped to 1–128
+  - structured_memory.max_reason_chars: clamped to 1–1000
+  - structured_memory.max_episodes_per_owner: clamped to 1–1024
+  - structured_memory.max_episode_summary_chars: clamped to 32–4000
+  - structured_memory.max_episode_bytes_per_owner: clamped to 256–8 MiB
+  - structured_memory.episode_ttl_secs: clamped to 60–31622400 (366 days)
+  - structured_memory.max_export_bytes: clamped to 1 KiB–8 MiB
+  - structured_memory.max_selected_facts: clamped to 1–32
+  - structured_memory.max_search_query_chars: clamped to 1–256
+  - structured_memory.max_search_results: clamped to 1–64
+  - structured_memory.max_retrieval_results: clamped to 1–16
+  - structured_memory.max_retrieval_tokens: clamped to 1–16
+  - structured_memory.max_retrieval_token_chars: clamped to 1–64
 
 ## config: sections and keys (values omitted) (part 11)
 
+- structured_memory.max_search_time_ms: clamped to 10–5000
+  - structured_memory.pinned_prompt_chars: clamped to 1–3000
+  - structured_memory.selected_fact_prompt_chars: clamped to 1–3000
+  - structured_memory.max_consolidation_episodes: clamped to 1–16
+  - structured_memory.max_consolidation_candidates: clamped to 1–16
+  - structured_memory.min_consolidation_confidence: clamped to 0–1
+  - structured_memory.auto_consolidation_idle_ms: clamped to 20–60000
 - netconnect: LAN observation. Every gate ships false. A tier is effective only when `enabled` and that tier's flag are both the literal boolean true; quoted "true" is off. `allowed_cidrs` is empty, so every…
   - netconnect.enabled
   - netconnect.passive_listen
@@ -639,17 +639,17 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - netconnect.read_timeout_ms
   - netconnect.max_dials
   - netconnect.diagnostics_targets
-  - netconnect.throughput_endpoint
+
+## config: sections and keys (values omitted) (part 12)
+
+- netconnect.throughput_endpoint
   - netconnect.ha_endpoint
   - netconnect.mqtt_endpoint
   - netconnect.untrusted_string_max_chars
 - scheduling: Durable schedules: restart-only tuning, never execution/write authority. New interval and cron schedules require an owner-bound preview receipt.
   - scheduling.poll_interval_ms: 250–5000
   - scheduling.dispatch_grace_secs: 5–30; older occurrences are skipped
-
-## config: sections and keys (values omitted) (part 12)
-
-- scheduling.preview_ttl_secs: 30–900; also expires at first occurrence
+  - scheduling.preview_ttl_secs: 30–900; also expires at first occurrence
   - scheduling.max_previews: 1–128 in-memory receipts
   - scheduling.max_schedules: 1–128 durable rows
 

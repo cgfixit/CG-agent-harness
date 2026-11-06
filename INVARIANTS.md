@@ -809,8 +809,10 @@ declares must, when present, be an unquoted number of its kind (finite for
 `common::config::FLOAT_KEYS`, else a non-negative integer): a quoted, empty,
 non-finite or wrong-kind value refuses startup, reload and every CLI or child
 load (`AppConfig::load`), naming the key, never the value. A missing key keeps
-its default; ranges stay with each reader, clamped where documented and
-otherwise refused. Parsed limits are fully validated
+its default. A range clamps only for a clamp row of `common::config::NUMERIC_LIMITS`
+or `FLOAT_LIMITS`, documented "clamped to" in the shipped default and named at
+`serve` startup when it applies; every other range refuses, a refuse row
+("refused outside") at load. Parsed limits are fully validated
 before one runtime snapshot is replaced. Any invalid limit,
 malformed YAML, unknown or restart-only change refuses the entire candidate
 and leaves running limits intact. Refusal audit/errors never echo YAML contents.
