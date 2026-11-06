@@ -61,7 +61,7 @@ A **home** is the application's state directory: `~/.CGagentHarness`, overridden
 
 Pick an installed model that fits your hardware; any OpenAI-compatible loopback service works, and chat and the coding planner have separate settings. The chat default `gemma4-26b-a4b:ud-q4_k_xl-cg` and planner default `qwen3.8:27b-mlx-cg` are [locally derived tags](docs/MODELS.md#pin-32768-with-a-local-derived-tag), not bundled or required.
 
-The default endpoint is `http://127.0.0.1:11434/v1`. Seeded research budgets assume a **32,768-token context window**; the harness sends no `num_ctx`, so set it when a terminal-managed Ollama starts and restart a running service rather than start a second one ([Models](docs/MODELS.md) covers Ollama.app, smaller windows, and pinned tags):
+The default endpoint is `http://127.0.0.1:11434/v1`. Seeded research budgets assume a **32,768-token context window**; the harness sends no `num_ctx`, so set it before Ollama starts ([Models](docs/MODELS.md) covers Ollama.app, smaller windows and pinned tags):
 
 ```bash
 OLLAMA_CONTEXT_LENGTH=32768 ollama serve
@@ -79,7 +79,7 @@ unzip CG-Agent-Harness-macos-universal.zip
 open "CG Agent Harness.app"
 ```
 
-The universal app (Apple Silicon and Intel) runs its backend on an ephemeral loopback port and needs no Rust, Python, or browser; bundles are ad-hoc signed ([Desktop](docs/DESKTOP.md) covers Gatekeeper). Releases also attach Linux x86_64 and macOS arm64 CLI builds with `.sha256` files.
+The universal app needs no Rust, Python or browser and is ad-hoc signed ([Desktop](docs/DESKTOP.md) covers Gatekeeper); releases also attach Linux x86_64 and macOS arm64 CLI builds with `.sha256` files.
 
 #### Standalone server: macOS or Linux
 
@@ -97,15 +97,15 @@ Open `https://127.0.0.1:8790/` and trust the local certificate ([certificate gui
 ### 3. Sign in and try a conversation
 
 1. Fresh homes open **Set your password**: enter the setup code (app: **Setup and recovery** stays open with it; terminal: `<home>/setup-code`) and a new password.
-2. `/model list` shows installed tags; `/model use <tag>` selects one and, with `auto_tune` on, measures it and sets per-model limits (`/model profile`).
-3. Run `/status`, send a message, inspect the assembled context with `/prompt`, and browse `/help` (`/help all` is the full catalog).
+2. `/model list` shows installed tags; `/model use <tag>` selects one and tunes its limits ([profiles](docs/MODELS.md#exact-model-diagnostics-and-optional-fallback)).
+3. Run `/status`, send a message, inspect the assembled context with `/prompt`, and browse `/help`.
 
 Start coding only after the separate [coding setup](docs/CODING_PIPELINE.md).
 
 ## Security and defaults
 
 - **Local access:** fresh homes require HTTPS and account login; the optional harness API key never replaces them.
-- **Web policy mode:** homes ship in allowlist mode; an administrator can confirm a switch to block-list mode, which opens every public URL no block rule covers. Private and local addresses stay refused either way.
+- **Web policy mode:** homes ship in allowlist mode; an administrator can confirm block-list mode, which opens every public URL no block rule covers; private addresses stay refused.
 - **Network boundaries:** loopback binding limits incoming access only; research, cloud providers, subprocesses, and model runtimes still reach the network.
 - **Cloud coding:** six gates end in per-run `--confirm-online`, and requests send repository excerpts before diff review; redaction does not remove proprietary code.
 - **Sandbox differences:** macOS uses Seatbelt. Linux prefers bubblewrap; its `unshare --net` fallback isolates networking only.
@@ -120,11 +120,11 @@ Six public commands, each with `--help`: `serve` starts the console; `account` c
 
 ## Configuration and verification
 
-First launch seeds the home's `config.yaml` from [the defaults](assets/config.default.yaml); edit that copy. Gates require literal YAML `true`; quoted `"true"` or a missing key is off, and startup logs any shipped-`true` setting your file lacks. Malformed or quoted numbers stop startup. Most settings need a restart; selected limits [reload live](docs/CONFIG_RELOAD.md).
+First launch seeds the home's `config.yaml` from [the defaults](assets/config.default.yaml); edit that copy. Gates need literal YAML `true`, malformed numbers stop startup, and startup logs any shipped-`true` setting your file lacks. Most settings need a restart; selected limits [reload live](docs/CONFIG_RELOAD.md).
 
-Before contributing, run `bash scripts/ensure-githooks.sh` ([hook guide](docs/GITHOOKS.md)) and follow [AGENTS.md](AGENTS.md) for focused verification; `SKIP_LIVE=1 scripts/verify-local.sh` runs the comprehensive checks and CI adds invariant guards, browser acceptance, sandbox and MCP lifecycle checks, and security scanning ([Tests and CI/CD](docs/INSTALL.md#tests-and-cicd)).
+Before contributing, run `bash scripts/ensure-githooks.sh` ([hook guide](docs/GITHOOKS.md)) and follow [AGENTS.md](AGENTS.md); `SKIP_LIVE=1 scripts/verify-local.sh` runs the broad checks and CI adds the rest ([Tests and CI/CD](docs/INSTALL.md#tests-and-cicd)).
 
-**Identify builds by commit**, not the Cargo version `0.1.0`: check `Contents/Resources/COMMIT`; `main` can be newer than published binaries.
+**Identify builds by commit** (`Contents/Resources/COMMIT`), not the Cargo version; `main` can be newer than published binaries.
 
 ## Documentation
 

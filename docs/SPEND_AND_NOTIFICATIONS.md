@@ -2,14 +2,8 @@
 
 Retained spend, Analytics and optional completion webhooks use the existing
 [installation](INSTALL.md), [account](SECURE_RESEARCH.md#accounts-and-roles)
-and [coding](CODING_PIPELINE.md) requirements.
-
-## Build requirements
-
-Check the installed bundle's `Contents/Resources/COMMIT` or source checkout;
-the Cargo package version does not identify these capabilities.
-`GET /api/notifications` and version-2 envelopes identify the notification
-interface.
+and [coding](CODING_PIPELINE.md) requirements. Identify a build by its
+`Resources/COMMIT`, never the Cargo version.
 
 ## Read spend without mistaking missing data for zero
 
@@ -51,10 +45,9 @@ reconcile against the provider's own billing.
 ## Analytics: sessions, tokens and coding runs
 
 After sign-in, choose **Analytics** or `/analytics`. The overview shows retained
-session tokens, readable sessions and coding runs; `+` marks a truncated list. Administrators who replaced the bootstrap password and operators can read
-it; auditors cannot. Sessions are owner-filtered; spend and coding-run records
-are portal-wide. Explicit legacy auth-disabled homes keep local access semantics.
-**Refresh** rereads; **Close**, Escape or an account change clears filters,
+session tokens, readable sessions and coding runs; `+` marks a truncated list.
+Administrators and operators can read it, auditors cannot; sessions are
+owner-filtered while spend and coding runs are portal-wide. **Refresh** rereads; **Close**, Escape or an account change clears filters,
 sorting and cache.
 
 - **Tokens and cost:** the ledger rollup (`GET /api/spend/summary`) in pages of
@@ -77,13 +70,12 @@ directory entries and returns at most 128 records; a truncated listing is
 partial and its totals cover only listed records. Session and ledger totals
 have different retention rules and are never added.
 
-Opening Analytics starts no inference, repository edit, verification, push or PR;
-only **Estimate draft** sends a token-counting request. Run listing can reconcile stale
-`running` records to `interrupted`. Analytics adds no polling, cloud calls,
-chart dependencies or CSP permissions; user labels render as text.
+Opening Analytics starts no inference or repository operation; only **Estimate
+draft** sends a token-counting request, and run listing can reconcile stale
+`running` records to `interrupted`.
 
-`GET /api/analytics/summary` uses the same account, role, same-origin, rate and
-CSRF (`X-CyClaw-CSRF`) guards as `GET /api/spend/summary`. It returns `spend`
+`GET /api/analytics/summary` sits behind the same guards as
+`GET /api/spend/summary`. It returns `spend`
 (the unchanged summary), `sessions.sessions` (no messages, goals or prompts),
 `status`, `session_days`, `sessions_without_created_date` and `code` (`runs`,
 `truncated`, `outcomes`; rows add `iterations`, `changed_file_count` and
@@ -92,26 +84,22 @@ coding-source failure keeps spend and session data; a snapshot-task failure
 returns `ANALYTICS_UNAVAILABLE`. The composition is best-effort, not a
 transaction across files.
 
-On an older backend answering 404 for the aggregate, the dialog reads
-`/api/spend/summary`, `/api/sessions`, `/api/status` and `/api/agent/runs` in
-parallel; other aggregate failures do not fall back, per-source errors stay
-visible, and an authentication or permission refusal clears all sections.
-CLI-backed requests keep a 130-second client deadline, past the shim's 120.
+Per-source errors stay visible, and an authentication or permission refusal
+clears all sections. CLI-backed requests keep a 130-second client deadline,
+past the shim's 120.
 
 ## Estimate a cloud draft and configure a per-call cap
 
 Select `grok` or `claude` with `/model use`, type without sending, then choose
 **Analytics → Tokens and cost → Estimate draft**. It reports model, estimate
 source, reserved output, dated rate and cap decision; local inference stays
-unpriced. Closing or logout clears estimates, and edits need re-estimation. The
-build must expose `POST /api/spend/predict`.
+unpriced. Closing or logout clears estimates, and edits need re-estimation.
 
 Claude sends the generation model and message body to its fixed
 [`messages/count_tokens`](https://platform.claude.com/docs/en/build-with-claude/token-counting) endpoint. The two-second default deadline covers headers
 and body; errors, malformed responses, or oversized responses use the labelled fallback.
 Grok uses rounded-up UTF-8 bytes divided by four without a counting call, which
-**can undercount CJK**. The local Qwen calibration is not a cloud estimator.
-History, attachments, memory, skills and web context are not sent. Provider
+**can undercount CJK**. History, attachments, memory, skills and web context are not sent. Provider
 credentials and enabled provider configuration are still required.
 
 Merge into `models.cloud_chat` in the active home's YAML and restart:
@@ -235,7 +223,7 @@ omits receiver bodies and URLs.
 
 Only `finished`, `failed` and `cancelled` detached jobs produce completion events.
 Chat, recovered `interrupted` jobs and schedules refused before job creation do
-not. Events remain metadata-only; richer fields are not implemented. A batch is:
+not. Events are metadata-only. A batch is:
 
 ```json
 {
@@ -266,9 +254,8 @@ recent retained jobs for the owner and selected subscriptions.
 
 Delivery is **at least once with finite retries and retention**. A timeout or
 crash after acceptance may resend, and a crash on the last attempt can leave an
-exhausted row with unknown receipt; inspect the receiver before replay. File data
-and Unix directory ordering are synced, but power loss still depends on storage.
-Run one backend per home.
+exhausted row with unknown receipt; inspect the receiver before replay. Writes
+are synced, but power loss still depends on storage.
 
 HTTP 2xx completes delivery. HTTP 429, 5xx, DNS and transport/timeouts may retry;
 other statuses fail. Attempts, backoff, jitter, rate and payload size (64 KiB) are

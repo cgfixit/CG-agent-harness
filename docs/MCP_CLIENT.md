@@ -51,8 +51,7 @@ all overlaps. Optional `cwd` is a read-only grant; omit it for an empty owned
 directory. Declare scripts, modules, and non-system runtimes explicitly because
 arguments grant no paths. Host writes stay in owned scratch and write roots.
 Linux also has private namespace storage (including `/tmp`); a write there does
-not modify a same-named host path. Tests check the host filesystem as well as
-the tool's result, including an unmounted host canary that must remain unchanged.
+not modify a same-named host path.
 
 `network: deny` is mandatory unless the operator explicitly selects
 `unrestricted`. Missing fields, unknown versions/fields/enums, invalid limits
@@ -75,10 +74,9 @@ when its network namespace probe fails.
 
 Strict mode requires `processes` 8–128, `memory_mb` 64–4096, systemd 254 or
 newer with `--expand-environment=no`, and cgroup v2. Counts include supervisor
-and runtime processes; memory covers the cgroup. Linux uses the existing user
-service manager, or the system manager for root. The harness does not invoke
-sudo, install services, or change host namespace settings. Missing controllers
-or namespace permissions cause refusal.
+and runtime processes; memory covers the cgroup. The harness uses the existing
+user (or root's system) service manager, never sudo or host namespace changes;
+missing controllers or permissions refuse.
 
 To deliberately retain weaker cleanup on macOS/Linux, replace `containment`
 with `process_group` and omit `limits`. This exception promises neither
@@ -131,11 +129,10 @@ The console explicitly warns that account-accessible secrets are readable.
 Scrubbing environment variables and checking declared command/cwd paths do not
 prevent this trusted program from opening other paths or contacting services.
 
-Membership exists before the first child instruction. Detached children cannot
-break away, and runner exit terminates job members without cleanup code. Windows
-services such as WMI or COM remain outside the job. The request deadline depends
-on a responsive harness; it is not an OS timer or hostile-code sandbox. Only
-configuration can select this exception.
+Membership exists before the first child instruction, detached children cannot
+break away, and runner exit terminates the job; Windows services such as WMI
+stay outside it ([lifecycle](PROCESS_LIFECYCLE.md#explicit-mcp-lifecycle-policy)).
+Only configuration selects this exception.
 
 ## Inspect and troubleshoot
 

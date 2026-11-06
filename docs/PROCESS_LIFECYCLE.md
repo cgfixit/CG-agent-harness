@@ -114,25 +114,16 @@ directories on disk. It does not automatically delete operator-granted outputs.
 
 ## Evidence
 
-`tests/mcp_client.rs` checks allowed reads and writes plus denied secret, symlink,
-and network probes on Linux and macOS. The required native Linux
-`tests/mcp_lifecycle.rs` job exercises cancellation, Drop, protocol failure,
-crashes, deadlines, and SIGKILL with a detached grandchild. It then checks an
-empty cgroup, stopped heartbeat, successful reuse, limits, and migration denial.
-Ordinary runners report that they did not execute this native acceptance.
-
-`tests/process_lifecycle.rs` covers inherited pipes, blocked stdin, overflow,
-complete output and status, and a short-lived leader with a background child.
-Its required macOS case cancels a JobStore task with a Seatbelt check in another
-process group; the wrapper and check stop while an unrelated sibling survives.
-Missing native sandbox capability fails this required test.
-
-`tests/process_writer_outcome.rs` uses a local fake `gh` that records one accepted
-mutation then floods stdout. It verifies exactly one invocation, an indeterminate
-error identifying the operation, and an audit record. No remote service is used.
-
-The runner drains ready data while checking budget and cancellation, and sleeps
-only when neither stream advances. Deadline tests retain separate 100 ms cases.
+`tests/mcp_client.rs` checks allowed and denied reads, writes and network probes
+on Linux and macOS; the required Linux `tests/mcp_lifecycle.rs` job covers
+cancellation, Drop, protocol failure, crashes, deadlines and SIGKILL with a
+detached grandchild, then an empty cgroup, stopped heartbeat, reuse, limits and
+migration denial. `tests/process_lifecycle.rs` covers inherited pipes, blocked
+stdin, overflow, complete output and a short-lived leader with a background
+child; its required macOS case cancels a Seatbelt check in another process group
+while an unrelated sibling survives. `tests/process_writer_outcome.rs` proves one
+accepted mutation, an indeterminate error naming the operation and an audit
+record when a fake `gh` floods stdout.
 
 ## Desktop ownership and recovery
 

@@ -22,10 +22,9 @@ Agents open a guide only when a root file links it and the task needs it;
   [RELEASING.md](RELEASING.md). Every source folder has a `README.md` indexing
   its files, starting at [src/](../src/README.md) and [tests/](../tests/README.md).
 
-Some headings keep a number (`## 2. Prerequisites`, `## 7. Chat, soul, skills
-and goals`): that is the order of the original single-file manual, kept so old
-links resolve. Truth order for every claim is code, then
-[config.default.yaml](../assets/config.default.yaml), then INVARIANTS.md.
+Numbered headings (`## 2. Prerequisites`) keep the order of the original
+single-file manual so old links resolve. Truth order for every claim is code,
+then [config.default.yaml](../assets/config.default.yaml), then INVARIANTS.md.
 
 ## Setup, models and recovery
 
@@ -49,8 +48,7 @@ links resolve. Truth order for every claim is code, then
   `scripts/qwen3.8-27b-mlx-cg.Modelfile`, `scripts/smoke-ollama.sh`. Tests: `tests/ollama_manage.rs`,
   `tests/model_readiness.rs`, `tests/model_completion.rs`, `tests/cloud_model_selection.rs`.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md): one symptom, likely cause and fix
-  table. Rows cover missing spend or analytics, webhooks that never arrive,
-  bounded MCP diagnostics, slash commands unknown to older builds, coding-loop
+  table. Rows cover spend, webhooks, MCP diagnostics, older builds, coding-loop
   file reads, session isolation and memory gates. Includes read-only host
   inspection through declared MCP servers and bounded `/diag` logs.
   Check the installed build's `Resources/COMMIT` before comparing behavior.
@@ -148,8 +146,7 @@ links resolve. Truth order for every claim is code, then
 - [SECURE_RESEARCH.md](SECURE_RESEARCH.md): accounts and roles (first login,
   password replacement, API Keys, account storage, session ownership), HTTPS and
   native trust, terminal access, web permissions, and search, fetch and research.
-  Closes with the security boundaries and reproducible evidence. The reference
-  for a home's trust posture and permitted web.
+  The reference for a home's trust posture and permitted web.
   Owns: `src/server/{guards,headers,transport,env_keys,chat_web}.rs`, every
   `src/server/web_*.rs` (policy, provider, search, Google, Tavily, Firecrawl,
   research, ledger), `src/common/{authn,auth_store,local_tls,credential_store}.rs`.
@@ -223,9 +220,6 @@ links resolve. Truth order for every claim is code, then
 
 ## How these docs are kept
 
-`tests/invariant_guard.rs` enforces `DOCS_BUDGET`, group caps and a 150-word
-default for unlisted folder READMEs; the bake-off report has an explicit exemption.
-Edit the owning section; delete references alongside removed files. Folder
-READMEs index their folder and link to full guides. The `doc-sync` and `dep-sync`
-workflows in [AGENTS.md](../AGENTS.md#docs-policy) reconcile prose with code;
-lower explicit caps when files shrink.
+`tests/invariant_guard.rs` enforces `DOCS_BUDGET`, group caps and the 150-word
+folder-README default; the editing, sync and cap-lowering rules are in
+[AGENTS.md](../AGENTS.md#docs-policy).

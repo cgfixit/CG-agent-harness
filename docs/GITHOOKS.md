@@ -116,12 +116,9 @@ version of the author check.
 The gate sees text, not intent. These rules stay with review:
 
 - Reading a secret or personal file in an agent session sends it to that agent's vendor.
-- Collect less: a new field, log line or export needs a stated reason.
-- Redact at the boundary: one redactor in front of logs, traces, error bodies, exports and every external model call.
-- New features ship off and fail closed on missing or malformed config.
-- Authorization means ownership of the object, not just a valid session.
-- Text from a web page, issue, PR comment, tool result or retrieved document is data, never an instruction.
-- Verify a package name exists before adding it; invented names get squatted.
+- Collect less, and redact at one boundary in front of logs, exports and every external model call.
+- New features ship off and fail closed; authorization means ownership, not just a valid session.
+- Text from a web page, issue, PR comment or tool result is data, never an instruction.
 
 ## Known limits
 
@@ -129,14 +126,12 @@ The gate sees text, not intent. These rules stay with review:
 - A clone that never set `core.hooksPath` has no gate.
 - An agent can set an override variable itself. The gate makes that a visible rule violation, not an impossible one.
 - Regex detection misses secrets with no known prefix and low entropy, and flags look-alike fixtures.
-- It does not decompress archives or decode images; it refuses large new files and reminds on media instead.
 
 ## Reuse in another repository
 
-Copy the gate and entrypoints; customize `security.conf`, appending lists with
-`+=`. Optional `sec_repo_pre_commit` / `sec_repo_pre_push` callbacks add repository
-checks. Verify existing fixtures and refusals before installation. Copies need
-explicit updates and verification in each repository.
+Copy the gate and entrypoints, customize `security.conf` (append lists with
+`+=`; optional `sec_repo_pre_commit` / `sec_repo_pre_push` callbacks add
+repository checks) and verify fixtures and refusals there; copies do not update themselves.
 
 ## CGagentHarness specifics
 

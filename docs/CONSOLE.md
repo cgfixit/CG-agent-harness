@@ -17,7 +17,7 @@ persona, or reply never authorizes commands, commits, pushes or publication.
 | Chat model selection | Select local tags, `local`, `grok/xai`, or `claude/anthropic`. Cloud requires an enabled provider, active key and confirmation; restart resets to local. `/model status` shows key presence and profile sources. Only new text leaves; history, memory, skills and web context stay local. `/loop` refuses cloud (`CLOUD_CHAT_LOOP`). [Profiles](MODELS.md). |
 | Chat continuation | `/goal` and `/loop` provide bounded follow-up turns with request limits, completion-token budgets, cancellation, and optional auto-continue. |
 | Tool visibility and use | `/skills` and `/tools` distinguish registered adapters from readiness and execution evidence. Console commands invoke backend operations through fixed, validated interfaces; model prose does not become an arbitrary shell command. |
-| Chat web tools | Natural-language Google search and permitted URL fetch. API Keys accepts `SERPAPI_API_KEY`, `TAVILY_API_KEY` and `FIRECRAWL_API_KEY`; no active key selects public Google. Actual tool outcomes and source links appear in chat. |
+| Chat web tools | Natural-language keyword search (public Google, SerpAPI or Tavily, per `web.search.provider` and the saved key) and permitted URL fetch, with the opt-in Firecrawl fallback for exact reads. Tool outcomes and source links appear in chat ([search providers](SECURE_RESEARCH.md#google-search)). |
 | Web research | Grant exact or wildcard URL access for bounded discovery and BM25 search. `/web research` returns local-model answers with checked quotes, usage, and partial coverage. Fresh homes allow only Google search; selection and injection are account scoped. |
 | Accounts and API Keys | Fresh homes open one form for the private setup code and new password; completed homes show sign-in. Closing setup leaves a lock card. Administrator, Portal operator and Auditor permissions are enforced on API reads and writes. Administrators manage masked saved/active credentials in API Keys. |
 | Coding loop | Stage a task and files or plan, then confirm an isolated run that proposes bounded edits, runs fixed sandboxed checks, and feeds results into later attempts. |
@@ -96,17 +96,9 @@ history uses that window; [compaction](#local-history-compaction) reduces
 overflow against the configured token budget, preserving the goal and recent messages. Stored token totals can therefore
 exceed what is sent to the model.
 
-Runtime `sessions/` directories, named `.CGagentHarness/` homes and dotenv files
-are Git-ignored in this repository. Avoid `git add -f` for private files: ignore
-rules do not remove files already tracked by Git.
-A custom home with another name can expose notes, web extracts, or coding
-records. Keep the whole home outside the checkout. Before publication, these
-checks must show matching ignore rules and no tracked runtime files:
-
-```bash
-git check-ignore .CGagentHarness/config.yaml example-home/sessions/example.json .env
-git ls-files -- ':(glob)**/sessions/**' ':(glob)**/.CGagentHarness/**' '.env' '.env.*' ':!.env.example'
-```
+Runtime homes, `sessions/` directories and dotenv files are Git-ignored in this
+repository, and the [hook gate](GITHOOKS.md#cgagentharness-specifics) blocks
+them; keep a custom home outside the checkout and never `git add -f` private files.
 
 ```text
 /loop 3
@@ -170,8 +162,7 @@ concise evidence-first communication without creating a global persona. The
 original reference remains in `assets/soul.default.md`.
 Planning and coding use the same public shipped communication guidance, beneath
 their governed output contracts; private persona edits are not implicitly sent
-to a cloud coding provider. The two seeded coding skills are optional context,
-not injected automatically.
+to a cloud coding provider.
 
 ```text
 /soul status
@@ -230,10 +221,9 @@ candidate content as `applied`, unchanged base content as `pending`, and unrelat
 content as `interrupted`. Recovery writes no persona text; review an interrupted
 record and create a new proposal if needed.
 
-Unreadable or unwritable recovery storage blocks startup and persona operations. Before manual
-repair, preserve `soul.md`, `soul-history/`, and `soul-pending-apply.json`; do not
-delete the marker blindly. Recovery covers process interruption, not power loss or
-concurrent external edits; older unmarked interruptions need manual review.
+Unreadable recovery storage blocks startup and persona operations: preserve
+`soul.md`, `soul-history/` and the marker before manual repair. Recovery covers
+process interruption, not power loss or concurrent external edits.
 
 ### 7.3 Runtime skills and Codex development skills
 
@@ -243,8 +233,6 @@ concurrent external edits; older unmarked interruptions need manual review.
 | Optional runtime prompt skill | `<home>/skills/<id>/SKILL.md`; `/skill use <id>` | Adds bounded context to this session's chat |
 | Fixed check | `/skill check:cargo-test` | Selects a known check for an already staged coding request; no immediate execution |
 | Governed catalog entry | `/skills all` | Inventory only unless an implemented adapter says otherwise |
-| Codex development skill | Repository `.codex/skills` or Codex personal skill directory | Guides Codex maintaining the repository; not automatically an app runtime skill |
-| Claude Code development skill | Repository `.claude/skills` | Guides Claude Code maintaining the repository; not an app command |
 
 To add optional context, create a local file in the **actual active home**, e.g.
 `skills/review-notes/SKILL.md`. Use a normal directory and file within the home;
@@ -274,13 +262,12 @@ under `personality.prompt_skill_max_chars` and `personality.prompt_skills_total_
 
 After chat, `/skill status` reports the last successful snapshot's IDs, character
 counts, and SHA256 hashes; it can differ from current files and does not prove
-execution. Use `/agent job <id>` or `/agent status <run-id>` for coding
-evidence. A missing, empty, unreadable, or invalid selected file blocks chat; restore it
+execution. A missing, empty, unreadable, or invalid selected file blocks chat; restore it
 or `/skill clear`. Clearing removes optional prompt bodies, seeded selections
 included, but not files.
 
-Repository development skills are indexed in [AGENTS.md](../AGENTS.md); they
-neither enter app chat nor authorize publication.
+Repository development skills under `.claude/`, `.codex/` and `.github/` are
+indexed in [AGENTS.md](../AGENTS.md#project-skills); they never enter app chat.
 
 ### 7.4 Customize response style
 
@@ -302,12 +289,9 @@ enable `/soul on`, and inspect `/prompt`. Compare a factual, troubleshooting, an
 detailed question in `/session new Style check`; `/clear` is not a fresh session.
 Style instructions guarantee neither length nor correctness.
 
-For a session-specific alternative, create `<home>/skills/concise/SKILL.md` using
-the file format in [runtime skills](#73-runtime-skills-and-codex-development-skills) and put the desired writing rules in its body.
-Select `/skill use concise`, then inspect `/prompt`. To combine it with another
-skill, supply both IDs in the same command. Avoid contradictory rules in soul,
-selected skills and memory: a “give full detail” instruction can conflict with a
-“one sentence only” instruction.
+For a session-specific alternative, put the writing rules in a
+[runtime skill](#73-runtime-skills-and-codex-development-skills) and select it.
+Avoid contradictory rules across soul, selected skills and memory.
 
 **Style presets.** `/style <name>` selects a session preset;
 `/style off` is the default and `/style` prints
@@ -329,25 +313,12 @@ output; an explicit format request wins. `off` removes only style; soul remains.
 Changes affect future turns without rewriting history. Compare the same question,
 model, and settings in a new session; a loaded indicator alone proves no prose effect.
 
-**The `unslop` planner probe.** This optional local coding-planner probe is
-not a chat preset. It excludes proposed file bodies when possible, records a
-response hash and counts 16 fixed case-insensitive phrases such as "delve" and
-"game-changer." It may nudge another loop iteration but never rewrites an
-answer, forces an iteration, or applies to cloud planners; phrase matching is
-not a quality score.
-
-To enable it, merge this into the active home's `config.yaml`, then restart:
-
-```yaml
-unslop:
-  enabled: true
-  metrics_path: "logs/unslop.jsonl"
-```
-
-It ships disabled; metrics follow bounded JSONL policy. There is no configurable
-phrase list or `/unslop` command.
-See [the current probe](../src/agentic/unslop.rs) and
-[its loop integration](../src/agentic/real_repo_loop.rs).
+**The `unslop` planner probe** is not a chat preset: an optional local
+coding-planner probe (`unslop.enabled: true` plus `metrics_path:
+"logs/unslop.jsonl"`, restart) that counts 16 fixed phrases such as "delve" in
+proposals and may nudge another iteration. It never rewrites an answer, applies
+to cloud planners, or scores quality; there is no phrase list setting or
+`/unslop` command ([probe](../src/agentic/unslop.rs)).
 
 ### 7.7 Tools and connectors: available versus catalog-only
 
@@ -366,12 +337,10 @@ array is not a replacement for `/tools`.
 | Public web text | Chat web tools and `/web` controls in [SECURE_RESEARCH.md](SECURE_RESEARCH.md#search-fetch-and-research) | Google listings, permitted URL fetch, page research and optional context injection |
 | GitHub coding | Explicit `agentic.repo`, gates and prerequisites in [coding pipeline](CODING_PIPELINE.md); `/github` reports status | Separate governed child-process workflow; a chat reply does not execute Git commands |
 | Local file context for coding | Stage `/agent read <repo-relative-path[#Lx-Ly]>` before confirmation | Bounded reads from the governed repository clone; no general Mac filesystem mount |
-| `fsconnect` | Not implemented in this app | No slash command, datasource picker, filesystem indexing or YAML enable switch |
 | `netconnect` | CLI `status`, `devices`, and budgeted `diag`; `/net` aliases; gates ship false | LAN panel is GET `/api/netconnect` (scope, passive devices, tier state). No scan button. `/net diag` calls GET `/api/netconnect/diag`. Empty scope refuses armed tiers. `/web` still applies |
 | Log diagnostics | `/diag`; `diagnostics.logs_enabled` ships true; admin or `portal_auditor` | Bounded, redacted tails of allowlisted `<home>/logs/` files; one excerpt staged for the next local turn ([diagnostics](TROUBLESHOOTING.md#diagnostics)) |
-| `sqlconnect` | Not implemented in this app | No database connection configuration, query tool or ingestion workflow |
-| `github-public` catalog entry | Inventory only | Does not provide an independent public-repository connector |
-| `openai-compatible` catalog entry | Inventory only as a connector | Separately configured local compatible model/fallback paths exist; the row is not an activation control |
+| `fsconnect`, `sqlconnect` | Not implemented in this app | No slash command, datasource picker, filesystem indexing, database connection or YAML enable switch |
+| `github-public`, `openai-compatible` catalog entries | Inventory only | Neither is a connector or an activation control; local model and fallback paths are configured separately |
 | Runtime prompt skill | Home skill file plus `/skill use` | Prompt context, not an executable plugin or permission grant |
 
 Upstream names do not establish support; copying settings does not implement a connector,
@@ -403,12 +372,10 @@ candidates. Use `/memory` for status and `/help` for syntax. Exact save/remember
 still require `:: <reason>`; exact clear/forget still delete pinned notes, so
 inspect the command before sending.
 
-Typed slash commands require the server parser; a parser failure or invalid reply
-leaves the command unexecuted, so retry or inspect the pane. Pending parser
-responses are discarded after a session/account change or transcript clear.
-Exact `/loop stop` still cancels chat continuation while the parser is unavailable;
-extra words disable that local shortcut. Inspect results after every state-changing command. The [coding pipeline](CODING_PIPELINE.md) describes
-confirmation and persistence.
+Typed slash commands require the server parser; a parser failure leaves the
+command unexecuted, and pending parses are discarded on a session, account or
+transcript change. Exact `/loop stop` still cancels continuation while the
+parser is unavailable. Inspect results after every state-changing command.
 
 | Command family | Supported use |
 |---|---|
@@ -451,15 +418,14 @@ confirmation and persistence.
 | `/web mode allowlist\|denylist`, `/web block <pattern-or-host> [...]`, `/web unblock <id-or-pattern>` | Administrator. The header globe (red X) switches modes after a confirmation dialog. `denylist` reads every public URL except blocked rules; a host with no path blocks it and its subdomains. Both lists persist across switches |
 | `/web check <URL> [URL ...] [--group name]` | Exact permission diagnostic, with no network request or grant |
 | `/web cancel`, `/web fetch <URL> [URL ...] [--group name] [--crawl]`, `/web forget`, `/web inject` | Cancel research; fetch permitted URLs (`--crawl` follows links); clear/select extracts |
+| `/web job [id]`, `/web jobs` | Show the newest or one owned detached research job, or list them; jobs outlive the tab, not a restart ([research](SECURE_RESEARCH.md#fetch-discovery-and-research)) |
 | `/web pages [--group name] <query>`, `/web research [--group name] [--url URL ...] <question>` | Permitted-page discovery or local-model research; repeat `--url` per starting point; no new authority |
 | `/web search [--count 1..10] [--engine google\|pages] [--group name] <query>` | Google listings by default; a group selects permitted-page search |
 
-Web commands support these flags; `--help` opens help without mutation.
-Value flags accept `--flag value` or `--flag=value`; quote whole arguments
-when needed. In queries `-tokio` is text; use `--` before words starting `--`. Legacy
-`group=name` and single-pattern `allow PATTERN GROUP SEED` remain accepted.
-Unknown, repeated singleton, or missing-value flags refuse; fetch takes URLs,
-not appended prose.
+Web value flags accept `--flag value` or `--flag=value`; `--help` opens help
+without mutation. In queries `-tokio` is text; put `--` before words starting
+`--`. Legacy `group=name` and `allow PATTERN GROUP SEED` remain accepted.
+Unknown, repeated or missing-value flags refuse; fetch takes URLs, not prose.
 Memory `save` and `remember` split text from the required reason at the final `::`.
 
 Misspellings only suggest: ambiguous `/skil` offers both `/skill` and
@@ -504,8 +470,6 @@ uses the prepared offline sandbox described in [coding pipeline](CODING_PIPELINE
 
 Arbitrary shell check commands are not accepted. Python profiles need their own
 prepared tools/dependencies; the Cargo preparation helper does not install them.
-The command implementation is in [the console](../assets/static/harness.html), and
-fixed profiles are in [agent policy](../src/server/agent_policy.rs).
 
 ### Text-file attachments and prompt preview
 
@@ -554,9 +518,8 @@ reader refuses ZIP64/split archives, ambiguous entries, trailing payloads,
 custom entities/DTDs, non-UTF-8 XML and malformed or empty documents. Fixed
 safety ceilings: 256 parts, 256 KiB directory, 16 MiB declared expansion,
 64 KiB content-types XML, 1 MiB document XML/output, and 128 XML levels.
-A two-second cooperative deadline is checked on ZIP reads/seeks and XML events;
-this is bounded in-process parsing, not OS preemption or a hard real-time
-scheduler. Prompt clipping is separate and remains explicitly labeled.
+A two-second cooperative deadline bounds parsing in process. Prompt clipping is
+separate and remains explicitly labeled.
 
 ### Streaming chat and cancellation
 
@@ -588,11 +551,8 @@ permission are rechecked before each evidence-derived delta and final delivery.
 Revocation cannot retract delivered text. Model traffic has a 4 MiB ceiling and
 request deadline; a bounded channel applies backpressure within that deadline.
 
-`cargo test --test chat_stream`, the SSE decoder unit test, and
-`node scripts/chat-browser-acceptance.mjs` cover completion, fragmented UTF-8,
-concurrent-client cancellation, disconnect, malformed output, tool refusal and
-provisional browser rendering. Synthetic fixtures establish protocol behavior,
-not the quality or cancellation scheduling of a real model.
+`tests/chat_stream.rs` and `scripts/chat-browser-acceptance.mjs` pin the
+protocol with synthetic fixtures, not a real model's quality or cancellation timing.
 
 ### Local history compaction
 
