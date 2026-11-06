@@ -1,11 +1,11 @@
 # HTTP route inventory
 
 `registered_paths()` in `src/server/routes/mod.rs` combines `REGISTERED_PATHS`
-with authentication routes; its unit test checks coverage and `GET /api/tools`
-reports wiring.
+with authentication routes; `GET /api/tools` reports wiring.
 
-Every console route passes the [guard chain](../INVARIANTS.md): same-origin,
-direct loopback, rate limit, account/RBAC, mutation CSRF (`X-CyClaw-CSRF`).
+Console routes pass the [guard chain](../INVARIANTS.md): same-origin, direct
+loopback, rate limit, account/RBAC, mutation CSRF (`X-CyClaw-CSRF`); public
+routes keep only the early guards.
 Agent requests carry check-profile names and run IDs, never commands.
 
 ## Console and status

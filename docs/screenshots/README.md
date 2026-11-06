@@ -9,8 +9,8 @@ verify newer builds. `slash-single-line-note.txt` is an operator aside.
 
 - `console-chat-2026-10-30`, `console-chat-signed-in-*`, `console-sign-in-first-run-*`: README hero, the former hero and first-run sign-in (below).
 - `console-ux-*-{before,after}-*-chromium`: console UX pass, desktop and phone.
-- `0N-browser-*`, `0N-native-*`, `0N-help-*`: browser and native acceptance, help overlay.
-- `0N-session-*`, `05-independent-spend-ledger`: per-session spend isolation.
+- `0N-browser-*`, `0N-native-*`, `0N-help-*`, `03-safe-command-refusal`: browser and native acceptance, help overlay.
+- `0N-session-*`, `02-new-session-zero`, `05-independent-spend-ledger`: per-session spend isolation.
 - `*-safari`: ownership, cron, delivery, MCP and private-memory acceptance.
 - `slash-single-line-0N-native-*`: the 2026-09-22 native slash captures (below).
 - `searxng-provider-0N-*-chromium`: #647 Phase 1 provider label, against a loopback SearXNG-shaped fixture.

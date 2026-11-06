@@ -10,6 +10,8 @@ Prior bakeoff open report: https://brush-monarch-slate-dove.grok.me
 - `cases.json` cases C0 to C5 with gold route, allowed tools, expected cites.
 - `gold.json` facts, traps, routes, web facts.
 - `bakeoff10.py` runner and scorer. C0 is the original stuffed HTML task.
+- `modelfiles/` the `-cg` Ollama Modelfiles under test.
+- `results.json`, `report.md` last recorded run; `archive/` earlier runners.
 
 ## Run
 ```
