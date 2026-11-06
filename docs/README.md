@@ -151,7 +151,7 @@ links resolve. Truth order for every claim is code, then
   Closes with the security boundaries and reproducible evidence. The reference
   for a home's trust posture and permitted web.
   Owns: `src/server/{guards,headers,transport,env_keys,chat_web}.rs`, every
-  `src/server/web_*.rs` (policy, search, Google, SearXNG, Tavily, Firecrawl,
+  `src/server/web_*.rs` (policy, provider, search, Google, Tavily, Firecrawl,
   research, ledger), `src/common/{authn,auth_store,local_tls,credential_store}.rs`.
   Tests: `tests/auth_guards.rs`, `tests/secure_portal.rs`, `tests/security_headers.rs`,
   `scripts/test-first-run-password.mjs`, `tests/owner_isolation.rs`, `tests/chat_web.rs`, `tests/web_research.rs`,
