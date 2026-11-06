@@ -364,18 +364,15 @@ the Google grant; a home that removed it re-grants it:
 /web search veeam software cve
 ```
 
-`web.search.provider` is `auto` (above), `google-public`, `serpapi`, `tavily` or `searxng`.
+`web.search.provider` is `auto` (above), `google-public`, `serpapi` or `tavily`.
 Tavily needs its key and never changes `auto`. Each search is one basic-depth
 request (one credit) to the fixed `https://api.tavily.com/search`, key in the
 Authorization header; `include_answer`, `include_raw_content` and `include_images`
 are pinned off, and only title, URL and snippet are kept. HTTP 429, 432 and 433 are quota refusals.
-SearXNG uses only `web.search.searxng_url`: a loopback IP literal and explicit port,
-with `json` in its `search.formats`; anything else fails boot. Listings need no URL
-grant; `!`/`:` query tokens are refused, private links dropped, `unresponsive_engines`
-reported as `degraded`. `web.search.fallback_to_public_google` (ships true) and the
-opt-in `fallback_to_serpapi` (after SearXNG or Tavily) try the next hop only when a
-provider is unusable; the answer carries `fallback_from` and each hop logs
-`web_search_fallback`.
+SearXNG support was removed: `provider: searxng` or a non-empty `web.search.searxng_url`
+fails boot by name. `web.search.fallback_to_public_google` (ships true) and the opt-in
+`fallback_to_serpapi` (after Tavily) try the next hop only when a provider is unusable;
+the answer carries `fallback_from` and each hop logs `web_search_fallback`.
 
 The exact generated search URL also works; an exact homepage grant is not enough.
 `https://google.com/*` does not grant `www`; the apex endpoint may redirect and

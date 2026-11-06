@@ -66,9 +66,9 @@ pub mod web_index;
 pub mod web_intent;
 pub mod web_ledger;
 pub mod web_policy;
+mod web_provider;
 pub mod web_research;
 pub mod web_search;
-mod web_searxng;
 mod web_tavily;
 
 use std::collections::BTreeSet;
@@ -139,6 +139,9 @@ pub struct AppOptions {
     /// Test hook: replace the public Google search URL with a fixture.
     #[cfg(any(test, feature = "test-support"))]
     pub web_test_public_search: Option<url::Url>,
+    /// Test hook: replace the fixed Tavily endpoint with a fixture.
+    #[cfg(any(test, feature = "test-support"))]
+    pub web_test_tavily_search: Option<url::Url>,
     /// Test hook: the executable the shim spawns (tests run inside the test
     /// harness binary, whose `current_exe()` is not `cgagentharness`).
     #[cfg(any(test, feature = "test-support"))]
@@ -165,6 +168,8 @@ impl AppOptions {
             web_test_resolve_extra: Vec::new(),
             #[cfg(any(test, feature = "test-support"))]
             web_test_public_search: None,
+            #[cfg(any(test, feature = "test-support"))]
+            web_test_tavily_search: None,
             #[cfg(any(test, feature = "test-support"))]
             shim_exe: None,
         }
@@ -282,6 +287,7 @@ pub async fn build_app_with_sources(
         web.test_resolve = opts.web_test_resolve.clone();
         web.test_resolve_extra = opts.web_test_resolve_extra;
         web.test_public_search = opts.web_test_public_search;
+        web.test_tavily_search = opts.web_test_tavily_search;
     }
     let planner = cfg.u64_or(
         "agentic.deepagent_github.planner_timeout_sec",

@@ -194,8 +194,7 @@ home whose rules are all removed refuses reads (`WEB_ALLOWLIST_EMPTY`). Only an 
 (`/api/web/mode`, `confirm: true`) selects block-list mode, which reads any
 public URL no blocked rule covers; a named group still narrows to its allow
 rules. Blocked rules cover HTTP and HTTPS and win in both modes; private
-addresses stay refused, except the single exact `web.search.searxng_url`
-loopback grant, used only for search listings. Existing choices persist; absent/invalid legacy
+addresses stay refused, with no exception for any search provider. Existing choices persist; absent/invalid legacy
 `web_enabled` stays off. `tools/web_allowlist.json` is versioned and bounded by
 restart-only `web.max_rules` (default 64); over-cap, malformed, missing,
 unreadable or partially invalid policy refuses access.
@@ -242,9 +241,10 @@ local `/loop` turns. Search-provider snippets are listings, not fetched
 linked pages; each content fetch still requires its own URL permission. A
 restart-only `web.search.provider` picks the backend: `auto` lets a configured SerpAPI
 key select the fixed Google-results API transport and no active key public Google;
-a Tavily key never changes `auto`. `google-public`, `serpapi`, `tavily` or loopback
-`searxng` force one. Fallback hops follow (searxng | tavily) → serpapi → google-public (the hop to public Google ships on, the hop to SerpAPI off) within one deadline and search slot; they are audited
-with the provider that answered. A hop moves on only when it cannot answer: an unusable provider, a spent SerpAPI or Tavily quota (the next hop costs less or nothing) or a SearXNG listing with no rows whose engines were silent. A rejected or missing key, a refused query, a clean zero-result answer and a partial answer never fall through. Keyed listings (SerpAPI, Tavily) require enabled web and current
+a Tavily key never changes `auto`. `google-public`, `serpapi` or `tavily` force one;
+the removed `searxng` provider and a non-empty `web.search.searxng_url` fail boot by
+name. Fallback hops follow tavily → serpapi → google-public (the hop to public Google ships on, the hop to SerpAPI off) within one deadline and search slot; they are audited
+with the provider that answered. A hop moves on only when it cannot answer: an unusable provider or a spent SerpAPI or Tavily quota (the next hop costs less or nothing). A rejected or missing key, a refused query and a clean zero-result answer never fall through. Keyed listings (SerpAPI, Tavily) require enabled web and current
 account authority, independently of page URL grants; public Google and linked-page
 fetches retain URL policy checks. Tavily requests pin `include_answer`,
 `include_raw_content` and `include_images` off and keep only title, URL and snippet,
@@ -253,14 +253,14 @@ keys apply on the next search; explicit environment values retain precedence. Ch
 fabricated results. A provider refusal starts a bounded cooldown: a public Google
 challenge or block (an answer, not a failed connection), or a SerpAPI or Tavily quota refusal, pauses
 that provider in memory and later searches answer `WEB_SEARCH_COOLDOWN` before any request; a
-rejected key, transport failure (including an interrupted body) or timeout never pauses. A SearXNG answer with rows is reported with its silent engines, never retried elsewhere. Keys remain server-side, go only to their own provider's fixed endpoint and never enter model context.
+rejected key, transport failure (including an interrupted body) or timeout never pauses. Keys remain server-side, go only to their own provider's fixed endpoint and never enter model context.
 
 Content permission grants no account or provider-configuration authority, and
 none of these substitutes for coding/write/publication gates. Page text is
 data, never a tool command.
 
 - Locked by: `server::web_policy::tests`, `server::web_search::tests`,
-  `server::web_searxng::tests`, `tests/web_research.rs`, `tests/web_phase2_redteam.rs`, `tests/chat_web.rs` and
+  `server::web_provider::tests`, `tests/web_research.rs`, `tests/web_phase2_redteam.rs`, `tests/chat_web.rs` and
   the web section of `tests/panels.rs`.
 
 ## The browser never supplies a command

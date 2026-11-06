@@ -185,19 +185,17 @@ web:
   # Google; a Tavily key never changes auto. google-public, serpapi and tavily force one.
   # tavily needs TAVILY_API_KEY in API Keys and sends one basic search (1 credit) with
   # include_answer, include_raw_content and include_images pinned off: snippets only, never
-  # a provider answer or page body. searxng sends listings to searxng_url only:
-  # one http(s) loopback IP literal with an explicit port (e.g. http://127.0.0.1:8888), whose
-  # settings.yml lists json in search.formats. Hostnames, public/LAN IPs or a missing port fail
-  # boot; web_fetch of that URL stays refused. Fallback hops run in the fixed order
-  # (searxng | tavily) -> serpapi -> google-public inside one web.request_seconds deadline and one
-  # search slot; the hop to public Google ships on, the hop to SerpAPI ships off. A hop falls through only when it cannot answer: its provider is unusable
-  # (transport, timeout, non-200, bad body), a SerpAPI or Tavily quota is spent (a keyed
-  # cooldown is skipped), or SearXNG returned no rows because its engines were silent. Clean
-  # zero results, an answer with rows and a rejected or missing key never fall through.
+  # a provider answer or page body. SearXNG support was removed: provider searxng or a
+  # non-empty searxng_url fails boot by name (an empty searxng_url from an older home loads).
+  # Fallback hops run in the fixed order tavily -> serpapi -> google-public inside one
+  # web.request_seconds deadline and one search slot; a Tavily first hop leaves at least 2 s
+  # for the next. The hop to public Google ships on, the hop to SerpAPI ships off. A hop falls
+  # through only when it cannot answer: its provider is unusable (transport, timeout, non-200)
+  # or a SerpAPI or Tavily quota is spent (a keyed cooldown is skipped). Clean zero results,
+  # an answer with rows and a rejected or missing key never fall through.
   search:
-    provider: auto # auto|google-public|serpapi|tavily|searxng
-    searxng_url: "" # e.g. http://127.0.0.1:8888; validated at boot even when unused
-    fallback_to_serpapi: false # literal true: a failed searxng or tavily tries SerpAPI when a key is active
+    provider: auto # auto|google-public|serpapi|tavily
+    fallback_to_serpapi: false # literal true: a failed tavily tries SerpAPI when a key is active
     fallback_to_public_google: true # ships on (operator decision, 2026-11-01); literal false turns it off. A failed earlier hop tries public Google (fresh homes seed its URL rule)
     fallback_alert_per_hour: 20 # 1–1000 SerpAPI fallbacks per clock hour before one web_search_fallback_burst audit line
   # Firecrawl, restart-only: an opt-in second reader for exact permitted URLs (/web fetch, the
