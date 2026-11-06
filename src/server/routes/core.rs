@@ -1343,13 +1343,7 @@ pub(crate) async fn chat_inner(
                 "reply_reservation_tokens": reply,
             }))
         };
-        let keep_max = state
-            .cfg
-            .u64_or(
-                "chat.compact_keep_messages",
-                crate::server::compaction::DEFAULT_KEEP_MESSAGES,
-            )
-            .clamp(2, 40) as usize;
+        let keep_max = state.cfg.limit("chat.compact_keep_messages") as usize;
         // Every backend reaches the trigger at the same input size: it counts one
         // reply. The hard limit, the window checks and dispatch keep the
         // effective reservation, twice where hidden reasoning may spend it, so

@@ -51,7 +51,7 @@ pub const MISSING_MEANS_ON: &[&str] = &["diagnostics.self_knowledge", "diagnosti
 /// Shipped numbers the code reads as floating point. [`AppConfig::load`]
 /// requires a finite number for these and an unquoted non-negative integer
 /// for every other number in the shipped default. `tests/invariant_guard.rs`
-/// keeps this list equal to the keys read through `f64_or`/`f64_in`, plus the
+/// keeps this list equal to the keys read through `f64_or`/`f64_in`/`limit_f64`, plus the
 /// two `read_timeout` paths in `llm/inventory.rs` and `self_manual_min_score`.
 pub const FLOAT_KEYS: &[&str] = &[
     "api.harness_loop_rate_limit.window_seconds",
@@ -69,6 +69,128 @@ pub const FLOAT_KEYS: &[&str] = &[
     "models.local_llm.timeout_sec",
     "structured_memory.min_consolidation_confidence",
 ];
+
+/// What a [`Limit`] does with a present, well-typed number outside its range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutOfRange {
+    /// The nearest bound applies, and `serve` names the key at startup
+    /// ([`AppConfig::clamped_limits`]).
+    Clamp,
+    /// As [`OutOfRange::Clamp`], except `0`, which turns the feature off.
+    ClampKeepZero,
+}
+
+/// A numeric tunable read through [`AppConfig::limit`] or
+/// [`AppConfig::limit_f64`]: the code default for a missing key and the range
+/// a present value is held to. Type is checked earlier, at load.
+#[derive(Debug, Clone, Copy)]
+pub struct Limit<T> {
+    pub key: &'static str,
+    pub default: T,
+    pub min: T,
+    pub max: T,
+    pub out_of_range: OutOfRange,
+}
+
+const fn clamp(key: &'static str, default: u64, min: u64, max: u64) -> Limit<u64> {
+    Limit {
+        key,
+        default,
+        min,
+        max,
+        out_of_range: OutOfRange::Clamp,
+    }
+}
+
+const KIB: u64 = 1024;
+const MIB: u64 = 1024 * KIB;
+
+/// Every integer limit that clamps instead of refusing. A key's range and
+/// missing-key default live here once; readers call [`AppConfig::limit`].
+/// `tests/invariant_guard.rs` keeps each `config.default.yaml` "clamped to"
+/// comment equal to its row and refuses a `u64_or(..).clamp(..)` read.
+pub const NUMERIC_LIMITS: &[Limit<u64>] = &[
+    clamp("app.agent_job_poll_ms", 1500, 1000, 30_000),
+    clamp("chat.compact_keep_messages", 8, 2, 40),
+    clamp("chat.compact_max_prefill_sec", 120, 30, 1800),
+    clamp("chat.compact_tail_percent", 25, 10, 50),
+    clamp("compaction.summary_max_tokens", 768, 128, 2048),
+    clamp("logging.audit_lease_retry_ms", 2, 1, 1000),
+    clamp("logging.audit_lease_wait_ms", 50, 0, 5000),
+    Limit {
+        out_of_range: OutOfRange::ClampKeepZero,
+        ..clamp("logging.audit_queue_lines", 4096, 64, 65_536)
+    },
+    clamp("logging.max_file_bytes", 8 * MIB, 64 * KIB, 64 * MIB),
+    clamp("models.local_llm.inventory.refresh_sec", 30, 1, 3600),
+    clamp("models.local_llm.pull.max_response_bytes", MIB, KIB, 4 * MIB),
+    clamp("models.local_llm.pull.timeout_sec", 600, 1, 3600),
+    clamp("models.local_llm.warmup.keep_alive_sec", 300, 1, 3600),
+    clamp("models.local_llm.warmup.timeout_sec", 30, 1, 120),
+    clamp("personality.prompt_skill_max_chars", 6000, 1, 32_768),
+    clamp("personality.prompt_skills_total_chars", 16_000, 1, 65_536),
+    clamp("structured_memory.auto_consolidation_idle_ms", 2000, 20, 60_000),
+    clamp(
+        "structured_memory.episode_ttl_secs",
+        30 * 24 * 3600,
+        60,
+        366 * 24 * 3600,
+    ),
+    clamp("structured_memory.max_category_chars", 64, 1, 64),
+    clamp("structured_memory.max_consolidation_candidates", 8, 1, 16),
+    clamp("structured_memory.max_consolidation_episodes", 8, 1, 16),
+    clamp("structured_memory.max_episode_bytes_per_owner", 64 * KIB, 256, 8 * MIB),
+    clamp("structured_memory.max_episode_summary_chars", 500, 32, 4000),
+    clamp("structured_memory.max_episodes_per_owner", 128, 1, 1024),
+    clamp("structured_memory.max_export_bytes", 256 * KIB, KIB, 8 * MIB),
+    clamp("structured_memory.max_fact_chars", 1000, 1, 4000),
+    clamp("structured_memory.max_facts_per_owner", 64, 1, 256),
+    clamp("structured_memory.max_proposals_per_owner", 32, 1, 128),
+    clamp("structured_memory.max_reason_chars", 1000, 1, 1000),
+    clamp("structured_memory.max_retrieval_results", 4, 1, 16),
+    clamp("structured_memory.max_retrieval_token_chars", 32, 1, 64),
+    clamp("structured_memory.max_retrieval_tokens", 8, 1, 16),
+    clamp("structured_memory.max_search_query_chars", 64, 1, 256),
+    clamp("structured_memory.max_search_results", 32, 1, 64),
+    clamp("structured_memory.max_search_time_ms", 250, 10, 5000),
+    clamp("structured_memory.max_selected_facts", 8, 1, 32),
+    clamp("structured_memory.pinned_prompt_chars", 1500, 1, 3000),
+    clamp("structured_memory.selected_fact_prompt_chars", 1500, 1, 3000),
+    clamp("structured_memory.status_poll_ms", 30_000, 250, 30_000),
+    clamp("structured_memory.suggestion_idle_ms", 2000, 10, 30_000),
+    clamp("structured_memory.suggestion_max_input_chars", 8000, 256, 32_000),
+    clamp("structured_memory.suggestion_max_queue", 8, 1, 32),
+    clamp("structured_memory.suggestion_queue_ttl_secs", 300, 1, 3600),
+];
+
+/// Floating-point limits that clamp; every key is also in [`FLOAT_KEYS`].
+pub const FLOAT_LIMITS: &[Limit<f64>] = &[Limit {
+    key: "structured_memory.min_consolidation_confidence",
+    default: 0.40,
+    min: 0.0,
+    max: 1.0,
+    out_of_range: OutOfRange::Clamp,
+}];
+
+impl Limit<u64> {
+    fn apply(&self, value: u64) -> u64 {
+        if value == 0 && self.out_of_range == OutOfRange::ClampKeepZero {
+            0
+        } else {
+            value.clamp(self.min, self.max)
+        }
+    }
+}
+
+/// The table row for `key`. A key outside the table is a programming error
+/// that `tests/invariant_guard.rs` rejects before it can ship.
+#[track_caller]
+fn row<T>(table: &'static [Limit<T>], key: &str) -> &'static Limit<T> {
+    table
+        .iter()
+        .find(|limit| limit.key == key)
+        .unwrap_or_else(|| panic!("{key} has no row in common::config's limit tables"))
+}
 
 /// Dotted path of every number in the shipped default. Only mappings are
 /// walked; numbers inside sequences belong to the module that reads them.
@@ -205,6 +327,44 @@ impl AppConfig {
             Some(Value::Number(n)) => n.as_u64().unwrap_or(default),
             _ => default,
         }
+    }
+
+    /// A [`NUMERIC_LIMITS`] key: its default when missing, otherwise held to
+    /// its range. [`Self::load`] has already refused a malformed value; one
+    /// that reaches here through [`Self::from_str`] reads as the default.
+    #[track_caller]
+    pub fn limit(&self, key: &str) -> u64 {
+        let limit = row(NUMERIC_LIMITS, key);
+        limit.apply(self.get(key).and_then(Value::as_u64).unwrap_or(limit.default))
+    }
+
+    /// A [`FLOAT_LIMITS`] key, read like [`Self::limit`]. A non-finite value
+    /// (only possible through [`Self::from_str`]) reads as the default.
+    #[track_caller]
+    pub fn limit_f64(&self, key: &str) -> f64 {
+        let limit = row(FLOAT_LIMITS, key);
+        self.get(key)
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map_or(limit.default, |value| value.clamp(limit.min, limit.max))
+    }
+
+    /// One line per present limit that [`Self::limit`] or
+    /// [`Self::limit_f64`] moves to a bound. It names the key, the range and
+    /// the bound used, never the configured value. Malformed values are left
+    /// to [`Self::check_numbers`].
+    pub fn clamped_limits(&self) -> Vec<String> {
+        let ints = NUMERIC_LIMITS.iter().filter_map(|limit| {
+            let value = self.get(limit.key)?.as_u64()?;
+            let used = limit.apply(value);
+            (used != value).then(|| format!("{} is outside {}–{}; using {used}", limit.key, limit.min, limit.max))
+        });
+        let floats = FLOAT_LIMITS.iter().filter_map(|limit| {
+            let value = self.get(limit.key)?.as_f64().filter(|v| v.is_finite())?;
+            let used = value.clamp(limit.min, limit.max);
+            (used != value).then(|| format!("{} is outside {}–{}; using {used}", limit.key, limit.min, limit.max))
+        });
+        ints.chain(floats).collect()
     }
 
     /// A missing limit uses its default; an explicitly malformed limit is refused.
@@ -506,6 +666,92 @@ mod tests {
             );
             assert!(!error.message.contains("15m") && !error.message.contains("900"));
         }
+    }
+
+    #[test]
+    fn limit_rows_are_shipped_keys_whose_shipped_value_never_clamps() {
+        let shipped = cfg(AppConfig::embedded_default());
+        let numeric = shipped_numeric_keys();
+        let mut keys: Vec<&str> = NUMERIC_LIMITS
+            .iter()
+            .map(|l| l.key)
+            .chain(FLOAT_LIMITS.iter().map(|l| l.key))
+            .collect();
+        let rows = keys.len();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), rows, "one row per key");
+        for limit in NUMERIC_LIMITS {
+            let key = limit.key;
+            assert!(numeric.iter().any(|k| k == key) && !FLOAT_KEYS.contains(&key), "{key}");
+            assert!((limit.min..=limit.max).contains(&limit.default), "{key}");
+            assert_eq!(cfg("{}").limit(key), limit.default, "{key}");
+            assert_eq!(
+                Some(shipped.limit(key)),
+                shipped.get(key).and_then(Value::as_u64),
+                "{key}"
+            );
+        }
+        for limit in FLOAT_LIMITS {
+            let key = limit.key;
+            assert!(FLOAT_KEYS.contains(&key), "{key}");
+            assert!((limit.min..=limit.max).contains(&limit.default), "{key}");
+            assert_eq!(cfg("{}").limit_f64(key), limit.default, "{key}");
+            assert_eq!(
+                Some(shipped.limit_f64(key)),
+                shipped.get(key).and_then(Value::as_f64),
+                "{key}"
+            );
+        }
+        assert!(shipped.clamped_limits().is_empty());
+    }
+
+    #[test]
+    fn a_present_limit_clamps_and_is_reported_by_key_and_range_only() {
+        let key = "structured_memory.max_facts_per_owner";
+        let high = cfg("structured_memory: {max_facts_per_owner: 1000}");
+        assert_eq!(high.limit(key), 256);
+        assert_eq!(high.clamped_limits(), [format!("{key} is outside 1–256; using 256")]);
+        assert!(!high.clamped_limits()[0].contains("1000"));
+        let low = cfg("structured_memory: {max_facts_per_owner: 0}");
+        assert_eq!(low.limit(key), 1);
+        assert_eq!(low.clamped_limits(), [format!("{key} is outside 1–256; using 1")]);
+        assert!(cfg("structured_memory: {max_facts_per_owner: 256}")
+            .clamped_limits()
+            .is_empty());
+        // Only `load` refuses a malformed value; a fixture's reads as the default.
+        let quoted = cfg("structured_memory: {max_facts_per_owner: '1000'}");
+        assert_eq!(quoted.limit(key), 64);
+        assert!(quoted.clamped_limits().is_empty());
+        // `0` turns the audit queue off rather than clamping to its floor.
+        let audit = "logging.audit_queue_lines";
+        let off = cfg("logging: {audit_queue_lines: 0}");
+        assert_eq!(off.limit(audit), 0);
+        assert!(off.clamped_limits().is_empty());
+        let small = cfg("logging: {audit_queue_lines: 8}");
+        assert_eq!(small.limit(audit), 64);
+        assert_eq!(
+            small.clamped_limits(),
+            [format!("{audit} is outside 64–65536; using 64")]
+        );
+        let float = "structured_memory.min_consolidation_confidence";
+        let over = cfg("structured_memory: {min_consolidation_confidence: 1.5}");
+        assert_eq!(over.limit_f64(float), 1.0);
+        assert_eq!(over.clamped_limits(), [format!("{float} is outside 0–1; using 1")]);
+        assert_eq!(
+            cfg("structured_memory: {min_consolidation_confidence: .nan}").limit_f64(float),
+            0.40
+        );
+        assert_eq!(
+            cfg("structured_memory: {min_consolidation_confidence: 0.75}").limit_f64(float),
+            0.75
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "has no row")]
+    fn a_limit_read_outside_the_tables_is_a_programming_error() {
+        cfg("{}").limit("loop.max_turns");
     }
 
     #[test]

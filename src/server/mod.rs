@@ -500,6 +500,10 @@ pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result
             drift.join(", ")
         );
     }
+    // None of these is reloadable, so a restart is the only time one changes.
+    for clamped in cfg.clamped_limits() {
+        tracing::warn!("config.yaml: {clamped}");
+    }
     let plaintext = cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE);
     let store = crate::common::credential_store::OsCredentialStore::for_home(&home.root);
     let loaded = env_keys::load_startup(&home.env_path(), plaintext, &store)?;

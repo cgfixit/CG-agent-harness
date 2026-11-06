@@ -326,7 +326,7 @@ impl AppState {
     /// endpoint without `/api/ps` is not probed (up to the inventory timeout)
     /// on every turn.
     pub async fn live_window(&self, model: &str) -> Option<u64> {
-        let refresh = crate::llm::ollama::clamped(&self.cfg, "models.local_llm.inventory.refresh_sec", 30, 1, 3600);
+        let refresh = self.cfg.limit("models.local_llm.inventory.refresh_sec");
         if let Some(window) = self.ollama.cached_window(model, refresh) {
             return window;
         }
@@ -432,16 +432,12 @@ impl AppState {
         let Some(native) = crate::llm::ollama::native_base_url(&self.chat.base_url) else {
             return;
         };
-        let keep_alive = crate::llm::ollama::clamped(&self.cfg, "models.local_llm.warmup.keep_alive_sec", 300, 1, 3600)
+        let keep_alive = self
+            .cfg
+            .limit("models.local_llm.warmup.keep_alive_sec")
             .max(min_keep_alive_sec)
             .min(3600);
-        let timeout = Duration::from_secs(crate::llm::ollama::clamped(
-            &self.cfg,
-            "models.local_llm.warmup.timeout_sec",
-            30,
-            1,
-            120,
-        ));
+        let timeout = Duration::from_secs(self.cfg.limit("models.local_llm.warmup.timeout_sec"));
         if crate::llm::ollama::load_model(&native, model, keep_alive, timeout).await {
             self.probe_window_state(model).await;
         }
@@ -559,12 +555,7 @@ impl AppState {
             self.prompt_cap(model),
             reply,
             tuning.speed.as_ref(),
-            self.cfg
-                .u64_or(
-                    "chat.compact_max_prefill_sec",
-                    super::model_limits::DEFAULT_MAX_PREFILL_SEC,
-                )
-                .clamp(30, 1800),
+            self.cfg.limit("chat.compact_max_prefill_sec"),
         )
     }
 

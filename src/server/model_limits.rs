@@ -27,10 +27,6 @@ use crate::llm::profile;
 /// The loaded window the shipped budgets were sized for.
 pub const TUNED_WINDOW: u64 = compaction::BASE_WINDOW;
 
-/// Default `chat.compact_max_prefill_sec`: how long the measured prefill may take
-/// to read the input a window-scaled compaction trigger admits.
-pub const DEFAULT_MAX_PREFILL_SEC: u64 = 120;
-
 /// The compaction trigger for a model whose window auto_tune verified. Above
 /// the 32768 the shipped budgets were sized for, `configured` (already
 /// tightened by tuning) rises to `proposed`, the tuning's trigger for this
@@ -533,7 +529,7 @@ pub async fn tune(state: Arc<AppState>, model: String) {
     let Ok(limits) = InventoryLimits::from_config(&state.cfg) else {
         return skipped("inventory_limits");
     };
-    let keep_alive = crate::llm::ollama::clamped(&state.cfg, "models.local_llm.warmup.keep_alive_sec", 300, 1, 3600);
+    let keep_alive = state.cfg.limit("models.local_llm.warmup.keep_alive_sec");
     let mut speed = None;
     for _ in 0..GATE_ATTEMPTS {
         // A newer selection starts its own tune; this one stops competing for the gate.
@@ -941,7 +937,7 @@ mod tests {
                 compaction::prompt_cap(Some(window)),
                 4_096,
                 speed,
-                DEFAULT_MAX_PREFILL_SEC,
+                120,
             )
         };
         // At or below the window the shipped budgets were sized for, nothing moves.

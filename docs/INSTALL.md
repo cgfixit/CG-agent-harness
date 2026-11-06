@@ -569,8 +569,8 @@ on first run. Common operator settings follow:
 | `attachments.max_concurrent_uploads` | 2 | Attachment upload bodies (up to ~45 MiB each) buffered at once; range 1–8, excess requests get 503 `ATTACHMENT_BUSY` |
 | `attachments.body_timeout_sec` | 360 | Deadline for receiving one upload body; range 5–600, expiry gives 408 `ATTACHMENT_TIMEOUT` and frees the permit |
 | `structured_memory.*` | see file | Per-owner caps (facts, proposals, episodes, bytes), search/retrieval limits, suggestion queue and consolidation thresholds |
-| `web.evidence_tokens` | 6000 | Evidence budget when no tokenizer is available, clamped 256–6000. Keep 3000 if the Ollama window is smaller than 32768 or unverified |
-| `web.model_tokens` | 2048 | Maximum synthesis completion, clamped 256–2048 |
+| `web.evidence_tokens` | 6000 | Evidence budget when no tokenizer is available, refused outside 256–6000. Keep 3000 if the Ollama window is smaller than 32768 or unverified |
+| `web.model_tokens` | 2048 | Maximum synthesis completion, refused outside 256–2048 |
 | `web.total_tokens` | 28000 | Planning and synthesis budget, 2048–128000 (32000 without a larger measured window); sized for a **verified** 32768-token Ollama window ([model setup](MODELS.md)). Keep 16000 if `/api/ps` shows a smaller `context_length` |
 
 Quoted YAML strings such as `"true"` never arm a gate, and a quoted, empty or non-finite number stops startup. See [coding pipeline](CODING_PIPELINE.md) for the

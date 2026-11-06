@@ -192,10 +192,7 @@ fn attempt(
     result["source"] = json!(source.name());
     result["episode_id"] = json!(episode);
     result["created_ts"] = json!(crate::common::now_ts());
-    let max = state
-        .cfg
-        .u64_or("structured_memory.suggestion_max_queue", 8)
-        .clamp(1, 32) as usize;
+    let max = state.cfg.limit("structured_memory.suggestion_max_queue") as usize;
     queue.attempts.retain(|(id, _)| id != owner);
     while queue.attempts.len() >= max {
         queue.attempts.pop_front();
@@ -214,13 +211,13 @@ pub fn status(state: &AppState, owner: &str) -> Value {
         "chat_unavailable_reason": chat_reason,
         "coding_unavailable_reason": coding_reason,
         "last_attempt": queue.attempts.iter().find(|(id, _)| id == owner).map(|(_, value)| value),
-        "poll_interval_ms": state.cfg.u64_or("structured_memory.status_poll_ms", 30000).clamp(250, 30000),
+        "poll_interval_ms": state.cfg.limit("structured_memory.status_poll_ms"),
         "mode": mode(state), "queued": queue.jobs.iter().filter(|j| j.owner == owner).count(),
         "running": queue.running_owner.as_deref() == Some(owner),
         "approval_required": true, "input_persistence": "bounded RAM only; lost on restart",
-        "max_input_chars": state.cfg.u64_or("structured_memory.suggestion_max_input_chars", 8000).clamp(256, 32000),
-        "max_queue": state.cfg.u64_or("structured_memory.suggestion_max_queue", 8).clamp(1, 32),
-        "queue_ttl_secs": state.cfg.u64_or("structured_memory.suggestion_queue_ttl_secs", 300).clamp(1, 3600),
+        "max_input_chars": state.cfg.limit("structured_memory.suggestion_max_input_chars"),
+        "max_queue": state.cfg.limit("structured_memory.suggestion_max_queue"),
+        "queue_ttl_secs": state.cfg.limit("structured_memory.suggestion_queue_ttl_secs"),
     })
 }
 
@@ -308,17 +305,11 @@ pub fn enqueue_for_model(
             json!({"queued":false,"reason":"injection_detected"}),
         );
     }
-    let cap = state
-        .cfg
-        .u64_or("structured_memory.suggestion_max_input_chars", 8000)
-        .clamp(256, 32000) as usize;
+    let cap = state.cfg.limit("structured_memory.suggestion_max_input_chars") as usize;
     // Each side receives half the shared budget; never retain an unbounded transcript.
     let input = crate::common::clip_chars(&state.audit.redact(input), cap / 2);
     let output = crate::common::clip_chars(&state.audit.redact(output), cap / 2);
-    let max = state
-        .cfg
-        .u64_or("structured_memory.suggestion_max_queue", 8)
-        .clamp(1, 32) as usize;
+    let max = state.cfg.limit("structured_memory.suggestion_max_queue") as usize;
     if queue.jobs.len() >= max {
         state
             .audit
@@ -473,10 +464,7 @@ fn discard(state: &AppState, job: &Job, reason: &str, attempts: &mut VecDeque<(S
 
 async fn worker(state: Arc<AppState>) {
     loop {
-        let idle = state
-            .cfg
-            .u64_or("structured_memory.suggestion_idle_ms", 2000)
-            .clamp(10, 30000);
+        let idle = state.cfg.limit("structured_memory.suggestion_idle_ms");
         tokio::select! {
             biased;
             _ = state.shutdown.cancelled() => return,
@@ -484,10 +472,7 @@ async fn worker(state: Arc<AppState>) {
         }
         let job = {
             let mut queue = state.memory_suggestions.0.lock().unwrap_or_else(|e| e.into_inner());
-            let ttl = state
-                .cfg
-                .u64_or("structured_memory.suggestion_queue_ttl_secs", 300)
-                .clamp(1, 3600);
+            let ttl = state.cfg.limit("structured_memory.suggestion_queue_ttl_secs");
             let Queue { jobs, attempts, .. } = &mut *queue;
             jobs.retain(|job| {
                 let reason = if job.created.elapsed() > Duration::from_secs(ttl) {
@@ -516,10 +501,7 @@ async fn worker(state: Arc<AppState>) {
             (job, gate, cancel)
         };
         let (job, gate, cancel) = job;
-        let ttl = state
-            .cfg
-            .u64_or("structured_memory.suggestion_queue_ttl_secs", 300)
-            .clamp(1, 3600);
+        let ttl = state.cfg.limit("structured_memory.suggestion_queue_ttl_secs");
         let reason = if job.created.elapsed() > Duration::from_secs(ttl) {
             Some("queue_expired")
         } else {

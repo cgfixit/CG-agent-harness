@@ -27,20 +27,10 @@ pub struct PullLimits {
 impl PullLimits {
     pub fn from_config(cfg: &AppConfig) -> Self {
         Self {
-            timeout: Duration::from_secs(clamped(cfg, "models.local_llm.pull.timeout_sec", 600, 1, 3600)),
-            max_bytes: clamped(
-                cfg,
-                "models.local_llm.pull.max_response_bytes",
-                1_048_576,
-                1024,
-                4_194_304,
-            ) as usize,
+            timeout: Duration::from_secs(cfg.limit("models.local_llm.pull.timeout_sec")),
+            max_bytes: cfg.limit("models.local_llm.pull.max_response_bytes") as usize,
         }
     }
-}
-
-pub fn clamped(cfg: &AppConfig, path: &str, default: u64, min: u64, max: u64) -> u64 {
-    cfg.u64_or(path, default).clamp(min, max)
 }
 
 /// Origin used for `/api/tags`, `/api/pull`, `/api/generate`. Strips a trailing `/v1`.
@@ -299,8 +289,8 @@ pub async fn run_warmup(backend: &ResolvedLocalBackend, model: &str, cfg: &AppCo
         audit.log(json!({"event":"ollama_warmup_degraded","reason":"model"}));
         return;
     }
-    let keep_alive = clamped(cfg, "models.local_llm.warmup.keep_alive_sec", 300, 1, 3600);
-    let timeout = Duration::from_secs(clamped(cfg, "models.local_llm.warmup.timeout_sec", 30, 1, 120));
+    let keep_alive = cfg.limit("models.local_llm.warmup.keep_alive_sec");
+    let timeout = Duration::from_secs(cfg.limit("models.local_llm.warmup.timeout_sec"));
     if load_model(&native, model, keep_alive, timeout).await {
         tracing::info!(model = model, "ollama keep_alive warmup ok");
         audit.log(json!({"event":"ollama_warmup_ok","model":model}));
