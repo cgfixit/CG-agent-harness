@@ -31,12 +31,10 @@ Paths are relative to `CGAGENTHARNESS_HOME` (default `~/.CGagentHarness`).
 | Facts search index | Derived, contentless FTS5 index in the structured store | Lexical search over facts only; no episode search. |
 | Detached coding jobs / run records | Owner-scoped jobs; shared underlying pipeline run records | Evidence about a coding run, not automatically injected memory. The completion-suggestion hook only uses the initiating account's current completed run. |
 
-`session_summary` and `insight` are categories, not storage systems. A generated
-summary covers **one completed turn or run**, not an unseen session. Applying it
-creates a fact without filling an episode's human `semantic_summary`. The
-Harness does not scan or import external Codex conversations or old archives.
-Use pinned notes for shared preferences and reviewed structured facts for
-account-private memory.
+`session_summary` and `insight` are categories, not stores: a suggestion covers
+**one completed turn or run**, applying it creates a fact without filling the
+episode's human `semantic_summary`, and old archives are never imported. Use
+pinned notes for shared preferences and reviewed facts for private memory.
 
 ## Pinned notes
 
@@ -48,9 +46,7 @@ account-private memory.
 ```
 
 - `/memory` shows inclusion state, note IDs, structured-memory gates and fact/proposal counts.
-- `/memory add <note>` stores those exact words. For example,
-  `/memory add save all session history` stores the sentence. It does not load
-  or summarize other sessions.
+- `/memory add <note>` stores those exact words; it never loads or summarizes sessions.
 - Adding a note does **not** turn inclusion on. `/memory on` includes saved notes
   in later chat; `/memory off` keeps the notes and excludes them.
 - `/memory forget <id>` deletes one note; `/memory clear` deletes all notes.
@@ -115,10 +111,9 @@ Invalid modes disable suggestions. Local chat and `/prompt` receive source eligi
 separate from pinned notes. Empty results are valid; no setting approves
 proposals. Human-summary consolidation and retrieval remain separate.
 
-Open **Memory** or `/memory proposals`. The pane refreshes proposals,
-queue state and outcomes without clearing review reasons. Cards show full text
-and affected memories. Collapsed **Suggestion activity** and card details contain
-source IDs, models, counts, and failures. **Refresh** reloads manually.
+Open **Memory** or `/memory proposals`: cards show full text and affected
+memories, and collapsed **Suggestion activity** holds source IDs, models,
+counts and failures.
 
 Review content, action, sources, and repository scope; confidence is not proof.
 Enter a reason and choose **Save memory** or **Dismiss**. Both confirm the displayed
@@ -130,12 +125,11 @@ The HTTP equivalent is POST `/api/structured-memory/proposals/{id}` with
 `X-CyClaw-CSRF`. Proposing needs no confirmation; direct fact writes require
 confirmation and a reason. Verify facts with `/memory facts` and `/prompt`.
 
-An empty result is valid. Inspect completion attempts and run history: gates, injection checks, queue limits, model/schema failures, filtering,
-and proposal capacity can prevent drafts without failing completed work. Review
-pending proposals to free capacity. Queued inputs remain RAM-only: expiry, clear,
-or restart can discard them. Receipts explain the loss; repeat relevant input
-or write a reviewed `/memory remember` summary. Old conversations are never
-replayed. See [completion suggestions](STRUCTURED_MEMORY.md#completion-suggestions).
+Gates, injection checks, queue limits, model or schema failures, filtering and
+proposal capacity can all prevent drafts without failing the work; review
+pending proposals to free capacity. Queued inputs are RAM-only, so expiry, clear
+or restart discards them with a receipt, and nothing is replayed
+([completion suggestions](STRUCTURED_MEMORY.md#completion-suggestions)).
 
 ## Save a fact manually
 
@@ -216,15 +210,12 @@ budget.
 
 ## Turn automation or the store off
 
-To keep manual facts but stop capture and suggestions, leave the store enabled
-and run `/memory auto-suggest-chat off`, `/memory auto-suggest-coding off`,
-`/memory auto-consolidate off` and `/memory capture off` (or set their config
-keys false and restart).
-Saved facts and pending proposals remain. To stop opening the database, set
-`enabled: false` and restart. This does not delete it or disable pinned notes,
-persona, or chat-history persistence. Successful exchanges still enter the
-account-owned `sessions/*.json`, and the next turn uses bounded recent messages.
-No structured-memory flag disables session persistence.
+To keep manual facts but stop automation, leave the store enabled and turn the
+capture and suggestion gates off (`/memory capture off`, `/memory
+auto-suggest-chat off`, `/memory auto-suggest-coding off`, `/memory
+auto-consolidate off`, or config `false` plus restart); facts and proposals
+remain. `enabled: false` stops opening the database without deleting it or
+disabling pinned notes, persona or session persistence.
 
 `/clear` clears the display. Sessions Clear has its separate deletion flow: it
 cancels waiting/in-flight chat suggestions and keeps facts and proposals; derived

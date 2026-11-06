@@ -58,17 +58,10 @@ them from `/api/status`.
 `web.concurrency` is **restart-only** (it sizes shared fetch permits), as are `web.goal_web_default`, `web.search*`.
 `web.max_rules` (default 64, 1–256) is restart-only too: a cap below the saved
 rule count refuses the policy until it is raised.
-TLS, authentication, credentials, `security.allow_plaintext_key_file` (default
-false), models (including cloud profiles), sandbox, coding policy, notifications
-and unknown keys require restart. Cloud profiles are config-owned. Invalid
-`context_window` (must exceed output), `temperature` (0–1) or `rpm` (1–100000
-calls/minute) refuses startup without echoing values; profile `max_output_tokens`,
-`timeout_sec` and `count_timeout_sec` clamp to 1–32768, 1–720 and 0.1–10 (zero or
-non-finite refuses), while the shared `models.cloud_chat` limits refuse malformed or
-out-of-range values. `tool_support` is informational. Absent profiles keep shared
-settings; context/RPM stay unset and temperature is omitted. [Anthropic](https://platform.claude.com/docs/en/api/messages/create)
-deprecates temperature for newer models; [xAI](https://docs.x.ai/developers/model-capabilities/text/best-practices)
-supports it.
+TLS, authentication, credentials, `security.allow_plaintext_key_file`, models
+(including cloud profiles, whose bounds the shipped YAML comments and
+[MODELS.md](MODELS.md) state), sandbox, coding policy, notifications and
+unknown keys require restart.
 This route never writes YAML or changes permissions. Use [normal restart and
 settings guidance](INSTALL.md#which-settings-take-effect-where).
 

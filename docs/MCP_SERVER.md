@@ -49,11 +49,10 @@ agent, chat, or loop tool.
    `localhost` is not an alias for a different Host authority. The console
    retains its own account and TLS configuration.
 
-The Rust SDK is `rmcp`, exact-pinned ([version](DEPENDENCIES.md#retained-constraints)),
-with only server and Streamable HTTP transport features. The transport is stateless, including for older supported
-protocol versions, and creates no durable MCP sessions. The server suppresses SDK trace output because protocol traces can
-contain memory. Call and refusal audits contain only public key IDs, recognized
-tool names, and coarse outcomes. They omit arguments, fact text, tokens, and hashes.
+The exact-pinned `rmcp` SDK ([version](DEPENDENCIES.md#retained-constraints))
+serves stateless Streamable HTTP with no durable sessions; SDK traces are
+suppressed because they can contain memory, and audits record only key IDs,
+tool names and coarse outcomes.
 
 ## Keys, isolation and revocation
 
@@ -120,10 +119,8 @@ mapping or remote listener is installed. Drop/shutdown closes the owned listener
 
 ## Future remote exposure requires a separate reviewed change
 
-This release has no remote mode. LAN, private-overlay, and public modes require
-separate acceptance for interface selection, TLS, machine identity, revocable
-tool and owner scope, Host and Origin rules, bounded load, console isolation,
-and rollback. Tool grants must not change deployment mode. Each new write,
-session, spend, audit, or evaluation tool needs its own capability and tests.
-Remote tools must not write canonical facts directly or inherit coding authority.
-Memory proposals must still pass the scanner and human application flow.
+This release has no remote mode. LAN, overlay or public exposure needs a
+separately reviewed change covering interface selection, TLS, machine identity,
+revocable scope, Host and Origin rules, bounded load and rollback; each new
+tool needs its own capability and tests, and none may write canonical facts or
+inherit coding authority.

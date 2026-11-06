@@ -107,10 +107,10 @@ using Rosetta** unchecked. Run every command from the clone, as your user.
    backend build takes several minutes.
 6. **Confirm:** `scripts/install-macos.sh --check` ends with
    `everything required is present`.
-7. **Start:** `scripts/start-macos.sh --trust-cert` starts Ollama with a
-   32768-token window, opens the app, and opens its console in your browser.
-   `--trust-cert` asks for your password once so the browser trusts this home's
-   certificate. Note the printed `CGagentHarness console: https://127.0.0.1:<port>/`.
+7. **Start:** `scripts/start-macos.sh --trust-cert` starts Ollama, opens the app
+   and its console in your browser, and trusts this home's certificate after one
+   password prompt ([section 7](#7-open-the-console-in-a-browser)). Note the
+   printed `CGagentHarness console: https://127.0.0.1:<port>/`.
 8. **Set your password:** fresh homes open a form for the private setup code
    and new password. The app keeps **Harness → Setup and recovery** open with the
    code and a **Copy setup code** button until you do (**Cmd and +**, that is
@@ -156,13 +156,10 @@ The universal app includes `arm64` and `x86_64`. `uname -m` reports
 translated shell. Check **About This Mac** to distinguish them. The supported
 packaging recipe below runs on Apple Silicon and cross-builds Intel.
 
-The bundle targets macOS 12+, but that target does not prove acceptance on every
-older OS or Intel Mac. See [desktop details](DESKTOP.md) for tested hardware and revisions.
-
-In Finder, press Cmd-I on the app. **Kind** must say Universal. Leave **Open using
-Rosetta** unchecked on Apple Silicon; both app and backend have native slices.
-If an Intel warning persists, verify Finder or Dock opened the new copy and check
-separate Intel-only tools. See Apple's [Rosetta guidance](https://support.apple.com/en-us/102527).
+The bundle targets macOS 12+, which does not prove acceptance on every older OS
+or Intel Mac ([desktop details](DESKTOP.md)). In Finder, Cmd-I on the app must
+say **Kind: Universal**; leave **Open using Rosetta** unchecked on Apple Silicon
+([Rosetta guidance](https://support.apple.com/en-us/102527)).
 
 ### 2.2 Xcode Command Line Tools
 
@@ -216,10 +213,6 @@ From the repository root, `rustup show active-toolchain` should resolve to 1.88;
 inside `desktop/`, it should resolve to 1.90. The packaging script disables
 implicit toolchain installation, so install both before running it.
 
-Download toolchains and dependencies during preparation. Generated-code checks
-must not invoke rustup or use credentials from your real home.
-See [Offline Cargo verification](CODING_PIPELINE.md#offline-cargo-verification).
-
 ### 2.5 Ollama
 
 [Ollama](https://ollama.com) runs the local chat and planning model. First run
@@ -237,13 +230,10 @@ Ollama or automatically downloads models; deliberate [API pulls](API_ROUTES.md#c
 are supported. `install-macos.sh` installs Ollama unless `--no-ollama` and pulls
 a model only with `--model`.
 
-Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 assume
-`OLLAMA_CONTEXT_LENGTH=32768` is set **before** the Ollama process starts.
-[Model setup](MODELS.md) is the set-and-verify step. The harness sends no `num_ctx`.
-A Modelfile `num_ctx` beats that variable; pin 32768 with the
-[local derived tag](MODELS.md#pin-32768-with-a-local-derived-tag). The shipped
-planner default is that tag, `qwen3.8:27b-mlx-cg`; the chat default is the
-operator-local tag `gemma4-26b-a4b:ud-q4_k_xl-cg`.
+Seeded web budgets assume `OLLAMA_CONTEXT_LENGTH=32768` is set **before** the
+Ollama process starts; the harness sends no `num_ctx`. [Model setup](MODELS.md)
+covers that window, the locally derived `-cg` tags both shipped defaults name,
+and how to verify the loaded window.
 
 ### 2.6 (Optional, for the coding pipeline only) GitHub CLI
 
@@ -357,13 +347,11 @@ bundle to Applications or a directory you own. Open it from Finder or the Dock.
 The app owns its backend on a dynamically selected loopback port; it does not
 adopt a server already running on port 8790. No login service is installed.
 
-The current app is **ad-hoc signed and not notarized**. Gatekeeper may require
-per-app approval under macOS Privacy & Security, or a managed policy may refuse
-it. After verifying the source and attempting to open it, follow Apple's
-[per-app Open Anyway procedure](https://support.apple.com/en-us/102445) if offered.
-Do not disable global Gatekeeper settings or strip quarantine as a blanket fix.
-A damaged-bundle warning calls for re-download and integrity checks. Signature verification and a
-successful build do not prove native interaction acceptance; see
+The app is **ad-hoc signed and not notarized**: after verifying the source,
+follow Apple's [per-app Open Anyway procedure](https://support.apple.com/en-us/102445)
+if Gatekeeper asks, and never disable Gatekeeper globally or strip quarantine as
+a blanket fix. A damaged-bundle warning calls for re-download and integrity
+checks. A signature or a green build is not native acceptance; see
 [desktop details](DESKTOP.md).
 
 ## 6. First run
@@ -380,13 +368,10 @@ Finder, or start the standalone server:
 ./target/release/cgagentharness serve
 ```
 
-Upgrades keep existing settings; to adopt the boundaries, merge
-`auth.enabled: true` and `tls.enabled: true` into the active configuration.
+Upgrades keep existing settings ([adopting the defaults](SECURE_RESEARCH.md)).
 A fresh home's `admin` signs in once with the code in private
 `<home>/setup-code` (the app's **Cmd and +** window and `start-web.sh` show it),
-then must replace the password. No MCP machine key can be minted for an account
-that has not. See
-[TLS trust, migration and recovery](SECURE_RESEARCH.md).
+then must replace the password; no MCP machine key can be minted before that.
 
 The standalone server prints its address, for example:
 
@@ -413,13 +398,10 @@ agentic:
 ```
 
 Both shipped defaults are that derived tag; if you skip `ollama create`, set an
-installed tag in each.
-
-Restart only after editing configuration; `/model use` applies to chat without
-a restart and does not change the coding planner. Existing homes are not
-overwritten with new configuration defaults; review new fields when upgrading.
-Fresh homes seed the bundled default `soul.md`; [soul](CONSOLE.md#72-default-soul-effective-prompt-and-persona-editing) explains editing
-and existing-home behavior.
+installed tag in each. `/model use` applies to chat without a restart and never
+changes the planner. Upgrades do not rewrite existing configuration; review new
+fields. Fresh homes leave the persona unset;
+[soul](CONSOLE.md#72-default-soul-effective-prompt-and-persona-editing) explains editing.
 
 In the app, the console opens automatically. **Harness → Setup and recovery**
 (**Cmd and +**, that is Cmd, Shift and =) shows the setup code (it stays open until the password is replaced) and its owned endpoint and model/tool diagnostics. Use **Check installed
@@ -442,23 +424,15 @@ If replies stall, check that [Ollama](MODELS.md) is available at its configured 
 ### Memory setup
 
 Run `/memory` to inspect gates. Fresh homes enable capture, suggestions and
-retrieval; upgrades preserve settings. To open a disabled store, set `enabled: true`
-under `structured_memory` in `config.yaml` and restart. Administrators can then
-enable `/memory capture on`, `/memory auto-suggest-chat on` and
-`/memory auto-suggest-coding on`.
-
-Select an installed local tag with `/model use <exact-tag>`, including 9B models.
-Under `structured_memory`, set `suggestion_mode: summaries` for summaries or `both`
-for summaries and useful details; restart after editing. Empty results can be valid.
-
-After completed work, open **Memory** for pending proposals. Review each and enter
-a reason to save, update, deactivate or dismiss; generation never changes saved
-facts. **Suggestion activity** explains empty, skipped, failed or interrupted work.
-Restart preserves proposals, but queued inputs are lost.
-
-`/memory search <query>` only finds facts; `/memory retrieve <query>` includes
-matches in that chat. Automatic retrieval separately requires `retrieval` and
-`auto_retrieval`; inspect `/prompt`. See [Memory](MEMORY_GUIDE.md) for gates and recovery.
+retrieval; upgrades preserve settings ([enable an existing home](MEMORY_GUIDE.md#enable-in-an-existing-home)).
+Suggestions need the selected local tag listed in
+`structured_memory.suggestion_supported` and a `suggestion_mode` (`summaries`,
+`insights` or `both`); restart after editing. After completed work, open
+**Memory**, review each proposal and enter a reason to save or dismiss;
+generation never changes saved facts, and **Suggestion activity** explains empty
+or failed work. `/memory search` only lists facts; `/memory retrieve` injects
+matches for one chat; automatic retrieval needs `retrieval` and `auto_retrieval`.
+Inspect `/prompt`. [Memory](MEMORY_GUIDE.md) covers gates and recovery.
 
 ## 7. Open the console in a browser
 
@@ -516,7 +490,6 @@ Uninstalling/replacing the bundle preserves this external data.
 | `logs/` | Bounded audit/spend/optional metrics logs |
 
 
-Fresh homes require HTTPS and login; metadata keys grant no account authority.
 **API Keys** manages credentials and distinguishes saved/active masks. Startup
 loads Keychain, Secret Service or Credential Manager. Linux builds vendor the
 D-Bus client and do not require D-Bus development headers. Inherited values override stored values, including
@@ -601,9 +574,6 @@ on first run. Common operator settings follow:
 | `web.model_tokens` | 2048 | Maximum synthesis completion, clamped 256–2048 |
 | `web.total_tokens` | 28000 | Planning and synthesis budget, 2048–128000 (32000 without a larger measured window); sized for a **verified** 32768-token Ollama window ([model setup](MODELS.md)). Keep 16000 if `/api/ps` shows a smaller `context_length` |
 
-Upgrades preserve `config.yaml`; missing settings use documented fallbacks.
-Explicit settings win. Restart after edits.
-
 Quoted YAML strings such as `"true"` never arm a gate, and a quoted, empty or non-finite number stops startup. See [coding pipeline](CODING_PIPELINE.md) for the
 coding-pipeline gates and [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md)
 for every memory key.
@@ -650,14 +620,12 @@ script or put secrets in soul, memory, skill files or shared prompts.
 
 ### Close, quit and reopen
 
-Closing the desktop window hides it while the backend runs. Dock reopen or a
-second launch focuses the same instance. During work, Cmd-Q offers **Keep
-running** or **Cancel work and quit**. Ctrl-C or SIGTERM stops `serve`. Neither
-path installs login startup or resumes requests or approvals after reboot.
-
-On Unix and Windows, one server owns a home at a time; competing starts refuse. Quit its owner before switching between app
-and standalone use; do not delete a live lock file. Different homes can run
-independently. This lock does not cover manually invoked agentic CLI writers.
+Closing the desktop window hides it while the backend runs; Cmd-Q offers
+**Keep running** or **Cancel work and quit** during work ([desktop
+recovery](DESKTOP.md#closing-quitting-and-recovery)). Ctrl-C or SIGTERM stops
+`serve`. Neither path installs login startup or resumes requests or approvals
+after reboot. One server owns a home at a time; quit its owner before switching
+between app and standalone use, and never delete a live lock file.
 
 ### Retained jobs and runs
 
@@ -748,9 +716,6 @@ gh auth status
 git remote get-url origin
 ```
 
-`/api/ps` must report `context_length` 32768 for the seeded web budgets
-([Ollama](#25-ollama)); otherwise keep 16000 and 3000 in the home `config.yaml`.
-
 Check both configured model tags, the selected repository and write gates. The
 existing hidden `agentic test` command checks some configuration/tools, but is
 not a complete doctor: it does not certify model selection, authentication,
@@ -787,15 +752,8 @@ It neither proves real-model acceptance nor tests editing. See the [coding
 pipeline](CODING_PIPELINE.md) for disposable Chrome, model, edit, verification,
 approval, and publication acceptance.
 
-For a source-built app, also verify the separate desktop crate and packaged backend:
-
-```bash
-(cd desktop && cargo fmt --all -- --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
-(cd desktop && cargo deny check)
-CGAH_TEST_BINARY='dist/CG Agent Harness.app/Contents/MacOS/cgagentharness' python3 scripts/test-desktop-backend.py
-scripts/verify-desktop-bundle.sh 'dist/CG Agent Harness.app' universal
-(cd dist && shasum -a 256 -c SHA256SUMS)
-```
+For a source-built app, run the desktop crate checks and bundle verification in
+[rebuild and verify](DESKTOP.md#rebuild-and-verify).
 
 For console interaction checks with installed Chrome and a Node runtime providing
 WebSocket (the recorded local run used Node 24):
@@ -804,13 +762,10 @@ WebSocket (the recorded local run used Node 24):
 node scripts/chat-browser-acceptance.mjs
 ```
 
-The script uses an isolated profile and mock APIs. Set `CHROME_BIN` for another
-installation. It checks the console and CSP, not model behavior or WKWebView.
-The fixture needs no new app build or model download.
-
-Run desktop checks after [packaging](INSTALL.md#52-macos-app). Build and HTTP
-checks do not prove native window, chooser, clipboard or quit behavior; record
-those separately in the PR body.
+The script uses an isolated profile and mock APIs (`CHROME_BIN` selects another
+Chrome); it checks the console and CSP, not model behavior or WKWebView. Build
+and HTTP checks never prove native window, chooser, clipboard or quit behavior;
+record those in the PR body.
 
 ## Tests and CI/CD
 

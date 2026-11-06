@@ -15,7 +15,7 @@ Agent requests carry check-profile names and run IDs, never commands.
 | GET | `/` | Console page (`assets/static/harness.html` with CSRF/CSP placeholders filled) |
 | GET | `/preview/html` | Sandboxed inline-only HTML preview, no network. |
 | GET | `/static/{name}` | Static console assets |
-| GET | `/api/status` | Public minimal status; operational `model`, `configured_model`, `selection_overrides_config` require account access |
+| GET | `/api/status` | Public minimal status; model fields require account access |
 | GET | `/api/tools` | Wired-route and tool inventory |
 | GET | `/api/netconnect` | Read-only LAN panel (query ignored; see [netconnect.md](netconnect.md)) |
 | GET | `/api/netconnect/diag` | Budgeted TCP probe of configured targets; 409 unless the tier may run ([diagnostics](netconnect.md#diagnostics)) |
@@ -26,7 +26,7 @@ Agent requests carry check-profile names and run IDs, never commands.
 | POST | `/api/diag/inject`, `/api/diag/forget` | Stage the last read for the next local chat turn of `session_id`, or drop it |
 | GET | `/api/harness/runs` | Retained harness-optimizer runs (`/harness`) |
 | GET | `/api/analytics/summary` | Owned sessions plus shared spend/coding analytics (`/analytics`; [details](SPEND_AND_NOTIFICATIONS.md#analytics-sessions-tokens-and-coding-runs)) |
-| POST | `/api/config/reload` | Reload the non-secret limits allowlist (administrator, CSRF-guarded; see [CONFIG_RELOAD.md](CONFIG_RELOAD.md)) |
+| POST | `/api/config/reload` | Reload the limits allowlist (administrator; [CONFIG_RELOAD.md](CONFIG_RELOAD.md)) |
 
 ## Accounts and sessions
 
@@ -51,17 +51,16 @@ Roles, scrypt bounds and session timeouts: [SECURE_RESEARCH.md](SECURE_RESEARCH.
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/chat` | One turn; streams SSE when `Accept: text/event-stream` |
-| POST | `/api/chat/attachments` | Upload up to 3 txt/md/json/csv/log/docx files, 15 MB each; home quota 64 MB/512 blobs; beyond `attachments.max_concurrent_uploads` returns 503; blobs are `0600` ([retention](CONSOLE.md#text-file-attachments-and-prompt-preview)) |
-| GET | `/api/notes-corpus` | List owned jailed `.md`/`.txt` metadata (ID, MIME, SHA prefix, bytes), without bodies or host paths. |
-| POST | `/api/notes-corpus` | Copy/classify `.md`/`.txt` into `notes_corpus/<owner-digest>/` under `notes_corpus.*` caps; local prompt retrieval. |
-| DELETE | `/api/notes-corpus/{id}` | Unlink one owner-owned note. |
+| POST | `/api/chat/attachments` | Upload up to 3 txt/md/json/csv/log/docx files (15 MB each; home quota 64 MB/512 blobs; 503 past `attachments.max_concurrent_uploads`) ([retention](CONSOLE.md#text-file-attachments-and-prompt-preview)) |
+| GET, POST | `/api/notes-corpus` | List owned jailed `.md`/`.txt` metadata (no bodies or host paths), or ingest files under `notes_corpus.*` caps for local prompt retrieval |
+| DELETE | `/api/notes-corpus/{id}` | Unlink one owned note |
 | POST | `/api/chat/cancel` | Cancel the active turn (`/loop stop`) |
 | POST | `/api/loop/start` | Start an owner-bound server-side `/loop` run: `session_id`, optional `goal`/`web_mode`, limit overrides |
 | POST | `/api/loop/stop` | Stop by `run_id` |
 | GET | `/api/loop/status` | One run (`?run_id=`) or a session's run (`?session_id=`) |
 | GET | `/api/loop/events/{run_id}` | SSE per-turn progress ([server loops](CONSOLE.md#71-sessions-and-bounded-chat-continuation)) |
-| POST | `/api/sessions/{session_id}/prompt-history` | Owner-scoped: save one submitted composer line (`{text}`) for ArrowUp recall, refused or not; last 50 kept, immediate repeats once; `/api set` lines omitted |
-| DELETE | `/api/sessions/{session_id}/attachment-pins` | Owner-scoped unpin; keeps blobs/messages; refuses during generation; session GET reports `live_attachment_pins` |
+| POST | `/api/sessions/{session_id}/prompt-history` | Owner-scoped composer history line (`{text}`) for ArrowUp recall; last 50 kept, `/api set` lines omitted |
+| DELETE | `/api/sessions/{session_id}/attachment-pins` | Owner-scoped unpin; keeps blobs; refused during generation |
 | POST | `/api/model` | Select the local model or `grok` / `claude` (`/model use`) |
 | GET | `/api/ollama/inventory` | Live loopback tags (`/model list`) plus configured-model readiness |
 | GET | `/api/ollama/profile` | Selected-model facts (`/model profile`) |
@@ -69,12 +68,12 @@ Roles, scrypt bounds and session timeouts: [SECURE_RESEARCH.md](SECURE_RESEARCH.
 | POST | `/api/ollama/pull/cancel` | Abort the in-flight pull |
 | POST | `/api/prompt/preview` | Show the assembled system prompt (`/prompt`) |
 | POST | `/api/slash/parse` | Suggest-don't-guess slash normalizer; never executes mutations |
-| GET | `/api/spend/summary` | Guarded retained spend, completeness, file statuses, skipped rows and read-time USD |
+| GET | `/api/spend/summary` | Retained spend summary with completeness and read-time USD |
 | POST | `/api/spend/predict` | Estimate unsent cloud cost (Analytics → Tokens and cost → Estimate draft; [details](SPEND_AND_NOTIFICATIONS.md)) |
 | GET, POST | `/api/sessions` | List your sessions or create an owned one |
 | GET | `/api/sessions/legacy` | Administrator metadata inventory of unassigned legacy sessions |
-| POST | `/api/sessions/{session_id}/adopt` | Administrator adopts into own account with confirmation/reason; clears prior goal-stage approval |
-| POST | `/api/sessions/search` | Owned local transcript search; case-insensitive literal phrases across chunk boundaries; snippets ≤160 characters |
+| POST | `/api/sessions/{session_id}/adopt` | Administrator adoption with confirmation and reason; clears prior goal-stage approval |
+| POST | `/api/sessions/search` | Owned local transcript search ([bounds](CONSOLE.md#search-and-export-session-transcripts)) |
 | POST | `/api/sessions/clear` | Delete owned sessions; retain foreign, legacy, corrupt and staged files |
 | GET | `/api/sessions/{session_id}` | Load one owned session, with its `web_sources` read ledger |
 | GET | `/api/sessions/{session_id}/export` | Markdown export; also written 0o600 under home/exports |
@@ -83,9 +82,6 @@ Roles, scrypt bounds and session timeouts: [SECURE_RESEARCH.md](SECURE_RESEARCH.
 | GET, POST | `/api/sessions/{session_id}/goal-stage` | Goal staging status and transitions |
 | GET, POST | `/api/sessions/{session_id}/skills` | Skill selection for the session |
 | GET, POST | `/api/sessions/{session_id}/structured-facts` | Selected structured-memory facts (explicit include) |
-
-See [CONSOLE.md](CONSOLE.md) and
-[streaming chat](CONSOLE.md#streaming-chat-and-cancellation).
 
 ## Persona, skills and pinned notes
 
@@ -133,7 +129,7 @@ Confirmation and gate rules are in [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 | Method | Path | Purpose |
 |---|---|---|
 | GET, POST | `/api/web` | Status and on/off toggle |
-| POST | `/api/web/allow` | Atomically grant exact URLs or explicit wildcards, with group/optional seeds |
+| POST | `/api/web/allow` | Atomically grant exact URLs or explicit wildcards with group and seeds |
 | POST | `/api/web/deny` | Remove a grant |
 | POST | `/api/web/mode` | Administrator selects allowlist/denylist; denylist requires confirmation |
 | POST | `/api/web/block`, `/api/web/unblock` | Administrator adds/removes blocks |
@@ -150,11 +146,9 @@ The `cgagentharness web` CLI drives these routes through the running portal.
 
 ## Private MCP memory server
 
-A separate default-off loopback listener accepts `POST /mcp` with dedicated
-machine bearer keys, never console cookies. Portal binding does not expose it.
-`mcp-key create/list/revoke` manages its credentials. `GET /api/mcp` and
-`/tools mcp` display configuration without probing or authorizing it. See
-[activation, limits and exposure contract](MCP_SERVER.md).
+A separate default-off loopback listener accepts `POST /mcp` with machine
+bearer keys minted by `mcp-key`; console cookies never authorize it
+([activation and limits](MCP_SERVER.md)).
 
 ## MCP client
 
@@ -177,8 +171,8 @@ Bounds and capability policy: [MCP_CLIENT.md](MCP_CLIENT.md). `/loop` has no MCP
 | POST | `/api/agent/jobs/{job_id}/cancel` | Cancel a job |
 | GET | `/api/notifications` | Owned destinations and retained delivery metadata; no URLs, credentials or job content |
 | POST | `/api/notifications/{delivery_id}/replay` | Confirmed owner replay within current grants/limits; never reruns a job |
-| POST | `/api/agent/schedules/preview` | Preview five interval/cron occurrences; return bounded owner-bound receipt |
-| GET, POST | `/api/agent/schedules` | List owned schedules or activate the exact previewed, owned reviewed-goal request |
+| POST | `/api/agent/schedules/preview` | Preview five occurrences and return an owner-bound receipt |
+| GET, POST | `/api/agent/schedules` | List owned schedules or activate the exact previewed request |
 | GET | `/api/agent/schedules/{schedule_id}` | One schedule |
 | POST | `/api/agent/schedules/{schedule_id}/cancel` | Cancel a schedule |
 | GET | `/api/agent/runs` | Retained run metadata (gate below) |
@@ -192,7 +186,5 @@ Run and job creation share `agent::prepare_run`, then spawn through the shim; se
 [CODING_PIPELINE.md](CODING_PIPELINE.md#git-approval-and-publication).
 Run routes need literal `agentic.enabled: true`; otherwise they return HTTP 409
 `AGENTIC_DISABLED` without reading or reconciling records. `GET /api/github/status` stays HTTP 200.
-
-The two notification routes serve default-off completion webhooks; destinations,
-payload and crash semantics are in
+Completion-webhook destinations and payloads:
 [SPEND_AND_NOTIFICATIONS.md](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook).

@@ -17,13 +17,9 @@ These keys are outside `RELOADABLE`. Edit `config.yaml` under `~/.CGagentHarness
 | Key | Shipped value | What this build does with it |
 |---|---|---|
 | `enabled` | `false` | Master switch. `false` refuses the CLI (exit 4) and registers no tools. The panel still answers and does not read tables. |
-| `passive_listen` | `false` | Flag only. `/net watch` maps here and does not join multicast. |
-| `discovery` | `false` | Flag only. No discovery tool is registered. |
-| `port_scan` | `false` | Flag only. `/net ports` maps here and does not scan. |
+| `passive_listen`, `discovery`, `port_scan`, `anomaly_detection`, `home_automation` | `false` | Flags only; no tool exists and `/net watch`, `/net ports` and `/net device` refuse ([tiers](#tiers-in-this-build)). |
 | `diagnostics` | `false` | Arms `netconnect_diag`; see [Diagnostics](#diagnostics). |
 | `throughput` | `false` | Flag only. A literal `true`, or any `throughput_endpoint`, warns at load. Passive commands do not use the endpoint. |
-| `anomaly_detection` | `false` | Flag only. No anomaly tool is registered. |
-| `home_automation` | `false` | Flag only. `/net device` always refuses, including when this flag and the scope are set. |
 
 `runnable: true` in `status` means `tier_may_run` is true. It does not mean a tier tool exists. Only `diagnostics` has a tool in this build. Another armed tier still returns `NETCONNECT_REFUSED` with `netconnect tier <name> has no tool in this build`.
 
@@ -40,11 +36,9 @@ The validator accepts an entry only when all of the following hold. One rejected
 - The whole block sits inside one of these containers: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, or `127.0.0.0/8`. Anything else is `outside RFC1918 and loopback`.
 - The same canonical CIDR is not repeated.
 
-Accepted examples include `10.0.0.0/16`, `10.1.2.0/24`,
-`172.31.255.0/24`, `192.168.1.0/24`, `127.0.0.0/16`, and `127.0.0.1/32`.
-Public, link-local, CGNAT, multicast, reserved, adjacent non-private, IPv6, and
-overly broad private blocks are rejected. Control characters are removed from
-error text.
+Accepted examples: `10.1.2.0/24`, `172.31.255.0/24`, `192.168.1.0/24`,
+`127.0.0.1/32`. Public, link-local, CGNAT, multicast, IPv6 and overly broad
+private blocks are rejected; error text has control characters removed.
 
 A route is kept only when some allowed CIDR covers that route's entire prefix. A neighbor or interface address is kept only when some allowed CIDR contains that address. A default gateway is kept only when the gateway address itself is inside the scope.
 
@@ -107,8 +101,6 @@ netconnect:
   allowed_cidrs:
     - 192.168.1.0/24
 ```
-
-Restart `serve` after saving that file. The CLI picks the file up on the next invocation.
 
 Names that survive filtering are JSON objects `{"value":"...","untrusted":true}`. Interface and route labels must start with an ASCII letter or digit and use only ASCII letters, digits, `_`, `.`, `:`, and `-`. The label is dropped when it is longer than the smaller of 32 and `untrusted_string_max_chars`. A label that fails that rule is omitted. Host names are capped, control characters are removed, and the result is marked untrusted. They are display data. They are not argv, a command, or a path.
 
@@ -187,7 +179,6 @@ The [gate contract](../INVARIANTS.md#netconnect-is-fail-closed-and-lan-scoped) o
 | Exit 3, `outside RFC1918 and loopback` or `prefix wider than /16` | That CIDR failed the validator. The rest of the list is not applied. `/8` and `/12` private aggregates are too wide; use `/16` or longer inside those blocks. |
 | Exit 3, `host bits must be zero` or `not a valid IPv4 CIDR` | Use the network address (`192.168.1.0/24`) and a prefix from 16 to 32. IPv6 is rejected. |
 | Exit 3, `diagnostics_targets[...] is outside allowed_cidrs` | Every target must already sit in `allowed_cidrs`. A host name is not a target. |
-| Exit 3, cannot read config file | `--config` or the home `config.yaml` is missing or unreadable. |
 | Exit 0, `scope_empty: true`, `active_tiers_refused: true` | The master gate and a tier flag are on, and the scope is empty. The tier is not runnable. `status` still succeeds. |
 | Exit 0, `runnable: true`, and a later call says `has no tool in this build` | The tier is armed inside a valid scope. Only `diagnostics` has a tool. |
 | `diag` exit 4, `NETCONNECT_BUDGET`, `truncated: true` | A limit stopped the run; `truncated_reason` names it. Raise that key or narrow the targets. |
@@ -197,13 +188,8 @@ The [gate contract](../INVARIANTS.md#netconnect-is-fail-closed-and-lan-scoped) o
 | stderr `netconnect throughput is configured...` | The throughput flag or endpoint is set. Passive commands do not call it. The warning is not a scan. |
 | `did you mean /net status or /net devices?` | The line was a near-miss. Nothing ran. Send an exact line. |
 | Console text `this console does not run active tiers or device control` | The subcommand was not `status`, `devices`, or `diag`. The panel did not refresh. No tier ran. |
-| Panel HTTP 400 | Host guard, or the `netconnect` section failed to load (a bad CIDR, limit, or endpoint). Collectors did not run. |
-| Panel HTTP 403 | CSRF guard. Collectors did not run. |
-| Panel HTTP 405 | The method was not GET. |
-| Panel HTTP 502 | A collector failed after the guards passed. |
+| Panel HTTP 400, 403, 405 or 502 | Host guard or a `netconnect` load error; CSRF guard; a method other than GET; a collector failure after the guards passed. Only 502 ran a collector. |
 | Empty device list while `enabled` is true | The scope matches nothing on this machine, or the scope is empty (tables are read, then every row is dropped). Public, link-local, CGNAT, and IPv6 rows are omitted. |
-| Edits to `config.yaml` seem ignored by the console | This section is restart-only. Restart `serve`. The CLI reads the file each time. |
-| `/api/tools` has no netconnect rows | `enabled` is not the boolean `true`. Arming a tier without the master flag adds no row. |
 
 ## Tiers in this build
 

@@ -43,10 +43,8 @@ episodes referenced by pending proposals.
    Runs are durable and idempotent by owner, ordered episode set, and summarizer version.
 10. **Optional automatic consolidation** through the same runner. Feature-off
     starts no worker, chat wins the generation gate, and output remains pending.
-11. A synthetic evaluation corpus covers preferences, temporary statements,
-    negation, corrections, secrets, injection, conflicts, and owner isolation.
-    Fixture metrics are provisional; live results require exact model tags,
-    modes, timings and candidate/proposal/rejection counts.
+11. A synthetic [evaluation corpus](#evaluation-corpus) whose fixture metrics
+    are provisional.
 
 ## What does not ship
 
@@ -111,12 +109,10 @@ leaves the proposal pending and canonical facts unchanged; the operator can
 still reject it. Confirmation, reason, ownership and revision checks remain
 separate requirements.
 
-This uses the fixed core patterns, not `policy.prompt_filter.banned_patterns`
-or the coding scan. Matching is case-insensitive and handles whitespace variants,
-but does not call `scan_normalized`. It is neither a secret scanner nor a general
-injection detector. Clean fragments can combine into unsafe text, and assembled
-recall is not scanned. Treat facts as untrusted context and review proposals
-together before applying them.
+This uses the fixed core patterns only (not `policy.prompt_filter.banned_patterns`,
+the coding scan or `scan_normalized`): neither a secret scanner nor a general
+injection detector. Assembled recall is not scanned, and clean fragments can
+combine into unsafe text, so treat facts as untrusted context.
 
 ## Completion suggestions
 
@@ -140,11 +136,9 @@ archives nor writes human semantic summaries. Synchronous and detached coding sh
 submitted instruction and projected child result (repository, status,
 run id, changed files, push/PR fields and commit message), not stdout/stderr,
 file bodies or tool logs. Metadata alone cannot prove a coding lesson or
-successful tests. Local `/loop` queues only replies containing the console's
-standalone `GOAL_DONE` marker, including Markdown decoration, paired with the
-stored human goal instead of generated turn framing. Intermediate, stopped, and
-budget-exhausted turns without that marker remain skipped. The marker is
-unverified model advice, not evidence that the goal was achieved.
+successful tests. Local `/loop` queues only replies carrying the standalone
+`GOAL_DONE` marker (Markdown decoration allowed), paired with the stored human
+goal; the marker is unverified model advice, not evidence of completion.
 
 Strict parsing, source membership, sensitivity, confidence, and fact bindings
 govern idempotent `session_summary` or `insight` proposals. Identical normalized
@@ -157,10 +151,9 @@ egress. Completion, manual, and idle inference request
 replies remain visible failures; schema and source validation remain authoritative.
 Automatic `consolidator-v2` requires human semantic summaries.
 
-Chat suggestions retain their turn's local model; coding suggestions snapshot
-the selection at completion. Manual and idle consolidation use current
-selection. Cloud selections use the configured local backend; memory never calls
-cloud providers. Failed runs retain their model.
+Suggestions record the local model of their turn or completion, consolidation
+uses the current selection, and a cloud chat selection falls back to the
+configured local backend: memory never calls cloud providers.
 
 | Setting | Default | Clamp / meaning |
 |---|---|---|
@@ -302,15 +295,12 @@ background context. Preview describes local chat. Cloud chat omits memory;
   A completed v1 key does not suppress a v2 run on the same episode set.
   Interrupted `running` rows become `failed`/`interrupted` on reopen and may
   be retried manually on the same key.
-- Audit records run id, counts, state, and error class. It does not record
-  episode summaries, proposal payloads, or raw model output.
 
 ## Threat model (at rest)
 
-The database is a regular file under the harness home with owner-private mode
-(0600) and NOFOLLOW/ownership checks on open. That is **OS access control**,
-not encryption. A process running as the home owner can read the SQLite bytes;
-application-managed encryption would need a separate key-lifecycle design.
+The database is an owner-private (0600, NOFOLLOW-checked) file under the home:
+**OS access control**, not encryption, so a process running as the owner can
+read it.
 
 Audit events record owner-safe ids, revisions, counts, and status. They must
 not record fact text, proposal payloads, episode summaries, or reasons that
@@ -364,9 +354,8 @@ cargo run --locked --example structured_memory_eval -- /tmp/phase7-report.json
 ```
 
 Both commands use `tests/fixtures/structured_memory/phase7/corpus.json` and a
-fixture-model consolidator, never a cloud model. Low-confidence temporary-plan
-and `unsupported-paris` cases must fail the 0.40 floor. These fixtures measure
-parsing, binding, and retention, not live model quality.
+fixture-model consolidator, never a cloud model; they measure parsing, binding
+and retention, not live model quality.
 
 ### Asserted baselines (provisional)
 
@@ -385,18 +374,18 @@ not a live-model SLA.
 | Database growth / pruning | Oldest-first episode prune with `max_episodes_per_owner: 2` | unreferenced row dropped; pending-proposal refs kept |
 | Chat / feature-combination regression | Existing `tests/structured_memory.rs` + shipped-gate scan | extend those tests; do not add live E2E |
 
-A future live local-model evaluation should target precision 1.0
-and unsupported rate 0 on a reviewed set. Rejected-class retention is zero for `sensitivity: reject` and core
-injection hits. No secret scanner exists; a confirmed human write can contain
-non-injection secret-shaped text.
+Rejected-class retention is zero for `sensitivity: reject` and core injection
+hits; no secret scanner exists, so a confirmed human write can still contain
+secret-shaped text.
 
 ### Documented-only (do not invent numbers)
 
-| Metric | Measurement method |
-|---|---|
-| Reviewer accept / reject rate | Count apply vs reject on `POST /api/structured-memory/proposals/{id}` in an owned home over a review window. |
-| Prompt latency p50 / p95 | In an owned temp `CGAGENTHARNESS_HOME`, time `POST /api/chat` and `POST /api/prompt/preview` for the same selected-fact set (n≥30). Host-dependent. |
-| Live-model quality | Swap fixture-model JSON for a local OpenAI-compatible backend only after the fixture baseline is green. Do not send this corpus to a cloud provider. |
+Reviewer accept/reject rate (apply versus reject on `POST
+/api/structured-memory/proposals/{id}` over a review window), prompt latency
+(p50/p95 of `/api/chat` and `/api/prompt/preview` with the same selected facts
+in an owned temp home, n≥30, host-dependent) and live-model quality (a local
+OpenAI-compatible backend only after the fixture baseline is green, never a
+cloud provider) are operator measurements, not asserted numbers.
 
 ## Enable order
 
@@ -421,12 +410,10 @@ should hold; review rate and latency remain operator measurements.
 
 Disable the gate in `config.yaml` (literal `false`) and/or the matching
 `/memory … off` overlay. That stops new reads, writes, FTS inject, consolidator
-calls, and the idle worker. It does **not** delete `memory/structured.sqlite3`.
-Existing rows stay listable/exportable/purgeable while the store remains open
-(`structured_memory.enabled` still true). Closing the store gate refuses new
-structured-memory mutations and does not open/create the database on the next
-start; leftover files remain until the operator exports or
-`POST /api/structured-memory/purge` with confirm+reason.
+calls, and the idle worker. It does **not** delete `memory/structured.sqlite3`:
+rows stay listable, exportable and purgeable while the store is open, and
+`enabled: false` stops opening the database on the next start, leaving the file
+until an explicit export or confirmed purge.
 
 ## Verify
 
@@ -439,14 +426,8 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
 
 The phase-7 corpus run is under [Evaluation corpus](#evaluation-corpus).
 
-For an already packaged backend, verify selected-model completion proposals,
-review refusals, Apply/Dismiss and restart persistence with:
-
-```sh
-CGAH_TEST_BINARY=dist/'CG Agent Harness.app'/Contents/MacOS/cgagentharness \
-  python3 scripts/test-desktop-backend.py \
-  DesktopBoundary.test_completion_memory_uses_selected_model_and_requires_review
-```
-
-This is fixture-backed sidecar evidence. Native UI freshness, every producer,
-and repeated real-model quality still need packaged-app acceptance.
+For a packaged backend, `scripts/test-desktop-backend.py
+DesktopBoundary.test_completion_memory_uses_selected_model_and_requires_review`
+(with `CGAH_TEST_BINARY` set) checks selected-model proposals, review refusals,
+Apply/Dismiss and restart persistence against fixtures; native UI and
+real-model quality still need packaged-app acceptance.

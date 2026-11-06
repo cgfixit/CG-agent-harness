@@ -20,10 +20,9 @@ security:
   api_key_optional: true
 ```
 
-Malformed auth/TLS booleans refuse configuration, preserving protection.
-The old `security.api_key_optional: false` mode is ignored. Upgrade such homes
-with `auth.enabled: true` to require account access.
-A stale harness key neither blocks a valid account nor grants access.
+Malformed auth/TLS booleans refuse configuration. The old
+`security.api_key_optional: false` mode is ignored, and a harness key neither
+blocks a valid account nor grants access.
 
 ## Accounts and roles
 
@@ -43,11 +42,9 @@ role change, disable, and deletion revoke that account's sessions. The last
 enabled administrator cannot be deleted, disabled, or demoted. **logout** revokes
 the session and clears private displayed state.
 
-Console authentication probes have a five-second deadline; login, legacy
-bootstrap, logout, and Users panel requests have a fifteen-second deadline.
-These cover the complete response body as well as headers, so a stalled JSON
-reply cannot leave the operation waiting indefinitely. A timeout does not prove
-that a submitted account change was rejected; refresh before retrying it.
+Console authentication probes time out after five seconds and account
+mutations after fifteen, body included. A timeout does not prove a submitted
+change was rejected; refresh before retrying.
 
 ### Roles
 
@@ -93,17 +90,15 @@ or recovery; preserve the database and initialization marker together, and do
 not delete them to recreate `admin`.
 
 Each scrypt derivation uses about 128 MiB. `auth.max_concurrent_operations`
-(default 2, range 1–4) bounds login and password work; extra attempts wait.
+(default 1, range 1–4) bounds login and password work; extra attempts wait.
 Sessions expire after `auth.session.idle_timeout_sec` (default 43200) without
 use and `auth.session.absolute_timeout_sec` (default 604800) regardless, each at most 30 days. Chat
 session files under `sessions/` are written atomically with mode 0600 because
 history can carry pasted secrets.
 
-Structured memory's separate `memory/structured.sqlite3` uses the same class of
-open policy (owned parent, `SQLITE_OPEN_NOFOLLOW`, `foreign_keys=ON`,
-`trusted_schema=OFF`, rollback journal, `synchronous=FULL`). Missing initialized
-or corrupt files refuse startup rather than bootstrapping. Its gates and at-rest
-limits are in [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
+Structured memory's `memory/structured.sqlite3` uses the same owner-only open
+policy and refuses corrupt or uninitialized files rather than bootstrapping
+([at-rest contract](STRUCTURED_MEMORY.md#threat-model-at-rest)).
 
 ### Session ownership and legacy adoption
 
@@ -190,9 +185,8 @@ listener, pass its origin with `--url` after `account` or `web`.
 ./target/release/cgagentharness account logout
 ```
 
-Login reads one password; replacement reads current and new passwords. Unix hides
-terminal input; automation may supply stdin. Windows interaction needs a private
-stdin pipe. Never put secrets in argv or chat. Private `cli-session.json` binds
+Passwords are read from hidden terminal input (automation may supply stdin;
+Windows needs a private stdin pipe); never put secrets in argv or chat. Private `cli-session.json` binds
 the cookie to the origin and certificate; logout revokes and removes it. Before
 sending credentials, the CLI refuses foreign origins, redirects, proxies, and
 certificate substitution.
@@ -248,12 +242,10 @@ fit a pattern in the same grant. `--group` on `check`, `fetch`, `pages`, `search
 or `research` limits that request to the group's allow rules. `/web deny` removes
 an allow rule ID or matching pattern across groups; it does not add a block.
 
-Legacy rows migrate only to the actual stored URL targets the old fetcher could
-request. A formerly implicit prefix becomes exact; add an explicit wildcard to
-permit discovery. Unknown legacy fields/invalid rows fail the whole
-migration. Reading legacy data normalizes it in memory; the next authorized
-mutation persists v1. Legacy unproven `web_context.txt`/`web_last.json` are never
-injected. Current selections use `tools/web_<account-hash>_{last,context}.json`.
+Legacy rows migrate as exact URLs (add a wildcard to permit discovery); invalid
+rows fail the whole migration, and the next authorized mutation persists v1.
+Legacy `web_context.txt`/`web_last.json` are never injected; selections live in
+`tools/web_<account-hash>_{last,context}.json`.
 
 ## Search, fetch and research
 
@@ -281,9 +273,7 @@ Direct commands:
 /web check https://www.veeam.com/ https://example.org/ --group vendors
 /web research --group vendors Compare the backup approaches
 /web research --url https://www.veeam.com/ Summarize products and permitted internal links
-/web allow https://example.com/docs/* --group docs
-/web pages --group docs widget_open
-/web research --group docs How does widget_open fail?
+/web pages --group vendors backup retention
 /web cancel
 /web inject
 /web forget
@@ -324,10 +314,9 @@ earlier reads in later web turns' prompts, fenced as untrusted: URLs and
 queries only, goal-matching and cited first, fetched URLs only while the
 current policy still permits them.
 
-Existing homes keep explicitly configured smaller call budgets. To use thirty there,
-set `web.chat_tool_calls: 30` in the active home's `config.yaml` and use
-**Reload limits** (or restart). Raising the call ceiling does not raise token,
-time, byte, or URL-permission limits.
+Existing homes keep a smaller configured `web.chat_tool_calls`; raise it and
+**Reload limits**. The call ceiling does not raise token, time, byte or
+URL-permission limits.
 
 The console separates provider and source data from the model answer. Tool calls
 show links, outcomes, and failures. Listings and snippets come from the search
@@ -337,13 +326,11 @@ required.
 
 ### Google search
 
-Open **API Keys** in the left pane, paste a **SerpAPI** key into **Google results
-(SerpAPI)** or a Tavily key into **Tavily search**, save, then click **Test search**.
-A SerpAPI key is not a Google Cloud/Custom Search key; obtain it through
-[SerpAPI](https://serpapi.com/search-api). No key belongs in the chat transcript
-or `config.yaml`. Both fields use the OS credential store (legacy `.env` only when
-the plaintext opt-in is literal true); saving or clearing applies to the next
-search, and process environment overrides still apply.
+In **API Keys**, paste a [SerpAPI](https://serpapi.com/search-api) key (not a
+Google Cloud key) into **Google results (SerpAPI)** or a Tavily key into
+**Tavily search**, save, then **Test search**. Both use the OS credential store
+([managed keys](INSTALL.md#supported-managed-keys)); saving or clearing applies
+to the next search, and an inherited environment value still wins.
 
 An active nonempty SerpAPI key selects the fixed `https://serpapi.com/search.json`
 Google backend, key in the request query. Keyed providers receive the keyword
@@ -372,7 +359,9 @@ are pinned off, and only title, URL and snippet are kept. HTTP 429, 432 and 433 
 SearXNG support was removed: `provider: searxng` or a non-empty `web.search.searxng_url`
 fails boot by name. `web.search.fallback_to_public_google` (ships true) and the opt-in
 `fallback_to_serpapi` (after Tavily) try the next hop only when a provider is unusable;
-the answer carries `fallback_from` and each hop logs `web_search_fallback`.
+the answer carries `fallback_from`, each hop logs `web_search_fallback`, and more
+than `fallback_alert_per_hour` (ships 20) SerpAPI fallbacks in a clock hour add one
+`web_search_fallback_burst` audit line.
 
 The exact generated search URL also works; an exact homepage grant is not enough.
 `https://google.com/*` does not grant `www`; the apex endpoint may redirect and
@@ -499,19 +488,14 @@ URL policy covers only web, not OS, model, or GitHub connections.
 
 ## Reproducible evidence
 
-The [test suite](INSTALL.md#tests-and-cicd) covers policy, pinned fetch,
-revocation, accounts, TLS, RBAC and the existing coding invariants.
-`tests/chat_web.rs` pins the chat search and page-permission contracts above, and
-`scripts/test-desktop-backend.py` exercises both real serving entrypoints. Native
-trust unit tests and actual WKWebView acceptance are separate evidence.
+`tests/chat_web.rs`, `tests/web_research.rs`, `tests/web_phase2_redteam.rs` and
+`tests/auth_guards.rs` pin the contracts above; WKWebView acceptance is separate evidence.
 
 ```bash
 cargo run --locked --example web_research_benchmark -- /absolute/report.json
 cargo run --locked --example web_research_benchmark -- /absolute/live-report.json --live
 ```
 
-The fixed corpus has nested pages, two sites, identifiers, paraphrases, stale
-and contradictory claims, no answer, and hostile text. The old literal baseline
-measures matching only on roots; its request count is an algorithmic count, not
-an old-network latency measurement. The live mode uses an already installed local
-model and records all results/usage. It performs no model download or publication.
+The fixed corpus mixes nested pages, identifiers, paraphrases, stale and
+contradictory claims, no-answer cases and hostile text. `--live` uses an
+installed local model and records usage; neither mode downloads a model or publishes.
