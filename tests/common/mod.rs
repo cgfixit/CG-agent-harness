@@ -147,6 +147,10 @@ pub struct ServerOptions {
     pub web_resolve: Option<(String, SocketAddr)>,
     /// Test hook: a fixture URL standing in for public Google search.
     pub public_search: Option<url::Url>,
+    /// Test hook: more exact fixture hosts, beside `web_resolve`.
+    pub resolve_extra: Vec<(String, SocketAddr)>,
+    /// Test hook: a fixture URL standing in for the fixed Tavily endpoint.
+    pub tavily_search: Option<url::Url>,
     /// Test hook. `None` uses the OS credential store when the plaintext opt-in is off.
     pub credential_store: Option<Arc<dyn CredentialStore>>,
 }
@@ -182,6 +186,8 @@ impl Default for ServerOptions {
             deny_all_tools: false,
             web_resolve: None,
             public_search: None,
+            resolve_extra: Vec::new(),
+            tavily_search: None,
             credential_store: None,
         }
     }
@@ -233,6 +239,8 @@ pub async fn prepare_server(model_url: &str, opts: ServerOptions) -> PreparedSer
     }
     app_opts.web_test_resolve = opts.web_resolve;
     app_opts.web_test_public_search = opts.public_search;
+    app_opts.web_test_resolve_extra = opts.resolve_extra;
+    app_opts.web_test_tavily_search = opts.tavily_search;
     app_opts.credential_store = opts.credential_store;
     app_opts.shim_exe = Some(opts.shim_exe.unwrap_or_else(|| PathBuf::from(BIN)));
     PreparedServer {

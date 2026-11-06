@@ -8,10 +8,8 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use super::web_policy::{canonical_url, error};
+use super::web_provider::{falls_through, plan_hops, Hop, SearchProvider};
 use super::web_search::{parse_html, run_web_cpu, WebTool};
-use super::web_searxng::{
-    falls_through, plan_hops, refuse_searxng_syntax, searxng_silent, Hop, SearchProvider, SEARXNG_SILENT,
-};
 use crate::common::audit::Audit;
 use crate::common::credential_store::CredentialStore;
 use crate::common::errors::Result;
@@ -331,7 +329,7 @@ impl WebTool {
 
     /// `web.search.provider` picks the backend; `auto` lets a key choose the fixed
     /// SerpAPI Google backend. A key is sent only to its own provider's fixed
-    /// endpoint, never to Google, SearXNG, another provider or a returned result
+    /// endpoint, never to Google, another provider or a returned result
     /// URL. Fallback hops (`web.search.fallback_*`): public Google ships on,
     /// SerpAPI off; see `plan_hops`.
     pub async fn google_search(&self, query: &str, count: usize, enabled: bool, audit: &Audit) -> Result<Value> {
@@ -366,7 +364,7 @@ impl WebTool {
         // The saved key is read only when a SerpAPI hop could run.
         let reads_key = match &self.search_provider {
             SearchProvider::GooglePublic => false,
-            SearchProvider::Searxng { .. } | SearchProvider::Tavily => self.search_fallback.to_serpapi,
+            SearchProvider::Tavily => self.search_fallback.to_serpapi,
             SearchProvider::Auto | SearchProvider::Serpapi => true,
         };
         let key = if reads_key { self.search_key()? } else { String::new() };
@@ -391,9 +389,6 @@ impl WebTool {
             String::new()
         };
         let hops = plan_hops(&self.search_provider, keyed, &self.search_fallback);
-        if hops[0] == Hop::Searxng {
-            refuse_searxng_syntax(query)?;
-        }
         // One broker decision, one search gate and one deadline for the whole chain:
         // fallback never makes a search longer or more concurrent than one search.
         self.gate_tool("web_search", &[query.into()], enabled, audit)?;
@@ -406,8 +401,8 @@ impl WebTool {
         let mut fallback_from: Vec<&str> = Vec::new();
         for (index, hop) in hops.iter().copied().enumerate() {
             let next = hops.get(index + 1).copied();
-            // SearXNG leaves at least 2 s for the next hop.
-            let hop_deadline = if hop == Hop::Searxng && next.is_some() {
+            // A Tavily first hop leaves at least 2 s for the next hop.
+            let hop_deadline = if hop == Hop::Tavily && next.is_some() {
                 let budget = self.limits.request_seconds.saturating_sub(2).clamp(1, 6);
                 deadline.min(tokio::time::Instant::now() + Duration::from_secs(budget))
             } else {
@@ -430,10 +425,6 @@ impl WebTool {
             };
             let attempt = async {
                 match (hop, &self.search_provider) {
-                    (Hop::Searxng, SearchProvider::Searxng { endpoint, socket }) => {
-                        self.searxng_listing(query, count, audit, endpoint, *socket).await
-                    }
-                    (Hop::Searxng, _) => Err(error("WEB_SEARCH_PROVIDER", "SearXNG is not configured")),
                     (Hop::Tavily, _) => {
                         self.tavily_listing(query, count, audit, self.tavily_endpoint(), tavily_key.trim())
                             .await
@@ -451,16 +442,7 @@ impl WebTool {
             let result = tokio::time::timeout_at(hop_deadline, attempt)
                 .await
                 .map_err(|_| error("WEB_TIMEOUT", "search deadline exceeded"))
-                .and_then(|value| value)
-                .and_then(|value| {
-                    // Silent engines say nothing about the query: with a later hop that is an
-                    // unusable provider; without one the listing stays the answer.
-                    if hop == Hop::Searxng && next.is_some() && searxng_silent(&value) {
-                        Err(error(SEARXNG_SILENT, "no SearXNG engine answered"))
-                    } else {
-                        Ok(value)
-                    }
-                });
+                .and_then(|value| value);
             match result {
                 Ok(mut value) => {
                     if !fallback_from.is_empty() {
@@ -970,8 +952,8 @@ mod tests {
         }
     }
 
-    /// Loopback fixtures for the fallback chain: SearXNG, SerpAPI (via the
-    /// endpoint seam) and public Google (via `test_public_search`).
+    /// Loopback fixtures for the fallback chain: Tavily (via `test_tavily_search`),
+    /// SerpAPI (via the endpoint seam) and public Google (via `test_public_search`).
     mod chain {
         use super::*;
         use axum::{extract::Query, routing::get, Json, Router};
@@ -996,37 +978,6 @@ mod tests {
             let addr = listener.local_addr().unwrap();
             let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
             Fixture { hits, addr, task }
-        }
-
-        /// SearXNG answering `mode`: "zero" rows, "slow" (10 s), "silent" (no rows and
-        /// google did not answer), "partial" (one row, google did not answer) or one row.
-        pub(super) async fn searxng(mode: &'static str) -> Fixture {
-            let hits = Arc::new(AtomicUsize::new(0));
-            let h = hits.clone();
-            let router = Router::new().route(
-                "/search",
-                get(move || {
-                    let h = h.clone();
-                    async move {
-                        h.fetch_add(1, Ordering::SeqCst);
-                        if mode == "slow" {
-                            tokio::time::sleep(Duration::from_secs(10)).await;
-                        }
-                        let rows = if matches!(mode, "zero" | "silent") {
-                            json!([])
-                        } else {
-                            json!([{"title":"SearXNG row","url":"https://veeam.com/sx","content":"x"}])
-                        };
-                        let silent = if matches!(mode, "silent" | "partial") {
-                            json!([["google", "Suspended: CAPTCHA"]])
-                        } else {
-                            json!([])
-                        };
-                        Json(json!({"results":rows,"unresponsive_engines":silent}))
-                    }
-                }),
-            );
-            serve(router, hits).await
         }
 
         /// SerpAPI: key "good" answers, "bad" is 401, "quota" is 429.
@@ -1054,7 +1005,8 @@ mod tests {
             serve(router, hits).await
         }
 
-        /// Tavily: Bearer "good" answers, "bad" is 401, "quota" is 432 (plan spent).
+        /// Tavily: Bearer "good" answers, "zero" answers with no rows, "slow" answers
+        /// after 10 s, "quota" is 432 (plan spent) and anything else is 401.
         /// A request that asks for an answer, page bodies, images or auto parameters,
         /// or carries a key anywhere but the header, is refused with 400.
         pub(super) async fn tavily() -> Fixture {
@@ -1079,8 +1031,17 @@ mod tests {
                             return (axum::http::StatusCode::BAD_REQUEST, Json(json!({})));
                         }
                         let auth = headers.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("");
+                        if auth == "Bearer slow" {
+                            tokio::time::sleep(Duration::from_secs(10)).await;
+                        }
+                        if auth == "Bearer zero" {
+                            return (
+                                axum::http::StatusCode::OK,
+                                Json(json!({"query":body["query"],"results":[]})),
+                            );
+                        }
                         let status = match auth {
-                            "Bearer good" => axum::http::StatusCode::OK,
+                            "Bearer good" | "Bearer slow" => axum::http::StatusCode::OK,
                             "Bearer quota" => axum::http::StatusCode::from_u16(432).unwrap(),
                             _ => axum::http::StatusCode::UNAUTHORIZED,
                         };
@@ -1110,12 +1071,6 @@ mod tests {
                 }),
             );
             serve(router, hits).await
-        }
-
-        /// A loopback port with nothing listening (connection refused).
-        pub(super) async fn refused_port() -> u16 {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only an ephemeral loopback port.
-            listener.local_addr().unwrap().port()
         }
 
         pub(super) struct Chain {
@@ -1160,11 +1115,14 @@ mod tests {
             }
 
             /// Point the Tavily hop at `fixture` and save `key` (empty saves none).
-            pub(super) fn with_tavily(mut self, key: &str, fixture: &Fixture) -> Self {
+            pub(super) fn with_tavily(self, key: &str, fixture: &Fixture) -> Self {
+                self.with_tavily_at(key, fixture.addr)
+            }
+
+            /// Point the Tavily hop at `addr`, such as a refused port (Tavily down).
+            pub(super) fn with_tavily_at(mut self, key: &str, addr: SocketAddr) -> Self {
                 self.web.tavily_key_from_file = true;
-                self.web
-                    .test_resolve_extra
-                    .push(("tavily.fixture".into(), fixture.addr));
+                self.web.test_resolve_extra.push(("tavily.fixture".into(), addr));
                 self.web.test_tavily_search = Some(url::Url::parse("http://tavily.fixture/search").unwrap()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
                 if !key.is_empty() {
                     super::super::super::env_keys::update_keys(
@@ -1193,17 +1151,21 @@ mod tests {
             }
         }
 
-        /// `request_seconds: 10` gives SearXNG a 6 s hop budget: Windows retries a
-        /// refused loopback connect for about 2 s before reporting it, which must
-        /// finish as `WEB_SEARCH_PROVIDER`, not race the budget into `WEB_TIMEOUT`.
-        pub(super) fn yaml(searxng_port: u16, extra: &str) -> String {
-            yaml_with(10, searxng_port, extra)
+        /// A refused loopback address: Tavily is down.
+        pub(super) async fn refused_addr() -> SocketAddr {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only an ephemeral loopback port.
+            listener.local_addr().unwrap()
         }
 
-        pub(super) fn yaml_with(request_seconds: u64, searxng_port: u16, extra: &str) -> String {
-            format!(
-                "web: {{request_seconds: {request_seconds}, search: {{provider: searxng, searxng_url: 'http://127.0.0.1:{searxng_port}'{extra}}}}}" // DevSkim: ignore DS137138,DS162092 because the SearXNG fixture is loopback-only.
-            )
+        /// `request_seconds: 10` gives a Tavily first hop a 6 s budget: Windows retries a
+        /// refused loopback connect for about 2 s before reporting it, which must
+        /// finish as `WEB_SEARCH_PROVIDER`, not race the budget into `WEB_TIMEOUT`.
+        pub(super) fn yaml(extra: &str) -> String {
+            yaml_with(10, extra)
+        }
+
+        pub(super) fn yaml_with(request_seconds: u64, extra: &str) -> String {
+            format!("web: {{request_seconds: {request_seconds}, search: {{provider: tavily{extra}}}}}")
         }
     }
 
@@ -1307,9 +1269,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fallback_is_off_by_default_and_a_down_searxng_stays_explicit() {
+    async fn fallback_is_off_by_default_and_a_down_tavily_stays_explicit() {
         let serp = chain::serpapi().await;
-        let chain = chain::Chain::new(&chain::yaml(chain::refused_port().await, ""), "good", &serp, None).await;
+        let chain = chain::Chain::new(&chain::yaml(""), "good", &serp, None)
+            .await
+            .with_tavily_at("good", chain::refused_addr().await);
         let err = chain.search("veeam cve").await.unwrap_err();
         assert_eq!(err.code, "WEB_SEARCH_PROVIDER");
         assert_eq!(
@@ -1321,55 +1285,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_down_searxng_falls_back_to_serpapi_and_says_so() {
+    async fn a_down_tavily_falls_back_to_serpapi_and_says_so() {
         let serp = chain::serpapi().await;
-        let chain = chain::Chain::new(
-            &chain::yaml(chain::refused_port().await, ", fallback_to_serpapi: true"),
-            "good",
-            &serp,
-            None,
-        )
-        .await;
+        let chain = chain::Chain::new(&chain::yaml(", fallback_to_serpapi: true"), "good", &serp, None)
+            .await
+            .with_tavily_at("good", chain::refused_addr().await);
         let value = chain.search("veeam cve").await.unwrap();
         assert_eq!(value["provider"], "google-serpapi");
-        assert_eq!(value["fallback_from"], json!(["searxng"]));
+        assert_eq!(value["fallback_from"], json!(["tavily"]));
         assert_eq!(value["results"][0]["title"], "SerpAPI row");
         let lines = chain.audit_events("web_search_fallback");
         assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0]["from"], "searxng");
+        assert_eq!(lines[0]["from"], "tavily");
         assert_eq!(lines[0]["to"], "google-serpapi");
         assert_eq!(lines[0]["code"], "WEB_SEARCH_PROVIDER");
         let text = std::fs::read_to_string(chain.dir.path().join("audit.jsonl")).unwrap();
-        assert!(!text.contains("veeam cve") && !text.contains("\"good\""), "{text}");
+        assert!(
+            !text.contains("veeam cve") && !text.contains("\"good\""),
+            "audit lines carry codes, never the query or a key"
+        );
     }
 
     #[tokio::test]
-    async fn zero_searxng_results_are_an_answer_not_a_fallback() {
-        let sx = chain::searxng("zero").await;
+    async fn zero_tavily_results_are_an_answer_not_a_fallback() {
+        let tv = chain::tavily().await;
         let serp = chain::serpapi().await;
         let google = chain::google().await;
         let chain = chain::Chain::new(
-            &chain::yaml(
-                sx.addr.port(),
-                ", fallback_to_serpapi: true, fallback_to_public_google: true",
-            ),
+            &chain::yaml(", fallback_to_serpapi: true, fallback_to_public_google: true"),
             "good",
             &serp,
             Some(&google),
         )
-        .await;
+        .await
+        .with_tavily("zero", &tv);
         let value = chain.search("nothing matches").await.unwrap();
-        assert_eq!(value["provider"], "searxng");
+        assert_eq!(value["provider"], "tavily");
         assert_eq!(value["results"], json!([]));
         assert!(value.get("fallback_from").is_none());
         assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
-        assert_eq!(
-            chain.search("!g bang").await.unwrap_err().code,
-            "WEB_BAD_QUERY",
-            "a refused query never falls through"
-        );
-        assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
@@ -1377,15 +1332,13 @@ mod tests {
         let serp = chain::serpapi().await;
         let google = chain::google().await;
         let chain = chain::Chain::new(
-            &chain::yaml(
-                chain::refused_port().await,
-                ", fallback_to_serpapi: true, fallback_to_public_google: true",
-            ),
+            &chain::yaml(", fallback_to_serpapi: true, fallback_to_public_google: true"),
             "bad",
             &serp,
             Some(&google),
         )
-        .await;
+        .await
+        .with_tavily_at("good", chain::refused_addr().await);
         assert_eq!(
             chain.search("veeam cve").await.unwrap_err().code,
             "WEB_SEARCH_KEY_REJECTED",
@@ -1398,14 +1351,14 @@ mod tests {
     async fn a_spent_quota_moves_on_to_public_google_on_the_first_search_and_then_skips_serpapi() {
         let serp = chain::serpapi().await;
         let google = chain::google().await;
-        let yaml = chain::yaml(
-            chain::refused_port().await,
-            ", fallback_to_serpapi: true, fallback_to_public_google: true",
-        );
-        let chain = chain::Chain::new(&yaml, "quota", &serp, Some(&google)).await;
+        let down = chain::refused_addr().await;
+        let yaml = chain::yaml(", fallback_to_serpapi: true, fallback_to_public_google: true");
+        let chain = chain::Chain::new(&yaml, "quota", &serp, Some(&google))
+            .await
+            .with_tavily_at("good", down);
         let first = chain.search("veeam cve").await.unwrap();
         assert_eq!(first["provider"], "google-public");
-        assert_eq!(first["fallback_from"], json!(["searxng", "google-serpapi"]));
+        assert_eq!(first["fallback_from"], json!(["tavily", "google-serpapi"]));
         let second = chain.search("veeam backup").await.unwrap();
         assert_eq!(second["provider"], "google-public");
         assert_eq!(
@@ -1428,13 +1381,9 @@ mod tests {
             ]
         );
         // Without the public hop nobody is spent beyond the operator's opt-ins: still an error.
-        let alone = chain::Chain::new(
-            &chain::yaml(chain::refused_port().await, ", fallback_to_serpapi: true"),
-            "quota",
-            &serp,
-            None,
-        )
-        .await;
+        let alone = chain::Chain::new(&chain::yaml(", fallback_to_serpapi: true"), "quota", &serp, None)
+            .await
+            .with_tavily_at("good", down);
         assert_eq!(alone.search("veeam cve").await.unwrap_err().code, "WEB_SEARCH_QUOTA");
     }
 
@@ -1468,55 +1417,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn silent_searxng_engines_move_on_but_a_partial_or_clean_answer_stays() {
-        let serp = chain::serpapi().await;
-        let silent = chain::searxng("silent").await;
-        let on = ", fallback_to_serpapi: true";
-        let chain = chain::Chain::new(&chain::yaml(silent.addr.port(), on), "good", &serp, None).await;
-        let value = chain.search("veeam cve").await.unwrap();
-        assert_eq!(value["provider"], "google-serpapi");
-        assert_eq!(value["fallback_from"], json!(["searxng"]));
-        assert_eq!(
-            chain.audit_events("web_search_fallback")[0]["code"],
-            "WEB_SEARCH_DEGRADED"
-        );
-        // No later hop: the empty listing is still the answer, with the engines named.
-        let alone = chain::Chain::new(&chain::yaml(silent.addr.port(), ""), "good", &serp, None).await;
-        let value = alone.search("veeam cve").await.unwrap();
-        assert_eq!(value["provider"], "searxng");
-        assert_eq!(value["results"], json!([]));
-        assert_eq!(value["degraded"], json!(["google"]));
-        assert!(alone.audit_events("web_search_fallback").is_empty());
-        // Rows with a silent engine are an answer.
-        let partial = chain::searxng("partial").await;
-        let part = chain::Chain::new(&chain::yaml(partial.addr.port(), on), "good", &serp, None).await;
-        let value = part.search("veeam cve").await.unwrap();
-        assert_eq!(value["provider"], "searxng");
-        assert_eq!(value["results"][0]["title"], "SearXNG row");
-        assert_eq!(
-            serp.hits.load(std::sync::atomic::Ordering::SeqCst),
-            1,
-            "only the silent answer spent SerpAPI"
-        );
-    }
-
-    #[tokio::test]
     async fn the_whole_chain_shares_one_deadline() {
-        let sx = chain::searxng("slow").await;
+        let tv = chain::tavily().await;
         let serp = chain::serpapi().await;
-        let chain = chain::Chain::new(
-            &chain::yaml_with(4, sx.addr.port(), ", fallback_to_serpapi: true"),
-            "good",
-            &serp,
-            None,
-        )
-        .await;
+        let chain = chain::Chain::new(&chain::yaml_with(4, ", fallback_to_serpapi: true"), "good", &serp, None)
+            .await
+            .with_tavily("slow", &tv);
         let started = tokio::time::Instant::now();
         let value = chain.search("veeam cve").await.unwrap();
         let elapsed = started.elapsed();
         assert_eq!(value["provider"], "google-serpapi");
         assert_eq!(chain.audit_events("web_search_fallback")[0]["code"], "WEB_TIMEOUT");
-        // request_seconds 4: SearXNG gets min(4 - 2, 6) = 2 s, the chain ends inside 4 s.
+        // request_seconds 4: Tavily gets min(4 - 2, 6) = 2 s, the chain ends inside 4 s.
         assert!(elapsed >= Duration::from_secs(2), "{elapsed:?}");
         assert!(elapsed < Duration::from_secs(4), "{elapsed:?}");
     }
@@ -1525,15 +1437,13 @@ mod tests {
     async fn serpapi_fallbacks_past_the_hourly_threshold_log_one_burst_line() {
         let serp = chain::serpapi().await;
         let chain = chain::Chain::new(
-            &chain::yaml(
-                chain::refused_port().await,
-                ", fallback_to_serpapi: true, fallback_alert_per_hour: 1",
-            ),
+            &chain::yaml(", fallback_to_serpapi: true, fallback_alert_per_hour: 1"),
             "good",
             &serp,
             None,
         )
-        .await;
+        .await
+        .with_tavily_at("good", chain::refused_addr().await);
         for query in ["a one", "b two", "c three"] {
             chain.search(query).await.unwrap();
         }

@@ -11,7 +11,7 @@ This manual is static text bundled with the build and indexed at startup. It is 
 - Local chat: Streaming sessions with search, export, text and DOCX attachments, prompt skills, `/prompt` inspection, and a sandboxed HTML preview. Starts: Ollama on loopback by default; listed, pulled, and tuned from the console.
 - Goal loops: `/goal` and `/loop` keep working on a task, in the console or as a server-side run that outlives the browser, under turn, token, and failure limits. Starts: Budgets unlimited; two consecutive failures stop a run; cloud models refuse loops.
 - Memory: Shared pinned notes plus account-private structured facts, recall, and proposed summaries. Starts: Capture, recall, and retrieval on; applying a proposal needs review (setup).
-- Web research: SerpAPI, Tavily, public Google, or loopback SearXNG search; permitted fetches (opt-in Firecrawl fallback); `/web research` under request, time,… Starts: On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; failed keyed searches fall back to public Google.
+- Web research: SerpAPI, Tavily, or public Google search; permitted fetches (opt-in Firecrawl fallback); `/web research` under request, time, byte, and token… Starts: On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; failed keyed searches fall back to public Google.
 
 ## readme: capability overview (part 2)
 

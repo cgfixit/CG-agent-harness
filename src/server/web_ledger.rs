@@ -370,15 +370,15 @@ mod tests {
                 "result":{"query":q,"provider":provider,"fallback_from":from,"results":[]}})
         };
         let events = [
-            search("a", "google-serpapi", json!(["searxng"])),
-            search("b", "searxng", Value::Null),
+            search("a", "google-serpapi", json!(["tavily"])),
+            search("b", "tavily", Value::Null),
             search("c", "google-serpapi", json!([])),
         ];
         let summary = record_turn(&mut sources, &events, "", 1, 0, 1.0).unwrap();
-        assert_eq!(summary.providers, ["google-serpapi", "searxng"]);
+        assert_eq!(summary.providers, ["google-serpapi", "tavily"]);
         assert_eq!(summary.fallbacks, 1);
         let fields = summary.audit_fields(1, true, 0);
-        assert_eq!(fields["providers"], json!(["google-serpapi", "searxng"]));
+        assert_eq!(fields["providers"], json!(["google-serpapi", "tavily"]));
         assert_eq!(fields["fallbacks"], 1);
         assert!(
             !fields.to_string().contains("\"a\""),

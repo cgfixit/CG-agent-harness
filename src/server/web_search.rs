@@ -455,13 +455,13 @@ pub struct WebTool {
     pub(super) mutation: Arc<Mutex<()>>,
     pub(super) search_gate: Arc<Semaphore>,
     /// Opt-in fallback hops after the provider; restart-only.
-    pub(super) search_fallback: super::web_searxng::Fallback,
+    pub(super) search_fallback: super::web_provider::Fallback,
     /// SerpAPI fallbacks this clock hour, shared by every snapshot.
-    pub(super) search_fallback_burst: Arc<super::web_searxng::FallbackBurst>,
+    pub(super) search_fallback_burst: Arc<super::web_provider::FallbackBurst>,
     /// When the last public Google search request left, shared by every snapshot.
     pub(super) public_search_sent: Arc<std::sync::Mutex<Option<tokio::time::Instant>>>,
-    /// `web.search.provider` and its one exact SearXNG socket; restart-only.
-    pub(super) search_provider: super::web_searxng::SearchProvider,
+    /// `web.search.provider`; restart-only.
+    pub(super) search_provider: super::web_provider::SearchProvider,
     /// Per-provider pause after a refusal, shared by every snapshot; lost on restart.
     pub(super) search_cooldown: Arc<super::web_google::SearchCooldown>,
     /// Test hook replacing the public Google search URL with a fixture.
@@ -501,10 +501,10 @@ impl WebTool {
             plaintext_key_file: cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE),
             mutation: Arc::new(Mutex::new(())),
             search_gate: Arc::new(Semaphore::new(1)),
-            search_fallback: super::web_searxng::Fallback::load(cfg)?,
+            search_fallback: super::web_provider::Fallback::load(cfg)?,
             search_fallback_burst: Arc::default(),
             public_search_sent: Arc::default(),
-            search_provider: super::web_searxng::SearchProvider::load(cfg)?,
+            search_provider: super::web_provider::SearchProvider::load(cfg)?,
             search_cooldown: Arc::default(),
             #[cfg(any(test, feature = "test-support"))]
             test_public_search: None,
@@ -577,7 +577,7 @@ impl WebTool {
             "mode": policy.mode, "blocked": policy.blocked,
             "policy_scope":"shared_home", "context_scope":"account", "limits":self.limits,
             "search_provider": self.search_provider.describe(
-                self.search_provider == super::web_searxng::SearchProvider::Auto && !self.search_key()?.is_empty()),
+                self.search_provider == super::web_provider::SearchProvider::Auto && !self.search_key()?.is_empty()),
             "injected": enabled && stored, "context_stored": stored,
             "has_last": self.read_page(&self.last_path(owner), None).is_ok(), "max_allow": self.limits.max_rules,
             "policy_missing": missing}),
@@ -887,17 +887,6 @@ impl WebTool {
             }
         };
         pinned_client_builder(host, &addresses, Duration::from_secs(self.limits.request_seconds))
-            .user_agent("CGagentHarness-web/1.0")
-            .build()
-            .map_err(|_| error("WEB_FETCH_FAILED", "HTTP setup failed"))
-    }
-
-    /// The single private-address exception: SearXNG listings reach exactly the
-    /// configured loopback socket, validated at boot. Only `searxng_listing` calls
-    /// this; fetch, discovery, research and webhooks keep `pinned_client`.
-    pub(super) fn searxng_client(&self, endpoint: &url::Url, socket: SocketAddr) -> Result<reqwest::Client> {
-        let host = endpoint.host_str().unwrap_or_default().trim_matches(['[', ']']);
-        pinned_client_builder(host, &[socket], Duration::from_secs(self.limits.request_seconds))
             .user_agent("CGagentHarness-web/1.0")
             .build()
             .map_err(|_| error("WEB_FETCH_FAILED", "HTTP setup failed"))
