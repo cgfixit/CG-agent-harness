@@ -1697,7 +1697,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
     // why: SearXNG removal (phase 3 of web search) trimmed it to 1,521 words; lowered so the cut stays cut.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
-    ("README.md", Root, 1450),
+    // why: operator-set (2026-11-06) allowance of 1,776 for the long-form research reframe, not a measured count;
+    // the Root group cap stays the binding limit.
+    ("README.md", Root, 1776),
     ("SECURITY.md", Root, 690),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
     // why: the sandboxed HTML preview route row; measured 1840 words.
@@ -1825,7 +1827,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: the Codex skill and AGENTS trim lowers Agent row caps by 3,590 words; retain that reduction in the group cap.
 // why: operator-set (2026-10-23) Root cap of 10,000 with the INVARIANTS.md row; Root was at 9,216 words, so the
 // 1,000-word DOCS_GROUP_SLACK still forces this cap down if the group shrinks by more than 216.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 10_000), (Guide, 68_700), (Evidence, 700), (Agent, 21_910)];
+// why: operator-set (2026-11-06) Root allowance of 12,500 for the long-form research README reframe; an allowance,
+// not a measured count, so Root also gets a slack override below.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 12_500), (Guide, 68_700), (Evidence, 700), (Agent, 21_910)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
@@ -1836,7 +1840,8 @@ const DOCS_GROUP_SLACK: usize = 1_000;
 // why: operator-approved (2026-10-14) Guide headroom for the 65,000 cap; 17,000 covers 64,500 - 47,827.
 // why: operator-approved (2026-10-18) +200-per-row raise: Guide 19,500 covers 68,700 - 49,361 and Agent 4,500
 // covers 25,500 - 21,466, each rounded up to the next 500.
-const DOCS_GROUP_SLACK_OVERRIDES: &[(Kind, usize)] = &[(Guide, 19_500), (Agent, 4_500)];
+// why: operator-set (2026-11-06) Root cap of 12,500 over about 9,900 words; 3,000 covers it, rounded up to the next 500.
+const DOCS_GROUP_SLACK_OVERRIDES: &[(Kind, usize)] = &[(Guide, 19_500), (Agent, 4_500), (Root, 3_000)];
 
 /// The slack a group cap may keep above its words before it must be lowered.
 fn group_slack(kind: Kind) -> usize {
@@ -2193,12 +2198,13 @@ fn docs_budget_rejects_unlisted_oversized_and_misplaced_files() {
         "DOCS_BUDGET lists docs/B.md, which does not exist",
     );
     // A cut locks in: a group cap left far above its words fails until lowered.
-    let root_budget: &[(&str, Kind, usize)] = &[("docs/A.md", Root, 100), ("docs/B.md", Root, 100)];
+    // Evidence keeps the default slack (Root, Guide and Agent have overrides).
+    let evidence_budget: &[(&str, Kind, usize)] = &[("docs/A.md", Evidence, 100), ("docs/B.md", Evidence, 100)];
     expect(
         docs_budget_violations(
             &md(&[("docs/A.md", 10), ("docs/B.md", 10)]),
-            root_budget,
-            &[(Root, 1_500)],
+            evidence_budget,
+            &[(Evidence, 1_500)],
         ),
         "lower it to 500",
     );

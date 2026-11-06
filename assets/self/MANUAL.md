@@ -8,21 +8,18 @@ This manual is static text bundled with the build and indexed at startup. It is 
 
 ## readme: capability overview
 
-- Local chat: Streaming sessions with search, export, text and DOCX attachments, prompt skills, `/prompt` inspection, and a sandboxed HTML preview. Starts: Ollama on loopback by default; listed, pulled, and tuned from the console.
-- Goal loops: `/goal` and `/loop` keep working on a task as a console or server-side run outliving the browser, under turn, token and failure limits. Starts: 50 turns, 200,000 tokens or two failed turns end a run; cloud models refuse loops.
-- Memory: Shared pinned notes plus account-private structured facts, recall, and proposed summaries. Starts: Capture, recall, and retrieval on; applying a proposal needs review (setup).
-- Web research: SerpAPI, Tavily, or public Google search; permitted fetches (opt-in Firecrawl fallback); `/web research` under request, time, byte, and token… Starts: On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; failed keyed searches fall back to public Google.
+- Web research: SerpAPI, Tavily, or public Google search; permitted fetches and crawls (opt-in Firecrawl fallback); `/web research` jobs with planned subqueries and… Starts: On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; failed keyed searches fall back to public Google.
+- Goal loops: `/goal` and `/loop` continue a long piece as a run outliving the browser, under turn, token and failure limits. Starts: 50 turns, 200,000 tokens or two failed turns end a run; cloud models refuse loops.
+- Memory: Shared pinned notes plus account-private facts, recall, and proposed summaries that carry findings between sessions. Starts: Capture, recall, and retrieval on; applying a proposal needs review (setup).
+- Local chat: Streaming sessions with search, Markdown export, text and DOCX attachments, prompt skills, `/prompt` inspection, and a sandboxed HTML preview. Starts: Ollama on loopback by default; listed, pulled, and tuned from the console.
 
 ## readme: capability overview (part 2)
 
-- Reviewed coding: Planner/executor loop, isolated clones, sandboxed checks, full diff review, separate Git decisions; detached jobs and schedules reuse the same gates. Starts: Off until configured for a selected repository.
 - Analytics: Session, token, and run history with USD where rates exist, plus **Estimate draft** before a cloud call. Starts: On after sign-in; read-only; local inference unpriced.
 - Cloud chat: Optional Grok or Claude. Sends only the new message, never history, memory, skills, attachments, or web context. Starts: Needs a provider key; refused for `/loop`.
 - MCP integrations: Declared external tools and a separate read-only memory gateway with dedicated machine credentials. Starts: Both off.
+- Reviewed coding: Optional edits in isolated clones; sandboxed checks, diff review, separate Git approval. Starts: Off until configured for a selected repository.
 - LAN observation: Netconnect reads in-scope interfaces, routes, and neighbors from local tables. Starts: Off with empty scope; only the budgeted `diag` probe sends packets; no scans or device control.
-
-## readme: capability overview (part 3)
-
 - Self-knowledge and diagnostics: Bundled harness manual and live status as untrusted local-chat context; `/diag` shows bounded, redacted tails of allowlisted home logs. Starts: Manual on, never sent to cloud chat or loops; `/diag` on, admin or `portal_auditor` only.
 
 ## agents: process and home map
