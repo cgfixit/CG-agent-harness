@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::{code, ok_reply, spawn_server, start_mock_model, ServerOptions};
+use common::{code, ok_reply, shipped_u64, spawn_server, start_mock_model, ServerOptions};
 use serde_json::{json, Value};
 
 /// A mock OpenAI-compatible endpoint whose completion text increments per
@@ -420,10 +420,14 @@ async fn status_exposes_loop_config_and_server_loop_flag() {
     let (status, body) = s.get_json("/api/status").await;
     assert_eq!(status, 200);
     assert_eq!(body["server_loop"], true);
-    assert_eq!(body["loop"]["max_turns"], 0);
-    assert_eq!(body["loop"]["max_total_completion_tokens"], 0);
-    assert_eq!(body["loop"]["max_failures"], 2);
-    assert_eq!(body["loop"]["cooldown_ms"], 2000);
+    // The shipped numbers are pinned in tests/shipped_config.rs; this checks wiring.
+    assert_eq!(body["loop"]["max_turns"], shipped_u64("loop.max_turns"));
+    assert_eq!(
+        body["loop"]["max_total_completion_tokens"],
+        shipped_u64("loop.max_total_completion_tokens")
+    );
+    assert_eq!(body["loop"]["max_failures"], shipped_u64("loop.max_failures"));
+    assert_eq!(body["loop"]["cooldown_ms"], shipped_u64("loop.cooldown_ms"));
 }
 
 #[tokio::test]
@@ -606,7 +610,7 @@ async fn unlimited_turns_do_not_stop_at_five() {
     assert_eq!(body["run"]["config"]["max_turns"], 0);
     let run_id = body["run"]["run_id"].as_str().unwrap().to_string();
 
-    // Well past the shipped 5-turn cap, the run is still turning.
+    // With both budgets at 0 the run keeps turning past any finite cap.
     for _ in 0..200 {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         if count.load(std::sync::atomic::Ordering::SeqCst) >= 8 {

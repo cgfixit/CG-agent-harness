@@ -28,8 +28,8 @@ removing a key selects its code fallback.
 | `api.harness_loop_rate_limit.max_requests` | 1–100,000 |
 | `api.harness_loop_rate_limit.window_seconds` | 0.001–86,400 seconds |
 | `api.harness_loop_rate_limit.max_tokens` | 1–25,904 for Ollama reasoning `none`; otherwise 1–12,952; legacy 0 selects 2,048; ships 8,192 |
-| `loop.max_turns` | 0 (unlimited) or 1–1,000,000 |
-| `loop.max_total_completion_tokens` | 0 (unlimited) or 1–100,000,000 |
+| `loop.max_turns` | 50 (0 unlimited), 1–1,000,000 |
+| `loop.max_total_completion_tokens` | 200,000 (0 unlimited), 1–100,000,000 |
 | `loop.max_failures` | 1–100 |
 | `loop.cooldown_ms` | 0–300,000 |
 | `web.response_bytes` | 1,024–1,048,576 |

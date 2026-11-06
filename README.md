@@ -18,7 +18,7 @@ Fresh home, loopback fixture model, 2026-10-30. [Silent 60-second demo](docs/scr
 | Capability | What it provides | Starting state |
 |---|---|---|
 | **Local chat** | Streaming sessions with search, export, text and DOCX attachments, prompt skills, `/prompt` inspection, and a sandboxed HTML preview. | Ollama on loopback by default; listed, pulled, and tuned from the console. |
-| **Goal loops** | `/goal` and `/loop` keep working on a task, in the console or as a server-side run that outlives the browser, under turn, token, and failure limits. | Budgets unlimited; two consecutive failures stop a run; cloud models refuse loops. |
+| **Goal loops** | `/goal` and `/loop` keep working on a task as a console or server-side run outliving the browser, under turn, token and failure limits. | 50 turns, 200,000 tokens or two failed turns end a run; cloud models refuse loops. |
 | **Memory** | Shared pinned notes plus account-private structured facts, recall, and proposed summaries. | Capture, recall, and retrieval on; applying a proposal needs review ([setup](docs/INSTALL.md#memory-setup)). |
 | **Web research** | SerpAPI, Tavily, or public Google search; permitted fetches (opt-in Firecrawl fallback); `/web research` under request, time, byte, and token budgets, quotes checked. | On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; failed keyed searches fall back to public Google. |
 | **Reviewed coding** | Planner/executor loop, isolated clones, sandboxed checks, full diff review, separate Git decisions; detached jobs and schedules reuse the same gates. | Off until configured for a selected repository. |
