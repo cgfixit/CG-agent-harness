@@ -43,6 +43,27 @@ fn shipped_web_and_workspace_settings_validate_for_a_fresh_home() {
     assert!(!agentic.deepagent.allow_git_write_tools);
 }
 
+/// #675: an unattended `/loop` stops on a finite turn and token budget out of
+/// the box. `0` stays an explicit opt-in to unlimited, and a home whose file
+/// lacks the key keeps the code fallback `0` (upgrades preserve behavior).
+#[test]
+fn shipped_loop_budgets_are_finite_and_a_missing_key_stays_unlimited() {
+    use cgagentharness::server::config_reload::LoopLimits;
+    let shipped = LoopLimits::load(&shipped()).unwrap();
+    assert_eq!(
+        shipped,
+        LoopLimits {
+            max_turns: 50,
+            max_total_completion_tokens: 200_000,
+            max_failures: 2,
+            cooldown_ms: 2000,
+        }
+    );
+    let absent = LoopLimits::load(&AppConfig::from_str("{}", Path::new("config.yaml")).unwrap()).unwrap();
+    assert_eq!(absent.max_turns, 0, "a missing key keeps the unlimited fallback");
+    assert_eq!(absent.max_total_completion_tokens, 0);
+}
+
 #[test]
 fn shipped_tool_hop_budget_validates_and_stays_under_the_answer_budget() {
     let cfg = shipped();

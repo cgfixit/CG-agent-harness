@@ -568,7 +568,9 @@ on stop, a changed or cleared session goal (`LOOP_GOAL_CHANGED`), `loop.max_turn
 `loop.max_total_completion_tokens`, `loop.max_failures`
 consecutive failed turns or failed web rounds, unverified `GOAL_DONE`, a
 near-repeat reply, or a web refusal every later turn would repeat. Both budgets
-ship `0` (unlimited), so by default only the other conditions end a run. Runs live
+ship finite, 50 turns and 200,000 completion tokens (#675); `0` is an explicit
+opt-in to unlimited, and a home whose file lacks the key keeps the code fallback
+`0`. Runs live
 in process memory: a restart ends them without resuming, and
 `loops/<run_id>.json` is a record, not a resume point. Audits hold start and
 finish metadata, never replies.
