@@ -71,14 +71,10 @@ build dependency does not itself require a CMake executable. See
   `unsafe-libyaml` leaves the backend lockfile, after both dependency policies
   and configuration parsing checks pass. Unused-ignore warnings do not detect
   available replacements.
-- `block-buffer` 0.10.4 (GHSA-qwgh-2vcv-g2f7, fixed in 0.12.1) is an accepted
-  residual in both locks. It needs a panic partway through hashing; `digest`
-  0.10 reaches only `scrypt`/`pbkdf2`/`hmac`, the keyring's `hkdf`, and desktop
-  build-time `tauri-codegen`. Harness `sha2` hashing uses 0.11. This is a
-  call-graph inference, not an audit. cargo-deny does not flag it yet; add a
-  `deny.toml` ignore only when a RUSTSEC ID fails it. `scrypt` 0.12 (on `sha2`
-  0.11 and `pbkdf2` 0.13, MSRV 1.85) would retire it, but it is a `password-hash`
-  0.6 API migration of `src/common/authn.rs`, not a refresh.
+- GHSA-qwgh-2vcv-g2f7 (`block-buffer`) affects only `>=0.11.0, <0.12.1`;
+  the range was corrected upstream on 2026-10-30. Both locks carry 0.10.4 and
+  0.12.1, outside it, so no residual or `deny.toml` ignore is needed (#713,
+  #757). A `scrypt` 0.12 move stays an optional API migration, not a fix.
 - Duplicate versions are warnings under the existing policy. Advisories,
   unapproved licenses, wildcard requirements and unknown sources remain blocking.
 - Both `deny.toml` files ban push-telemetry and analytics SDK crates
@@ -132,5 +128,5 @@ cooldown (all published 2026-11-01): backend `crc32fast` 1.5.4, `zip` 9.2.1,
 optional `dbus-secret-service` OpenSSL feature, never compiled), and desktop
 `crc32fast` 1.5.4. `rmcp` 3.8.0 (2026-10-26) and `tauri` 2.12.5 wait on their
 deliberate pins. It follows the 2026-10-30 refresh (#701), the `rmcp` 3.7.0
-bump (#712) and the `block-buffer` note (#714).
+bump (#712) and the `block-buffer` note (#714), since corrected to not affected.
 Dated results describe that pass only; rerun the checks above before trusting them.
