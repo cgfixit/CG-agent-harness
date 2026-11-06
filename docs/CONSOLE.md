@@ -1,7 +1,6 @@
 # Chat, soul, skills and slash commands
 
-This page covers chat, sessions, soul, skills, style and commands.
-See the [index](../README.md), [memory setup](MEMORY_GUIDE.md), and
+See [setup](../README.md), [memory](MEMORY_GUIDE.md), and
 [web operations](SECURE_RESEARCH.md#search-fetch-and-research).
 
 Chat continuation and coding jobs differ: `/loop` follows a session goal,
@@ -108,13 +107,13 @@ them; keep a custom home outside the checkout and never `git add -f` private fil
 /goal clear
 ```
 
-`/loop 3` runs up to three follow-up turns toward the goal (default three).
-Each turn restates the goal. Run limits are the hot-reloadable
-[`loop.*` keys](CONFIG_RELOAD.md); the per-turn generation budget is
-`api.harness_loop_rate_limit.max_tokens`. Text after the count sets the
-goal first, so `/loop 3 <text>` is `/goal <text>` then `/loop 3`. With no stored
-goal, `/loop` takes the last prompt as the goal. Manual mode pauses after each
-turn; `/loop` continues. `/loop auto` toggles automatic continuation; turning it
+`/loop 3` requests three turns (the default), each restating the goal.
+[`loop.*` limits](CONFIG_RELOAD.md) reload; `api.harness_loop_rate_limit.max_tokens`
+bounds each reply. When both configured caps are zero or absent, `/status`
+and loop preflight warn: set a finite cap, then **Reload limits**. The warning
+never blocks; requested turn counts still apply.
+Text after the count sets the goal; otherwise a goal-less loop takes the last
+prompt. Manual mode pauses between turns; `/loop` continues. `/loop auto` toggles automatic continuation; turning it
 on with a goal (or last prompt) to follow starts the loop after 5 s, and so does
 `/goal <text>` while auto is on. `/loop auto` with a count, mode or goal turns
 auto on and starts after the same pause, storing nothing until then. A turn
@@ -408,7 +407,7 @@ parser is unavailable. Inspect results after every state-changing command.
 | `/skills [all\|help\|<name>]` | Inspect wired skills, the full catalog including optional prompt files, help, or skills matching a display name (which can differ from the `/skill use` directory ID) |
 | `/soul`, `status`, `on`, `off`, `edit`, `history`, `propose` | Inspect, toggle or open persona editing/proposal flows |
 | `/soul apply <id> <reason>`, `reject <id> <reason>`, `review <id>` | Review a retained proposal before explicitly applying or rejecting its exact revision |
-| `/status` | Runtime status; operational details require account access |
+| `/status` | Runtime status and unlimited-loop warning; account access required |
 | `/style`, `/style <name>`, `/style off` | Inspect/select a session output style, or clear it without changing soul.md |
 | `/tokens` | Current session token tally |
 | `/tools [all\|help\|mcp\|<name>]` | Inspect registered tools, the full catalog including unwired entries, help, external MCP grants, or one named tool |

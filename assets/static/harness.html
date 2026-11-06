@@ -1038,6 +1038,8 @@ let LOOP_COOLDOWN_MS = LOOP_LIMITS_FALLBACK.cooldown_ms;
    The server separately controls each turn's generation budget. */
 let MAX_LOOP_TOTAL_COMPLETION_TOKENS = LOOP_LIMITS_FALLBACK.max_total_completion_tokens;
 let MAX_LOOP_FAILURES = LOOP_LIMITS_FALLBACK.max_failures;
+let loopUnbounded = false;
+const LOOP_UNBOUNDED_WARNING = 'Warning: configured /loop budgets are unlimited (loop.max_turns and loop.max_total_completion_tokens are zero or absent). A requested turn count and other stop conditions still apply. Set a finite cap in config.yaml and use Reload limits.';
 /* The server-side /loop runner keeps turns running after this tab closes.
    Set from /api/status (server_loop); absent on older servers, which keeps
    the browser-driven runLoopTurns path below as the fallback. Only automatic
@@ -1047,6 +1049,7 @@ let serverLoopSupported = false;
 let serverLoopEventsAbort = null;
 function applyLoopConfig(status) {
   const c = status && status.loop;
+  loopUnbounded = !!c && c.unbounded === true;
   serverLoopSupported = !!(status && status.server_loop);
   if (!c) return;
   for (const key of ['max_turns', 'max_total_completion_tokens', 'max_failures', 'cooldown_ms']) {
@@ -3902,6 +3905,8 @@ async function runSlash(line, webCommand) {
             loaded.goal_web_mode = set.goal_web_mode || loopWebMode;
           }
           paintGoalLoop();
+          applyLoopConfig(status);
+          if (loopUnbounded) sys(LOOP_UNBOUNDED_WARNING);
           sys('Loop context: ' + (loaded.live_attachment_pins || 0) + ' live attachment pin(s); goal web mode ' + (loaded.goal_web_mode || 'all') + '; web tools ' + (status.chat_tools_available && loaded.goal_web_mode !== 'off' ? (loaded.goal_web_mode === 'fetch' ? 'fetch only within current URL permissions' : 'available within current URL permissions') : 'off') + '. /session unpin clears pins.');
         }
         if (!sessionGoal) { sys('set a goal first: /goal <what you want done>, /loop <what you want done>, or send any prompt and /loop will continue it'); break; }
@@ -4001,12 +4006,14 @@ async function runSlash(line, webCommand) {
 
       case 'status': {
         const s = await api('/api/status');
+        applyLoopConfig(s);
         if (s.auth_enabled && !('sessions' in s)) {
           const access = window.__cyclawRole === 'audit' ? 'Auditor: read-only status and audit records.' : s.status || 'Sign in to view operational details.';
           sys(table([['version', s.version], ['access', access]]));
           break;
         }
         if (s.selection_overrides_config) sys(s.model_status && s.model_status.cloud ? 'Cloud selection resets to local after restart.' : 'Saved selection overrides configured model ' + s.configured_model + '; changing that config model and restarting clears the selection.');
+        if (loopUnbounded) sys(LOOP_UNBOUNDED_WARNING);
         /* The style row must reflect the persisted state: settle queued
            style writes and re-read the open session's selection. */
         await awaitStyleWrites();

@@ -18,7 +18,7 @@ Fresh home, loopback fixture model, 2026-10-30. [Silent 60-second demo](docs/scr
 | Capability | What it provides | Starting state |
 |---|---|---|
 | **Web research** | SerpAPI, Tavily, or public Google search; permitted fetches and crawls (opt-in Firecrawl fallback); `/web research` jobs with planned subqueries and checked quotes. | On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; failed keyed searches fall back to public Google. |
-| **Goal loops** | `/goal` and `/loop` continue a long piece as a run outliving the browser, under turn, token and failure limits. | 50 turns, 200,000 tokens or two failed turns end a run; cloud models refuse loops. |
+| **Goal loops** | `/goal` and `/loop` continue a long piece as a run outliving the browser, under turn, token and failure limits. | Fresh defaults: 50 turns, 200,000 tokens, two failed turns. [Unlimited homes warn](docs/CONSOLE.md#71-sessions-and-bounded-chat-continuation); cloud refuses loops. |
 | **Memory** | Shared pinned notes plus account-private facts, recall, and proposed summaries that carry findings between sessions. | Capture, recall, and retrieval on; applying a proposal needs review ([setup](docs/INSTALL.md#memory-setup)). |
 | **Local chat** | Streaming sessions with search, Markdown export, text and DOCX attachments, prompt skills, `/prompt` inspection, and a sandboxed HTML preview. | Ollama on loopback by default; listed, pulled, and tuned from the console. |
 | **Analytics** | Session, token, and run history with USD where rates exist, plus **Estimate draft** before a cloud call. | On after sign-in; read-only; local inference unpriced. |

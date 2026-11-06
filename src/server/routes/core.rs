@@ -121,6 +121,7 @@ pub async fn status(
         "chat_mode": "conversation",
         "chat_tools_available": settings.web_enabled && !cloud && !state.chat_tools_unsupported(&model),
         "loop": {
+            "unbounded": loop_limits.is_unbounded(),
             "max_turns": loop_limits.max_turns,
             "max_total_completion_tokens": loop_limits.max_total_completion_tokens,
             "max_failures": loop_limits.max_failures,

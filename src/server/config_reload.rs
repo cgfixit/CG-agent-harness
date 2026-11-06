@@ -80,7 +80,13 @@ pub struct LoopLimits {
     pub cooldown_ms: u64,
 }
 
+pub const LOOP_UNBOUNDED_WARNING: &str = "Configured /loop budgets are unlimited: loop.max_turns and loop.max_total_completion_tokens are both zero or absent. Other stop conditions still apply. Set a finite cap in config.yaml and use Reload limits.";
+
 impl LoopLimits {
+    pub fn is_unbounded(&self) -> bool {
+        self.max_turns == 0 && self.max_total_completion_tokens == 0
+    }
+
     pub fn load(cfg: &AppConfig) -> Result<Self> {
         Ok(Self {
             max_turns: cfg.u64_in("loop.max_turns", 0, 0..=1_000_000)?,
@@ -218,7 +224,12 @@ pub async fn reload(state: Arc<AppState>, source: &'static str) -> Result<serde_
             next.revision = current.revision.saturating_add(1);
         }
         let result = json!({"ok":true, "changed":changed, "limits":next, "reloadable":RELOADABLE});
+        let became_unbounded = !current.loop_limits.is_unbounded() && next.loop_limits.is_unbounded();
         *current = Arc::new(next);
+        if became_unbounded {
+            tracing::warn!("{LOOP_UNBOUNDED_WARNING}");
+            state.audit.log(json!({"event":"loop_budgets_unlimited"}));
+        }
         state
             .audit
             .log(json!({"event":"config_reloaded", "source":source, "revision":current.revision, "changed":changed}));
@@ -248,6 +259,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn loop_unbounded_requires_both_budgets_to_be_zero() {
+        for (max_turns, max_total_completion_tokens, expected) in
+            [(0, 0, true), (0, 100, false), (5, 0, false), (5, 100, false)]
+        {
+            let limits = LoopLimits {
+                max_turns,
+                max_total_completion_tokens,
+                max_failures: 2,
+                cooldown_ms: 2000,
+            };
+            assert_eq!(limits.is_unbounded(), expected);
+        }
+        for key in ["loop.max_turns", "loop.max_total_completion_tokens"] {
+            assert!(LOOP_UNBOUNDED_WARNING.contains(key));
+        }
+    }
+
+    #[test]
     fn snapshots_share_fetch_capacity_cancellation_and_mutation_locks() {
         let dir = tempfile::tempdir().unwrap();
         let cfg = AppConfig::from_str("{}", &dir.path().join("config.yaml")).unwrap();
@@ -274,6 +303,7 @@ mod tests {
     fn loop_limits_load_defaults_and_reject_invalid_values() {
         let parse = |text: &str| AppConfig::from_str(text, std::path::Path::new("fixture.yaml")).unwrap();
         let defaults = LoopLimits::load(&parse("{}")).unwrap();
+        assert!(defaults.is_unbounded(), "absent keys retain the zero fallback");
         assert_eq!(
             defaults,
             LoopLimits {

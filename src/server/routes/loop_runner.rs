@@ -164,6 +164,7 @@ pub async fn start(
         .map_err(|e| ApiError::from_err(StatusCode::CONFLICT, &e))?;
     state.audit.log(json!({
         "event": "loop_run_started",
+        "unbounded": run.config.is_unbounded(),
         "run_id": run.run_id,
         "session_id": run.session_id,
         "owner": owner,

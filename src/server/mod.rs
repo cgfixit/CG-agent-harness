@@ -267,6 +267,10 @@ pub async fn build_app_with_sources(
     }
     cloud_chat.attach_spend(spend_file.clone());
     let runtime = config_reload::RuntimeLimits::load(&cfg, &backend, None)?;
+    if runtime.loop_limits.is_unbounded() {
+        tracing::warn!("{}", config_reload::LOOP_UNBOUNDED_WARNING);
+        audit.log(serde_json::json!({"event":"loop_budgets_unlimited"}));
+    }
     let rate_limiter = RateLimiter::new(runtime.api.max_requests, runtime.api.window_seconds);
     let loop_rate_limiter = RateLimiter::new(runtime.loop_rate.max_requests, runtime.loop_rate.window_seconds);
     let csrf_token = crate::common::random_urlsafe(32);

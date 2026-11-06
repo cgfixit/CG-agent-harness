@@ -96,6 +96,8 @@ console.log('Unattended loop retries a verdict-less turn up to MAX_LOOP_FAILURES
 const loopCase=html.slice(html.indexOf("      case 'loop': {"),html.indexOf("      case 'tokens': {"));
 /* Run the shipped /loop branch; fixtures that do not care get inert auto-start helpers. */
 function runLoopCase(c){
+  vm.runInContext(html.slice(html.indexOf('const LOOP_UNBOUNDED_WARNING ='),html.indexOf('/* The server-side /loop runner')),c);
+  vm.runInContext(html.slice(html.indexOf('function applyLoopConfig('),html.indexOf('/* A turn that needed compaction')),c);
   for(const [k,v] of Object.entries({MAX_GOAL_CHARS:2000,DEFAULT_LOOP_TURNS:3,AUTO_LOOP_START_MS:5000,cancelAutoLoopStart(){},goalWebNote:()=>'',refreshSessions:async()=>{},
     scheduleAutoLoopStart(line,lead){(c.scheduled||(c.scheduled=[])).push(line);}})) if(!(k in c)) c[k]=v;
   return vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',c);
@@ -106,6 +108,19 @@ assert.equal(command.ran,true);
 assert.equal(command.sessionGoal,'stored goal');
 assert.equal(command.loopState.remaining,2);
 console.log('Loop command preflight loads goal and starts the owned loop.');
+
+for (const server of [false, true]) {
+  for (const unbounded of [true, false]) {
+    const notes=[];
+    const c=vm.createContext({rest:['2'],loopState:null,loopAuto:server,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,
+      api:async path=>path==='/api/status'?{provider:'ollama',server_loop:server,loop:{max_turns:unbounded?0:50,max_total_completion_tokens:0,unbounded}}:{goal:'stored goal'},
+      paintGoalLoop(){},sys:line=>notes.push(line),ran:'',runLoopTurns:async()=>{c.ran='browser';},runServerLoop:async()=>{c.ran='server';}});
+    await runLoopCase(c);
+    assert.equal(c.ran,server?'server':'browser','a warning never blocks either loop path');
+    assert.equal(notes.filter(line=>line.startsWith('Warning: configured /loop budgets are unlimited')).length,unbounded?1:0);
+  }
+}
+console.log('Both loop paths warn only for server-reported unbounded budgets and still run.');
 
 // Goal derivation: the last own prompt, never a loop turn or compaction note.
 assert.equal(loopGoalFromMessages([{role:'user',content:'first'},{role:'assistant',content:'ack'},{role:'user',content:'fix the parser'}],2000),'fix the parser');
