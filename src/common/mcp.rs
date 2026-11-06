@@ -33,6 +33,7 @@ pub const SECRET_ENV: &[&str] = &[
     "CGAGENTHARNESS_WEBHOOK_TOKEN",
     "CLAUDE_API_KEY",
     "DEEPAGENT_API_KEY",
+    "FIRECRAWL_API_KEY",
     "GH_TOKEN",
     "GITHUB_TOKEN",
     "GROK_API_KEY",

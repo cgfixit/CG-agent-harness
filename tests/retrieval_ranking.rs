@@ -143,6 +143,7 @@ fn page(path: &str, title: &str, text: &str, policy: &Policy) -> Page {
         policy_revision: policy.revision.clone(),
         etag: None,
         last_modified: None,
+        via: None,
     }
 }
 

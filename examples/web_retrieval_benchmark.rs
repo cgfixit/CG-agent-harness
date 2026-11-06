@@ -40,6 +40,7 @@ fn main() -> anyhow::Result<()> {
                 policy_revision: policy.revision.clone(),
                 etag: None,
                 last_modified: None,
+                via: None,
             }
         })
         .collect();

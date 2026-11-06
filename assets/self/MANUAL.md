@@ -11,7 +11,7 @@ This manual is static text bundled with the build and indexed at startup. It is 
 - Local chat: Streaming sessions with search, export, text and DOCX attachments, prompt skills, `/prompt` inspection, and a sandboxed HTML preview. Starts: Ollama on loopback by default; listed, pulled, and tuned from the console.
 - Goal loops: `/goal` and `/loop` keep working on a task, in the console or as a server-side run that outlives the browser, under turn, token, and failure limits. Starts: Budgets unlimited; two consecutive failures stop a run; cloud models refuse loops.
 - Memory: Shared pinned notes plus account-private structured facts, recall, and proposed summaries. Starts: Capture, recall, and retrieval on; applying a proposal needs review (setup).
-- Web research: SerpAPI, Tavily, public Google, or loopback SearXNG search; permitted fetches; `/web research` under request, time, byte, and token budgets, quotes… Starts: On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; failed keyed searches fall back to public Google.
+- Web research: SerpAPI, Tavily, public Google, or loopback SearXNG search; permitted fetches (opt-in Firecrawl fallback); `/web research` under request, time,… Starts: On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; failed keyed searches fall back to public Google.
 
 ## readme: capability overview (part 2)
 
@@ -87,7 +87,7 @@ Audit records are redacted recursively (emails, IPs, secret shapes, startup-load
 
 ## invariant: Provider keys live in the OS credential store
 
-Managed keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`, `SERPAPI_API_KEY`, `TAVILY_API_KEY`, `GH_TOKEN`, `CGAGENTHARNESS_API_KEY`, and `CGAGENTHARNESS_WEBHOOK_TOKEN`) use macOS Keychain, Linux Secret Service, or Windows Credential Manager. Inherited environment values, including empty, win. Legacy home `.env` migration removes only store-verified assignments; unknown/failed lines stay. Failures warn without values and leave keys unloaded. Settings save/clear use the store and fail closed when…
+Managed keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`, `SERPAPI_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY`, `GH_TOKEN`, `CGAGENTHARNESS_API_KEY`, and `CGAGENTHARNESS_WEBHOOK_TOKEN`) use macOS Keychain, Linux Secret Service, or Windows Credential Manager. Inherited environment values, including empty, win. Legacy home `.env` migration removes only store-verified assignments; unknown/failed lines stay. Failures warn without values and leave keys unloaded. Settings save/clear use the store and…
 
 ## invariant: A detached run cannot outlive its gates
 
@@ -485,6 +485,7 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
 
 - web.stale_seconds: 60–31536000; fetch age, not publication-date verification
   - web.search
+  - web.firecrawl
 - notifications: Completion webhooks are explicit operator configuration and restart-only.
   - notifications.enabled
   - notifications.schema_version
@@ -498,11 +499,11 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - notifications.max_attempts: 1–3 per delivery/replay; IDs remain stable
   - notifications.retry_delay_sec: 1–60; exponential backoff base
   - notifications.max_backoff_sec: 1–3600; before bounded jitter
-  - notifications.jitter_percent: 0–50; nonnegative random delay
 
 ## config: sections and keys (values omitted) (part 6)
 
-- notifications.retention_sec: 60–2592000; pending and terminal delivery retention
+- notifications.jitter_percent: 0–50; nonnegative random delay
+  - notifications.retention_sec: 60–2592000; pending and terminal delivery retention
   - notifications.max_replays: 0–10; explicit owner-confirmed replay cycles
   - notifications.timeout_sec: 1–30, includes DNS and request
 - mcp: External MCP tools. Off until an operator declares servers. Never auto-discover. SSE loopback is an explicit toggle and ships off. MCP tools never appear on /loop. stdio command[0] must be an…
@@ -519,11 +520,11 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - tls.enabled: newly seeded homes use HTTPS; existing configs are not rewritten
   - tls.auto_generate: unique local cert/key in a private atomic PEM bundle
   - tls.certificate_days: 1–365; renew explicitly before expiry
-  - tls.cert_file: optional operator PEM chain, relative to home or absolute
 
 ## config: sections and keys (values omitted) (part 7)
 
-- tls.key_file: paired private PEM key; never overwritten by automatic generation
+- tls.cert_file: optional operator PEM chain, relative to home or absolute
+  - tls.key_file: paired private PEM key; never overwritten by automatic generation
 - auth
   - auth.enabled
   - auth.max_concurrent_operations
@@ -552,12 +553,12 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - agentic.gh_min_version
   - agentic.gh_timeout_sec
   - agentic.gh_retries
-  - agentic.registry_path: must stay under the home data/ tree
-  - agentic.allowed_read_ops
 
 ## config: sections and keys (values omitted) (part 8)
 
-- agentic.deepagent_github
+- agentic.registry_path: must stay under the home data/ tree
+  - agentic.allowed_read_ops
+  - agentic.deepagent_github
 - unslop
   - unslop.enabled: opt-in coding-output inspection and rewrite pass
   - unslop.metrics_path

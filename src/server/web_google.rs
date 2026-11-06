@@ -71,8 +71,10 @@ fn cooldown_seconds(provider: &str, code: &str, now_unix: u64, public_sec: u64, 
         ("google-public", "WEB_GOOGLE_CHALLENGE" | "WEB_GOOGLE_BLOCKED") => Some(public_sec),
         // Keyed providers cap searches per window (SerpAPI per clock hour): 0 waits
         // for the next hour boundary.
-        ("google-serpapi" | "tavily", "WEB_SEARCH_QUOTA") if quota_sec == 0 => Some(3600 - now_unix % 3600),
-        ("google-serpapi" | "tavily", "WEB_SEARCH_QUOTA") => Some(quota_sec),
+        ("google-serpapi" | "tavily", "WEB_SEARCH_QUOTA") | ("firecrawl", "WEB_FALLBACK_QUOTA") if quota_sec == 0 => {
+            Some(3600 - now_unix % 3600)
+        }
+        ("google-serpapi" | "tavily", "WEB_SEARCH_QUOTA") | ("firecrawl", "WEB_FALLBACK_QUOTA") => Some(quota_sec),
         _ => None,
     }
 }
@@ -294,7 +296,7 @@ impl WebTool {
         self.provider_key("TAVILY_API_KEY", self.tavily_key_from_file)
     }
 
-    fn provider_key(&self, name: &str, loaded_from_file: bool) -> Result<String> {
+    pub(super) fn provider_key(&self, name: &str, loaded_from_file: bool) -> Result<String> {
         if self.plaintext_key_file {
             if !loaded_from_file {
                 if let Ok(key) = std::env::var(name) {

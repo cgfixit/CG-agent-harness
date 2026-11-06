@@ -221,6 +221,14 @@ HTML parse/extract runs off async workers, stops on cancel/deadline, and keeps
 its permit until exit. `web.html_parser_handles` bounds parser state; excess
 complexity returns no partial evidence.
 
+The one exception is opt-in `web.firecrawl.enabled` (ships off), for exact reads
+only, never discovery, crawl or search. After a pinned read gets a server's 403,
+429 or 503 or a near-empty script shell, the authorized URL, rechecked just
+before sending, may go once to Firecrawl, so it leaves the machine. Its answer
+must name that URL as final (a redirect is refused), keeps no links, carries
+`via: firecrawl`, and is capped by `web.firecrawl.max_per_hour`. A failed
+fallback keeps the original outcome.
+
 Policy is reloaded before dispatch and before storage or delivery. Revoked or
 unproven saved evidence is inaccessible, including old shared plain-text context.
 Revocation cannot erase historical chat or content already sent to a model. No atomicity against arbitrary external file
@@ -475,7 +483,7 @@ zizmor-linted; Rust pins: 1.88 backend, 1.90 desktop.
 ## Provider keys live in the OS credential store
 
 Managed keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`,
-`SERPAPI_API_KEY`, `TAVILY_API_KEY`, `GH_TOKEN`, `CGAGENTHARNESS_API_KEY`, and
+`SERPAPI_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY`, `GH_TOKEN`, `CGAGENTHARNESS_API_KEY`, and
 `CGAGENTHARNESS_WEBHOOK_TOKEN`) use macOS Keychain, Linux Secret Service, or
 Windows Credential Manager. Inherited environment values, including empty, win.
 Legacy home `.env` migration removes only store-verified assignments;
