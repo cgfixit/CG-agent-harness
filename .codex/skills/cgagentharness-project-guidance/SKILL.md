@@ -21,8 +21,9 @@ These files guide coding agents; they are not the harness runtime `/api/skills`.
 | Process containment | `src/agentic/executor/sandbox.rs`, `src/common/process.rs`, `src/common/mcp.rs` |
 | Defaults and reload | `assets/config.default.yaml`, `src/common/config.rs`, `src/server/config_reload.rs` |
 | Routes and slash commands | `src/server/routes/mod.rs`, `src/server/slash.rs`, `src/server/views.rs`, `assets/static/harness.html` |
+| Search, fetch, detached research | `src/server/web_google.rs`, `src/server/web_tavily.rs`, `src/server/web_firecrawl.rs`, `src/server/web_research.rs`; `tests/web_research.rs` |
 | Model budgets and compaction | `src/llm`, `src/server/compaction.rs`, `tests/chat_and_sessions.rs` |
-| Ownership, memory, MCP, web, schedules, notifications, netconnect | Contract-to-test map in `cgagentharness-invariant-guard`; select the affected rows |
+| Ownership, memory, MCP, schedules, notifications, netconnect | Contract-to-test map in `cgagentharness-invariant-guard`; select affected rows |
 | Install and packaging | Root README's installation links, `scripts/package-desktop.sh`, `.github/workflows/desktop.yml` |
 
 ## Select a skill

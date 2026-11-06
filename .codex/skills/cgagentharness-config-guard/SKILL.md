@@ -17,7 +17,7 @@ unexecuted check is NOT RUN, not a merge recommendation.
 | ID | Check and authoritative evidence |
 |---|---|
 | H1 | `flag_is_true` accepts only literal YAML `true`; missing keys and strings stay off. `tests/common_layer.rs::quoted_true_is_off`. |
-| H2 | Read the complete closed-gate list in `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`: execution, unslop, `diagnostics.model_tool`, outbound/inbound MCP, netconnect, notifications and repository retrieval stay off; inbound tools and netconnect scope stay empty. Self-knowledge, live state, diagnostic logs (`diagnostics.logs_enabled`), and auth/TLS ship on. The public Google fallback ships on; the SerpAPI fallback ships off. Fresh web settings seed on with one content grant, `https://www.google.com/*` (`a_new_home_seeds_only_the_google_search_rule_and_never_reseeds`); existing/legacy choices follow `home_layout_seeds_config_registry_and_skills_once` and `existing_web_settings_preserve_choices_and_keep_legacy_values_off` in `tests/common_layer.rs`. |
+| H2 | Closed gates: `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` covers execution, unslop, `diagnostics.model_tool`, MCP, netconnect, notifications and repository retrieval; inbound tools/netconnect scope stay empty. Self-knowledge, live state, diagnostic logs and auth/TLS ship on; public Google fallback on, SerpAPI fallback off. Fresh web settings seed only `https://www.google.com/*`; `tests/common_layer.rs` covers seeding and preservation through `a_new_home_seeds_only_the_google_search_rule_and_never_reseeds`, `home_layout_seeds_config_registry_and_skills_once`, `existing_web_settings_preserve_choices_and_keep_legacy_values_off`. |
 | H3 | The shipped-config test also locks literal YAML needles, including `allow_plaintext_key_file: false`, and keeps that opt-in restart-only. `security.api_key_optional` is deprecated metadata, not account authority. |
 | H4 | Writes require human reason and per-call confirm; inspect writer, `tests/real_repo_loop.rs` and shim route assertions. |
 | H5 | `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` only disables; `EXECUTION_ENABLED` cannot be flipped to fake a passing refusal. `tests/write_kill_switch.rs`. |
@@ -25,8 +25,9 @@ unexecuted check is NOT RUN, not a merge recommendation.
 | H7 | Mode/write-enabled alone grants no mutation: fresh disk policy, master/deepagent/clone-write gates and separate intents remain required. `tests/write_policy.rs`. |
 | H8 | The shipped-config test locks the prompt-filter pattern count; inspect its current assertion rather than copying the count here. |
 | H9 | `shipped_defaults_protect_agent_instruction_files` and `shipped_defaults_deny_sensitive_read_basenames` retain protected instructions and sensitive-read exclusions. |
-| H10 | Auth/TLS reject invalid switch types instead of treating them as generic off gates. `tests/common_layer.rs::security_switches_require_boolean_values`. |
+| H10 | Auth/TLS reject invalid switch types: `tests/common_layer.rs::security_switches_require_boolean_values`. Numeric types are checked at `AppConfig::load`; missing retains defaults, malformed refuses. `tests/invariant_guard.rs::numeric_config_reads_are_type_checked_at_load`, `src/common/config.rs` units. |
 | H11 | The shipped-config test locks pinned/structured-memory defaults. Saved explicit choices win; proposals remain pending until reviewed. Use `tests/common_layer.rs` and `tests/structured_memory_suggestions.rs` for persistence and proposal behavior. |
+| H12 | Firecrawl ships off with a bounded hourly cap, both restart-only. Check `src/server/web_firecrawl.rs::tests::config_ships_off_and_refuses_a_bad_cap`, shipped YAML and `config_reload::RELOADABLE`; H2 does not assert this gate. |
 
 ## Execute and interpret
 
@@ -44,7 +45,7 @@ Confirm the output names the intended tests. For changed gates, inspect their
 behavioral assertions and exercise the relevant refusal path; a static default
 check does not prove runtime enforcement. Follow `AGENTS.md` for scoped checks.
 
-Report H1–H11 with commands, results, source SHA, deliberate default changes and
+Report H1–H12 with commands, results, source SHA, deliberate default changes and
 remaining gaps. Re-tuning requires matching code, comments and contract updates
 with an explicit PR invariant statement. Keep valid assertions and security
 boundaries; isolate environment failures before attributing a product defect.

@@ -28,22 +28,21 @@ This manual is static text bundled with the build and indexed at startup. It is 
 ## agents: process and home map
 
 - `cgagentharness serve` -> loopback HTTP/HTTPS console in `src/server`. Public
- `account`, `web` and `tls` CLI commands call the same protected service;
- `mcp-key` manages machine keys by local file authority.
+ `account` and `web` call that service; `tls` manages local certificates and
+ `mcp-key` manages machine keys by filesystem authority.
 - `cgagentharness agentic <action>` -> `src/agentic` (hidden; spawned by
  `src/shim` as a child process, never called in-process).
 - `cgagentharness netconnect status|devices|diag` and `/net` -> `src/netconnect`.
- Only `diag` dials, through the budgeted `Dialer` in `connect.rs`; gates, scope
- and aliases are in the netconnect row below.
-- Exit codes are an API for the `agentic` and `netconnect` children: `0` ok,
- `2` failed, `3` env/config, `4` write refused. A non-zero child exit is HTTP
+ Only `diag` dials, through the budgeted `Dialer` in `connect.rs`.
+- `agentic`/`netconnect` exit codes: `0` ok, `2` failed, `3` env/config,
+ `4` write refused. Through the shim, a non-zero child exit is HTTP
  200 with `ok=false`; shim failures map to 400/502/504 and the disabled-layer
  banner to 409. Other subcommands (`serve`, `account`, `web`, `tls`,
  `mcp-key`) exit `1` on error.
-- Home: `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`). Never write outside it
- except into a clone the pipeline itself made under `data/agentic/workspaces`.
-- Feature contracts live in `INVARIANTS.md`; read the owning section before
- changing a feature:
+- Application state: `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`); coding writes
+ stay in pipeline-created clones under `data/agentic/workspaces`.
+- Before changing a feature, read its guide below and owning `INVARIANTS.md`
+ section. Source index locates implementations.
 
 ## invariant: I6 — process isolation between the console and the agentic pipeline
 
