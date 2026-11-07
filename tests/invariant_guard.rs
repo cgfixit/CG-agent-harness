@@ -1729,7 +1729,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
-    ("docs/DESKTOP.md", Guide, 2429),
+    ("docs/DESKTOP.md", Guide, 2422),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
     // why: hook behavior review trims duplicated reuse instructions; retain the smaller budget.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.

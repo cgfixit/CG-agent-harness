@@ -157,18 +157,17 @@ operator certificate, set both `tls.cert_file` and `tls.key_file` to absolute or
 home-relative paths, with a valid chain, key, and loopback SANs. The operator
 renews it. Old certificate-bound CLI sessions must log in again.
 
-Browsers do not trust generated certificates automatically. Use the native app
-or CLI, supply a browser-trusted operator certificate, or review and install the
-exported public certificate through the OS or browser UI. The app never installs
-it. `curl --cacert local-public.pem https://127.0.0.1:8790/api/status` trusts only
-that file for one command. Never bypass certificate validation.
+Browsers, including private windows, need separate trust. Native **Setup → Export
+public browser certificate** saves the owned leaf and displays its SHA-256.
+Safari and Chrome/Chromium on macOS use operator-managed Keychain SSL trust;
+Firefox may need its own exception or a browser-trusted operator certificate.
+Renewal needs another review. The app installs no trust. Never disable validation.
 
 ## Terminal access
 
-Public `account` and `web` commands call the console's protected HTTP handlers,
-so the home server must run. They cannot bypass login or mutate policy offline.
-Set an absolute `CGAGENTHARNESS_HOME` when needed. For an explicit port or desktop
-listener, pass its origin with `--url` after `account` or `web`.
+`account` and `web` use the running home's authenticated API; no offline policy
+mutation exists. Set absolute `CGAGENTHARNESS_HOME` when needed. Pass a desktop
+or custom-port origin with `--url` after `account` or `web`.
 
 ```bash
 ./target/release/cgagentharness account --url https://127.0.0.1:8790 login admin

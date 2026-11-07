@@ -25,7 +25,9 @@ Process edges; update this map when adding one.
   in a browser or desktop webview, and the setup window (`desktop/ui/`). It never
   supplies a command: it calls same-origin `/api/*` through the guard chain, and
   `setup.js` invokes only the Tauri commands `desktop_status`, `retry_backend`,
-  `prepare_cargo` and `check_models`.
+  `prepare_cargo`, `check_models` and `export_browser_certificate`. The last saves
+  only the owned public leaf through a native file picker, never a private key or
+  trust-store change; the renderer supplies no destination path.
 - **Main:** `cgagentharness serve` (`src/server`) owns every guard, gate and store. The
   desktop shell (`desktop/src/`) hash-checks the bundled backend and runs it as the
   hidden, Unix-only `cgagentharness desktop` sidecar, whose pipe carries readiness and
