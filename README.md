@@ -20,7 +20,7 @@ Fresh home, loopback fixture model, 2026-10-30. [Silent 60-second demo](docs/scr
 | **Web research** | SerpAPI, Tavily, or public Google search; permitted fetches and crawls (opt-in Firecrawl fallback); `/web research` jobs with planned subqueries and checked quotes. | On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; failed keyed searches fall back to public Google. |
 | **Goal loops** | `/goal` and `/loop` continue a long piece as a run outliving the browser, under turn, token and failure limits. | Fresh defaults: 50 turns, 200,000 tokens, two failed turns. [Unlimited homes warn](docs/CONSOLE.md#71-sessions-and-bounded-chat-continuation); cloud refuses loops. |
 | **Memory** | Shared pinned notes plus account-private facts you select per session, recall, and proposed summaries that carry findings between sessions. | Capture, recall, and retrieval on; applying a proposal needs review ([setup](docs/INSTALL.md#memory-setup)). |
-| **Local chat** | Streaming sessions with owner-scoped transcript search and per-session Markdown export in the Sessions pane, text and DOCX attachments, prompt skills, `/prompt` inspection, and a sandboxed HTML preview. | Ollama on loopback by default; listed, pulled, and tuned from the console. |
+| **Local chat** | Streaming sessions with owner-scoped transcript search and per-session Markdown export in the Sessions pane, text and DOCX attachments, prompt skills, nine session style presets, `/prompt` inspection, and a sandboxed HTML preview. | Ollama on loopback by default; listed, pulled, and tuned from the console. No persona or style applies until you write `soul.md` or pick a preset. |
 | **Analytics** | Session, token, and run history with USD where rates exist, plus **Estimate draft** before a cloud call. | On after sign-in; read-only; local inference unpriced. |
 | **Cloud chat** | Optional Grok or Claude. Sends only the new message, never history, memory, skills, attachments, or web context. | Needs a provider key; refused for `/loop`. |
 | **MCP integrations** | Declared external tools and a separate read-only memory gateway with dedicated machine credentials. | Both off. |
@@ -80,7 +80,7 @@ unzip CG-Agent-Harness-macos-universal.zip
 open "CG Agent Harness.app"
 ```
 
-The universal app needs no Rust, Python or browser and is ad-hoc signed ([Desktop](docs/DESKTOP.md) covers Gatekeeper); releases also attach Linux x86_64 and macOS arm64 CLI builds with `.sha256` files.
+The universal app needs no Rust, Python or browser and is ad-hoc signed ([Desktop](docs/DESKTOP.md) covers Gatekeeper); its Setup window exports the public certificate for [browser trust](docs/SECURE_RESEARCH.md#https-and-native-trust). Releases also attach Linux x86_64 and macOS arm64 CLI builds with `.sha256` files.
 
 #### Standalone server: macOS or Linux
 
@@ -93,7 +93,7 @@ cargo build --release --locked
 ./target/release/cgagentharness serve
 ```
 
-Open `https://127.0.0.1:8790/` and trust the local certificate ([certificate guide](docs/SECURE_RESEARCH.md)). Non-loopback binds are refused.
+Open `https://127.0.0.1:8790/` and trust the local certificate ([certificate guide](docs/SECURE_RESEARCH.md#https-and-native-trust)). Non-loopback binds are refused.
 
 ### 3. Sign in and try a conversation
 
