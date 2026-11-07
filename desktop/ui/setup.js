@@ -37,6 +37,8 @@ async function refresh() {
     if (version !== actionVersion) return;
     status.textContent = data.message;
     showCode(data.setup_code);
+    document.getElementById('certificateRow').hidden = !data.certificate_sha256;
+    document.getElementById('certificateFingerprint').textContent = data.certificate_sha256 || '';
     details.textContent = data.details;
   }
   catch (_) {
@@ -48,7 +50,11 @@ async function action(command, args) {
   actionVersion++;
   busy = true; failure = ''; details.textContent = '';
   for (const b of document.querySelectorAll('button')) b.disabled = true;
-  try { status.textContent = 'Working…'; await invoke(command, args); }
+  try {
+    status.textContent = 'Working…';
+    const result = await invoke(command, args);
+    if (command === 'export_browser_certificate') document.getElementById('certificateResult').textContent = result ? 'Public certificate saved to ' + result + '. Review its fingerprint and trust settings in your browser or Keychain Access.' : 'Export cancelled.';
+  }
   catch (e) { failure = String(e); status.textContent = failure; }
   finally { busy = false; for (const b of document.querySelectorAll('button')) b.disabled = false; refresh(); }
 }
@@ -56,4 +62,5 @@ document.getElementById('retry').addEventListener('click', () => action('retry_b
 document.getElementById('prepare').addEventListener('click', () => action('prepare_cargo'));
 copyButton.addEventListener('click', copyCode);
 document.getElementById('models').addEventListener('click', () => action('check_models'));
+document.getElementById('exportCertificate').addEventListener('click', () => action('export_browser_certificate'));
 refresh(); setInterval(refresh, 2000);

@@ -14,7 +14,7 @@ let rejectModels, statusResponse, statusUnavailable = false, poll;
 let clipboard = null, clipboardDenied = false;
 const context = vm.createContext({
   navigator: {clipboard: {writeText: async text => { if (clipboardDenied) throw new Error('denied'); clipboard = text; }}},
-  document: {getElementById: node, querySelectorAll: () => ['retry', 'models', 'prepare', 'copyCode'].map(node)},
+  document: {getElementById: node, querySelectorAll: () => ['retry', 'models', 'prepare', 'copyCode', 'exportCertificate'].map(node)},
   window: {__TAURI_INTERNALS__: {invoke(command, args) {
     if (command === 'desktop_status') {
       const response = statusResponse;
@@ -22,6 +22,7 @@ const context = vm.createContext({
       return response ?? (statusUnavailable ? Promise.reject('unavailable') : Promise.resolve(snapshot));
     }
     if (command === 'retry_backend') { assert.equal(args.initializeKey, null); return Promise.resolve(); }
+    if (command === 'export_browser_certificate') return Promise.resolve('/tmp/fixture-public.cer');
     assert.equal(command, 'check_models');
     return new Promise((_, reject) => { rejectModels = reject; });
   }}},
@@ -45,12 +46,17 @@ await poll();
 assert.match(node('status').textContent, /timed out/, 'polling must preserve the action error');
 
 // A successful retry clears the action error; subsequent polls read current account state.
-snapshot = {message: 'Backend ready. Sign in to the harness.', details: 'Owned endpoint: https://127.0.0.1:12345', setup_code: 'fixture-code'};
+snapshot = {message: 'Backend ready. Sign in to the harness.', details: 'Owned endpoint: https://127.0.0.1:12345', setup_code: 'fixture-code', certificate_sha256: 'a'.repeat(64)};
 await node('retry').listeners.click();
 await settle();
 assert.equal(node('status').textContent, snapshot.message);
 assert.equal(node('setupCode').textContent, 'fixture-code');
 assert.equal(node('codeRow').hidden, false, 'the setup code must be visible while it exists');
+assert.equal(node('certificateRow').hidden, false);
+assert.equal(node('certificateFingerprint').textContent, 'a'.repeat(64));
+await node('exportCertificate').listeners.click();
+await settle();
+assert.match(node('certificateResult').textContent, /fixture-public.cer/);
 assert.equal(clipboard, null, 'the code must never reach the clipboard without a click');
 // The code element is not rewritten by an unchanged poll, so a selection on it survives.
 let writes = 0;

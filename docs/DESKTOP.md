@@ -84,11 +84,12 @@ inherited stdin/stdout and certificate-pinned HTTPS readiness. The backend binds
 port zero before reporting its address, so it cannot adopt an existing listener.
 The endpoint applies account, origin, CSRF, and rate checks.
 
-The setup window reaches the shell through four Tauri commands in `desktop/src/main.rs`:
-`desktop_status`, `retry_backend`, `check_models`, and `prepare_cargo`. They accept
-no command line; the backend HTTP API remains the operational surface. A
-readiness challenge grants no API authority; `serve` and the CLI remain
-available independently.
+Setup invokes `desktop_status`, `retry_backend`, `check_models`, `prepare_cargo`,
+and `export_browser_certificate` in `desktop/src/main.rs`. None accepts commands.
+Certificate export uses a native save dialog, writes only the owned public leaf,
+and refuses existing files. Compare its displayed SHA-256 before following
+[browser trust instructions](SECURE_RESEARCH.md#https-and-native-trust). It never installs trust.
+Readiness grants no API authority; the backend API and CLI remain independent.
 
 The globe beside **CG Agent / harness** requests native confirmation, then runs
 bundled `start-web.sh` in Terminal to open the owned server in the default browser.
@@ -108,9 +109,9 @@ OS opens an external browser. New webviews and downloads are denied. The
 console has no download/export command; plan and PR-body file inputs remain,
 with native chooser acceptance pending. Model/web content uses the
 existing text renderer and nonce CSP. The external console window receives **no
-native capability**. Only bundled Setup can invoke status, retry, local inventory,
-and offline preparation through a native folder picker. There is no generic shell,
-arbitrary file API, analytics, updater, or crash upload.
+native capability**. Only bundled Setup can invoke status, retry, model inventory, offline preparation
+and public-certificate export through native pickers. No generic shell, arbitrary
+file API, analytics, updater, or crash upload exists.
 
 I6 is unchanged: the server never imports agentic implementation. All run,
 approval, commit, push and publication operations cross the existing shim into
@@ -121,11 +122,9 @@ the existing Seatbelt execution restrictions. No App Sandbox entitlement is adde
 
 ## Finder setup and local inference
 
-Setup reports discovered Git, gh, Cargo, Rust, Python and Xcode tools. Discovery
-uses known absolute directories (`~/.cargo/bin`, Homebrew, `/usr/local/bin`, and
-system directories), never arbitrary inherited PATH or the launch directory.
-Path presence does not prove GitHub readiness or a prepared build; each operation
-validates its tools.
+Setup discovers Git, gh, Cargo, Rust, Python and Xcode in known directories
+(`~/.cargo/bin`, Homebrew, `/usr/local/bin`, system directories), never inherited
+PATH or the launch directory. Each operation validates readiness separately.
 For explicit operator tool locations, a private, current-user-owned
 `desktop-tools.json` in the application home may contain:
 
