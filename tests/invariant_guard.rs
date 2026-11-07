@@ -1725,7 +1725,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved +200 (2026-10-22) so dated advisory notes such as RUSTSEC-2026-0384 fit without trimming history.
     // why: the +50 (2026-10-31) for the block-buffer residual is reverted; the advisory no longer matches. 1139 words.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
-    ("docs/DEPENDENCIES.md", Guide, 1077),
+    ("docs/DEPENDENCIES.md", Guide, 1070),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
