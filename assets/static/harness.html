@@ -6393,12 +6393,12 @@ function factSelectionSummary(session, selection, error, facts) {
   const injected = Array.isArray(selection.injected) ? selection.injected.length : 0;
   const dropped = Array.isArray(selection.dropped) ? selection.dropped : [];
   let text = 'Session ' + session + ': ' + picked + ' selected, ' + injected + ' eligible for local chat.';
-  if (selection.explicit_recall === false) text += ' Explicit recall is off, so selections are kept but not sent.';
+  if (selection.explicit_recall === false) text += ' Explicit recall is off, so selections are kept but none are eligible.';
   const reasons = dropped.filter(item => item.reason !== 'recall_disabled').map(item => {
     const fact = facts.find(row => row.id === item.id);
     return (fact ? String(fact.category || 'fact') : String(item.id || 'fact')) + ' (' + (FACT_DROP_TEXT[item.reason] || String(item.reason || 'dropped')) + ')';
   });
-  if (reasons.length) text += ' Not sent: ' + reasons.join(', ') + '.';
+  if (reasons.length) text += ' Not eligible: ' + reasons.join(', ') + '.';
   return text;
 }
 
@@ -6499,7 +6499,7 @@ async function appendSavedFacts(panel) {
           : picks.filter(item => item.id !== fact.id)));
         if (pick && pick.expected_revision !== fact.revision) {
           const stale = document.createElement('span');
-          stale.textContent = ' Selected revision ' + pick.expected_revision + ' is outdated, so it is not sent.';
+          stale.textContent = ' Selected revision ' + pick.expected_revision + ' is outdated, so it is not eligible.';
           const refresh = document.createElement('button'); refresh.type = 'button';
           refresh.textContent = 'Use revision ' + fact.revision;
           refresh.addEventListener('click', () => commit(picks.map(item => item.id === fact.id ? { id: fact.id, expected_revision: fact.revision } : item)));
