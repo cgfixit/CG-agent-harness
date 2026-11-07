@@ -120,6 +120,21 @@ pub(super) fn plan_hops(provider: &SearchProvider, keyed: bool, fallback: &Fallb
     hops
 }
 
+/// Lend unused time forward while reserving a paced public request when possible.
+pub(super) fn hop_budget(
+    remaining: std::time::Duration,
+    hops: &[Hop],
+    public_reserve: std::time::Duration,
+) -> std::time::Duration {
+    if hops.len() <= 1 {
+        remaining
+    } else if hops.last() == Some(&Hop::GooglePublic) && remaining > public_reserve {
+        (remaining - public_reserve) / (hops.len() - 1) as u32
+    } else {
+        remaining / hops.len() as u32
+    }
+}
+
 /// Whether a hop's failure moves the search to the next hop. A hop that cannot
 /// answer does: an unusable provider and a keyed quota that is spent (the next
 /// hop costs less or nothing). A clean zero-result answer, a refused query and a
@@ -160,6 +175,29 @@ impl FallbackBurst {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hop_budgets_reserve_pacing_and_lend_unused_time_forward() {
+        use std::time::Duration;
+        let seconds = Duration::from_secs;
+        assert_eq!(
+            hop_budget(seconds(8), &[Hop::Tavily, Hop::Serpapi, Hop::GooglePublic], seconds(4)),
+            seconds(2)
+        );
+        assert_eq!(
+            hop_budget(seconds(7), &[Hop::Serpapi, Hop::GooglePublic], seconds(4)),
+            seconds(3)
+        );
+        assert_eq!(hop_budget(seconds(7), &[Hop::GooglePublic], seconds(4)), seconds(7));
+        assert_eq!(
+            hop_budget(seconds(2), &[Hop::Serpapi, Hop::GooglePublic], seconds(4)),
+            seconds(1)
+        );
+        assert_eq!(
+            hop_budget(seconds(8), &[Hop::Tavily, Hop::Serpapi], seconds(4)),
+            seconds(4)
+        );
+    }
 
     fn load(yaml: &str) -> Result<SearchProvider> {
         SearchProvider::load(&AppConfig::from_str(yaml, std::path::Path::new("config.yaml")).unwrap())
