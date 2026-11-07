@@ -25,7 +25,9 @@ Process edges; update this map when adding one.
   in a browser or desktop webview, and the setup window (`desktop/ui/`). It never
   supplies a command: it calls same-origin `/api/*` through the guard chain, and
   `setup.js` invokes only the Tauri commands `desktop_status`, `retry_backend`,
-  `prepare_cargo` and `check_models`.
+  `prepare_cargo`, `check_models` and `export_browser_certificate`. The last saves
+  only the owned public leaf through a native file picker, never a private key or
+  trust-store change; the renderer supplies no destination path.
 - **Main:** `cgagentharness serve` (`src/server`) owns every guard, gate and store. The
   desktop shell (`desktop/src/`) hash-checks the bundled backend and runs it as the
   hidden, Unix-only `cgagentharness desktop` sidecar, whose pipe carries readiness and
@@ -233,7 +235,7 @@ unproven saved evidence is inaccessible, including old shared plain-text context
 Revocation cannot erase historical chat or content already sent to a model. No atomicity against arbitrary external file
 edits between an authorization check and an OS operation is claimed.
 
-Chat exposes only two read-only model tools while web is enabled: Google keyword
+Chat exposes only two read-only model tools while web is enabled: configured-provider
 search and permitted URL fetch. The dispatcher bounds calls, tokens, time and
 arguments and rechecks current account/URL permissions before reads and evidence
 delivery. A turn that already holds a notes-corpus read (`source=notes_corpus`), or a successful private-notes tool result, does not offer or run `web_search` or the `search_web` alias unless that user message asks for outside, web, or internet sources. `web.chat_tool_calls` (default 30, range 1–30) remains the tool-round ceiling. Tool hops use `models.local_llm.tool_max_tokens` (default 512) and temperature 0. The answer hop keeps the chat token ceiling and temperature. It cannot mutate policy, credentials, accounts or repositories, including
@@ -247,7 +249,7 @@ name. Fallback hops follow tavily → serpapi → google-public (the hop to publ
 with the provider that answered. A hop moves on only when it cannot answer: an unusable provider or a spent SerpAPI or Tavily quota (the next hop costs less or nothing). A rejected or missing key, a refused query and a clean zero-result answer never fall through. Keyed listings (SerpAPI, Tavily) require enabled web and current
 account authority, independently of page URL grants; public Google and linked-page
 fetches retain URL policy checks. Tavily requests pin `include_answer`,
-`include_raw_content` and `include_images` off and keep only title, URL and snippet,
+`include_raw_content` and `include_images` off and retain bounded listing fields,
 so no provider-written answer or page body enters a listing. Saved SerpAPI and Tavily
 keys apply on the next search; explicit environment values retain precedence. Challenges and provider failures never become
 fabricated results. A provider refusal starts a bounded cooldown: a public Google
@@ -262,6 +264,12 @@ data, never a tool command.
 - Locked by: `server::web_policy::tests`, `server::web_search::tests`,
   `server::web_provider::tests`, `tests/web_research.rs`, `tests/web_phase2_redteam.rs`, `tests/chat_web.rs` and
   the web section of `tests/panels.rs`.
+
+Server-managed goal evidence holds bounded references, not page bodies. Reuse
+requires current account/URL authority, matching cache hashes and acceptable age;
+quote validation proves provenance, not logical support. No evidence is promoted
+to private memory. Ending or cancelling the run clears these references.
+
 
 ## The browser never supplies a command
 

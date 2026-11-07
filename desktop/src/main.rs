@@ -39,6 +39,7 @@ struct Status {
     message: String,
     details: String,
     setup_code: Option<String>,
+    certificate_sha256: Option<String>,
 }
 
 fn show(app: &tauri::AppHandle, label: &str) {
@@ -126,13 +127,60 @@ fn desktop_status(state: tauri::State<'_, Desktop>) -> Status {
             message: owner.message.clone(),
             details: owner.details.clone(),
             setup_code: owner.backend.as_ref().and_then(|_| backend::home().ok()).and_then(|home| setup_code(&home)),
+            certificate_sha256: owner.backend.as_ref().filter(|backend| backend.origin.starts_with("https:"))
+                .and_then(|backend| backend.hello["certificate_sha256"].as_str().map(str::to_string)),
         },
         Err(_) => Status {
             message: "Waiting for the owned backend…".into(),
             details: "If this persists, check for a macOS file-access prompt. Move the app to Applications and retry; do not change global security settings.".into(),
             setup_code: None,
+            certificate_sha256: None,
         },
     }
+}
+
+fn write_public_certificate(path: &std::path::Path, certificate: &[u8]) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|_| "Choose a new filename; no existing file or symlink is overwritten.".to_string())?;
+    file.write_all(certificate)
+        .and_then(|_| file.sync_all())
+        .map_err(|_| "Could not save the public certificate.".to_string())
+}
+
+#[tauri::command]
+async fn export_browser_certificate(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let certificate = {
+            let state = app.state::<Desktop>();
+            let mut owner = state.owner.lock().map_err(|_| "Desktop owner unavailable.")?;
+            let backend = owner.backend.as_mut().ok_or("Start the owned backend first.")?;
+            backend.status()?;
+            if !backend.origin.starts_with("https:") {
+                return Err("This home is not using HTTPS.".into());
+            }
+            backend.certificate_der.clone()
+        };
+        let Some(file) = app
+            .dialog()
+            .file()
+            .set_file_name("CG-Agent-Harness-public.cer")
+            .add_filter("Public certificate", &["cer"])
+            .blocking_save_file()
+        else {
+            return Ok(None);
+        };
+        let path = file.into_path().map_err(|_| "Choose a local file.")?;
+        write_public_certificate(&path, &certificate)?;
+        Ok(Some(path.display().to_string()))
+    })
+    .await
+    .map_err(|_| "Certificate export stopped.".to_string())?
 }
 
 /// The backend's one-time first sign-in code, shown only in this native window,
@@ -377,7 +425,7 @@ fn main() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Desktop { instance_owned: instance_ok, ..Desktop::default() })
-        .invoke_handler(tauri::generate_handler![desktop_status, retry_backend, prepare_cargo, check_models])
+        .invoke_handler(tauri::generate_handler![desktop_status, retry_backend, prepare_cargo, check_models, export_browser_certificate])
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event { api.prevent_close(); let _ = window.hide(); }
         })
@@ -472,5 +520,18 @@ mod tests {
         std::fs::write(&path, "fixture-code\n").unwrap();
         std::fs::remove_file(path).unwrap();
         assert_eq!(super::setup_code(home.path()), None);
+    }
+
+    #[test]
+    fn certificate_export_never_overwrites_existing_files_or_symlinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("public.cer");
+        super::write_public_certificate(&path, b"public certificate").unwrap();
+        assert!(super::write_public_certificate(&path, b"replacement").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"public certificate");
+        let link = dir.path().join("link.cer");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert!(super::write_public_certificate(&link, b"replacement").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"public certificate");
     }
 }

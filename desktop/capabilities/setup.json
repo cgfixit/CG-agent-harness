@@ -4,5 +4,5 @@
   "description": "Only the bundled setup window can retry startup or request native setup actions.",
   "local": true,
   "windows": ["setup"],
-  "permissions": ["allow-desktop-status", "allow-retry-backend", "allow-prepare-cargo", "allow-check-models"]
+  "permissions": ["allow-desktop-status", "allow-retry-backend", "allow-prepare-cargo", "allow-check-models", "allow-export-browser-certificate"]
 }

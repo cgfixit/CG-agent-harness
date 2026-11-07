@@ -8,7 +8,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use super::web_policy::{canonical_url, error};
-use super::web_provider::{falls_through, plan_hops, Hop, SearchProvider};
+use super::web_provider::{falls_through, hop_budget, plan_hops, Hop, SearchProvider};
 use super::web_search::{parse_html, run_web_cpu, WebTool};
 use crate::common::audit::Audit;
 use crate::common::credential_store::CredentialStore;
@@ -164,6 +164,14 @@ pub(super) struct SearchResult {
     pub(super) title: String,
     pub(super) url: String,
     pub(super) snippet: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) provider_rank: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) provider_score: Option<f64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) highlights: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) source_date: Option<String>,
 }
 
 pub(super) fn add_result(
@@ -188,6 +196,10 @@ pub(super) fn add_result(
         title: crate::common::clip_chars(title.trim(), 300),
         url: url.to_string(),
         snippet: crate::common::clip_chars(snippet.trim(), 1000),
+        provider_rank: None,
+        provider_score: None,
+        highlights: Vec::new(),
+        source_date: None,
     });
 }
 
@@ -204,6 +216,7 @@ fn api_results(body: &[u8], limit: usize) -> Result<Vec<SearchResult>> {
     let mut rows = Vec::new();
     let mut seen = BTreeSet::new();
     for item in items.into_iter().flatten().take(100) {
+        let before = rows.len();
         add_result(
             &mut rows,
             &mut seen,
@@ -212,8 +225,64 @@ fn api_results(body: &[u8], limit: usize) -> Result<Vec<SearchResult>> {
             item["snippet"].as_str().unwrap_or(""),
             limit,
         );
+        if rows.len() > before {
+            let row = rows.last_mut().unwrap();
+            row.provider_rank = item["position"].as_u64().filter(|n| *n > 0);
+            row.highlights = item["snippet_highlighted_words"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .take(8)
+                .map(|s| crate::common::clip_chars(s, 80))
+                .collect();
+            row.source_date = item["date"].as_str().map(|s| crate::common::clip_chars(s, 80));
+        }
     }
     Ok(rows)
+}
+
+/// Provider `site:` echoes are hints; enforce recognizable host/path constraints locally.
+fn filter_sites(query: &str, value: &mut Value) {
+    let constraints: Vec<_> = query
+        .split_whitespace()
+        .filter_map(|word| {
+            let (excluded, word) = (word.starts_with('-'), word.trim_start_matches('-'));
+            let raw = word.strip_prefix("site:")?.trim_matches(['\"', '\'']);
+            let raw = raw
+                .strip_prefix("https://")
+                .or_else(|| raw.strip_prefix("http://"))
+                .unwrap_or(raw);
+            let url = canonical_url(&format!("https://{raw}")).ok()?;
+            Some((excluded, url))
+        })
+        .collect();
+    if constraints.is_empty() {
+        return;
+    }
+    if let Some(rows) = value["results"].as_array_mut() {
+        let before = rows.len();
+        rows.retain(|row| {
+            let Some(url) = row["url"].as_str().and_then(|s| url::Url::parse(s).ok()) else {
+                return false;
+            };
+            let matches = |site: &url::Url| {
+                let host = url.host_str().unwrap_or("");
+                let wanted = site.host_str().unwrap_or("");
+                (host == wanted || host.ends_with(&format!(".{wanted}"))) && url.path().starts_with(site.path())
+            };
+            !constraints.iter().any(|(excluded, site)| *excluded && matches(site))
+                && (!constraints.iter().any(|(excluded, _)| !excluded)
+                    || constraints.iter().any(|(excluded, site)| !excluded && matches(site)))
+        });
+        let removed = before - rows.len();
+        for (index, row) in rows.iter_mut().enumerate() {
+            row["rank"] = json!(index + 1);
+        }
+        if removed > 0 {
+            value["filtered_results"] = json!(removed);
+        }
+    }
 }
 
 fn public_results(
@@ -401,13 +470,21 @@ impl WebTool {
         let mut fallback_from: Vec<&str> = Vec::new();
         for (index, hop) in hops.iter().copied().enumerate() {
             let next = hops.get(index + 1).copied();
-            // A Tavily first hop leaves at least 2 s for the next hop.
-            let hop_deadline = if hop == Hop::Tavily && next.is_some() {
-                let budget = self.limits.request_seconds.saturating_sub(2).clamp(1, 6);
-                deadline.min(tokio::time::Instant::now() + Duration::from_secs(budget))
-            } else {
-                deadline
-            };
+            let started = tokio::time::Instant::now();
+            let budget = hop_budget(
+                deadline.saturating_duration_since(started),
+                &hops[index..],
+                Duration::from_millis(self.limits.pace_ms.max(PUBLIC_SEARCH_PACE_FLOOR_MS)) + Duration::from_secs(1),
+            );
+            if budget.is_zero() {
+                audit
+                    .log(json!({"event":"web_search_attempt","provider":hop.name(),"code":"exhausted_before_attempt"}));
+                return Err(error(
+                    "WEB_TIMEOUT",
+                    "search deadline exceeded before the next provider",
+                ));
+            }
+            let hop_deadline = started + budget;
             if hop == Hop::Serpapi && !fallback_from.is_empty() {
                 if let Some(count) = self
                     .search_fallback_burst
@@ -430,12 +507,30 @@ impl WebTool {
                             .await
                     }
                     (Hop::Serpapi, _) => {
-                        self.google_hop(query, count, enabled, audit, endpoint.clone(), key.trim(), expected_key)
-                            .await
+                        self.google_hop(
+                            query,
+                            count,
+                            enabled,
+                            audit,
+                            endpoint.clone(),
+                            key.trim(),
+                            expected_key,
+                            hop_deadline,
+                        )
+                        .await
                     }
                     (Hop::GooglePublic, _) => {
-                        self.google_hop(query, count, enabled, audit, endpoint.clone(), "", expected_key)
-                            .await
+                        self.google_hop(
+                            query,
+                            count,
+                            enabled,
+                            audit,
+                            endpoint.clone(),
+                            "",
+                            expected_key,
+                            hop_deadline,
+                        )
+                        .await
                     }
                 }
             };
@@ -443,8 +538,12 @@ impl WebTool {
                 .await
                 .map_err(|_| error("WEB_TIMEOUT", "search deadline exceeded"))
                 .and_then(|value| value);
+            audit.log(json!({"event":"web_search_attempt","provider":hop.name(),
+                "budget_ms":budget.as_millis(),"elapsed_ms":started.elapsed().as_millis(),
+                "code":result.as_ref().map_or_else(|e| e.code.as_str(), |_| "OK")}));
             match result {
                 Ok(mut value) => {
+                    filter_sites(query, &mut value);
                     if !fallback_from.is_empty() {
                         value["fallback_from"] = json!(fallback_from);
                     }
@@ -476,6 +575,7 @@ impl WebTool {
         endpoint: url::Url,
         key: &str,
         expected_key: Option<String>,
+        deadline: tokio::time::Instant,
     ) -> Result<Value> {
         // Provider listings require web/account authority, not page-content permission.
         // Public Google is a page fetch and retains the original URL policy checks.
@@ -527,7 +627,6 @@ impl WebTool {
             return Err(cooldown_error(provider, &pause));
         }
         let fetched = if key.trim().is_empty() {
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
             tokio::time::timeout_at(deadline, async {
                 let (_, body) = self
                     .get_raw_paced(
@@ -683,6 +782,22 @@ pub(super) async fn listing_body(mut response: reqwest::Response, max: usize) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listing_metadata_is_bounded_and_site_filters_check_actual_hosts() {
+        let rows = api_results(json!({"organic_results":[{"title":"Guide","link":"https://docs.example.com/path","snippet":"matching result","position":7,"snippet_highlighted_words":["matching",null,7],"date":"2026-11-07"}]}).to_string().as_bytes(), 5).unwrap();
+        assert_eq!(rows[0].provider_rank, Some(7));
+        assert_eq!(rows[0].highlights, vec!["matching"]);
+        assert_eq!(rows[0].source_date.as_deref(), Some("2026-11-07"));
+        let mut value = json!({"results":[{"url":"https://other.test/","rank":1},{"url":"https://docs.example.com/path","rank":2,"provider_rank":7},{"url":"https://example.com.attacker.test/path","rank":3}]});
+        filter_sites("manual site:http://example.com -site:other.test", &mut value);
+        assert_eq!(value["results"].as_array().unwrap().len(), 1);
+        assert_eq!(value["results"][0]["rank"], 1);
+        assert_eq!(value["results"][0]["provider_rank"], 7);
+        assert_eq!(value["filtered_results"], 2);
+        filter_sites("manual site:other.test", &mut value);
+        assert!(value["results"].as_array().unwrap().is_empty());
+    }
 
     fn public_results(body: &str, limit: usize) -> Result<Vec<SearchResult>> {
         super::public_results(body, limit, 512, &|| Ok(()))
@@ -980,7 +1095,7 @@ mod tests {
             Fixture { hits, addr, task }
         }
 
-        /// SerpAPI: key "good" answers, "bad" is 401, "quota" is 429.
+        /// SerpAPI: "slow" delays ten seconds, "bad" is 401, "quota" is 429.
         pub(super) async fn serpapi() -> Fixture {
             let hits = Arc::new(AtomicUsize::new(0));
             let h = hits.clone();
@@ -990,6 +1105,9 @@ mod tests {
                     let h = h.clone();
                     async move {
                         h.fetch_add(1, Ordering::SeqCst);
+                        if q.get("api_key").is_some_and(|key| key == "slow") {
+                            tokio::time::sleep(Duration::from_secs(10)).await;
+                        }
                         let status = match q.get("api_key").map(String::as_str) {
                             Some("bad") => axum::http::StatusCode::UNAUTHORIZED,
                             Some("quota") => axum::http::StatusCode::TOO_MANY_REQUESTS,
@@ -1414,6 +1532,45 @@ mod tests {
         let lines = chain.audit_events("web_search_fallback");
         assert_eq!(lines[0]["code"], "WEB_SEARCH_QUOTA");
         assert_eq!(lines[1]["code"], "WEB_SEARCH_COOLDOWN");
+    }
+
+    #[tokio::test]
+    async fn a_slow_serpapi_leaves_time_for_the_public_google_fallback() {
+        let serp = chain::serpapi().await;
+        let google = chain::google().await;
+        let chain = chain::Chain::new(
+            "web: {request_seconds: 8, search: {fallback_to_public_google: true}}",
+            "slow",
+            &serp,
+            Some(&google),
+        )
+        .await;
+        let started = tokio::time::Instant::now();
+        let value = chain.search("veeam cve").await.unwrap();
+        assert_eq!(value["provider"], "google-public");
+        assert_eq!(value["fallback_from"], json!(["google-serpapi"]));
+        assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(started.elapsed() < Duration::from_secs(8));
+    }
+
+    #[tokio::test]
+    async fn two_slow_keyed_providers_still_reach_public_google() {
+        let tv = chain::tavily().await;
+        let serp = chain::serpapi().await;
+        let google = chain::google().await;
+        let chain = chain::Chain::new(
+            "web: {request_seconds: 8, search: {provider: tavily, fallback_to_serpapi: true, fallback_to_public_google: true}}",
+            "slow", &serp, Some(&google),
+        ).await.with_tavily("slow", &tv);
+        let started = tokio::time::Instant::now();
+        let value = chain.search("veeam cve").await.unwrap();
+        assert_eq!(value["provider"], "google-public");
+        assert_eq!(value["fallback_from"], json!(["tavily", "google-serpapi"]));
+        assert_eq!(tv.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(started.elapsed() < Duration::from_secs(8));
     }
 
     #[tokio::test]

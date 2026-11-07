@@ -1719,7 +1719,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the HTML editor preview sentence; measured 6229 words.
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
-    ("docs/CONSOLE.md", Guide, 5909),
+    ("docs/CONSOLE.md", Guide, 5902),
     // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
     // why: the 2026-10-20 dep-sync folded the dated 2026-09 audit notes into Retained constraints; 944 words, keep the cut.
     // why: operator-approved +200 (2026-10-22) so dated advisory notes such as RUSTSEC-2026-0384 fit without trimming history.
@@ -1729,7 +1729,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
-    ("docs/DESKTOP.md", Guide, 2429),
+    ("docs/DESKTOP.md", Guide, 2422),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
     // why: hook behavior review trims duplicated reuse instructions; retain the smaller budget.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
@@ -1764,7 +1764,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
     // why: SearXNG removal (phase 3 of web search) trimmed it to 4,102 words; lowered so the cut stays cut.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
-    ("docs/SECURE_RESEARCH.md", Guide, 3914),
+    ("docs/SECURE_RESEARCH.md", Guide, 3901),
     // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here; 2157 words, cap set to 2750 for room to grow.
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2750),
     // why: #244 made this the one memory contract: a gate table, and the #87
@@ -1774,6 +1774,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     ("docs/TROUBLESHOOTING.md", Guide, 1462),
+    // why: operator-requested conversion of the routing research TXT, with implementation and measured limits.
+    ("docs/learning/web-decision-router.md", Guide, 4600),
     // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     ("docs/netconnect.md", Guide, 3115),

@@ -1404,8 +1404,12 @@ function renderChatWebTools(events) {
   for (const event of events || []) {
     if (!event.ok || event.code === 'WEB_TOOLS_WITHHELD') { sys(event.tool + ': ' + event.code + ' — ' + event.message, WEB_TOOL_NEXT_STEP[event.code]); continue; }
     const result = event.result || {};
+    if (event.tool === 'web_evidence') {
+      sys('Evidence digest: ' + (result.supported || []).length + ' cited findings, ' + (result.conflicts || []).length + ' conflicts, ' + (result.inferences || []).length + ' inferences.', 'Quote references checked; logical support still needs review. ' + (result.missing || []).join(' '));
+      continue;
+    }
     if (result.results) sys(renderSearchResults(result));
-    else sys(renderSearchResults({provider:event.tool,results:[{title:result.title || result.url,url:result.url}],notice:result.notice}), (result.source_chars || 0) + ' source characters' + (result.via === 'firecrawl' ? ' · read via Firecrawl' : ''));
+    else sys(renderSearchResults({provider:event.tool,results:[{title:result.title || result.url,url:result.url}],notice:result.notice}), (result.source_chars || 0) + ' source characters' + (result.receipts ? ' · ' + result.receipts.length + ' selected passages' : '') + (result.cache_reused ? ' · reused permitted cache' : '') + (result.via === 'firecrawl' ? ' · read via Firecrawl' : ''));
   }
 }
 
@@ -4213,6 +4217,7 @@ function loopTurnPrompt(turn, total, goal) {
   const reminder = g.length > LOOP_GOAL_REMINDER_CHARS ? g.slice(0, LOOP_GOAL_REMINDER_CHARS - 1).join('') + '…' : g.join('');
   return 'Loop turn ' + turn + ' of ' + total + '. Session goal: ' + reminder + '\n' +
     'Follow every constraint in the full stored goal in system context. Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies. ' +
+    'Complete only harness turn ' + turn + '; tool calls and evidence digests do not advance the turn. Do not simulate later turns. ' +
     'Be concise. If the goal is fully satisfied, give a short summary and end with GOAL_DONE on its own line. ' +
     'Stay in this chat; do not request a real-repo write.';
 }
@@ -4700,7 +4705,7 @@ async function finishChat(r, asLoop) {
   }
   renderChatWebTools(r && r.web_tools);
   const webEvents = ((r && r.web_tools) || []).filter(Boolean);
-  const failedTools = webEvents.filter(tool => tool.ok === false);
+  const failedTools = webEvents.filter(tool => tool.ok === false && tool.tool !== 'web_evidence');
   if (asLoop && loopState) {
     const blocking = loopBlockingWebCode(webEvents);
     if (blocking) loopState.blockedTool = blocking;
