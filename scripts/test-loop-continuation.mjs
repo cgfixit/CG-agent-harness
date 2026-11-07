@@ -20,6 +20,7 @@ for (const notDone of ['', 'I will write GOAL_DONE when finished.', '1. Write GO
 
 const prompt = loopTurnPrompt(2, 3, 'Write   a\nparser');
 assert.ok(prompt.startsWith('Loop turn 2 of 3. Session goal: Write a parser\n'), prompt);
+assert.ok(prompt.includes('Complete only harness turn 2; tool calls and evidence digests do not advance the turn.'));
 assert.ok(prompt.includes('GOAL_DONE on its own line') && !/27b/i.test(prompt), 'model-agnostic marker instruction');
 const fullGoal = 'x'.repeat(1930) + ' FINAL_CONSTRAINT: do not search the web; CHECKED_441';
 assert.ok(loopTurnPrompt(1, 1, fullGoal).includes(fullGoal), 'late constraints in every valid goal reach the latest user turn');

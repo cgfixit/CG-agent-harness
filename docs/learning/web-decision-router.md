@@ -431,16 +431,18 @@ and budget decisions remain deterministic.
   highlighted words and dates. Recognizable `site:` / `-site:` constraints filter
   off-host listings; this is not a full search-language parser.
 - `chat_web/evidence` selects up to three relevant existing BM25 passages, with
-  receipt IDs/offsets only for passages delivered whole. Exact reads refresh by
-  default; `refresh:false` permits current-policy cache reuse within its age limit.
+  receipt IDs/offsets only for passages delivered whole. Omitted `refresh` reuses
+  fresh evidence already read for the active goal; other reads default fresh.
+  Explicit `true` refreshes; `false` permits current-policy cache reuse.
 - Server-managed runs hold nine URL/hash references, three passage IDs each,
   sixteen prior queries and one validated packet. Restoring after compaction
   rechecks permissions, age and hashes and supplies citation-to-URL mappings.
   Failed or missing content contributes no renewed evidence. A new run starts empty.
-- A useful read batch can produce one ≤1,024-token digest before the final answer.
-  Unchanged restored evidence skips that extra call. Invalid quotes are discarded;
-  invalid digest JSON leaves the original page-grounded answer and a visible failure.
-  Transport/model failure still follows the ordinary failed-turn policy.
+- A useful read batch produces a ≤1,024-token digest before the next tool choice,
+  without generating and discarding an answer first. Unchanged passages skip it.
+  Restored findings include bounded source passages for critical review. Invalid
+  digest JSON retains valid passages and a visible failure. Transport/model
+  failure still follows the ordinary failed-turn policy.
 - Tool planning stays at 512 tokens; truncated answers receive full synthesis.
   The active Qwen profile allowed 4,096 answer tokens, 28,000 total prompt-plus-reply
   tokens, 6,000 evidence tokens, 24,000 compaction trigger and 30 tool calls.
@@ -480,6 +482,32 @@ Safari private mode rendered the session, and a further browser-driven loop rend
 the page receipt and three-finding digest separately. The loaded MLX allocation later reported
 27.75 GB, so the earlier readiness allocation is not a memory ceiling. VM counters
 showed pre-existing compression/swap; no controlled before/after swap claim is made.
+
+Follow-up repetition exposed a control-flow defect: two reruns at `86b28ff`
+ended after one server turn with two fetch calls (69.38/75.48 seconds). A diagnostic
+trace showed the second call rephrasing the same section query and returning the
+same cached passages. Evidence messages also lacked the current turn. Moving the
+digest before the next tool decision removes the discarded draft answer; explicit
+turn framing keeps the actual harness turn visible.
+Restored findings now carry bounded passages for review. Fresh current-goal reads
+reuse cache by default, explicit refresh remains effective, and invalid digests
+retain valid references.
+
+Five consecutive fresh-session RFC runs with that correction completed two server
+turns, one fetch and one validated digest each, with no tool failures or first-turn
+`GOAL_DONE`. Wall times were 62.35, 57.32, 43.26, 46.51 and 46.31 seconds; completion
+tokens were 1,818, 1,763, 1,080, 1,022 and 982. This verifies the repeated workflow,
+not universal semantic correctness. A startup attempt blocked by `model_tune`
+performed no inference and was excluded; readiness was verified before repetition.
+The temporary diagnostic endpoint was removed and its disposable configuration
+restored byte for byte. Trust stores and model settings remained unchanged.
+
+Two further IANA goals completed two turns with one read each (44.26/56.36 s),
+distinguishing service guidance from technical impossibility, though policy
+extrapolations still require review. A local arithmetic goal in fetch mode attempted
+an unnecessary example.com read; current URL policy refused it. Stronger routing
+wording did not correct that behavior and was reverted. Natural-language exclusion
+of web is not an enforced gate; use the explicit goal web-off mode when required.
 
 ### Verification scope
 

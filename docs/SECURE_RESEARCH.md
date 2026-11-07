@@ -302,20 +302,21 @@ remaining calibrated room. `WEB_TOKEN_BUDGET` reports refusal;
 own outcomes; an all-failed batch ends discovery. Usage includes completed model
 calls; missing upstream counts remain unknown. Cancellation aborts the whole turn.
 
-`web_fetch` accepts a focused `query` (1–200 characters) and `refresh` (default
-true). It selects up to three BM25 passages instead of a page prefix. Only whole
-delivered passages get receipt IDs and offsets. `refresh:false` may reuse currently
-permitted cache within `web.stale_seconds`; current-fact requests should refresh.
-Firecrawl remains an independently opted-in exact-read fallback.
+`web_fetch` selects up to three BM25 passages with `query` (1–200 characters).
+Only whole delivered passages get receipt IDs and offsets. Omitted `refresh`
+reuses fresh evidence already read for this goal; other reads default fresh.
+`refresh:false` allows permitted cache within `web.stale_seconds`; `true` forces
+a fresh read, including current facts. Firecrawl remains opt-in.
 
-After new useful reads, loop turns can generate a bounded evidence digest
+Before choosing further tools, new useful passages receive a bounded digest
 (≤1,024 output tokens). Quote/source validation separates supported claims,
 conflicts, inferences and missing coverage; it does not prove logical entailment.
 The final model answer remains unvalidated. Server-managed goal runs retain at
 most nine URL/hash receipts, three passage IDs per URL and sixteen queries,
-plus the digest. Subsequent turns recheck age, hashes and permissions against
-the existing cache; unchanged evidence needs no new digest call. References
-survive history compaction, not run completion, cancellation or restart.
+plus the digest. Reuse rechecks age, hashes and permissions; unchanged passages
+need no new digest. Failed digests retain valid passages. Bounded passages accompany restored findings. Evidence messages name
+the current harness turn; tool calls do not advance it. References survive
+compaction, not completion, cancellation or restart.
 
 `POST /api/chat` returns `web_tools`, reply and aggregate usage. The console shows
 listing metadata, selected passages, cache reuse, extraction path and digest

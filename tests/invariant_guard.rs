@@ -1764,7 +1764,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
     // why: SearXNG removal (phase 3 of web search) trimmed it to 4,102 words; lowered so the cut stays cut.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
-    ("docs/SECURE_RESEARCH.md", Guide, 3901),
+    ("docs/SECURE_RESEARCH.md", Guide, 3874),
     // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here; 2157 words, cap set to 2750 for room to grow.
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2750),
     // why: #244 made this the one memory contract: a gate table, and the #87

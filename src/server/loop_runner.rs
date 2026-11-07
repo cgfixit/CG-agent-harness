@@ -150,6 +150,7 @@ pub fn loop_turn_prompt(turn: u64, total: Option<u64>, goal: &str) -> String {
     format!(
         "Loop turn {turn} of {total_label}. Session goal: {reminder}\n\
          Follow every constraint in the full stored goal in system context. Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies. \
+         Complete only harness turn {turn}; tool calls and evidence digests do not advance the turn. Do not simulate later turns. \
          Be concise. If the goal is fully satisfied, give a short summary and end with GOAL_DONE on its own line. \
          Stay in this chat; do not request a real-repo write."
     )
@@ -693,6 +694,9 @@ mod tests {
             "{prompt}"
         );
         assert!(prompt.contains("GOAL_DONE"));
+        assert!(
+            prompt.contains("Complete only harness turn 2; tool calls and evidence digests do not advance the turn.")
+        );
         let unlimited = loop_turn_prompt(1, None, "g");
         assert!(
             unlimited.starts_with("Loop turn 1 of unlimited. Session goal: g\n"),

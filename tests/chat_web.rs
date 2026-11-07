@@ -440,7 +440,7 @@ async fn check_fetch_evidence(loop_turn: bool) {
         assert_eq!(reply["web_tools"][1]["tool"], "web_evidence");
         assert_eq!(
             reply["web_tools"][1]["ok"], false,
-            "invalid digest must retain the original grounded answer"
+            "invalid digest must still answer from the delivered passages"
         );
     }
     let session = s
@@ -2229,7 +2229,7 @@ async fn loop_reserves_final_synthesis_without_reporting_successful_reads_as_fai
     );
     assert!(events.iter().any(|e| e["code"] == "WEB_TOOLS_WITHHELD"));
     assert_eq!(
-        events.last().unwrap()["code"],
+        events.iter().find(|event| event["tool"] == "web_evidence").unwrap()["code"],
         "WEB_ANSWER_INVALID",
         "the deliberately non-JSON digest does not turn the successful read into a failure"
     );
@@ -2241,13 +2241,36 @@ async fn loop_reserves_final_synthesis_without_reporting_successful_reads_as_fai
         .unwrap();
     assert!(final_call.get("tools").is_none());
     assert_eq!(final_call["tool_choice"], "none");
-    let digest = requests.last().unwrap();
+    let digest = requests
+        .iter()
+        .find(|request| request["response_format"]["type"] == "json_object")
+        .unwrap();
     assert_eq!(digest["response_format"]["type"], "json_object");
     assert!(digest.get("tools").is_none(), "the digest cannot call tools");
 }
 
 #[tokio::test]
 async fn active_goal_reuses_a_validated_digest_with_source_urls_without_another_read() {
+    check_goal_evidence_reuse(false, None, true, 6000).await;
+}
+
+#[tokio::test]
+async fn repeated_goal_reads_reuse_cache_unless_explicitly_refreshed() {
+    check_goal_evidence_reuse(true, None, true, 6000).await;
+    check_goal_evidence_reuse(true, Some(true), true, 6000).await;
+}
+
+#[tokio::test]
+async fn invalid_digest_retains_passages_for_the_next_goal_turn() {
+    check_goal_evidence_reuse(true, None, false, 6000).await;
+}
+
+#[tokio::test]
+async fn restored_passages_yield_to_the_bounded_digest_when_context_is_tight() {
+    check_goal_evidence_reuse(false, None, true, 512).await;
+}
+
+async fn check_goal_evidence_reuse(reread: bool, refresh: Option<bool>, valid_digest: bool, evidence_budget: u64) {
     let reads = Arc::new(AtomicUsize::new(0));
     let digests = Arc::new(AtomicUsize::new(0));
     let restored = Arc::new(AtomicBool::new(false));
@@ -2255,7 +2278,7 @@ async fn active_goal_reuses_a_validated_digest_with_source_urls_without_another_
     let router = Router::new()
         .route("/docs/item", get(move || {
             r.fetch_add(1, Ordering::SeqCst);
-            async { ([("content-type", "text/plain")], "RECOVERY_ANCHOR requires two replicas.") }
+            async move { ([("content-type", "text/plain")], format!("RECOVERY_ANCHOR requires two replicas.{}", if evidence_budget == 512 { " A source qualification.".repeat(40) } else { String::new() })) }
         }))
         .route("/v1/chat/completions", post(move |Json(body): Json<Value>| {
             let (d, seen) = (d.clone(), seen.clone());
@@ -2264,16 +2287,48 @@ async fn active_goal_reuses_a_validated_digest_with_source_urls_without_another_
                 if body["response_format"]["type"] == "json_object" {
                     d.fetch_add(1, Ordering::SeqCst);
                     assert!(body["max_tokens"].as_u64().unwrap() <= 1024);
+                    if !valid_digest { return Json(common::ok_reply("invalid digest", 100, 40)); }
                     return Json(common::ok_reply(&json!({"supported":[{"text":"Recovery requires two replicas.","citations":[{"id":"S1","quote":"requires two replicas"}]}],"conflicts":[],"inferences":[],"missing":[]}).to_string(), 100, 40));
                 }
                 let last = messages.last().unwrap();
                 let content = last["content"].as_str().unwrap_or("");
+                let fetch = || {
+                    let mut args = json!({"url":"http://docs.example/docs/item","query":"RECOVERY_ANCHOR replicas"});
+                    if let Some(refresh) = refresh { args["refresh"] = json!(refresh); }
+                    Json(tool_call_reply("web_fetch", &args.to_string(), "reread"))
+                };
                 if content.contains("Untrusted active-goal findings") {
                     let context: Value = serde_json::from_str(content).unwrap();
+                    assert!(context["current_turn"].as_str().unwrap().starts_with("Loop turn 2 of 2."));
                     assert_eq!(context["sources"][0]["url"], "http://docs.example/docs/item");
-                    assert_eq!(context["findings"]["supported"][0]["citations"][0]["id"], context["sources"][0]["id"]);
+                    assert!(content.len().div_ceil(4) <= evidence_budget as usize);
+                    if evidence_budget == 512 {
+                        assert!(context["passages"].as_array().unwrap().is_empty());
+                    } else {
+                        assert!(context["passages"][0]["text"].as_str().unwrap().contains("requires two replicas"));
+                    }
+                    if valid_digest {
+                        assert_eq!(context["findings"]["supported"][0]["citations"][0]["id"], context["sources"][0]["id"]);
+                    } else {
+                        assert!(context["findings"].is_null());
+                        assert!(context["passages"][0]["text"].as_str().unwrap().contains("requires two replicas"));
+                    }
                     seen.store(true, Ordering::SeqCst);
+                    if reread { return fetch(); }
                     return Json(common::ok_reply("The retained finding still supports two replicas.", 100, 10));
+                }
+                if last["role"] == "tool" {
+                    assert!(d.load(Ordering::SeqCst) > 0, "digest must precede the next tool decision");
+                    let result: Value = serde_json::from_str(content).unwrap();
+                    let tool_count = messages.iter().filter(|m| m["role"] == "tool").count();
+                    let later_turn = messages.iter().any(|m| m["content"].as_str().unwrap_or("").contains("Untrusted active-goal findings"));
+                    assert_eq!(result["cache_reused"], reread && (tool_count > 1 || later_turn) && refresh != Some(true));
+                    if reread && tool_count == 1 && !later_turn { return fetch(); }
+                }
+                if content.contains("Untrusted evidence digest") {
+                    let context: Value = serde_json::from_str(content).unwrap();
+                    assert!(context["current_turn"].as_str().unwrap().starts_with("Loop turn 1 of 2."));
+                    if reread { return fetch(); }
                 }
                 if last["role"] == "tool" || content.contains("Untrusted evidence digest") {
                     return Json(common::ok_reply("Recovery needs two replicas, per http://docs.example/docs/item.", 100, 10));
@@ -2288,7 +2343,7 @@ async fn active_goal_reuses_a_validated_digest_with_source_urls_without_another_
         &format!("http://{address}/v1"),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..Default::default()
+            ..common::ServerOptions::default().with("web.evidence_tokens", &evidence_budget.to_string())
         },
     )
     .await;
@@ -2333,7 +2388,10 @@ async fn active_goal_reuses_a_validated_digest_with_source_urls_without_another_
         restored.load(Ordering::SeqCst),
         "the second turn must receive validated references"
     );
-    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        if reread && refresh == Some(true) { 3 } else { 1 }
+    );
     assert_eq!(
         digests.load(Ordering::SeqCst),
         1,

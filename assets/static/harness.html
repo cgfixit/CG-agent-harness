@@ -4216,6 +4216,7 @@ function loopTurnPrompt(turn, total, goal) {
   const reminder = g.length > LOOP_GOAL_REMINDER_CHARS ? g.slice(0, LOOP_GOAL_REMINDER_CHARS - 1).join('') + '…' : g.join('');
   return 'Loop turn ' + turn + ' of ' + total + '. Session goal: ' + reminder + '\n' +
     'Follow every constraint in the full stored goal in system context. Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies. ' +
+    'Complete only harness turn ' + turn + '; tool calls and evidence digests do not advance the turn. Do not simulate later turns. ' +
     'Be concise. If the goal is fully satisfied, give a short summary and end with GOAL_DONE on its own line. ' +
     'Stay in this chat; do not request a real-repo write.';
 }

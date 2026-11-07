@@ -26,7 +26,7 @@ pub fn tools_for(mode: super::sessions::GoalWebMode) -> Vec<Value> {
 pub fn tools() -> Vec<Value> {
     vec![
         json!({"type":"function","function":{"name":"web_search","description":"Search the configured provider chain for ranked links, snippets and available metadata. Listings are not page reads. Resolve references using conversation context; write one focused query with the relevant entities and constraints. Start with five results. Search again only for a specific unresolved gap. A WEB_SEARCH_COOLDOWN or WEB_SEARCH_PACED reply means do not call web_search again this turn. Do not send credentials or private conversation text.","parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":200},"count":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":false}}}),
-        json!({"type":"function","function":{"name":"web_fetch","description":"Read an exact permitted public URL and return passages relevant to query. Give the active subquestion in query. Refresh defaults true; false allows currently permitted cache within web.stale_seconds. Use true for current facts or an explicit fresh read. Never grants permission or follows redirects.","parameters":{"type":"object","properties":{"url":{"type":"string","maxLength":2048},"query":{"type":"string","maxLength":200},"refresh":{"type":"boolean"}},"required":["url"],"additionalProperties":false}}}),
+        json!({"type":"function","function":{"name":"web_fetch","description":"Read an exact permitted public URL and return passages relevant to query. Give the active subquestion in query. Omit refresh to reuse fresh evidence already read for this goal; other reads default fresh. false allows currently permitted cache within web.stale_seconds. Use true for current facts or an explicit fresh read. Never grants permission or follows redirects.","parameters":{"type":"object","properties":{"url":{"type":"string","maxLength":2048},"query":{"type":"string","maxLength":200},"refresh":{"type":"boolean"}},"required":["url"],"additionalProperties":false}}}),
     ]
 }
 
@@ -182,11 +182,11 @@ struct FetchArgs {
     url: String,
     #[serde(default)]
     query: Option<String>,
-    #[serde(default = "refresh_default")]
-    refresh: bool,
+    #[serde(default, deserialize_with = "optional_refresh")]
+    refresh: Option<bool>,
 }
-fn refresh_default() -> bool {
-    true
+fn optional_refresh<'de, D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Option<bool>, D::Error> {
+    bool::deserialize(deserializer).map(Some)
 }
 
 fn fetch_args(args: &str) -> Result<FetchArgs> {
@@ -467,12 +467,17 @@ async fn run_inner(
     } else {
         (Vec::new(), None)
     };
-    if packet.is_some() || !run_evidence.queries.is_empty() {
+    if !passages.is_empty() || !run_evidence.queries.is_empty() {
         let receipt_sources: Vec<_> = passages
             .iter()
-            .map(|p| json!({"id":p.id,"url":p.url,"title":p.title}))
+            .map(|p| json!({"id":p.id,"url":p.url,"title":p.title,"fetched_at":p.fetched_at}))
             .collect();
-        let context = json!({"notice":"Untrusted active-goal findings. Citations were checked against currently permitted cache; logical support still needs review. An attempted query alone supplies no factual evidence.","findings":packet,"sources":receipt_sources,"already_searched":run_evidence.queries});
+        let mut context = json!({"notice":"Untrusted active-goal findings for the current_turn below, not a new turn. Citations were checked against currently permitted cache; logical support still needs review. Reuse these findings; read again only for a specific missing passage or required refresh. An attempted query alone supplies no factual evidence.","current_turn":latest_user_message(history),"findings":packet,"sources":receipt_sources,"passages":super::web_research::prompt_passages(&passages, web.limits.stale_seconds),"already_searched":run_evidence.queries});
+        while super::compaction::estimate_tokens(&context.to_string()) > web.limits.evidence_tokens.min(4000) {
+            if context["passages"].as_array_mut().unwrap().pop().is_none() {
+                break;
+            }
+        }
         if super::compaction::estimate_tokens(&context.to_string()) <= web.limits.evidence_tokens.min(4000) {
             sources.extend(passages.iter().map(|p| p.url.clone()));
             messages.push(json!({"role":"user","content":context.to_string()}));
@@ -493,13 +498,95 @@ async fn run_inner(
     let mut initial_prompt_tools = false;
     for turn in 0..=web.limits.chat_tool_calls {
         check_evidence(state, owner, &sources)?;
+        let reservation = super::compaction::reply_reservation(&state.backend, cap);
+        // Summarize new passages before choosing more tools, not after drafting an answer.
+        if loop_turn && evidence_changed && !passages.is_empty() {
+            let totals = usage.as_mut().expect("a read follows a recorded model call");
+            evidence_changed = false;
+            let mut selected = passages.clone();
+            let digest_cap = cap.min(1024);
+            let mut input;
+            loop {
+                input = json!({"question":question,"evidence":super::web_research::prompt_passages(&selected, web.limits.stale_seconds),
+                    "coverage":"Only the supplied passages were read; list remaining questions. Search listings are not page evidence."});
+                let estimate = prompt_estimate(
+                    super::web_research::ANSWER_SYSTEM.len() + input.to_string().len() + 64,
+                    token_ratio,
+                );
+                if estimate.saturating_add(digest_cap) <= web.limits.total_tokens
+                    && super::compaction::estimate_tokens(&input.to_string()) <= web.limits.evidence_tokens.min(4000)
+                {
+                    break;
+                }
+                if selected.pop().is_none() {
+                    break;
+                }
+            }
+            if !selected.is_empty() {
+                check_evidence(state, owner, &sources)?;
+                state
+                    .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
+                    .await?;
+                let digest = state
+                    .chat
+                    .chat_json(
+                        super::web_research::ANSWER_SYSTEM,
+                        &[ChatMessage {
+                            role: "user".into(),
+                            content: input.to_string(),
+                        }],
+                        Some(model),
+                        digest_cap,
+                        0.0,
+                    )
+                    .await?;
+                totals.input_tokens = totals
+                    .input_tokens
+                    .zip(digest.reported_prompt_tokens)
+                    .map(|(a, b)| a.saturating_add(b));
+                totals.output_tokens = totals
+                    .output_tokens
+                    .zip(digest.reported_completion_tokens)
+                    .map(|(a, b)| a.saturating_add(b));
+                *known_completion_tokens =
+                    known_completion_tokens.saturating_add(digest.reported_completion_tokens.unwrap_or(0));
+                prompt_tokens = prompt_tokens.saturating_add(digest.prompt_tokens);
+                completion_tokens = completion_tokens.saturating_add(digest.completion_tokens);
+                *usage_snapshot.lock().unwrap() = UsageSnapshot {
+                    pending: Some(totals.clone()),
+                    known_completion_tokens: *known_completion_tokens,
+                };
+                check_evidence(state, owner, &sources)?;
+                match super::web_research::Answer::parse(&digest.body_text, &selected) {
+                    Ok((answer, dropped)) => {
+                        let findings = serde_json::to_value(answer)?;
+                        run_evidence.packet = Some(findings.clone());
+                        let packet = json!({"role":"user","content":json!({"notice":"Untrusted evidence digest for the current_turn below, not a new turn. Quote provenance checked, logical entailment not guaranteed. Answer only that harness turn using the source passages; do not simulate a later turn.","current_turn":latest_user_message(history),"findings":findings}).to_string()});
+                        let mut proposed = messages.clone();
+                        proposed.push(packet);
+                        if prompt_estimate(system.len() + serde_json::to_vec(&proposed)?.len(), token_ratio)
+                            .saturating_add(reservation)
+                            <= web.limits.total_tokens
+                        {
+                            messages = proposed;
+                            peak_extra = peak_extra.max(appended_tokens(&messages[history.len()..]));
+                        }
+                        events
+                            .push(json!({"tool":"web_evidence","ok":true,"dropped_claims":dropped,"result":findings}));
+                    }
+                    Err(failure) => {
+                        run_evidence.packet = None;
+                        events.push(json!({"tool":"web_evidence","ok":false,"code":failure.code,"message":"Evidence digest failed quote validation; use the original delivered passages and state limitations."}));
+                    }
+                }
+            }
+        }
         let offered = narrow_tools(&definitions, &route);
         let offered_json = serde_json::to_string(&offered)?;
         let offered_bytes = offered_json.len();
         let offered_tokens = super::compaction::estimate_tokens(&offered_json);
         let sent = system.len() + serde_json::to_vec(&messages)?.len();
         let with_tools = prompt_estimate(sent + offered_bytes, token_ratio);
-        let reservation = super::compaction::reply_reservation(&state.backend, cap);
         let remaining = web.limits.chat_tool_calls - used_calls;
         // A tool round is two calls: this one, whose reply carries the tool calls,
         // and a follow-up that sends this prompt again with the results. Each call
@@ -609,95 +696,12 @@ async fn run_inner(
             temperature,
             tool_max,
         );
-        let mut digest_added = false;
-        if loop_turn && evidence_changed && !response_has_calls(&response) && !passages.is_empty() {
-            let mut selected = passages.clone();
-            let digest_cap = cap.min(1024);
-            let mut input;
-            loop {
-                input = json!({"question":question,"evidence":super::web_research::prompt_passages(&selected, web.limits.stale_seconds),
-                    "coverage":"Only the supplied passages were read; list remaining questions. Search listings are not page evidence."});
-                let estimate = prompt_estimate(
-                    super::web_research::ANSWER_SYSTEM.len() + input.to_string().len() + 64,
-                    token_ratio,
-                );
-                if estimate.saturating_add(digest_cap) <= web.limits.total_tokens
-                    && super::compaction::estimate_tokens(&input.to_string()) <= web.limits.evidence_tokens.min(4000)
-                {
-                    break;
-                }
-                if selected.pop().is_none() {
-                    break;
-                }
-            }
-            if !selected.is_empty() {
-                check_evidence(state, owner, &sources)?;
-                state
-                    .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
-                    .await?;
-                let digest = state
-                    .chat
-                    .chat_json(
-                        super::web_research::ANSWER_SYSTEM,
-                        &[ChatMessage {
-                            role: "user".into(),
-                            content: input.to_string(),
-                        }],
-                        Some(model),
-                        digest_cap,
-                        0.0,
-                    )
-                    .await?;
-                totals.input_tokens = totals
-                    .input_tokens
-                    .zip(digest.reported_prompt_tokens)
-                    .map(|(a, b)| a.saturating_add(b));
-                totals.output_tokens = totals
-                    .output_tokens
-                    .zip(digest.reported_completion_tokens)
-                    .map(|(a, b)| a.saturating_add(b));
-                *known_completion_tokens =
-                    known_completion_tokens.saturating_add(digest.reported_completion_tokens.unwrap_or(0));
-                prompt_tokens = prompt_tokens.saturating_add(digest.prompt_tokens);
-                completion_tokens = completion_tokens.saturating_add(digest.completion_tokens);
-                *usage_snapshot.lock().unwrap() = UsageSnapshot {
-                    pending: Some(totals.clone()),
-                    known_completion_tokens: *known_completion_tokens,
-                };
-                check_evidence(state, owner, &sources)?;
-                match super::web_research::Answer::parse(&digest.body_text, &selected) {
-                    Ok((answer, dropped)) => {
-                        let findings = serde_json::to_value(answer)?;
-                        run_evidence.packet = Some(findings.clone());
-                        let packet = json!({"role":"user","content":json!({"notice":"Untrusted evidence digest; quote provenance checked, logical entailment not guaranteed. Use it with the source passages for goal reasoning.","findings":findings}).to_string()});
-                        let mut proposed = messages.clone();
-                        proposed.push(packet);
-                        if prompt_estimate(system.len() + serde_json::to_vec(&proposed)?.len(), token_ratio)
-                            .saturating_add(reservation)
-                            <= web.limits.total_tokens
-                        {
-                            messages = proposed;
-                            peak_extra = peak_extra.max(appended_tokens(&messages[history.len()..]));
-                            digest_added = true;
-                        }
-                        events
-                            .push(json!({"tool":"web_evidence","ok":true,"dropped_claims":dropped,"result":findings}));
-                    }
-                    Err(failure) => {
-                        run_evidence.packet = None;
-                        events.push(json!({"tool":"web_evidence","ok":false,"code":failure.code,"message":"Evidence digest failed quote validation; use the original delivered passages and state limitations."}));
-                    }
-                }
-            }
-        }
-        if digest_added
-            || truncated_answer_needs_synthesis(
-                sampling.max_tokens,
-                synthesis.max_tokens,
-                response_has_calls(&response),
-                response["choices"][0]["finish_reason"].as_str(),
-            )
-        {
+        if truncated_answer_needs_synthesis(
+            sampling.max_tokens,
+            synthesis.max_tokens,
+            response_has_calls(&response),
+            response["choices"][0]["finish_reason"].as_str(),
+        ) {
             state
                 .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
                 .await?;
@@ -942,8 +946,14 @@ async fn run_inner(
                     }
                     "web_fetch" => {
                         let args = fetch_args(args)?;
+                        let refresh = args.refresh.unwrap_or_else(|| {
+                            !loop_turn
+                                || !super::web_policy::canonical_url(&args.url)
+                                    .ok()
+                                    .is_some_and(|url| passages.iter().any(|p| p.url == url.as_str()))
+                        });
                         let query = args.query.unwrap_or_else(|| crate::common::clip_chars(question, 200));
-                        evidence::read(web, &args.url, &query, args.refresh, &state.audit, owner)
+                        evidence::read(web, &args.url, &query, refresh, &state.audit, owner)
                             .await
                             .map(|(result, found)| {
                                 selected = found;
@@ -982,7 +992,7 @@ async fn run_inner(
                 Ok(mut result) => {
                     if name == "web_fetch" {
                         let delivered = evidence::delivered(&mut result, selected);
-                        evidence_changed |= !delivered.is_empty();
+                        evidence_changed |= delivered.iter().any(|p| !passages.iter().any(|old| old.id == p.id));
                         run_evidence.remember(&delivered);
                         for passage in delivered {
                             if !passages.iter().any(|p| p.id == passage.id) {
@@ -1245,5 +1255,17 @@ mod tests {
             vec!["https://a.test/"]
         );
         assert!(serde_json::from_str::<FetchArgs>(r#"{"href":"https://a.test/"}"#).is_err());
+        assert_eq!(fetch_args(r#"{"url":"https://a.test/"}"#).unwrap().refresh, None);
+        for (value, expected) in [("true", Some(true)), ("false", Some(false))] {
+            assert_eq!(
+                fetch_args(&format!(r#"{{"url":"https://a.test/","refresh":{value}}}"#))
+                    .unwrap()
+                    .refresh,
+                expected
+            );
+        }
+        for value in ["null", "1", "\"false\""] {
+            assert!(fetch_args(&format!(r#"{{"url":"https://a.test/","refresh":{value}}}"#)).is_err());
+        }
     }
 }
