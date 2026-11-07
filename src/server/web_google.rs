@@ -8,7 +8,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use super::web_policy::{canonical_url, error};
-use super::web_provider::{falls_through, plan_hops, Hop, SearchProvider};
+use super::web_provider::{falls_through, hop_budget, plan_hops, Hop, SearchProvider};
 use super::web_search::{parse_html, run_web_cpu, WebTool};
 use crate::common::audit::Audit;
 use crate::common::credential_store::CredentialStore;
@@ -401,13 +401,21 @@ impl WebTool {
         let mut fallback_from: Vec<&str> = Vec::new();
         for (index, hop) in hops.iter().copied().enumerate() {
             let next = hops.get(index + 1).copied();
-            // A Tavily first hop leaves at least 2 s for the next hop.
-            let hop_deadline = if hop == Hop::Tavily && next.is_some() {
-                let budget = self.limits.request_seconds.saturating_sub(2).clamp(1, 6);
-                deadline.min(tokio::time::Instant::now() + Duration::from_secs(budget))
-            } else {
-                deadline
-            };
+            let started = tokio::time::Instant::now();
+            let budget = hop_budget(
+                deadline.saturating_duration_since(started),
+                &hops[index..],
+                Duration::from_millis(self.limits.pace_ms.max(PUBLIC_SEARCH_PACE_FLOOR_MS)) + Duration::from_secs(1),
+            );
+            if budget.is_zero() {
+                audit
+                    .log(json!({"event":"web_search_attempt","provider":hop.name(),"code":"exhausted_before_attempt"}));
+                return Err(error(
+                    "WEB_TIMEOUT",
+                    "search deadline exceeded before the next provider",
+                ));
+            }
+            let hop_deadline = started + budget;
             if hop == Hop::Serpapi && !fallback_from.is_empty() {
                 if let Some(count) = self
                     .search_fallback_burst
@@ -430,12 +438,30 @@ impl WebTool {
                             .await
                     }
                     (Hop::Serpapi, _) => {
-                        self.google_hop(query, count, enabled, audit, endpoint.clone(), key.trim(), expected_key)
-                            .await
+                        self.google_hop(
+                            query,
+                            count,
+                            enabled,
+                            audit,
+                            endpoint.clone(),
+                            key.trim(),
+                            expected_key,
+                            hop_deadline,
+                        )
+                        .await
                     }
                     (Hop::GooglePublic, _) => {
-                        self.google_hop(query, count, enabled, audit, endpoint.clone(), "", expected_key)
-                            .await
+                        self.google_hop(
+                            query,
+                            count,
+                            enabled,
+                            audit,
+                            endpoint.clone(),
+                            "",
+                            expected_key,
+                            hop_deadline,
+                        )
+                        .await
                     }
                 }
             };
@@ -443,6 +469,9 @@ impl WebTool {
                 .await
                 .map_err(|_| error("WEB_TIMEOUT", "search deadline exceeded"))
                 .and_then(|value| value);
+            audit.log(json!({"event":"web_search_attempt","provider":hop.name(),
+                "budget_ms":budget.as_millis(),"elapsed_ms":started.elapsed().as_millis(),
+                "code":result.as_ref().map_or_else(|e| e.code.as_str(), |_| "OK")}));
             match result {
                 Ok(mut value) => {
                     if !fallback_from.is_empty() {
@@ -476,6 +505,7 @@ impl WebTool {
         endpoint: url::Url,
         key: &str,
         expected_key: Option<String>,
+        deadline: tokio::time::Instant,
     ) -> Result<Value> {
         // Provider listings require web/account authority, not page-content permission.
         // Public Google is a page fetch and retains the original URL policy checks.
@@ -527,7 +557,6 @@ impl WebTool {
             return Err(cooldown_error(provider, &pause));
         }
         let fetched = if key.trim().is_empty() {
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
             tokio::time::timeout_at(deadline, async {
                 let (_, body) = self
                     .get_raw_paced(
@@ -980,7 +1009,7 @@ mod tests {
             Fixture { hits, addr, task }
         }
 
-        /// SerpAPI: key "good" answers, "bad" is 401, "quota" is 429.
+        /// SerpAPI: "slow" delays ten seconds, "bad" is 401, "quota" is 429.
         pub(super) async fn serpapi() -> Fixture {
             let hits = Arc::new(AtomicUsize::new(0));
             let h = hits.clone();
@@ -990,6 +1019,9 @@ mod tests {
                     let h = h.clone();
                     async move {
                         h.fetch_add(1, Ordering::SeqCst);
+                        if q.get("api_key").is_some_and(|key| key == "slow") {
+                            tokio::time::sleep(Duration::from_secs(10)).await;
+                        }
                         let status = match q.get("api_key").map(String::as_str) {
                             Some("bad") => axum::http::StatusCode::UNAUTHORIZED,
                             Some("quota") => axum::http::StatusCode::TOO_MANY_REQUESTS,
@@ -1414,6 +1446,45 @@ mod tests {
         let lines = chain.audit_events("web_search_fallback");
         assert_eq!(lines[0]["code"], "WEB_SEARCH_QUOTA");
         assert_eq!(lines[1]["code"], "WEB_SEARCH_COOLDOWN");
+    }
+
+    #[tokio::test]
+    async fn a_slow_serpapi_leaves_time_for_the_public_google_fallback() {
+        let serp = chain::serpapi().await;
+        let google = chain::google().await;
+        let chain = chain::Chain::new(
+            "web: {request_seconds: 8, search: {fallback_to_public_google: true}}",
+            "slow",
+            &serp,
+            Some(&google),
+        )
+        .await;
+        let started = tokio::time::Instant::now();
+        let value = chain.search("veeam cve").await.unwrap();
+        assert_eq!(value["provider"], "google-public");
+        assert_eq!(value["fallback_from"], json!(["google-serpapi"]));
+        assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(started.elapsed() < Duration::from_secs(8));
+    }
+
+    #[tokio::test]
+    async fn two_slow_keyed_providers_still_reach_public_google() {
+        let tv = chain::tavily().await;
+        let serp = chain::serpapi().await;
+        let google = chain::google().await;
+        let chain = chain::Chain::new(
+            "web: {request_seconds: 8, search: {provider: tavily, fallback_to_serpapi: true, fallback_to_public_google: true}}",
+            "slow", &serp, Some(&google),
+        ).await.with_tavily("slow", &tv);
+        let started = tokio::time::Instant::now();
+        let value = chain.search("veeam cve").await.unwrap();
+        assert_eq!(value["provider"], "google-public");
+        assert_eq!(value["fallback_from"], json!(["tavily", "google-serpapi"]));
+        assert_eq!(tv.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(started.elapsed() < Duration::from_secs(8));
     }
 
     #[tokio::test]
