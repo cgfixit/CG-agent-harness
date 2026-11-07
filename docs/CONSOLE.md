@@ -292,24 +292,24 @@ For a session-specific alternative, put the writing rules in a
 Avoid contradictory rules across soul, selected skills and memory.
 
 **Style presets.** `/style <name>` selects a session preset;
-`/style off` is the default and `/style` prints
-the active preset. Shipped: `code-review`, `concise`, `design`,
-`research`, `soul`, `technical`, and `troubleshoot`
+`/style off` is the default (shown as Default) and `/style` prints
+the active preset. Shipped: `code-review`, `concise`, `design`, `extract`,
+`handoff`, `research`, `soul`, `technical`, `troubleshoot`, `verify`
 ([`data/styles/`](../data/styles/)). An overlay at
-`$CGAGENTHARNESS_HOME/styles/<name>.md` wins. The selector creates a session if needed.
-`troubleshoot` labels claims observed or inferred and ends with one next command.
+`$CGAGENTHARNESS_HOME/styles/<name>.md` wins. Selecting creates a session if needed.
 Local chat and `/prompt` also carry a live status block and bundled-manual excerpts
 (`diagnostics.self_knowledge`, `live_state`); [contract](../INVARIANTS.md#self-knowledge-never-widens-authority).
-Prompt order is soul, style, then fixed policy, so style cannot
+Prompt order is soul, style, then fixed policy; style cannot
 override the contract. `/prompt` reports load failures and omits an unreadable,
 empty, missing, or scanner-refused overlay.
 
 `concise` is brief, `technical` traces mechanism, `research` grades evidence,
-`code-review` leads with blockers at file:line, `design` weighs tradeoffs. These model
-instructions do not deterministically rewrite or limit
-output; an explicit format request wins. `off` removes only style; soul remains.
-Changes affect future turns without rewriting history. Compare the same question,
-model, and settings in a new session; a loaded indicator alone proves no prose effect.
+`code-review` leads with blockers at file:line, `design` weighs tradeoffs,
+`troubleshoot` ranks causes with one next command, `handoff` briefs another
+agent, `verify` weighs one claim, `extract` uses supplied documents only.
+These instructions guide, not rewrite, output; an explicit format request wins.
+`off` removes only style; soul remains. Changes affect future turns only.
+Compare across sessions; a loaded indicator proves no prose effect.
 
 **The `unslop` planner probe** is not a chat preset: an optional local
 coding-planner probe (`unslop.enabled: true` plus `metrics_path:
