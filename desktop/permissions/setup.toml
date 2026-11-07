@@ -17,3 +17,7 @@ commands.allow = ["prepare_cargo"]
 identifier = "allow-check-models"
 description = "Inspect configured local model inventories without generating or downloading."
 commands.allow = ["check_models"]
+[[permission]]
+identifier = "allow-export-browser-certificate"
+description = "Save only the owned backend public certificate through a native file dialog. No trust installation."
+commands.allow = ["export_browser_certificate"]
