@@ -179,11 +179,11 @@ replay. Manual consolidation remains available.
 ## Retrieve and inspect
 
 - `/memory facts` lists your facts even with prompt recall off.
-- With `explicit_recall` on, select facts by stable `public_id` plus
-  `expected_revision` for a session (`POST /api/sessions/{session_id}/structured-facts`)
-  or one request (`selected_facts` on `/api/chat` or `/api/prompt/preview`).
-  There is no `/memory select` slash. Assembly rechecks ownership, active state
-  and revision.
+- **Use in this session** (Memory tab) selects a fact's `public_id` and
+  `expected_revision` for the open session (`POST /api/sessions/{session_id}/structured-facts`);
+  `selected_facts` on `/api/chat` or `/api/prompt/preview` selects per request.
+  With `explicit_recall` on, assembly rechecks ownership, active state and
+  revision.
 - `/memory search <query>` (or `GET /api/structured-memory/search`) returns
   candidates only; it does **not** write session selection or inject. Retrieval
   off is HTTP 409, not a silent empty inject.

@@ -228,9 +228,9 @@ Reuse persona review rules, not `soul-history/*.json`:
 
 The **Memory** tab (`/memory proposals`) lists pending proposals via
 `?status=pending`, filtered before its 128-row cap, then saved facts. **Save memory**
-and **Dismiss** send the displayed revision to the
-`POST /api/structured-memory/proposals/{id}` route; there is no separate decide
-endpoint or extra mutation rule.
+and **Dismiss** send its revision to
+`POST /api/structured-memory/proposals/{id}`; there is no separate decide
+endpoint. **Use in this session** sets [session selection](#explicit-recall).
 
 ## Explicit recall
 
