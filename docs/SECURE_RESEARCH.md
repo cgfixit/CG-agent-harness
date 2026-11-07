@@ -286,43 +286,46 @@ that literal argument. Other flag rules are in the
 
 ### Chat web tools
 
-With web enabled, local chat and `/loop` can invoke `web_search` (Google keyword listings)
-and `web_fetch` (an exact permitted public URL). They use OpenAI-compatible tool calls, which the local model must support, and
-receive the retrieved content.
-No repository, shell, policy, account, key or mutation tool is exposed. Invalid names, arguments and excess tool requests are refused; batches are
-validated before their first read and run sequentially. A turn allows at most
-`web.chat_tool_calls` (1–30, default 30) across all rounds. Tool hops send `models.local_llm.tool_max_tokens` (default 512) at temperature 0. The final answer keeps the chat token ceiling and temperature. After a notes-corpus read, `web_search` stays closed unless the user asked for outside sources. The turn gets the chat timeout
-plus a measured tool-round allowance (at most twice it), and checks each call's
-prompt against `web.total_tokens`, charged once. Tools are offered only while
-the prompt, its definitions, one reply and a minimal result (≥256 calibrated
-tokens) fit. A batch without that minimum per call runs no read and the model answers
-without tools. Results are cut to the room left, keeping that minimum per later
-call (pages keep prefixes, listings drop results). A failed
-read returns to the model as its result; a batch that fails entirely ends the
-turn (no evidence yet) or the tool rounds. Budget refusals report `WEB_TOKEN_BUDGET`; after reads, `WEB_TOOLS_WITHHELD`
-reserves synthesis.
-Reported usage sums all completed model calls; absent upstream usage stays marked
-unreported, never invented.
-`/loop stop` or the chat cancellation endpoint aborts the whole turn, including
-an outstanding content request. Direct chat uses `POST /api/chat` and returns
-`web_tools` alongside the reply and aggregate usage.
-Each session keeps a bounded ledger of its reads (targets, counts, truncation,
-citations, re-reads after compaction; no page text); `GET /api/sessions/{id}`
-returns it as `web_sources`. Each web turn audits `chat_web_turn` counts without
-targets. `web.carry_forward_sources` (ships 0, off; up to 50) lists that many
-earlier reads in later web turns' prompts, fenced as untrusted: URLs and
-queries only, goal-matching and cited first, fetched URLs only while the
-current policy still permits them.
+Local chat and `/loop` offer only `web_search` (configured-provider listings)
+and `web_fetch` (an exact permitted URL). The model chooses supplied local context,
+search, or reads; listings grant no page access. No repository, shell, policy,
+account, key or mutation tool is exposed. Batches validate before sequential
+reads; `web.chat_tool_calls` bounds all rounds (1–30, default 30).
 
-Existing homes keep a smaller configured `web.chat_tool_calls`; raise it and
-**Reload limits**. The call ceiling does not raise token, time, byte or
-URL-permission limits.
+Routing hops use `models.local_llm.tool_max_tokens` (default 512), temperature 0.
+A truncated answer gets a tool-free synthesis at the chat ceiling. The full
+stored goal governs whether outside evidence is requested after a notes read.
+Each call fits prompt, definitions, one reply and minimal results inside
+`web.total_tokens`; insufficient batch room runs no reads. Results shrink to
+remaining calibrated room. `WEB_TOKEN_BUDGET` reports refusal;
+`WEB_TOOLS_WITHHELD` reserves an answer after evidence. Failed reads return their
+own outcomes; an all-failed batch ends discovery. Usage includes completed model
+calls; missing upstream counts remain unknown. Cancellation aborts the whole turn.
 
-The console separates provider and source data from the model answer. Tool calls
-show links, outcomes, and failures. Listings and snippets come from the search
-provider; linked pages have not been fetched. Model answers are not validated
-research citations; use `/web research` when checked quote references are
-required.
+`web_fetch` accepts a focused `query` (1–200 characters) and `refresh` (default
+true). It selects up to three BM25 passages instead of a page prefix. Only whole
+delivered passages get receipt IDs and offsets. `refresh:false` may reuse currently
+permitted cache within `web.stale_seconds`; current-fact requests should refresh.
+Firecrawl remains an independently opted-in exact-read fallback.
+
+After new useful reads, loop turns can generate a bounded evidence digest
+(≤1,024 output tokens). Quote/source validation separates supported claims,
+conflicts, inferences and missing coverage; it does not prove logical entailment.
+The final model answer remains unvalidated. Server-managed goal runs retain at
+most nine URL/hash receipts, three passage IDs per URL and sixteen queries,
+plus the digest. Subsequent turns recheck age, hashes and permissions against
+the existing cache; unchanged evidence needs no new digest call. References
+survive history compaction, not run completion, cancellation or restart.
+
+`POST /api/chat` returns `web_tools`, reply and aggregate usage. The console shows
+listing metadata, selected passages, cache reuse, extraction path and digest
+outcomes separately. Session `web_sources` remains a bounded metadata ledger,
+never a second page store. `web.carry_forward_sources` still ships off; when
+enabled it supplies permitted earlier URLs/queries, not page text.
+
+Existing homes keep their configured call ceiling; **Reload limits** does not
+raise URL permissions. [Router design and measurements](learning/web-decision-router.md)
+record the provider matrix, context limits and remaining acceptance gaps.
 
 ### Google search
 

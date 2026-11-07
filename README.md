@@ -38,6 +38,8 @@ Fresh-home states; upgrades keep existing choices ([console guide](docs/CONSOLE.
 4. **Build the long piece.** One answer is at most 2,048 tokens (`web.model_tokens`), so longer work spans runs: `/goal`, `/loop`, memory pins, then Markdown export.
 5. **Fit your hardware.** Discovery and answering have separate deadlines (1,200 s and 1,800 s, up to an hour each); `auto_tune` sizes them.
 
+Goal loops select relevant page passages and retain checked evidence references through compaction ([router design and measurements](docs/learning/web-decision-router.md)).
+
 Rank is not truth, and bounded runs never claim completeness ([research](docs/SECURE_RESEARCH.md#fetch-discovery-and-research), [transcripts](docs/CONSOLE.md#search-and-export-session-transcripts); coding: [pipeline](docs/CODING_PIPELINE.md)).
 
 ## Engineering choices
