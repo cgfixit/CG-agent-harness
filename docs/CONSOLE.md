@@ -107,7 +107,7 @@ them; keep a custom home outside the checkout and never `git add -f` private fil
 /goal clear
 ```
 
-`/loop 3` requests three turns (the default), each restating the goal.
+Bare `/loop` defaults to three turns within the configured cap.
 [`loop.*` limits](CONFIG_RELOAD.md) reload; `api.harness_loop_rate_limit.max_tokens`
 bounds each reply. When both configured caps are zero or absent, `/status`
 and loop preflight warn: set a finite cap, then **Reload limits**. The warning

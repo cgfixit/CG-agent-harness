@@ -1719,7 +1719,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the HTML editor preview sentence; measured 6229 words.
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
-    ("docs/CONSOLE.md", Guide, 5910),
+    ("docs/CONSOLE.md", Guide, 5909),
     // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
     // why: the 2026-10-20 dep-sync folded the dated 2026-09 audit notes into Retained constraints; 944 words, keep the cut.
     // why: operator-approved +200 (2026-10-22) so dated advisory notes such as RUSTSEC-2026-0384 fit without trimming history.
