@@ -122,15 +122,13 @@ cancels generation, cooldown or a pending start. Goal clear, session switching, 
 `loop.max_failures` consecutive failed turns (default 2; auto retries once) stop it. A `GOAL_DONE` line (even `**GOAL_DONE**`) stops it
 too, but is only model advice.
 
-With `server_loop` in `/api/status`, auto loops run server-side,
-outliving the tab: the console renders turns from
-`GET /api/loop/events/<run_id>`, reattaches on `/session use`
-(`/api/loop/status?session_id=`), and `/loop stop` or auto off posts
-`/api/loop/stop`. Runs are owner-bound; each turn rechecks the account.
-`POST /api/loop/start` takes `session_id`, optional `goal`/`web_mode`, and
-limit overrides; each turn persists to `$CGAGENTHARNESS_HOME/loops/`.
-Manual, older-server and compaction-started loops stay browser-driven, as do
-staged attachments.
+With `server_loop` in `/api/status`, auto loops outlive tabs. The console reads
+`GET /api/loop/events/<run_id>`, reattaches using `/api/loop/status?session_id=`,
+and stops through `/api/loop/stop`. `POST /api/loop/start` accepts `session_id`,
+optional `goal`/`web_mode`, and limits. Turns persist under the home's `loops/`.
+Runs recheck account authority each turn and retain bounded, revalidated
+[web evidence references](SECURE_RESEARCH.md#chat-web-tools) through compaction.
+Manual, older-server, compaction-started and attachment loops remain browser-driven.
 
 This loop does not edit files, run skills as programs, or run coding checks.
 `--web` on `/goal` or `/loop` sets the chat tools of every turn while the goal is set; without it the goal takes `web.goal_web_default` (ships `all`, restart-only). `fetch` excludes search, `off` excludes web context and tools. Search listings never grant URL permission; URL permissions still apply. Preflight shows the mode.

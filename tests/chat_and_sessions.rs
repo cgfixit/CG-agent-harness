@@ -1333,11 +1333,25 @@ async fn loop_turns_need_a_session_a_goal_and_the_tool_allowlist() {
         .await;
     assert_eq!(status, 200, "{body}");
     let req = model.last_request().unwrap();
-    assert_eq!(req["max_tokens"], 2048, "loop turns use the loop token budget");
+    assert_eq!(req["max_tokens"], 512, "tool selection keeps the small planning cap");
     assert!(req["messages"][0]["content"]
         .as_str()
         .unwrap()
         .contains("Operator goal (session, read-only)"));
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"ship it","web_mode":"off"}),
+    )
+    .await;
+    let (status, body) = s
+        .post_json("/api/chat", json!({"message":"x","loop":true,"session_id":sid}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        model.last_request().unwrap()["max_tokens"],
+        2048,
+        "tool-free answers retain the loop budget"
+    );
     // Empty allowlist denies loop turns with 403 and releases the in-flight claim.
     let deny = ServerOptions {
         deny_all_tools: true,

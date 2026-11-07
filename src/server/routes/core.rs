@@ -1550,6 +1550,7 @@ pub(crate) async fn chat_inner(
             Vec::new(),
         )
     } else if chat_tools {
+        let active_loop = if req.loop_turn { state.loops.active_for_session(&owner, &session.session_id) } else { None };
         crate::server::chat_web::run_stream(
             &state,
             &web,
@@ -1563,6 +1564,8 @@ pub(crate) async fn chat_inner(
             chat_web_mode,
             sized_tuned,
             req.loop_turn,
+            &session.goal,
+            active_loop.as_ref().map(|run| run.run_id.as_str()),
             output,
             &local_usage,
         )

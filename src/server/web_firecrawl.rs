@@ -266,7 +266,7 @@ impl WebTool {
                 .json(
                     &json!({"url":target.as_str(),"formats":["markdown"],"onlyMainContent":true,
                     "timeout":remote_ms,"waitFor":0,"mobile":false,"skipTlsVerification":false,
-                    "removeBase64Images":true,"blockAds":true,"proxy":"basic","storeInCache":false}),
+                    "removeBase64Images":true,"blockAds":true,"proxy":"basic","storeInCache":false,"maxAge":0}),
                 )
                 .send()
                 .await
@@ -572,6 +572,7 @@ mod tests {
                         counter.fetch_add(1, Ordering::SeqCst);
                         let pinned = body["formats"] == json!(["markdown"])
                             && body["storeInCache"] == json!(false)
+                            && body["maxAge"] == json!(0)
                             && body["proxy"] == "basic"
                             && body["skipTlsVerification"] == json!(false)
                             && body.get("actions").is_none();

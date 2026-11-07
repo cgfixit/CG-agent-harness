@@ -9,6 +9,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     Arc, Mutex,
 };
+use std::time::Duration;
 
 #[tokio::test]
 async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_prefix_execution() {
@@ -427,7 +428,21 @@ async fn check_fetch_evidence(loop_turn: bool) {
         reply["web_tools"][0]["result"]["url"],
         "http://docs.example/docs/item?q=version"
     );
-    assert_eq!(reply["usage"], json!({"prompt_tokens":5010,"completion_tokens":7}));
+    assert_eq!(
+        reply["usage"],
+        if loop_turn {
+            json!({"prompt_tokens":5020,"completion_tokens":9})
+        } else {
+            json!({"prompt_tokens":5010,"completion_tokens":7})
+        }
+    );
+    if loop_turn {
+        assert_eq!(reply["web_tools"][1]["tool"], "web_evidence");
+        assert_eq!(
+            reply["web_tools"][1]["ok"], false,
+            "invalid digest must still answer from the delivered passages"
+        );
+    }
     let session = s
         .state
         .store
@@ -440,7 +455,7 @@ async fn check_fetch_evidence(loop_turn: bool) {
         "calibrate from the initial 10-token prompt, not the 5010-token aggregate"
     );
     assert_eq!(reads.load(Ordering::SeqCst), 1);
-    assert_eq!(requests.lock().unwrap().len(), 2);
+    assert_eq!(requests.lock().unwrap().len(), if loop_turn { 3 } else { 2 });
     let (_, denied) = s
         .post_json(
             "/api/chat",
@@ -689,9 +704,8 @@ async fn web_chat_tool_rounds_stay_inside_the_web_token_budget() {
         200
     );
     let mut session = Value::Null;
-    // Phase 1 (about 18.3k input tokens): the round fits, so tools stay on, and the
-    // follow-up (prompt, batch, page and one reply) must fit 28000, so the
-    // 6000-token page is clipped below its 24000-character evidence cap.
+    // Phase 1: a large history still permits a read. Repeated page content is
+    // deduplicated into a selected passage before the follow-up is budgeted.
     for turn in 0..50 {
         if last_prompt.load(Ordering::SeqCst) >= 18_300 {
             break;
@@ -719,7 +733,7 @@ async fn web_chat_tool_rounds_stay_inside_the_web_token_budget() {
     );
     // Phase 2: past the compaction trigger the next seed is compacted (the
     // mock's "Noted." is its summary) and the history shrinks; a fetch then runs
-    // with tools and the page fits whole.
+    // with tools and the selected passage retains a complete receipt.
     let mut peak = last_prompt.load(Ordering::SeqCst);
     for turn in 50..100 {
         let (status, body) = s
@@ -751,10 +765,12 @@ async fn web_chat_tool_rounds_stay_inside_the_web_token_budget() {
     assert!(offered.load(Ordering::SeqCst), "tools stay offered after compaction");
     assert_eq!(reads.load(Ordering::SeqCst), 2);
     assert_eq!(body["reply"], "Answer from the fetched page");
+    let result = &body["web_tools"][0]["result"];
+    let receipt = &result["receipts"][0];
     assert_eq!(
-        body["web_tools"][0]["result"]["text"].as_str().unwrap().len(),
-        24_000,
-        "the page fits whole"
+        result["text"].as_str().unwrap().chars().count() as u64,
+        receipt["end"].as_u64().unwrap() - receipt["start"].as_u64().unwrap(),
+        "the selected passage fits whole after compaction"
     );
     let (_, stored) = s
         .get_json(&format!("/api/sessions/{}", session.as_str().unwrap()))
@@ -1061,7 +1077,12 @@ async fn budget_server(router: Router, calls: usize) -> (common::TestServer, Arc
             let reads = read_count.clone();
             async move {
                 reads.fetch_add(1, Ordering::SeqCst);
-                ([("content-type", "text/plain")], "PAGE_EVIDENCE ".repeat(2000))
+                (
+                    [("content-type", "text/plain")],
+                    (0..30)
+                        .map(|n| format!("Section {n}: {}\n\n", format!("PAGE_EVIDENCE_{n} ").repeat(90)))
+                        .collect::<String>(),
+                )
             }
         }),
     );
@@ -1240,10 +1261,10 @@ async fn web_chat_grounds_a_web_denial_only_when_the_answer_was_offered_tools() 
 async fn web_chat_sizes_a_tool_free_follow_up_without_the_tool_definitions() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let (s, reads, base) = budget_server(budget_model(1, None, None, requests.clone()), 1).await;
-    // About 5,000 input tokens: a one-call round fits (up to about 6,424), and the
+    // About 6,350 input tokens: a one-call round fits (up to about 6,424), and the
     // follow-up (this prompt, the batch, the page and a 2048-token reply) must fit
     // 9000, so the 6000-token page must be cut.
-    let message = format!("fetch the page {}", "x".repeat(4 * (5_000 - base) as usize));
+    let message = format!("fetch the page {}", "x".repeat(4 * (6_350 - base) as usize));
     let (status, body) = s.post_json("/api/chat", json!({"message": message})).await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["reply"], "Answer from the page", "{body}");
@@ -1416,6 +1437,16 @@ async fn cancel_before_model_response_does_not_invent_spend() {
 
 #[tokio::test]
 async fn revoked_source_discards_inflight_answer() {
+    check_revoked_source("answer").await;
+}
+
+#[tokio::test]
+async fn revoked_source_discards_inflight_goal_digest_and_synthesis() {
+    check_revoked_source("digest").await;
+    check_revoked_source("synthesis").await;
+}
+
+async fn check_revoked_source(phase: &'static str) {
     let answering = Arc::new(tokio::sync::Notify::new());
     let resume = Arc::new(tokio::sync::Notify::new());
     let signal = answering.clone();
@@ -1426,9 +1457,19 @@ async fn revoked_source_discards_inflight_answer() {
             let signal = signal.clone();
             let release = release.clone();
             async move {
-                if body["messages"].as_array().unwrap().last().unwrap()["role"] == "tool" {
+                let last = body["messages"].as_array().unwrap().last().unwrap();
+                let digest = body["response_format"]["type"] == "json_object";
+                let synthesis = last["content"].as_str().unwrap_or("").contains("Untrusted evidence digest");
+                if (phase == "answer" && last["role"] == "tool")
+                    || (phase == "digest" && digest)
+                    || (phase == "synthesis" && synthesis)
+                {
                     signal.notify_one();
                     release.notified().await;
+                }
+                if digest {
+                    Json(common::ok_reply(&json!({"supported":[{"text":"Evidence exists.","citations":[{"id":"S1","quote":"Evidence to be revoked"}]}],"conflicts":[],"inferences":[],"missing":[]}).to_string(), 10, 2))
+                } else if last["role"] == "tool" || synthesis {
                     Json(common::ok_reply("Answer with revoked evidence", 10, 2))
                 } else {
                     Json(json!({"choices":[{"finish_reason":"tool_calls","message":{"content":null,"tool_calls":[{"id":"fetch","type":"function","function":{"name":"web_fetch","arguments":"{\"url\":\"http://docs.example/page\"}"}}]}}],"usage":{"prompt_tokens":10,"completion_tokens":2}}))
@@ -1448,7 +1489,17 @@ async fn revoked_source_discards_inflight_answer() {
     .await;
     s.post_json("/api/web/allow", json!({"url":"http://docs.example/page"}))
         .await;
-    let read = s.post_json("/api/chat", json!({"message":"Read the page"}));
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"Read the page and review the evidence."}),
+    )
+    .await;
+    let read = s.post_json(
+        "/api/chat",
+        json!({"message":"Read the page","session_id":sid,"loop":phase != "answer"}),
+    );
     let revoke = async {
         answering.notified().await;
         let result = s
@@ -2158,10 +2209,10 @@ async fn loop_reserves_final_synthesis_without_reporting_successful_reads_as_fai
         json!({"goal":"Summarize the fetched page", "web_mode":"fetch"}),
     )
     .await;
-    // About 5,000 input tokens: the page is cut to the follow-up's room, which then
+    // About 6,150 input tokens: the page is cut to the follow-up's room, which then
     // holds about 6,950 tokens, so a second round (definitions, a minimal result
     // and a reply) no longer fits and the final answer is reserved.
-    let message = format!("fetch the page {}", "x".repeat(4 * (5_000 - base) as usize));
+    let message = format!("fetch the page {}", "x".repeat(4 * (6_150 - base) as usize));
     let (status, body) = s
         .post_json("/api/chat", json!({"session_id":sid,"loop":true,"message":message}))
         .await;
@@ -2169,10 +2220,182 @@ async fn loop_reserves_final_synthesis_without_reporting_successful_reads_as_fai
     assert_eq!(body["reply"], "Answer from the page");
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     let events = body["web_tools"].as_array().unwrap();
-    assert!(events.iter().all(|e| e["ok"] == true), "{events:?}");
-    assert_eq!(events.last().unwrap()["code"], "WEB_TOOLS_WITHHELD");
+    assert!(
+        events
+            .iter()
+            .filter(|e| e["tool"] != "web_evidence")
+            .all(|e| e["ok"] == true),
+        "{events:?}"
+    );
+    assert!(events.iter().any(|e| e["code"] == "WEB_TOOLS_WITHHELD"));
+    assert_eq!(
+        events.iter().find(|event| event["tool"] == "web_evidence").unwrap()["code"],
+        "WEB_ANSWER_INVALID",
+        "the deliberately non-JSON digest does not turn the successful read into a failure"
+    );
     let requests = requests.lock().unwrap();
-    let final_call = requests.last().unwrap();
+    let final_call = requests
+        .iter()
+        .rev()
+        .find(|r| r.get("response_format").is_none())
+        .unwrap();
     assert!(final_call.get("tools").is_none());
     assert_eq!(final_call["tool_choice"], "none");
+    let digest = requests
+        .iter()
+        .find(|request| request["response_format"]["type"] == "json_object")
+        .unwrap();
+    assert_eq!(digest["response_format"]["type"], "json_object");
+    assert!(digest.get("tools").is_none(), "the digest cannot call tools");
+}
+
+#[tokio::test]
+async fn active_goal_reuses_a_validated_digest_with_source_urls_without_another_read() {
+    check_goal_evidence_reuse(false, None, true, 6000).await;
+}
+
+#[tokio::test]
+async fn repeated_goal_reads_reuse_cache_unless_explicitly_refreshed() {
+    check_goal_evidence_reuse(true, None, true, 6000).await;
+    check_goal_evidence_reuse(true, Some(true), true, 6000).await;
+}
+
+#[tokio::test]
+async fn invalid_digest_retains_passages_for_the_next_goal_turn() {
+    check_goal_evidence_reuse(true, None, false, 6000).await;
+}
+
+#[tokio::test]
+async fn restored_passages_yield_to_the_bounded_digest_when_context_is_tight() {
+    check_goal_evidence_reuse(false, None, true, 512).await;
+}
+
+async fn check_goal_evidence_reuse(reread: bool, refresh: Option<bool>, valid_digest: bool, evidence_budget: u64) {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let digests = Arc::new(AtomicUsize::new(0));
+    let restored = Arc::new(AtomicBool::new(false));
+    let (r, d, seen) = (reads.clone(), digests.clone(), restored.clone());
+    let router = Router::new()
+        .route("/docs/item", get(move || {
+            r.fetch_add(1, Ordering::SeqCst);
+            async move { ([("content-type", "text/plain")], format!("RECOVERY_ANCHOR requires two replicas.{}", if evidence_budget == 512 { " A source qualification.".repeat(40) } else { String::new() })) }
+        }))
+        .route("/v1/chat/completions", post(move |Json(body): Json<Value>| {
+            let (d, seen) = (d.clone(), seen.clone());
+            async move {
+                let messages = body["messages"].as_array().unwrap();
+                if body["response_format"]["type"] == "json_object" {
+                    d.fetch_add(1, Ordering::SeqCst);
+                    assert!(body["max_tokens"].as_u64().unwrap() <= 1024);
+                    if !valid_digest { return Json(common::ok_reply("invalid digest", 100, 40)); }
+                    return Json(common::ok_reply(&json!({"supported":[{"text":"Recovery requires two replicas.","citations":[{"id":"S1","quote":"requires two replicas"}]}],"conflicts":[],"inferences":[],"missing":[]}).to_string(), 100, 40));
+                }
+                let last = messages.last().unwrap();
+                let content = last["content"].as_str().unwrap_or("");
+                let fetch = || {
+                    let mut args = json!({"url":"http://docs.example/docs/item","query":"RECOVERY_ANCHOR replicas"});
+                    if let Some(refresh) = refresh { args["refresh"] = json!(refresh); }
+                    Json(tool_call_reply("web_fetch", &args.to_string(), "reread"))
+                };
+                if content.contains("Untrusted active-goal findings") {
+                    let context: Value = serde_json::from_str(content).unwrap();
+                    assert!(context["current_turn"].as_str().unwrap().starts_with("Loop turn 2 of 2."));
+                    assert_eq!(context["sources"][0]["url"], "http://docs.example/docs/item");
+                    assert!(content.len().div_ceil(4) <= evidence_budget as usize);
+                    if evidence_budget == 512 {
+                        assert!(context["passages"].as_array().unwrap().is_empty());
+                    } else {
+                        assert!(context["passages"][0]["text"].as_str().unwrap().contains("requires two replicas"));
+                    }
+                    if valid_digest {
+                        assert_eq!(context["findings"]["supported"][0]["citations"][0]["id"], context["sources"][0]["id"]);
+                    } else {
+                        assert!(context["findings"].is_null());
+                        assert!(context["passages"][0]["text"].as_str().unwrap().contains("requires two replicas"));
+                    }
+                    seen.store(true, Ordering::SeqCst);
+                    if reread { return fetch(); }
+                    return Json(common::ok_reply("The retained finding still supports two replicas.", 100, 10));
+                }
+                if last["role"] == "tool" {
+                    assert!(d.load(Ordering::SeqCst) > 0, "digest must precede the next tool decision");
+                    let result: Value = serde_json::from_str(content).unwrap();
+                    let tool_count = messages.iter().filter(|m| m["role"] == "tool").count();
+                    let later_turn = messages.iter().any(|m| m["content"].as_str().unwrap_or("").contains("Untrusted active-goal findings"));
+                    assert_eq!(result["cache_reused"], reread && (tool_count > 1 || later_turn) && refresh != Some(true));
+                    if reread && tool_count == 1 && !later_turn { return fetch(); }
+                }
+                if content.contains("Untrusted evidence digest") {
+                    let context: Value = serde_json::from_str(content).unwrap();
+                    assert!(context["current_turn"].as_str().unwrap().starts_with("Loop turn 1 of 2."));
+                    if reread { return fetch(); }
+                }
+                if last["role"] == "tool" || content.contains("Untrusted evidence digest") {
+                    return Json(common::ok_reply("Recovery needs two replicas, per http://docs.example/docs/item.", 100, 10));
+                }
+                Json(tool_call_reply("web_fetch", &json!({"url":"http://docs.example/docs/item","query":"RECOVERY_ANCHOR"}).to_string(), "read"))
+            }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let fixture = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"),
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..common::ServerOptions::default().with("web.evidence_tokens", &evidence_budget.to_string())
+        },
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"}))
+            .await
+            .0,
+        200
+    );
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    assert_eq!(
+        s.post_json(
+            &format!("/api/sessions/{sid}/goal"),
+            json!({"goal":"Read the recovery manual, then review its implication in a second step.","web_mode":"fetch"})
+        )
+        .await
+        .0,
+        200
+    );
+    let (status, started) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id":sid,"max_turns":2,"cooldown_ms":0}),
+        )
+        .await;
+    assert_eq!(status, 200, "{started}");
+    let run_id = started["run"]["run_id"].as_str().unwrap();
+    let run = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let (_, value) = s.get_json(&format!("/api/loop/status?run_id={run_id}")).await;
+            if matches!(value["run"]["state"].as_str(), Some("done" | "failed" | "stopped")) {
+                break value["run"].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(run["stats"]["turns_completed"], 2, "{run}");
+    assert!(
+        restored.load(Ordering::SeqCst),
+        "the second turn must receive validated references"
+    );
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        if reread && refresh == Some(true) { 3 } else { 1 }
+    );
+    assert_eq!(
+        digests.load(Ordering::SeqCst),
+        1,
+        "unchanged evidence needs no new digest inference"
+    );
+    fixture.abort();
 }
