@@ -24,6 +24,7 @@ const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', to
 let memoryEnabled=false, structuredOpen=true;
 let suggestionRun=null;
 let automaticSuggestions=null, memoryOwnerFixture=null, holdMemoryHistory=false, memoryHistoryHeld=null, rejectHeldMemoryHistory=null;
+let failFactSelectOnce=false;
 let holdMemoryFacts=false, memoryFactsHeld=null, releaseHeldMemoryFacts=null;
 let holdMemoryDecision=false, memoryDecisionHeld=null, releaseHeldMemoryDecision=null, rateLimitMemoryOnce=false, failMemoryOnce=false;
 let latestEpisode={id:'episode_labeled_latest',outcome:'completed',semantic_summary:null};
@@ -108,6 +109,19 @@ const server=createServer(async(req,res)=>{
   if(sessionId&&!session){reply({detail:{code:'SESSION_NOT_FOUND',message:'No such session'}},404);return;}
   if(req.method==='POST')session.style=body.name==='off'?null:body.name;
   reply({styles:['concise','technical'].map(id=>({id})),session_id:sessionId,style:session?.style||null,loaded:!!session?.style});return;
+ }
+ // #621 U3: explicit fact selection per session; mirrors the server's injected/dropped preview.
+ const factSel=path.match(/^\/api\/sessions\/([^/]+)\/structured-facts$/);
+ if(factSel){
+  const s=sessions.get(factSel[1]);if(!s){reply({detail:{code:'SESSION_NOT_FOUND',message:'No such session'}},404);return;}
+  if(req.method==='POST'){if(failFactSelectOnce){failFactSelectOnce=false;reply({detail:{code:'STRUCTURED_MEMORY_SELECTION',message:'too many selected facts for this configuration'}},400);return;}s.selectedFacts=body.facts;}
+  const selected=s.selectedFacts||[],injected=[],dropped=[];
+  for(const pick of selected){const f=savedFacts.find(x=>x.id===pick.id);
+   if(!f||f.active===false)dropped.push({id:pick.id,reason:f?'inactive':'missing'});
+   else if(f.revision!==pick.expected_revision)dropped.push({id:pick.id,reason:'stale_revision'});
+   else if(!structuredGates.explicit_recall)dropped.push({id:pick.id,reason:'recall_disabled'});
+   else injected.push({id:f.id,revision:f.revision,category:f.category,chars:f.content.length,source:'selected'});}
+  reply({session_id:s.session_id,explicit_recall:structuredGates.explicit_recall,selected,injected,dropped});return;
  }
  if(path==='/api/sessions/clear'){
   if(clearFails){reply({detail:{code:'HARNESS_SESSION_PERSIST_ERROR',message:'fixture storage failure'}},502);return;}
@@ -571,8 +585,45 @@ try {
  await send('/memory proposals');
  await until('document.querySelectorAll("#pane-memory form").length === 2');
  await until('document.getElementById("pane-memory").textContent.includes("Saved facts (1)")');
- assert.equal(await evaluate('document.querySelectorAll("#pane-memory section.saved-facts form, #pane-memory section.saved-facts button").length'),0,'saved facts are listed read-only, outside the proposal forms');
+ assert.equal(await evaluate('document.querySelectorAll("#pane-memory section.saved-facts form, #pane-memory section.saved-facts button").length'),0,'saved facts sit outside the proposal forms; only selection controls appear');
  assert.equal(await evaluate('document.querySelectorAll("#pane-memory script").length'),0,'proposal and fact content must stay inert text');
+ {
+  // #621 U3: select/deselect a saved fact for the open session; stale, gate-off, refusal and session-change handling.
+  const factSession=await evaluate('currentSession');
+  assert.ok(factSession,'a session is open for fact selection');
+  const prevRecall=structuredGates.explicit_recall;structuredGates.explicit_recall=true;
+  const factPosts=()=>requests.filter(r=>r[0]==='POST'&&r[1]==='/api/sessions/'+factSession+'/structured-facts');
+  const rerender='(()=>{const s=document.querySelector("#pane-memory > section.saved-facts");if(s)delete s.dataset.snapshot;return appendSavedFacts(document.getElementById("pane-memory")).then(()=>true);})()';
+  const statusOf='document.querySelector("#pane-memory .fact-selection-status").textContent';
+  const box='document.querySelector("#pane-memory .saved-fact .fact-select input")';
+  await evaluate(rerender);
+  await until(statusOf+'.includes("0 selected")');
+  assert.ok((await evaluate(statusOf)).includes(factSession),'the status names the open session');
+  await evaluate(box+'.click()');
+  await until(statusOf+'.includes("1 selected, 1 sent")');
+  assert.deepEqual(factPosts().at(-1)[2],{facts:[{id:'fact_labeled_saved',expected_revision:1}]},'select posts the stable id and current revision');
+  assert.equal(savedFacts[0].revision,1,'selecting never edits the fact');
+  savedFacts[0].revision=2;await evaluate(rerender);
+  await until(statusOf+'.includes("changed since selected")');
+  await evaluate('[...document.querySelectorAll("#pane-memory .fact-select button")].find(b=>b.textContent==="Use revision 2").click()');
+  await until(statusOf+'.includes("1 selected, 1 sent")');
+  assert.deepEqual(factPosts().at(-1)[2],{facts:[{id:'fact_labeled_saved',expected_revision:2}]},'refresh selects the current revision');
+  structuredGates.explicit_recall=false;await evaluate(rerender);
+  await until(statusOf+'.includes("Explicit recall is off")');
+  assert.ok((await evaluate(statusOf)).includes('1 selected, 0 sent'),'gate off keeps the selection but sends nothing');
+  structuredGates.explicit_recall=true;failFactSelectOnce=true;
+  await evaluate(box+'.click()');
+  await until(statusOf+'.includes("Selection not saved")');
+  assert.equal(await evaluate(box+'.checked'),true,'a refused change shows the stored selection');
+  const posted=factPosts().length;
+  await evaluate('sessionRevision++');await evaluate(box+'.click()');
+  await until(statusOf+'.includes("open session changed")');
+  assert.equal(factPosts().length,posted,'a view from an earlier session selection never writes');
+  await evaluate(box+'.click()');
+  await until(statusOf+'.includes("0 selected")');
+  assert.deepEqual(factPosts().at(-1)[2],{facts:[]},'deselect posts the remaining selection');
+  savedFacts[0].revision=1;structuredGates.explicit_recall=prevRecall;await evaluate(rerender);
+ }
  // Completion polling must update outcomes alongside existing proposals without rebuilding review inputs.
  automaticSuggestions={chat:true,coding:true,mode:'both',queued:1,running:false,poll_interval_ms:250,last_attempt:{source:'chat',created_ts:1,episode_id:'episode_polled',queued:true,run_id:'run_polled'}};
  await evaluate('refreshMemoryProposals()');

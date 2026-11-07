@@ -195,6 +195,11 @@
   #pane-memory summary { cursor: pointer; color: var(--accent-blue); }
   #pane-memory h3 { margin: 16px 0 6px; font-size: var(--fs-md); }
   #pane-memory input { display: block; width: 100%; padding: 6px; color: var(--text-primary); background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px; }
+  .fact-select { font-size: var(--fs-micro); color: var(--text-secondary); margin: 2px 0 6px; }
+  .fact-select button, .fact-select-clear { margin-left: 6px; padding: 1px 6px; font-size: var(--fs-micro); background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+  .fact-selection-status { font-size: var(--fs-micro); color: var(--text-muted); }
+  #pane-memory .fact-select label { display: inline-flex; align-items: center; gap: 6px; width: auto; margin: 0; }
+  #pane-memory .fact-select input[type=checkbox] { display: inline-block; width: auto; padding: 0; margin: 0; accent-color: var(--accent-amber); }
   #pane-memory button { cursor: pointer; margin: 6px 6px 0 0; padding: 6px 10px; color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 4px; }
   #pane-memory button:disabled { opacity: .5; cursor: default; }
 
@@ -6272,6 +6277,28 @@ async function refreshMemoryProposals() {
   }
 }
 
+/* Explicit recall for the open session (#621 U3). Selecting stores an ID and
+   expected revision on the session; it never edits a fact. The server's
+   injected/dropped preview is the authority for what chat will receive. */
+let factSelectionNotice = null; // {text, view, session}: one failed-save message for the next render of the same view
+const FACT_DROP_TEXT = {stale_revision: 'changed since selected', inactive: 'deactivated', missing: 'no longer exists', over_limit: 'over the selection limit', duplicate: 'duplicate', invalid_id: 'invalid ID', invalid_owner: 'not yours', recall_disabled: 'explicit recall is off', cloud_chat: 'cloud chat'};
+function factSelectionSummary(session, selection, error, facts) {
+  if (!session) return 'Open or start a session to choose saved facts for it.';
+  if (error) return 'Could not load the selection for session ' + session + ': ' + error;
+  if (!selection) return '';
+  const picked = Array.isArray(selection.selected) ? selection.selected.length : 0;
+  const injected = Array.isArray(selection.injected) ? selection.injected.length : 0;
+  const dropped = Array.isArray(selection.dropped) ? selection.dropped : [];
+  let text = 'Session ' + session + ': ' + picked + ' selected, ' + injected + ' sent with chat.';
+  if (selection.explicit_recall === false) text += ' Explicit recall is off, so selections are kept but not sent.';
+  const reasons = dropped.filter(item => item.reason !== 'recall_disabled').map(item => {
+    const fact = facts.find(row => row.id === item.id);
+    return (fact ? String(fact.category || 'fact') : String(item.id || 'fact')) + ' (' + (FACT_DROP_TEXT[item.reason] || String(item.reason || 'dropped')) + ')';
+  });
+  if (reasons.length) text += ' Not sent: ' + reasons.join(', ') + '.';
+  return text;
+}
+
 /* Saved facts render after the proposal forms and outside any form. They
    load and fail on their own, so a listing error never replaces the
    proposals feedback. No query: filters switch the route to a capped search. */
@@ -6282,6 +6309,15 @@ async function appendSavedFacts(panel) {
     const result = await api('/api/structured-memory/facts');
     if (revision !== memoryViewRevision || request !== memoryFactsRevision || !panel.isConnected) return;
     const facts = result && Array.isArray(result.facts) ? result.facts : [];
+    /* #621 U3: the open session's explicit selection. A load failure is shown
+       in the section and never hides the facts list. */
+    const session = currentSession, selectionRevision = sessionRevision;
+    let selection = null, selectionError = '';
+    if (session) {
+      try { selection = await api('/api/sessions/' + encodeURIComponent(session) + '/structured-facts'); }
+      catch (error) { selectionError = error.message; }
+      if (revision !== memoryViewRevision || request !== memoryFactsRevision || !panel.isConnected) return;
+    }
     // New proposal cards may need their target even when the saved-facts list
     // is unchanged. Update text in place; never unlock a decision in flight.
     for (const form of panel.querySelectorAll(':scope > .memory-proposals > form[data-target-fact]')) {
@@ -6295,7 +6331,7 @@ async function appendSavedFacts(panel) {
       if (target.textContent !== text) target.textContent = text;
       if (form.dataset.reviewState === 'pending') form.querySelector('.memory-save').disabled = !current;
     }
-    const snapshot = JSON.stringify(facts);
+    const snapshot = JSON.stringify({facts, session, selection, selectionError});
     if (previous && previous.isConnected && previous.dataset.snapshot === snapshot) return;
     const section = document.createElement('section'); section.className = 'saved-facts'; section.dataset.snapshot = snapshot;
     const heading = document.createElement('h3'); heading.textContent = 'Saved facts (' + facts.length + ')';
@@ -6304,11 +6340,63 @@ async function appendSavedFacts(panel) {
       ? 'Memories you chose to keep, most recently changed first. Chat uses them when you select them or enabled retrieval finds a match.'
       : 'No saved facts yet. Save a suggestion above or add one with /memory save.';
     section.append(heading, note);
+    const picks = selection && Array.isArray(selection.selected) ? selection.selected : [];
+    const selectionNote = document.createElement('p'); selectionNote.className = 'fact-selection-status'; selectionNote.setAttribute('role', 'status');
+    const notice = factSelectionNotice && factSelectionNotice.view === revision && factSelectionNotice.session === session ? factSelectionNotice.text + ' ' : '';
+    factSelectionNotice = null;
+    selectionNote.textContent = notice + factSelectionSummary(session, selection, selectionError, facts);
+    section.appendChild(selectionNote);
+    const commit = async next => {
+      for (const control of section.querySelectorAll('.fact-select input, .fact-select button, .fact-select-clear')) control.disabled = true;
+      selectionNote.textContent = 'Saving this session\'s selection…';
+      try {
+        if (session !== currentSession || selectionRevision !== sessionRevision) throw new Error('The open session changed. Selections reload for the current session.');
+        const saved = await api('/api/sessions/' + encodeURIComponent(session) + '/structured-facts', 'POST', { facts: next });
+        if (revision !== memoryViewRevision || session !== currentSession || selectionRevision !== sessionRevision) return;
+        selectionNote.textContent = factSelectionSummary(session, saved, '', facts);
+      } catch (error) {
+        if (revision !== memoryViewRevision || !section.isConnected) return;
+        factSelectionNotice = { text: 'Selection not saved: ' + error.message, view: revision, session: currentSession };
+      }
+      delete section.dataset.snapshot;
+      if (panel.isConnected) await appendSavedFacts(panel);
+    };
+    const unavailable = picks.filter(pick => !facts.some(fact => fact.id === pick.id && fact.active !== false));
+    if (unavailable.length) {
+      const clear = document.createElement('button'); clear.type = 'button'; clear.className = 'fact-select-clear';
+      clear.textContent = 'Remove ' + unavailable.length + ' unavailable selection' + (unavailable.length === 1 ? '' : 's');
+      clear.addEventListener('click', () => commit(picks.filter(pick => !unavailable.includes(pick))));
+      section.appendChild(clear);
+    }
     for (const fact of facts) {
       const detail = document.createElement('details'), title = document.createElement('summary'), body = document.createElement('pre');
       title.textContent = String(fact.category || 'uncategorized') + ' · ' + Array.from(String(fact.content || '')).slice(0, 160).join('');
       body.textContent = 'Fact ' + String(fact.id || '') + ' · revision ' + String(fact.revision != null ? fact.revision : '') + '\n' + String(fact.content || '');
       detail.append(title, body);
+      if (session && selection) {
+        const pick = picks.find(item => item.id === fact.id);
+        const row = document.createElement('div'); row.className = 'fact-select';
+        const label = document.createElement('label'), box = document.createElement('input');
+        box.type = 'checkbox'; box.checked = !!pick; box.disabled = fact.active === false;
+        label.append(box, document.createTextNode(' Use in this session'));
+        row.appendChild(label);
+        box.addEventListener('change', () => commit(box.checked
+          ? picks.filter(item => item.id !== fact.id).concat([{ id: fact.id, expected_revision: fact.revision }])
+          : picks.filter(item => item.id !== fact.id)));
+        if (pick && pick.expected_revision !== fact.revision) {
+          const stale = document.createElement('span');
+          stale.textContent = ' Selected revision ' + pick.expected_revision + ' is outdated, so it is not sent.';
+          const refresh = document.createElement('button'); refresh.type = 'button';
+          refresh.textContent = 'Use revision ' + fact.revision;
+          refresh.addEventListener('click', () => commit(picks.map(item => item.id === fact.id ? { id: fact.id, expected_revision: fact.revision } : item)));
+          row.append(stale, refresh);
+        }
+        if (pick) title.textContent = '✓ ' + title.textContent;
+        const item = document.createElement('div'); item.className = 'saved-fact';
+        item.append(detail, row);
+        section.appendChild(item);
+        continue;
+      }
       section.appendChild(detail);
     }
     const existing = panel.querySelector(':scope > section.saved-facts');
