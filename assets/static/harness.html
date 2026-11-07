@@ -299,6 +299,16 @@
   .sess-item.current { border-color: var(--accent-amber); background: rgba(212,146,11,.07); }
   .sess-item .t { font-size: var(--fs-small); color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sess-item .m { font-family: var(--mono); font-size: var(--fs-micro); color: var(--text-muted); }
+  .sess-item .snip { font-size: var(--fs-micro); color: var(--text-secondary); white-space: normal; overflow-wrap: anywhere; margin-top: 2px; }
+  .sess-hit { display: block; width: 100%; text-align: left; background: none; color: inherit; font: inherit; }
+  .sess-export { margin-top: 3px; padding: 1px 6px; font-size: var(--fs-micro); background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+  #sessionSearch { margin: 8px 0; }
+  #sessionSearch form { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+  #sessionSearch label { width: 100%; font-size: var(--fs-micro); color: var(--text-muted); }
+  #sessionSearch input { flex: 1; min-width: 0; padding: 4px 6px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 4px; }
+  #sessionSearch button[type=submit] { padding: 4px 8px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+  #sessionSearchResults { margin-top: 4px; }
+  #sessionSearchResults > .m { font-size: var(--fs-micro); color: var(--text-muted); margin-bottom: 4px; }
 
   .reg-entry { padding: 6px 8px; border-bottom: 1px solid var(--border); }
   .legacy-session { display: grid; gap: 10px; padding: 12px 8px; }
@@ -1941,17 +1951,106 @@ async function refreshSessions() {
     } catch (error) { if (revision === sessionRevision) legacyRows.textContent = error.message; }
     finally { legacy.disabled = false; }
   });
-  pane.append(legacy, legacyRows);
+  pane.append(legacy, legacyRows, sessionSearchControls(revision));
   data.sessions.forEach(s => {
     const el = document.createElement('div');
     el.className = 'sess-item' + (s.session_id === currentSession ? ' current' : '');
     const t = document.createElement('div'); t.className = 't'; t.textContent = s.title;
     const m = document.createElement('div'); m.className = 'm';
     m.textContent = s.session_id + ' · ' + s.message_count + ' msgs · ' + s.tokens.total + ' tok';
-    el.appendChild(t); el.appendChild(m);
+    const exp = document.createElement('button'); exp.type = 'button'; exp.className = 'sess-export';
+    exp.textContent = 'Export .md'; exp.setAttribute('aria-label', 'Export session ' + s.session_id + ' as Markdown');
+    const fb = document.createElement('div'); fb.className = 'm'; fb.setAttribute('role', 'status');
+    exp.addEventListener('click', event => { event.stopPropagation(); exportSessionMarkdown(s.session_id, exp, fb, revision); });
+    el.append(t, m, exp, fb);
     el.addEventListener('click', () => runSlash('/session use ' + s.session_id));
     pane.appendChild(el);
   });
+}
+
+/* Transcript search and Markdown export (#621 U1). Both call the owner- and
+   CSRF-guarded APIs; results render through textContent only and are dropped
+   when the session or account changes (sessionRevision). Only the typed query
+   survives a pane rebuild, and resetAccountView clears it. */
+let sessionSearchQuery = '', sessionSearchSeq = 0;
+function sessionSearchControls(revision) {
+  const box = document.createElement('div'); box.id = 'sessionSearch';
+  const form = document.createElement('form');
+  const label = document.createElement('label'); label.htmlFor = 'sessionSearchInput'; label.textContent = 'Search my transcripts';
+  const q = document.createElement('input'); q.id = 'sessionSearchInput'; q.type = 'search'; q.maxLength = 200;
+  q.placeholder = 'exact phrase'; q.value = sessionSearchQuery;
+  const go = document.createElement('button'); go.type = 'submit'; go.textContent = 'Search';
+  const results = document.createElement('div'); results.id = 'sessionSearchResults'; results.setAttribute('aria-live', 'polite');
+  form.append(label, q, go);
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const query = q.value.trim(); sessionSearchQuery = q.value;
+    const ticket = ++sessionSearchSeq;
+    results.replaceChildren();
+    if (!query) { results.textContent = 'Enter a phrase to search your sessions.'; return; }
+    go.disabled = true; results.textContent = 'Searching…';
+    const stale = () => ticket !== sessionSearchSeq || revision !== sessionRevision || !results.isConnected;
+    try {
+      const data = await api('/api/sessions/search', 'POST', { query });
+      if (stale()) return;
+      results.replaceChildren();
+      const hits = Array.isArray(data && data.hits) ? data.hits : [];
+      if (!hits.length) { results.textContent = 'No matches in your sessions.'; return; }
+      const count = document.createElement('div'); count.className = 'm';
+      count.textContent = hits.length + ' match' + (hits.length === 1 ? '' : 'es') + ' (local index; nothing leaves this machine)';
+      results.appendChild(count);
+      for (const hit of hits) {
+        const row = document.createElement('button'); row.type = 'button'; row.className = 'sess-item sess-hit';
+        const t = document.createElement('div'); t.className = 't'; t.textContent = String(hit.title || hit.session_id);
+        const m = document.createElement('div'); m.className = 'm';
+        const when = Number.isFinite(hit.ts) && hit.ts > 0 ? ' · ' + new Date(hit.ts * 1000).toLocaleString() : '';
+        m.textContent = hit.session_id + ' · ' + hit.role + when;
+        const snip = document.createElement('div'); snip.className = 'snip'; snip.textContent = String(hit.snippet || '');
+        row.append(t, m, snip);
+        row.addEventListener('click', () => runSlash('/session use ' + hit.session_id));
+        results.appendChild(row);
+      }
+    } catch (error) {
+      if (!stale()) results.textContent = error.message;
+    } finally {
+      if (ticket === sessionSearchSeq) {
+        go.disabled = false;
+        if (revision !== sessionRevision && results.isConnected) results.replaceChildren();
+      }
+    }
+  });
+  box.append(form, results);
+  return box;
+}
+async function exportSessionMarkdown(sessionId, button, feedback, revision) {
+  const headers = {};
+  const key = apiKeyInput ? apiKeyInput.value.trim() : '';
+  if (key) headers['Authorization'] = 'Bearer ' + key;
+  if (CSRF_TOKEN) headers['X-CyClaw-CSRF'] = CSRF_TOKEN;
+  const stale = () => revision !== sessionRevision || !feedback.isConnected;
+  button.disabled = true; feedback.textContent = 'Exporting…';
+  let held = null;
+  try {
+    held = await fetchHold('/api/sessions/' + encodeURIComponent(sessionId) + '/export', { method: 'GET', headers }, 15000);
+    const resp = held.resp;
+    if (!resp.ok) {
+      let message = 'HTTP ' + resp.status;
+      try { const d = await resp.json(); const t = d && d.detail !== undefined ? d.detail : d; if (t && t.message) message = (t.code ? t.code + ': ' : message + ': ') + t.message; } catch (e) { /* non-JSON refusal */ }
+      throw new Error(message);
+    }
+    const body = await resp.text();
+    if (stale()) return;
+    const url = URL.createObjectURL(new Blob([body], { type: 'text/markdown;charset=utf-8' }));
+    const link = document.createElement('a'); link.href = url; link.download = sessionId + '.md';
+    document.body.appendChild(link); link.click(); link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000);
+    feedback.textContent = 'Saved exports/' + sessionId + '.md in the harness home; download offered.';
+  } catch (error) {
+    if (!stale()) feedback.textContent = error.name === 'AbortError' ? 'Export timed out.' : error.message;
+  } finally {
+    if (held) held.release();
+    if (!stale()) button.disabled = false;
+  }
 }
 
 /* ── API Keys pane; catalog and persistence remain server-owned ── */
@@ -5717,7 +5816,7 @@ function setPasswordRequired(on) {
    message inherits the previous view. */
 function resetAccountView() {
   clearTimeout(memoryRefreshTimer); memoryViewRevision++; memoryRefreshBusy = false;
-  clearTranscript(); $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
+  clearTranscript(); sessionSearchQuery = ''; sessionSearchSeq++; $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
   netconnectRevision++; $('pane-netconnect').replaceChildren();
   currentSession = null; sessionGoal = ''; loopAuto = false; stopLoop();
   paintSessionTokens({total:0});
