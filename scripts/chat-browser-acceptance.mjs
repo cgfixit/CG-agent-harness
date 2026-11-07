@@ -15,7 +15,10 @@ const FIXTURE_SETUP_CODE='fx2a-b3cd-e4fg-h5jk';
 let adminPassword=FIXTURE_SETUP_CODE;
 const userIds={admin:'1'.repeat(32),'audit-fixture':'2'.repeat(32),'memory-second':'3'.repeat(32)}; // random_hex(16) owner ids
 let persona=''; let clearFails=false, slashMode='dispatch';
-let authFixture=false, signedIn=false, logoutStatus=200, whoamiDrop=false, mustChange=true, savedKey='', savedSearchKey='', authRole='admin', authUsername='admin';
+let authFixture=false, signedIn=false, logoutStatus=200, whoamiDrop=false, mustChange=true, authRole='admin', authUsername='admin';
+const visibleKeys=['SERPAPI_API_KEY','TAVILY_API_KEY','FIRECRAWL_API_KEY','GH_TOKEN','GROK_API_KEY','ANTHROPIC_API_KEY','CGAGENTHARNESS_WEBHOOK_TOKEN'];
+const hiddenKeys=['CGAGENTHARNESS_API_KEY','DEEPAGENT_API_KEY'];
+const savedKeys=new Map(hiddenKeys.map(name=>[name,'fixture-existing-key-9012']));
 let searchFallback=false; // /api/web/search answers as a public-Google hop after a failed Tavily; 'constructor' must not resolve to a label
 let automationFixture=null; // null keeps the unknown-path {} reply for the header feature probes
 let loopFixture=null;
@@ -92,8 +95,19 @@ const server=createServer(async(req,res)=>{
  if(path==='/api/auth/logout'){if(logoutStatus!==200){reply({detail:{code:'AUTH_REQUIRED',message:'session expired'}},logoutStatus);return;}signedIn=false;reply({ok:true});return;}
  if(path==='/api/keys'){
   if(!signedIn || mustChange || authRole!=='admin'){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
-  if(req.method==='POST'){if(body.clear?.includes('DEEPAGENT_API_KEY'))savedKey='';if(body.clear?.includes('SERPAPI_API_KEY'))savedSearchKey='';if(body.keys?.DEEPAGENT_API_KEY)savedKey=body.keys.DEEPAGENT_API_KEY;if(body.keys?.SERPAPI_API_KEY)savedSearchKey=body.keys.SERPAPI_API_KEY;}
-  reply({...(req.method==='POST'&&body.keys?{written:Object.keys(body.keys),path:'fixture-store'}:{}),keys:[{name:'SERPAPI_API_KEY',label:'Google results (SerpAPI)',detail:'Public Google fallback when unset',saved_configured:!!savedSearchKey,saved_masked:savedSearchKey?'••••••••5678':'',active_configured:false,active_masked:'',active_source:'unset',pending_restart:!!savedSearchKey,environment_override:false},{name:'DEEPAGENT_API_KEY',label:'Planner key',detail:'Optional fixture provider',saved_configured:!!savedKey,saved_masked:savedKey?'••••••••1234':'',active_configured:false,active_masked:'',active_source:'unset',pending_restart:!!savedKey,environment_override:false}]});return;
+  if(req.method==='POST'){
+   for(const name of body.clear??[])savedKeys.delete(name);
+   for(const [name,value] of Object.entries(body.keys??{}))savedKeys.set(name,value);
+  }
+  const keys=[...visibleKeys,...hiddenKeys].map(name=>{
+   const saved=savedKeys.get(name);
+   const live=['SERPAPI_API_KEY','TAVILY_API_KEY','FIRECRAWL_API_KEY'].includes(name);
+   const masked=saved?'••••••••'+saved.slice(-4):'';
+   return {name,label:name,detail:'Fixture credential',saved_configured:!!saved,saved_masked:masked,
+    active_configured:live&&!!saved,active_masked:live?masked:'',active_source:live&&saved?'saved_store':'unset',
+    pending_restart:!live&&!!saved,environment_override:false};
+  });
+  reply({written:Object.keys(body.keys??{}),path:'fixture-store',keys});return;
  }
  if(path==='/api/status'&&authFixture&&(!signedIn||mustChange||authRole==='audit')){reply({version:'fixture',auth_enabled:true});return;}
  if(path==='/api/status'){reply({model:'mock',provider:'mock',home:'/fixture',soul_enabled:true,soul:{loaded:false,unavailable_reason:'missing'},total_tokens:987654,loop:loopFixture});return;}
@@ -1002,34 +1016,43 @@ try {
  await until(headerState+'==="openAnalytics,openDeliveries,openSchedules"');
  assert.match(await evaluate('document.getElementById("openDeliveries").title'),/metadata-only.*coding job finishes/);
  await evaluate('document.querySelector("[data-pane=api-keys]").click()');
- await until('!!document.getElementById("saved-DEEPAGENT_API_KEY")');
- await evaluate('document.getElementById("saved-DEEPAGENT_API_KEY").value="fixture-secret-value-1234";document.getElementById("saved-DEEPAGENT_API_KEY").form.requestSubmit()');
- await until('document.getElementById("pane-api-keys").textContent.includes("••••••••1234")');
- assert.equal(savedKey,'fixture-secret-value-1234');
- await evaluate('document.getElementById("saved-SERPAPI_API_KEY").value="fixture-search-key-5678";document.getElementById("saved-SERPAPI_API_KEY").form.requestSubmit()');
- await until('document.getElementById("pane-api-keys").textContent.includes("••••••••5678")');
- assert.equal(savedSearchKey,'fixture-search-key-5678');
- await evaluate('Array.from(document.getElementById("saved-SERPAPI_API_KEY").form.querySelectorAll("button")).find(b=>b.textContent==="Test search").click()');
- await until('document.getElementById("pane-api-keys").textContent.includes("Connected via SerpAPI")');
- assert.equal(await evaluate('document.body.textContent.includes("fixture-search-key-5678")'),false);
- await evaluate('Array.from(document.getElementById("saved-SERPAPI_API_KEY").form.querySelectorAll("button")).find(b=>b.textContent==="Clear saved value").click()');
- await until('document.getElementById("saved-SERPAPI_API_KEY") && !document.getElementById("pane-api-keys").textContent.includes("••••••••5678")');assert.equal(savedSearchKey,'');
-
- assert.equal(await evaluate('document.getElementById("saved-DEEPAGENT_API_KEY").value'),'');
- assert.equal(await evaluate('document.body.textContent.includes("fixture-secret-value-1234")'),false);
+ const keyField=name=>`document.getElementById(${JSON.stringify('saved-'+name)})`;
+ await until(`!!${keyField('SERPAPI_API_KEY')}`);
+ assert.deepEqual(await evaluate('[...document.querySelectorAll("#pane-api-keys input")].map(field=>field.id.slice(6)).sort()'),[...visibleKeys].sort());
+ for(const name of visibleKeys){
+  const field=keyField(name);
+  const status=`${field}?.previousElementSibling?.textContent`;
+  const click=label=>evaluate(`[...${field}.form.querySelectorAll('button')].find(b=>b.textContent===${JSON.stringify(label)}).click()`);
+  assert.equal(await evaluate(`${field}.type`),'password');
+  for(const tail of ['1234','5678']){
+   const value=`fixture-key-value-${tail}`;
+   await evaluate(`${field}.value=${JSON.stringify(value)};${field}.form.requestSubmit()`);
+   await until(`${status}?.startsWith('Saved: ••••••••${tail}')`);
+   assert.equal(savedKeys.get(name),value);
+   assert.equal(await evaluate(`${field}.value`),'');
+   assert.equal(await evaluate(`document.body.textContent.includes(${JSON.stringify(value)})`),false);
+  }
+  if(name==='SERPAPI_API_KEY'){
+   await click('Test search');
+   await until(`${field}?.form.textContent.includes('Connected via SerpAPI')`);
+  }
+  await click('Clear saved value');
+  await until(`${status}?.startsWith('Saved: unset')`);
+  assert.equal(savedKeys.has(name),false);
+ }
+ assert.deepEqual([...savedKeys.keys()],hiddenKeys,'pane actions preserve existing hidden credentials');
  // /api set takes the value from the operator's line, not the parse echo,
  // and the transcript never prints it (no "normalized:" copy).
  await send('/API  set DEEPAGENT_API_KEY slash-secret-value-4321');
  await until('document.getElementById("stream").innerText.includes("saved: DEEPAGENT_API_KEY")');
- assert.equal(savedKey,'slash-secret-value-4321');
+ assert.equal(savedKeys.get('DEEPAGENT_API_KEY'),'slash-secret-value-4321');
  assert.equal(requests.filter(r=>r[1]==='/api/slash/parse').at(-1)[2].line,'/API  set DEEPAGENT_API_KEY slash-secret-value-4321');
  assert.equal(await evaluate('document.getElementById("stream").innerText.includes("slash-secret-value-4321")'),false);
  assert.equal(await evaluate('document.getElementById("stream").innerText.includes("normalized: /api set")'),false);
  assert.equal(requests.some(r=>historySave(r)&&JSON.stringify(r[2]).includes('slash-secret-value-4321')),false,'history never saves an /api set value');
  assert.equal(await evaluate('promptHistory.prompts.some(p=>p.includes("slash-secret-value-4321"))'),false);
- await evaluate('Array.from(document.getElementById("saved-DEEPAGENT_API_KEY").form.querySelectorAll("button")).find(b=>b.textContent==="Clear saved value").click()');
- // The cleared SerpAPI row already reads "Saved: unset", so wait on this row's status (the <p> before its input).
- await until('document.getElementById("saved-DEEPAGENT_API_KEY")?.previousElementSibling?.textContent.startsWith("Saved: unset")');assert.equal(savedKey,'');
+ await send('/api clear DEEPAGENT_API_KEY');
+ assert.equal(savedKeys.has('DEEPAGENT_API_KEY'),false);
  // A rejected history request from the previous account must not render its already-loaded proposals into the next account.
  memoryOwnerFixture={owner:'user_prior',facts:[],proposals:[{id:'proposal_prior_owner',revision:'revision_prior',action:'add',category:'insight',content:'PRIVATE_PRIOR_OWNER_PROPOSAL',status:'pending'}]};
  holdMemoryHistory=true;const historyRequestSeen=new Promise(resolve=>{memoryHistoryHeld=resolve;});
