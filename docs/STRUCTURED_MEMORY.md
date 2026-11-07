@@ -126,8 +126,8 @@ local model and mode listed in `suggestion_supported`; otherwise the receipt and
 A missing key supports nothing, so existing homes add it to keep suggestions:
 `suggestion_supported: [{ model: "<tag>", modes: [summaries, insights, both] }]`.
 Only Ollama aliases bare names to `:latest`; other local backends require exact IDs.
-Fresh homes seed `qwen3.8:27b-mlx-cg`, not the shipped chat default
-([why](MEMORY_GUIDE.md#automatic-suggestions-and-review)). `"*"` matches any model and opts out
+Fresh homes seed `qwen3.8:27b-mlx-cg`, also the shipped chat default
+([D7](MEMORY_GUIDE.md#automatic-suggestions-and-review)). `"*"` matches any model and opts out
 of the corpus rule; a malformed list refuses (`invalid_supported_models`).
 `completion-suggestions-v1` reads bounded, redacted current
 completion evidence in RAM for the initiating account. It neither scans shared

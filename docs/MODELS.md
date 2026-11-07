@@ -45,8 +45,8 @@ a turn exceeds it. Otherwise keep `web.total_tokens: 16000` and
 
 A Modelfile `PARAMETER num_ctx` wins over `OLLAMA_CONTEXT_LENGTH` and over a
 `/v1` request. The harness sends no `num_ctx`, so a tag can load a window
-other than the 32768 the seeded budgets assume. The shipped planner
-default is the derived tag below, which exists only after `ollama create`; until then the
+other than the 32768 the seeded budgets assume. The shipped chat and planner
+default is the derived tag below, existing only after `ollama create`; until then the
 inventory reports it `tag_missing`, and `/model use` an installed tag to chat.
 
 ```bash
@@ -57,7 +57,7 @@ That file is `FROM qwen3.8:27b-mlx` with `PARAMETER num_ctx 32768`. Select it
 with `/model use qwen3.8:27b-mlx-cg`. It is local-only: do not pull it.
 `/model profile` reports `declared.modelfile_num_ctx` and
 `loaded.context_length`; chat uses the loaded value. Confirm `/api/ps` is 32768.
-The chat default `gemma4-26b-a4b:ud-q4_k_xl-cg` is built the same way from
+The alternative `gemma4-26b-a4b:ud-q4_k_xl-cg` is built the same way from
 `scripts/bakeoff/modelfiles/gemma4-26b-a4b-ud-q4_k_xl-cg.Modelfile` (`num_ctx 32768`,
 temperature 0, `draft_num_predict 2`) and is `tag_missing` until then.
 
