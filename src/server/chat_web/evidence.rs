@@ -209,7 +209,7 @@ mod tests {
             .unwrap();
         assert!(first["text"].as_str().unwrap().contains("two independent replicas"));
         assert!(selected[0].start > 24_000, "the anchor must be beyond the old prefix");
-        let other = format!("http://passages.invalid:{}/other", address.port());
+        let other = format!("http://passages.invalid:{}/other", address.port()); // DevSkim: ignore DS137138 because this synthetic host resolves only to the loopback fixture.
         web.allow_rule(&other, "other", &[], true).unwrap();
         read(&web, &other, "OTHER_PAGE", true, &audit, "owner").await.unwrap();
         let (cached, _) = read(&web, &url, "RECOVERY_ANCHOR", false, &audit, "owner")
