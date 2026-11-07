@@ -94,9 +94,12 @@ console.log('Unattended loop retries a verdict-less turn up to MAX_LOOP_FAILURES
 
 // Execute the actual slash branch too: preflight must use its own session guard.
 const loopCase=html.slice(html.indexOf("      case 'loop': {"),html.indexOf("      case 'tokens': {"));
+const loopConfigSrc=html.slice(html.indexOf('function applyLoopConfig('),html.indexOf('/* A turn that needed compaction'));
 /* Run the shipped /loop branch; fixtures that do not care get inert auto-start helpers. */
 function runLoopCase(c){
-  for(const [k,v] of Object.entries({MAX_GOAL_CHARS:2000,DEFAULT_LOOP_TURNS:3,AUTO_LOOP_START_MS:5000,cancelAutoLoopStart(){},goalWebNote:()=>'',refreshSessions:async()=>{},
+  vm.runInContext(html.slice(html.indexOf('const LOOP_UNBOUNDED_WARNING ='),html.indexOf('/* The server-side /loop runner')),c);
+  vm.runInContext(loopConfigSrc,c);
+  for(const [k,v] of Object.entries({MAX_GOAL_CHARS:2000,DEFAULT_LOOP_TURNS:3,lastStatus:null,AUTO_LOOP_START_MS:5000,cancelAutoLoopStart(){},goalWebNote:()=>'',refreshSessions:async()=>{},
     scheduleAutoLoopStart(line,lead){(c.scheduled||(c.scheduled=[])).push(line);}})) if(!(k in c)) c[k]=v;
   return vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',c);
 }
@@ -106,6 +109,31 @@ assert.equal(command.ran,true);
 assert.equal(command.sessionGoal,'stored goal');
 assert.equal(command.loopState.remaining,2);
 console.log('Loop command preflight loads goal and starts the owned loop.');
+
+for (const server of [false, true]) {
+  for (const unbounded of [true, false]) {
+    const notes=[];
+    const c=vm.createContext({rest:['2'],loopState:null,loopAuto:server,serverLoopSupported:server,MAX_LOOP_TURNS:unbounded?0:50,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,
+      api:async path=>path==='/api/status'?{provider:'ollama',loop:{unbounded}}:{goal:'stored goal'},
+      paintGoalLoop(){},sys:line=>notes.push(line),ran:'',runLoopTurns:async()=>{c.ran='browser';},runServerLoop:async()=>{c.ran='server';}});
+    await runLoopCase(c);
+    assert.equal(c.ran,server?'server':'browser','a warning never blocks either loop path');
+    assert.equal(notes.filter(line=>line.startsWith('Warning: configured /loop budgets are unlimited')).length,unbounded?1:0);
+  }
+}
+console.log('Both loop paths warn only for server-reported unbounded budgets and still run.');
+
+for (const server of [false, true]) {
+  for (const [cap, turns] of [[0, 3], [1, 1], [2, 2], [50, 3]]) {
+    const c=vm.createContext({rest:[],loopState:null,loopAuto:server,serverLoopSupported:server,MAX_LOOP_TURNS:0,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,
+      api:async path=>path==='/api/status'?{provider:'ollama',loop:{max_turns:cap}}:{goal:'stored goal'},
+      paintGoalLoop(){},sys(){},runLoopTurns:async()=>{},runServerLoop:async()=>{}});
+    await runLoopCase(c);
+    assert.equal(c.loopState.total,turns,`bare /loop with a turn cap of ${cap}`);
+    assert.equal(c.loopState.server,server);
+  }
+}
+console.log('Bare /loop limits default turns using preflight, even before a status refresh.');
 
 // Goal derivation: the last own prompt, never a loop turn or compaction note.
 assert.equal(loopGoalFromMessages([{role:'user',content:'first'},{role:'assistant',content:'ack'},{role:'user',content:'fix the parser'}],2000),'fix the parser');
@@ -169,6 +197,24 @@ console.log('Loop goal derivation takes the last own prompt and stays bounded.')
   assert.equal(posts.length,1,'the derived goal and the requested mode land in one write');
   assert.equal(JSON.stringify(posts[0].body),JSON.stringify({goal:'fix the parser',web_mode:'fetch'}));
   assert.equal(atomic.ran,true);
+  const finite={provider:'ollama',loop:{max_turns:1,max_total_completion_tokens:100,unbounded:false}};
+  const unlimited={provider:'ollama',loop:{max_turns:0,max_total_completion_tokens:0,unbounded:true}};
+  for (const [before, after, turns] of [[unlimited, finite, 1], [finite, unlimited, 2]]) {
+    const notices=[];
+    const reloaded=loopFixture(['2'],{sys:line=>notices.push(line),api:async(path,method,body)=>{
+      if(path==='/api/status')return before;
+      if(method==='POST'){
+        // A status refresh applies the new limits while the goal write is in flight.
+        reloaded.lastStatus=after;
+        reloaded.applyLoopConfig(after);
+        return {goal:body.goal};
+      }
+      return {goal:'',prompt_history:['fix the parser']};
+    }});
+    await run(reloaded);
+    assert.equal(reloaded.loopState.remaining,turns,'preflight uses the refreshed turn cap');
+    assert.equal(notices.some(line=>line.startsWith('Warning: configured /loop budgets are unlimited')),after.loop.unbounded,'preflight warns according to the refreshed limits');
+  }
   const stoppedSlash=loopFixture(['2']);
   stoppedSlash.during=(path,method)=>{if(method==='POST')stoppedSlash.loopCancelGeneration++;};
   await run(stoppedSlash);
@@ -184,15 +230,16 @@ console.log('Loop goal derivation takes the last own prompt and stays bounded.')
   const autoSrc=html.slice(html.indexOf('async function maybeAutoLoop()'),html.indexOf('window.addEventListener',html.indexOf('async function maybeAutoLoop()')));
   function autoFixture(provider,goal,messages){
     const box={loopState:null,currentSession:'s',sessionRevision:0,loopCancelGeneration:0,sessionGoal:goal,lastStatus:{provider,base_url:provider==='ollama'?'http://127.0.0.1:11434':null},
-      MAX_GOAL_CHARS:2000,DEFAULT_LOOP_TURNS:3,loopGoalFromSession,calls:[],
+      MAX_GOAL_CHARS:2000,DEFAULT_LOOP_TURNS:3,MAX_LOOP_TURNS:1,loopGoalFromSession,calls:[],
       api:async(path,method,body)=>{box.calls.push({path,method,body});if(box.during)box.during(path,method);return method==='POST'?{goal:body.goal}:{goal,messages};},
       paintGoalLoop(){},sys:m=>box.calls.push({sys:m}),showError:e=>{throw e;},runLoopTurns:async()=>{box.looped=true;}};
-    const c=vm.createContext(box);vm.runInContext(autoSrc,c);return c;
+    const c=vm.createContext(box);vm.runInContext(loopConfigSrc+autoSrc,c);return c;
   }
   const local=autoFixture('ollama','',['fix the parser'].map(content=>({role:'user',content})));
   await local.maybeAutoLoop();
   assert.equal(local.looped,true,'compacted local turn auto-continues');
   assert.equal(local.loopState.auto,true);
+  assert.equal(local.loopState.total,1,'compaction continuation respects the turn cap');
   assert.equal(local.calls.find(c=>c.method==='POST').body.goal,'fix the parser');
   assert.equal(local.loopState.autoStarted,true,'an automatic loop is marked so staged attachments stay staged');
   const otherTab=autoFixture('ollama','',[]);

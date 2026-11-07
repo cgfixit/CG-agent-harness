@@ -420,6 +420,8 @@ async fn status_exposes_loop_config_and_server_loop_flag() {
     let (status, body) = s.get_json("/api/status").await;
     assert_eq!(status, 200);
     assert_eq!(body["server_loop"], true);
+    assert_eq!(body["loop"]["unbounded"], false);
+    assert!(!s.audit_log().contains("loop_budgets_unlimited"));
     // The shipped numbers are pinned in tests/shipped_config.rs; this checks wiring.
     assert_eq!(body["loop"]["max_turns"], shipped_u64("loop.max_turns"));
     assert_eq!(
@@ -428,6 +430,104 @@ async fn status_exposes_loop_config_and_server_loop_flag() {
     );
     assert_eq!(body["loop"]["max_failures"], shipped_u64("loop.max_failures"));
     assert_eq!(body["loop"]["cooldown_ms"], shipped_u64("loop.cooldown_ms"));
+}
+
+#[tokio::test]
+async fn unbounded_startup_status_and_run_audit_use_effective_limits() {
+    let model = start_mock_model().await;
+    for (turns, tokens, unbounded) in [("0", "0", true), ("1", "0", false), ("0", "100", false)] {
+        let s = spawn_server(
+            &model.base_url(),
+            ServerOptions::default()
+                .with("loop.max_turns", turns)
+                .with("loop.max_total_completion_tokens", tokens),
+        )
+        .await;
+        let before = std::fs::read(&s.state.cfg.path).unwrap();
+        let (status, body) = s.get_json("/api/status").await;
+        assert_eq!(status, 200);
+        assert_eq!(body["loop"]["unbounded"], unbounded);
+        let warnings: Vec<Value> = s
+            .audit_log()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .filter(|row| row["event"] == "loop_budgets_unlimited")
+            .collect();
+        assert_eq!(warnings.len(), usize::from(unbounded));
+        if let Some(warning) = warnings.first() {
+            assert_eq!(
+                warning.as_object().unwrap().len(),
+                2,
+                "only event and timestamp: {warning}"
+            );
+        }
+        // Override in both directions: audit the run, not the home's defaults.
+        let sid = session_with_goal(&s).await;
+        let run_unbounded = !unbounded;
+        let (status, body) = s
+            .post_json(
+                "/api/loop/start",
+                json!({
+                    "session_id": sid, "max_turns": if run_unbounded { 0 } else { 1 },
+                    "max_total_completion_tokens": 0
+                }),
+            )
+            .await;
+        assert_eq!(status, 200, "{body}");
+        let run_id = body["run"]["run_id"].as_str().unwrap();
+        let row: Value = s
+            .audit_log()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .find(|row| row["event"] == "loop_run_started" && row["run_id"] == run_id)
+            .unwrap();
+        assert_eq!(row["unbounded"], run_unbounded);
+        s.post_json("/api/loop/stop", json!({"run_id": run_id})).await;
+        wait_for(&s, run_id, "stopped warning fixture", |run| run["state"] != "running").await;
+        assert_eq!(std::fs::read(&s.state.cfg.path).unwrap(), before);
+    }
+}
+
+#[tokio::test]
+async fn unbounded_reload_warns_only_on_transition_and_preserves_config() {
+    use cgagentharness::{common::config::AppConfig, server::config_reload::reload};
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let mut raw = s.state.cfg.raw.clone();
+    // Missing keys keep the legacy zero fallback, including after reload.
+    for (turns, tokens, expected, warnings) in [
+        (None, None, true, 1),
+        (Some(0), Some(0), true, 1),
+        (Some(1), Some(0), false, 1),
+        (Some(0), Some(1), false, 1),
+        (Some(0), Some(0), true, 2),
+        (Some(0), Some(0), true, 2),
+    ] {
+        for (key, value) in [("max_turns", turns), ("max_total_completion_tokens", tokens)] {
+            let key = serde_yaml_ng::Value::from(key);
+            let limits = raw["loop"].as_mapping_mut().unwrap();
+            if let Some(value) = value {
+                limits.insert(key, serde_yaml_ng::Value::from(value));
+            } else {
+                limits.remove(&key);
+            }
+        }
+        let text = serde_yaml_ng::to_string(&raw).unwrap();
+        AppConfig::write_private(&s.state.cfg.path, &text).unwrap();
+        // The HTTP route and SIGHUP use this same serialized publication path.
+        let results = tokio::join!(reload(s.state.clone(), "http"), reload(s.state.clone(), "sighup"));
+        assert!(results.0.unwrap()["ok"].as_bool().unwrap());
+        assert_eq!(results.1.unwrap()["ok"], true);
+        assert_eq!(s.get_json("/api/status").await.1["loop"]["unbounded"], expected);
+        assert_eq!(
+            s.audit_log()
+                .lines()
+                .filter(|line| line.contains("\"loop_budgets_unlimited\""))
+                .count(),
+            warnings
+        );
+        assert_eq!(std::fs::read_to_string(&s.state.cfg.path).unwrap(), text);
+    }
 }
 
 #[tokio::test]

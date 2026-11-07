@@ -570,13 +570,21 @@ consecutive failed turns or failed web rounds, unverified `GOAL_DONE`, a
 near-repeat reply, or a web refusal every later turn would repeat. Both budgets
 ship finite, 50 turns and 200,000 completion tokens (#675); `0` is an explicit
 opt-in to unlimited, and a home whose file lacks the key keeps the code fallback
-`0`. Runs live
-in process memory: a restart ends them without resuming, and
+`0`. With both budgets zero, startup and transitions into unbounded on reload
+warn and audit `loop_budgets_unlimited`; unchanged or finite reloads do not.
+`/api/status.loop.unbounded` is authoritative (audit is best effort); console
+`/status` and `/loop` preflight warn without blocking or rewriting configuration.
+`loop_run_started.unbounded` describes effective per-run caps, including overrides.
+Runs live in process memory: a restart ends them without resuming, and
 `loops/<run_id>.json` is a record, not a resume point. Audits hold start and
 finish metadata, never replies.
 
 - Locked by: `tests/loop_runner.rs` (`runs_are_owner_bound_and_end_when_the_account_is_disabled`,
-  `loop_start_validates_goal_config_and_run_ids`, `unlimited_turns_do_not_stop_at_five`),
+  `loop_start_validates_goal_config_and_run_ids`, `unlimited_turns_do_not_stop_at_five`,
+  `unbounded_startup_status_and_run_audit_use_effective_limits`,
+  `unbounded_reload_warns_only_on_transition_and_preserves_config`),
+  `config_reload::tests::loop_unbounded_requires_both_budgets_to_be_zero`,
+  `scripts/test-loop-continuation.mjs`, `scripts/chat-browser-acceptance.mjs`,
   `src/server/loop_runner.rs` units.
 
 ## Local chat compaction preserves goal and the first user turn

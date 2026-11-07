@@ -1,10 +1,9 @@
 # Reload non-secret limits
 
-Edit the active home's `config.yaml`, then choose **Reload limits** as an
-administrator who replaced the bootstrap password. The button sends `{}` to
-authenticated, CSRF-guarded `POST /api/config/reload`; operators, auditors and
-auth-disabled homes cannot call it. Unix SIGHUP to the owned **backend** PID
-(the native sidecar, not the desktop parent) runs the same implementation.
+Edit `config.yaml`, then choose **Reload limits** as a non-bootstrap admin.
+Authenticated, CSRF-guarded `POST /api/config/reload` accepts `{}`; operators,
+auditors and auth-disabled homes cannot call it. Unix SIGHUP to the owned
+**backend** PID (native sidecar, not desktop parent) uses the same implementation.
 
 Success returns `changed`, `limits.revision`, the applied snapshot and
 `reloadable`; a no-op preserves revision. New operations use the new snapshot;
@@ -17,9 +16,8 @@ one.
 
 ## Supported settings
 
-Only these 28 keys reload; values are integers except finite `window_seconds`.
-Bounds also apply at startup. Defaults live in `assets/config.default.yaml`;
-removing a key selects its code fallback.
+These 28 keys reload; integers except finite `window_seconds`. Startup shares
+bounds. Defaults: `assets/config.default.yaml`; removing keys selects code fallbacks.
 
 | Key | Accepted range |
 |---|---|
@@ -52,8 +50,10 @@ removing a key selects its code fallback.
 | `web.chat_tool_calls` | 1–30 |
 | `web.carry_forward_sources` | 0–50 |
 
-The `loop.*` keys bound the server-side `/loop` runner; the console reads
-them from `/api/status`.
+Both loop caps zero or absent sets `/api/status.loop.unbounded`. Startup and
+reload transitions into unbounded warn and audit `loop_budgets_unlimited`;
+no-op and finite reloads add nothing. Console notices are described in
+[loop guidance](CONSOLE.md#71-sessions-and-bounded-chat-continuation).
 
 `web.concurrency` is **restart-only** (it sizes shared fetch permits), as are `web.goal_web_default`, `web.search*`.
 `web.max_rules` (default 64, 1–256) is restart-only too: a cap below the saved

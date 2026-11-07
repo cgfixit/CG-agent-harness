@@ -26,7 +26,7 @@ jobs:
   # leave a required check pending. A skipped matrix job reports once, under
   # its unexpanded name. invariant-guard always runs. Every other event,
   # including merge_group (the merge queue) and release.yml's workflow_call,
-  # runs all jobs.
+  # runs all jobs, including the full Windows suite.
   changes:
     name: classify changed paths
     runs-on: ubuntu-26.04
@@ -154,7 +154,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # PRs keep the focused Windows lifecycle/credential job below.
+        os: >-
+          ${{ fromJSON(github.event_name == 'pull_request'
+            && '["ubuntu-latest","macos-latest"]'
+            || '["ubuntu-latest","macos-latest","windows-latest"]') }}
     defaults:
       run:
         # Git Bash also supports the shell fixtures invoked by Rust tests.

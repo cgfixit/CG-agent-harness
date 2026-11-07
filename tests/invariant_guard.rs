@@ -1711,7 +1711,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved (2026-10-23) measured count for the public Google search pace floor, merged with the #649 cooldown keys.
     // why: the 2026-11-02 doc sync trimmed it to 597 words; lowered so the cut stays cut.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
-    ("docs/CONFIG_RELOAD.md", Guide, 535),
+    ("docs/CONFIG_RELOAD.md", Guide, 531),
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
@@ -1719,7 +1719,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the HTML editor preview sentence; measured 6229 words.
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
-    ("docs/CONSOLE.md", Guide, 5921),
+    ("docs/CONSOLE.md", Guide, 5909),
     // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
     // why: the 2026-10-20 dep-sync folded the dated 2026-09 audit notes into Retained constraints; 944 words, keep the cut.
     // why: operator-approved +200 (2026-10-22) so dated advisory notes such as RUSTSEC-2026-0384 fit without trimming history.
@@ -1738,7 +1738,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // Setup memory guidance replaces repeated setup/verification prose; keep the cut.
     // why: operator-approved (2026-10-14) automated macOS install (section 1) and browser access (section 7); 5188 words plus about 1%, rounded up to the next 50.
     // why: operator-approved (2026-10-14) raise to 7500 for room to grow the install guide after #491 and #496 together hit 5250; the Guide group cap still bounds it.
-    ("docs/INSTALL.md", Guide, 7412),
+    ("docs/INSTALL.md", Guide, 6521),
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     ("docs/MCP_CLIENT.md", Guide, 894),
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
@@ -1773,7 +1773,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("docs/STRUCTURED_MEMORY.md", Guide, 3442),
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
-    ("docs/TROUBLESHOOTING.md", Guide, 1468),
+    ("docs/TROUBLESHOOTING.md", Guide, 1462),
     // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     ("docs/netconnect.md", Guide, 3115),

@@ -1038,6 +1038,7 @@ let LOOP_COOLDOWN_MS = LOOP_LIMITS_FALLBACK.cooldown_ms;
    The server separately controls each turn's generation budget. */
 let MAX_LOOP_TOTAL_COMPLETION_TOKENS = LOOP_LIMITS_FALLBACK.max_total_completion_tokens;
 let MAX_LOOP_FAILURES = LOOP_LIMITS_FALLBACK.max_failures;
+const LOOP_UNBOUNDED_WARNING = 'Warning: configured /loop budgets are unlimited (loop.max_turns and loop.max_total_completion_tokens are zero or absent). A requested turn count and other stop conditions still apply. Set a finite cap in config.yaml and use Reload limits.';
 /* The server-side /loop runner keeps turns running after this tab closes.
    Set from /api/status (server_loop); absent on older servers, which keeps
    the browser-driven runLoopTurns path below as the fallback. Only automatic
@@ -1058,6 +1059,9 @@ function applyLoopConfig(status) {
       else LOOP_COOLDOWN_MS = value;
     }
   }
+}
+function defaultLoopTurns(turnCap = MAX_LOOP_TURNS) {
+  return turnCap > 0 ? Math.min(DEFAULT_LOOP_TURNS, turnCap) : DEFAULT_LOOP_TURNS;
 }
 /* A turn that needed compaction has outgrown the context window, so the chat
    continues toward the goal automatically instead of stopping at one reply.
@@ -2240,7 +2244,7 @@ const COMMAND_MAN = {
   '/help [topic|search words|all]': {detail:'Alone, an overview with topics. A topic key filters to that family; any other words search every command and summary, so a flag such as --group works; all prints the whole catalog. The Commands pane is this same guide; its ? buttons open these pages.', examples:['/help --group']},
   /* Getters: the turn cap arrives with /api/status after this table is built, so
      the manual reads MAX_LOOP_TURNS when opened, not the page-load fallback. */
-  '/loop [auto] [--web off|fetch|all] [n] [goal]|stop': {get detail() { return 'Continues chat toward the session goal for n turns (default ' + DEFAULT_LOOP_TURNS + (MAX_LOOP_TURNS > 0 ? ', at most ' + MAX_LOOP_TURNS : ', unlimited turns') + (MAX_LOOP_TOTAL_COMPLETION_TOKENS > 0 ? '; ' + MAX_LOOP_TOTAL_COMPLETION_TOKENS + ' completion tokens per run' : '; unlimited completion tokens') + '), one turn at a time unless auto is on. Turn, token, failure and cooldown limits are configurable (loop.* in config.yaml; Reload limits/SIGHUP applies them at runtime). Text after the count sets the session goal first, so /loop 3 compare hvac vendors is /goal then /loop in one command. With no stored goal, your last prompt becomes the goal. A normal turn that needed compaction also continues this way automatically. --web off, fetch or all sets the goal web mode before starting and persists on the goal. auto toggles automatic continuation and, when it turns on with a goal (or a last prompt) to follow, starts the loop after ' + (AUTO_LOOP_START_MS / 1000) + ' s; /goal <text> with auto on does the same. /loop auto with a count or goal turns auto on and starts after the same pause. When the server supports it the loop runs server-side: closing this tab does not stop it. stop ends the loop, cancels a pending start and also cancels a reply that is still streaming.'; }, notes:['Local loops can read attachments and permitted web sources; they never start a coding run.', 'A goal set without --web uses web.goal_web_default (ships all: search and pages).'], get args() { return {n:'turns to run, 1 to ' + (MAX_LOOP_TURNS > 0 ? MAX_LOOP_TURNS : '∞ (until another stop condition)'), goal:'optional goal text stored before the loop starts'}; }},
+  '/loop [auto] [--web off|fetch|all] [n] [goal]|stop': {get detail() { return 'Continues chat toward the session goal for n turns (default ' + defaultLoopTurns() + (MAX_LOOP_TURNS > 0 ? ', at most ' + MAX_LOOP_TURNS : ', unlimited turns') + (MAX_LOOP_TOTAL_COMPLETION_TOKENS > 0 ? '; ' + MAX_LOOP_TOTAL_COMPLETION_TOKENS + ' completion tokens per run' : '; unlimited completion tokens') + '), one turn at a time unless auto is on. Turn, token, failure and cooldown limits are configurable (loop.* in config.yaml; Reload limits/SIGHUP applies them at runtime). Text after the count sets the session goal first, so /loop 3 compare hvac vendors is /goal then /loop in one command. With no stored goal, your last prompt becomes the goal. A normal turn that needed compaction also continues this way automatically. --web off, fetch or all sets the goal web mode before starting and persists on the goal. auto toggles automatic continuation and, when it turns on with a goal (or a last prompt) to follow, starts the loop after ' + (AUTO_LOOP_START_MS / 1000) + ' s; /goal <text> with auto on does the same. /loop auto with a count or goal turns auto on and starts after the same pause. When the server supports it the loop runs server-side: closing this tab does not stop it. stop ends the loop, cancels a pending start and also cancels a reply that is still streaming.'; }, notes:['Local loops can read attachments and permitted web sources; they never start a coding run.', 'A goal set without --web uses web.goal_web_default (ships all: search and pages).'], get args() { return {n:'turns to run, 1 to ' + (MAX_LOOP_TURNS > 0 ? MAX_LOOP_TURNS : '∞ (until another stop condition)'), goal:'optional goal text stored before the loop starts'}; }},
   '/memory [on|off|status]': {detail:'Alone or with status, shows the pinned notes, your structured fact and pending proposal counts, and every gate. on or off decides whether pinned notes enter the system prompt. The structured-memory gates are separate; see the capture and auto commands.'},
   '/memory add <note>': {detail:'Pins a literal note shared by this home. Notes are injected only while /memory is on.'},
   '/memory auto-consolidate|auto-retrieve|auto-suggest-chat|auto-suggest-coding on|off': {detail:'Administrator switches for the automatic structured-memory features. Each depends on its prerequisite gate: auto-retrieve needs retrieval, auto-consolidate needs consolidation, the suggest switches need capture. The reply shows every gate.'},
@@ -3871,6 +3875,7 @@ async function runSlash(line, webCommand) {
         }
         /* Reload the stored goal every time: each turn restates it, and another
            tab may have changed it since this page last read it. */
+        let loopStatus = null;
         if (currentSession) {
           const loaded = await api('/api/sessions/' + encodeURIComponent(currentSession));
           if (loopSetupStale()) break;
@@ -3880,6 +3885,7 @@ async function runSlash(line, webCommand) {
           const status = await api('/api/status');
           if (loopSetupStale()) break;
           if (status.provider !== 'ollama' && status.base_url === null) { sys('Select a local model before /loop; cloud loops are unavailable.'); break; }
+          const statusBeforeGoalWrite = lastStatus;
           /* No stored goal: continue the last thing the operator asked. The
              requested web mode rides the same write, so no intermediate goal
              ever carries the default mode. */
@@ -3902,25 +3908,22 @@ async function runSlash(line, webCommand) {
             loaded.goal_web_mode = set.goal_web_mode || loopWebMode;
           }
           paintGoalLoop();
+          // A limits refresh can finish while the goal write is in flight.
+          loopStatus = lastStatus === statusBeforeGoalWrite ? status : lastStatus;
+          if (loopStatus?.loop?.unbounded === true) sys(LOOP_UNBOUNDED_WARNING);
           sys('Loop context: ' + (loaded.live_attachment_pins || 0) + ' live attachment pin(s); goal web mode ' + (loaded.goal_web_mode || 'all') + '; web tools ' + (status.chat_tools_available && loaded.goal_web_mode !== 'off' ? (loaded.goal_web_mode === 'fetch' ? 'fetch only within current URL permissions' : 'available within current URL permissions') : 'off') + '. /session unpin clears pins.');
         }
         if (!sessionGoal) { sys('set a goal first: /goal <what you want done>, /loop <what you want done>, or send any prompt and /loop will continue it'); break; }
         if (loopCancelGeneration !== loopGeneration) break;
-        if (sub) {
-          const n = Math.min(parseInt(sub, 10), MAX_LOOP_TURNS > 0 ? MAX_LOOP_TURNS : Number.MAX_SAFE_INTEGER);
+        if (sub || !loopState || loopState.remaining <= 0) {
+          const turnCap = loopStatus?.loop?.max_turns ?? MAX_LOOP_TURNS;
+          const n = sub ? Math.min(parseInt(sub, 10), turnCap > 0 ? turnCap : Number.MAX_SAFE_INTEGER) : defaultLoopTurns(turnCap);
           loopState = {
             remaining: n, total: n, auto: loopAuto, stop: false,
             running: false, failures: 0, lastReply: '', completionTokens: 0,
             server: typeof serverLoopSupported !== 'undefined' && serverLoopSupported && loopAuto,
           };
           sys('loop ' + n + ' turn(s) toward the session goal. Chat only — never starts a real-repo run.');
-        } else if (!loopState || loopState.remaining <= 0) {
-          loopState = {
-            remaining: DEFAULT_LOOP_TURNS, total: DEFAULT_LOOP_TURNS,
-            auto: loopAuto, stop: false, running: false, failures: 0,
-            lastReply: '', completionTokens: 0, server: typeof serverLoopSupported !== 'undefined' && serverLoopSupported && loopAuto,
-          };
-          sys('loop ' + DEFAULT_LOOP_TURNS + ' turn(s) toward the session goal. Chat only — never starts a real-repo run.');
         }
         paintGoalLoop();
         if (loopState.server) await runServerLoop();
@@ -4007,6 +4010,7 @@ async function runSlash(line, webCommand) {
           break;
         }
         if (s.selection_overrides_config) sys(s.model_status && s.model_status.cloud ? 'Cloud selection resets to local after restart.' : 'Saved selection overrides configured model ' + s.configured_model + '; changing that config model and restarting clears the selection.');
+        if (s.loop?.unbounded === true) sys(LOOP_UNBOUNDED_WARNING);
         /* The style row must reflect the persisted state: settle queued
            style writes and re-read the open session's selection. */
         await awaitStyleWrites();
@@ -4533,13 +4537,14 @@ async function maybeAutoLoop() {
   if (stale() || !sessionGoal) return;
   /* autoStarted: files staged for the operator's next manual prompt stay
      staged; only an explicit /loop sends them. */
+  const turns = defaultLoopTurns();
   loopState = {
-    remaining: DEFAULT_LOOP_TURNS, total: DEFAULT_LOOP_TURNS,
+    remaining: turns, total: turns,
     auto: true, stop: false, running: false, failures: 0,
     lastReply: '', completionTokens: 0, autoStarted: true,
   };
   paintGoalLoop();
-  sys('context budget reached — continuing with /loop auto (' + DEFAULT_LOOP_TURNS + ' turns toward the goal); /loop stop to halt');
+  sys('context budget reached — continuing with /loop auto (' + turns + ' turns toward the goal); /loop stop to halt');
   try {
     await runLoopTurns();
   } catch (e) {

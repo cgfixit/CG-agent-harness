@@ -552,7 +552,7 @@ on first run. Common operator settings follow:
 | `app.agent_job_poll_ms` | 1500 | Browser job polling interval, clamped to 1–30 s |
 | `api.rate_limit.max_requests` / `window_seconds` | 300 / 240 | Per-IP sliding-window ceiling on every route: 75 a minute sustained, above the 44 a minute a console polls while an `/agent` job runs |
 | `api.harness_loop_rate_limit.*` | 34 / 500 s / 8192 tokens | Separate `/loop` budget; same backend-dependent ceiling as local chat after the legacy `0` → `2048` fallback |
-| `loop.max_turns` / `loop.max_total_completion_tokens` | 50 / 200000 | Per-run `/loop` turn and completion-token caps; `0` opts into unlimited, and a home whose file lacks the key keeps `0`. Reloadable ([loop keys](CONFIG_RELOAD.md)) |
+| `loop.max_turns` / `loop.max_total_completion_tokens` | 50 / 200000 | Per-run caps; zero or absent keys stay unlimited. When both are unlimited, startup and console warn; upgrades preserve configuration. [Reload limits](CONFIG_RELOAD.md) |
 | `models.cloud_chat.enabled` | true | Allows `/model use grok` / `claude`; each provider has its own `enabled` and `model` |
 | `models.cloud_chat.max_tokens` / `timeout_sec` | 10000 / 360 | Cloud reply ceiling and timeout; boot refuses 0 or >32768 tokens, or a timeout outside 1–720 s |
 | `models.local_llm.max_tokens` | 4096 | Local reply ceiling: 1–25904 with resolved Ollama and explicit reasoning `none`; otherwise 1–12952, with twice the ceiling reserved for completion. Invalid combinations fail startup with `CONFIG_ERROR` |
@@ -780,7 +780,7 @@ tokens, fresh CSRF, and no replay.
 
 | Gate | Evidence and scope |
 |---|---|
-| [Backend CI](../.github/workflows/ci.yml) | On PRs, `main`, and reusable release calls: rustfmt, warning-denied Clippy, `cargo deny`, the pinned 1.88 toolchain (equal to `rust-version`), I6 scan, Chrome commands, Linux/macOS/Windows tests, and real-repo smoke. Linux jobs run on Ubuntu 26.04; the bubblewrap and MCP lifecycle jobs stay on 24.04. Bundle owns release builds and CLI packaging; Release rebuilds before publication. |
+| [Backend CI](../.github/workflows/ci.yml) | Rust 1.88 (`rust-version`), rustfmt, warning-denied Clippy, `cargo deny`, I6, Chrome, Linux/macOS tests and real-repo smoke. Code PRs run focused Windows lifecycle and credential tests; `main`, merge queue and release calls also run the full Windows suite. Linux uses Ubuntu 26.04 (bubblewrap and MCP lifecycle: 24.04). Bundle packages the CLI; Release rebuilds before publication. |
 | Coding and chat regression tests | Revocation, exact edits, clone jail, reviewed trees, job cancellation, session and goal gates, loop budgets, and failed-chat claim release. See [`tests/`](../tests/). |
 | Native Cargo acceptance | macOS tests prepare locked dependencies, then test Seatbelt and fixed Cargo checks. Linux uses bubblewrap when present; `unshare --net` and Windows Job Object do not provide equivalent confinement. |
 | [Desktop CI](../.github/workflows/desktop.yml) | Bundle, releases, and manual runs build the universal app on Rust 1.90, test desktop policy and packaged backend, verify signatures, checksums, and extraction, then retain ZIP and checksums. |

@@ -9,7 +9,7 @@ This manual is static text bundled with the build and indexed at startup. It is 
 ## readme: capability overview
 
 - Web research: SerpAPI, Tavily, or public Google search; permitted fetches and crawls (opt-in Firecrawl fallback); `/web research` jobs with planned subqueries and… Starts: On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; failed keyed searches fall back to public Google.
-- Goal loops: `/goal` and `/loop` continue a long piece as a run outliving the browser, under turn, token and failure limits. Starts: 50 turns, 200,000 tokens or two failed turns end a run; cloud models refuse loops.
+- Goal loops: `/goal` and `/loop` continue a long piece as a run outliving the browser, under turn, token and failure limits. Starts: Fresh defaults: 50 turns, 200,000 tokens, two failed turns. Unlimited homes warn; cloud refuses loops.
 - Memory: Shared pinned notes plus account-private facts, recall, and proposed summaries that carry findings between sessions. Starts: Capture, recall, and retrieval on; applying a proposal needs review (setup).
 - Local chat: Streaming sessions with search, Markdown export, text and DOCX attachments, prompt skills, `/prompt` inspection, and a sandboxed HTML preview. Starts: Ollama on loopback by default; listed, pulled, and tuned from the console.
 
@@ -177,7 +177,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 ## console: slash-command quick reference (part 4)
 
 - `/soul apply <id> <reason>`, `reject <id> <reason>`, `review <id>`: Review a retained proposal before explicitly applying or rejecting its exact revision
-- `/status`: Runtime status; operational details require account access
+- `/status`: Runtime status and unlimited-loop warning; account access required
 - `/style`, `/style <name>`, `/style off`: Inspect/select a session output style, or clear it without changing soul.md
 - `/tokens`: Current session token tally
 - `/tools [all|help|mcp|<name>]`: Inspect registered tools, the full catalog including unwired entries, help, external MCP grants, or one named tool
@@ -347,43 +347,44 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - A job finished but no webhook arrived → Check **Job webhooks**, `notification_delivery`/`notification_dropped` audit and `/agent job <id>`. Use guarded delivery replay, never rerun the job
 - Webhook receiver reports duplicates → Deduplicate stable `delivery_id`; retry batch membership can change. Each delivery/replay has at most three attempts
 - MCP stderr log is absent or diagnostics are short → Expected: 2 KiB retained, ≤512 Unicode diagnostic characters. Inspect child/timeout; capture limits
-- A command such as `/prompt`, `/goal stage`, `/memory consolidate` or `/memory auto-consolidate` is unknown,… → Check `/help` and bundle `Resources/COMMIT`; use Latest or a successful main Bundle
+- Command or control missing → Check `/help`, `Resources/COMMIT`; install Latest or a successful main Bundle
 - Local coding loop never fetches a file the planner asked for → Pre-stage ordinary files with `/agent read`. Operator/model READ both refuse sensitive basenames (`sensitive_basename`). Cloud refuses all model…
+- New sessions appear to share old context → Inspect `/prompt`. `/session new` separates history while retaining shared context
 
 ## troubleshooting: symptom to fix (part 2)
 
-- New sessions appear to share old context → Inspect `/prompt`. `/session new` separates history while retaining shared context
 - Chat denies memory exists or claims it can run `gh` → Inspect `/memory`, `/tools` and `/prompt`; prose cannot run a commands
 - `/memory search` reports retrieval disabled → Enable the store, restart, then `/memory retrieval on`. Search never injects; `/memory retrieve` selects one prompt
 - Automatic completion suggestions do not appear → Inspect `/api/structured-memory` effective `automatic_suggestions`, run status and audit. Check `/memory capture` and `/memory auto-suggest-chat
 - `/memory save` reports store closed → Enable the store and restart; automatic generation and capture may stay off. A prose request is not a save command
 - `/memory consolidate` or auto-consolidator reports the gate off → Enable the store, restart, then `/memory consolidation on`; auto also needs `/memory auto-consolidate on`. Fresh defaults are on; explicit off…
+- Model inventory says `tag_missing`, or fallback is selected unexpectedly → Compare inventory/config and persisted `/model` with the resolved endpoint; restart to reevaluate fallback
+- Soul says missing → Valid existing-home state; use `/soul edit` to create persona, then `/soul on` and `/prompt`
 
 ## troubleshooting: symptom to fix (part 3)
 
-- Model inventory says `tag_missing`, or fallback is selected unexpectedly → Compare inventory/config and persisted `/model` with the resolved endpoint; restart to reevaluate fallback
-- Soul says missing → Valid existing-home state; use `/soul edit` to create persona, then `/soul on` and `/prompt`
 - Soul saved but is not in chat → Confirm Setup home, `/soul status`, editor result and `/prompt`; reload a stale editor before saving again
 - Persona/proposal save conflicts or history is full → Review current content/history; deliberately archive records if needed. Never blindly retry or delete active persona
 - Selected skill prevents chat → Restore `<home>/skills/<id>/SKILL.md` or `/skill clear`; inspect `/prompt`
-- `/loop` does not edit the repository → Use the explicitly configured goal-to-coding workflow in goal staging
+- `/loop` does not edit files → Use goal staging
+- Warning: configured `/loop` budgets are unlimited → Set a finite cap, then Reload limits. Upgrades preserve configuration
 - Goal task is stale/interrupted/unavailable → Inspect `/goal task`, `/agent jobs` and `/agent runs`; never infer approval or replay work from `GOAL_DONE`
 - App asks for Rosetta or shows Intel-only kind → Verify the installed universal copy and both executable slices; see hardware before changing the OS
+- `401 Unauthorized` on harness requests → Sign in again; a fresh bootstrap account must replace its password. A harness key cannot grant access
+- App reports a home ownership conflict → Quit that owner normally before retrying; do not delete its lock
 
 ## troubleshooting: symptom to fix (part 4)
 
-- `401 Unauthorized` on harness requests → Sign in again; a fresh bootstrap account must replace its password. A harness key cannot grant access
-- App reports a home ownership conflict → Quit that owner normally before retrying; do not delete its lock
 - App waits at startup → Check macOS prompts; quit, move the complete app to Applications and retry; inspect Setup without deleting the home
 - Changing config appears to do nothing → Use Reload limits for supported fields; otherwise Cmd-Q/relaunch or restart `serve`. Window close only hides it
 - Offline preparation fails in the app → Inspect Setup and offline Cargo verification; the app does not download dependencies
 - Chat takes too long or times out → Check inventory, `/model` and Setup diagnostics; cancel with `/loop stop`. Avoid repeated submissions
 - Chat reports `502 HARNESS_LLM_ERROR` with `model server returned HTTP ...` → Check upstream status, endpoint/model and model-server diagnostics. Harness drops error bodies unread, omits them from debug logs and releases the…
+- `cgagentharness: harness binds loopback only` and the server refuses to start → Only loopback is accepted. Omit `--host` or use `127.0.0.1`
+- `Address already in use` when starting `serve` → Use `lsof -i :8790`; stop only the known owner or choose another `--port`. Concurrent servers need separate homes
 
 ## troubleshooting: symptom to fix (part 5)
 
-- `cgagentharness: harness binds loopback only` and the server refuses to start → Only loopback is accepted. Omit `--host` or use `127.0.0.1`
-- `Address already in use` when starting `serve` → Use `lsof -i :8790`; stop only the known owner or choose another `--port`. Concurrent servers need separate homes
 - `gh: command not found` when trying `/agent` commands → `brew install gh && gh auth login`
 - `/agent` commands report "Agentic layer disabled" → Follow coding config, then restart `serve`
 - A write action is refused → Re-read coding console steps and the kill switch; check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE`
@@ -391,9 +392,6 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/diag` says `DIAG_DISABLED` → Set it to `true` in `config.yaml`, then restart `serve`
 - `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` → Use an admin or `portal_auditor` account
 - A read or `/diag inject` says `DIAG_SCANNER_REFUSED` → Narrow with `--event`, `--since` or `--last`; nothing from it is shown or staged
-
-## troubleshooting: symptom to fix (part 6)
-
 - Chat says `DIAG_SURFACE_FORBIDDEN` → Send a local turn first, or `/diag forget`
 - `/diag unslop` says `DIAG_NOT_FOUND` → `/diag` reads only `<home>/logs/unslop.jsonl`
 
