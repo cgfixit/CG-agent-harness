@@ -18,10 +18,13 @@ async fn every_builtin_style_reaches_chat_and_off_reverts_without_touching_exist
         ("code-review", include_str!("../data/styles/code-review.md")),
         ("concise", include_str!("../data/styles/concise.md")),
         ("design", include_str!("../data/styles/design.md")),
+        ("extract", include_str!("../data/styles/extract.md")),
+        ("handoff", include_str!("../data/styles/handoff.md")),
         ("research", include_str!("../data/styles/research.md")),
         ("soul", include_str!("../data/styles/soul.md")),
         ("technical", include_str!("../data/styles/technical.md")),
         ("troubleshoot", include_str!("../data/styles/troubleshoot.md")),
+        ("verify", include_str!("../data/styles/verify.md")),
     ] {
         let (status, set) = s
             .post_json("/api/style", json!({"session_id": sid, "name": name}))

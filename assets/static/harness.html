@@ -715,7 +715,7 @@ dialog p { margin-bottom:12px; }
         <label title="session output style; does not write soul.md">
           <span class="k">style </span>
           <select id="sStyle" aria-label="output style">
-            <option value="off">off</option>
+            <option value="off">Default</option>
           </select>
         </label>
         <span title="session /goal"><span class="k">goal </span><span class="v" id="sGoal">none</span></span>
@@ -1845,6 +1845,9 @@ async function refreshStyle() {
     }
   } catch (e) { /* the status poll already reports connectivity; keep the last known catalog and value */ }
 }
+/* The clear sentinel stays `off` as the stored value and /style argument;
+   only the dropdown shows it as Default. */
+function styleOptionLabel(id) { return id === 'off' ? 'Default' : id; }
 /* Rebuild the dropdown from a `/api/style` reply's catalog when it changed,
    keeping the current selection. Both reads and successful writes carry it. */
 function applyStyleCatalog(r) {
@@ -1854,7 +1857,7 @@ function applyStyleCatalog(r) {
   const have = [...sel.options].map(o => o.value);
   if (ids.length !== have.length || ids.some((id, i) => id !== have[i])) {
     sel.innerHTML = '';
-    ids.forEach(id => { const o = document.createElement('option'); o.value = id; o.textContent = id; sel.appendChild(o); });
+    ids.forEach(id => { const o = document.createElement('option'); o.value = id; o.textContent = styleOptionLabel(id); sel.appendChild(o); });
   }
 }
 /* `/api/style` reports the persisted name, whether it currently loads and
@@ -1890,7 +1893,7 @@ function paintStyle() {
     /* The persisted overlay is gone from the catalog: still show it, marked. */
     opt = document.createElement('option'); opt.value = value; sel.appendChild(opt);
   }
-  [...sel.options].forEach(o => { o.textContent = o.value; });
+  [...sel.options].forEach(o => { o.textContent = styleOptionLabel(o.value); });
   if (currentStyleIssue) opt.textContent = value + ' (' + currentStyleIssue + ')';
   sel.value = value;
   sel.title = currentStyleIssue ? 'style ' + value + ': ' + styleIssueText(currentStyleIssue) : 'session output style; does not write soul.md';
