@@ -1466,11 +1466,24 @@ fn shipped_listed_model() -> String {
 #[tokio::test]
 async fn only_listed_local_model_and_mode_pairs_queue_suggestions() {
     let model = model().await;
-    // D7: the shipped chat default has no corpus run yet, so it is not listed and
-    // its suggestions are refused. List it only after it qualifies.
+    // D7: only listed model/mode pairs queue suggestions. The shipped chat
+    // default is the listed qwen3.8:27b-mlx-cg (owner decision, 2026-11-07);
+    // any other local model is refused until its corpus run passes.
     let s = spawn_server(
         &model.base,
         options("both").with("structured_memory.suggestion_supported", &shipped_supported()),
+    )
+    .await;
+    assert_eq!(
+        s.state.local_memory_model(),
+        shipped_listed_model(),
+        "the shipped chat default is the listed model"
+    );
+    let s = spawn_server(
+        &model.base,
+        options("both")
+            .with("models.local_llm.model", "\"unlisted-local:1b\"")
+            .with("structured_memory.suggestion_supported", &shipped_supported()),
     )
     .await;
     assert_ne!(s.state.local_memory_model(), shipped_listed_model());

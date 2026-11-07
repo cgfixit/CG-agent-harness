@@ -380,7 +380,7 @@ CGagentHarness console on https://127.0.0.1:8790/ (home /Users/you/.CGagentHarne
 ```
 
 First run seeds the application home. Chat uses the configured loopback service's
-`gemma4-26b-a4b:ud-q4_k_xl-cg` tag by default, a [locally derived tag](MODELS.md#pin-32768-with-a-local-derived-tag)
+`qwen3.8:27b-mlx-cg` tag by default, a [locally derived tag](MODELS.md#pin-32768-with-a-local-derived-tag)
 reported `tag_missing` until `ollama create` builds it. Inspect installed tags with `/model list` and
 select one with `/model use <exact-tag>`. Selection never downloads missing tags.
 
