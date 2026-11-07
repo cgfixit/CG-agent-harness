@@ -67,6 +67,7 @@ const context = vm.createContext({
   refreshStatus:async () => {}, refreshSessions:async () => {}, refreshMemoryProposals:async () => {},
   memoryRefreshTimer:null, memoryViewRevision:0, memoryRefreshBusy:false, netconnectRevision:0,
   currentSession:null, sessionGoal:'', loopAuto:false, retryAttachmentIds:null, promptHistory:{},
+  sessionSearchQuery:'', sessionSearchSeq:0,
   currentStyle:'off', currentStyleIssue:null, sessionRevision:0, sendBtn:{disabled:false}, input:node('input'),
 });
 vm.runInContext(between('let apiRetryUntil = 0;', 'async function readChatStream(') + '\n' +

@@ -22,6 +22,7 @@ const context = vm.createContext({
   clearTimeout:timer=>clearedTimers.push(timer), memoryRefreshTimer:'pending-memory-poll', memoryViewRevision:0, memoryRefreshBusy:true,
   pendingAgentRun:null, shownAgentDiffs:new Map(), reviewedSoulProposal:null,
   currentSession:'fixture-session', sessionGoal:'fixture goal', promptHistory:{},
+  sessionSearchQuery:'private transcript query', sessionSearchSeq:7,
   input:node('input'), loopAuto:false, retryAttachmentIds:null, stopLoop(){}, paintGoalLoop(){}, resetScheduleReview(){++scheduleClears;}, resetNotificationView(){++notificationClears;},
   currentStyle:'off', currentStyleIssue:null, inflightChat:null, sendBtn:{disabled:false},
   isLoopStopCommand:()=>false, AGENT_CLI_TIMEOUT_MS:100, AGENT_STATUS_TIMEOUT_MS:100, AGENT_WRITE_TIMEOUT_MS:100, sys:text=>messages.push(text), table:rows=>JSON.stringify(rows),
@@ -53,6 +54,8 @@ const reset = () => {
 };
 seed(); context.clearTranscript(); reset();
 seed(); await context.hAuthLogout.click(); reset();
+assert.equal(context.sessionSearchQuery, '', 'logout clears the previous account search query');
+assert.equal(context.sessionSearchSeq, 8, 'logout invalidates pending transcript searches');
 assert.deepEqual(clearedTimers, ['pending-memory-poll'], 'logout cancels the old account memory poll');
 assert.equal(context.memoryViewRevision, 1, 'logout invalidates in-flight memory replies');
 assert.equal(context.memoryRefreshBusy, false);
