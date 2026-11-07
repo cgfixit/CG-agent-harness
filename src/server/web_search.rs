@@ -1083,13 +1083,19 @@ impl WebTool {
     }
 
     pub async fn fetch(&self, raw: &str, enabled: bool, audit: &Audit, owner: &str) -> Result<Value> {
+        Ok(serde_json::to_value(
+            self.fetch_page(raw, enabled, audit, owner).await?,
+        )?)
+    }
+
+    pub(super) async fn fetch_page(&self, raw: &str, enabled: bool, audit: &Audit, owner: &str) -> Result<Page> {
         self.require_enabled(enabled)?;
         self.gate_tool("web_fetch", &[raw.into()], enabled, audit)?;
         let page = self.get_or_fallback(raw, None, None, audit, None).await?;
         self.cache_page(&page, None)?;
         self.store_last(&page, None, owner)?;
         page.validate(&self.policy()?, None)?;
-        Ok(serde_json::to_value(page)?)
+        Ok(page)
     }
 }
 

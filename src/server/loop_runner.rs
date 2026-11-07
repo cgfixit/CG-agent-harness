@@ -150,6 +150,7 @@ pub fn loop_turn_prompt(turn: u64, total: Option<u64>, goal: &str) -> String {
     format!(
         "Loop turn {turn} of {total_label}. Session goal: {reminder}\n\
          Follow every constraint in the full stored goal in system context. Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies. \
+         Complete only harness turn {turn}; tool calls and evidence digests do not advance the turn. Do not simulate later turns. \
          Be concise. If the goal is fully satisfied, give a short summary and end with GOAL_DONE on its own line. \
          Stay in this chat; do not request a real-repo write."
     )
@@ -217,6 +218,7 @@ struct LoopEntry {
     /// The account that started the run; its turns carry its owner context
     /// after [`current_authority`] re-reads it before each turn.
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    web_evidence: super::chat_web::evidence::RunEvidence,
 }
 
 /// Active and recently finished runs, plus the persistence directory.
@@ -226,6 +228,33 @@ pub struct LoopManager {
 }
 
 impl LoopManager {
+    pub(crate) fn web_evidence(&self, owner: &str, run_id: &str, goal: &str) -> super::chat_web::evidence::RunEvidence {
+        self.runs
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(run_id)
+            .filter(|e| e.owner == owner && e.run.goal == goal && !e.run.state.terminal() && !e.cancel.is_cancelled())
+            .map(|e| e.web_evidence.clone())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn save_web_evidence(
+        &self,
+        owner: &str,
+        run_id: &str,
+        goal: &str,
+        evidence: super::chat_web::evidence::RunEvidence,
+    ) {
+        if let Some(entry) = self
+            .runs
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get_mut(run_id)
+            .filter(|e| e.owner == owner && e.run.goal == goal && !e.run.state.terminal() && !e.cancel.is_cancelled())
+        {
+            entry.web_evidence = evidence;
+        }
+    }
     pub fn new(home: &std::path::Path) -> Self {
         Self {
             runs: Mutex::new(HashMap::new()),
@@ -267,6 +296,7 @@ impl LoopManager {
             events,
             owner,
             user,
+            web_evidence: Default::default(),
         };
         let cancel = entry.cancel.clone();
         let sender = entry.events.clone();
@@ -553,6 +583,7 @@ fn finish(
         let mut runs = state.loops.runs.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(entry) = runs.get_mut(run_id) {
             entry.run = run.clone();
+            entry.web_evidence = Default::default();
         }
     }
     persist(dir, &run);
@@ -571,6 +602,55 @@ fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_references_belong_only_to_the_active_owner_run_and_goal() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = LoopManager::new(dir.path());
+        let (events, _) = tokio::sync::broadcast::channel(1);
+        let run = LoopRun {
+            run_id: "run".into(),
+            session_id: "session".into(),
+            goal: "goal".into(),
+            web_mode: "all".into(),
+            config: LoopLimits {
+                max_turns: 2,
+                max_total_completion_tokens: 4096,
+                max_failures: 2,
+                cooldown_ms: 0,
+            },
+            state: LoopRunState::Running,
+            reason: String::new(),
+            stats: Default::default(),
+        };
+        manager.runs.lock().unwrap().insert(
+            "run".into(),
+            LoopEntry {
+                run,
+                cancel: CancellationToken::new(),
+                events,
+                owner: "alice".into(),
+                user: None,
+                web_evidence: Default::default(),
+            },
+        );
+        let mut evidence = super::super::chat_web::evidence::RunEvidence::default();
+        evidence.searched("question");
+        manager.save_web_evidence("alice", "run", "goal", evidence.clone());
+        assert_eq!(manager.web_evidence("alice", "run", "goal").queries, vec!["question"]);
+        for (owner, run, goal) in [
+            ("bob", "run", "goal"),
+            ("alice", "different", "goal"),
+            ("alice", "run", "changed"),
+        ] {
+            assert!(manager.web_evidence(owner, run, goal).queries.is_empty());
+            manager.save_web_evidence(owner, run, goal, Default::default());
+        }
+        assert_eq!(manager.web_evidence("alice", "run", "goal").queries.len(), 1);
+        manager.runs.lock().unwrap().get_mut("run").unwrap().cancel.cancel();
+        assert!(manager.web_evidence("alice", "run", "goal").queries.is_empty());
+        manager.save_web_evidence("alice", "run", "goal", evidence);
+    }
 
     #[test]
     fn search_cooldown_turns_do_not_count_toward_max_failures() {
@@ -614,6 +694,9 @@ mod tests {
             "{prompt}"
         );
         assert!(prompt.contains("GOAL_DONE"));
+        assert!(
+            prompt.contains("Complete only harness turn 2; tool calls and evidence digests do not advance the turn.")
+        );
         let unlimited = loop_turn_prompt(1, None, "g");
         assert!(
             unlimited.starts_with("Loop turn 1 of unlimited. Session goal: g\n"),

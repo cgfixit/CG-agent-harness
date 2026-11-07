@@ -164,6 +164,14 @@ pub(super) struct SearchResult {
     pub(super) title: String,
     pub(super) url: String,
     pub(super) snippet: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) provider_rank: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) provider_score: Option<f64>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) highlights: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) source_date: Option<String>,
 }
 
 pub(super) fn add_result(
@@ -188,6 +196,10 @@ pub(super) fn add_result(
         title: crate::common::clip_chars(title.trim(), 300),
         url: url.to_string(),
         snippet: crate::common::clip_chars(snippet.trim(), 1000),
+        provider_rank: None,
+        provider_score: None,
+        highlights: Vec::new(),
+        source_date: None,
     });
 }
 
@@ -204,6 +216,7 @@ fn api_results(body: &[u8], limit: usize) -> Result<Vec<SearchResult>> {
     let mut rows = Vec::new();
     let mut seen = BTreeSet::new();
     for item in items.into_iter().flatten().take(100) {
+        let before = rows.len();
         add_result(
             &mut rows,
             &mut seen,
@@ -212,8 +225,64 @@ fn api_results(body: &[u8], limit: usize) -> Result<Vec<SearchResult>> {
             item["snippet"].as_str().unwrap_or(""),
             limit,
         );
+        if rows.len() > before {
+            let row = rows.last_mut().unwrap();
+            row.provider_rank = item["position"].as_u64().filter(|n| *n > 0);
+            row.highlights = item["snippet_highlighted_words"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .take(8)
+                .map(|s| crate::common::clip_chars(s, 80))
+                .collect();
+            row.source_date = item["date"].as_str().map(|s| crate::common::clip_chars(s, 80));
+        }
     }
     Ok(rows)
+}
+
+/// Provider `site:` echoes are hints; enforce recognizable host/path constraints locally.
+fn filter_sites(query: &str, value: &mut Value) {
+    let constraints: Vec<_> = query
+        .split_whitespace()
+        .filter_map(|word| {
+            let (excluded, word) = (word.starts_with('-'), word.trim_start_matches('-'));
+            let raw = word.strip_prefix("site:")?.trim_matches(['\"', '\'']);
+            let raw = raw
+                .strip_prefix("https://")
+                .or_else(|| raw.strip_prefix("http://"))
+                .unwrap_or(raw);
+            let url = canonical_url(&format!("https://{raw}")).ok()?;
+            Some((excluded, url))
+        })
+        .collect();
+    if constraints.is_empty() {
+        return;
+    }
+    if let Some(rows) = value["results"].as_array_mut() {
+        let before = rows.len();
+        rows.retain(|row| {
+            let Some(url) = row["url"].as_str().and_then(|s| url::Url::parse(s).ok()) else {
+                return false;
+            };
+            let matches = |site: &url::Url| {
+                let host = url.host_str().unwrap_or("");
+                let wanted = site.host_str().unwrap_or("");
+                (host == wanted || host.ends_with(&format!(".{wanted}"))) && url.path().starts_with(site.path())
+            };
+            !constraints.iter().any(|(excluded, site)| *excluded && matches(site))
+                && (!constraints.iter().any(|(excluded, _)| !excluded)
+                    || constraints.iter().any(|(excluded, site)| !excluded && matches(site)))
+        });
+        let removed = before - rows.len();
+        for (index, row) in rows.iter_mut().enumerate() {
+            row["rank"] = json!(index + 1);
+        }
+        if removed > 0 {
+            value["filtered_results"] = json!(removed);
+        }
+    }
 }
 
 fn public_results(
@@ -474,6 +543,7 @@ impl WebTool {
                 "code":result.as_ref().map_or_else(|e| e.code.as_str(), |_| "OK")}));
             match result {
                 Ok(mut value) => {
+                    filter_sites(query, &mut value);
                     if !fallback_from.is_empty() {
                         value["fallback_from"] = json!(fallback_from);
                     }
@@ -712,6 +782,22 @@ pub(super) async fn listing_body(mut response: reqwest::Response, max: usize) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listing_metadata_is_bounded_and_site_filters_check_actual_hosts() {
+        let rows = api_results(json!({"organic_results":[{"title":"Guide","link":"https://docs.example.com/path","snippet":"matching result","position":7,"snippet_highlighted_words":["matching",null,7],"date":"2026-11-07"}]}).to_string().as_bytes(), 5).unwrap();
+        assert_eq!(rows[0].provider_rank, Some(7));
+        assert_eq!(rows[0].highlights, vec!["matching"]);
+        assert_eq!(rows[0].source_date.as_deref(), Some("2026-11-07"));
+        let mut value = json!({"results":[{"url":"https://other.test/","rank":1},{"url":"https://docs.example.com/path","rank":2,"provider_rank":7},{"url":"https://example.com.attacker.test/path","rank":3}]});
+        filter_sites("manual site:http://example.com -site:other.test", &mut value);
+        assert_eq!(value["results"].as_array().unwrap().len(), 1);
+        assert_eq!(value["results"][0]["rank"], 1);
+        assert_eq!(value["results"][0]["provider_rank"], 7);
+        assert_eq!(value["filtered_results"], 2);
+        filter_sites("manual site:other.test", &mut value);
+        assert!(value["results"].as_array().unwrap().is_empty());
+    }
 
     fn public_results(body: &str, limit: usize) -> Result<Vec<SearchResult>> {
         super::public_results(body, limit, 512, &|| Ok(()))

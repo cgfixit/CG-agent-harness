@@ -20,6 +20,7 @@ for (const notDone of ['', 'I will write GOAL_DONE when finished.', '1. Write GO
 
 const prompt = loopTurnPrompt(2, 3, 'Write   a\nparser');
 assert.ok(prompt.startsWith('Loop turn 2 of 3. Session goal: Write a parser\n'), prompt);
+assert.ok(prompt.includes('Complete only harness turn 2; tool calls and evidence digests do not advance the turn.'));
 assert.ok(prompt.includes('GOAL_DONE on its own line') && !/27b/i.test(prompt), 'model-agnostic marker instruction');
 const fullGoal = 'x'.repeat(1930) + ' FINAL_CONSTRAINT: do not search the web; CHECKED_441';
 assert.ok(loopTurnPrompt(1, 1, fullGoal).includes(fullGoal), 'late constraints in every valid goal reach the latest user turn');
@@ -384,3 +385,14 @@ vm.runInContext(html.slice(html.indexOf('function renderChatWebTools('),html.ind
 noticeContext.renderChatWebTools([{tool:'web',ok:true,code:'WEB_TOOLS_WITHHELD',message:'Final answer reserved.'}]);
 assert.equal(notices[0],'web: WEB_TOOLS_WITHHELD — Final answer reserved.');
 console.log('Final-answer budget notice renders without inventing a source result.');
+
+// Digest events have no URL and must not pass through the page-link renderer.
+const evidenceMessages = [];
+const evidenceContext = vm.createContext({
+  sys: (...args) => evidenceMessages.push(args), WEB_TOOL_NEXT_STEP: {},
+  renderSearchResults: () => { throw new Error('digest rendered as a page'); },
+});
+vm.runInContext(html.slice(html.indexOf('function renderChatWebTools('), html.indexOf('/* The next step for a refused model web read')), evidenceContext);
+vm.runInContext('renderChatWebTools([{tool:"web_evidence",ok:true,result:{supported:[{}],missing:["Limited coverage"]}}])', evidenceContext);
+assert.match(evidenceMessages[0][0], /1 cited findings/);
+assert.match(evidenceMessages[0][1], /Limited coverage/);

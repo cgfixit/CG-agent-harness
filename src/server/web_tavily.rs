@@ -1,6 +1,6 @@
 //! Tavily search listings: the keyed `web.search.provider: tavily` hop. The
 //! request pins `include_answer`, `include_raw_content` and `include_images` off
-//! and the parser reads only `title`, `url` and `content`, so neither a
+//! and the parser retains bounded listing fields and ranking metadata, so neither a
 //! provider-written answer nor a page body enters a listing. Linked pages still
 //! need their own URL permission.
 use std::collections::BTreeSet;
@@ -29,7 +29,8 @@ pub(super) fn tavily_results(body: &[u8], limit: usize) -> Result<Vec<SearchResu
         .ok_or_else(|| error("WEB_SEARCH_RESPONSE", "search result listing is missing"))?;
     let mut rows = Vec::new();
     let mut seen = BTreeSet::new();
-    for item in items.iter().take(100) {
+    for (index, item) in items.iter().take(100).enumerate() {
+        let before = rows.len();
         add_result(
             &mut rows,
             &mut seen,
@@ -38,6 +39,13 @@ pub(super) fn tavily_results(body: &[u8], limit: usize) -> Result<Vec<SearchResu
             item["content"].as_str().unwrap_or(""),
             limit,
         );
+        if rows.len() > before {
+            let row = rows.last_mut().unwrap();
+            row.provider_rank = Some(index as u64 + 1);
+            row.provider_score = item["score"]
+                .as_f64()
+                .filter(|s| s.is_finite() && (0.0..=1.0).contains(s));
+        }
     }
     Ok(rows)
 }
@@ -156,7 +164,9 @@ mod tests {
         assert_eq!(rows[0].snippet, "Evidence");
         assert_eq!(rows[1].rank, 2);
         let rendered = serde_json::to_string(&rows).unwrap();
-        for absent in ["PROVIDER ANSWER", "FULL PAGE BODY", "score", "127.0.0.1"] {
+        assert_eq!(rows[0].provider_score, Some(0.91));
+        assert_eq!(rows[1].provider_rank, Some(5));
+        for absent in ["PROVIDER ANSWER", "FULL PAGE BODY", "127.0.0.1"] {
             assert!(!rendered.contains(absent), "{absent}: {rendered}");
         }
         let long = "y".repeat(5000);

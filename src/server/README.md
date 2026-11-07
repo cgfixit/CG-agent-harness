@@ -11,7 +11,7 @@ The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs) and
 - [`agent_schedules.rs`](agent_schedules.rs): persisted recurring schedules, at-most-once per occurrence, through `prepare_run`.
 - [`attachment_index.rs`](attachment_index.rs): query-ranked passage fence over owner-verified attachments.
 - [`attachments.rs`](attachments.rs): chat upload `AttachmentStore`: cap-std jail, UUID blobs, multipart parse.
-- [`chat_web.rs`](chat_web.rs): chat-model `web_search`/`web_fetch` tool loop with bounded reads and SSE.
+- [`chat_web.rs`](chat_web.rs): chat `web_search`/`web_fetch` loop; [evidence](chat_web/evidence.rs) retains bounded goal references.
 - [`client.rs`](client.rs): `account`/`web` portal clients; `tls` inspects or renews home-owned certificates.
 - [`compaction.rs`](compaction.rs): prompt-window estimation, reply reservation, web budgets, summary compaction.
 - [`config_reload.rs`](config_reload.rs): hot reload of the `RELOADABLE` allowlist into `RuntimeLimits`; SIGHUP installer.
