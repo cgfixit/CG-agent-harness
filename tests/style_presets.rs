@@ -19,7 +19,6 @@ async fn every_builtin_style_reaches_chat_and_off_reverts_without_touching_exist
         ("concise", include_str!("../data/styles/concise.md")),
         ("design", include_str!("../data/styles/design.md")),
         ("research", include_str!("../data/styles/research.md")),
-        ("soul", include_str!("../data/styles/soul.md")),
         ("technical", include_str!("../data/styles/technical.md")),
         ("troubleshoot", include_str!("../data/styles/troubleshoot.md")),
     ] {
@@ -169,6 +168,46 @@ async fn prompt_preview_reports_a_style_that_no_longer_loads() {
     assert_eq!(preview["style"]["loaded"], false);
     assert_eq!(preview["style"]["unavailable_reason"], "injection");
     assert!(!preview["prompt"].as_str().unwrap().contains("praise the user"));
+}
+
+#[tokio::test]
+async fn a_retired_builtin_stays_visible_and_clearable() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    std::fs::create_dir_all(s.home.join("styles")).unwrap();
+    // `soul` shipped as a built-in and was retired; an overlay with that name
+    // stands in for a pre-upgrade home where the selection was still valid.
+    let overlay = s.home.join("styles").join("soul.md");
+    std::fs::write(&overlay, "SOUL_OVERLAY shapes the next local reply.\n").unwrap();
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap();
+    let (status, set) = s
+        .post_json("/api/style", json!({"session_id": sid, "name": "soul"}))
+        .await;
+    assert_eq!(status, 200, "{set}");
+
+    // After the upgrade the overlay is gone and no built-in remains: the
+    // persisted name reports missing, composes without a style section, and a
+    // fresh select of the same name is refused with a live suggestion.
+    std::fs::remove_file(&overlay).unwrap();
+    let (status, preview) = s.post_json("/api/prompt/preview", json!({"session_id": sid})).await;
+    assert_eq!(status, 200, "{preview}");
+    assert_eq!(preview["style"]["name"], "soul");
+    assert_eq!(preview["style"]["loaded"], false);
+    assert_eq!(preview["style"]["unavailable_reason"], "missing");
+    assert!(!preview["prompt"].as_str().unwrap().contains("## Output style ("));
+    let (status, body) = s
+        .post_json("/api/style", json!({"session_id": sid, "name": "soul"}))
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(code(&body), "STYLE_UNKNOWN");
+    assert!(!body["detail"]["details"]["suggestion"].is_null());
+    let (status, cleared) = s
+        .post_json("/api/style", json!({"session_id": sid, "name": "off"}))
+        .await;
+    assert_eq!(status, 200, "{cleared}");
+    assert!(cleared["style"].is_null());
+    assert!(s.state.store.for_owner("local").get(sid).unwrap().style.is_none());
 }
 
 #[tokio::test]

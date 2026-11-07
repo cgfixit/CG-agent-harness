@@ -11,22 +11,20 @@ use cap_std::fs::Dir;
 use crate::common::injection::Scanner;
 use crate::common::{clip_chars, edit_distance};
 
-pub const BUILTIN_IDS: [&str; 7] = [
+pub const BUILTIN_IDS: [&str; 6] = [
     "code-review",
     "concise",
     "design",
     "research",
-    "soul",
     "technical",
     "troubleshoot",
 ];
 
-const BUILTIN_BODIES: [(&str, &str); 7] = [
+const BUILTIN_BODIES: [(&str, &str); 6] = [
     ("code-review", include_str!("../../data/styles/code-review.md")),
     ("concise", include_str!("../../data/styles/concise.md")),
     ("design", include_str!("../../data/styles/design.md")),
     ("research", include_str!("../../data/styles/research.md")),
-    ("soul", include_str!("../../data/styles/soul.md")),
     ("technical", include_str!("../../data/styles/technical.md")),
     ("troubleshoot", include_str!("../../data/styles/troubleshoot.md")),
 ];
@@ -280,6 +278,7 @@ mod tests {
         assert_eq!(suggest_builtin("technicl"), Some("technical"));
         // A retired preset name resolves to its nearest successor.
         assert_eq!(suggest_builtin("technical-deep"), Some("technical"));
+        assert_eq!(suggest_builtin("soul"), Some("design"));
         assert_eq!(suggest_builtin("off"), None);
         assert_eq!(suggest_builtin(""), None);
     }

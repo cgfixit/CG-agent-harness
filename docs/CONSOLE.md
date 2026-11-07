@@ -155,12 +155,11 @@ CSRF; export includes bounded attachment metadata without bodies or filenames.
 
 **Fresh homes leave the global persona unset.** The soul toggle remains available;
 without `soul.md`, no persona is loaded and the interface displays **unset**.
-Existing files and deliberate deletions are preserved. Select `/style soul` for
-concise evidence-first communication without creating a global persona. The
-original reference remains in `assets/soul.default.md`.
-Planning and coding use the same public shipped communication guidance, beneath
-their governed output contracts; private persona edits are not implicitly sent
-to a cloud coding provider.
+Existing files and deliberate deletions are preserved. The reference persona
+remains in `assets/soul.default.md` but is never loaded implicitly: chat, the
+coding planner and cloud prompts carry no persona unless `soul.md` exists and
+the toggle is on. Private persona edits are never sent to a cloud coding
+provider.
 
 ```text
 /soul status
@@ -294,7 +293,7 @@ Avoid contradictory rules across soul, selected skills and memory.
 **Style presets.** `/style <name>` selects a session preset;
 `/style off` is the default and `/style` prints
 the active preset. Shipped: `code-review`, `concise`, `design`,
-`research`, `soul`, `technical`, and `troubleshoot`
+`research`, `technical`, and `troubleshoot`
 ([`data/styles/`](../data/styles/)). An overlay at
 `$CGAGENTHARNESS_HOME/styles/<name>.md` wins. The selector creates a session if needed.
 `troubleshoot` labels claims observed or inferred and ends with one next command.
