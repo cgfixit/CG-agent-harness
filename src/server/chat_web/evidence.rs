@@ -198,8 +198,7 @@ mod tests {
                 .unwrap();
         let mut web = WebTool::new(dir.path(), &cfg).unwrap();
         web.test_resolve = Some(("passages.invalid".into(), address));
-        // DevSkim: ignore DS137138 because this synthetic host resolves only to the loopback fixture.
-        let url = format!("http://passages.invalid:{}/manual", address.port());
+        let url = format!("http://passages.invalid:{}/manual", address.port()); // DevSkim: ignore DS137138 because this synthetic host resolves only to the loopback fixture.
         web.allow_rule(&url, "manuals", &[], true).unwrap();
         web.allow_rule("https://example.com/", "other", &[], true).unwrap();
         let audit = Audit::new(dir.path().join("audit.jsonl"), &cfg);
