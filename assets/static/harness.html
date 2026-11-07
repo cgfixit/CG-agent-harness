@@ -2852,6 +2852,7 @@ $('sessionClearConfirm').addEventListener('click', async () => {
     clearTranscript();
     retryAttachmentIds = null;
     currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionGoal = ''; loopAuto = false; cancelAutoLoopStart('');
+    refreshMemoryProposals();
     currentStyle = 'off'; currentStyleIssue = null; paintStyle();
     input.value = '';
     $('sSession').textContent = 'none';
@@ -2966,6 +2967,7 @@ async function runSlash(line, webCommand) {
             stream.scrollTop = stream.scrollHeight;
             /* Not awaited: the stream lives as long as the run, and the send gate must reopen. */
             if (typeof reattachServerLoop === 'function') reattachServerLoop(s.session_id, revision);
+            refreshMemoryProposals();
           } catch (e) {
             if (revision === sessionRevision) throw e;
           } finally {
@@ -6377,9 +6379,11 @@ async function refreshMemoryProposals() {
 }
 
 /* Explicit recall for the open session (#621 U3). Selecting stores an ID and
-   expected revision on the session; it never edits a fact. The server's
-   injected/dropped preview is the authority for what chat will receive. */
+   expected revision on the session; it never edits a fact. The server previews
+   eligible picks before local chat applies its prompt budget. */
 let factSelectionNotice = null; // {text, view, session}: one failed-save message for the next render of the same view
+// A refresh cannot reopen controls over a pending replacement of the full selection.
+const factSelectionSaves = new Set();
 const FACT_DROP_TEXT = {stale_revision: 'changed since selected', inactive: 'deactivated', missing: 'no longer exists', over_limit: 'over the selection limit', duplicate: 'duplicate', invalid_id: 'invalid ID', invalid_owner: 'not yours', recall_disabled: 'explicit recall is off', cloud_chat: 'cloud chat'};
 function factSelectionSummary(session, selection, error, facts) {
   if (!session) return 'Open or start a session to choose saved facts for it.';
@@ -6388,7 +6392,7 @@ function factSelectionSummary(session, selection, error, facts) {
   const picked = Array.isArray(selection.selected) ? selection.selected.length : 0;
   const injected = Array.isArray(selection.injected) ? selection.injected.length : 0;
   const dropped = Array.isArray(selection.dropped) ? selection.dropped : [];
-  let text = 'Session ' + session + ': ' + picked + ' selected, ' + injected + ' sent with chat.';
+  let text = 'Session ' + session + ': ' + picked + ' selected, ' + injected + ' eligible for local chat.';
   if (selection.explicit_recall === false) text += ' Explicit recall is off, so selections are kept but not sent.';
   const reasons = dropped.filter(item => item.reason !== 'recall_disabled').map(item => {
     const fact = facts.find(row => row.id === item.id);
@@ -6404,18 +6408,23 @@ function factSelectionSummary(session, selection, error, facts) {
 async function appendSavedFacts(panel) {
   const revision = memoryViewRevision, request = ++memoryFactsRevision;
   const previous = panel.querySelector(':scope > section.saved-facts');
+  const stale = () => revision !== memoryViewRevision || request !== memoryFactsRevision || !panel.isConnected;
   try {
     const result = await api('/api/structured-memory/facts');
-    if (revision !== memoryViewRevision || request !== memoryFactsRevision || !panel.isConnected) return;
+    if (stale()) return;
     const facts = result && Array.isArray(result.facts) ? result.facts : [];
     /* #621 U3: the open session's explicit selection. A load failure is shown
        in the section and never hides the facts list. */
     const session = currentSession, selectionRevision = sessionRevision;
+    const saveKey = revision + ':' + session;
     let selection = null, selectionError = '';
     if (session) {
+      if (factSelectionSaves.has(saveKey)) return;
       try { selection = await api('/api/sessions/' + encodeURIComponent(session) + '/structured-facts'); }
       catch (error) { selectionError = error.message; }
-      if (revision !== memoryViewRevision || request !== memoryFactsRevision || !panel.isConnected) return;
+      if (stale()) return;
+      if (session !== currentSession || selectionRevision !== sessionRevision) return appendSavedFacts(panel);
+      if (factSelectionSaves.has(saveKey)) return;
     }
     // New proposal cards may need their target even when the saved-facts list
     // is unchanged. Update text in place; never unlock a decision in flight.
@@ -6430,7 +6439,7 @@ async function appendSavedFacts(panel) {
       if (target.textContent !== text) target.textContent = text;
       if (form.dataset.reviewState === 'pending') form.querySelector('.memory-save').disabled = !current;
     }
-    const snapshot = JSON.stringify({facts, session, selection, selectionError});
+    const snapshot = JSON.stringify({facts, session, selectionRevision, selection, selectionError});
     if (previous && previous.isConnected && previous.dataset.snapshot === snapshot) return;
     const section = document.createElement('section'); section.className = 'saved-facts'; section.dataset.snapshot = snapshot;
     const heading = document.createElement('h3'); heading.textContent = 'Saved facts (' + facts.length + ')';
@@ -6446,19 +6455,25 @@ async function appendSavedFacts(panel) {
     selectionNote.textContent = notice + factSelectionSummary(session, selection, selectionError, facts);
     section.appendChild(selectionNote);
     const commit = async next => {
+      if (revision !== memoryViewRevision || !section.isConnected || factSelectionSaves.has(saveKey)) return;
       for (const control of section.querySelectorAll('.fact-select input, .fact-select button, .fact-select-clear')) control.disabled = true;
       selectionNote.textContent = 'Saving this session\'s selection…';
+      let started = false;
       try {
         if (session !== currentSession || selectionRevision !== sessionRevision) throw new Error('The open session changed. Selections reload for the current session.');
-        const saved = await api('/api/sessions/' + encodeURIComponent(session) + '/structured-facts', 'POST', { facts: next });
-        if (revision !== memoryViewRevision || session !== currentSession || selectionRevision !== sessionRevision) return;
-        selectionNote.textContent = factSelectionSummary(session, saved, '', facts);
+        factSelectionSaves.add(saveKey);
+        started = true;
+        await api('/api/sessions/' + encodeURIComponent(session) + '/structured-facts', 'POST', { facts: next });
       } catch (error) {
-        if (revision !== memoryViewRevision || !section.isConnected) return;
-        factSelectionNotice = { text: 'Selection not saved: ' + error.message, view: revision, session: currentSession };
+        if (revision === memoryViewRevision && section.isConnected && (!started || (session === currentSession && selectionRevision === sessionRevision))) {
+          factSelectionNotice = { text: 'Selection not saved: ' + error.message, view: revision, session: currentSession };
+        }
+      } finally {
+        if (started) factSelectionSaves.delete(saveKey);
       }
+      if (revision !== memoryViewRevision || !panel.isConnected || (!section.isConnected && session !== currentSession)) return;
       delete section.dataset.snapshot;
-      if (panel.isConnected) await appendSavedFacts(panel);
+      await appendSavedFacts(panel);
     };
     const unavailable = picks.filter(pick => !facts.some(fact => fact.id === pick.id && fact.active !== false));
     if (unavailable.length) {
@@ -6501,7 +6516,7 @@ async function appendSavedFacts(panel) {
     const existing = panel.querySelector(':scope > section.saved-facts');
     if (existing) existing.replaceWith(section); else panel.appendChild(section);
   } catch (error) {
-    if (revision !== memoryViewRevision || request !== memoryFactsRevision || !panel.isConnected) return;
+    if (stale()) return;
     let section = panel.querySelector(':scope > section.saved-facts');
     if (!section) { section = document.createElement('section'); section.className = 'saved-facts'; panel.appendChild(section); }
     let note = section.querySelector('[role="status"]');

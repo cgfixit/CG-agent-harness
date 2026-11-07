@@ -24,7 +24,7 @@ const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', to
 let memoryEnabled=false, structuredOpen=true;
 let suggestionRun=null;
 let automaticSuggestions=null, memoryOwnerFixture=null, holdMemoryHistory=false, memoryHistoryHeld=null, rejectHeldMemoryHistory=null;
-let failFactSelectOnce=false;
+let failFactSelectOnce=false, factSaveHeld=null, releaseHeldFactSave=null;
 let holdMemoryFacts=false, memoryFactsHeld=null, releaseHeldMemoryFacts=null;
 let holdMemoryDecision=false, memoryDecisionHeld=null, releaseHeldMemoryDecision=null, rateLimitMemoryOnce=false, failMemoryOnce=false;
 let latestEpisode={id:'episode_labeled_latest',outcome:'completed',semantic_summary:null};
@@ -114,7 +114,11 @@ const server=createServer(async(req,res)=>{
  const factSel=path.match(/^\/api\/sessions\/([^/]+)\/structured-facts$/);
  if(factSel){
   const s=sessions.get(factSel[1]);if(!s){reply({detail:{code:'SESSION_NOT_FOUND',message:'No such session'}},404);return;}
-  if(req.method==='POST'){if(failFactSelectOnce){failFactSelectOnce=false;reply({detail:{code:'STRUCTURED_MEMORY_SELECTION',message:'too many selected facts for this configuration'}},400);return;}s.selectedFacts=body.facts;}
+  if(req.method==='POST'){
+   if(failFactSelectOnce){failFactSelectOnce=false;reply({detail:{code:'STRUCTURED_MEMORY_SELECTION',message:'too many selected facts for this configuration'}},400);return;}
+   if(factSaveHeld)await new Promise(resolve=>{releaseHeldFactSave=resolve;factSaveHeld();factSaveHeld=null;});
+   s.selectedFacts=body.facts;
+  }
   const selected=s.selectedFacts||[],injected=[],dropped=[];
   for(const pick of selected){const f=savedFacts.find(x=>x.id===pick.id);
    if(!f||f.active===false)dropped.push({id:pick.id,reason:f?'inactive':'missing'});
@@ -603,18 +607,23 @@ try {
   await evaluate(rerender);
   await until(statusOf+'.includes("0 selected")');
   assert.ok((await evaluate(statusOf)).includes(factSession),'the status names the open session');
+  await send('/session use '+factSession);
+  await until('!memoryRefreshBusy');
+  const beforeReselectClick=factPosts().length;
   await evaluate(box+'.click()');
-  await until(statusOf+'.includes("1 selected, 1 sent")');
+  await until(statusOf+'.includes("1 selected, 1 eligible") || '+statusOf+'.includes("open session changed")');
+  assert.equal(factPosts().length,beforeReselectClick+1,'reopening the same session must leave its first selection click usable');
+  await until(statusOf+'.includes("1 selected, 1 eligible")');
   assert.deepEqual(factPosts().at(-1)[2],{facts:[{id:'fact_labeled_saved',expected_revision:1}]},'select posts the stable id and current revision');
   assert.equal(savedFacts[0].revision,1,'selecting never edits the fact');
   savedFacts[0].revision=2;await evaluate(rerender);
   await until(statusOf+'.includes("changed since selected")');
   await evaluate('[...document.querySelectorAll("#pane-memory .fact-select button")].find(b=>b.textContent==="Use revision 2").click()');
-  await until(statusOf+'.includes("1 selected, 1 sent")');
+  await until(statusOf+'.includes("1 selected, 1 eligible")');
   assert.deepEqual(factPosts().at(-1)[2],{facts:[{id:'fact_labeled_saved',expected_revision:2}]},'refresh selects the current revision');
   structuredGates.explicit_recall=false;await evaluate(rerender);
   await until(statusOf+'.includes("Explicit recall is off")');
-  assert.ok((await evaluate(statusOf)).includes('1 selected, 0 sent'),'gate off keeps the selection but sends nothing');
+  assert.ok((await evaluate(statusOf)).includes('1 selected, 0 eligible'),'gate off keeps the selection but sends nothing');
   structuredGates.explicit_recall=true;failFactSelectOnce=true;
   await evaluate(box+'.click()');
   await until(statusOf+'.includes("Selection not saved")');
@@ -623,7 +632,14 @@ try {
   await evaluate('sessionRevision++');await evaluate(box+'.click()');
   await until(statusOf+'.includes("open session changed")');
   assert.equal(factPosts().length,posted,'a view from an earlier session selection never writes');
+  const saveStarted=new Promise(resolve=>{factSaveHeld=resolve;});
   await evaluate(box+'.click()');
+  await Promise.race([saveStarted,pause(3000).then(()=>{if(factSaveHeld)throw new Error('selection save never started');})]);
+  savedFacts.push({...savedFacts[0],id:'fact_labeled_other'});
+  try {
+   await evaluate('appendSavedFacts(document.getElementById("pane-memory"))');
+   assert.equal(await evaluate(box+'.disabled'),true,'a changed fact list cannot reopen the controls while a selection save is pending');
+  } finally { savedFacts.pop(); releaseHeldFactSave(); }
   await until(statusOf+'.includes("0 selected")');
   assert.deepEqual(factPosts().at(-1)[2],{facts:[]},'deselect posts the remaining selection');
   savedFacts[0].revision=1;structuredGates.explicit_recall=prevRecall;await evaluate(rerender);
