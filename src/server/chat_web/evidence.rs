@@ -113,6 +113,7 @@ pub(super) async fn read(
     let page = match cached {
         Some(page) => {
             web.gate_tool("web_fetch", std::slice::from_ref(&url), true, audit)?;
+            web.store_last(&page, None, owner)?;
             page
         }
         None => web.fetch_page(&url, true, audit, owner).await?,
@@ -187,6 +188,7 @@ mod tests {
                 ([("content-type", "text/plain")], format!("{}\n\n## Recovery\nThe RECOVERY_ANCHOR requires two independent replicas before failback.\n", "Background material about unrelated widgets.\n\n".repeat(1600)))
             }
         }));
+        let app = app.route("/other", axum::routing::get(|| async { "OTHER_PAGE" }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
@@ -207,10 +209,18 @@ mod tests {
             .unwrap();
         assert!(first["text"].as_str().unwrap().contains("two independent replicas"));
         assert!(selected[0].start > 24_000, "the anchor must be beyond the old prefix");
+        let other = format!("http://passages.invalid:{}/other", address.port());
+        web.allow_rule(&other, "other", &[], true).unwrap();
+        read(&web, &other, "OTHER_PAGE", true, &audit, "owner").await.unwrap();
         let (cached, _) = read(&web, &url, "RECOVERY_ANCHOR", false, &audit, "owner")
             .await
             .unwrap();
         assert_eq!(cached["cache_reused"], true);
+        web.inject(true, "owner").unwrap();
+        assert!(web
+            .context_text(true, "owner")
+            .contains("Background material about unrelated widgets"));
+        assert!(!web.context_text(true, "owner").contains("OTHER_PAGE"));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
         read(&web, &url, "RECOVERY_ANCHOR", true, &audit, "owner")
             .await

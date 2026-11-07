@@ -467,20 +467,32 @@ async fn run_inner(
     } else {
         (Vec::new(), None)
     };
+    let mut restored_context = false;
     if !passages.is_empty() || !run_evidence.queries.is_empty() {
         let receipt_sources: Vec<_> = passages
             .iter()
             .map(|p| json!({"id":p.id,"url":p.url,"title":p.title,"fetched_at":p.fetched_at}))
             .collect();
         let mut context = json!({"notice":"Untrusted active-goal findings for the current_turn below, not a new turn. Citations were checked against currently permitted cache; logical support still needs review. Reuse these findings; read again only for a specific missing passage or required refresh. An attempted query alone supplies no factual evidence.","current_turn":latest_user_message(history),"findings":packet,"sources":receipt_sources,"passages":super::web_research::prompt_passages(&passages, web.limits.stale_seconds),"already_searched":run_evidence.queries});
-        while super::compaction::estimate_tokens(&context.to_string()) > web.limits.evidence_tokens.min(4000) {
+        let fits = |context: &Value| -> Result<bool> {
+            let mut proposed = messages.clone();
+            proposed.push(json!({"role":"user","content":context.to_string()}));
+            Ok(
+                super::compaction::estimate_tokens(&context.to_string()) <= web.limits.evidence_tokens.min(4000)
+                    && prompt_estimate(system.len() + serde_json::to_vec(&proposed)?.len(), token_ratio)
+                        .saturating_add(super::compaction::reply_reservation(&state.backend, cap))
+                        <= web.limits.total_tokens,
+            )
+        };
+        while !fits(&context)? {
             if context["passages"].as_array_mut().unwrap().pop().is_none() {
                 break;
             }
         }
-        if super::compaction::estimate_tokens(&context.to_string()) <= web.limits.evidence_tokens.min(4000) {
+        if fits(&context)? {
             sources.extend(passages.iter().map(|p| p.url.clone()));
             messages.push(json!({"role":"user","content":context.to_string()}));
+            restored_context = true;
         } else {
             passages.clear();
         }
@@ -539,7 +551,20 @@ async fn run_inner(
                         digest_cap,
                         0.0,
                     )
-                    .await?;
+                    .await
+                    .inspect_err(|failure| {
+                        if failure.details.get("usage_reported").is_some() {
+                            let input = failure.details["prompt_tokens"].as_u64();
+                            let output = failure.details["completion_tokens"].as_u64();
+                            totals.input_tokens = totals.input_tokens.zip(input).map(|(a, b)| a.saturating_add(b));
+                            totals.output_tokens = totals.output_tokens.zip(output).map(|(a, b)| a.saturating_add(b));
+                            *known_completion_tokens = known_completion_tokens.saturating_add(output.unwrap_or(0));
+                            *usage_snapshot.lock().unwrap() = UsageSnapshot {
+                                pending: Some(totals.clone()),
+                                known_completion_tokens: *known_completion_tokens,
+                            };
+                        }
+                    })?;
                 totals.input_tokens = totals
                     .input_tokens
                     .zip(digest.reported_prompt_tokens)
@@ -993,6 +1018,19 @@ async fn run_inner(
                     if name == "web_fetch" {
                         let delivered = evidence::delivered(&mut result, selected);
                         evidence_changed |= delivered.iter().any(|p| !passages.iter().any(|old| old.id == p.id));
+                        if let (Some(url), Some(hash)) = (result["url"].as_str(), result["content_hash"].as_str()) {
+                            if passages.iter().any(|old| old.url == url && old.content_hash != hash) {
+                                passages.retain(|old| old.url != url || old.content_hash == hash);
+                                run_evidence
+                                    .receipts
+                                    .retain(|old| old.url != url || old.content_hash == hash);
+                                run_evidence.packet = None;
+                                if restored_context {
+                                    messages.remove(history.len());
+                                    restored_context = false;
+                                }
+                            }
+                        }
                         run_evidence.remember(&delivered);
                         for passage in delivered {
                             if !passages.iter().any(|p| p.id == passage.id) {

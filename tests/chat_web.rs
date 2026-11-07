@@ -2399,3 +2399,319 @@ async fn check_goal_evidence_reuse(reread: bool, refresh: Option<bool>, valid_di
     );
     fixture.abort();
 }
+
+#[tokio::test]
+async fn truncated_goal_digest_counts_reported_usage() {
+    let missing_usage = Arc::new(AtomicBool::new(false));
+    let missing = missing_usage.clone();
+    let router = Router::new()
+        .route(
+            "/docs/item",
+            get(|| async { ([("content-type", "text/plain")], "Relevant source passage.") }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(move |Json(body): Json<Value>| {
+                let missing = missing.clone();
+                async move {
+                    if body["response_format"]["type"] == "json_object" {
+                        let mut reply = common::ok_reply("partial", 100, 40);
+                        reply["choices"][0]["finish_reason"] = json!("length");
+                        if missing.load(Ordering::SeqCst) {
+                            reply["usage"].as_object_mut().unwrap().remove("completion_tokens");
+                        }
+                        return Json(reply);
+                    }
+                    Json(tool_call_reply(
+                        "web_fetch",
+                        &json!({"url":"http://docs.example/docs/item","query":"source"}).to_string(),
+                        "read",
+                    )) // DevSkim: ignore DS137138 because this synthetic host resolves only to the loopback fixture.
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let fixture = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"),
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..common::ServerOptions::default().with("loop.max_failures", "1")
+        },
+    )
+    .await;
+    s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"}))
+        .await; // DevSkim: ignore DS137138 because this synthetic host resolves only to the loopback fixture.
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"Read the source", "web_mode":"fetch"}),
+    )
+    .await;
+    let (status, reply) = s
+        .post_json(
+            "/api/chat",
+            json!({"session_id":sid,"loop":true,"message":"Read the source"}),
+        )
+        .await;
+    assert_ne!(status, 200, "{reply}");
+    assert_eq!(reply["detail"]["details"]["known_completion_tokens"], 42, "{reply}");
+    assert_eq!(reply["detail"]["details"]["completion_tokens"], 42, "{reply}");
+    s.state.audit.flush_async().await;
+    let ledger = std::fs::read_to_string(s.home.join("logs/spend.jsonl")).unwrap();
+    let row: Value = serde_json::from_str(ledger.lines().last().unwrap()).unwrap();
+    assert_eq!(row["output_tokens"], 42, "{row}");
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"Read the source", "web_mode":"fetch"}),
+    )
+    .await;
+    let (_, started) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id":sid,"max_turns":1,"cooldown_ms":0}),
+        )
+        .await;
+    let run_id = started["run"]["run_id"].as_str().unwrap();
+    let run = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let (_, value) = s.get_json(&format!("/api/loop/status?run_id={run_id}")).await;
+            if value["run"]["state"] == "failed" {
+                break value["run"].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(run["stats"]["total_completion_tokens"], 42, "{run}");
+    missing_usage.store(true, Ordering::SeqCst);
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"Read the source", "web_mode":"fetch"}),
+    )
+    .await;
+    let (_, reply) = s
+        .post_json(
+            "/api/chat",
+            json!({"session_id":sid,"loop":true,"message":"Read the source"}),
+        )
+        .await;
+    assert!(reply["detail"]["details"]["completion_tokens"].is_null(), "{reply}");
+    assert_eq!(reply["detail"]["details"]["known_completion_tokens"], 2, "{reply}");
+    s.state.audit.flush_async().await;
+    let ledger = std::fs::read_to_string(s.home.join("logs/spend.jsonl")).unwrap();
+    let row: Value = serde_json::from_str(ledger.lines().last().unwrap()).unwrap();
+    assert!(row["output_tokens"].is_null(), "{row}");
+    assert_eq!(row["usage_missing"], true, "{row}");
+    fixture.abort();
+}
+
+#[tokio::test]
+async fn refreshed_goal_digest_excludes_superseded_passages() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let digests = Arc::new(AtomicUsize::new(0));
+    let (r, d) = (reads.clone(), digests.clone());
+    let router = Router::new()
+        .route(
+            "/docs/item",
+            get(move || {
+                let n = r.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    (
+                        [("content-type", "text/plain")],
+                        if n == 0 {
+                            "OLD_VERSION evidence"
+                        } else {
+                            "NEW_VERSION evidence"
+                        },
+                    )
+                }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(move |Json(body): Json<Value>| {
+                let d = d.clone();
+                async move {
+                    if body["response_format"]["type"] == "json_object" {
+                        let n = d.fetch_add(1, Ordering::SeqCst);
+                        let sent = body.to_string();
+                        if n == 0 {
+                            assert!(sent.contains("OLD_VERSION"), "{sent}");
+                        } else {
+                            assert!(sent.contains("NEW_VERSION") && !sent.contains("OLD_VERSION"), "{sent}");
+                        }
+                        return Json(common::ok_reply(
+                            &json!({"supported":[],"conflicts":[],"inferences":[],"missing":[]}).to_string(),
+                            10,
+                            2,
+                        ));
+                    }
+                    let messages = body["messages"].as_array().unwrap();
+                    let last = messages.last().unwrap();
+                    let content = last["content"].as_str().unwrap_or("");
+                    if last["role"] == "tool" {
+                        let second = messages
+                            .iter()
+                            .any(|m| m["content"].as_str().unwrap_or("").starts_with("Loop turn 2"));
+                        return Json(common::ok_reply(
+                            if second {
+                                "Reviewed the refreshed page."
+                            } else {
+                                "Read the original page."
+                            },
+                            10,
+                            2,
+                        ));
+                    }
+                    if content.contains("Untrusted active-goal findings") || content.starts_with("Loop turn 1") {
+                        return Json(tool_call_reply(
+                            "web_fetch",
+                            &json!({"url":"http://docs.example/docs/item","query":"evidence","refresh":true})
+                                .to_string(),
+                            "read",
+                        )); // DevSkim: ignore DS137138 because this synthetic host resolves only to the loopback fixture.
+                    }
+                    Json(common::ok_reply("No read requested.", 10, 2))
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let fixture = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"),
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..common::ServerOptions::default()
+        },
+    )
+    .await;
+    s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"}))
+        .await; // DevSkim: ignore DS137138 because this synthetic host resolves only to the loopback fixture.
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"Read the evidence", "web_mode":"fetch"}),
+    )
+    .await;
+    let (_, started) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id":sid,"max_turns":2,"cooldown_ms":0}),
+        )
+        .await;
+    let run_id = started["run"]["run_id"].as_str().unwrap();
+    let run = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let (_, value) = s.get_json(&format!("/api/loop/status?run_id={run_id}")).await;
+            if matches!(value["run"]["state"].as_str(), Some("done" | "failed" | "stopped")) {
+                break value["run"].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(run["stats"]["turns_completed"], 2, "{run}");
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
+    assert_eq!(digests.load(Ordering::SeqCst), 2);
+    fixture.abort();
+}
+
+#[tokio::test]
+async fn restored_goal_evidence_fits_the_remaining_turn_budget() {
+    let seen = Arc::new(AtomicBool::new(false));
+    let checked = seen.clone();
+    let router = Router::new()
+        .route(
+            "/docs/item",
+            get(|| async {
+                (
+                    [("content-type", "text/plain")],
+                    format!("SOURCE_MARKER {}", "qualification ".repeat(700)),
+                )
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(move |Json(body): Json<Value>| {
+                let checked = checked.clone();
+                async move {
+                    if body["response_format"]["type"] == "json_object" {
+                        return Json(common::ok_reply(
+                            &json!({"supported":[],"conflicts":[],"inferences":[],"missing":[]}).to_string(),
+                            100,
+                            2,
+                        ));
+                    }
+                    let messages = body["messages"].as_array().unwrap();
+                    let last = messages.last().unwrap();
+                    let content = last["content"].as_str().unwrap_or("");
+                    if content.contains("Untrusted active-goal findings") || content.starts_with("Loop turn 2") {
+                        checked.store(true, Ordering::SeqCst);
+                        return Json(common::ok_reply("Second turn completed.", 100, 2));
+                    }
+                    if last["role"] == "tool" || content.contains("Untrusted evidence digest") {
+                        return Json(common::ok_reply(&format!("First turn. {}", "x".repeat(17500)), 100, 2));
+                    }
+                    Json(tool_call_reply(
+                        "web_fetch",
+                        &json!({"url":"http://docs.example/docs/item","query":"SOURCE_MARKER"}).to_string(),
+                        "read",
+                    )) // DevSkim: ignore DS137138 because this synthetic host resolves only to the loopback fixture.
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let fixture = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"),
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..common::ServerOptions::default()
+        }
+        .with("models.local_llm.max_tokens", "2048")
+        .with("web.total_tokens", "16000"),
+    )
+    .await;
+    s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"}))
+        .await; // DevSkim: ignore DS137138 because this synthetic host resolves only to the loopback fixture.
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal":"Read the source and review it", "web_mode":"fetch"}),
+    )
+    .await;
+    let (_, started) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id":sid,"max_turns":2,"cooldown_ms":0}),
+        )
+        .await;
+    let run_id = started["run"]["run_id"].as_str().unwrap();
+    let run = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let (_, value) = s.get_json(&format!("/api/loop/status?run_id={run_id}")).await;
+            if matches!(value["run"]["state"].as_str(), Some("done" | "failed" | "stopped")) {
+                break value["run"].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(run["stats"]["turns_completed"], 2, "{run}");
+    assert!(seen.load(Ordering::SeqCst), "the second turn must reach inference");
+    fixture.abort();
+}
