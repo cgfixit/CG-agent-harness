@@ -604,9 +604,9 @@ nonempty, at most 4,096 characters, and contain no newline, carriage return, or
 NUL. `/api clear <KEY>` removes only that OS-store credential. Migration retains
 unknown `.env` lines. Restart after changes except `SERPAPI_API_KEY`, `TAVILY_API_KEY` and `FIRECRAWL_API_KEY`.
 
-Prefer the **API Keys** pane for pasting secrets; its password inputs are cleared
-after successful save. Use **Clear saved value** to remove a stored credential.
-The pane displays masked **Saved** and **Active** values separately, their source
+Use `/api` to inspect or change `CGAGENTHARNESS_API_KEY` and `DEEPAGENT_API_KEY`.
+For other keys, use **API Keys** to save or clear values. Its password fields clear on submit.
+The pane shows masked **Saved** and **Active** values, their source
 (`startup_store`, `saved_store`, `environment`, or `unset`; `startup_file` or
 `saved_file` when the plaintext opt-in is on), and whether a restart is needed.
 Clearing a saved value leaves a currently active value running until restart;
