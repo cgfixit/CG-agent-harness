@@ -385,6 +385,9 @@ pub fn compose_system_prompt_detailed(inputs: &PromptInputs<'_>) -> ComposedProm
     }
     parts.push(HEADER.to_string());
     parts.push(super::tool_inventory::available_tools_markdown(inputs.chat_web_mode));
+    if inputs.chat_web_mode.enabled() {
+        parts.push(WEB_ROUTING.to_string());
+    }
     parts.push(CAPABILITIES.to_string());
     parts.push(format!(
         "Current inclusion settings: memory={}, web={}, soul={}, style={}. Enabled does not imply content is present. Soul and style appear above this contract when loaded; other included content appears below.",
@@ -463,9 +466,6 @@ pub fn compose_system_prompt_detailed(inputs: &PromptInputs<'_>) -> ComposedProm
         parts.push(format!(
             "\n## Diagnostic log excerpt (read-only, untrusted)\n\n{DIAG_PREAMBLE}\n\n{DIAG_OPEN}\n{block}\n{DIAG_CLOSE}"
         ));
-    }
-    if inputs.chat_web_mode.enabled() {
-        parts.push(WEB_ROUTING.to_string());
     }
     ComposedPrompt {
         prompt: parts.join("\n"),
