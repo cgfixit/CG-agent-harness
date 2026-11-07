@@ -12,6 +12,7 @@ verify newer builds. `slash-single-line-note.txt` is an operator aside.
 - `0N-browser-*`, `0N-native-*`, `0N-help-*`, `03-safe-command-refusal`: browser and native acceptance, help overlay.
 - `0N-session-*`, `02-new-session-zero`, `05-independent-spend-ledger`: per-session spend isolation.
 - `*-safari`: ownership, cron, delivery, MCP and private-memory acceptance.
+- `session-search-export-chromium`: Sessions-pane transcript search and export on a live-server synthetic home (#621 U1).
 - `slash-single-line-0N-native-*`: the 2026-09-22 native slash captures (below).
 - `demo/`: the README's silent 60-second native-and-web demo (`poster.jpg`, the MP4, `voiceover-cues.txt` with timing, edits and limits; recorded source `3a32ae5`).
 

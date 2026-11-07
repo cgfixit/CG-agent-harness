@@ -118,6 +118,10 @@ const server=createServer(async(req,res)=>{
   if(req.method==='GET'){reply({sessions:[...sessions.values()]});return;}
   const session={session_id:String(++sequence).padStart(12,'0'),goal:'',messages:[],title:'fixture',tokens:{total:0}};sessions.set(session.session_id,session);reply(session,201);return;
  }
+ // #621 U1: owned-transcript search and Markdown export, before the generic session route.
+ if(path==='/api/sessions/search'){const q=String(body.query||'').trim().toLowerCase();const hits=[];for(const s of sessions.values())for(const m of s.messages||[])if(q&&String(m.content||'').toLowerCase().includes(q))hits.push({session_id:s.session_id,title:s.title,snippet:m.content,role:m.role,ts:1794000000,score:1});reply({index:'tantivy-bm25',hits:hits.slice(0,16)});return;}
+ const exportMatch=path.match(/^\/api\/sessions\/([^/]+)\/export$/);
+ if(exportMatch){const s=sessions.get(exportMatch[1]);if(!s){reply({detail:{code:'SESSION_NOT_FOUND',message:'No such session'}},404);return;}res.writeHead(200,{'Content-Type':'text/markdown; charset=utf-8','Cache-Control':'no-store'});res.end('# '+s.title+'\n\nEXPORT_OF_'+s.session_id+'\n');return;}
  const match=path.match(/^\/api\/sessions\/([^/]+)(\/goal)?$/);
  if(match){const s=sessions.get(match[1]);if(match[2]){s.goal=body.goal;s.goal_web_mode=s.goal?(body.web_mode??'fetch'):'all';}reply(s);return;}
  if(path.match(/^\/api\/sessions\/[^/]+\/goal-stage$/)){
@@ -775,6 +779,42 @@ try {
  assert.equal(await evaluate('document.getElementById("stream").getAttribute("aria-live")'),'polite');
  await send('/session use '+firstSession.session_id);
  assert.equal(await evaluate('document.querySelectorAll("#stream .msg.user, #stream .msg.agent").length'),12,'reselecting a session must not duplicate its transcript');
+ {
+  // #621 U1: Sessions-pane search renders untrusted titles/snippets as text, exports the clicked row, and drops stale results.
+  const savedTitle=firstSession.title, savedText=firstSession.messages[3].content;
+  firstSession.title='Fixture <img src=x onerror=window.__u1xss=1>';
+  firstSession.messages[3].content='OLD_MESSAGE_3 <script>window.__u1xss=2</script>';
+  await evaluate('document.getElementById("tab-sessions").click(); refreshSessions()');
+  await until('!!document.getElementById("sessionSearchInput")');
+  const resultsText='document.getElementById("sessionSearchResults").textContent';
+  const searchFor=async q=>{
+   await evaluate('document.getElementById("sessionSearchInput").value='+JSON.stringify(q)+';document.querySelector("#sessionSearch form").requestSubmit()');
+   await until(resultsText+' !== "" && !/Searching/.test('+resultsText+')');
+   return evaluate('[...document.querySelectorAll("#sessionSearchResults .sess-hit")].map(b=>b.textContent)');
+  };
+  const searches=()=>requests.filter(r=>r[1]==='/api/sessions/search').length;
+  const before=searches();
+  assert.deepEqual(await searchFor('   '),[]);
+  assert.equal(searches(),before,'a blank query sends no search request');
+  assert.match(await evaluate(resultsText),/Enter a phrase/);
+  assert.deepEqual(await searchFor('no such phrase'),[]);
+  assert.match(await evaluate(resultsText),/No matches/);
+  const found=await searchFor('old_message_3');
+  assert.equal(found.length,1,'one owned hit');
+  assert.ok(found[0].includes('<img src=x')&&found[0].includes('<script>'),'title and snippet render as literal text');
+  assert.equal(await evaluate('document.querySelectorAll("#pane-sessions img, #pane-sessions script").length+(window.__u1xss?1:0)'),0,'no markup is interpreted');
+  await evaluate('[...document.querySelectorAll("#pane-sessions > .sess-item")].find(el=>el.querySelector(".m").textContent.startsWith('+JSON.stringify(secondSession)+')).querySelector(".sess-export").click()');
+  await until('[...document.querySelectorAll("#pane-sessions > .sess-item [role=status]")].some(el=>el.textContent.includes("exports/'+secondSession+'.md"))');
+  assert.equal(requests.filter(r=>r[1].endsWith('/export')).at(-1)[1],'/api/sessions/'+secondSession+'/export','the clicked row exports');
+  assert.equal(await evaluate('currentSession'),firstSession.session_id,'export does not switch sessions');
+  const held=searches();
+  await evaluate('document.getElementById("sessionSearchInput").value="old_message";document.querySelector("#sessionSearch form").requestSubmit();sessionRevision++');
+  for(let i=0;i<40&&searches()===held;i++)await pause(25);
+  await pause(200);
+  assert.equal(await evaluate('document.querySelectorAll("#sessionSearchResults .sess-hit").length'),0,'a reply from an earlier selection never renders');
+  assert.equal(await evaluate(resultsText),'','the discarded search clears its pending notice');
+  firstSession.title=savedTitle; firstSession.messages[3].content=savedText;
+ }
  // Keyboard recall loads saved prompts, restores drafts, and never crosses session boundaries.
  const arrow=async key=>{
    await evaluate('document.getElementById("input").focus()');
@@ -1002,7 +1042,7 @@ try {
  assert.equal(await evaluate('document.getElementById("passwordDialog").open'),false);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','direct first-run password setup without implicit login; protected replacement and lock/reopen','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','unset persona diagnostics','first session','goal set/show/clear','manual continuation','unbounded /status and /loop notices clear when finite; warning never blocks','goal text in /loop','auto start after a 5 s countdown and its cancellation','auto cooldown stop','generation cancellation','session switch','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout resets the transcript, Memory pane and active session like a successful logout, even when the follow-up probe fails','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
+ console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','direct first-run password setup without implicit login; protected replacement and lock/reopen','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','unset persona diagnostics','first session','goal set/show/clear','manual continuation','unbounded /status and /loop notices clear when finite; warning never blocks','goal text in /loop','auto start after a 5 s countdown and its cancellation','auto cooldown stop','generation cancellation','session switch','Sessions-pane transcript search (text-only, stale-safe) and clicked-row Markdown export','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout resets the transcript, Memory pane and active session like a successful logout, even when the follow-up probe fails','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
  }
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});

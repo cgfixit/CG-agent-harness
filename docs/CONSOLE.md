@@ -65,7 +65,7 @@ the generation wait, discards delayed replies, and clears staged
 coding or persona reviews. Switching restores retained messages without
 duplicates. A new session has no messages, goal, or prompt skills. Persona and
 enabled notes stay shared; your account's web selection and
-injected context survive session changes. The HTML editor button, beside the web-policy globe, previews the draft for the chat that was open when you clicked it. That preview is a separate page. It can run the draft's own style and script, and it cannot call this console. Reset controls differ in scope:
+injected context survive session changes. The HTML editor button, beside the web-policy globe, previews the draft for the chat open when clicked, as a separate page that runs the draft's own style and script but cannot call this console. Reset controls differ in scope:
 
 | Intent | Control | Retained data |
 |---|---|---|
@@ -139,18 +139,19 @@ is the separate [goal staging](CODING_PIPELINE.md#94-stage-a-session-goal-as-a-c
 
 #### Search and export session transcripts
 
-Search and export are guarded APIs, not `/session` subcommands.
-`POST /api/sessions/search` accepts `{"query":"exact phrase"}` and returns owned
-session snippets. Its request-local Tantivy RAM index covers at most 200 sessions
-and 2,000,000 bytes. Queries allow 200 characters; indexing uses up to 32 terms.
-Results contain at most 16 hits, two per session, with 160-character snippets,
-found as case-insensitive literal phrases across 1,200-character chunks. Search runs on
-the blocking pool, writes no web cache, and sends nothing off-machine. Per-query
-rebuilding is accepted within these bounds (#258).
+The Sessions pane's **Search my transcripts** box and per-row **Export .md**
+buttons call guarded APIs, not `/session` subcommands.
+`POST /api/sessions/search` takes `{"query":"exact phrase"}` and searches a
+request-local Tantivy RAM index of at most 200 owned sessions and 2,000,000
+bytes. Queries allow 200 characters; indexing uses up to 32 terms. At most 16
+hits, two per session, 160-character snippets, literal case-insensitive
+phrases across 1,200-character chunks. Search writes no web cache, sending
+nothing off-machine; per-query rebuilding is accepted (#258). A hit opens its
+session; session or account switches discard results.
 
 `GET /api/sessions/{session_id}/export` returns Markdown, written to
-`<home>/exports/{id}.md`. Both APIs enforce owner and CSRF; export includes
-bounded attachment metadata without bodies or filenames.
+`<home>/exports/{id}.md`; the pane offers a download. Both enforce owner and
+CSRF; export includes bounded attachment metadata without bodies or filenames.
 
 ### 7.2 Default soul, effective prompt and persona editing
 

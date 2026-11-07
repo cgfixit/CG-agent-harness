@@ -43,6 +43,7 @@ const context = vm.createContext({
   clearAnalytics() {}, clearPendingAttachments() {}, abortInflightSearch() {}, openPasswordChange(required) { passwordPrompts.push(required); },
   refreshMemoryProposals:async () => { memoryRefreshes++; }, refreshStatus:async () => {}, refreshSessions:async () => {},
   // resetAccountView() state, so logout paths run the real reset.
+  sessionSearchQuery:'', sessionSearchSeq:0,
   clearTimeout:timer => clearedTimers.push(timer), memoryRefreshTimer:null, memoryViewRevision:0, memoryRefreshBusy:false,
   clearTranscript() { transcriptClears++; }, stopLoop() {}, paintSessionTokens() {}, paintStyle() {}, input:node('input'),
   netconnectRevision:0, currentSession:'fixture-session', sessionGoal:'fixture goal', loopAuto:false, retryAttachmentIds:null,
@@ -164,11 +165,14 @@ assert.deepEqual(shown(), buttons);
 
 // Logout hides first; a rejected logout that kept the session restores and rechecks.
 vm.runInContext("currentSession = 'fixture-session'", context);
+context.sessionSearchQuery = 'private transcript query';
 auth.logout = reply(500);
 await node('hAuthLogout').listeners.click(); await settle();
 assert.deepEqual(shown(), buttons);
 assert.equal(node('hAuthWho').textContent, 'logout rejected (500)');
 assert.equal(context.currentSession, 'fixture-session', 'a 500 logout keeps the session and its view');
+assert.equal(context.sessionSearchQuery, 'private transcript query', 'a rejected logout preserves the current search');
+const searchSeq = context.sessionSearchSeq;
 const memoryRevision = context.memoryViewRevision;
 context.memoryRefreshTimer = 'logout-memory-poll'; context.memoryRefreshBusy = true;
 node('pane-memory').textContent = 'private memory';
@@ -176,6 +180,8 @@ auth.logout = reply(401); auth.whoami = reply(401);
 await node('hAuthLogout').listeners.click(); await settle();
 assert.deepEqual(shown(), [], 'a 401 logout rechecks whoami and stays hidden when signed out');
 assert.equal(context.currentSession, null, 'a 401 logout resets the account view');
+assert.equal(context.sessionSearchQuery, '', 'logout clears the previous account search query');
+assert.ok(context.sessionSearchSeq > searchSeq, 'logout invalidates pending transcript searches');
 assert.ok(transcriptClears >= 1, 'a 401 logout clears the transcript');
 assert.ok(clearedTimers.includes('logout-memory-poll'), 'logout cancels the old account memory poll');
 assert.ok(context.memoryViewRevision > memoryRevision, 'logout invalidates in-flight memory replies');
