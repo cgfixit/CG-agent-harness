@@ -2062,7 +2062,7 @@ async function exportSessionMarkdown(sessionId, button, feedback, revision) {
 async function refreshKeys() {
   const pane = $('pane-api-keys'); pane.replaceChildren();
   const note = document.createElement('p');
-  note.textContent = 'Administrator access required. Saved values go to the OS credential store. SerpAPI, Tavily and Firecrawl key changes apply on the next search or read; other saved values load after restart. Explicit process environment values take precedence. Harness metadata never grants account access.';
+  note.textContent = 'Administrator access required. Saved values go to the OS credential store. SerpAPI, Tavily and Firecrawl key changes apply on the next search or read; other saved values load after restart. Explicit process environment values take precedence.';
   pane.appendChild(note);
   const registry = document.createElement('button'); registry.textContent = 'View registry';
   registry.addEventListener('click', () => runSlash('/registry')); pane.appendChild(registry);
@@ -2075,6 +2075,7 @@ async function refreshKeys() {
     pane.appendChild(line);
   }
   for (const key of response.keys) {
+    if (key.name === 'CGAGENTHARNESS_API_KEY' || key.name === 'DEEPAGENT_API_KEY') continue;
     const form = document.createElement('form'); form.className = 'reg-entry';
     const label = document.createElement('label'); label.textContent = key.label + ' (' + key.name + ')';
     const field = document.createElement('input'); field.id = 'saved-' + key.name; field.type = 'password';
