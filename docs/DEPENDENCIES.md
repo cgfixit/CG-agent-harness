@@ -42,7 +42,7 @@ build dependency does not itself require a CMake executable. See
   overrides. `uuid` 1.26 and `rusqlite` 0.40 stay for the same reason (`uuid`
   1.27 and `rusqlite` 0.41 need Rust 1.89).
 - Incompatible major lines are separate API migrations, not drift: backend
-  `base64` 0.22, `rand` 0.8, `scrypt` 0.11, `scraper` 0.27 with `html5ever`
+  `axum-server` 0.8, `base64` 0.22, `rand` 0.8, `scrypt` 0.11, `scraper` 0.27 with `html5ever`
   0.39, `windows-sys` 0.59 and the `rmcp` pin; desktop `toml` 0.8.2 and `brotli-decompressor` 6.2,
   held by upstream constraints with `generic-array` and `matchit`. Newer
   available versions alone do not make a valid lockfile stale or justify
@@ -112,15 +112,14 @@ point-in-time advisory/license/source check, not proof of vulnerability absence.
 Workflow action pins live in `.github/workflows/` and move with those files,
 not with the lockfiles.
 
-## Last synchronization (2026-11-02)
+## Last synchronization (2026-11-07)
 
 Both locks were already at every compatible MSRV-aware release older than the
-7-day cooldown, with no advisory against a locked version. Held behind the
-cooldown (all published 2026-11-01): backend `crc32fast` 1.5.4, `zip` 9.2.1,
-`openssl` 0.10.82 with `openssl-sys` 0.9.118 (in the lock only through the
-optional `dbus-secret-service` OpenSSL feature, never compiled), and desktop
-`crc32fast` 1.5.4. `rmcp` 3.8.0 (2026-10-26) and `tauri` 2.12.5 wait on their
-deliberate pins. It follows the 2026-10-30 refresh (#701), the `rmcp` 3.7.0
-bump (#712) and the `block-buffer` note (#714), since corrected to not affected.
-Neither lock changed between that pass and the 2026-11-06 doc sync. Dated
-results describe that pass only; rerun the checks above before trusting them.
+7-day cooldown, with no advisory against a locked version (cargo-deny 0.20.2:
+backend with all features, desktop, fixture). Every candidate `cargo update`
+offered (13 backend, 16 desktop, among them `zip` 9.4.2, `crc32fast` 1.5.4,
+`openssl` 0.10.82, `cc` 1.11.1, `toml` 1.2.1, `jiff` 0.2.39 and `uuid` 1.29.1)
+was published 2026-11-01 or later, so all wait. `rmcp` 3.9.0 and `tauri` 2.12.5
+wait on their deliberate pins; `axum-server` 0.9.0 (2026-11-06) is a new major
+line. Neither lock has changed since 2026-10-31 (#720). Dated results describe
+that pass only; rerun the checks above before trusting them.
