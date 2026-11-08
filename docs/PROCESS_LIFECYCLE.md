@@ -70,7 +70,7 @@ containment. See [troubleshooting](TROUBLESHOOTING.md).
 
 ### Explicit MCP lifecycle policy
 
-Every stdio server must declare [capabilities](MCP_CLIENT.md). In Linux strict
+Every stdio server must declare [capabilities](MCP.md#migrate-a-stdio-declaration). In Linux strict
 mode, a transient systemd service owns the supervisor and bubblewrap child in a
 dedicated cgroup v2 hierarchy. The service sets aggregate process and memory
 limits, disables delegation, protects cgroup control files, and kills the whole

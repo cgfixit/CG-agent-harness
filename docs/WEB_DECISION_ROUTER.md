@@ -1,9 +1,14 @@
 # Web decision router: research and implementation
 
-Research baseline and implementation design, 2026-11-07.
+Research baseline and implementation design, 2026-11-07, for goal and loop
+turns that read the web. The one-page summary and flow diagram are in the
+[README](../README.md#how-the-research-loop-decides); the operator contract is
+[chat web tools](SECURE_RESEARCH.md#chat-web-tools); remaining phases are
+tracked in [#772](https://github.com/cgfixit/CG-agent-harness/issues/772).
 
 Converted from the operator-requested research TXT. The observations below describe
-the reviewed baseline; implementation and measurement status is recorded at the end.
+the reviewed baseline (before #786 and #788 merged); what shipped and what was
+measured is in [Implemented behavior and measured limits](#implemented-behavior-and-measured-limits).
 
 ## Outcome and accepted scope
 

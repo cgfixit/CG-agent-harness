@@ -175,11 +175,8 @@ or custom-port origin with `--url` after `account` or `web`.
 ./target/release/cgagentharness web status
 ./target/release/cgagentharness web allow 'https://example.com/docs/*' --group docs --seed https://example.com/docs/
 ./target/release/cgagentharness web fetch https://example.com/docs/start
-./target/release/cgagentharness web fetch https://example.com/docs/start --crawl
 ./target/release/cgagentharness web search 'veeam software cve' --count 5
-./target/release/cgagentharness web search 'widget_open' --group docs
 ./target/release/cgagentharness web research 'How does widget_open fail?' --group docs
-./target/release/cgagentharness web cancel
 ./target/release/cgagentharness web deny 'https://example.com/docs/*'
 ./target/release/cgagentharness account logout
 ```
@@ -248,8 +245,7 @@ Legacy `web_context.txt`/`web_last.json` are never injected; selections live in
 
 ## Search, fetch and research
 
-The app and browser console share the backend. Enter slash commands as plain text
-starting with `/`. See [Google search permissions](#google-search).
+Enter slash commands as plain text starting with `/`. See [Google search permissions](#google-search).
 In default allowlist mode, an administrator first grants the example page:
 
 ```text
@@ -323,9 +319,9 @@ outcomes separately. Session `web_sources` remains a bounded metadata ledger,
 never a second page store. `web.carry_forward_sources` still ships off; when
 enabled it supplies permitted earlier URLs/queries, not page text.
 
-Existing homes keep their configured call ceiling; **Reload limits** does not
-raise URL permissions. [Router design and measurements](learning/web-decision-router.md)
-record the provider matrix, context limits and remaining acceptance gaps.
+[Router design and measurements](WEB_DECISION_ROUTER.md)
+record the provider matrix, context limits and remaining acceptance gaps; the
+[README](../README.md#how-the-research-loop-decides) has the one-page version.
 
 ### Google search
 
@@ -358,7 +354,9 @@ the Google grant; a home that removed it re-grants it:
 Tavily needs its key and never changes `auto`. Each search is one basic-depth
 request (one credit) to the fixed `https://api.tavily.com/search`, key in the
 Authorization header; `include_answer`, `include_raw_content` and `include_images`
-are pinned off, and only title, URL and snippet are kept. HTTP 429, 432 and 433 are quota refusals.
+are pinned off; listings keep title, URL, snippet and bounded optional provider rank,
+score, highlighted terms and date, never a provider answer or page body. HTTP 429,
+432 and 433 are quota refusals.
 SearXNG support was removed: `provider: searxng` or a non-empty `web.search.searxng_url`
 fails boot by name. `web.search.fallback_to_public_google` (ships true) and the opt-in
 `fallback_to_serpapi` (after Tavily) try the next hop only when a provider is unusable;
@@ -414,7 +412,7 @@ Seeded: 40 page requests, 2 MiB charged bytes, 180 seconds per crawl; 8 seconds
 and 256 KiB per response; 4 concurrent fetches, 400 ms per-origin pacing, 10
 requests per origin; 256 cached pages/16 MiB. A home missing these keys uses 20
 pages, 60 seconds, 2 fetches, 250 ms and 128 pages. `web.*` fields in the shipped YAML
-list validated bounds; [configuration reload](CONFIG_RELOAD.md) lists the ones an
+list validated bounds; [reloadable limits](INSTALL.md#reload-limits-without-a-restart) names the ones an
 administrator can reload without a restart. Failed requests can conservatively
 charge the full response allowance. Reports expose partial coverage, failures and
 unvisited work.
@@ -436,6 +434,18 @@ heading boosts improve ranking; diversity and
 deduplication reduce repetition. Derived cache corruption grants nothing.
 Conditional refresh repeats network checks. Validators reduce bytes, not requests.
 
+```mermaid
+flowchart LR
+    Q["/web research question"] --> S[Starts: --url, group seeds, permitted prefixes]
+    S --> C[One bounded crawl: robots, pacing, policy per link]
+    C --> I[Tantivy BM25 index over permitted cached extracts]
+    I --> P[Local model: at most 3 subqueries in 2 rounds]
+    P --> A[Synthesis within evidence_tokens]
+    A --> V{Citation IDs and quotes found in passages?}
+    V -->|no| D[Claim dropped: WEB_CITATION_DROPPED]
+    V -->|yes| R[Answer: support, conflicts, inference, missing or stale]
+```
+
 Research asks the local model for at most 3 subqueries in 2 rounds, runs at most
 one bounded crawl, and synthesizes about 6,000 evidence tokens. Defaults:
 28,000 total model tokens, 1200s discovery including cold load, then 1800s answering (300s each if the keys are absent).
@@ -448,11 +458,9 @@ Retrieval interleaves the question and subqueries without embeddings or rerankin
 Console research (`/web job`, `/web jobs`) outlives the tab; `/web cancel`
 stops it.
 
-Answers label support, conflicts, inference, and missing or stale evidence.
 Citation IDs and quotes are checked against passages, but semantic support still
-needs judgment; failed claims drop alone (`WEB_CITATION_DROPPED`). Rank is not
-truth, and fetch age is not publication date. Bounded runs never claim
-completeness; no-answer results abstain and failures stay visible.
+needs judgment. Rank is not truth, and fetch age is not publication date. Bounded
+runs never claim completeness; no-answer results abstain and failures stay visible.
 
 ### Saved web selection
 
@@ -469,7 +477,7 @@ When auth is enabled, all operational API reads and writes require an account.
 Public endpoints are static login assets, minimal status, setup status, and login
 or legacy bootstrap. Mutation CSRF remains `X-CyClaw-CSRF`. Forwarding headers
 are refused, and reverse proxies are unsupported. The dedicated
-[machine gateway](MCP_SERVER.md) does not inherit console authority.
+[machine gateway](MCP.md#private-read-only-memory-gateway) does not inherit console authority.
 
 Ownership follows [session ownership](#session-ownership-and-legacy-adoption)
 and the shared-resource list in [SECURITY.md](../SECURITY.md#local-authority-and-shared-resources).
@@ -499,6 +507,6 @@ cargo run --locked --example web_research_benchmark -- /absolute/report.json
 cargo run --locked --example web_research_benchmark -- /absolute/live-report.json --live
 ```
 
-The fixed corpus mixes nested pages, identifiers, paraphrases, stale and
-contradictory claims, no-answer cases and hostile text. `--live` uses an
-installed local model and records usage; neither mode downloads a model or publishes.
+The fixed corpus mixes identifiers, paraphrases, stale and contradictory claims,
+no-answer cases and hostile text; `--live` uses an installed local model.
+Neither mode downloads a model or publishes.

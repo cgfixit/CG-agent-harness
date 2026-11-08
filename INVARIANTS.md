@@ -81,7 +81,7 @@ are unreachable from confined MCP stdio children: command paths, cwd, and read/w
 roots overlapping that home are refused (`MCP_HOME_REFUSED`). Actual backend,
 probe result and declared capabilities are audited on `mcp_stdio_spawn`;
 `MCP_HOME_REFUSED`, `MCP_SSRF_DENIED` and `MCP_TIMEOUT` audit as `mcp_refused` with
-the error code. See `docs/MCP_CLIENT.md` and
+the error code. See `docs/MCP.md` and
 `docs/PROCESS_LIFECYCLE.md` for residual limits.
 Servers are operator-declared in `mcp.servers`; unknown names fail closed.
 SSE URLs reuse DNS-pinned SSRF checks; loopback SSE is `mcp.sse_allow_loopback`
@@ -873,7 +873,7 @@ machine keys and retires that owner's schedules and completion notifications.
 Key rows stay until an explicit key-id revoke.
 Audits contain recognized tools, public IDs and coarse outcomes, never content.
 All gateway settings remain restart-only, outside `RELOADABLE`.
-Remote exposure needs the deployment acceptance in `docs/MCP_SERVER.md`; nothing
+Remote exposure needs the deployment acceptance in `docs/MCP.md`; nothing
 here opens a LAN/public service or tunnel.
 
 ## Self-knowledge never widens authority

@@ -1,15 +1,24 @@
 # Coding pipeline
 
-Optional, disarmed-by-default coding loop. Index: [README.md](../README.md).
+Optional, disarmed-by-default coding loop ([README](../README.md#design-invariants)).
 
 ## 9. (Optional, advanced) Arm the coding pipeline
 
-Coding execution is optional and disarmed by default. Complete this section only
-when you intend to authorize work in a selected repository.
+Coding execution is optional and disarmed by default. Complete it only to
+authorize work in a selected repository.
 
-The pipeline clones a GitHub repository, asks a local or optional cloud model to
-propose a patch, verifies it in a sandbox, and waits for personal review before
-commit, push, and draft pull request creation.
+```mermaid
+flowchart LR
+    S["/agent run, or /goal stage"] --> C["/agent confirm reason"]
+    C --> W[Owned clone under data/agentic/workspaces]
+    W --> P[Local or cloud planner proposes bounded edits]
+    P --> V[Fixed check profile in Seatbelt or bubblewrap]
+    V -->|check failed, iterations left| P
+    V -->|awaiting_review| R["/agent status: complete diff"]
+    R --> A["/agent approve reason"] --> U["/agent push reason"] --> D["/agent publish reason: draft PR"]
+```
+
+Every arrow after the clone is its own gate; model prose crosses none.
 The combined write policy ships closed: `agentic.enabled`,
 `agentic.deepagent_github.enabled` and `allow_git_write_tools` are false. Individual
 settings such as `mode: write`, `writes_enabled: true` and cloud-provider flags
@@ -18,7 +27,7 @@ are not all false. Inspect the complete policy before enabling its master gates.
 ### 9.1 Install and authenticate the GitHub CLI
 
 Install the [GitHub CLI](INSTALL.md#26-optional-for-the-coding-pipeline-only-github-cli)
-if you skipped it, then sign in (browser login is simplest) and confirm:
+if you skipped it, then sign in and confirm:
 
 ```bash
 gh auth login
@@ -69,8 +78,6 @@ cloud-provider child flags false when their parent allow flag is false.
 `gh` call; a pair whose worst case reaches the 900-second run setup budget is
 refused at load.
 
-Quit/relaunch the app, or stop/restart `serve`, to load the changed configuration.
-
 ### 9.3 Run it from the console
 
 Select the repository in configuration, then prepare its committed Cargo.lock
@@ -109,9 +116,8 @@ Back in the app or browser console:
    `/agent publish <run-id> <reason>` separately opens the draft PR.
 
 `/agent cancel` discards only a staged request. `/agent stop <job-id>` requests
-active cancellation; observed native descendants are cleaned up, but escaped or
-interrupted work may survive. `/agent reject <run-id>` rejects a pending candidate;
-`/agent discard <run-id>` cleans up a terminal run.
+cancellation; escaped or interrupted descendants may survive. `/agent reject
+<run-id>` rejects a candidate; `/agent discard <run-id>` cleans up a terminal run.
 
 CLI writes need `--reason=<why> --confirm` (publication also a reviewed
 `--body-file`); API writes need `reason`, `confirm: true` and, for publication,
@@ -477,12 +483,11 @@ remain unchanged.
 
 ## Isolation check
 
-The HTTP server reaches agentic execution only through twelve actions in
-`src/shim`. `tests/invariant_guard.rs` checks `src/server`, `src/shim`, `src/llm`,
-`src/common` and `src/netconnect` against the agentic tree in both directions:
-literal and direct paths, macro indirection, and `use` bindings including
-grouped, nested, renamed, inline-module and function-local imports. Comments do
-not trigger the guard. Child exit codes are the entire interface; a signal
+The HTTP server reaches agentic execution only through the twelve
+`shim::ACTIONS`. `tests/invariant_guard.rs` checks every non-agentic tree against
+`src/agentic` in both directions, including macro indirection and grouped,
+renamed or function-local `use` bindings; comments do not trigger it. Child
+exit codes are the entire interface; a signal
 death reports `-1` plus a stderr line naming the signal
 ([I6](../INVARIANTS.md#i6--process-isolation-between-the-console-and-the-agentic-pipeline)).
 

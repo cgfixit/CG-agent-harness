@@ -43,19 +43,19 @@ server -> MCP runtime -> declared stdio children / SSE servers
 | Changing | Read first / trap |
 |----------|-------------------|
 | Accounts, TLS, ownership, auditor role | [Secure portal](docs/SECURE_RESEARCH.md#accounts-and-roles), [native trust](docs/DESKTOP.md#ownership-ports-and-security-boundaries) |
-| Chat search/fetch, providers | [Search permissions](docs/SECURE_RESEARCH.md#google-search): Tavily requires explicit selection; `auto` ignores its key. Listings grant no page access. |
+| Chat search/fetch, providers, goal web routing | [Search permissions](docs/SECURE_RESEARCH.md#google-search), [router](docs/WEB_DECISION_ROUTER.md): Tavily requires explicit selection; `auto` ignores its key. Listings grant no page access. |
 | Exact fetch fallback | [Firecrawl](docs/SECURE_RESEARCH.md#fetch-discovery-and-research): opt-in, sends URLs off-machine; same-URL results only, never discovery/crawl/research. |
 | Web research/jobs | [Research](docs/SECURE_RESEARCH.md#fetch-discovery-and-research), [job contract](INVARIANTS.md#a-detached-run-cannot-outlive-its-gates): local model, separate discovery/synthesis deadlines; owner-bound jobs survive tabs, not restart. |
 | Provider keys | [Credential storage](docs/INSTALL.md#supported-managed-keys): inherited environment (even empty) wins; saved SerpAPI/Tavily/Firecrawl keys apply next search/read. |
 | Memory, notes corpus | [Memory contract](docs/STRUCTURED_MEMORY.md#two-memory-systems), [source owners](src/server/README.md): pinned notes, uploaded corpus and structured facts are distinct. |
 | Clone reads, edits, Git approval | [Coding pipeline](docs/CODING_PIPELINE.md): retrieval and publication have separate gates. |
 | Coding jobs, schedules, `/loop` | [Retained jobs](docs/INSTALL.md#retained-jobs-and-runs), [loops](docs/CONSOLE.md#71-sessions-and-bounded-chat-continuation) |
-| Outbound MCP / subprocess cleanup | [MCP client](docs/MCP_CLIENT.md), [lifetime limits](docs/PROCESS_LIFECYCLE.md): capabilities select confinement; process groups are not strict containment. |
-| Inbound MCP memory gateway | [MCP server](docs/MCP_SERVER.md): separate machine credentials, owner-bound read-only facts. |
+| Outbound MCP / subprocess cleanup | [MCP client](docs/MCP.md#outbound-client-capabilities), [lifetime limits](docs/PROCESS_LIFECYCLE.md): capabilities select confinement; process groups are not strict containment. |
+| Inbound MCP memory gateway | [MCP gateway](docs/MCP.md#private-read-only-memory-gateway): separate machine credentials, owner-bound read-only facts. |
 | Ollama, context, compaction | [Models](docs/MODELS.md), [compaction](docs/CONSOLE.md#local-history-compaction): inspect live allocation; never send `num_ctx`. |
 | Session search/export | [Transcripts](docs/CONSOLE.md#search-and-export-session-transcripts): owner-scoped, local only. |
 | Spend, estimates, webhooks | [Spend/notifications](docs/SPEND_AND_NOTIFICATIONS.md): estimates are not charges; notifications grant no job authority. |
-| Config reload | [Reload](docs/CONFIG_RELOAD.md): `src/server/config_reload.rs::RELOADABLE` lists reloadable limits; authority and `web.concurrency` require restart. |
+| Config reload | [Reloadable limits](docs/INSTALL.md#reload-limits-without-a-restart): `src/server/config_reload.rs::RELOADABLE` lists them; authority and `web.concurrency` require restart. |
 | netconnect | [Gates/scope](docs/netconnect.md): tools inventory is not chat dispatch. |
 | Self-manual, live state, `/diag` | [Prompt context](docs/CONSOLE.md#72-default-soul-effective-prompt-and-persona-editing), [diagnostics](docs/TROUBLESHOOTING.md): untrusted local context, no additional authority. |
 

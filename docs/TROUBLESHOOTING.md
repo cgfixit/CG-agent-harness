@@ -24,13 +24,13 @@ See [setup](../README.md), [models](MODELS.md) and [coding](CODING_PIPELINE.md).
 | Persona/proposal save conflicts or history is full | Changed base revision or 32-record limit | Review current content/history; deliberately archive records if needed. Never blindly retry or delete active persona |
 | Selected skill prevents chat | Missing, empty, unreadable or unsafe file; wrong directory ID | Restore `<home>/skills/<id>/SKILL.md` or `/skill clear`; inspect `/prompt` |
 | `/loop` does not edit files | Chat continuation | Use [goal staging](CODING_PIPELINE.md#94-stage-a-session-goal-as-a-coding-task) |
-| Warning: configured `/loop` budgets are unlimited | Both caps zero or absent | Set a finite cap, then [Reload limits](CONFIG_RELOAD.md). Upgrades preserve configuration |
+| Warning: configured `/loop` budgets are unlimited | Both caps zero or absent | Set a finite cap, then [Reload limits](INSTALL.md#reload-limits-without-a-restart). Upgrades preserve configuration |
 | Goal task is stale/interrupted/unavailable | Goal changed, job already submitted, restart interrupted work or retention removed job evidence | Inspect `/goal task`, `/agent jobs` and `/agent runs`; never infer approval or replay work from `GOAL_DONE` |
 | App asks for Rosetta or shows Intel-only kind | Old app copy, forced translation or separate Intel-only component | Verify the installed universal copy and both executable slices; see [hardware](INSTALL.md#21-hardware-and-macos) before changing the OS |
 | `401 Unauthorized` on harness requests | Missing, expired or revoked account session | Sign in again; a fresh bootstrap account must replace its password. A harness key cannot grant access |
 | App reports a home ownership conflict | Another app/server owns the same home | Quit that owner normally before retrying; do not delete its lock |
 | App waits at startup | File-access mediation, unavailable backend or damaged/moved bundle | Check macOS prompts; quit, move the complete app to Applications and retry; inspect Setup without deleting the home |
-| Changing config appears to do nothing | Most startup settings require restart; supported limits need an explicit reload | Use [Reload limits](CONFIG_RELOAD.md) for supported fields; otherwise Cmd-Q/relaunch or restart `serve`. Window close only hides it |
+| Changing config appears to do nothing | Most startup settings require restart; supported limits need an explicit reload | Use [Reload limits](INSTALL.md#reload-limits-without-a-restart) for supported fields; otherwise Cmd-Q/relaunch or restart `serve`. Window close only hides it |
 | Offline preparation fails in the app | Missing toolchain, Python/SDK, Cargo.lock, cached sources or an existing snapshot | Inspect Setup and [offline Cargo verification](CODING_PIPELINE.md#offline-cargo-verification); the app does not download dependencies |
 | Chat takes too long or times out | Wrong exact model/endpoint, unavailable service, slow loading or inference timeout | Check [inventory](MODELS.md), `/model` and Setup diagnostics; cancel with `/loop stop`. Avoid repeated submissions |
 | Chat reports `502 HARNESS_LLM_ERROR` with `model server returned HTTP ...` | The local model server returned a non-success HTTP status | Check upstream status, endpoint/model and model-server diagnostics. Harness drops error bodies unread, omits them from debug logs and releases the chat gate without waiting for them |
@@ -45,7 +45,7 @@ See [setup](../README.md), [models](MODELS.md) and [coding](CODING_PIPELINE.md).
 
 The harness reads no host file outside its home, and chat cannot call MCP
 tools. To read host files, declare a read-only stdio filesystem MCP server
-([example](MCP_CLIENT.md#read-only-host-files-on-macos)) with explicit
+([example](MCP.md#read-only-host-files-on-macos)) with explicit
 `read_roots`, empty `write_roots` and `network: deny`, then call its tool
 yourself; each call needs `confirm: true`.
 

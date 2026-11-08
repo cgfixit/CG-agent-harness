@@ -363,7 +363,7 @@ fn parse_server(value: &serde_yaml_ng::Value) -> Result<DeclaredServer> {
         Transport::Stdio => {
             let capabilities: StdioCapabilities =
                 serde_yaml_ng::from_value(get("capabilities").cloned().ok_or_else(|| {
-                    HarnessError::config("MCP stdio requires explicit versioned capabilities; see docs/MCP_CLIENT.md")
+                    HarnessError::config("MCP stdio requires explicit versioned capabilities; see docs/MCP.md")
                 })?)
                 .map_err(|_| HarnessError::config("invalid MCP stdio capabilities"))?;
             capabilities.validate()?;
