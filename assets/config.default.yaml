@@ -116,7 +116,7 @@ notes_corpus:
   max_concurrent_ingests: 2 # 1–8
 
 # These API limits and the listed web limits support admin Reload limits/SIGHUP.
-# See docs/CONFIG_RELOAD.md; secrets, authority and other settings require restart.
+# See the reloadable-limits section of docs/INSTALL.md; secrets, authority and other settings require restart.
 api:
   rate_limit:
     max_requests: 300      # 1–100000; per-IP request ceiling within the window
@@ -131,7 +131,7 @@ api:
     # default, or raise it toward the ceiling your model window allows.
     max_tokens: 8192 # same backend-dependent ceiling as local chat; legacy 0 selects 2048
 
-# Server-side /loop runner bounds (Reload limits/SIGHUP; see docs/CONFIG_RELOAD.md
+# Server-side /loop runner bounds (Reload limits/SIGHUP; see docs/INSTALL.md
 # and docs/CONSOLE.md). The console reads these from /api/status at runtime and
 # falls back to these values. Both budgets ship finite (operator decision,
 # 2026-10-30, #675): an unattended run stops cleanly instead of running until a
@@ -235,7 +235,7 @@ notifications:
 # SSE loopback is an explicit toggle and ships off. MCP tools never appear on /loop.
 # stdio command[0] must be an absolute path. Calls require confirm: true.
 # Each stdio entry requires capabilities version 1; missing/invalid grants fail
-# closed. See docs/MCP_CLIENT.md for filesystem, read_roots, write_roots, network, containment
+# closed. See docs/MCP.md for filesystem, read_roots, write_roots, network, containment
 # and strict process/memory limits. These authority settings require restart.
 mcp:
   # Separate inbound gateway: no listener or capabilities until explicitly selected.

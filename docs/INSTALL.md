@@ -506,7 +506,7 @@ repair files.
 Only local/fallback `api_key`, MCP `env` values and complete SSE `url` accept
 whole-value `env:NAME`, e.g. `api_key: env:LOCAL_MODEL_TOKEN`, resolved once at
 startup. Arbitrary names must be inherited, not saved through API Keys. MCP
-refuses reserved sources; see [declarations](MCP_CLIENT.md).
+refuses reserved sources; see [declarations](MCP.md#migrate-a-stdio-declaration).
 
 Forwarded or proxy requests are unsupported. See [secure setup](SECURE_RESEARCH.md).
 
@@ -517,7 +517,7 @@ keys are invalid. Only literal `true` enables gates.
 Nest `local_llm` under `models`; a root-level block is rejected rather than
 silently ignored. `workspace_root` must stay beneath the active home's `data/`;
 the harness creates `data/agentic/workspaces` automatically.
-Use **Reload limits** or Unix SIGHUP for [reloadable limits](CONFIG_RELOAD.md).
+Use **Reload limits** or Unix SIGHUP for the [reloadable limits](#reload-limits-without-a-restart).
 Other settings require quit/relaunch or `serve` restart; closing the window only
 hides it. Coding-policy checks reread disk at mutation boundaries.
 
@@ -542,6 +542,48 @@ Use [response style](CONSOLE.md#74-customize-response-style) before generation
 parameters: `max_tokens` limits output, not context (chat zero is invalid), and
 `temperature` changes sampling, not filler filtering.
 
+### Reload limits without a restart
+
+Edit `config.yaml`, then choose **Reload limits** as a non-bootstrap administrator.
+Authenticated, CSRF-guarded `POST /api/config/reload` accepts `{}`; operators,
+auditors and auth-disabled homes cannot call it. Unix SIGHUP to the owned
+**backend** PID (native sidecar, not the desktop parent) runs the same code.
+Success returns `changed`, `limits.revision`, the applied snapshot and
+`reloadable`; a no-op keeps the revision. New operations use the new snapshot;
+running web fetch, research and chat-tool operations keep theirs. Rate-limit
+hits, shared fetch capacity, locks and cancellation survive, so tightening a
+ceiling can answer HTTP 429 at once; SIGHUP recovers a ceiling that blocks the
+route itself. The route never writes YAML or changes permissions.
+
+`src/server/config_reload.rs::RELOADABLE` lists the 28 keys; the shipped YAML
+comments state each range, and startup shares the bounds:
+
+| Group | Reloadable keys |
+|---|---|
+| API | `api.rate_limit.max_requests`, `.window_seconds`; `api.harness_loop_rate_limit.max_requests`, `.window_seconds`, `.max_tokens` |
+| Loop | `loop.max_turns`, `max_total_completion_tokens`, `max_failures`, `cooldown_ms` |
+| Web limits | `web.response_bytes`, `request_seconds`, `pages`, `run_bytes`, `run_seconds`, `per_site_pages`, `pace_ms`, `cache_pages`, `cache_bytes` |
+| Web research | `web.subqueries`, `rounds`, `evidence_tokens`, `model_tokens`, `total_tokens`, `research_seconds`, `synthesis_seconds`, `stale_seconds`, `chat_tool_calls`, `carry_forward_sources` |
+
+Both loop caps zero or absent sets `/api/status.loop.unbounded`; a transition
+into unbounded warns and audits `loop_budgets_unlimited`
+([loop guidance](CONSOLE.md#71-sessions-and-bounded-chat-continuation)).
+`web.concurrency`, `web.goal_web_default`, `web.search*`, `web.firecrawl*` and
+`web.max_rules` (a cap below the saved rule count refuses the policy) are
+restart-only, as are TLS, authentication, credentials,
+`security.allow_plaintext_key_file`, models, sandbox, coding policy, MCP
+declarations, notifications and unknown keys.
+
+An unreadable or [non-private](#home-and-optional-credentials) file, a symlink,
+invalid UTF-8/YAML, more than 1 MiB, or a malformed number or limit returns
+`CONFIG_RELOAD_INVALID`; a candidate that also changes anything outside the
+allowlist returns `CONFIG_RESTART_REQUIRED`. Both keep every running limit.
+Audit `config_reloaded` records source (`http`/`sighup`), revision and whether
+anything changed; `config_reload_refused` records source and a coarse code,
+never raw YAML or secrets. Refusal leaves the edited file on disk, where
+coding write-policy revalidation still reads it. Smaller cache bounds govern
+later operations without promising immediate eviction.
+
 ### Tunables you may want to know about
 
 Every tunable lives in `assets/config.default.yaml` and is copied to `config.yaml`
@@ -552,7 +594,7 @@ on first run. Common operator settings follow:
 | `app.agent_job_poll_ms` | 1500 | Browser job polling interval, clamped to 1–30 s |
 | `api.rate_limit.max_requests` / `window_seconds` | 300 / 240 | Per-IP sliding-window ceiling on every route: 75 a minute sustained, above the 44 a minute a console polls while an `/agent` job runs |
 | `api.harness_loop_rate_limit.*` | 34 / 500 s / 8192 tokens | Separate `/loop` budget; same backend-dependent ceiling as local chat after the legacy `0` → `2048` fallback |
-| `loop.max_turns` / `loop.max_total_completion_tokens` | 50 / 200000 | Per-run caps; zero or absent keys stay unlimited. When both are unlimited, startup and console warn; upgrades preserve configuration. [Reload limits](CONFIG_RELOAD.md) |
+| `loop.max_turns` / `loop.max_total_completion_tokens` | 50 / 200000 | Per-run caps; zero or absent keys stay unlimited. When both are unlimited, startup and console warn; upgrades preserve configuration. [Reloadable](#reload-limits-without-a-restart) |
 | `models.cloud_chat.enabled` | true | Allows `/model use grok` / `claude`; each provider has its own `enabled` and `model` |
 | `models.cloud_chat.max_tokens` / `timeout_sec` | 10000 / 360 | Cloud reply ceiling and timeout; boot refuses 0 or >32768 tokens, or a timeout outside 1–720 s |
 | `models.local_llm.max_tokens` | 4096 | Local reply ceiling: 1–25904 with resolved Ollama and explicit reasoning `none`; otherwise 1–12952, with twice the ceiling reserved for completion. Invalid combinations fail startup with `CONFIG_ERROR` |

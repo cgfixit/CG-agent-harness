@@ -8,19 +8,16 @@ This manual is static text bundled with the build and indexed at startup. It is 
 
 ## readme: capability overview
 
-- Web research: SerpAPI, Tavily, or public Google search; permitted fetches and crawls (opt-in Firecrawl fallback); `/web research` jobs with planned subqueries and… Starts: On in allowlist mode with one seeded rule, Google search; listings never authorize page reads; failed keyed searches fall back to public Google.
-- Goal loops: `/goal` and `/loop` continue a long piece as a run outliving the browser, under turn, token and failure limits. Starts: Fresh defaults: 50 turns, 200,000 tokens, two failed turns. Unlimited homes warn; cloud refuses loops.
-- Memory: Shared pinned notes plus account-private facts you select per session, recall, and proposed summaries that carry findings between sessions. Starts: Capture, recall, and retrieval on; applying a proposal needs review (setup).
-- Local chat: Streaming sessions with owner-scoped transcript search and per-session Markdown export in the Sessions pane, text and DOCX attachments, prompt… Starts: Ollama on loopback by default; listed, pulled, and tuned from the console. No persona or style applies until you write `soul.md` or pick a preset.
+- Web research: Search listings, permitted fetches and crawls, `/web research` jobs with planned subqueries and checked quotes. Starts: On, allowlist mode, one seeded Google rule.
+- Goal loops: `/goal` and `/loop` continue a long piece in a run that outlives the browser. Starts: 50 turns, 200,000 tokens, two failed turns; cloud refuses loops.
+- Memory: Shared pinned notes plus account-private facts you select, recall or accept from proposals. Starts: On; applying a proposal needs review.
+- Local chat: Streaming sessions, transcript search and export, text and DOCX attachments, prompt skills, nine style presets, `/prompt`, sandboxed HTML preview. Starts: Ollama on loopback; no persona or style until you add one.
+- Analytics, diagnostics: Session, token and run history with USD where rates exist, **Estimate draft** before a cloud call, `/diag` redacted log tails. Starts: On; local inference unpriced; `/diag` admin or `portal_auditor` only.
+- Cloud chat: Optional Grok or Claude; only the new message leaves, never history, memory or web context. Starts: Needs a provider key.
 
 ## readme: capability overview (part 2)
 
-- Analytics: Session, token, and run history with USD where rates exist, plus **Estimate draft** before a cloud call. Starts: On after sign-in; read-only; local inference unpriced.
-- Cloud chat: Optional Grok or Claude. Sends only the new message, never history, memory, skills, attachments, or web context. Starts: Needs a provider key; refused for `/loop`.
-- MCP integrations: Declared external tools and a separate read-only memory gateway with dedicated machine credentials. Starts: Both off.
-- Reviewed coding: Optional edits in isolated clones; sandboxed checks, diff review, separate Git approval. Starts: Off until configured for a selected repository.
-- LAN observation: Netconnect reads in-scope interfaces, routes, and neighbors from local tables. Starts: Off with empty scope; only the budgeted `diag` probe sends packets; no scans or device control.
-- Self-knowledge and diagnostics: Bundled harness manual and live status as untrusted local-chat context; `/diag` shows bounded, redacted tails of allowlisted home logs. Starts: Manual on, never sent to cloud chat or loops; `/diag` on, admin or `portal_auditor` only.
+- Off by default: Reviewed coding in isolated clones with sandboxed checks and separate Git approval; MCP tools and a read-only memory gateway; Netconnect LAN… Starts: Each needs explicit configuration; only the budgeted `diag` probe sends packets.
 
 ## agents: process and home map
 
@@ -165,17 +162,17 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 - `/memory save <text> :: <reason>`: Confirm an immediate private fact write
 - `/model [status]`, `/model list`, `/model use <name>`: Inspect/list/select a local chat model or explicit cloud provider; does not select the coding planner
-- `/net status`, `/net devices`: Read-only scope and gates, or passive neighbors. Aliases and refused tier words: netconnect
+- `/net status`, `/net devices`, `/net diag`: Read-only scope and gates, passive neighbors, or the budgeted diagnostics probe. Aliases and refused tier words: netconnect
 - `/prompt`: Private preview of the next chat system prompt
 - `/registry`: Combined skill, tool and connector catalog
 - `/session`, `list`, `info`, `new [title]`, `rename <title>`, `use <id>`: List sessions, inspect the current session, create, rename or reopen one
 - `/skill`, `status`, `use <id...>`, `clear`: Inspect, replace or clear session prompt-skill selection
 - `/skill check:<profile>`: Select one fixed check for an already staged coding request
 - `/skills [all|help|<name>]`: Inspect wired skills, the full catalog including optional prompt files, help, or skills matching a display name (which can differ from the `/skill…
-- `/soul`, `status`, `on`, `off`, `edit`, `history`, `propose`: Inspect, toggle or open persona editing/proposal flows
 
 ## console: slash-command quick reference (part 4)
 
+- `/soul`, `status`, `on`, `off`, `edit`, `history`, `propose`: Inspect, toggle or open persona editing/proposal flows
 - `/soul apply <id> <reason>`, `reject <id> <reason>`, `review <id>`: Review a retained proposal before explicitly applying or rejecting its exact revision
 - `/status`: Runtime status and unlimited-loop warning; account access required
 - `/style`, `/style <name>`, `/style off`: Inspect/select a session output style, or clear it without changing soul.md
@@ -213,7 +210,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 ## api: registered routes (part 2)
 
-- POST `/api/config/reload`: Reload the limits allowlist (administrator; CONFIG_RELOAD.md)
+- POST `/api/config/reload`: Reload the limits allowlist (administrator)
 - GET `/api/auth/setup-status`: `setup_code` while the one-time code works; public
 - POST `/api/auth/login`: Login; public with early guards
 - POST `/api/auth/logout`: Revoke the current session
@@ -395,16 +392,28 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - Chat says `DIAG_SURFACE_FORBIDDEN` → Send a local turn first, or `/diag forget`
 - `/diag unslop` says `DIAG_NOT_FOUND` → `/diag` reads only `<home>/logs/unslop.jsonl`
 
-## mcp: external client capabilities
+## mcp: external client and private memory gateway
 
-MCP requires declared servers and enabled `mcp.enabled`. Calls need an authenticated operator/admin, CSRF, a declared namespaced tool in the broker allowlist, and literal `confirm: true`. Discovery, models and repositories cannot expand declarations. `/loop` has no MCP tools. The client is separate from the read-only memory gateway, whose listener, keys and tool grants are independent.
-Migrate a stdio declaration: Stdio declarations need `capabilities` or startup refuses. Review paths and lifecycle policy; upgrades grant no ambient access. Disabled, undeclared MCP stays off. Declarations require restart, outside `RELOADABLE`.
+The harness speaks the Model Context Protocol on two independent surfaces. The **outbound client** calls tools of servers an operator declares in `config.yaml`; `mcp.enabled` gates it. The **inbound gateway** serves three read-only memory tools to machine clients on its own loopback listener; `mcp.server.enabled` gates it. Neither inherits the other's keys, grants or listener, and `/loop` never receives MCP tools. Both ship off.
+Outbound client capabilities: Calls need an authenticated operator or administrator, CSRF, a declared namespaced tool in the broker allowlist, and literal `confirm: true`. Discovery, models and repositories cannot expand declarations; disabled or undeclared MCP stays off.
+Migrate a stdio declaration: Stdio declarations need `capabilities` or startup refuses. Review paths and lifecycle policy; upgrades grant no ambient access. Declarations require restart, outside `RELOADABLE`.
+
+## mcp: external client and private memory gateway (part 2)
+
 Lifecycle choices: Strict mode requires `processes` 8–128, `memory_mb` 64–4096, systemd 254 or newer with `--expand-environment=no`, and cgroup v2. Counts include supervisor and runtime processes; memory covers the cgroup. The harness uses the existing user (or root's system) service manager, never sudo or host namespace changes; missing controllers or permissions refuse.
-
-## mcp: external client capabilities (part 2)
-
 Explicit Windows trusted-server exception: Windows cannot enforce this client's filesystem/network sandbox policy. Only for a trusted server, an operator can deliberately declare:
 Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show declarations/grants without spawning or claiming readiness. Success audits backend, policy and probe result; refusals audit policy/error code. Arguments, results and environment secrets stay out of audit.
+
+## mcp: external client and private memory gateway (part 3)
+
+Private read-only memory gateway: The gateway runs in the harness process, uses the owner-filtered memory store, and listens separately from the console. It does not open another memory database or expose the portal. New and upgraded homes have no inbound listener unless `mcp.server.enabled` is literal `true`. `mcp.server.tools` defaults empty. Supported tools are `memory_list_facts`,…
+Deliberate local activation: 1. Stop the backend before changing listener configuration. Keep the home private; on Unix, its owner must own the directory and its mode must be `0700`. If an older home uses `0755`, explicitly change its permissions to `0700` first. 2. Enable structured memory and select exactly the tools to publish:
+Keys, isolation and revocation: Machine keys are independent of console users and cookies, even when console account authentication is disabled. A key has a public 128-bit ID and a random 256-bit secret. Only the SHA-256 secret hash is stored, compared in constant time; unknown/disabled keys follow a dummy-hash comparison path. No password KDF runs per tool call. The dedicated…
+
+## mcp: external client and private memory gateway (part 4)
+
+Bounds and failures: Limits are under `mcp.server`. Rates use fixed one-minute windows. Authentication, body read and response collection share the request deadline. Synchronous store work holds its concurrency permit until completion even if the caller times out. Request body limits apply to streamed bodies, independent of Content-Length. The complete serialized response is…
+Future remote exposure requires a separate reviewed change: This release has no remote mode. LAN, overlay or public exposure needs a separately reviewed change covering interface selection, TLS, machine identity, revocable scope, Host and Origin rules, bounded load and rollback; each new tool needs its own capability and tests, and none may write canonical facts or inherit coding authority.
 
 ## config: sections and keys (values omitted)
 
@@ -433,15 +442,15 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - notes_corpus.max_home_bytes: 1048576–33554432
   - notes_corpus.max_files_per_request: 1–16
   - notes_corpus.max_concurrent_ingests: 1–8
-- api: These API limits and the listed web limits support admin Reload limits/SIGHUP. See docs/CONFIG_RELOAD.md; secrets, authority and other settings require restart.
+- api: These API limits and the listed web limits support admin Reload limits/SIGHUP. See the reloadable-limits section of docs/INSTALL.md; secrets, authority and other settings require restart.
   - api.rate_limit
   - api.harness_loop_rate_limit
-- loop: Server-side /loop runner bounds (Reload limits/SIGHUP; see docs/CONFIG_RELOAD.md and docs/CONSOLE.md). The console reads these from /api/status at runtime and falls back to these values. Both…
-  - loop.max_turns: 0 (unlimited) or 1–1000000
+- loop: Server-side /loop runner bounds (Reload limits/SIGHUP; see docs/INSTALL.md and docs/CONSOLE.md). The console reads these from /api/status at runtime and falls back to these values. Both budgets ship…
 
 ## config: sections and keys (values omitted) (part 3)
 
-- loop.max_total_completion_tokens: 0 (unlimited) or 1–100000000
+- loop.max_turns: 0 (unlimited) or 1–1000000
+  - loop.max_total_completion_tokens: 0 (unlimited) or 1–100000000
   - loop.max_failures: 1–100
   - loop.cooldown_ms: 0–300000
 - web: Bounded public content reads; a fresh home enables web with one seeded allow rule, https://www.google.com/* (public Google search); /web deny removes it. Missing values in existing homes use these…
@@ -453,11 +462,11 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - web.html_parser_handles: 64–4096; bound open-element/formatting state, restart-only
   - web.concurrency: 1–4 total fetches; restart-only (shared permits)
   - web.max_rules: 1–256 allowlist rules (one per pattern; a grant names 1–32); restart-only; file cap 4 KiB per rule, at least…
-  - web.pages: 1–40 per run
 
 ## config: sections and keys (values omitted) (part 4)
 
-- web.run_bytes: 1024–8388608 per run
+- web.pages: 1–40 per run
+  - web.run_bytes: 1024–8388608 per run
   - web.run_seconds: 1–180
   - web.per_site_pages: 1–20
   - web.pace_ms: 100–5000 between requests to an origin; public Google searches wait at least 3000 (code floor)
@@ -471,11 +480,11 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - web.model_tokens: 256–2048 maximum synthesis completion
   - web.total_tokens: 2048–128000, held at 32000 unless auto_tune measured a larger window; sized for a verified 32768-token window
   - web.research_seconds: 10–3600 discovery and planning deadline
-  - web.synthesis_seconds: 10–3600 answer deadline, started after discovery; missing keys use 300
 
 ## config: sections and keys (values omitted) (part 5)
 
-- web.stale_seconds: 60–31536000; fetch age, not publication-date verification
+- web.synthesis_seconds: 10–3600 answer deadline, started after discovery; missing keys use 300
+  - web.stale_seconds: 60–31536000; fetch age, not publication-date verification
   - web.search
   - web.firecrawl
 - notifications: Completion webhooks are explicit operator configuration and restart-only.
@@ -490,11 +499,11 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - notifications.poll_interval_sec: 1–60; durable outbox scan
   - notifications.max_attempts: 1–3 per delivery/replay; IDs remain stable
   - notifications.retry_delay_sec: 1–60; exponential backoff base
-  - notifications.max_backoff_sec: 1–3600; before bounded jitter
 
 ## config: sections and keys (values omitted) (part 6)
 
-- notifications.jitter_percent: 0–50; nonnegative random delay
+- notifications.max_backoff_sec: 1–3600; before bounded jitter
+  - notifications.jitter_percent: 0–50; nonnegative random delay
   - notifications.retention_sec: 60–2592000; pending and terminal delivery retention
   - notifications.max_replays: 0–10; explicit owner-confirmed replay cycles
   - notifications.timeout_sec: 1–30, includes DNS and request
@@ -511,11 +520,11 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
 - tls
   - tls.enabled: newly seeded homes use HTTPS; existing configs are not rewritten
   - tls.auto_generate: unique local cert/key in a private atomic PEM bundle
-  - tls.certificate_days: 1–365; renew explicitly before expiry
 
 ## config: sections and keys (values omitted) (part 7)
 
-- tls.cert_file: optional operator PEM chain, relative to home or absolute
+- tls.certificate_days: 1–365; renew explicitly before expiry
+  - tls.cert_file: optional operator PEM chain, relative to home or absolute
   - tls.key_file: paired private PEM key; never overwritten by automatic generation
 - auth
   - auth.enabled
@@ -541,13 +550,13 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - agentic.enabled: master switch; CLI no-ops (exit 0) while false
   - agentic.repo: set owner/name explicitly before enabling coding
   - agentic.mode: "read" | "write"
-  - agentic.writes_enabled: writes need mode=write AND this AND reason AND confirm
-  - agentic.gh_min_version
-  - agentic.gh_timeout_sec
 
 ## config: sections and keys (values omitted) (part 8)
 
-- agentic.gh_retries
+- agentic.writes_enabled: writes need mode=write AND this AND reason AND confirm
+  - agentic.gh_min_version
+  - agentic.gh_timeout_sec
+  - agentic.gh_retries
   - agentic.registry_path: must stay under the home data/ tree
   - agentic.allowed_read_ops
   - agentic.deepagent_github
@@ -564,11 +573,11 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - diagnostics.self_knowledge
   - diagnostics.self_manual_max_chunks: 1–8 chunks per turn
   - diagnostics.self_manual_max_chars: 512–16000 injected characters per turn
-  - diagnostics.self_manual_min_score: finite, >= 0; Tantivy score floor, 0 keeps every hit
-  - diagnostics.live_state
 
 ## config: sections and keys (values omitted) (part 9)
 
+- diagnostics.self_manual_min_score: finite, >= 0; Tantivy score floor, 0 keeps every hit
+  - diagnostics.live_state
 - memory: Account-private structured facts, governed proposals, and optional episodes. Distinct from harness.json.memory_enabled, which only includes pinned /memory notes in the chat prompt. Missing, quoted,…
   - memory.enabled
 - structured_memory
@@ -585,12 +594,12 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - structured_memory.suggestion_supported
   - structured_memory.suggestion_max_input_chars: clamped to 256–32000; total across input/output, split equally
   - structured_memory.suggestion_max_queue: clamped to 1–32; queued inputs; one additional generation may be running
-  - structured_memory.suggestion_queue_ttl_secs: clamped to 1–3600; volatile inputs expire; restart drops them
-  - structured_memory.suggestion_idle_ms: clamped to 10–30000
 
 ## config: sections and keys (values omitted) (part 10)
 
-- structured_memory.status_poll_ms: clamped to 250–30000; visible Memory pane only
+- structured_memory.suggestion_queue_ttl_secs: clamped to 1–3600; volatile inputs expire; restart drops them
+  - structured_memory.suggestion_idle_ms: clamped to 10–30000
+  - structured_memory.status_poll_ms: clamped to 250–30000; visible Memory pane only
   - structured_memory.max_facts_per_owner: clamped to 1–256
   - structured_memory.max_fact_chars: clamped to 1–4000
   - structured_memory.max_category_chars: clamped to 1–64
@@ -605,12 +614,12 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - structured_memory.max_search_query_chars: clamped to 1–256
   - structured_memory.max_search_results: clamped to 1–64
   - structured_memory.max_retrieval_results: clamped to 1–16
-  - structured_memory.max_retrieval_tokens: clamped to 1–16
-  - structured_memory.max_retrieval_token_chars: clamped to 1–64
 
 ## config: sections and keys (values omitted) (part 11)
 
-- structured_memory.max_search_time_ms: clamped to 10–5000
+- structured_memory.max_retrieval_tokens: clamped to 1–16
+  - structured_memory.max_retrieval_token_chars: clamped to 1–64
+  - structured_memory.max_search_time_ms: clamped to 10–5000
   - structured_memory.pinned_prompt_chars: clamped to 1–3000
   - structured_memory.selected_fact_prompt_chars: clamped to 1–3000
   - structured_memory.max_consolidation_episodes: clamped to 1–16
@@ -630,14 +639,14 @@ Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show dec
   - netconnect.port_allowlist
   - netconnect.host_cap
   - netconnect.rate_limit_per_min
-  - netconnect.connect_timeout_ms
-  - netconnect.read_timeout_ms
-  - netconnect.max_dials
-  - netconnect.diagnostics_targets
 
 ## config: sections and keys (values omitted) (part 12)
 
-- netconnect.throughput_endpoint
+- netconnect.connect_timeout_ms
+  - netconnect.read_timeout_ms
+  - netconnect.max_dials
+  - netconnect.diagnostics_targets
+  - netconnect.throughput_endpoint
   - netconnect.ha_endpoint
   - netconnect.mqtt_endpoint
   - netconnect.untrusted_string_max_chars

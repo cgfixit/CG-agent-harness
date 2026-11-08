@@ -11,8 +11,8 @@ Agents open a guide only when a root file links it and the task needs it;
   [MODELS.md](MODELS.md) and [CONSOLE.md](CONSOLE.md).
   Keep [TROUBLESHOOTING.md](TROUBLESHOOTING.md) open.
 - **Memory and optional features:** [MEMORY_GUIDE.md](MEMORY_GUIDE.md),
-  [CODING_PIPELINE.md](CODING_PIPELINE.md), [MCP_CLIENT.md](MCP_CLIENT.md),
-  [MCP_SERVER.md](MCP_SERVER.md), [netconnect.md](netconnect.md). Read the
+  [CODING_PIPELINE.md](CODING_PIPELINE.md), [MCP.md](MCP.md),
+  [netconnect.md](netconnect.md). Read the
   owning [INVARIANTS.md](../INVARIANTS.md) section first; [AGENTS.md](../AGENTS.md#the-map)
   maps features to sections. Fresh homes enable structured-memory gates;
   coding, MCP and netconnect remain off. Existing homes retain their settings.
@@ -22,9 +22,9 @@ Agents open a guide only when a root file links it and the task needs it;
   [RELEASING.md](RELEASING.md). Every source folder has a `README.md` indexing
   its files, starting at [src/](../src/README.md) and [tests/](../tests/README.md).
 
-Numbered headings (`## 2. Prerequisites`) keep the order of the original
-single-file manual so old links resolve. Truth order for every claim is code,
-then [config.default.yaml](../assets/config.default.yaml), then INVARIANTS.md.
+Numbered headings (`## 2. Prerequisites`) keep the original single-file
+manual's order so old links resolve. Truth order is code, then
+[config.default.yaml](../assets/config.default.yaml), then INVARIANTS.md.
 
 ## Setup, models and recovery
 
@@ -36,8 +36,10 @@ then [config.default.yaml](../assets/config.default.yaml), then INVARIANTS.md.
   live, which settings take effect where, supported managed keys, retained jobs
   and runs, and update, backup, rollback and uninstall. Use it to take a fresh
   machine to a verified console.
+  Also holds **Reload limits**: `POST /api/config/reload` and SIGHUP, the
+  reloadable keys, and refusal and recovery.
   Owns: `src/main.rs`, `src/common/{home,config,credential_store}.rs`,
-  `src/server/env_keys.rs`, `scripts/{init,install-macos,start-macos,verify-local}.sh`,
+  `src/server/{env_keys,config_reload}.rs`, `scripts/{init,install-macos,start-macos,verify-local}.sh`,
   `.github/workflows/ci.yml`.
   Tests: `tests/common_layer.rs`, `tests/contract_locks.rs`, `tests/windows_private_credentials.rs`.
 - [MODELS.md](MODELS.md): local inventory, model selection, the 32768-token
@@ -51,7 +53,6 @@ then [config.default.yaml](../assets/config.default.yaml), then INVARIANTS.md.
   table. Rows cover spend, webhooks, MCP diagnostics, older builds, coding-loop
   file reads, session isolation and memory gates. Includes read-only host
   inspection through declared MCP servers and bounded `/diag` logs.
-  Check the installed build's `Resources/COMMIT` before comparing behavior.
   Owns: `src/server/diag_reader.rs`, `src/server/routes/diag.rs`.
 
 ## Console and daily use
@@ -116,21 +117,18 @@ then [config.default.yaml](../assets/config.default.yaml), then INVARIANTS.md.
 
 ## External tools and private access
 
-- [MCP_CLIENT.md](MCP_CLIENT.md): the outbound MCP client. Declared servers,
-  `mcp.enabled`, broker allowlist and literal `confirm: true`; migrating stdio
-  declarations with capabilities, `env:NAME` references resolved at startup,
-  lifecycle choices, the Windows trusted-server exception, and troubleshooting.
-  `/loop` never gets MCP tools.
-  Owns: `src/server/mcp.rs`, `src/common/{mcp,mcp_policy,mcp_worker,sandbox_wrap,
-  windows_job,tool_broker}.rs`. Tests: `tests/mcp_client.rs`, `tests/mcp_lifecycle.rs`,
-  `tests/mcp_windows.rs`, fixture `scripts/mcp-fixture.py`.
-- [MCP_SERVER.md](MCP_SERVER.md): the inbound, read-only memory gateway that
-  runs in the harness process on its own listener. Lists the three
-  `memory:read` tools, the deliberate activation steps (private `0700` home),
-  keys, isolation and revocation, bounds and failures, and why remote exposure
-  needs a separate reviewed change.
-  Owns: `src/server/{mcp_server,mcp_server_config,mcp_keys}.rs`, the `mcp-key`
-  command in `src/main.rs`. Tests: `tests/mcp_server.rs`.
+- [MCP.md](MCP.md): both MCP surfaces, with a topology diagram. The outbound
+  client: declared servers, `mcp.enabled`, broker allowlist and literal
+  `confirm: true`, stdio capabilities, `env:NAME` references, lifecycle choices,
+  the Windows trusted-server exception and troubleshooting; `/loop` never gets
+  MCP tools. The inbound read-only memory gateway on its own listener: the three
+  `memory:read` tools, activation in a private `0700` home, machine keys,
+  revocation, bounds, and why remote exposure needs a separate reviewed change.
+  Owns: `src/server/{mcp,mcp_server,mcp_server_config,mcp_keys}.rs`,
+  `src/common/{mcp,mcp_policy,mcp_worker,sandbox_wrap,windows_job,tool_broker}.rs`,
+  the `mcp-key` command in `src/main.rs`. Tests: `tests/mcp_client.rs`,
+  `tests/mcp_lifecycle.rs`, `tests/mcp_windows.rs`, `tests/mcp_server.rs`,
+  fixture `scripts/mcp-fixture.py`.
 - [netconnect.md](netconnect.md): fail-closed LAN observation. Every gate
   ships `false` and `allowed_cidrs` empty; explains `flag_is_true`,
   `tier_enabled` and `tier_may_run`, the `status`, `devices` and `diag` CLI,
@@ -153,6 +151,15 @@ then [config.default.yaml](../assets/config.default.yaml), then INVARIANTS.md.
   Tests: `tests/auth_guards.rs`, `tests/secure_portal.rs`, `tests/security_headers.rs`,
   `scripts/test-first-run-password.mjs`, `tests/owner_isolation.rs`, `tests/chat_web.rs`, `tests/web_research.rs`,
   `tests/web_phase2_redteam.rs`.
+- [WEB_DECISION_ROUTER.md](WEB_DECISION_ROUTER.md): the design record behind
+  goal and loop web turns: the provider eligibility matrix, the five routing
+  stages (need, search, select, read, evidence packet), the 32K starting profile,
+  acceptance cases, and what shipped with measured runtimes. The README carries
+  the one-page summary; [#772](https://github.com/cgfixit/CG-agent-harness/issues/772)
+  tracks the open phases.
+  Owns: `src/server/{chat_web,web_provider,web_google,web_tavily,web_index}.rs`,
+  `src/server/chat_web/evidence.rs`, `src/server/loop_runner.rs`.
+  Tests: `tests/chat_web.rs`, `tests/loop_runner.rs`, `tests/retrieval_ranking.rs`.
 - [DESKTOP.md](DESKTOP.md): the universal macOS app that owns its bundled
   backend in a WKWebView. Install and launch, native-confirmed browser opening,
   notifications, home and
@@ -172,11 +179,6 @@ then [config.default.yaml](../assets/config.default.yaml), then INVARIANTS.md.
   `src/server/desktop.rs`, `desktop/src/backend.rs`.
   Tests: `tests/process_lifecycle.rs`, `tests/process_writer_outcome.rs`,
   `tests/child_env.rs`.
-- [CONFIG_RELOAD.md](CONFIG_RELOAD.md): **Reload limits**,
-  `POST /api/config/reload` and SIGHUP. Lists the reloadable keys, what a
-  reload preserves, why tightening a ceiling can return 429 at once, and refusal and
-  recovery. Everything else, including MCP declarations, needs a restart.
-  Owns: `RELOADABLE` in `src/server/config_reload.rs`. Tests: `tests/secure_portal.rs`.
 - [GITHOOKS.md](GITHOOKS.md): the `pre-commit` and `pre-push` gate for
   secrets, private data and ask-first actions. Install once per clone, what runs
   when, operator-only overrides, privacy setup, what a hook cannot check, and
@@ -210,8 +212,7 @@ then [config.default.yaml](../assets/config.default.yaml), then INVARIANTS.md.
 ## Folders
 
 - `bakeoff/`: a dated, measured local-model bake-off report that picks no
-  winner. Owner-exempt from the group word cap; dated evidence otherwise
-  belongs in PR bodies.
+  winner; dated evidence otherwise belongs in PR bodies.
 - [`learning/`](learning/README.md): operator reading material (Rust and AI
   design PDFs). Agents never open it unless the operator asks.
 - [`screenshots/`](screenshots/README.md): captures indexed by series, plus

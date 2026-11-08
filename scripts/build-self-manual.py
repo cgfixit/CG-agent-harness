@@ -22,7 +22,7 @@ INPUTS = [
     "docs/CONSOLE.md",
     "docs/API_ROUTES.md",
     "docs/TROUBLESHOOTING.md",
-    "docs/MCP_CLIENT.md",
+    "docs/MCP.md",
     "assets/config.default.yaml",
     "src/server/agent_policy.rs",
     "src/common/injection.rs",
@@ -202,7 +202,7 @@ def troubleshooting(root):
 
 
 def mcp_summary(root):
-    text = read(root, "docs/MCP_CLIENT.md")
+    text = read(root, "docs/MCP.md")
     intro = first_paragraph(text.split("\n", 1)[1])
     parts = [intro]
     for heading, body in sections(text, 2):
@@ -297,7 +297,7 @@ def build(root):
     parts.append(("console: slash-command quick reference", console_reference(root)))
     parts.append(("api: registered routes", routes(root)))
     parts.append(("troubleshooting: symptom to fix", troubleshooting(root)))
-    parts.append(("mcp: external client capabilities", mcp_summary(root)))
+    parts.append(("mcp: external client and private memory gateway", mcp_summary(root)))
     parts.append(("config: sections and keys (values omitted)", config_keys(root)))
     parts.append(("coding: fixed check profiles", check_profiles(root)))
     chunks = []

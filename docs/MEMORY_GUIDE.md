@@ -1,8 +1,8 @@
 # Memory: save, suggest, review and retrieve
 
-This how-to covers memory operations. [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md)
-defines gates, ownership, storage, limits, and automatic behavior. The command
-table is [CONSOLE.md §7.8](CONSOLE.md#78-slash-command-quick-reference).
+[STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md) defines gates, ownership, storage,
+limits and automatic behavior; the command table is
+[CONSOLE.md §7.8](CONSOLE.md#78-slash-command-quick-reference).
 
 Memory has shared-home pinned notes and an account-private structured store,
 without embeddings or vector search.
@@ -15,6 +15,16 @@ Fresh configuration enables pinned-note inclusion (`memory.enabled: true`) and
 every structured-memory gate. Upgrades preserve existing config, saved
 `harness.json` choices, and administrator overrides. Chat history persists
 independently of these flags.
+
+```mermaid
+flowchart LR
+    T[Completed chat turn or coding run] -->|episode_capture| E[Episode: bounded metadata]
+    E -->|auto_suggest_* or /memory consolidate| P[Pending proposal]
+    P -->|Save memory + reason| F[(Private fact)]
+    P -->|Dismiss + reason| X[Nothing saved]
+    F -->|Use in this session, /memory retrieve, auto_retrieval| C[Prompt: untrusted background]
+    N["/memory add: shared pinned note"] -->|/memory on| C
+```
 
 ## What counts as memory
 
@@ -29,12 +39,12 @@ Paths are relative to `CGAGENTHARNESS_HOME` (default `~/.CGagentHarness`).
 | Pending proposals | Same private SQLite store; a model or operator may propose | Memory cards show suggested text; details contain sources and revision. Pending text never enters chat. Saving or dismissing requires a reason. |
 | Episodes | Private bounded metadata from successful captured chat; coding metadata when coding suggestions are enabled; optional human `semantic_summary` | Provenance and consolidation input. Never injected into chat or indexed by FTS. Metadata is not a durable fact. |
 | Facts search index | Derived, contentless FTS5 index in the structured store | Lexical search over facts only; no episode search. |
-| Detached coding jobs / run records | Owner-scoped jobs; shared underlying pipeline run records | Evidence about a coding run, not automatically injected memory. The completion-suggestion hook only uses the initiating account's current completed run. |
 
 `session_summary` and `insight` are categories, not stores: a suggestion covers
-**one completed turn or run**, applying it creates a fact without filling the
-episode's human `semantic_summary`, and old archives are never imported. Use
-pinned notes for shared preferences and reviewed facts for private memory.
+one completed turn or run, applying it creates a fact without filling the
+episode's `semantic_summary`, and old archives are never imported. Coding run
+records are evidence, not memory; the suggestion hook reads only the initiating
+account's current completed run.
 
 ## Pinned notes
 
@@ -46,7 +56,7 @@ pinned notes for shared preferences and reviewed facts for private memory.
 ```
 
 - `/memory` shows inclusion state, note IDs, structured-memory gates and fact/proposal counts.
-- `/memory add <note>` stores those exact words; it never loads or summarizes sessions.
+- `/memory add <note>` stores those exact words; it never summarizes sessions.
 - Adding a note does **not** turn inclusion on. `/memory on` includes saved notes
   in later chat; `/memory off` keeps the notes and excludes them.
 - `/memory forget <id>` deletes one note; `/memory clear` deletes all notes.
@@ -115,10 +125,10 @@ Open **Memory** or `/memory proposals`: cards show full text and affected
 memories, and collapsed **Suggestion activity** holds source IDs, models,
 counts and failures.
 
-Review content, action, sources, and repository scope; confidence is not proof.
-Enter a reason and choose **Save memory** or **Dismiss**. Both confirm the displayed
-revision; blank reasons fail. Refresh after a stale-revision error. Applied
-proposals appear under **Saved facts**; a closed store has no decision controls.
+Review content, action, sources and repository scope; confidence is not proof.
+Enter a reason and choose **Save memory** or **Dismiss**; both confirm the displayed
+revision, blank reasons fail, and a stale revision needs a refresh. Applied
+proposals appear under **Saved facts**.
 
 The HTTP equivalent is POST `/api/structured-memory/proposals/{id}` with
 `revision`, `confirm: true`, nonblank `reason`, and `apply: true|false`, using
@@ -146,7 +156,6 @@ command. It may produce a draft when suggestions are enabled, but cannot approve
 one. Saving and retrieval remain separate.
 
 For manual-only facts, see [turn automation off](#turn-automation-or-the-store-off).
-For a shared literal note, use `/memory add <text>`.
 
 ## Summarize and consolidate episodes
 

@@ -56,7 +56,7 @@ Enter slash commands in chat; `/help` lists them. Begin with `/status`,
 /goal
 ```
 
-Send a question and confirm a reply. `/tokens` and the header's
+`/tokens` and the header's
 **session · tokens** count the tally
 ([interpretation](SPEND_AND_NOTIFICATIONS.md#read-spend-without-mistaking-missing-data-for-zero)).
 
@@ -76,8 +76,7 @@ injected context survive session changes. The HTML editor button, beside the web
 In the dialog, choose **Delete my session history** to confirm or **Cancel**.
 Confirmation stops active chat, clears the conversation, and deletes your saved
 sessions, goals, skill selections, and token totals, retaining other accounts,
-unassigned legacy records, and unreadable files. Late replies cannot recreate a
-deleted session. Afterward, send a message or use `/session new`. If storage
+unassigned legacy records, and unreadable files. Afterward, send a message or use `/session new`. If storage
 fails, resolve the reported problem before retrying; deletion may be partial.
 
 Deletion is not secure erasure: backups, model-service copies, and text loaded
@@ -95,9 +94,8 @@ history uses that window; [compaction](#local-history-compaction) reduces
 overflow against the configured token budget, preserving the goal and recent messages. Stored token totals can therefore
 exceed what is sent to the model.
 
-Runtime homes, `sessions/` directories and dotenv files are Git-ignored in this
-repository, and the [hook gate](GITHOOKS.md#cgagentharness-specifics) blocks
-them; keep a custom home outside the checkout and never `git add -f` private files.
+Keep a custom home outside the checkout; the
+[hook gate](GITHOOKS.md#cgagentharness-specifics) blocks home spill.
 
 ```text
 /loop 3
@@ -107,8 +105,18 @@ them; keep a custom home outside the checkout and never `git add -f` private fil
 /goal clear
 ```
 
+```mermaid
+flowchart LR
+    G["/goal text, web mode off, fetch or all"] --> L["/loop n, or /loop auto"]
+    L --> T[Turn: local model, permitted web tools, attachments, notes]
+    T -->|prompt over the trigger| K[Compaction keeps goal and first turn] --> T
+    T --> S{Stop?}
+    S -->|GOAL_DONE, near-repeat, max_turns, token cap, max_failures, /loop stop, goal change| E[Run ends; loops/run_id.json is a record]
+    S -->|no| T
+```
+
 Bare `/loop` defaults to three turns within the configured cap.
-[`loop.*` limits](CONFIG_RELOAD.md) reload; `api.harness_loop_rate_limit.max_tokens`
+[`loop.*` limits](INSTALL.md#reload-limits-without-a-restart) reload; `api.harness_loop_rate_limit.max_tokens`
 bounds each reply. When both configured caps are zero or absent, `/status`
 and loop preflight warn: set a finite cap, then **Reload limits**. The warning
 never blocks; requested turn counts still apply.
@@ -268,9 +276,8 @@ indexed in [AGENTS.md](../AGENTS.md#project-skills); they never enter app chat.
 
 ### 7.4 Customize response style
 
-Use soul for your usual voice across sessions; an optional runtime skill styles
-an explicitly selected task. Neither changes permissions or gives chat repository
-access. Start with `/soul edit` and adapt this example:
+Use soul for your usual voice across sessions and a runtime skill for one
+task; neither changes permissions. Start with `/soul edit` and adapt this example:
 
 ```text
 Lead with the answer. Use plain, direct language.
@@ -282,13 +289,10 @@ Never sacrifice accuracy or necessary uncertainty for brevity.
 ```
 
 Save through the [soul review flow](#72-default-soul-effective-prompt-and-persona-editing),
-enable `/soul on`, and inspect `/prompt`. Compare a factual, troubleshooting, and
-detailed question in `/session new Style check`; `/clear` is not a fresh session.
-Style instructions guarantee neither length nor correctness.
-
-For a session-specific alternative, put the writing rules in a
-[runtime skill](#73-runtime-skills-and-codex-development-skills) and select it.
-Avoid contradictory rules across soul, selected skills and memory.
+`/soul on`, then compare questions in `/session new Style check` (`/clear` is
+not a fresh session). Style guarantees neither length nor correctness; avoid
+contradictory rules across soul, [runtime skills](#73-runtime-skills-and-codex-development-skills)
+and memory.
 
 **Style presets.** `/style <name>` selects a session preset;
 `/style off` is the default (shown as Default) and `/style` prints
@@ -323,7 +327,7 @@ to cloud planners, or scores quality; there is no phrase list setting or
 does not probe a model, invoke GitHub, or arm writes. `last_result: null` means
 no invocation history; registered or legacy `wired` does not prove readiness.
 `/tools mcp` shows external MCP declarations, read/write grants, network policy,
-and process-group or unrestricted Windows Job Object exceptions. It does not execute a tool or prove the selected sandbox is available. See [MCP capabilities](MCP_CLIENT.md).
+and process-group or unrestricted Windows Job Object exceptions. It does not execute a tool or prove the selected sandbox is available. See [MCP capabilities](MCP.md#outbound-client-capabilities).
 `/connectors` displays connector inventory; `/registry` is another. Neither
 installs a connector or proves its prerequisites ready; the registry's tools
 array is not a replacement for `/tools`.
@@ -396,7 +400,7 @@ parser is unavailable. Inspect results after every state-changing command.
 | `/memory facts`, `/memory retrieve <query>`, `/memory search <query>` | List your active facts, force fact retrieval for this chat prompt, or inspect candidates without injection |
 | `/memory save <text> :: <reason>` | Confirm an immediate private fact write |
 | `/model [status]`, `/model list`, `/model use <name>` | Inspect/list/select a local chat model or explicit cloud provider; does not select the coding planner |
-| `/net status`, `/net devices` | Read-only scope and gates, or passive neighbors. Aliases and refused tier words: [netconnect](netconnect.md) |
+| `/net status`, `/net devices`, `/net diag` | Read-only scope and gates, passive neighbors, or the budgeted diagnostics probe. Aliases and refused tier words: [netconnect](netconnect.md) |
 | `/prompt` | Private preview of the next chat system prompt |
 | `/registry` | Combined skill, tool and connector catalog |
 | `/session`, `list`, `info`, `new [title]`, `rename <title>`, `use <id>` | List sessions, inspect the current session, create, rename or reopen one |

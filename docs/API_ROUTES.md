@@ -26,7 +26,7 @@ Agent requests carry check-profile names and run IDs, never commands.
 | POST | `/api/diag/inject`, `/api/diag/forget` | Stage the last read for the next local chat turn of `session_id`, or drop it |
 | GET | `/api/harness/runs` | Retained harness-optimizer runs (`/harness`) |
 | GET | `/api/analytics/summary` | Owned sessions plus shared spend/coding analytics (`/analytics`; [details](SPEND_AND_NOTIFICATIONS.md#analytics-sessions-tokens-and-coding-runs)) |
-| POST | `/api/config/reload` | Reload the limits allowlist (administrator; [CONFIG_RELOAD.md](CONFIG_RELOAD.md)) |
+| POST | `/api/config/reload` | Reload the [limits allowlist](INSTALL.md#reload-limits-without-a-restart) (administrator) |
 
 ## Accounts and sessions
 
@@ -142,13 +142,13 @@ Confirmation and gate rules are in [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 | POST | `/api/web/inject` | Inject a read into the session context |
 | POST | `/api/web/forget` | Drop injected reads |
 
-The `cgagentharness web` CLI drives these routes through the running portal.
+The `cgagentharness web` CLI drives these routes.
 
 ## Private MCP memory server
 
 A separate default-off loopback listener accepts `POST /mcp` with machine
 bearer keys minted by `mcp-key`; console cookies never authorize it
-([activation and limits](MCP_SERVER.md)).
+([activation and limits](MCP.md#deliberate-local-activation)).
 
 ## MCP client
 
@@ -157,7 +157,7 @@ bearer keys minted by `mcp-key`; console cookies never authorize it
 | GET | `/api/mcp` | Declared MCP servers, namespaced tools and versioned stdio capability policies; does not auto-discover |
 | POST | `/api/mcp/call` | Call one declared MCP tool; `confirm` is never defaulted |
 
-Bounds and capability policy: [MCP_CLIENT.md](MCP_CLIENT.md). `/loop` has no MCP tools.
+Bounds and capability policy: [MCP.md](MCP.md#outbound-client-capabilities). `/loop` has no MCP tools.
 
 ## Coding agent
 

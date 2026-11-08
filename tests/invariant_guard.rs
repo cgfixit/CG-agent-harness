@@ -1699,7 +1699,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: operator-set (2026-11-06) allowance of 1,776 for the long-form research reframe, not a measured count;
     // the Root group cap stays the binding limit.
-    ("README.md", Root, 1776),
+    // why: operator-requested (2026-11-08) 15% trim with the research-loop router section added; measured
+    // 1,325 words, rounded up to the next 10 so the cut stays cut.
+    ("README.md", Root, 1330),
     ("SECURITY.md", Root, 690),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
     // why: the sandboxed HTML preview route row; measured 1840 words.
@@ -1708,10 +1710,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     ("docs/CODING_PIPELINE.md", Guide, 3549),
-    // why: operator-approved (2026-10-23) measured count for the public Google search pace floor, merged with the #649 cooldown keys.
-    // why: the 2026-11-02 doc sync trimmed it to 597 words; lowered so the cut stays cut.
-    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
-    ("docs/CONFIG_RELOAD.md", Guide, 531),
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
@@ -1738,11 +1736,12 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // Setup memory guidance replaces repeated setup/verification prose; keep the cut.
     // why: operator-approved (2026-10-14) automated macOS install (section 1) and browser access (section 7); 5188 words plus about 1%, rounded up to the next 50.
     // why: operator-approved (2026-10-14) raise to 7500 for room to grow the install guide after #491 and #496 together hit 5250; the Guide group cap still bounds it.
-    ("docs/INSTALL.md", Guide, 6521),
-    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
-    ("docs/MCP_CLIENT.md", Guide, 894),
-    // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
-    ("docs/MCP_SERVER.md", Guide, 951),
+    // why: operator-approved (2026-11-08) consolidation folded CONFIG_RELOAD.md in as the reloadable-limits
+    // section; measured count, rounded up to the next 10.
+    ("docs/INSTALL.md", Guide, 6840),
+    // why: operator-approved (2026-11-08) consolidation of MCP_CLIENT.md (894) and MCP_SERVER.md (951) into one
+    // guide with a topology diagram; measured count, rounded up to the next 10.
+    ("docs/MCP.md", Guide, 1930),
     // why: #244 folded MEMORY_SETUP.md and the user manual's memory sections in here.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     ("docs/MEMORY_GUIDE.md", Guide, 1686),
@@ -1775,7 +1774,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     ("docs/TROUBLESHOOTING.md", Guide, 1462),
     // why: operator-requested conversion of the routing research TXT, with implementation and measured limits.
-    ("docs/learning/web-decision-router.md", Guide, 4600),
+    // why: moved out of docs/learning (operator reading material agents never open) into docs/ on 2026-11-08.
+    ("docs/WEB_DECISION_ROUTER.md", Guide, 4600),
     // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     ("docs/netconnect.md", Guide, 3115),
