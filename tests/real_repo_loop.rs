@@ -185,7 +185,7 @@ impl ScriptedProposer {
 #[cfg(unix)]
 impl ProposerClient for ScriptedProposer {
     fn invoke(&self, system: &str, user: &str, _max_tokens: u64, _temperature: Option<f64>) -> Result<String> {
-        assert!(system.contains(cgagentharness::common::home::DEFAULT_SOUL));
+        assert!(!system.contains(cgagentharness::common::home::DEFAULT_SOUL));
         assert!(!system.contains("PRIVATE_LOCAL_PERSONA"));
         self.prompts.borrow_mut().push(user.to_string());
         Ok(self.replies.borrow_mut().pop().unwrap_or_default())

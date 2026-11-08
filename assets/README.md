@@ -6,8 +6,8 @@ Product Markdown is exempt from documentation budgets; folder indexes are not.
 - [`config.default.yaml`](config.default.yaml): every tunable and its shipped
   default; the only place defaults live. **Core path**: read
   [INVARIANTS.md](../INVARIANTS.md) before editing. Gates need literal `true`.
-- [`soul.default.md`](soul.default.md): preserved reference persona and public coding guidance; not seeded into fresh homes
-  (`DEFAULT_SOUL` in `src/common/home.rs`), editable per home from the console.
+- [`soul.default.md`](soul.default.md): preserved reference persona; never seeded or loaded implicitly
+  (`DEFAULT_SOUL` in `src/common/home.rs`). Copy it into `soul.md`, editable per home from the console.
 - [`skills_registry.json`](skills_registry.json): the empty runtime skills
   registry seeded into a fresh home's `data/agentic/`.
 - [`skills/`](skills/README.md): the two bundled runtime skills seeded into a

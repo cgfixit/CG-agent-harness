@@ -11,27 +11,25 @@ use cap_std::fs::Dir;
 use crate::common::injection::Scanner;
 use crate::common::{clip_chars, edit_distance};
 
-pub const BUILTIN_IDS: [&str; 10] = [
+pub const BUILTIN_IDS: [&str; 9] = [
     "code-review",
     "concise",
     "design",
     "extract",
     "handoff",
     "research",
-    "soul",
     "technical",
     "troubleshoot",
     "verify",
 ];
 
-const BUILTIN_BODIES: [(&str, &str); 10] = [
+const BUILTIN_BODIES: [(&str, &str); 9] = [
     ("code-review", include_str!("../../data/styles/code-review.md")),
     ("concise", include_str!("../../data/styles/concise.md")),
     ("design", include_str!("../../data/styles/design.md")),
     ("extract", include_str!("../../data/styles/extract.md")),
     ("handoff", include_str!("../../data/styles/handoff.md")),
     ("research", include_str!("../../data/styles/research.md")),
-    ("soul", include_str!("../../data/styles/soul.md")),
     ("technical", include_str!("../../data/styles/technical.md")),
     ("troubleshoot", include_str!("../../data/styles/troubleshoot.md")),
     ("verify", include_str!("../../data/styles/verify.md")),
@@ -286,6 +284,7 @@ mod tests {
         assert_eq!(suggest_builtin("technicl"), Some("technical"));
         // A retired preset name resolves to its nearest successor.
         assert_eq!(suggest_builtin("technical-deep"), Some("technical"));
+        assert_eq!(suggest_builtin("soul"), Some("design"));
         assert_eq!(suggest_builtin("extrct"), Some("extract"));
         assert_eq!(suggest_builtin("handof"), Some("handoff"));
         assert_eq!(suggest_builtin("verfy"), Some("verify"));
