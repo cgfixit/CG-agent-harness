@@ -377,7 +377,19 @@ fn netconnect_dials_only_through_the_budgeted_dialer() {
     // Sockets and name lookups. Only connect.rs may open a socket, and
     // nothing under src/netconnect may resolve a host name.
     const SOCKETS: &[&str] = &["TcpStream", "TcpSocket", "UdpSocket", "socket2", "RawSocket"];
-    const LOOKUPS: &[&str] = &["lookup_host", "ToSocketAddrs", "to_socket_addrs", "getaddrinfo"];
+    // `lookup_bounded` and `dns::` are this crate's own resolver: netconnect
+    // may import `crate::common`, and that path names none of the std needles.
+    const LOOKUPS: &[&str] = &[
+        "lookup_host",
+        "ToSocketAddrs",
+        "to_socket_addrs",
+        "getaddrinfo",
+        "lookup_bounded",
+        "dns::",
+    ];
+    // An HTTP client resolves names and opens its own sockets without ever
+    // naming a socket type, so it would pass every needle above.
+    const HTTP_CLIENTS: &[&str] = &["reqwest", "pinned_client_builder"];
     const LISTENERS: &[&str] = &[
         "TcpListener",
         "UnixListener",
@@ -391,6 +403,20 @@ fn netconnect_dials_only_through_the_budgeted_dialer() {
         let dialer = path.replace('\\', "/").ends_with("netconnect/connect.rs");
         for needle in LOOKUPS {
             assert!(!text.contains(needle), "{path} resolves names via {needle:?}");
+        }
+        for needle in HTTP_CLIENTS {
+            assert!(
+                !text.contains(needle),
+                "{path} reaches the network via {needle:?}; dial through netconnect::Dialer"
+            );
+        }
+        // The needles miss a renamed import (`use crate::common::{dns as d};`).
+        let imports = use_idents(&path, &text);
+        for name in ["dns", "reqwest"] {
+            assert!(
+                !imports.iter().any(|i| i == name),
+                "{path} imports {name:?}; dial through netconnect::Dialer"
+            );
         }
         if !dialer {
             for needle in SOCKETS {
