@@ -438,9 +438,9 @@ pub async fn delete_user(
         state.diag.forget_owner(owner);
     }
     manager.delete_user(&username).map_err(|e| map_auth_error(&e))?;
-    // Cleanup is reported, never swallowed: a blob whose unlink failed keeps
-    // its manifest row (still charged to the quota) and is retried by the
-    // dead-owner sweep at the next deletion or server start.
+    // Cleanup is reported, never swallowed: a blob or uploaded note whose
+    // unlink failed keeps its manifest row (still charged to the quota) and
+    // is retried by the dead-owner sweeps at the next deletion or server start.
     let cleanup = match owner.as_deref().map(|owner| state.attachments.unlink_owner(owner)) {
         None => json!({"removed": 0}),
         Some(Ok(removed)) => json!({"removed": removed}),
@@ -457,19 +457,25 @@ pub async fn delete_user(
                    "error": e.code})
         }
     };
+    let mut notes_cleanup = json!({"removed": 0});
     if let Some(owner) = owner.as_deref() {
         let _ = state.store.drop_attachment_pins_for_owner(owner);
-        let _ = state.notes_corpus.unlink_owner(owner);
+        notes_cleanup = super::notes_corpus::cleanup_owner(&state, owner);
     }
     let live: std::collections::BTreeSet<String> = manager.list_users().into_iter().map(|u| u.user_id).collect();
-    let swept = state
-        .attachments
-        .sweep_dead_owners(&|candidate| candidate == "local" || live.contains(candidate))
-        .unwrap_or(0);
+    let is_live = |candidate: &str| candidate == "local" || live.contains(candidate);
+    let swept = state.attachments.sweep_dead_owners(&is_live).unwrap_or(0);
+    let notes_swept = state.notes_corpus.sweep_dead_owners(&is_live).unwrap_or(0);
     if let Some(owner) = owner.as_deref() {
         retire_disabled_owner(&state, owner)?;
     }
-    Ok(Json(json!({"ok": true, "attachment_cleanup": cleanup, "swept": swept})))
+    Ok(Json(json!({
+        "ok": true,
+        "attachment_cleanup": cleanup,
+        "notes_cleanup": notes_cleanup,
+        "swept": swept,
+        "notes_swept": notes_swept,
+    })))
 }
 
 use axum::extract::FromRequest;

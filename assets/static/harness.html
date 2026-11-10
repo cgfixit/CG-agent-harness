@@ -3037,7 +3037,11 @@ $('sessionClearConfirm').addEventListener('click', async () => {
     const blobs = cleanup && cleanup.error
       ? (' Attachment cleanup incomplete: ' + String(cleanup.retained || 0) + ' blob(s) could not be removed (' + cleanup.error + ') and still count toward the quota; they are retried at the next server start.')
       : '';
-    sys('Your saved session history deleted. Memory notes, persona, web context, coding runs and facts are kept.' + kept + blobs);
+    const notesCleanup = cleared && cleared.notes_cleanup;
+    const notes = notesCleanup && notesCleanup.error
+      ? (' Uploaded notes were not fully deleted (' + notesCleanup.error + '). Open Memory → Manage uploaded notes to see what remains, then delete it there or clear again.')
+      : '';
+    sys('Your saved session history deleted. Memory notes, persona, web context, coding runs and facts are kept.' + kept + blobs + notes);
   } catch (e) {
     $('sessionClearFeedback').textContent = e.message || String(e);
   } finally {
