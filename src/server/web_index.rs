@@ -1,7 +1,7 @@
 //! Bounded discovery and a rebuildable Tantivy passage index over authorized cache.
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -12,7 +12,7 @@ use tantivy::{doc, Index};
 use tokio::time::Instant;
 
 use super::web_policy::{canonical_url, error, valid_group, Policy};
-use super::web_search::{Page, WebTool};
+use super::web_search::{Page, WebTool, MAX_CACHE_PAGES};
 use crate::common::audit::Audit;
 use crate::common::errors::Result;
 use crate::server::retrieval_ranking::{PreparedQuery, RankedCandidate, CANDIDATE_LIMIT};
@@ -190,20 +190,31 @@ impl WebTool {
             .join(format!("{}.json", crate::common::sha256_hex(url)))
     }
 
-    fn cache_files(&self) -> Result<Vec<PathBuf>> {
+    /// Every cached document, oldest first, with its size.
+    ///
+    /// The listing is bounded by the largest `web.cache_pages` any config
+    /// accepts, not the current value: a cap lowered by a reload or an edit must
+    /// still see what the earlier cap stored, or nothing could evict it.
+    /// `write_atomic` stages beside its target, so a staged write is one in
+    /// flight or one a crash cut off; it is skipped. Any other unexpected entry
+    /// still refuses the cache.
+    fn cache_entries(&self) -> Result<Vec<(Option<SystemTime>, PathBuf, usize)>> {
         let dir = self.cache_dir();
         match std::fs::symlink_metadata(&dir) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Ok(m) if m.is_dir() => {}
             _ => return Err(error("WEB_CACHE_INVALID", "cache must be a directory")),
         }
-        let mut files = Vec::new();
-        for entry in std::fs::read_dir(dir)?.take(self.limits.cache_pages + 1) {
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with(".staged.") && name.ends_with(".tmp") {
+                continue;
+            }
             if name.len() != 69
                 || !name.ends_with(".json")
-                || !name[..64].bytes().all(|c| c.is_ascii_hexdigit())
+                || !name.as_bytes()[..64].iter().all(u8::is_ascii_hexdigit)
                 || !entry.file_type()?.is_file()
             {
                 return Err(error(
@@ -211,12 +222,34 @@ impl WebTool {
                     "unexpected cache entry; repair the derived cache",
                 ));
             }
-            files.push(entry.path());
+            if entries.len() == MAX_CACHE_PAGES {
+                return Err(error("WEB_CACHE_LIMIT", "cache exceeds configured page limit"));
+            }
+            match entry.metadata() {
+                Ok(meta) => entries.push((meta.modified().ok(), entry.path(), meta.len() as usize)),
+                // Evicted by a write between the listing and this read.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
         }
-        if files.len() > self.limits.cache_pages {
-            return Err(error("WEB_CACHE_LIMIT", "cache exceeds configured page limit"));
+        entries.sort();
+        Ok(entries)
+    }
+
+    /// What the current caps keep: the newest documents within `web.cache_pages`
+    /// and `web.cache_bytes`. Readers use this view, so a lowered cap hides the
+    /// oldest documents at once and the next write evicts them.
+    fn cache_files(&self) -> Result<Vec<PathBuf>> {
+        let entries = self.cache_entries()?;
+        let mut size: usize = entries.iter().map(|(_, _, len)| len).sum();
+        let mut hidden = 0;
+        while hidden < entries.len()
+            && (entries.len() - hidden > self.limits.cache_pages || size > self.limits.cache_bytes)
+        {
+            size -= entries[hidden].2;
+            hidden += 1;
         }
-        Ok(files)
+        Ok(entries.into_iter().skip(hidden).map(|(_, path, _)| path).collect())
     }
 
     pub(super) fn cache_page(&self, page: &Page, group: Option<&str>) -> Result<()> {
@@ -230,13 +263,8 @@ impl WebTool {
         if payload.len() > self.limits.cache_bytes {
             return Err(error("WEB_CACHE_LIMIT", "document exceeds cache budget"));
         }
-        let mut files: Vec<_> = self
-            .cache_files()?
-            .into_iter()
-            .filter(|p| *p != path)
-            .map(|p| std::fs::metadata(&p).map(|m| (m.modified().ok(), p, m.len() as usize)))
-            .collect::<std::io::Result<_>>()?;
-        files.sort_by_key(|(time, _, _)| *time);
+        let mut files = self.cache_entries()?;
+        files.retain(|(_, cached, _)| *cached != path);
         let mut size = files.iter().map(|(_, _, len)| len).sum::<usize>() + payload.len();
         while !files.is_empty() && (files.len() >= self.limits.cache_pages || size > self.limits.cache_bytes) {
             let (_, old, len) = files.remove(0);
@@ -250,12 +278,7 @@ impl WebTool {
     pub(super) fn cached_pages(&self, group: Option<&str>) -> Result<(Vec<Page>, Vec<Value>)> {
         let mut pages = Vec::new();
         let mut errors = Vec::new();
-        let mut bytes = 0u64;
         for file in self.cache_files()? {
-            bytes = bytes.saturating_add(std::fs::metadata(&file)?.len());
-            if bytes > self.limits.cache_bytes as u64 {
-                return Err(error("WEB_CACHE_LIMIT", "cache exceeds configured byte limit"));
-            }
             match self.read_page(&file, group) {
                 Ok(p) if self.cache_path(&p.url) == file => pages.push(p),
                 Ok(_) => errors.push(json!({"code":"WEB_EVIDENCE_INVALID"})),
@@ -713,6 +736,108 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
+
+    fn cache_tool(dir: &Path) -> WebTool {
+        let cfg = AppConfig::from_str("web: {pace_ms: 100}", Path::new("config.yaml")).unwrap();
+        crate::common::atomic::write_json_atomic(&dir.join("web_allowlist.json"), &json!({"version":1,"rules":[]}))
+            .unwrap();
+        let web = WebTool::new(dir, &cfg).unwrap();
+        web.allow_rule("https://example.org/*", "g", &[], true).unwrap();
+        web
+    }
+
+    /// Caches `name` under example.org and stamps it `age` seconds after the epoch.
+    fn cache_doc(web: &WebTool, name: &str, age: u64) -> PathBuf {
+        let text = format!("body of {name}");
+        let page = Page {
+            url: format!("https://example.org/{name}"),
+            title: name.into(),
+            content_hash: crate::common::sha256_hex(&text),
+            bytes: text.len(),
+            transfer_bytes: text.len(),
+            chars: text.chars().count(),
+            text,
+            links: Vec::new(),
+            status: 200,
+            content_type: "text/html".into(),
+            fetched_at: 1.0,
+            extraction_version: 1,
+            policy_revision: "0".repeat(64),
+            etag: None,
+            last_modified: None,
+            via: None,
+        };
+        web.cache_page(&page, None).unwrap();
+        let path = web.cache_path(&page.url);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(age))
+            .unwrap();
+        path
+    }
+
+    fn cached_urls(web: &WebTool) -> Vec<String> {
+        web.cached_pages(None).unwrap().0.into_iter().map(|p| p.url).collect()
+    }
+
+    #[test]
+    fn a_lowered_cache_cap_hides_then_evicts_the_oldest_documents() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut web = cache_tool(dir.path());
+        let (old, mid, new) = (
+            cache_doc(&web, "old", 10),
+            cache_doc(&web, "mid", 20),
+            cache_doc(&web, "new", 30),
+        );
+        // A reload or an edit can lower either cap below what is already cached.
+        web.limits.cache_pages = 2;
+        assert_eq!(
+            cached_urls(&web),
+            ["https://example.org/mid", "https://example.org/new"]
+        );
+        assert!(old.exists(), "a read hides the oldest document; it does not delete");
+        // The next write evicts down to the cap, oldest first.
+        let fresh = cache_doc(&web, "fresh", 40);
+        assert!(!old.exists() && !mid.exists() && new.exists() && fresh.exists());
+        assert_eq!(
+            cached_urls(&web),
+            ["https://example.org/fresh", "https://example.org/new"]
+        );
+        // The byte cap is held the same way.
+        web.limits.cache_pages = 256;
+        web.limits.cache_bytes = std::fs::metadata(&fresh).unwrap().len() as usize;
+        assert_eq!(cached_urls(&web), ["https://example.org/fresh"]);
+        let last = cache_doc(&web, "last", 50);
+        assert!(!new.exists() && !fresh.exists() && last.exists());
+    }
+
+    #[test]
+    fn a_staged_write_does_not_refuse_the_cache_but_a_stray_entry_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let web = cache_tool(dir.path());
+        cache_doc(&web, "kept", 10);
+        // What `write_atomic` keeps beside its target during a write, and leaves
+        // behind when the process dies before the rename.
+        std::fs::write(web.cache_dir().join(".staged.Ab12Cd.tmp"), b"partial").unwrap();
+        assert_eq!(cached_urls(&web), ["https://example.org/kept"]);
+        cache_doc(&web, "next", 20);
+        assert_eq!(cached_urls(&web).len(), 2);
+        std::fs::write(web.cache_dir().join("stray.txt"), b"x").unwrap();
+        assert_eq!(web.cached_pages(None).unwrap_err().code, "WEB_CACHE_INVALID");
+    }
+
+    #[test]
+    fn more_documents_than_any_cap_allows_still_refuse_the_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let web = cache_tool(dir.path());
+        std::fs::create_dir_all(web.cache_dir()).unwrap();
+        for n in 0..=super::super::web_search::MAX_CACHE_PAGES {
+            std::fs::write(web.cache_path(&n.to_string()), b"{}").unwrap();
+        }
+        assert_eq!(web.cached_pages(None).unwrap_err().code, "WEB_CACHE_LIMIT");
+    }
 
     #[tokio::test]
     async fn discovery_obeys_robots_groups_limits_validators_and_cache_revocation() {
