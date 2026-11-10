@@ -176,7 +176,7 @@ impl McpRuntime {
             );
         }
         let namespaced = namespaced(server, tool);
-        if let Err(err) = assert_allowed(&namespaced, &[namespaced.clone()], allowlist, audit) {
+        if let Err(err) = assert_allowed(&namespaced, std::slice::from_ref(&namespaced), allowlist, audit) {
             audit.log(json!({
                 "event": "mcp_refused",
                 "code": err.code,

@@ -107,7 +107,7 @@ server -> MCP runtime -> declared stdio children / SSE servers
 - Once per clone, before committing: `bash scripts/ensure-githooks.sh`.
 - CI merge gate: `cargo fmt --all -- --check`,
   `cargo clippy --all-targets --all-features -- -D warnings`,
-  `cargo test --all-targets`, `cargo deny check`. Rust 1.88 is pinned for the
+  `cargo test --all-targets`, `cargo deny check`. Rust 1.89 is pinned for the
   backend; `desktop/` pins 1.90. `scripts/verify-local.sh` skips deny when
   cargo-deny is missing, so its green run is not deny evidence.
 - Verifying a change locally: lint (fmt, clippy), then run the changed code

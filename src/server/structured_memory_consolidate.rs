@@ -450,7 +450,14 @@ mod tests {
             8,
         )
         .unwrap();
-        let (bound, rejected) = bind_candidates(&parsed, &[source.clone()], &[existing.clone()], 1000, 64, 0.4);
+        let (bound, rejected) = bind_candidates(
+            &parsed,
+            std::slice::from_ref(&source),
+            std::slice::from_ref(&existing),
+            1000,
+            64,
+            0.4,
+        );
         assert_eq!(rejected, 0);
         assert_eq!(bound[0].action, "update");
         assert_eq!(bound[0].target_fact_id.as_deref(), Some(existing.id.as_str()));
