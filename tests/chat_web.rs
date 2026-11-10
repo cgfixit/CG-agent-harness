@@ -2260,6 +2260,123 @@ async fn repeated_goal_reads_reuse_cache_unless_explicitly_refreshed() {
     check_goal_evidence_reuse(true, Some(true), true, 6000).await;
 }
 
+/// A model that reports the prompt size the harness itself estimates (bytes/4
+/// of every message, plus the tool definitions) must leave the session's token
+/// ratio at 1. Before, a turn that restored earlier evidence compared that
+/// usage with an estimate that left the restored message out, so the ratio
+/// rose by its share and every later budget of the run shrank with it.
+#[tokio::test]
+async fn restored_evidence_does_not_inflate_token_calibration() {
+    let seen = Arc::new(AtomicBool::new(false));
+    let restored = seen.clone();
+    let router = Router::new()
+        .route(
+            "/docs/item",
+            get(|| async {
+                (
+                    [("content-type", "text/plain")],
+                    format!(
+                        "RECOVERY_ANCHOR requires two replicas.{}",
+                        " Each replica is checked before failback.".repeat(20)
+                    ),
+                )
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(move |Json(body): Json<Value>| {
+                let restored = restored.clone();
+                async move {
+                    let messages = body["messages"].as_array().unwrap();
+                    let size = |text: &str| text.len().div_ceil(4) as u64;
+                    let mut prompt: u64 = messages.iter().map(|m| size(m["content"].as_str().unwrap_or(""))).sum();
+                    if let Some(tools) = body.get("tools") {
+                        prompt += size(&tools.to_string());
+                    }
+                    let usage = json!({"prompt_tokens": prompt, "completion_tokens": 10});
+                    let answer = |text: &str| {
+                        let mut reply = common::ok_reply(text, 0, 0);
+                        reply["usage"] = usage.clone();
+                        Json(reply)
+                    };
+                    if body["response_format"]["type"] == "json_object" {
+                        return answer(&json!({"supported":[{"text":"Recovery requires two replicas.","citations":[{"id":"S1","quote":"requires two replicas"}]}],"conflicts":[],"inferences":[],"missing":[]}).to_string());
+                    }
+                    let last = messages.last().unwrap();
+                    let content = last["content"].as_str().unwrap_or("");
+                    if content.contains("Untrusted active-goal findings") {
+                        restored.store(true, Ordering::SeqCst);
+                        return answer("The retained finding still supports two replicas.");
+                    }
+                    if last["role"] == "tool" || content.contains("Untrusted evidence digest") {
+                        return answer("Recovery needs two replicas, per http://docs.example/docs/item."); // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+                    }
+                    let mut call = tool_call_reply(
+                        "web_fetch",
+                        &json!({"url":"http://docs.example/docs/item","query":"RECOVERY_ANCHOR"}).to_string(), // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+                        "read",
+                    );
+                    call["usage"] = usage.clone();
+                    Json(call)
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let fixture = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..common::ServerOptions::default()
+        },
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"})) // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+            .await
+            .0,
+        200
+    );
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    let goal =
+        json!({"goal":"Read the recovery manual, then review its implication in a second step.","web_mode":"fetch"});
+    assert_eq!(s.post_json(&format!("/api/sessions/{sid}/goal"), goal).await.0, 200);
+    let (status, started) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id":sid,"max_turns":2,"cooldown_ms":0}),
+        )
+        .await;
+    assert_eq!(status, 200, "{started}");
+    let run_id = started["run"]["run_id"].as_str().unwrap();
+    let run = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let (_, value) = s.get_json(&format!("/api/loop/status?run_id={run_id}")).await;
+            if matches!(value["run"]["state"].as_str(), Some("done" | "failed" | "stopped")) {
+                break value["run"].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(run["stats"]["turns_completed"], 2, "{run}");
+    assert!(seen.load(Ordering::SeqCst), "the second turn must restore evidence");
+    let ratio = s
+        .state
+        .store
+        .for_owner("local")
+        .get(sid)
+        .unwrap()
+        .token_calibration
+        .expect("usage was reported")
+        .ratio;
+    assert!(ratio < 1.01, "restored evidence inflated the token ratio to {ratio}");
+    fixture.abort();
+}
+
 #[tokio::test]
 async fn invalid_digest_retains_passages_for_the_next_goal_turn() {
     check_goal_evidence_reuse(true, None, false, 6000).await;

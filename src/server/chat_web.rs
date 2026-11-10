@@ -242,6 +242,12 @@ fn min_result_tokens(token_ratio: f64) -> u64 {
     super::compaction::calibrated_tokens(MIN_EVIDENCE_TOKENS, token_ratio)
 }
 
+/// Most evidence one `/loop` turn restores from earlier turns or hands to a
+/// digest: `web.evidence_tokens`, held at the router's working target
+/// (`docs/WEB_DECISION_ROUTER.md`) so carried findings never crowd out the
+/// turn's own reads.
+const CARRIED_EVIDENCE_TOKENS: u64 = 4000;
+
 /// The notice on every fetched page.
 const FETCH_NOTICE: &str = "Untrusted fetched page text; excerpt may be truncated.";
 
@@ -477,12 +483,11 @@ async fn run_inner(
         let fits = |context: &Value| -> Result<bool> {
             let mut proposed = messages.clone();
             proposed.push(json!({"role":"user","content":context.to_string()}));
-            Ok(
-                super::compaction::estimate_tokens(&context.to_string()) <= web.limits.evidence_tokens.min(4000)
-                    && prompt_estimate(system.len() + serde_json::to_vec(&proposed)?.len(), token_ratio)
-                        .saturating_add(super::compaction::reply_reservation(&state.backend, cap))
-                        <= web.limits.total_tokens,
-            )
+            Ok(super::compaction::estimate_tokens(&context.to_string())
+                <= web.limits.evidence_tokens.min(CARRIED_EVIDENCE_TOKENS)
+                && prompt_estimate(system.len() + serde_json::to_vec(&proposed)?.len(), token_ratio)
+                    .saturating_add(super::compaction::reply_reservation(&state.backend, cap))
+                    <= web.limits.total_tokens)
         };
         while !fits(&context)? {
             if context["passages"].as_array_mut().unwrap().pop().is_none() {
@@ -499,6 +504,8 @@ async fn run_inner(
     } else {
         passages.clear();
     }
+    // What the first call sends beyond the history: calibration must count it.
+    let initial_extra = appended_tokens(&messages[history.len()..]);
     let tool_key = "models.local_llm.tool_max_tokens";
     let tool_max = crate::llm::openai_chat::parse_tool_max_tokens(
         state.cfg.get(tool_key).and_then(|value| value.as_u64()),
@@ -526,7 +533,8 @@ async fn run_inner(
                     token_ratio,
                 );
                 if estimate.saturating_add(digest_cap) <= web.limits.total_tokens
-                    && super::compaction::estimate_tokens(&input.to_string()) <= web.limits.evidence_tokens.min(4000)
+                    && super::compaction::estimate_tokens(&input.to_string())
+                        <= web.limits.evidence_tokens.min(CARRIED_EVIDENCE_TOKENS)
                 {
                     break;
                 }
@@ -791,6 +799,7 @@ async fn run_inner(
             reply.reported_completion_tokens = totals.output_tokens;
             reply.initial_prompt_tokens = initial_prompt_tokens;
             reply.initial_prompt_tools = initial_prompt_tools;
+            reply.initial_prompt_extra_tokens = initial_extra;
             reply.final_prompt_tools = final_tools;
             reply.peak_prompt_extra_tokens = peak_extra;
             return Ok((reply, events));
@@ -1087,6 +1096,7 @@ async fn run_inner(
                         reported_completion_tokens: totals.output_tokens,
                         initial_prompt_tokens,
                         initial_prompt_tools,
+                        initial_prompt_extra_tokens: initial_extra,
                         // The last model call offered tools: it returned this batch.
                         final_prompt_tools: true,
                         peak_prompt_extra_tokens: peak_extra,
