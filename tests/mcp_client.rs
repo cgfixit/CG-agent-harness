@@ -710,6 +710,8 @@ struct SseStub {
     port: u16,
     connections: Arc<std::sync::atomic::AtomicUsize>,
     posts: Arc<std::sync::atomic::AtomicUsize>,
+    /// The request target of every POST, in arrival order.
+    post_targets: Arc<std::sync::Mutex<Vec<String>>>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -726,27 +728,43 @@ impl SseStub {
     fn posts(&self) -> usize {
         self.posts.load(std::sync::atomic::Ordering::SeqCst)
     }
+    fn post_targets(&self) -> Vec<String> {
+        self.post_targets.lock().unwrap().clone()
+    }
 }
 
 /// Owned HTTP/1.1 SSE stub. `endpoint` maps the stub's own port to the
 /// `data:` line of the endpoint event.
 async fn sse_stub(bind: &str, endpoint: impl Fn(u16) -> String, reply: PostReply) -> Option<SseStub> {
+    sse_stub_frames(
+        bind,
+        move |port| vec![format!("event: endpoint\ndata: {}\n\n", endpoint(port))],
+        reply,
+    )
+    .await
+}
+
+/// The same stub with the event stream spelled out: each frame is one write,
+/// with a pause before the next so the client reads them as separate chunks.
+async fn sse_stub_frames(bind: &str, frames: impl Fn(u16) -> Vec<String>, reply: PostReply) -> Option<SseStub> {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind(bind).await.ok()?;
     let port = listener.local_addr().unwrap().port();
-    let data = endpoint(port);
+    let frames = frames(port);
     let connections = Arc::new(AtomicUsize::new(0));
     let posts = Arc::new(AtomicUsize::new(0));
-    let (conns, post_count) = (connections.clone(), posts.clone());
+    let post_targets = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (conns, post_count, targets) = (connections.clone(), posts.clone(), post_targets.clone());
     let task = tokio::spawn(async move {
         loop {
             let Ok((mut stream, _)) = listener.accept().await else {
                 return;
             };
             conns.fetch_add(1, Ordering::SeqCst);
-            let data = data.clone();
+            let frames = frames.clone();
             let post_count = post_count.clone();
+            let targets = targets.clone();
             tokio::spawn(async move {
                 let mut buf = Vec::new();
                 let mut chunk = [0u8; 4096];
@@ -765,16 +783,28 @@ async fn sse_stub(bind: &str, endpoint: impl Fn(u16) -> String, reply: PostReply
                 };
                 let head = String::from_utf8_lossy(&buf[..head_end]).to_ascii_lowercase();
                 if head.starts_with("get ") {
-                    let body = format!("event: endpoint\ndata: {data}\n\n");
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\n\r\n{body}"
-                    );
-                    let _ = stream.write_all(response.as_bytes()).await;
+                    let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\n\r\n";
+                    let mut pending = head.to_string();
+                    for (index, frame) in frames.iter().enumerate() {
+                        if index > 0 {
+                            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                        }
+                        pending.push_str(frame);
+                        let _ = stream.write_all(pending.as_bytes()).await;
+                        let _ = stream.flush().await;
+                        pending.clear();
+                    }
                     // Keep the event stream open like a real SSE server.
                     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                     return;
                 }
                 post_count.fetch_add(1, Ordering::SeqCst);
+                let target = String::from_utf8_lossy(&buf[..head_end])
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .to_string();
+                targets.lock().unwrap().push(target);
                 let length = head
                     .lines()
                     .find_map(|l| l.strip_prefix("content-length:"))
@@ -833,6 +863,7 @@ async fn sse_stub(bind: &str, endpoint: impl Fn(u16) -> String, reply: PostReply
         port,
         connections,
         posts,
+        post_targets,
         task,
     })
 }
@@ -873,6 +904,56 @@ async fn sse_relative_and_same_origin_endpoints_are_accepted() {
         assert!(
             stub.posts() >= 2,
             "initialize and tools/call must reach the configured origin"
+        );
+    }
+}
+
+/// The handshake must wait for the whole endpoint event and read it the way
+/// the endpoint parser does. A field may omit the space after its colon, and a
+/// comment or keep-alive may arrive first, in its own chunk.
+#[tokio::test]
+async fn sse_handshake_reads_a_whole_endpoint_event_in_either_spelling() {
+    let cases: [(&str, &str, Vec<&str>); 3] = [
+        (
+            "no space after the colon",
+            "/messages?session_id=tight",
+            vec!["event:endpoint\ndata:/messages?session_id=tight\n\n"],
+        ),
+        (
+            "a keep-alive first, then the endpoint event split across two chunks",
+            "/messages?session_id=split",
+            vec![
+                ": keep-alive\n\n",
+                "event: endpoint\ndata: /messages?sess",
+                "ion_id=split\n\n",
+            ],
+        ),
+        (
+            "CRLF line endings",
+            "/messages?session_id=crlf",
+            vec!["event: endpoint\r\ndata: /messages?session_id=crlf\r\n\r\n"],
+        ),
+    ];
+    for (label, endpoint, frames) in cases {
+        let frames: Vec<String> = frames.into_iter().map(str::to_string).collect();
+        let stub = sse_stub_frames(
+            "127.0.0.1:0", // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+            move |_| frames.clone(),
+            PostReply::Echo,
+        )
+        .await
+        .expect("bind loopback stub");
+        let server = McpServer::boot(
+            &sse_stub_yaml(stub.port),
+            &[("mcp.sse_allow_loopback", "true"), ("mcp.timeout_sec", "3")],
+        )
+        .await;
+        let (status, body) = sse_stub_call(&server).await;
+        assert_eq!(status, 200, "{label}: {body}");
+        let targets = stub.post_targets();
+        assert!(
+            targets.len() >= 2 && targets.iter().all(|target| target == endpoint),
+            "{label}: every POST must use the whole endpoint, got {targets:?}"
         );
     }
 }
