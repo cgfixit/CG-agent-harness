@@ -180,11 +180,12 @@ fn resolve_run_shape(state: &AppState, req: &AgentRunRequest) -> ApiResult<(Vec<
     })?;
     let tuned_planner = planner_timeout_sec(state);
     let planner = tuned_planner.unwrap_or(state.shim.planner_timeout_sec);
-    let estimated = shim::real_repo_run_budget_sec(planner, req.max_iterations, checks.len());
+    let estimated = shim::real_repo_run_shape_budget_sec(&state.shim, planner, req.max_iterations, checks.len());
     if estimated > REAL_REPO_RUN_MAX_TIMEOUT_SEC {
         let max_fitting = (1..=MAX_ITERATIONS_CEILING as i64)
             .filter(|n| {
-                shim::real_repo_run_budget_sec(planner, Some(*n), checks.len()) <= REAL_REPO_RUN_MAX_TIMEOUT_SEC
+                shim::real_repo_run_shape_budget_sec(&state.shim, planner, Some(*n), checks.len())
+                    <= REAL_REPO_RUN_MAX_TIMEOUT_SEC
             })
             .max()
             .unwrap_or(0);
