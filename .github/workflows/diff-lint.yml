@@ -1,0 +1,37 @@
+# Fast static checks for mistakes that kept reaching review or a later CI job:
+# an unannotated http:// literal in Rust or Python (DevSkim alert after push), a stale
+# self-manual, a Markdown file over its cap, a raised cap with no `// why:`,
+# and a wall-clock test bound near runner jitter. Rules and their evidence:
+# scripts/lint-diff.py. tests/invariant_guard.rs and tests/self_manual.rs in
+# ci.yml stay the authority; this job answers in seconds without a compile.
+name: Diff - Recurring-mistake lint
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: diff-lint-${{ github.workflow }}-${{ github.ref }}
+  # Pull requests only. Do not cancel main, tags, schedules, or release calls.
+  # workflow_call keeps the caller event; if it does not, still refuse main and tags.
+  cancel-in-progress: ${{ (github.event_name == 'pull_request' || github.event_name == 'workflow_call') && github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  diff-lint:
+    name: lint-diff (added lines, docs caps, self-manual)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The lint diffs against the merge base with main, so it needs history.
+          fetch-depth: 0
+      - name: Rule fixtures
+        run: python3 scripts/test-lint-diff.py
+      - name: Lint what this branch changes
+        run: python3 scripts/lint-diff.py --base origin/main

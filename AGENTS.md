@@ -98,6 +98,12 @@ server -> MCP runtime -> declared stdio children / SSE servers
   workers. Audit queue overflow drops lines; explicit flushes can wait.
 - scrypt at n=2^17 is slow unoptimized; `[profile.dev.package."*"] opt-level=3`
   is load-bearing for test time.
+- Reload policy after any wait and before a send or stored delivery;
+  permission checked earlier is stale.
+- Assert and panic messages never print secret-bearing values (audit lines,
+  results, base URLs); CodeQL flags them.
+- Console replies check `sessionRevision` before rendering; an older
+  selection's reply is dropped.
 - Reuse `common::dns::lookup_bounded` and `web_search::pinned_client_builder`
   for pinned egress; callers still authorize destinations. Fixture bypasses
   require `test-support`, absent from default release builds.
@@ -110,10 +116,13 @@ server -> MCP runtime -> declared stdio children / SSE servers
   `cargo test --all-targets`, `cargo deny check`. Rust 1.89 is pinned for the
   backend; `desktop/` pins 1.90. `scripts/verify-local.sh` skips deny when
   cargo-deny is missing, so its green run is not deny evidence.
-- Verifying a change locally: lint (fmt, clippy), then run the changed code
-  (route, binary or function). Use focused tests when needed; for docs, run
+- Verifying a change locally: lint (fmt, clippy, `python3 scripts/lint-diff.py`),
+  then run the changed code (route, binary or function). Use focused tests when
+  needed; for docs, run
   `cargo test --test invariant_guard markdown_stays_on_the_docs_budget`.
-  Leave full suites to CI. Lint workflow edits with actionlint and zizmor.
+  Leave full suites to CI. Lint workflow edits with `scripts/lint-workflows.sh`.
+- Changing a shipped default, refusal order or exit code: `rg` the tests for
+  it and run every matching target.
 - New routes: add to `src/server/routes/mod.rs::REGISTERED_PATHS` (and
   `views.rs` if the console lists them) or `/api/tools` reports them unwired.
 - New shim actions: extend `shim::ACTIONS` (and `shim::JSON_ACTIONS` if it
