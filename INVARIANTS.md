@@ -43,9 +43,13 @@ Process edges; update this map when adding one.
 - **Keep-awake child (macOS):** while a `/web research` run holds the model,
   `src/common/process.rs` runs `/usr/bin/caffeinate -i -w <server pid>` with a fixed
   argv and empty environment, and kills it when the run ends.
+- **LAN table readers (macOS):** for device lists, `src/netconnect/sources.rs` runs
+  `/usr/sbin/arp -an` and `/usr/sbin/netstat -rn -f inet` with a fixed argv and
+  environment and a 2 s bound, from the server or the `netconnect` CLI. Linux reads
+  `/proc/net` instead.
 - **Operator CLI:** `account` and `web` call the portal, `tls` inspects or renews the
-  certificate, `mcp-key` manages machine keys by file authority. The server never
-  spawns them.
+  certificate, `mcp-key` manages machine keys by file authority, `netconnect` runs
+  `status`, `devices` and `diag` in-process. The server never spawns them.
 
 MCP stdio children are spawned from `src/common/mcp.rs` with a constructed
 environment (secret and linker-hijack names stripped). Required per-server
@@ -238,7 +242,7 @@ edits between an authorization check and an OS operation is claimed.
 Chat exposes only two read-only model tools while web is enabled: configured-provider
 search and permitted URL fetch. The dispatcher bounds calls, tokens, time and
 arguments and rechecks current account/URL permissions before reads and evidence
-delivery. A turn that already holds a notes-corpus read (`source=notes_corpus`), or a successful private-notes tool result, does not offer or run `web_search` or the `search_web` alias unless that user message asks for outside, web, or internet sources. `web.chat_tool_calls` (default 30, range 1–30) remains the tool-round ceiling. Tool hops use `models.local_llm.tool_max_tokens` (default 512) and temperature 0. The answer hop keeps the chat token ceiling and temperature. It cannot mutate policy, credentials, accounts or repositories, including
+delivery. A turn that already holds a notes-corpus read (`source=notes_corpus`), or a successful private-notes tool result, does not offer or run `web_search` or its `search_web`/`websearch` aliases unless that user message asks for outside, web, or internet sources. `web.chat_tool_calls` (default 30, range 1–30) remains the tool-round ceiling. Tool hops use `models.local_llm.tool_max_tokens` (default 512) and temperature 0. The answer hop keeps the chat token ceiling and temperature. It cannot mutate policy, credentials, accounts or repositories, including
 local `/loop` turns. Search-provider snippets are listings, not fetched
 linked pages; each content fetch still requires its own URL permission. A
 restart-only `web.search.provider` picks the backend: `auto` lets a configured SerpAPI
@@ -300,7 +304,9 @@ manifest and commits locally with fresh reason/confirmation. Push and draft PR
 publication each require separate actions and fresh intent; combined
 `real-repo-run-decide --push/--publish` is refused. Default master, deepagent, and clone-write
 flags remain false (mode/write-enabled defaults alone cannot arm writes).
-Master-disabled CLI calls banner and exit 0; mutation-boundary denials exit 4;
+Master-disabled CLI calls banner and exit 0, except two intent refusals that
+precede the master gate and exit 4: that combined decide, and
+`real-repo-run-publish` without `--confirm`. Mutation-boundary denials exit 4;
 invalid or missing config exits 3.
 
 Read-only diff/status do not require write enablement. Git optional index refresh,
@@ -466,8 +472,9 @@ false`, omitted; never raw. `logging.audit_file` stays home-relative: absolute,
 Server audit lines go through one ordered writer thread behind a bounded queue
 (`logging.audit_queue_lines`, default 4096; 0 appends inline). A full queue drops
 the new line with a warning and never blocks a request. The server flushes (at
-most 10 s) before spawning an agentic child, before `GET /api/audit` reads,
-and on Ctrl-C/SIGTERM, so a child's lines follow the server lines the flush
+most 10 s) before spawning an agentic child, before `GET /api/audit` and
+`GET /api/diag/read` reads, and on Ctrl-C/SIGTERM or desktop sidecar shutdown,
+so a child's lines follow the server lines the flush
 landed; a dropped line or an expired flush does not stop the spawn. Other
 callers append inline.
 

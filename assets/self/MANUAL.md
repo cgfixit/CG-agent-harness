@@ -29,7 +29,7 @@ This manual is static text bundled with the build and indexed at startup. It is 
 - `cgagentharness netconnect status|devices|diag` and `/net` -> `src/netconnect`.
  Only `diag` dials, through the budgeted `Dialer` in `connect.rs`.
 - `agentic`/`netconnect` exit codes: `0` ok, `2` failed, `3` env/config,
- `4` write refused. Through the shim, a non-zero child exit is HTTP
+ `4` refused. Through the shim, a non-zero child exit is HTTP
  200 with `ok=false`; shim failures map to 400/502/504 and the disabled-layer
  banner to 409. Other subcommands (`serve`, `account`, `web`, `tls`,
  `mcp-key`) exit `1` on error.
