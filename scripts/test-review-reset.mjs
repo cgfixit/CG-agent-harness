@@ -12,7 +12,7 @@ const nodes = new Map(), messages = [], calls = [];
 let analyticsClears = 0, scheduleClears = 0, notificationClears = 0;
 const headerStates = [], clearedTimers = []; let headersAtLogoutRequest = null;
 const node = id => {
-  if (!nodes.has(id)) nodes.set(id, {value:'', files:[], textContent:'', replaceChildren(){this.textContent='';}, addEventListener(event, handler){this[event]=handler;}});
+  if (!nodes.has(id)) nodes.set(id, {value:'', files:[], textContent:'', close(){this.open=false;}, replaceChildren(){this.textContent='';}, addEventListener(event, handler){this[event]=handler;}});
   return nodes.get(id);
 };
 const context = vm.createContext({
@@ -33,6 +33,8 @@ const context = vm.createContext({
   api:async(...args)=>{calls.push(args);return context.respond(...args);},
 });
 vm.runInContext([
+  source('let notesViewRevision =', 'async function withNotesDialog('),
+  source('function setCurrentSession(', 'let promptHistory ='),
   source('let sessionTokenRevision =', 'async function refreshStatus()'),
   source('const reviewedPRBodies =', 'function isReviewableAgentDiff('),
   source('function isReviewableAgentDiff(', "$('sessionClearCancel')"),
