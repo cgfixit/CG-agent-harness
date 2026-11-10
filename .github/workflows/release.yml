@@ -117,7 +117,6 @@ jobs:
   publish:
     needs: [plan, build, desktop]
     runs-on: ubuntu-latest
-    environment: release
     timeout-minutes: 10
     permissions:
       contents: write

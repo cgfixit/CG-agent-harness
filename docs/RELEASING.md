@@ -24,11 +24,10 @@ assets, and publishes it as a regular Latest release (`gh release edit --latest`
 Existing releases and tags are never overwritten. Publication uses the event's
 exact source commit, so commits merged during a build wait for a later run.
 
-Publication targets the `release` environment. Configure its required reviewer
-as `cgfixit`, with self-approval allowed. This repository setting is separate
-from the workflow declaration; the declaration alone does not enforce review.
-With that protection configured, scheduled and manual publication wait for
-approval after builds complete.
+Publication needs no manual approval: the `publish` job declares no environment,
+so scheduled, manual and tag releases publish as soon as verification, both
+builds and the source recheck pass. Those gates are the only review.
+A required reviewer on the `release` environment no longer applies.
 
 ## Change the timing
 
@@ -58,9 +57,9 @@ In GitHub, open **Actions → Release - Plan, verify and publish → Run workflo
 
 The planner requires an existing latest regular `vMAJOR.MINOR.PATCH` release.
 API errors and occupied versions fail explicitly. Publication runs share one
-concurrency group: the running release keeps its slot while awaiting approval;
-only the newest pending run is retained. Read-only manual previews use separate
-groups, so they neither wait behind approval nor replace a queued publication.
+concurrency group: the running release keeps its slot; only the newest pending run is
+retained. Read-only manual previews use separate groups, so they neither wait
+behind a release nor replace a queued publication.
 After upload/publication failure, inspect the draft and assets before recovery;
 reruns refuse collisions and never overwrite uploads.
 
