@@ -594,6 +594,65 @@ async fn expired_episode_purge_route_requires_confirm_and_keeps_live_episodes() 
 }
 
 #[tokio::test]
+async fn episode_delete_route_needs_confirm_and_reason_and_removes_only_the_owners_unreferenced_episode() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), capture()).await;
+    let cited = stage_episode(&s).await;
+    let doomed = stage_episode(&s).await;
+    let foreign = stage_store_episode(&s, "user_bob");
+    let path = |id: &str| format!("/api/structured-memory/episodes/{id}/delete");
+    let confirmed = json!({"reason":"operator cleanup","confirm":true});
+
+    // Confirmation and a reason are both required, and a refusal deletes nothing.
+    for body in [
+        json!({"reason":"operator cleanup"}),
+        json!({"reason":"operator cleanup","confirm":false}),
+    ] {
+        let (status, refused) = s.post_json(&path(&doomed), body).await;
+        assert_eq!(status, 400, "{refused}");
+        assert_eq!(code(&refused), "STRUCTURED_MEMORY_CONFIRM");
+    }
+    let (status, refused) = s.post_json(&path(&doomed), json!({"reason":"","confirm":true})).await;
+    assert_eq!(status, 422, "{refused}");
+    assert_eq!(s.get_json("/api/structured-memory/episodes").await.1["count"], 2);
+
+    // An episode a pending proposal cites stays until that proposal is decided.
+    let (status, proposal) = s
+        .post_json(
+            "/api/structured-memory/proposals",
+            json!({"action":"add","content":"Keep tabs","source_episode_ids":[cited]}),
+        )
+        .await;
+    assert_eq!(status, 200, "{proposal}");
+    let (status, refused) = s.post_json(&path(&cited), confirmed.clone()).await;
+    assert_eq!(status, 409, "{refused}");
+    assert_eq!(code(&refused), "STRUCTURED_MEMORY_CHANGED");
+
+    // Another owner's episode, an unknown id and a malformed id all read as unknown.
+    let unknown = cgagentharness::common::random_hex(16);
+    for id in [foreign.as_str(), unknown.as_str(), "not-an-id"] {
+        let (status, missing) = s.post_json(&path(id), confirmed.clone()).await;
+        assert_eq!(status, 404, "{id}: {missing}");
+        assert_eq!(code(&missing), "STRUCTURED_MEMORY_NOT_FOUND");
+    }
+    let store = s.state.structured_memory.as_ref().unwrap();
+    assert_eq!(store.list_episodes("user_bob").unwrap()[0].id, foreign);
+
+    // The delete removes exactly that episode; repeating it is not a silent success.
+    let (status, deleted) = s.post_json(&path(&doomed), confirmed.clone()).await;
+    assert_eq!(status, 200, "{deleted}");
+    assert_eq!(deleted["deleted"], doomed.as_str());
+    let listed = s.get_json("/api/structured-memory/episodes").await.1;
+    assert_eq!(listed["count"], 1, "{listed}");
+    assert_eq!(listed["episodes"][0]["id"], cited.as_str());
+    assert!(s.audit_log().contains("structured_memory_episode_deleted"));
+    assert!(!s.audit_log().contains("operator cleanup"), "the reason is not audited");
+    let (status, again) = s.post_json(&path(&doomed), confirmed).await;
+    assert_eq!(status, 404, "{again}");
+    assert_eq!(code(&again), "STRUCTURED_MEMORY_NOT_FOUND");
+}
+
+#[tokio::test]
 async fn export_is_escaped_owner_local_and_owner_purge_is_atomic_from_http() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), capture()).await;
@@ -1481,6 +1540,67 @@ async fn foreign_episode_ids_are_owner_isolated() {
     assert_eq!(status, 404, "{missing}");
     assert_eq!(code(&missing), "STRUCTURED_MEMORY_NOT_FOUND");
     assert_eq!(s.get_json("/api/structured-memory/proposals").await.1["count"], 0);
+}
+
+/// The consolidation route's SQLite work runs on the blocking pool. With the
+/// store's write lock held elsewhere it waits there, and the runtime's only
+/// worker stays free to answer other requests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_busy_store_does_not_stall_other_requests_behind_a_consolidation_start() {
+    use std::time::{Duration, Instant};
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), consolidation()).await;
+    let episode_id = stage_store_episode(&s, "local");
+    model.set_reply(consolidator_reply(&episode_id, "Prefer metric units"));
+    // Another connection takes the database's write lock and keeps it.
+    let database = s.home.join("memory/structured.sqlite3");
+    let (locked, is_locked) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let conn = rusqlite::Connection::open(database).unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        locked.send(()).unwrap();
+        // Well inside the store's 5 s busy timeout, so the waiting write succeeds.
+        let _ = released.recv_timeout(Duration::from_secs(3));
+        conn.execute_batch("ROLLBACK").unwrap();
+    });
+    is_locked.recv().unwrap();
+    // The run's first write now has to wait for that lock.
+    let start = s.post_json(
+        "/api/structured-memory/consolidation",
+        json!({"episode_ids": [episode_id]}),
+    );
+    tokio::pin!(start);
+    // Timed from before the pause: a worker stuck in SQLite fires no timers either.
+    let probe = async {
+        let asked = Instant::now();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let (status, _) = s.get_json("/api/status").await;
+        (status, asked.elapsed())
+    };
+    tokio::pin!(probe);
+    let mut finished = None;
+    let (status, waited) = loop {
+        tokio::select! {
+            answered = &mut probe => break answered,
+            done = &mut start, if finished.is_none() => finished = Some(done),
+        }
+    };
+    assert_eq!(status, 200);
+    assert!(
+        waited < Duration::from_millis(1500),
+        "another request waited {waited:?} behind the memory store"
+    );
+    assert!(finished.is_none(), "the start finished before the store was released");
+    release.send(()).unwrap();
+    let (status, run) = start.await;
+    assert_eq!(status, 200, "{run}");
+    assert_eq!(
+        (&run["state"], &run["proposal_count"]),
+        (&json!("done"), &json!(1)),
+        "{run}"
+    );
+    holder.join().unwrap();
 }
 
 fn auto_consolidation() -> ServerOptions {

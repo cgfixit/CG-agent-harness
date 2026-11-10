@@ -329,8 +329,13 @@ pub async fn agent_run(
     refuse_bound_session_pins(&state, &owner, &req)?;
     let prepared = prepare_run(&state, &req, &owner)?;
     let Json(mut result) = agentic_call(&state, prepared.ops).await?;
-    result["memory_suggestion"] =
-        crate::server::structured_memory_suggest::coding_completed(&state, &owner, &req.instruction, &result);
+    // The receipt stages an episode in the memory store: off the async worker.
+    let result = super::structured_memory::off_worker(move || {
+        result["memory_suggestion"] =
+            crate::server::structured_memory_suggest::coding_completed(&state, &owner, &req.instruction, &result);
+        result
+    })
+    .await;
     Ok(Json(result))
 }
 
@@ -385,14 +390,20 @@ pub(crate) fn start_job(
         } = prepared;
         let outcome = agentic_call(&task_state, ops).await.map(|Json(v)| v);
         task_state.jobs.finish(&task_job, outcome);
-        task_state.jobs.annotate_completion(&task_job, |result| {
-            result["memory_suggestion"] = crate::server::structured_memory_suggest::coding_completed(
-                &task_state,
-                &task_owner,
-                &instruction,
-                result,
-            );
-        });
+        // The receipt stages an episode in the memory store: off the async worker.
+        // `finish` released this task's handle, so no cancel can abort it here.
+        let (receipt_state, receipt_job, receipt_owner) = (task_state.clone(), task_job.clone(), task_owner.clone());
+        super::structured_memory::off_worker(move || {
+            receipt_state.jobs.annotate_completion(&receipt_job, |result| {
+                result["memory_suggestion"] = crate::server::structured_memory_suggest::coding_completed(
+                    &receipt_state,
+                    &receipt_owner,
+                    &instruction,
+                    result,
+                );
+            });
+        })
+        .await;
         if let Some(job) = task_state.jobs.get(&task_owner, &task_job) {
             if let Some(sid) = task_schedule {
                 let event = if job["status"] == crate::server::agent_jobs::FINISHED {
