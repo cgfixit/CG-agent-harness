@@ -1594,6 +1594,20 @@ impl StructuredMemoryStore {
         self.proposals_filtered(owner, true)
     }
 
+    /// Every proposal the owner has, decided ones included.
+    fn proposal_count(&self, owner: &str) -> Result<usize> {
+        Self::require_owner(owner)?;
+        let conn = self.lock();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM proposals WHERE owner_id=?1",
+                params![owner],
+                |r| r.get(0),
+            )
+            .map_err(sql)?;
+        Ok(count as usize)
+    }
+
     fn proposals_filtered(&self, owner: &str, pending_only: bool) -> Result<Vec<Proposal>> {
         Self::require_owner(owner)?;
         let conn = self.lock();
@@ -3008,13 +3022,17 @@ impl StructuredMemoryStore {
                 .then_with(|| a.id.cmp(&b.id))
         });
         let proposals = self.list_proposals(owner)?;
+        // Both listings return their newest rows up to a fixed limit. Decided
+        // proposals are never pruned and the episode cap can be set above the
+        // episode limit, so either can leave rows out; the export must say so.
+        let truncated = self.proposal_count(owner)? > proposals.len() || self.episode_count(owner)? > episodes.len();
         let mut export = OwnerExport {
             owner_id: owner.to_string(),
             fields: EXPORT_FIELDS.iter().map(|s| (*s).to_string()).collect(),
             facts,
             episodes,
             proposals,
-            truncated: false,
+            truncated,
             note: "Episodes store privacy-filtered metadata summaries only. Raw query, full answer, hidden reasoning, and tool secrets are omitted. Strings are HTML-escaped against stored XSS.".to_string(),
         };
         while export.html().len() > self.limits.max_export_bytes {
@@ -4166,6 +4184,72 @@ mod tests {
         assert!(!ids.contains(&second.id.as_str()));
         assert!(ids.contains(&third.id.as_str()));
         assert_eq!(listed.len(), 2);
+    }
+
+    #[test]
+    fn export_says_truncated_when_a_row_limit_leaves_rows_out() {
+        let dir = tempfile::tempdir().unwrap();
+        // Room for more episodes than the listing returns; the shipped cap is below it.
+        let text = AppConfig::embedded_default()
+            .replace("max_episodes_per_owner: 128", "max_episodes_per_owner: 300")
+            .replace(
+                "max_episode_bytes_per_owner: 65536",
+                "max_episode_bytes_per_owner: 1048576",
+            );
+        let cfg = AppConfig::from_str(&text, &dir.path().join("config.yaml")).unwrap();
+        let store = StructuredMemoryStore::open(&dir.path().join("structured.sqlite3"), &cfg).unwrap();
+        let decide_one = |owner: &str| {
+            let proposal = store
+                .create_proposal(
+                    owner,
+                    ProposalDraft {
+                        action: "add",
+                        content: Some("Prefer concise answers."),
+                        category: None,
+                        target_fact_id: None,
+                        expected_revision: None,
+                        expected_digest: None,
+                        source_episode_ids: &[],
+                    },
+                )
+                .unwrap();
+            store
+                .decide_proposal(owner, &proposal.id, &proposal.revision, false, "fixture review")
+                .unwrap();
+        };
+        let stage_one = |owner: &str| {
+            store
+                .stage_episode(
+                    owner,
+                    EpisodeDraft {
+                        model_id: "local-test-model",
+                        outcome: "completed",
+                        user_chars: 4,
+                        assistant_chars: 8,
+                        sensitivity: "normal",
+                    },
+                )
+                .unwrap();
+        };
+        let shape = |owner: &str| {
+            let export = store.export_owner(owner).unwrap();
+            (export.proposals.len(), export.episodes.len(), export.truncated)
+        };
+        // Decided proposals are never pruned, so an owner outgrows the listing in normal use.
+        (0..128).for_each(|_| decide_one("user_alice"));
+        assert_eq!(shape("user_alice"), (128, 0, false), "everything fits: not truncated");
+        decide_one("user_alice");
+        assert_eq!(shape("user_alice"), (128, 0, true), "the oldest proposal was left out");
+        assert!(store
+            .export_owner("user_alice")
+            .unwrap()
+            .html()
+            .contains("<p>Truncated: true</p>"));
+        // Episodes clip the same way once an operator raises their cap past the listing's.
+        (0..256).for_each(|_| stage_one("user_bob"));
+        assert_eq!(shape("user_bob"), (0, 256, false));
+        stage_one("user_bob");
+        assert_eq!(shape("user_bob"), (0, 256, true), "the oldest episode was left out");
     }
 
     #[test]
