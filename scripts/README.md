@@ -27,6 +27,8 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 ## Verification and CI
 
 - [`verify-local.sh`](verify-local.sh): broad opt-in lint/test/build/live-smoke runner; missing cargo-deny or Node skips those checks, and `SKIP_LIVE=1` skips smoke.
+- [`lint-diff.py`](lint-diff.py): seconds-fast lint of what a branch changes (`--staged` for the index): unannotated `http://` Rust literals, stale self-manual, docs caps and unexplained cap raises fail; short wall-clock test bounds warn. Runs in `diff-lint.yml` with [`test-lint-diff.py`](test-lint-diff.py).
+- [`lint-workflows.sh`](lint-workflows.sh): `workflow-lint.yml`'s actionlint and zizmor at the same pins, from PATH or a rootless fallback; zizmor's online audits stay CI-only.
 - [`check-pr-template.sh`](check-pr-template.sh): local PR-body gate mirroring `pr-template-check.yml`, including its Cursor and trailing Claude Code footer strips but not its Dependabot exemption.
 - [`ci-docs-only.sh`](ci-docs-only.sh): classifies changed paths so qualifying PRs skip selected CI compile/test jobs; other event types run everything.
 - [`browser-acceptance.mjs`](browser-acceptance.mjs): native Chrome acceptance against a disposable fixture (manual, after `browser-fixture.py --http`).
