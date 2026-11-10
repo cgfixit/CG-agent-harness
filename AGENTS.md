@@ -34,7 +34,7 @@ server -> MCP runtime -> declared stdio children / SSE servers
   `4` refused. Through the shim, a non-zero child exit is HTTP
   200 with `ok=false`; shim failures map to 400/502/504 and the disabled-layer
   banner to 409. Other subcommands (`serve`, `account`, `web`, `tls`,
-  `mcp-key`) exit `1` on error.
+  `mcp-key`) exit `1` on error; hidden `desktop` and `mcp-stdio-worker` exit `3`.
 - Application state: `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`); coding writes
   stay in pipeline-created clones under `data/agentic/workspaces`.
 - Before changing a feature, read its guide below and owning `INVARIANTS.md`
@@ -67,8 +67,8 @@ server -> MCP runtime -> declared stdio children / SSE servers
   Cross the boundary only through `src/shim` and the CLI whitelist.
 - Duplicated on purpose, kept in sync by tests: `RUN_ID_PATTERN` (server
   `agent_policy` vs agentic `run_store`), the planner/check timeout and
-  setup-budget constants (shim/server vs agentic), the iteration default. Never
-  deduplicate them.
+  setup-budget constants (shim/server vs agentic), the iteration default, the
+  console's `MAX_GOAL_CHARS`. Never deduplicate them.
 - Config is strict by type. Gates read through `flag_is_true`: only literal
   YAML `true` is on; quoted `"true"` and a missing key are off. A missing key
   is not the shipped value: several gates ship `true` (structured memory,
@@ -134,7 +134,7 @@ server -> MCP runtime -> declared stdio children / SSE servers
 - Prefer a `#[cfg(test)] mod tests` unit test beside a pure parser or matcher
   over another integration test.
 - PRs are draft, one concern, on a driver-prefixed branch (`claude/`, `codex/`,
-  `grok/`, `kimi/`, `agent/` when unknown), **based on `main`**, title
+  `grok/`, `kimi/`, `cyclaw/`, `agent/` when unknown), **based on `main`**, title
   `[prefix] - Sentence`, body from `.github/PULL_REQUEST_TEMPLATE.md` (run
   `scripts/check-pr-template.sh` first). Touching a core path requires an
   explicit invariant statement in the body.
@@ -173,8 +173,8 @@ map), regenerate `assets/self/MANUAL.md`; commit it when the bytes change.
 
 ## Project skills
 
-Repository guidance is separate from runtime `/api/skills`. Start with
-`cgagentharness-project-guidance`, then the applicable task skill; neither
+Repository guidance is separate from runtime `/api/skills`. Codex and Claude start
+with `cgagentharness-project-guidance`, then the applicable task skill; neither
 expands publication, merge or release authority.
 
 - Codex: [.codex/skills/README.md](.codex/skills/README.md) indexes contract/config
