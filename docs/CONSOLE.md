@@ -156,8 +156,8 @@ nothing off-machine; per-query rebuilding is accepted (#258). A hit opens its
 session; session or account switches discard results.
 
 `GET /api/sessions/{session_id}/export` returns Markdown, written to
-`<home>/exports/{id}.md`; the pane offers a download. Both enforce owner and
-CSRF; export includes bounded attachment metadata without bodies or filenames.
+`<home>/exports/{id}.md`. Browsers offer a download; the app reports the saved
+path. Export includes attachment metadata only. Both enforce owner and CSRF.
 
 ### 7.2 Default soul, effective prompt and persona editing
 
@@ -495,13 +495,11 @@ rate limit's `retry_after` (up to 300 s; `/loop stop` ends the wait); a
 server-side run counts it as a failed turn.
 Unsupported formats are refused; clipped sections say they are incomplete.
 
-The notes corpus has multipart ingest, list, and delete
-[routes](API_ROUTES.md#chat-model-and-chat-sessions), but no console uploader.
-A local message supplies the query; `/prompt` shows assembled context. Notes are
-separate from structured facts and pinned notes. Ingest honors
-`notes_corpus.max_files_per_request` (default 8, range 1–16). The HTTP body
-cap is that count times `max_file_bytes` plus 256 KiB of multipart overhead.
-Attachment uploads still cap at three files per request.
+Open **Memory → Manage uploaded notes** to upload, refresh or delete your
+account’s UTF-8 notes. The picker shows configured limits and reports skipped
+files; the server accepts or rejects the submitted batch together. Saved notes
+use reference IDs, not filenames. A local message supplies the retrieval query;
+`/prompt` shows matching passages. Notes remain separate from facts and pins.
 
 ### DOCX attachments
 
