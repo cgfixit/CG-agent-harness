@@ -4,8 +4,10 @@
 use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 
-/// `web.search.provider`, restart-only. `Auto` is today's rule: an active SerpAPI
-/// key selects SerpAPI, otherwise public Google. A Tavily key never changes `Auto`.
+/// `web.search.provider`, restart-only. `Auto` follows the saved keys: an active
+/// Tavily key selects Tavily, else an active SerpAPI key selects SerpAPI, else
+/// public Google (operator decision, 2026-11-10; before, a Tavily key never
+/// changed `Auto`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchProvider {
     Auto,
@@ -43,9 +45,11 @@ impl SearchProvider {
         }
     }
 
-    /// The `/web status` wording.
-    pub fn describe(&self, keyed: bool) -> &'static str {
+    /// The `/web status` wording. `keyed` and `tavily_keyed` say which keys are
+    /// active; only `Auto` reads them.
+    pub fn describe(&self, keyed: bool, tavily_keyed: bool) -> &'static str {
         match self {
+            Self::Auto if tavily_keyed => "Tavily (auto: a saved Tavily key is searched first)",
             Self::Auto if keyed => "Google via SerpAPI",
             Self::Auto | Self::GooglePublic => "public Google (may require JavaScript/CAPTCHA)",
             Self::Serpapi => "Google via SerpAPI (web.search.provider: serpapi)",
@@ -104,10 +108,13 @@ impl Hop {
 /// The hops a search tries, in order: the configured provider, then each
 /// enabled later hop of tavily → google-serpapi → google-public. A SerpAPI
 /// fallback needs an active key; a forced provider is always tried first.
-pub(super) fn plan_hops(provider: &SearchProvider, keyed: bool, fallback: &Fallback) -> Vec<Hop> {
+/// `Auto` starts at Tavily when its key is active (`tavily_keyed`), else at
+/// SerpAPI when that key is (`keyed`), else at public Google.
+pub(super) fn plan_hops(provider: &SearchProvider, keyed: bool, tavily_keyed: bool, fallback: &Fallback) -> Vec<Hop> {
     let mut hops = match provider {
         SearchProvider::Tavily => vec![Hop::Tavily],
         SearchProvider::Serpapi => vec![Hop::Serpapi],
+        SearchProvider::Auto if tavily_keyed => vec![Hop::Tavily],
         SearchProvider::Auto if keyed => vec![Hop::Serpapi],
         SearchProvider::Auto | SearchProvider::GooglePublic => return vec![Hop::GooglePublic],
     };
@@ -277,29 +284,56 @@ mod tests {
             alert_per_hour: 20,
         };
         use Hop::*;
-        assert_eq!(plan_hops(&SearchProvider::Tavily, true, &off), [Tavily]);
+        assert_eq!(plan_hops(&SearchProvider::Tavily, true, true, &off), [Tavily]);
         assert_eq!(
-            plan_hops(&SearchProvider::Tavily, true, &on),
+            plan_hops(&SearchProvider::Tavily, true, true, &on),
             [Tavily, Serpapi, GooglePublic]
         );
         assert_eq!(
-            plan_hops(&SearchProvider::Tavily, false, &on),
+            plan_hops(&SearchProvider::Tavily, false, true, &on),
             [Tavily, GooglePublic],
             "no SerpAPI key, no SerpAPI hop"
         );
-        assert_eq!(plan_hops(&SearchProvider::Serpapi, true, &on), [Serpapi, GooglePublic]);
         assert_eq!(
-            plan_hops(&SearchProvider::Auto, true, &off),
-            [Serpapi],
-            "today's keyed auto"
+            plan_hops(&SearchProvider::Serpapi, true, true, &on),
+            [Serpapi, GooglePublic],
+            "a forced SerpAPI is not reordered by a Tavily key"
         );
-        assert_eq!(plan_hops(&SearchProvider::Auto, true, &on), [Serpapi, GooglePublic]);
+        // Auto follows the saved keys: Tavily first, then SerpAPI, then public Google.
+        assert_eq!(plan_hops(&SearchProvider::Auto, true, false, &off), [Serpapi]);
         assert_eq!(
-            plan_hops(&SearchProvider::Auto, false, &on),
+            plan_hops(&SearchProvider::Auto, true, false, &on),
+            [Serpapi, GooglePublic]
+        );
+        assert_eq!(plan_hops(&SearchProvider::Auto, false, false, &on), [GooglePublic]);
+        assert_eq!(
+            plan_hops(&SearchProvider::Auto, false, true, &off),
+            [Tavily],
+            "a lone Tavily key selects Tavily"
+        );
+        assert_eq!(
+            plan_hops(&SearchProvider::Auto, true, true, &off),
+            [Tavily],
+            "with both keys Tavily wins"
+        );
+        assert_eq!(
+            plan_hops(&SearchProvider::Auto, true, true, &on),
+            [Tavily, Serpapi, GooglePublic]
+        );
+        assert_eq!(
+            plan_hops(&SearchProvider::Auto, false, true, &on),
+            [Tavily, GooglePublic]
+        );
+        assert_eq!(
+            plan_hops(&SearchProvider::GooglePublic, true, true, &on),
             [GooglePublic],
-            "today's keyless auto"
+            "a forced public Google ignores both keys"
         );
-        assert_eq!(plan_hops(&SearchProvider::GooglePublic, true, &on), [GooglePublic]);
+        let auto = SearchProvider::Auto;
+        assert!(auto.describe(true, true).starts_with("Tavily"));
+        assert_eq!(auto.describe(true, false), "Google via SerpAPI");
+        assert!(auto.describe(false, false).starts_with("public Google"));
+        assert!(SearchProvider::Serpapi.describe(true, true).contains("serpapi"));
     }
 
     #[test]
