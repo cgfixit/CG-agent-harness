@@ -30,11 +30,15 @@ with open(os.path.join(a.root, "AGENTS.md")) as f, open(a.out, "w") as out:
 
 class RuleTests(unittest.TestCase):
     def test_insecure_url_follows_the_devskim_rule(self):
+        # Split so this file's own lines carry one suppression each: DevSkim reads only the first.
+        other_rule = "// DevSkim: " + "ignore DS162092 because another rule"
         flagged = [
             '"http://example.org/docs/a",',  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
             'let url = format!("http://passages.invalid:{}/manual", address.port());',  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
             'let base = format!("http://{address}/v1"); // a plain comment',  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
-            '"http://a.example", // DevSkim: ignore DS162092 because another rule',  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
+            '"http://a.example", ' + other_rule,  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
+            '"http://a.example", ' + other_rule + " // DevSkim: " + "ignore DS137138 too late",  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
+            '"http://a.example", // DevSkim: ' + "ignore DS162092, DS137138 because the space ends the list",  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
         ]
         clean = [
             '"http://example.org/docs/a", // DevSkim: ignore DS137138 because the downgrade is refused.',
@@ -42,6 +46,7 @@ class RuleTests(unittest.TestCase):
             'let u = "http://localhost:1/x";',
             'let u = "http://127.0.0.1:1/x";',
             'raw.strip_prefix("http://")',
+            '"http://a.example", // devskim: ' + "ignore all because case and `all` both count",  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
             "// see http://example.com/docs",  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
             'fetch("https://a.example") // formerly http://b.example',  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
         ]

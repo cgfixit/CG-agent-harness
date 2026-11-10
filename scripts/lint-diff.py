@@ -38,7 +38,8 @@ LOOPBACK_URL = re.compile(r"http://(localhost|127.0.0.1)")  # DevSkim: ignore DS
 # DevSkim scans every language it knows; these are the two it has alerted on here.
 # extension -> (line comment marker, string quote characters)
 LANGUAGES = {".rs": ("//", '"'), ".py": ("#", "\"'")}
-SUPPRESSION = re.compile(r"DevSkim:\s*ignore\s+[A-Z0-9,\s]*" + DEVSKIM_RULE)
+# DevSkim's own suppression pattern (Suppression.cs). It reads only the first one on a line.
+SUPPRESSION = re.compile(r"DevSkim:\s+ignore\s([a-zA-Z\d,:]+)", re.IGNORECASE)
 ROW = re.compile(r'^\s*\("([^"]+)",\s*(?:Root|Guide|Evidence|Agent),\s*([0-9_]+)\),')
 FOLDER_README_WORDS = re.compile(r"^const FOLDER_README_WORDS: usize = ([0-9_]+);", re.M)
 ELAPSED_BOUND = re.compile(r"elapsed\(\)\s*<=?\s*(?:[A-Za-z_:]*::)?Duration::from_(millis|secs)\(\s*([0-9_]+)\s*\)")
@@ -97,10 +98,16 @@ def code_part(line, marker="//", quotes='"'):
     return line
 
 
+def suppressed(line):
+    """DevSkim honours the first suppression on the line, wherever it sits
+    (inside a string too), and ignores any later one."""
+    first = SUPPRESSION.search(line)
+    return bool(first) and bool({DEVSKIM_RULE.lower(), "all"} & set(first.group(1).lower().split(",")))
+
+
 def insecure_urls(line, marker="//", quotes='"'):
-    """Insecure-URL matches DevSkim would report on this line. DevSkim honours
-    a suppression anywhere on the line, including inside a string."""
-    if SUPPRESSION.search(line):
+    """Insecure-URL matches DevSkim would report on this line."""
+    if suppressed(line):
         return []
     code = code_part(line, marker, quotes)
     return [m.group(0) for m in INSECURE_URL.finditer(code) if not LOOPBACK_URL.match(m.group(0))]
