@@ -260,7 +260,7 @@ mod tests {
     async fn missing_base_url_keeps_the_configured_model_and_effort() {
         let sparse = resolved("models:\n  local_llm:\n    model: \"llama3.2\"\n    reasoning_effort: \"none\"\n").await;
         assert_eq!(sparse.provider, "ollama");
-        assert!(is_loopback_url(&sparse.base_url), "{}", sparse.base_url);
+        assert!(is_loopback_url(&sparse.base_url));
         assert_eq!(sparse.model, "llama3.2");
         assert_eq!(sparse.reasoning_effort.as_deref(), Some("none"));
         // Nothing configured at all still resolves, so the app can start.
