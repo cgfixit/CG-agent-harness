@@ -2,7 +2,9 @@
 """Static lint for mistakes that kept reaching review or CI (PRs #742-#810).
 
 Seconds, no compile. Checks what the branch changes against its merge base
-with origin/main, reading file content from the working tree:
+with origin/main, reading file content from the working tree. With --staged
+it checks the pending commit instead: staged lines, and file content from an
+index snapshot, so unstaged edits neither hide nor cause a finding.
 
   CG001 error    added Rust or Python http:// literal without a same-line
                  DevSkim DS137138 annotation (code scanning alerted after
@@ -47,6 +49,7 @@ STRING = re.compile(r'"[^"]*"')
 FOLDER_README_WORDS = re.compile(r"^const FOLDER_README_WORDS: usize = ([0-9_]+);", re.M)
 ELAPSED_BOUND = re.compile(r"elapsed\(\)\s*<=?\s*(?:[A-Za-z_:]*::)?Duration::from_(millis|secs)\(\s*([0-9_]+)\s*\)")
 TIMING_FLOOR_MS = 5000
+MARKDOWN = (".md", ".markdown", ".mdx")
 HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
@@ -198,12 +201,39 @@ def check_self_manual(report, root):
         if done.returncode != 0:
             report.add("error", "CG002", BUILDER, 0, f"the generator failed: {done.stderr.strip()[-300:]}")
             return
+        if not os.path.isfile(os.path.join(root, MANUAL)):
+            report.add("error", "CG002", MANUAL, 0, "missing; the generator's output must be tracked.")
+            return
         with open(out, "rb") as fresh, open(os.path.join(root, MANUAL), "rb") as tracked:
             if fresh.read() != tracked.read():
                 report.add(
                     "error", "CG002", MANUAL, 0,
                     f"stale: an input changed. Run `python3 {BUILDER}` and commit the result.",
                 )
+
+
+def index_snapshot(tmp, changed):
+    """Writes the index copy of each file the content checks read under `tmp`
+    and returns that directory: the generator, its inputs, the manual, the
+    guard and the changed Markdown. Everything, when the inputs are unknown."""
+    inputs = re.search(r"^INPUTS = \[(.*?)^\]", git("show", f":{BUILDER}", check=False), re.M | re.S)
+    if inputs:
+        paths = {BUILDER, MANUAL, GUARD, *(text[1:-1] for text in STRING.findall(inputs.group(1)))}
+        paths.update(path for path in changed if path.lower().endswith(MARKDOWN))
+        selection = ["--", *sorted(paths)]
+    else:
+        selection = ["-a"]
+    # -q: a path that is not in the index is left out, and the check that needs it says so.
+    git("checkout-index", "-q", f"--prefix={tmp}{os.sep}", *selection, check=False)
+    return tmp
+
+
+def read_text(root, path):
+    try:
+        with open(os.path.join(root, path), encoding="utf-8", errors="replace") as handle:
+            return handle.read()
+    except OSError:
+        return ""
 
 
 def check_docs_budget(report, root, changed, guard_text):
@@ -217,14 +247,12 @@ def check_docs_budget(report, root, changed, guard_text):
     folder = FOLDER_README_WORDS.search(guard_text)
     folder_words = int(folder.group(1).replace("_", "")) if folder else None
     for path in sorted(changed):
-        if not path.lower().endswith((".md", ".markdown", ".mdx")):
+        if not path.lower().endswith(MARKDOWN):
             continue
         cap = cap_for(path, rows, folder_words)
-        full = os.path.join(root, path)
-        if cap is None or not os.path.isfile(full):
+        if cap is None or not os.path.isfile(os.path.join(root, path)):
             continue
-        with open(full, encoding="utf-8", errors="replace") as handle:
-            words = len(handle.read().split())
+        words = len(read_text(root, path).split())
         if words > cap:
             report.add("error", "CG003", path, 0, f"{words} words, cap {cap} in {GUARD} DOCS_BUDGET. Trim it; do not raise the cap.")
 
@@ -292,15 +320,17 @@ def main():
             if language(path):
                 with open(os.path.join(root, path), encoding="utf-8", errors="replace") as handle:
                     added[path] = dict(enumerate(handle.read().splitlines(), 1))
-    with open(os.path.join(root, GUARD), encoding="utf-8") as handle:
-        guard_text = handle.read()
 
     report = Report()
-    check_devskim(report, added)
-    check_self_manual(report, root)
-    check_docs_budget(report, root, changed, guard_text)
-    check_cap_raises(report, base, guard_text, added.get(GUARD, {}))
-    check_timing(report, added)
+    with tempfile.TemporaryDirectory() as tmp:
+        # Where file content is read: the pending commit for --staged, else the working tree.
+        content = index_snapshot(tmp, changed) if args.staged else root
+        guard_text = read_text(content, GUARD)
+        check_devskim(report, added)
+        check_self_manual(report, content)
+        check_docs_budget(report, content, changed, guard_text)
+        check_cap_raises(report, base, guard_text, added.get(GUARD, {}))
+        check_timing(report, added)
     print(f"lint-diff: {report.errors} error(s), {report.warnings} warning(s) against {base[:12]}")
     return 1 if report.errors else 0
 

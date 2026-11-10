@@ -27,6 +27,9 @@ WRAPPED = """    (
     ),
 """
 BUILDER = """import argparse, os
+INPUTS = [
+    "AGENTS.md",
+]
 p = argparse.ArgumentParser(); p.add_argument("--root"); p.add_argument("--out")
 a = p.parse_args()
 with open(os.path.join(a.root, "AGENTS.md")) as f, open(a.out, "w") as out:
@@ -207,6 +210,36 @@ class RepositoryTests(unittest.TestCase):
         code, out = self.lint("--staged")
         self.assertEqual(code, 1, out)
         self.assertIn("CG001", out)
+
+    def test_staged_scope_reads_the_index_not_the_working_tree(self):
+        # Staged: over its cap, with the manual to match. Working tree: restored. The commit is still wrong.
+        self.write("AGENTS.md", "one two three four five six\n")
+        self.write("assets/self/MANUAL.md", "manual:one two three four five six\n")
+        self.git("add", "-A")
+        self.write("AGENTS.md", "one two three\n")
+        self.write("assets/self/MANUAL.md", "manual:one two three\n")
+        code, out = self.lint("--staged")
+        self.assertEqual(code, 1, out)
+        self.assertIn("AGENTS.md: error CG003: 6 words, cap 5", out)
+        self.assertNotIn("CG002", out)
+
+    def test_staged_scope_is_not_failed_by_unstaged_edits(self):
+        self.write("AGENTS.md", "one two four\n")
+        self.write("assets/self/MANUAL.md", "manual:one two four\n")
+        self.git("add", "-A")
+        self.write("AGENTS.md", "one two three four five six\n")
+        self.write("tests/invariant_guard.rs", "not a table\n")
+        code, out = self.lint("--staged")
+        self.assertEqual(code, 0, out)
+        self.assertIn("0 error(s), 0 warning(s)", out)
+
+    def test_staged_scope_sees_a_stale_staged_manual(self):
+        self.write("AGENTS.md", "one two four\n")
+        self.git("add", "-A")
+        self.write("assets/self/MANUAL.md", "manual:one two four\n")
+        code, out = self.lint("--staged")
+        self.assertEqual(code, 1, out)
+        self.assertIn("assets/self/MANUAL.md: error CG002", out)
 
     def test_a_missing_base_is_a_usage_error(self):
         self.assertEqual(self.lint("--base", "origin/absent")[0], 2)
