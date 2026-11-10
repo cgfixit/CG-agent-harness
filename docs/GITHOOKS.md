@@ -142,7 +142,7 @@ naming and PR title rules stay in `scripts/check-pr-template.sh` and CI.
 - **Blocked files:** `.githooks/security.local.conf`, the operator-home spill that `.gitignore` lists (`harness.json`, `soul.md`, `soul-pending-apply.json`, `auth.json`, `auth.initialized`, `cli-session.json`, `.CGagentHarness/`, `sessions/`, `tls/`, `soul-history/`, `attachments/`, `notes_corpus/`, `exports/`, `memory/`, `logs/`, `data/agentic/`), so `git add -f` or a home inside the checkout cannot publish it.
 - **Protected (ask first):** `.gitleaks.toml`, `deny.toml` (root and `desktop/`), plus the template's `.githooks/*` and agent tool settings.
 - **Core-path reminder:** the `AGENTS.md` core paths (`src/shim/`, `src/server/{guards,headers}.rs`, `src/agentic/{writer,workspace}.rs`, `src/agentic/executor/sandbox.rs`, `assets/config.default.yaml`) print a reminder that the PR body needs an invariant statement.
-- **Repo check:** staged Rust triggers `cargo fmt --all -- --check` on the root working-tree workspace (not index contents or the separate desktop workspace); skipped with a notice without `cargo`.
+- **Repo checks:** staged Rust triggers `cargo fmt --all -- --check` on the root working-tree workspace (not index or `desktop/`); all commits run `scripts/lint-diff.py --staged`. Missing tools skip with notice.
 - **Fixture allowlist:** the synthetic AWS, GitHub and Anthropic values in `src/common/audit.rs`, `tests/common_layer.rs`, `tests/chat_and_sessions.rs` and `.gitleaks.toml`.
 
 The coding pipeline runs `git` with `core.hooksPath` pinned to the null device

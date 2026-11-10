@@ -49,9 +49,13 @@ const gatePayload=()=>({
  episode_capture:structuredGates.episode_capture,explicit_recall:structuredGates.explicit_recall,
  retrieval:structuredGates.retrieval,auto_retrieval:structuredGates.retrieval&&structuredGates.auto_retrieval,consolidation:structuredGates.consolidation,auto_consolidation:structuredGates.consolidation&&structuredGates.auto_consolidation,auto_suggest_chat:structuredGates.episode_capture&&structuredGates.auto_suggest_chat,auto_suggest_coding:structuredGates.episode_capture&&structuredGates.auto_suggest_coding,memory_on_unchanged:true
 });
+const fixtureNotes = [];
+let delayedNotesList;
 const server=createServer(async(req,res)=>{
  let data=''; for await (const chunk of req) data+=chunk;
- const body=data?JSON.parse(data):{}; const path=req.url; requests.push([req.method,path,body]);
+ const path=req.url;
+ const body=data && path !== '/api/notes-corpus' ? JSON.parse(data) : {};
+ requests.push([req.method,path,body]);
  const reply=(value,status=200)=>{if(!res.headersSent)res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
  if(path==='/'){res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'nonce-fixture'; style-src 'nonce-fixture'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; frame-src 'self'");res.end(html.replaceAll('__CYCLAW_CSRF_TOKEN__','fixture').replaceAll('__CYCLAW_CSP_NONCE__','fixture'));return;}
  if(path.startsWith('/preview/html')){res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; frame-src 'none'");res.setHeader('X-Frame-Options','SAMEORIGIN');res.end('<!DOCTYPE html><html><body><p>Run a page to preview it here.</p></body></html>');return;}
@@ -61,6 +65,21 @@ const server=createServer(async(req,res)=>{
  const route=path.split('?')[0];
  if(authFixture&&signedIn&&mustChange&&route.startsWith('/api/')&&!['/api/status','/api/auth/setup-status','/api/auth/login','/api/auth/whoami','/api/auth/password','/api/auth/logout'].includes(route)){reply({detail:{code:'AUTH_PASSWORD_CHANGE_REQUIRED',message:'replace the bootstrap password before using the harness'}},403);return;}
  if(authFixture&&signedIn&&authRole==='audit'&&route.startsWith('/api/')&&!['/api/status','/api/auth/setup-status','/api/auth/login','/api/auth/whoami','/api/auth/password','/api/auth/logout'].includes(route)&&!(route==='/api/audit'&&req.method==='GET')){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
+ if(path==='/api/notes-corpus' && req.method==='GET'){
+  const notes = fixtureNotes.slice();
+  if(delayedNotesList) await delayedNotesList();
+  reply({notes,count:notes.length,limits:{max_files_per_request:2,max_file_bytes:1024,max_files_per_owner:4}});return;
+ }
+ if(path==='/api/notes-corpus' && req.method==='POST'){
+  assert.equal(req.headers['x-cyclaw-csrf'],'fixture');
+  assert.deepEqual([...data.matchAll(/filename="([^"]+)"/g)].map(m=>m[1]),['keep.md']);
+  const note={id:'6cbca933-b650-466c-a2fb-0b7520181256',magic_mime:'text/markdown',byte_len:11};
+  fixtureNotes.push(note);reply({notes:[note],count:1});return;
+ }
+ if(path.startsWith('/api/notes-corpus/') && req.method==='DELETE'){
+  assert.equal(path,'/api/notes-corpus/'+fixtureNotes[0].id);
+  reply({ok:true,id:fixtureNotes.pop().id});return;
+ }
  // Browser dispatch contract fixture; actual grammar is covered by Rust slash tests.
  if(path==='/api/slash/parse'){
   if(slashMode==='error'){reply({detail:{code:'UNAVAILABLE',message:'parser fixture unavailable'}},503);return;}
@@ -365,6 +384,35 @@ try {
  await until('typeof onSend === "function"');
  await until('document.getElementById("sSoulV").textContent === "unset"');
  await until('document.getElementById("hAuthWho").textContent.includes("authentication disabled")');
+ {
+  await evaluate('selectSideTab("memory"); document.getElementById("openNotes").click()');
+  await until('document.getElementById("notesList").textContent.includes("No uploaded notes")');
+  await evaluate(`(() => {
+   const files = new DataTransfer();
+   files.items.add(new File(['keep sample'], 'keep.md'));
+   files.items.add(new File([], '<b>empty.txt'));
+   document.getElementById('notesFiles').files = files.files;
+   document.getElementById('notesForm').requestSubmit();
+  })()`);
+  await until('document.getElementById("notesList").textContent.includes("6cbca933")');
+  assert.match(await evaluate('document.getElementById("notesStatus").textContent'),/<b>empty.txt: skipped.*\nkeep.md: saved/);
+  assert.equal(await evaluate('document.querySelector("#notesStatus b")'),null,'untrusted names are text');
+  await evaluate('document.querySelector("#notesList button").click()');
+  assert.equal(requests.filter(r=>r[0]==='DELETE' && r[1].startsWith('/api/notes-corpus/')).length,0);
+  await evaluate('document.querySelector("#notesList button").click()');
+  await until('document.getElementById("notesList").textContent.includes("No uploaded notes")');
+  let releaseNotes;
+  const requestStarted = new Promise(resolve => {
+   delayedNotesList = () => new Promise(release => { releaseNotes = release; resolve(); });
+  });
+  await evaluate('document.getElementById("notesRefresh").click()');
+  await Promise.race([requestStarted,pause(3000).then(()=>{if(!releaseNotes)throw new Error('notes refresh did not start');})]);
+  await evaluate('setCurrentSession("test-transition"); setCurrentSession(null)');
+  delayedNotesList = null; releaseNotes();
+  await pause(100);
+  assert.deepEqual(await evaluate('[document.getElementById("notesDialog").open, document.getElementById("notesList").textContent, document.getElementById("notesStatus").textContent]'),[false,'','']);
+  await evaluate('document.getElementById("tab-commands").click()');
+ }
  assert.equal(await evaluate('document.getElementById("signInScreen").hidden'),true,'disabled-auth homes must not advertise a login');
  assert.equal(await evaluate('document.getElementById("passwordDialog").open'),false,'disabled-auth homes must not offer setup');
  {
@@ -381,7 +429,7 @@ try {
   assert.ok(Math.abs(await width()-420)<10,'drag right expands the sidebar');
   await drag(260);
   assert.ok(Math.abs(await width()-260)<10,'drag left shrinks the sidebar');
-  await evaluate('selectSideTab("memory");document.getElementById("pane-memory").innerHTML="<input id=reviewDraft value=keep-my-reason>"');
+  await evaluate('selectSideTab("memory");document.getElementById("memoryReview").innerHTML="<input id=reviewDraft value=keep-my-reason>"');
   await drag(30);
   assert.equal(await width(),0,'drag far left hides the pane');
   assert.equal(await evaluate('document.getElementById("sidebarToggle").textContent'),'>>');
@@ -615,7 +663,7 @@ try {
   assert.ok(factSession,'a session is open for fact selection');
   const prevRecall=structuredGates.explicit_recall;structuredGates.explicit_recall=true;
   const factPosts=()=>requests.filter(r=>r[0]==='POST'&&r[1]==='/api/sessions/'+factSession+'/structured-facts');
-  const rerender='(()=>{const s=document.querySelector("#pane-memory > section.saved-facts");if(s)delete s.dataset.snapshot;return appendSavedFacts(document.getElementById("pane-memory")).then(()=>true);})()';
+  const rerender='(()=>{const s=document.querySelector("#memoryReview > section.saved-facts");if(s)delete s.dataset.snapshot;return appendSavedFacts(document.getElementById("memoryReview")).then(()=>true);})()';
   const statusOf='document.querySelector("#pane-memory .fact-selection-status").textContent';
   const box='document.querySelector("#pane-memory .saved-fact .fact-select input")';
   await evaluate(rerender);
@@ -651,7 +699,7 @@ try {
   await Promise.race([saveStarted,pause(3000).then(()=>{if(factSaveHeld)throw new Error('selection save never started');})]);
   savedFacts.push({...savedFacts[0],id:'fact_labeled_other'});
   try {
-   await evaluate('appendSavedFacts(document.getElementById("pane-memory"))');
+   await evaluate('appendSavedFacts(document.getElementById("memoryReview"))');
    assert.equal(await evaluate(box+'.disabled'),true,'a changed fact list cannot reopen the controls while a selection save is pending');
   } finally { savedFacts.pop(); releaseHeldFactSave(); }
   await until(statusOf+'.includes("0 selected")');
@@ -684,13 +732,13 @@ try {
  await until('document.querySelectorAll("#pane-memory form").length === 2 && !memoryRefreshBusy');
  // A delayed facts snapshot must not overwrite a newer post-Apply read.
  holdMemoryFacts=true;const factsRequestSeen=new Promise(resolve=>{memoryFactsHeld=resolve;});
- await evaluate('window.oldFactsLoad=appendSavedFacts(document.getElementById("pane-memory"));true');
+ await evaluate('window.oldFactsLoad=appendSavedFacts(document.getElementById("memoryReview"));true');
  await Promise.race([factsRequestSeen,pause(5000).then(()=>{throw Error('facts fixture request not held');})]);
  savedFacts.unshift({id:'fact_after_newer_read',revision:1,category:'insight',content:'NEWER_FACT_SNAPSHOT',active:true});
- await evaluate('appendSavedFacts(document.getElementById("pane-memory"))');
+ await evaluate('appendSavedFacts(document.getElementById("memoryReview"))');
  releaseHeldMemoryFacts();await evaluate('window.oldFactsLoad');
  assert.ok(await evaluate('document.getElementById("pane-memory").textContent.includes("NEWER_FACT_SNAPSHOT")'),'an older facts response cannot erase a newer read');
- savedFacts.shift();await evaluate('appendSavedFacts(document.getElementById("pane-memory"))');
+ savedFacts.shift();await evaluate('appendSavedFacts(document.getElementById("memoryReview"))');
  const decisions=()=>requests.filter(r=>r[0]==='POST'&&r[1].startsWith('/api/structured-memory/proposals/'));
  await evaluate('document.querySelector("#pane-memory form button").click()');
  assert.equal(decisions().length,0,'empty reason cannot apply');
@@ -738,20 +786,20 @@ try {
  assert.equal(await evaluate('document.querySelectorAll("#pane-memory script").length'),0);
  for(const [field,changed] of [['revision',2],['content_digest','changed_digest']]){
   const original=originalTarget[field];originalTarget[field]=changed;
-  await evaluate('appendSavedFacts(document.getElementById("pane-memory"))');
+  await evaluate('appendSavedFacts(document.getElementById("memoryReview"))');
   assert.equal(await evaluate('[targetUpdate,targetRemove].every(form=>form.querySelector(".memory-save").disabled && !form.querySelectorAll("button")[1].disabled && form.querySelector(".memory-target").textContent.includes("changed since the suggestion"))'),true,'a stale '+field+' blocks changes while allowing dismissal');
   assert.equal(await evaluate('targetReason===targetUpdate.querySelector("input") && document.activeElement===targetReason && targetReason.value==="Keep the corrected preference" && targetUpdate.querySelector("details").open'),true,'stale-target updates preserve the review in progress');
   originalTarget[field]=original;
  }
- await evaluate('appendSavedFacts(document.getElementById("pane-memory"))');
+ await evaluate('appendSavedFacts(document.getElementById("memoryReview"))');
  assert.equal(await evaluate('[targetUpdate,targetRemove].every(form=>!form.querySelector(".memory-save").disabled)'),true,'only the exact proposal target revision and digest enable a change');
  holdMemoryDecision=true;const decisionSeen=new Promise(resolve=>{memoryDecisionHeld=resolve;});
  await evaluate('targetRemove.querySelector("input").value="No longer relevant";targetRemove.querySelector(".memory-save").click()');
  await Promise.race([decisionSeen,pause(5000).then(()=>{throw Error('target decision not held');})]);
- await evaluate('appendSavedFacts(document.getElementById("pane-memory"))');
+ await evaluate('appendSavedFacts(document.getElementById("memoryReview"))');
  assert.equal(await evaluate('Array.from(targetRemove.querySelectorAll("button")).every(button=>button.disabled)'),true,'a facts poll cannot unlock an in-flight decision');
  releaseHeldMemoryDecision();await until('targetRemove.dataset.reviewState === "decided"');
- await evaluate('appendSavedFacts(document.getElementById("pane-memory"))');
+ await evaluate('appendSavedFacts(document.getElementById("memoryReview"))');
  assert.equal(await evaluate('Array.from(targetRemove.querySelectorAll("button")).every(button=>button.disabled) && targetRemove.querySelector(".memory-target").textContent.includes("Saved fact <script>")'),true,'a completed removal stays locked and retains the text that was reviewed');
  for(const proposal of targetProposals)proposal.status='rejected';
  savedFacts.push(originalTarget);await evaluate('refreshMemoryProposals()');
@@ -1084,13 +1132,13 @@ try {
  signedIn=false;logoutStatus=401;whoamiDrop=true;
  await evaluate('document.getElementById("hAuthLogout").click()');
  await until('document.getElementById("hAuthWho").textContent==="logout rejected (401)"');
- assert.equal(await evaluate('document.getElementById("pane-memory").childElementCount'),0,'a 401 logout clears facts even when the follow-up probe fails');
+ assert.equal(await evaluate('document.getElementById("memoryReview").childElementCount'),0,'a 401 logout clears facts even when the follow-up probe fails');
  assert.equal(await evaluate('document.getElementById("stream").innerText.includes("fact_labeled_saved")'),false);
  assert.equal(await evaluate('currentSession'),null,'a 401 logout drops the session even when the follow-up probe fails');
  whoamiDrop=false;
  await evaluate('refreshHarnessAuth()');
  await until('!document.getElementById("hAuthLoginBox").hidden');
- assert.equal(await evaluate('document.getElementById("pane-memory").childElementCount'),0,'a rejected logout still clears account-private facts');
+ assert.equal(await evaluate('document.getElementById("memoryReview").childElementCount'),0,'a rejected logout still clears account-private facts');
  assert.equal(await evaluate('document.getElementById("stream").innerText.includes("fact_labeled_saved")'),false,'a rejected logout still clears listed facts from the transcript');
  assert.equal(await evaluate('currentSession'),null,'a rejected logout drops the active session like a successful one');
  assert.equal(await evaluate('sessionGoal'),'');assert.equal(await evaluate('document.getElementById("input").value'),'');
