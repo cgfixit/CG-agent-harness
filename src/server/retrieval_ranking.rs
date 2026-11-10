@@ -88,6 +88,7 @@ impl PreparedQuery {
     }
 }
 
+#[derive(Clone)]
 pub(super) struct RankedCandidate<T> {
     item: T,
     score: f32,
@@ -106,9 +107,13 @@ impl<T> RankedCandidate<T> {
     }
 }
 
+/// The best `limit` candidates (at most [`HIT_CAP`]), near-duplicates dropped,
+/// with at most `per_source` from one diversity key: each pass adds one more per
+/// source, so every source gets its best hit before any gets a second.
 pub(super) fn select_diverse<T: Clone>(
     mut candidates: Vec<RankedCandidate<T>>,
     limit: usize,
+    per_source: usize,
     text: impl Fn(&T) -> &str,
 ) -> Vec<T> {
     candidates.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.tie_key.cmp(&b.tie_key)));
@@ -120,7 +125,7 @@ pub(super) fn select_diverse<T: Clone>(
     let mut seen_text = BTreeSet::new();
     let mut source_counts: BTreeMap<String, usize> = BTreeMap::new();
     let limit = limit.min(HIT_CAP);
-    for cap in [1, 2] {
+    for cap in 1..=per_source.max(1) {
         for (candidate_index, candidate) in candidates.iter().enumerate() {
             if selected.len() >= limit {
                 break;
@@ -231,6 +236,7 @@ mod tests {
                 candidate("over", "c", 1.0, over_ninety),
             ],
             16,
+            2,
             |item| &item.text,
         );
         assert_eq!(
@@ -247,11 +253,23 @@ mod tests {
             candidate("a3", "a", 28.0, "shared a three"),
             candidate("b1", "b", 27.0, "shared b one"),
         ];
-        let selected = select_diverse(candidates, 16, |item| &item.text);
+        let selected = select_diverse(candidates.clone(), 16, 2, |item| &item.text);
         assert_eq!(
             selected.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
             ["a1", "b1", "a2"]
         );
+        // A caller reading one source asks for its whole limit: the cap of two
+        // exists to spread hits across sources, and left a single page at two
+        // passages whatever limit was asked.
+        let one_source: Vec<_> = candidates.into_iter().filter(|c| c.diversity_key == "a").collect();
+        let ids = |per_source| {
+            select_diverse(one_source.clone(), 3, per_source, |item: &Item| &item.text)
+                .into_iter()
+                .map(|item| item.id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(2), ["a1", "a2"]);
+        assert_eq!(ids(3), ["a1", "a2", "a3"]);
     }
 
     #[test]
@@ -265,7 +283,7 @@ mod tests {
                 &format!("shared unique marker {i}"),
             ));
         }
-        let selected = select_diverse(candidates, 100, |item| &item.text);
+        let selected = select_diverse(candidates, 100, 2, |item| &item.text);
         assert_eq!(selected.len(), 16);
     }
 
