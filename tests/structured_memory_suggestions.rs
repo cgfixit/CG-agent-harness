@@ -1622,3 +1622,102 @@ async fn suggestion_status_stays_consistent_while_the_selected_model_changes() {
     assert!(inconsistent.is_none(), "inconsistent status: {inconsistent:?}");
     assert!(model.requests.lock().unwrap().is_empty());
 }
+
+/// Another connection takes the store's write lock and keeps it until told to
+/// let go, well inside the store's 5 s busy timeout.
+fn hold_store_write_lock(s: &TestServer) -> (std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>) {
+    let database = s.home.join("memory/structured.sqlite3");
+    let (locked, is_locked) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let conn = rusqlite::Connection::open(database).unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        locked.send(()).unwrap();
+        let _ = released.recv_timeout(Duration::from_secs(3));
+        conn.execute_batch("ROLLBACK").unwrap();
+    });
+    is_locked.recv().unwrap();
+    (release, holder)
+}
+
+/// Answers `/api/status` after `pause`, timed from before the pause: a runtime
+/// thread stuck in SQLite fires no timers either.
+async fn status_after(s: &TestServer, pause: Duration) -> Duration {
+    let asked = Instant::now();
+    tokio::time::sleep(pause).await;
+    let (status, _) = s.get_json("/api/status").await;
+    assert_eq!(status, 200);
+    asked.elapsed()
+}
+
+/// The worker's store calls run on the blocking pool. With the store's write
+/// lock held elsewhere, starting a suggestion waits there and this test's only
+/// runtime thread keeps answering requests.
+#[tokio::test]
+async fn a_busy_store_does_not_stall_other_requests_behind_the_suggestion_worker() {
+    let model = model().await;
+    let s = spawn_server(
+        &model.base,
+        options("both").with("structured_memory.suggestion_idle_ms", "400"),
+    )
+    .await;
+    let (_, chat) = s
+        .post_json("/api/chat", json!({"message":"I prefer metric units."}))
+        .await;
+    assert_eq!(chat["memory_suggestion"]["queued"], true, "{chat}");
+    // Taken inside the worker's idle wait, so its first write meets the lock.
+    let (release, holder) = hold_store_write_lock(&s);
+    let waited = status_after(&s, Duration::from_millis(700)).await;
+    assert!(
+        waited < Duration::from_millis(1700),
+        "another request waited {waited:?} behind the suggestion worker"
+    );
+    assert!(
+        model.requests.lock().unwrap().is_empty(),
+        "the suggestion started before the store was released"
+    );
+    release.send(()).unwrap();
+    holder.join().unwrap();
+    settled(&s, "local").await;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    assert_eq!(store.list_pending_proposals("local").unwrap().len(), 2);
+}
+
+/// Session clear writes a receipt for each queued suggestion it drops. That
+/// write waits for the store on the blocking pool too.
+#[tokio::test]
+async fn a_busy_store_does_not_stall_other_requests_behind_a_session_clear() {
+    let model = model().await;
+    model.delay.store(10_000, Ordering::SeqCst);
+    let s = spawn_server(&model.base, options("both")).await;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let id = stage(store, "local");
+    suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "metric", "reply");
+    requested(&model, 1).await;
+    let id2 = stage(store, "local");
+    let queued = suggest::enqueue(&s.state, "local", Source::Chat, Some(&id2), "metric", "reply");
+    assert_eq!(queued["queued"], true, "{queued}");
+    let (release, holder) = hold_store_write_lock(&s);
+    let clear = s.post_json("/api/sessions/clear", json!({"confirm":true,"reason":"Clear fixture"}));
+    tokio::pin!(clear);
+    let probe = status_after(&s, Duration::from_millis(300));
+    tokio::pin!(probe);
+    let mut finished = None;
+    let waited = loop {
+        tokio::select! {
+            waited = &mut probe => break waited,
+            done = &mut clear, if finished.is_none() => finished = Some(done),
+        }
+    };
+    assert!(
+        waited < Duration::from_millis(1500),
+        "another request waited {waited:?} behind a session clear"
+    );
+    assert!(finished.is_none(), "the clear finished before the store was released");
+    release.send(()).unwrap();
+    let (code, body) = clear.await;
+    assert_eq!(code, 200, "{body}");
+    holder.join().unwrap();
+    settled(&s, "local").await;
+    assert!(store.list_pending_proposals("local").unwrap().is_empty());
+}

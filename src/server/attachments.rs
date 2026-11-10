@@ -266,13 +266,13 @@ impl AttachmentStore {
     /// once its file is gone (or already absent); a blob whose unlink fails
     /// stays listed so it keeps counting toward the quota and a later
     /// cleanup can retry it, and the failure is reported after the manifest
-    /// is saved.
+    /// is saved. `retained` counts those blobs only, not other owners' rows.
     pub fn unlink_owner(&self, owner: &str) -> Result<usize> {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let jail = &self.jail;
         let mut manifest = self.load_manifest()?;
         let (mut keep, drop): (Vec<_>, Vec<_>) = manifest.blobs.drain(..).partition(|b| b.owner != owner);
-        let mut removed = 0usize;
+        let (mut removed, mut retained) = (0usize, 0usize);
         let mut first_error: Option<std::io::Error> = None;
         for blob in drop {
             let outcome = blob_rel(&blob)
@@ -286,11 +286,11 @@ impl AttachmentStore {
                 Ok(()) => removed += 1,
                 Err(e) => {
                     first_error.get_or_insert(e);
+                    retained += 1;
                     keep.push(blob);
                 }
             }
         }
-        let retained = keep.len();
         manifest.blobs = keep;
         self.save_manifest(&manifest)?;
         if let Some(e) = first_error {
@@ -1256,6 +1256,33 @@ mod tests {
         assert!(path.exists());
         assert_eq!(store.unlink_owner("local").unwrap(), 1);
         assert_eq!(store.blob_count(), 0);
+    }
+
+    #[test]
+    fn a_failed_cleanup_counts_only_the_blobs_it_could_not_remove() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = AttachmentStore::open(tmp.path()).unwrap();
+        let alice = store
+            .store("alice", &[part("a.txt", "one"), part("b.txt", "two")])
+            .unwrap();
+        store
+            .store("bob", &[part("c.txt", "three"), part("d.txt", "four")])
+            .unwrap();
+        // A directory where the blob was: the unlink fails, and not as "absent".
+        // Unlike a permission change, this also holds when the tests run as root.
+        let stuck = blob_path(tmp.path(), &alice[0]).unwrap();
+        std::fs::remove_file(&stuck).unwrap();
+        std::fs::create_dir(&stuck).unwrap();
+        let failed = store.unlink_owner("alice").unwrap_err();
+        // Bob's two rows stay in the manifest too, but they are not part of this cleanup.
+        assert_eq!(
+            (&failed.details["removed"], &failed.details["retained"]),
+            (&json!(1), &json!(1))
+        );
+        assert_eq!(store.blob_count(), 3);
+        std::fs::remove_dir(&stuck).unwrap();
+        assert_eq!(store.unlink_owner("alice").unwrap(), 1);
+        assert_eq!(store.blob_count(), 2);
     }
 
     #[test]
