@@ -940,10 +940,6 @@ impl StructuredMemoryStore {
         self.limits
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-
     fn lock(&self) -> std::sync::MutexGuard<'_, Connection> {
         self.conn.lock().unwrap_or_else(|p| p.into_inner())
     }

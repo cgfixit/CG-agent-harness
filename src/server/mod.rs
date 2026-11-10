@@ -588,8 +588,3 @@ async fn shutdown_signal() {
         () = terminate => {}
     }
 }
-
-/// Location of the executable for the shim (exposed for diagnostics).
-pub fn current_exe() -> PathBuf {
-    std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cgagentharness"))
-}

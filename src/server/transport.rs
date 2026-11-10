@@ -21,7 +21,6 @@ pub struct ListenerScheme(pub &'static str);
 pub struct Transport {
     config: Option<Arc<rustls::ServerConfig>>,
     pub certificate_der: Vec<u8>,
-    pub certificate_pem: String,
 }
 
 fn tls_error(message: &str) -> HarnessError {
@@ -113,7 +112,6 @@ impl Transport {
             return Ok(Self {
                 config: None,
                 certificate_der: Vec::new(),
-                certificate_pem: String::new(),
             });
         }
         let cert_path = cfg.str_opt("tls.cert_file").unwrap_or_default();
@@ -213,13 +211,9 @@ impl Transport {
                 .with_single_cert(certs, key)
                 .map_err(|_| tls_error("private key is invalid or does not match the certificate"))?;
         config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
-        use base64::Engine;
-        let b64 = base64::engine::general_purpose::STANDARD.encode(&leaf);
-        let certificate_pem = format!("-----BEGIN CERTIFICATE-----\n{b64}\n-----END CERTIFICATE-----\n");
         Ok(Self {
             config: Some(Arc::new(config)),
             certificate_der: leaf,
-            certificate_pem,
         })
     }
 
