@@ -538,10 +538,14 @@ async fn a_later_web_turn_lists_earlier_reads_only_when_carry_forward_is_on() {
                     let systems = recorded.clone();
                     async move {
                         let messages = body["messages"].as_array().unwrap();
-                        systems
-                            .lock()
-                            .unwrap()
-                            .push(messages[0]["content"].as_str().unwrap_or("").to_string());
+                        // The ledger rides with the new message on a local chat
+                        // turn: record the system prompt and every user turn.
+                        let carried: Vec<&str> = messages
+                            .iter()
+                            .filter(|m| m["role"] == "system" || m["role"] == "user")
+                            .filter_map(|m| m["content"].as_str())
+                            .collect();
+                        systems.lock().unwrap().push(carried.join("\n"));
                         if messages.last().unwrap()["role"] == "tool" {
                             Json(common::ok_reply("Read it.", 10, 2))
                         } else {

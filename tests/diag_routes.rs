@@ -234,8 +234,10 @@ async fn inject_and_forget_need_csrf() {
 }
 
 #[cfg(unix)]
+/// Everything the model was sent: a local chat turn carries a staged excerpt
+/// with its new message, so "absent" is checked across the whole request.
 fn system_prompt(request: &Value) -> String {
-    request["messages"][0]["content"].as_str().unwrap_or("").to_string()
+    request["messages"].to_string()
 }
 
 // Windows builds refuse every read (`DIAG_UNSUPPORTED`); see the windows test below.
@@ -363,8 +365,17 @@ async fn a_staged_excerpt_reaches_one_local_turn_and_is_refused_elsewhere() {
     )
     .await;
     assert_eq!(status, 200, "{body}");
-    let sent = system_prompt(&model.last_request().unwrap());
+    let request = model.last_request().unwrap();
+    assert!(!request["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .contains("DIAG_DATA"));
+    let sent = common::turn_message(&request);
     assert!(sent.contains("<<<DIAG_DATA>>>") && sent.contains("You did not read these files"));
+    assert!(
+        sent.ends_with("\n\nhi"),
+        "the operator's text follows the fenced context"
+    );
     let (status, _) = json_call(
         &s,
         &admin,

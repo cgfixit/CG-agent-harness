@@ -127,7 +127,7 @@ async fn three_markdown_files_appear_in_prompt_fence() {
         .await;
     assert_eq!(status, 200, "{chat}");
     let sent = model.last_request().unwrap();
-    let system = sent["messages"][0]["content"].as_str().unwrap();
+    let system = common::turn_message(&sent);
     assert!(system.contains("<<<ATTACHMENT_DATA>>>"));
     assert!(system.contains("one-alpha"));
     let sid = chat["session_id"].as_str().unwrap();
@@ -141,7 +141,7 @@ async fn three_markdown_files_appear_in_prompt_fence() {
         .await;
     assert_eq!(status, 200, "{chat2}");
     let sent = model.last_request().unwrap();
-    let system = sent["messages"][0]["content"].as_str().unwrap();
+    let system = common::turn_message(&sent);
     assert!(system.contains("<<<ATTACHMENT_DATA>>>"));
     assert!(system.contains("one-alpha"));
     assert!(system.contains("two-beta"));
@@ -354,10 +354,7 @@ async fn docx_uses_local_prompt_fence_and_refuses_hostile_xml() {
         .await;
     assert_eq!(status, 200, "{chat}");
     let sent = model.last_request().unwrap();
-    assert!(sent["messages"][0]["content"]
-        .as_str()
-        .unwrap()
-        .contains("DOCX_MARKER & text"));
+    assert!(common::turn_message(&sent).contains("DOCX_MARKER & text"));
     let (_, created) = s.post_json("/api/sessions", json!({})).await;
     let sid = created["session_id"].as_str().unwrap();
     s.post_json(&format!("/api/sessions/{sid}/goal"), json!({"goal": "arithmetic"}))
@@ -397,7 +394,7 @@ async fn deleted_blob_drops_the_pin_and_chat_still_works() {
         .await;
     assert_eq!(status, 200, "{chat2}");
     let sent = model.last_request().unwrap();
-    let system = sent["messages"][0]["content"].as_str().unwrap();
+    let system = sent["messages"].to_string();
     assert!(!system.contains("<<<ATTACHMENT_DATA>>>"));
     assert!(!system.contains("gone-soon"));
     let pins = session_json(&s.home, sid)["attachment_pins"]
@@ -452,7 +449,7 @@ async fn local_chat_and_loop_bm25_hits_stay_fenced() {
         .await;
     assert_eq!(status, 200, "{chat}");
     let sent = model.last_request().unwrap();
-    let system = sent["messages"][0]["content"].as_str().unwrap();
+    let system = common::turn_message(&sent);
     assert!(system.contains("UNIQUE_NEEDLE_TOKEN"), "{system}");
     assert!(system.contains("<<<ATTACHMENT_DATA>>>"));
     assert!(system.contains("source=attachment"));
@@ -497,7 +494,7 @@ async fn notes_corpus_injects_local_chat_and_loop() {
         .await;
     assert_eq!(status, 200, "{chat}");
     let sent = model.last_request().unwrap();
-    let system = sent["messages"][0]["content"].as_str().unwrap();
+    let system = common::turn_message(&sent);
     assert!(system.contains(note), "{system}");
     assert!(system.contains("source=notes_corpus"));
     assert!(!system.contains("ops.md"));

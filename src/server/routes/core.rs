@@ -1213,10 +1213,15 @@ pub(crate) async fn chat_inner(
     let web_reads = (!cloud_selected && chat_tools)
         .then(|| crate::server::web_ledger::carried_web_reads(&web, &session, web.limits.carry_forward_sources))
         .flatten();
-    let system_prompt = if cloud_selected {
-        String::new()
+    // Local chat turns send what varies with each message (manual excerpts,
+    // retrieved facts, attachment excerpts, a staged /diag excerpt) fenced
+    // ahead of the new message instead of in the system prompt, so the prompt
+    // up to the last exchange stays the same from one turn to the next. A
+    // /loop turn's context does not vary: it keeps one system prompt.
+    let (system_prompt, turn_context) = if cloud_selected {
+        (String::new(), String::new())
     } else {
-        compose_system_prompt(&PromptInputs {
+        let inputs = PromptInputs {
             selected_skills: &selected_skills,
             soul_enabled: settings.soul_enabled && !portal_auditor,
             soul_override: None,
@@ -1238,8 +1243,16 @@ pub(crate) async fn chat_inner(
             self_manual: manual.as_ref().map(|selection| selection.block.as_str()),
             diag_context: diag.as_ref().map(|staged| staged.block.as_str()),
             web_reads: web_reads.as_deref(),
-        })
+        };
+        if local_turn {
+            let (composed, turn_context) = crate::server::prompts::compose_prompt_parts(&inputs);
+            (composed.prompt, turn_context)
+        } else {
+            (compose_system_prompt(&inputs), String::new())
+        }
     };
+    // What this turn sends as its new message. The session stores `req.message`.
+    let sent_message = crate::server::prompts::with_turn_context(&turn_context, &req.message);
     let max_tokens = if req.loop_turn {
         // Only a tuned model's window lowers the loop cap; untuned, it is unchanged.
         live.loop_max_tokens
@@ -1357,7 +1370,7 @@ pub(crate) async fn chat_inner(
             crate::server::compaction::projected_prompt_tokens(
                 &system_prompt,
                 history,
-                &req.message,
+                &sent_message,
                 reply,
                 ratio,
                 tool_tokens,
@@ -1405,7 +1418,7 @@ pub(crate) async fn chat_inner(
             let retained_projected = crate::server::compaction::projected_prompt_tokens(
                 &system_prompt,
                 &retained_history,
-                &req.message,
+                &sent_message,
                 reservation,
                 ratio,
                 tool_tokens,
@@ -1480,7 +1493,7 @@ pub(crate) async fn chat_inner(
             let compacted_projected = crate::server::compaction::projected_prompt_tokens(
                 &system_prompt,
                 &compacted_history,
-                &req.message,
+                &sent_message,
                 reservation,
                 ratio,
                 tool_tokens,
@@ -1514,7 +1527,7 @@ pub(crate) async fn chat_inner(
     }
     history.push(ChatMessage {
         role: "user".into(),
-        content: req.message.clone(),
+        content: sent_message.clone(),
     });
     let temperature = state.cfg.limit_f64("models.local_llm.temperature");
     // Compaction can take a while: the window must still allow what this turn
@@ -1573,6 +1586,7 @@ pub(crate) async fn chat_inner(
             sized_tuned,
             req.loop_turn,
             &session.goal,
+            &req.message,
             active_loop.as_ref().map(|run| run.run_id.as_str()),
             output,
             &local_usage,
