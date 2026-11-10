@@ -151,6 +151,7 @@ jobs:
               ["Risks to monitor", /^#{1,4}[ \t\v\f\r]*risks?([ \t\v\f\r]*(to[ \t\v\f\r]*monitor|impact))?\b/im],
               ["Checklist", /^#{1,4}[ \t\v\f\r]*checklist\b/im],
               ["Suggested merge order of open PRs", /^##[ \t\v\f\r]+suggested merge order of open prs[ \t\v\f\r]*$/im],
+              ["McLuhan tetrad", /^##[ \t\v\f\r]+mcluhan tetrad[ \t\v\f\r]*$/im],
             ];
             const missing = required.filter(([, re]) => !re.test(body)).map(([label]) => label);
             const bodyLines = body.replace(/\r/g, "").split("\n");
