@@ -295,25 +295,11 @@ impl OperatorGates {
     }
 
     pub fn save(&self, home: &crate::common::home::Home) -> Result<()> {
-        // Same CodeQL rust/path-injection barrier as StructuredMemoryStore::open:
-        // home-relative, never an HTTP field, but `..` is still refused before
+        // Same barrier as StructuredMemoryStore::open: home-relative, never an
+        // HTTP field, but a parent component is still refused before
         // create_dir_all / write_atomic so a tainted home cannot escape.
-        let dir_path = home.memory_dir();
-        let dir_raw = dir_path.to_string_lossy();
-        if dir_raw.contains("..") {
-            return Err(invalid(
-                "structured memory path must not contain parent-directory components",
-            ));
-        }
-        let dir = PathBuf::from(dir_raw.as_ref());
-        let gates_path = home.structured_memory_gates_path();
-        let path_raw = gates_path.to_string_lossy();
-        if path_raw.contains("..") {
-            return Err(invalid(
-                "structured memory path must not contain parent-directory components",
-            ));
-        }
-        let path = PathBuf::from(path_raw.as_ref());
+        let dir = refuse_parent_components(home.memory_dir())?;
+        let path = refuse_parent_components(home.structured_memory_gates_path())?;
         std::fs::create_dir_all(&dir)?;
         let mut saved = serde_json::Map::from_iter([("version".to_string(), json!(2))]);
         for gate in &self.overrides {
@@ -866,15 +852,9 @@ fn proposal_revision(
 
 impl StructuredMemoryStore {
     pub fn open(path: &Path, cfg: &AppConfig) -> Result<Self> {
-        // Same CodeQL rust/path-injection barrier as the audit sink: the store
-        // path is home-relative, never an HTTP field, but `..` is still refused.
-        let raw = path.to_string_lossy();
-        if raw.contains("..") {
-            return Err(invalid(
-                "structured memory path must not contain parent-directory components",
-            ));
-        }
-        let path = PathBuf::from(raw.as_ref());
+        // Same barrier as the audit sink: the store path is home-relative, never
+        // an HTTP field, but a parent component is still refused.
+        let path = refuse_parent_components(path.to_path_buf())?;
         let marker = marker_path(&path);
         let parent = path
             .parent()
@@ -3461,8 +3441,19 @@ mod tests {
         let home = dir.path().join("my..home");
         let path = home.join("memory/structured.sqlite3");
         assert_eq!(refuse_parent_components(path.clone()).unwrap(), path);
+        // The name is not a parent component, so the store opens and gates save.
+        StructuredMemoryStore::open(&path, &cfg(dir.path())).unwrap();
+        let dotted = Home::at(home.clone());
+        OperatorGates::load(&dotted).save(&dotted).unwrap();
+        assert!(dotted.structured_memory_gates_path().is_file());
+        // A real parent component is still refused, by the store as well as the helper.
         assert!(refuse_parent_components(home.join("../escape.sqlite3")).is_err());
         assert!(refuse_parent_components(home.join("memory/..")).is_err());
+        for escaping in [home.join("../escape.sqlite3"), home.join("memory/../../escape.sqlite3")] {
+            let refused = StructuredMemoryStore::open(&escaping, &cfg(dir.path())).err().unwrap();
+            assert_eq!(refused.code, "STRUCTURED_MEMORY_IO");
+        }
+        assert!(!dir.path().join("escape.sqlite3").exists());
     }
 
     fn store(dir: &Path) -> StructuredMemoryStore {

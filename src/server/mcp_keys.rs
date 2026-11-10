@@ -21,12 +21,9 @@ fn refused() -> anyhow::Error {
     anyhow::anyhow!("MCP_KEYS_REFUSED: restore a valid private machine-key store")
 }
 fn present(path: &Path) -> anyhow::Result<bool> {
-    // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
-    let raw = path.to_string_lossy();
-    if raw.contains("..") {
-        return Err(refused());
-    }
-    let path = Path::new(raw.as_ref());
+    // The shared path barrier: a parent component is refused, a name with dots is not.
+    let path = crate::common::refuse_parent_components(path).ok_or_else(refused)?;
+    let path = path.as_path();
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -34,12 +31,8 @@ fn present(path: &Path) -> anyhow::Result<bool> {
     }
 }
 fn private_file(path: &Path) -> anyhow::Result<std::fs::File> {
-    // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
-    let raw = path.to_string_lossy();
-    if raw.contains("..") {
-        return Err(refused());
-    }
-    let path = Path::new(raw.as_ref());
+    let path = crate::common::refuse_parent_components(path).ok_or_else(refused)?;
+    let path = path.as_path();
     if std::fs::symlink_metadata(path)
         .map_err(|_| refused())?
         .file_type()
@@ -470,5 +463,14 @@ mod tests {
     fn present_refuses_parent_components() {
         let err = present(Path::new("/tmp/harness/../mcp_keys.sqlite3")).unwrap_err();
         assert!(err.to_string().contains("MCP_KEYS_REFUSED"));
+        // Two dots inside a name are not a parent component.
+        let dir = tempfile::tempdir().unwrap();
+        let dotted = dir.path().join("my..home");
+        std::fs::create_dir_all(&dotted).unwrap();
+        assert!(!present(&dotted.join("mcp_keys.sqlite3")).unwrap());
+        crate::common::atomic::write_atomic(&dotted.join("mcp_keys.sqlite3"), b"x", Some(0o600)).unwrap();
+        assert!(present(&dotted.join("mcp_keys.sqlite3")).unwrap());
+        assert!(private_file(&dotted.join("mcp_keys.sqlite3")).is_ok());
+        assert!(private_file(&dotted.join("../my..home/mcp_keys.sqlite3")).is_err());
     }
 }
