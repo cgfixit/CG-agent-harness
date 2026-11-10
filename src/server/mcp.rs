@@ -565,7 +565,7 @@ async fn read_sse_handshake(mut response: reqwest::Response, max: usize) -> Resu
             return Err(mcp_err("MCP_RESULT_TOO_LARGE", "sse handshake exceeds cap"));
         }
         if let Ok(text) = std::str::from_utf8(&buf) {
-            if text.contains("event: endpoint") && (text.contains("\n\n") || text.contains("\r\n\r\n")) {
+            if endpoint_event_data(text).is_some() {
                 return Ok(text.to_string());
             }
         }
@@ -573,31 +573,46 @@ async fn read_sse_handshake(mut response: reqwest::Response, max: usize) -> Resu
     Err(mcp_err("MCP_SSE", "sse stream closed before endpoint"))
 }
 
+/// The `data` of the first complete `endpoint` event in an SSE stream.
+///
+/// An event ends at a blank line, and a field may be written with or without
+/// the space after its colon. Text after the last blank line is an event still
+/// arriving: it is not read, so a comment or keep-alive ahead of the endpoint
+/// cannot cut the endpoint short. The handshake and the endpoint reader both
+/// use this, so what one waits for is what the other parses.
+fn endpoint_event_data(stream: &str) -> Option<String> {
+    let stream = stream.replace("\r\n", "\n").replace('\r', "\n");
+    let (complete, _arriving) = stream.rsplit_once("\n\n")?;
+    complete.split("\n\n").find_map(|event| {
+        let field = |name: &str| {
+            event
+                .lines()
+                .find_map(|line| line.strip_prefix(name)?.strip_prefix(':'))
+                .map(str::trim)
+        };
+        (field("event") == Some("endpoint"))
+            .then(|| field("data"))
+            .flatten()
+            .map(str::to_string)
+    })
+}
+
 fn sse_endpoint(base: &Url, body: &str) -> Result<Url> {
-    let mut event = "";
-    for line in body.lines() {
-        if let Some(rest) = line.strip_prefix("event:") {
-            event = rest.trim();
-        } else if let Some(rest) = line.strip_prefix("data:") {
-            if event == "endpoint" {
-                let endpoint = base
-                    .join(rest.trim())
-                    .map_err(|_| mcp_err("MCP_SSE", "sse endpoint is not a valid URL"))?;
-                // The pinned client only validated the configured host. An endpoint
-                // on another scheme, host, or port (an IP literal skips DNS entirely)
-                // would send JSON-RPC to an unvalidated target, so refuse it without
-                // echoing either URL.
-                if endpoint.origin() != base.origin() {
-                    return Err(mcp_err(
-                        "MCP_SSE",
-                        "sse endpoint must share the configured url's scheme, host, and port",
-                    ));
-                }
-                return Ok(endpoint);
-            }
-        }
+    let data = endpoint_event_data(body).ok_or_else(|| mcp_err("MCP_SSE", "sse stream missing endpoint event"))?;
+    let endpoint = base
+        .join(&data)
+        .map_err(|_| mcp_err("MCP_SSE", "sse endpoint is not a valid URL"))?;
+    // The pinned client only validated the configured host. An endpoint
+    // on another scheme, host, or port (an IP literal skips DNS entirely)
+    // would send JSON-RPC to an unvalidated target, so refuse it without
+    // echoing either URL.
+    if endpoint.origin() != base.origin() {
+        return Err(mcp_err(
+            "MCP_SSE",
+            "sse endpoint must share the configured url's scheme, host, and port",
+        ));
     }
-    Err(mcp_err("MCP_SSE", "sse stream missing endpoint event"))
+    Ok(endpoint)
 }
 
 /// Read a JSON-RPC POST body under `max` bytes, refusing early on an
@@ -733,6 +748,33 @@ mod config_tests {
         ] {
             let cfg = AppConfig::from_str(text, Path::new("config.yaml")).unwrap();
             assert!(McpRuntime::from_config(&cfg).is_ok());
+        }
+    }
+
+    #[test]
+    fn endpoint_event_data_reads_only_complete_events_in_either_spelling() {
+        for (stream, expected) in [
+            ("event: endpoint\ndata: /m?s=1\n\n", Some("/m?s=1")),
+            ("event:endpoint\ndata:/m?s=1\n\n", Some("/m?s=1")),
+            ("event: endpoint\r\ndata: /m?s=1\r\n\r\n", Some("/m?s=1")),
+            ("event: endpoint\rdata: /m?s=1\r\r", Some("/m?s=1")),
+            ("data: /m?s=1\nevent: endpoint\n\n", Some("/m?s=1")),
+            (": keep-alive\n\nevent: endpoint\ndata: /m?s=1\n\n", Some("/m?s=1")),
+            (
+                "retry: 3000\n\nevent: message\ndata: {}\n\nevent: endpoint\ndata: /m\n\n",
+                Some("/m"),
+            ),
+            // Still arriving: no blank line has ended the endpoint event yet.
+            ("event: endpoint\ndata: /m?s=1", None),
+            ("event: endpoint\ndata: /m?s=1\n", None),
+            (": keep-alive\n\nevent: endpoint\ndata: /mess", None),
+            // An event line and a data line in different events are not one event.
+            ("event: endpoint\n\ndata: /m\n\n", None),
+            ("event: message\ndata: /m\n\n", None),
+            ("event: endpoints\ndata: /m\n\n", None),
+            ("", None),
+        ] {
+            assert_eq!(endpoint_event_data(stream).as_deref(), expected, "{stream:?}");
         }
     }
 
