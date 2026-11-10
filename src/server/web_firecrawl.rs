@@ -489,6 +489,8 @@ mod tests {
             pub audit: Audit,
             pub dir: tempfile::TempDir,
             pub hits: Arc<AtomicUsize>,
+            /// Pinned reads of the site's `/robots.txt`, which answers 403.
+            pub robots: Arc<AtomicUsize>,
             /// `/gate` notifies `gate_hit` from inside the pinned read, then answers
             /// 403 only after `gate_go`.
             pub gate_hit: Arc<tokio::sync::Notify>,
@@ -531,6 +533,8 @@ mod tests {
             let gate_hit = Arc::new(tokio::sync::Notify::new());
             let gate_go = Arc::new(tokio::sync::Notify::new());
             let (hit, go) = (gate_hit.clone(), gate_go.clone());
+            let robots = Arc::new(AtomicUsize::new(0));
+            let robots_seen = robots.clone();
             let site = Router::new()
                 .route(
                     "/gate",
@@ -544,6 +548,13 @@ mod tests {
                     }),
                 )
                 .route("/wall", get(|| async { (StatusCode::FORBIDDEN, "blocked") }))
+                .route(
+                    "/robots.txt",
+                    get(move || {
+                        robots_seen.fetch_add(1, Ordering::SeqCst);
+                        async { (StatusCode::FORBIDDEN, "blocked") }
+                    }),
+                )
                 .route("/moves", get(|| async { (StatusCode::FORBIDDEN, "blocked") }))
                 .route("/missing", get(|| async { (StatusCode::NOT_FOUND, "gone") }))
                 .route(
@@ -628,6 +639,7 @@ mod tests {
                 audit,
                 dir,
                 hits,
+                robots,
                 gate_hit,
                 gate_go,
                 tasks: vec![site_task, fc_task],
@@ -636,6 +648,26 @@ mod tests {
     }
 
     const ON: &str = "web: {firecrawl: {enabled: true, max_per_hour: 4}}";
+
+    /// Reading an origin's robots.txt under a path rule is discovery's politeness
+    /// exception. A single fetch is a content read, so it needs a content grant
+    /// before the site or Firecrawl sees the URL.
+    #[tokio::test]
+    async fn a_single_fetch_of_robots_txt_is_refused_before_any_request() {
+        let rig = fixture::rig(ON, "good").await;
+        rig.web.allow("http://site.fixture/docs/*", true).unwrap(); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        rig.web.deny("http://site.fixture/*", true).unwrap(); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        let robots = "http://site.fixture/robots.txt"; // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        let policy = rig.web.policy().unwrap();
+        assert!(
+            policy.authorize_robots(robots, None).is_ok(),
+            "discovery may still read it"
+        );
+        assert_eq!(policy.authorize(robots, None).unwrap_err().code, "WEB_HOST_DENIED");
+        assert_eq!(rig.fetch("robots.txt").await.unwrap_err().code, "WEB_HOST_DENIED");
+        let pinned_reads = rig.robots.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!((pinned_reads, rig.hits()), (0, 0), "(pinned reads, Firecrawl reads)");
+    }
 
     #[tokio::test]
     async fn the_fallback_is_off_by_default_and_never_reads_by_itself() {
