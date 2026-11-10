@@ -397,6 +397,10 @@
   .msg .body { white-space: pre-wrap; word-break: break-word; color: var(--text-primary); }
   .msg.sys .body { color: var(--text-secondary); font-size: var(--fs-small); }
   .msg a { color: var(--accent-blue); overflow-wrap: anywhere; }
+  .msg .model-pull-command {
+    max-width: 100%; padding: 4px 6px; font: inherit; color: var(--text-primary);
+    background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px;
+  }
   .msg .meta { font-size: var(--fs-micro); color: var(--text-muted); margin-top: 3px; }
   .msg table { border-collapse: collapse; margin-top: 4px; font-size: var(--fs-small); }
   .msg td, .msg th { border: 1px solid var(--border); padding: 3px 9px; text-align: left; }
@@ -3317,7 +3321,18 @@ async function runSlash(line, webCommand) {
           // A failed tag query is not an empty install.
           if (inv.tags_state !== 'listed') { sys('The model service did not return its tag list (failed, timed out or too large). Try /model list again, or run ollama list.'); break; }
           const models = Array.isArray(inv.models) ? inv.models : [];
-          if (!models.length) { sys('No local models are installed. ollama pull <tag> downloads one.'); break; }
+          if (!models.length) {
+            const hint = document.createElement('div');
+            const command = document.createElement('input');
+            command.readOnly = true;
+            command.value = 'ollama pull qwen2.5:0.5b';
+            command.size = command.value.length + 1;
+            command.className = 'model-pull-command';
+            command.setAttribute('aria-label', 'Example Ollama pull command');
+            hint.append('No local models are installed. Copy this example to your terminal.\n', command);
+            sys(hint);
+            break;
+          }
           // A cloud selection never marks a local tag, even one with the same name.
           const selected = s.provider === 'ollama' ? s.model || '' : '';
           const isSelected = n => selected !== '' && (n === selected || n === selected + ':latest');
