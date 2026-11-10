@@ -339,14 +339,27 @@ pub async fn build_app_with_sources(
     }
     if let Some(mgr) = auth.as_ref() {
         // Finish any account-deletion cleanup that failed part-way in an
-        // earlier run: attachment rows and session pins still naming a
-        // deleted user are removed here.
+        // earlier run: attachment rows, uploaded notes and session pins still
+        // naming a deleted user are removed here.
         let live: BTreeSet<String> = mgr.list_users().into_iter().map(|u| u.user_id).collect();
         match attachments.sweep_dead_owners(&|owner| owner == "local" || live.contains(owner)) {
             Ok(0) => {}
             Ok(n) => audit.log(serde_json::json!({"event": "chat_attachments_swept", "removed": n})),
             Err(e) => audit.log(serde_json::json!({
                 "event": "chat_attachments_sweep_incomplete",
+                "code": e.code,
+                "message": e.message,
+            })),
+        }
+        match notes_corpus.sweep_dead_owners(&|| {
+            let mut owners: BTreeSet<String> = mgr.list_users().into_iter().map(|u| u.user_id).collect();
+            owners.insert("local".into());
+            owners
+        }) {
+            Ok(0) => {}
+            Ok(n) => audit.log(serde_json::json!({"event": "notes_corpus_swept", "removed": n})),
+            Err(e) => audit.log(serde_json::json!({
+                "event": "notes_corpus_sweep_incomplete",
                 "code": e.code,
                 "message": e.message,
             })),
