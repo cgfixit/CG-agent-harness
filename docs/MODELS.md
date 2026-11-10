@@ -68,9 +68,9 @@ For a 65536 window on a 48 GB Mac and the values to verify, see the
 `SMOKE_MODEL=qwen3.8:27b-mlx-cg scripts/smoke-ollama.sh` selects it. Pinned
 models under `scripts/live-ollama/` are a separate fingerprint set.
 
-Choose an **exact installed identifier**. With empty inventory, deliberately download
-a model suited to your hardware. An `-mlx`
-suffix proves no execution backend. Inspect its tag:
+Empty `/model list` offers a copyable terminal command. `/api/ollama/pull` serves
+CLI/API clients. Select an exact installed tag. Check the execution backend
+independently of the `-mlx` suffix:
 
 ```bash
 ollama show qwen3.8:27b
