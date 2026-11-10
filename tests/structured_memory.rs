@@ -1483,6 +1483,67 @@ async fn foreign_episode_ids_are_owner_isolated() {
     assert_eq!(s.get_json("/api/structured-memory/proposals").await.1["count"], 0);
 }
 
+/// The consolidation route's SQLite work runs on the blocking pool. With the
+/// store's write lock held elsewhere it waits there, and the runtime's only
+/// worker stays free to answer other requests.
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+async fn a_busy_store_does_not_stall_other_requests_behind_a_consolidation_start() {
+    use std::time::{Duration, Instant};
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), consolidation()).await;
+    let episode_id = stage_store_episode(&s, "local");
+    model.set_reply(consolidator_reply(&episode_id, "Prefer metric units"));
+    // Another connection takes the database's write lock and keeps it.
+    let database = s.home.join("memory/structured.sqlite3");
+    let (locked, is_locked) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let conn = rusqlite::Connection::open(database).unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        locked.send(()).unwrap();
+        // Well inside the store's 5 s busy timeout, so the waiting write succeeds.
+        let _ = released.recv_timeout(Duration::from_secs(3));
+        conn.execute_batch("ROLLBACK").unwrap();
+    });
+    is_locked.recv().unwrap();
+    // The run's first write now has to wait for that lock.
+    let start = s.post_json(
+        "/api/structured-memory/consolidation",
+        json!({"episode_ids": [episode_id]}),
+    );
+    tokio::pin!(start);
+    // Timed from before the pause: a worker stuck in SQLite fires no timers either.
+    let probe = async {
+        let asked = Instant::now();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let (status, _) = s.get_json("/api/status").await;
+        (status, asked.elapsed())
+    };
+    tokio::pin!(probe);
+    let mut finished = None;
+    let (status, waited) = loop {
+        tokio::select! {
+            answered = &mut probe => break answered,
+            done = &mut start, if finished.is_none() => finished = Some(done),
+        }
+    };
+    assert_eq!(status, 200);
+    assert!(
+        waited < Duration::from_millis(1500),
+        "another request waited {waited:?} behind the memory store"
+    );
+    assert!(finished.is_none(), "the start finished before the store was released");
+    release.send(()).unwrap();
+    let (status, run) = start.await;
+    assert_eq!(status, 200, "{run}");
+    assert_eq!(
+        (&run["state"], &run["proposal_count"]),
+        (&json!("done"), &json!(1)),
+        "{run}"
+    );
+    holder.join().unwrap();
+}
+
 fn auto_consolidation() -> ServerOptions {
     consolidation()
         .with("structured_memory.auto_consolidation", "true")
