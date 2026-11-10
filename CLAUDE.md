@@ -15,8 +15,9 @@ to Claude Code.
 - Agent fan-out is capped (operator decision, 2026-10-19): settings deny the
   `Workflow` tool and put every `Agent` spawn behind an approval prompt. Ask before
   using more than 2 subagents on one task; never route around the cap.
-- A `SessionStart` hook runs `.claude/hooks/session-start.sh` (toolchain, libdbus,
-  build cache). If a build fails right after start, read its output before debugging.
+- A `SessionStart` hook runs `.claude/hooks/session-start.sh` (git hooks; in cloud
+  sessions also toolchain, libdbus, build cache). If a build fails right after start, read
+  `${TMPDIR:-/tmp}/cgah-session-start.log` before debugging.
 - `.claude/skills/<slug>/SKILL.md` runs as `/<slug>`. Four are operator-only
   (`disable-model-invocation: true`): `cgagentharness-invariant-guard`,
   `cgagentharness-otel-hardening`, `doc-sync`, `run-cg-agent-harness`. Ask the
@@ -29,5 +30,5 @@ to Claude Code.
 Lint (fmt, clippy), then run the changed code. Never the full suite locally; CI
 runs it with `GROK_API_KEY`, `ANTHROPIC_API_KEY` and `DEEPAGENT_API_KEY` blanked.
 After any `.md` edit, `wc -w` it against its `DOCS_BUDGET` cap (`CLAUDE.md` 400,
-`AGENTS.md` 1776).
+`AGENTS.md` 1460).
 

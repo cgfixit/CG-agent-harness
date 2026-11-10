@@ -31,7 +31,7 @@ server -> MCP runtime -> declared stdio children / SSE servers
 - `cgagentharness netconnect status|devices|diag` and `/net` -> `src/netconnect`.
   Only `diag` dials, through the budgeted `Dialer` in `connect.rs`.
 - `agentic`/`netconnect` exit codes: `0` ok, `2` failed, `3` env/config,
-  `4` write refused. Through the shim, a non-zero child exit is HTTP
+  `4` refused. Through the shim, a non-zero child exit is HTTP
   200 with `ok=false`; shim failures map to 400/502/504 and the disabled-layer
   banner to 409. Other subcommands (`serve`, `account`, `web`, `tls`,
   `mcp-key`) exit `1` on error.
@@ -67,7 +67,7 @@ server -> MCP runtime -> declared stdio children / SSE servers
   Cross the boundary only through `src/shim` and the CLI whitelist.
 - Duplicated on purpose, kept in sync by tests: `RUN_ID_PATTERN` (server
   `agent_policy` vs agentic `run_store`), the planner/check timeout and
-  setup-budget constants (shim vs agentic), the iteration default. Never
+  setup-budget constants (shim/server vs agentic), the iteration default. Never
   deduplicate them.
 - Config is strict by type. Gates read through `flag_is_true`: only literal
   YAML `true` is on; quoted `"true"` and a missing key are off. A missing key
@@ -132,7 +132,7 @@ server -> MCP runtime -> declared stdio children / SSE servers
 - Refresh `origin/main` and open PR heads/files/checks before publication;
   trial-merge overlapping changes, including generated manuals and doc caps.
 - The advisory `review gate` check reports unresolved threads and running Codex
-  reviews; it never fails CI. Read it before merging and re-run it after
+  reviews; only evaluation errors fail it. Read it before merging and re-run it after
   resolving the last thread. Never comment `@codex review` without the
   operator's approval.
 
