@@ -394,8 +394,9 @@ pub async fn clear_sessions(
         derived_retained = store.episode_count(&owner).unwrap_or(0);
     }
     // Session clear is the operator's recovery path for a full attachment
-    // quota, so an incomplete blob cleanup is reported rather than hidden.
-    let _ = state.notes_corpus.unlink_owner(&owner);
+    // quota, so an incomplete blob or uploaded-notes cleanup is reported
+    // rather than hidden.
+    let notes_cleanup = super::notes_corpus::cleanup_owner(&state, &owner);
     let attachment_cleanup = match state.attachments.unlink_owner(&owner) {
         Ok(removed) => json!({"removed": removed}),
         Err(e) => {
@@ -416,6 +417,7 @@ pub async fn clear_sessions(
     Ok(Json(json!({
         "deleted_sessions": deleted,
         "attachment_cleanup": attachment_cleanup,
+        "notes_cleanup": notes_cleanup,
         "derived_episodes_deleted": derived_deleted,
         "derived_episodes_retained": derived_retained,
         "delete_derived_episodes": req.delete_derived_episodes,

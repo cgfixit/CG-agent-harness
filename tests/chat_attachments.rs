@@ -549,6 +549,39 @@ async fn notes_corpus_lists_and_deletes_by_id() {
 }
 
 #[tokio::test]
+async fn session_clear_reports_an_uploaded_note_it_could_not_delete() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, stored) = post_notes(&s, &[("a.md", b"first note"), ("b.md", b"second note")]).await;
+    assert_eq!(status, 200, "{stored}");
+    // A directory where one note was: its unlink fails, and not as "absent".
+    let owner_dir = std::fs::read_dir(s.home.join("notes_corpus"))
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| path.is_dir())
+        .unwrap();
+    let stuck = owner_dir.join(stored["notes"][0]["id"].as_str().unwrap());
+    std::fs::remove_file(&stuck).unwrap();
+    std::fs::create_dir(&stuck).unwrap();
+    let clear = json!({"confirm": true, "reason": "Clear fixture"});
+    let (status, cleared) = s.post_json("/api/sessions/clear", clear.clone()).await;
+    assert_eq!(status, 200, "{cleared}");
+    assert_eq!(
+        cleared["notes_cleanup"],
+        json!({"removed": 1, "retained": 1, "error": "IO_ERROR"})
+    );
+    // Still listed, so the owner can see what remains and retry.
+    let listed = s.get_json("/api/notes-corpus").await.1;
+    assert_eq!(listed["count"], 1, "{listed}");
+    assert_eq!(listed["notes"][0]["id"], stored["notes"][0]["id"]);
+    std::fs::remove_dir(&stuck).unwrap();
+    let (_, cleared) = s.post_json("/api/sessions/clear", clear).await;
+    assert_eq!(cleared["notes_cleanup"], json!({"removed": 1}));
+    assert_eq!(s.get_json("/api/notes-corpus").await.1["count"], 0);
+}
+
+#[tokio::test]
 async fn notes_ingest_honors_default_file_count() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
