@@ -971,7 +971,7 @@ pub async fn start_consolidation(
             "cancel": "/api/structured-memory/consolidation/{id}/cancel",
         })));
     };
-    let run = crate::server::structured_memory_consolidate::run_manual(&state, store, &owner, &req.episode_ids)
+    let run = crate::server::structured_memory_consolidate::run_manual(&state, &owner, &req.episode_ids)
         .await
         .map_err(|e| {
             let mut api = store_err(&e);

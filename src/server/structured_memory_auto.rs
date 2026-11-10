@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
+use crate::server::routes::structured_memory::off_worker;
 use crate::server::state::AppState;
 use crate::server::structured_memory::{auto_consolidation_available, current_gates, ConsolidationRun};
 use crate::server::structured_memory_consolidate::run_manual;
@@ -89,19 +90,19 @@ async fn worker_loop(state: Arc<AppState>) {
             tokio::time::sleep(idle).await;
             continue;
         }
-        let Some(store) = state.structured_memory.as_ref() else {
+        if state.structured_memory.is_none() {
             break;
-        };
-        let batch = match store.next_auto_consolidation_batch() {
-            Ok(Some(batch)) => batch,
-            Ok(None) => {
-                tokio::time::sleep(idle).await;
-                continue;
-            }
-            Err(_) => {
-                tokio::time::sleep(idle).await;
-                continue;
-            }
+        }
+        let picker = state.clone();
+        // No batch due, or the store could not say: wait and ask again.
+        let Some(batch) = off_worker(move || {
+            let store = picker.structured_memory.as_ref()?;
+            store.next_auto_consolidation_batch().ok().flatten()
+        })
+        .await
+        else {
+            tokio::time::sleep(idle).await;
+            continue;
         };
         if !state.auto_consolidation.claims_allowed() || !worker_available(&state) {
             break;
@@ -118,7 +119,7 @@ async fn worker_loop(state: Arc<AppState>) {
             drop(_gate);
             break;
         }
-        let outcome = run_manual(&state, store, &batch.0, &batch.1).await;
+        let outcome = run_manual(&state, &batch.0, &batch.1).await;
         match outcome {
             Ok(run) => audit_run(&state, &run),
             Err(err) => {

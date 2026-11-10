@@ -1,7 +1,7 @@
 //! Shared application state for the console.
 
 use std::collections::{BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -253,11 +253,9 @@ impl AppState {
         }
         let provider = self.provider_for(model);
         let home = self.home.root.display().to_string();
-        // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
-        // The home is operator-set; a traversing one reports the persona absent.
-        let soul = self.home.soul_path();
-        let soul = soul.to_string_lossy();
-        let soul_present = !soul.contains("..") && Path::new(soul.as_ref()).is_file();
+        // The home is operator-set; one with a parent component reports the persona absent.
+        let soul_present =
+            crate::common::refuse_parent_components(&self.home.soul_path()).is_some_and(|soul| soul.is_file());
         Some(super::live_state::render(&super::live_state::LiveState {
             model,
             provider: &provider,

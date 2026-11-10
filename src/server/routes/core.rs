@@ -371,6 +371,10 @@ pub async fn clear_sessions(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<SessionClearRequest>,
 ) -> ApiResult<Json<Value>> {
+    // Every step is synchronous and several wait on SQLite or the disk, so the
+    // whole clear runs on the blocking pool. It also finishes if the client
+    // disconnects part-way.
+    super::structured_memory::off_worker(move || {
     let owner = super::auth::context_owner(user.clone());
     crate::server::structured_memory_suggest::clear_chat_queue(&state, &owner);
     state.diag.forget(&owner);
@@ -427,6 +431,8 @@ pub async fn clear_sessions(
             "Session history was cleared. Derived structured-memory episodes remain unless delete_derived_episodes is confirmed. Facts and proposals are never cleared here."
         }
     })))
+    })
+    .await
 }
 
 pub async fn get_session(
@@ -1790,15 +1796,23 @@ pub(crate) async fn chat_inner(
     } else if portal_auditor {
         json!({"queued": false, "reason": "portal_auditor"})
     } else {
-        crate::server::structured_memory_suggest::enqueue_for_model(
-            &state,
-            &owner,
-            crate::server::structured_memory_suggest::Source::Chat,
-            episode["id"].as_str(),
-            if req.loop_turn { &session.goal } else { &req.message },
-            &reply.body_text,
-            &model,
-        )
+        // Queuing reads and writes the memory store, so it leaves the async worker too.
+        let (state, owner, model) = (state.clone(), owner.clone(), model.clone());
+        let episode_id = episode["id"].as_str().map(str::to_owned);
+        let input = if req.loop_turn { session.goal.clone() } else { req.message.clone() };
+        let output = reply.body_text.clone();
+        super::structured_memory::off_worker(move || {
+            crate::server::structured_memory_suggest::enqueue_for_model(
+                &state,
+                &owner,
+                crate::server::structured_memory_suggest::Source::Chat,
+                episode_id.as_deref(),
+                &input,
+                &output,
+                &model,
+            )
+        })
+        .await
     };
     Ok(Json(json!({
         "session_id": session.session_id,
