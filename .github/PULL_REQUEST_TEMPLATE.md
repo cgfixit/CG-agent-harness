@@ -160,7 +160,7 @@ Merge the foundation first. If a later PR was written against an older base, reb
 ```
 
 ## McLuhan tetrad
-_Goes directly above ELI5. Four short answers about the whole diff against `main`, later commits included. Tie each to something literal: a file, setting or command. Write N/A instead of inventing an effect._
+_Required on every PR (`pr-template-check.yml` enforces the heading) and goes directly above ELI5. Four short answers about the whole diff against `main`, later commits included. Tie each to something literal: a file, setting or command. Write N/A instead of inventing an effect._
 
 - **Enhances:** what does this PR make stronger, faster or easier to see?
 - **Obsoletes:** what does it make unnecessary or push aside?
