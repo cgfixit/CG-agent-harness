@@ -386,7 +386,7 @@ Local verification should build/run affected paths and use only focused tests
 needed for the matrix, not a full local suite. Relevant existing files include
 tests/chat_web.rs, tests/loop_runner.rs, tests/web_research.rs,
 tests/web_phase2_redteam.rs, tests/retrieval_ranking.rs and module unit tests.
-Use pinned Rust 1.88 shims, scoped lint/build checks, and actionlint/zizmor only
+Use pinned Rust 1.89 shims, scoped lint/build checks, and actionlint/zizmor only
 if workflows actually change. Leave broad/platform coverage to hosted CI.
 Browser/native checks become required if the delivered feature changes those
 surfaces; no browser/native acceptance is claimed by this plan.

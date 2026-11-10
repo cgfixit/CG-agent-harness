@@ -76,7 +76,7 @@ Audit records are redacted recursively (emails, IPs, secret shapes, startup-load
 
 ## invariant: Telemetry and unreviewed dependencies stay out
 
-`deny.toml` and `desktop/deny.toml` ban push-telemetry and crash-reporting crates (OpenTelemetry, Sentry and similar) by exact name; the lists match. CI runs `cargo deny check` with `unsound = "all"` on the root, `desktop/` and `tests/fixtures/cargo-sandbox` lockfiles (fixture: no licenses); each advisory ignore carries a removal condition. Workflow actions are SHA-pinned and zizmor-linted; Rust pins: 1.88 backend, 1.90 desktop.
+`deny.toml` and `desktop/deny.toml` ban push-telemetry and crash-reporting crates (OpenTelemetry, Sentry and similar) by exact name; the lists match. CI runs `cargo deny check` with `unsound = "all"` on the root, `desktop/` and `tests/fixtures/cargo-sandbox` lockfiles (fixture: no licenses); each advisory ignore carries a removal condition. Workflow actions are SHA-pinned and zizmor-linted; Rust pins: 1.89 backend, 1.90 desktop.
 
 ## invariant: Provider keys live in the OS credential store
 
