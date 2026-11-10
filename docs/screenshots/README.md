@@ -11,6 +11,7 @@ verify newer builds. `slash-single-line-note.txt` is an operator aside.
 - `console-ux-*-{before,after}-*-chromium`: console UX pass, desktop and phone.
 - `0N-browser-*`, `0N-native-*`, `0N-help-*`, `03-safe-command-refusal`: browser and native acceptance, help overlay.
 - `0N-session-*`, `02-new-session-zero`, `05-independent-spend-ledger`: per-session spend isolation.
+- `loop-budget-warning`: the console's unlimited `/loop` budget warning on a fixture home (#781).
 - `saved-fact-selection-chromium`: Memory-tab per-session fact selection on a live-server synthetic home (#621 U3).
 - `*-safari`: ownership, cron, delivery, MCP and private-memory acceptance.
 - `session-search-export-chromium`: Sessions-pane transcript search and export on a live-server synthetic home (#621 U1).

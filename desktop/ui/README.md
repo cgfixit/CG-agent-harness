@@ -5,8 +5,8 @@ commands granted in [`../capabilities/`](../capabilities/README.md). The main
 console is not here; it is [assets/static/harness.html](../../assets/static/harness.html),
 served by the sidecar.
 
-- [`index.html`](index.html): status, retry/open-console, model inventory,
-  offline Cargo preparation and recovery guidance.
+- [`index.html`](index.html): status, retry/open-console, browser certificate export,
+  model inventory, offline Cargo preparation and recovery guidance.
 - [`setup.js`](setup.js): invokes the granted Tauri commands and refreshes status; its only
   other API is the clipboard, written when **Copy setup code** is clicked.
 - [`style.css`](style.css): the single dark stylesheet.

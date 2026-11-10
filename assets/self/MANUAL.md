@@ -161,11 +161,11 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 ## console: slash-command quick reference (part 3)
 
 - `/memory save <text> :: <reason>`: Confirm an immediate private fact write
-- `/model [status]`, `/model list`, `/model use <name>`: Inspect/list/select a local chat model or explicit cloud provider; does not select the coding planner
+- `/model [status]`, `profile`, `list`, `use <name>`: Inspect/profile/list/select a local chat model or explicit cloud provider; does not select the coding planner
 - `/net status`, `/net devices`, `/net diag`: Read-only scope and gates, passive neighbors, or the budgeted diagnostics probe. Aliases and refused tier words: netconnect
 - `/prompt`: Private preview of the next chat system prompt
 - `/registry`: Combined skill, tool and connector catalog
-- `/session`, `list`, `info`, `new [title]`, `rename <title>`, `use <id>`: List sessions, inspect the current session, create, rename or reopen one
+- `/session`, `list`, `info`, `new [title]`, `rename <title>`, `unpin`, `use <id>`: List, inspect, create, rename or reopen sessions, or clear attachment pins
 - `/skill`, `status`, `use <id...>`, `clear`: Inspect, replace or clear session prompt-skill selection
 - `/skill check:<profile>`: Select one fixed check for an already staged coding request
 - `/skills [all|help|<name>]`: Inspect wired skills, the full catalog including optional prompt files, help, or skills matching a display name (which can differ from the `/skill…
@@ -198,9 +198,9 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET `/static/{name}`: Static console assets
 - GET `/api/status`: Public minimal status; model fields require account access
 - GET `/api/tools`: Wired-route and tool inventory
-- GET `/api/netconnect`: Read-only LAN panel (query ignored; see netconnect.md)
+- GET `/api/netconnect`: Read-only LAN panel (query ignored; netconnect.md)
 - GET `/api/netconnect/diag`: Budgeted TCP probe of configured targets; 409 unless the tier may run (diagnostics)
-- GET `/api/registry`: Skill/persona registry listing
+- GET `/api/registry`: Skill/tool/connector catalog
 - GET `/api/audit`: Audit events (any role)
 - GET `/api/diag`: `/diag` gate, allowlisted log files, last read and staged excerpt (admin or…
 - GET `/api/diag/read`: Bounded, redacted tail of one allowlisted log: `file`, optional `last`, `event`,…
@@ -234,7 +234,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/loop/stop`: Stop by `run_id`
 - GET `/api/loop/status`: One run (`?run_id=`) or a session's run (`?session_id=`)
 - GET `/api/loop/events/{run_id}`: SSE per-turn progress (server loops)
-- POST `/api/sessions/{session_id}/prompt-history`: Owner-scoped composer history line (`{text}`) for ArrowUp recall; last 50 kept, `/api…
+- POST `/api/sessions/{session_id}/prompt-history`: Owner-scoped composer history line (`{text}`) for ArrowUp recall; last 50, `/api` values…
 - DELETE `/api/sessions/{session_id}/attachment-pins`: Owner-scoped unpin; keeps blobs; refused during generation
 - POST `/api/model`: Select the local model or `grok` / `claude` (`/model use`)
 - GET `/api/ollama/inventory`: Live loopback tags (`/model list`) plus configured-model readiness
@@ -252,7 +252,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET `/api/sessions/legacy`: Administrator metadata inventory of unassigned legacy sessions
 - POST `/api/sessions/{session_id}/adopt`: Administrator adoption with confirmation and reason; clears prior goal-stage approval
 - POST `/api/sessions/search`: Owned local transcript search (bounds)
-- POST `/api/sessions/clear`: Delete owned sessions; retain foreign, legacy, corrupt and staged files
+- POST `/api/sessions/clear`: Delete owned sessions, attachments and uploaded notes; retain foreign, legacy, corrupt…
 - GET `/api/sessions/{session_id}`: Load one owned session, with its `web_sources` read ledger
 - GET `/api/sessions/{session_id}/export`: Markdown export; also written 0o600 under home/exports
 - POST `/api/sessions/{session_id}/rename`: Rename
@@ -269,7 +269,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/soul/proposals`: Propose a persona change
 - GET, POST `/api/soul/proposals/{id}`: Review or decide a proposal
 - GET `/api/skills`: List skills
-- POST `/api/skills/check`: Validate a skill
+- POST `/api/skills/check`: Describe a `check:<profile>` ID
 - GET, POST `/api/memory`: Pinned-note status and on/off toggle
 - POST `/api/memory/add`: Save a literal note
 - POST `/api/memory/forget`: Remove one note
@@ -309,7 +309,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/web/research`: Research permitted sources; question ≤2,000 characters, optional group/URLs
 - POST `/api/web/research/cancel`: Cancel the owner's running research, detached or not
 - POST, GET `/api/web/research/jobs`: Start a detached owner-bound research job (`/web job`) or list owned jobs; `GET…
-- POST `/api/web/inject`: Inject a read into the session context
+- POST `/api/web/inject`: Include your last selection in chat
 
 ## api: registered routes (part 8)
 
@@ -333,7 +333,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/agent/schedules/{schedule_id}/cancel`: Cancel a schedule
 - GET `/api/agent/runs`: Retained run metadata (gate below)
 - GET `/api/agent/runs/{run_id}`: One run and its diff
-- POST `/api/agent/runs/{run_id}/decision`: Approve locally (`--reason` + confirm)
+- POST `/api/agent/runs/{run_id}/decision`: Approve (`reason`, confirm) or reject
 - POST `/api/agent/runs/{run_id}/push`: Push the approved commit
 - POST `/api/agent/runs/{run_id}/publish`: Open a draft PR
 - POST `/api/agent/runs/{run_id}/discard`: Discard a run
