@@ -27,7 +27,8 @@ exact source commit, so commits merged during a build wait for a later run.
 Publication needs no manual approval: the `publish` job declares no environment,
 so scheduled, manual and tag releases publish as soon as verification, both
 builds and the source recheck pass. Those gates are the only review.
-A required reviewer on the `release` environment no longer applies.
+`preflight` stops tokens unable to create releases before building
+([#796](https://github.com/cgfixit/CG-agent-harness/issues/796)).
 
 ## Change the timing
 
