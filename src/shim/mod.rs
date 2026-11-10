@@ -31,6 +31,12 @@ pub const REAL_REPO_RUN_CHECK_SEC: u64 = 120;
 /// shipped config; a smaller value turns a slow gh into a 504 with no child
 /// record. `tests/shim_and_agent_routes.rs` pins the sum.
 pub const REAL_REPO_RUN_OVERHEAD_SEC: u64 = 900;
+/// Per-iteration cost when repository retrieval is on: before each planner
+/// call the child lists the clone through one validated git call (30 s for
+/// the config read, 30 s for `git ls-files`). The fixed overhead has 161 s of
+/// slack, which three such iterations exceed, so it is budgeted separately.
+/// Zero when retrieval is off. `tests/shim_and_agent_routes.rs` pins it.
+pub const REAL_REPO_RUN_RETRIEVAL_SEC: u64 = 60;
 /// `real-repo-run-status` renders the pending diff through two validated git
 /// calls (120 s of bounds) before it answers; the default would cut it exactly
 /// at the bound. The console mirrors it as `AGENT_STATUS_TIMEOUT_MS`.
@@ -173,17 +179,22 @@ pub fn label_for(code: i32) -> (bool, &'static str) {
     }
 }
 
-/// UNCAPPED wall-clock budget for one `real-repo-run` request shape.
+fn run_iterations(max_iterations: Option<i64>) -> u64 {
+    match max_iterations {
+        Some(n) if n > 0 => n as u64,
+        _ => REAL_REPO_RUN_DEFAULT_ITERATIONS,
+    }
+}
+
+/// UNCAPPED wall-clock budget for one `real-repo-run` request shape, without
+/// repository retrieval. [`real_repo_run_shape_budget_sec`] adds that term.
 pub fn real_repo_run_budget_sec(planner_timeout_sec: u64, max_iterations: Option<i64>, check_count: usize) -> u64 {
     let planner = if planner_timeout_sec == 0 {
         REAL_REPO_RUN_FALLBACK_PLANNER_SEC
     } else {
         planner_timeout_sec
     };
-    let iterations = match max_iterations {
-        Some(n) if n > 0 => n as u64,
-        _ => REAL_REPO_RUN_DEFAULT_ITERATIONS,
-    };
+    let iterations = run_iterations(max_iterations);
     // Saturate: an extreme operator planner timeout must not panic (debug) or
     // wrap below REAL_REPO_RUN_MAX_TIMEOUT_SEC (release).
     iterations
@@ -194,6 +205,24 @@ pub fn real_repo_run_budget_sec(planner_timeout_sec: u64, max_iterations: Option
                 .saturating_mul(REAL_REPO_RUN_CHECK_SEC),
         )
         .saturating_add(REAL_REPO_RUN_OVERHEAD_SEC)
+}
+
+/// UNCAPPED budget as this server would spawn the shape: the base budget plus,
+/// when retrieval is on, the per-iteration listing bound. The run routes size
+/// their cap check with it and [`timeout_for`] sets the kill timer from it, so
+/// the two cannot disagree.
+pub fn real_repo_run_shape_budget_sec(
+    ctx: &ShimContext,
+    planner_timeout_sec: u64,
+    max_iterations: Option<i64>,
+    check_count: usize,
+) -> u64 {
+    let base = real_repo_run_budget_sec(planner_timeout_sec, max_iterations, check_count);
+    if ctx.retrieval_enabled {
+        base.saturating_add(run_iterations(max_iterations).saturating_mul(REAL_REPO_RUN_RETRIEVAL_SEC))
+    } else {
+        base
+    }
 }
 
 pub fn real_repo_run_timeout_sec(planner_timeout_sec: u64, max_iterations: Option<i64>, check_count: usize) -> u64 {
@@ -208,6 +237,10 @@ pub struct ShimContext {
     pub cwd: PathBuf,
     pub tmp_dir: PathBuf,
     pub planner_timeout_sec: u64,
+    /// `agentic.deepagent_github.retrieval.enabled` as the server loaded it.
+    /// The child reads the file itself; a flag turned on without a restart is
+    /// budgeted as off, which is the budget every run had before this field.
+    pub retrieval_enabled: bool,
 }
 
 impl ShimContext {
@@ -218,6 +251,7 @@ impl ShimContext {
             cwd: cwd.to_path_buf(),
             tmp_dir: tmp_dir.to_path_buf(),
             planner_timeout_sec,
+            retrieval_enabled: false,
         })
     }
 }
@@ -465,11 +499,13 @@ pub fn build_argv(ctx: &ShimContext, req: &OpsRequest) -> Result<(Vec<String>, V
 /// else gets the default.
 pub fn timeout_for(ctx: &ShimContext, req: &OpsRequest) -> Duration {
     let secs = match req.action.as_str() {
-        "real-repo-run" => real_repo_run_timeout_sec(
+        "real-repo-run" => real_repo_run_shape_budget_sec(
+            ctx,
             req.planner_timeout_sec.unwrap_or(ctx.planner_timeout_sec),
             req.max_iterations,
             req.checks.as_ref().map(|c| c.len()).unwrap_or(0),
-        ),
+        )
+        .min(REAL_REPO_RUN_MAX_TIMEOUT_SEC),
         "real-repo-run-decide" | "real-repo-run-push" | "real-repo-run-publish" => REAL_REPO_RUN_WRITE_SEC,
         "real-repo-run-status" => REAL_REPO_RUN_STATUS_SEC,
         _ => DEFAULT_TIMEOUT_SEC,
