@@ -57,16 +57,14 @@ Elsewhere it holds nothing. A child ended by a signal reports `signal` in
 
 ## MCP stdio diagnostics
 
-MCP stdio has a separate Tokio child owner. It drains stderr continuously,
-discards excess bytes, retains at most 2 KiB, and exposes at most 512 Unicode
-characters at EOF. It creates no stderr log file. The 4 MiB synchronous-runner
-limit does not apply.
+MCP stdio drains and discards stderr so a noisy child can finish without
+filling its pipe. When stdout closes unexpectedly, the client waits up to
+50 ms for the drain and returns a fixed `MCP_STDIO` message. To see child
+diagnostics, reproduce the call with the MCP server in a controlled environment.
 
-The drain lets a noisy child finish a valid response without filling its stderr
-pipe. Each response is one newline-delimited JSON line and is refused above
+Each response is one newline-delimited JSON line and is refused above
 `mcp.max_result_bytes`, even if unterminated. `mcp.timeout_sec` and child cleanup
-still apply. A diagnostic prefix proves neither complete capture nor descendant
-containment. See [troubleshooting](TROUBLESHOOTING.md).
+still apply. See [troubleshooting](TROUBLESHOOTING.md).
 
 ### Explicit MCP lifecycle policy
 
