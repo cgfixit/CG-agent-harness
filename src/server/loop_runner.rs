@@ -160,7 +160,6 @@ pub fn loop_turn_prompt(turn: u64, total: Option<u64>, goal: &str) -> String {
 #[serde(rename_all = "lowercase")]
 pub enum LoopRunState {
     Running,
-    Paused,
     Stopped,
     Failed,
     Done,
@@ -170,7 +169,6 @@ impl LoopRunState {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Running => "running",
-            Self::Paused => "paused",
             Self::Stopped => "stopped",
             Self::Failed => "failed",
             Self::Done => "done",
@@ -178,7 +176,7 @@ impl LoopRunState {
     }
 
     pub fn terminal(self) -> bool {
-        !matches!(self, Self::Running | Self::Paused)
+        !matches!(self, Self::Running)
     }
 }
 
