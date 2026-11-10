@@ -159,12 +159,19 @@ Status: **Safe** applies clean to current `main`; **Dirty** conflicts; **Blocked
 Merge the foundation first. If a later PR was written against an older base, rebase it onto the new one so it drops in clean instead of creating a merge commit. We already tested the fit with a trial merge.
 ```
 
+## McLuhan tetrad
+_Goes directly above ELI5. Four short answers about the whole diff against `main`, later commits included. Tie each to something literal: a file, setting or command. Write N/A instead of inventing an effect._
+
+- **Enhances:** what does this PR make stronger, faster or easier to see?
+- **Obsoletes:** what does it make unnecessary or push aside?
+- **Retrieves:** what does it bring back that an earlier change had dropped?
+- **Reverses into:** what does it flip into when pushed to an extreme? State the actual failure, how bad it is, and the signal that shows it, worst first. List each one under Risks to monitor too.
+
 ## ELI5
 _Required on every PR, and it must stay the **last heading** in the body (`pr-template-check.yml` enforces both). The body's last line you write is the stamp below (e.g. `Last updated: 2026-10-14 15:05 ET`); only a Claude Code attribution footer may follow it, and the checks strip it. Refresh the stamp whenever you edit the body._
 
 Explain the **whole** diff against `main`, not just the first commit. Re-read it whenever a later commit changes what the PR does. Plain words, no jargon you would not say out loud, but keep the specifics:
-Write for the operator: plain but technical, nothing glossed. Cover the whole branch diff against main, later commits included. Say what changed and why, naming files and functions; what could break and where to look; what was run versus only reasoned. Mark guesses. Do not market a feature or soften a gate. No heading after this one. Plain words, no jargon you would not say out loud, but keep the specifics on what is changing, what it touches, what it adds, potential or expected risk, etc .. (Think: McLuhan's tetrad: "What does this Pr's changes enhance? What does this Pr's changes make obsolete? What does this Pr's changes retrieve that had been obsolesced earlier? What does this Pr's changes reverse or flip into when pushed to extremes?"):
-Then bring each tetrad answer back to the literal: name the file, setting, or command it refers to, and for **Reverses into** state the actual failure, how bad it is, and the signal that shows it (worst first, each also listed under Risks to monitor); write N/A instead of inventing an effect.
+Write for the operator: plain but technical, nothing glossed. Cover the whole branch diff against main, later commits included. Say what changed and why, naming files and functions; what could break and where to look; what was run versus only reasoned. Mark guesses. Do not market a feature or soften a gate. No heading after this one. Plain words, no jargon you would not say out loud, but keep the specifics on what is changing, what it touches, what it adds, potential or expected risk, etc. The tetrad above names the four effects; say the same thing here in plain words:
 
 - **What was broken or missing**, in one picture or analogy, then the real names (file, function, setting) so you can still find it.
 - **What changed**, including every later commit. Say what the new behavior is and what it deliberately does not do.
