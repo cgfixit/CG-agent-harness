@@ -594,6 +594,65 @@ async fn expired_episode_purge_route_requires_confirm_and_keeps_live_episodes() 
 }
 
 #[tokio::test]
+async fn episode_delete_route_needs_confirm_and_reason_and_removes_only_the_owners_unreferenced_episode() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), capture()).await;
+    let cited = stage_episode(&s).await;
+    let doomed = stage_episode(&s).await;
+    let foreign = stage_store_episode(&s, "user_bob");
+    let path = |id: &str| format!("/api/structured-memory/episodes/{id}/delete");
+    let confirmed = json!({"reason":"operator cleanup","confirm":true});
+
+    // Confirmation and a reason are both required, and a refusal deletes nothing.
+    for body in [
+        json!({"reason":"operator cleanup"}),
+        json!({"reason":"operator cleanup","confirm":false}),
+    ] {
+        let (status, refused) = s.post_json(&path(&doomed), body).await;
+        assert_eq!(status, 400, "{refused}");
+        assert_eq!(code(&refused), "STRUCTURED_MEMORY_CONFIRM");
+    }
+    let (status, refused) = s.post_json(&path(&doomed), json!({"reason":"","confirm":true})).await;
+    assert_eq!(status, 422, "{refused}");
+    assert_eq!(s.get_json("/api/structured-memory/episodes").await.1["count"], 2);
+
+    // An episode a pending proposal cites stays until that proposal is decided.
+    let (status, proposal) = s
+        .post_json(
+            "/api/structured-memory/proposals",
+            json!({"action":"add","content":"Keep tabs","source_episode_ids":[cited]}),
+        )
+        .await;
+    assert_eq!(status, 200, "{proposal}");
+    let (status, refused) = s.post_json(&path(&cited), confirmed.clone()).await;
+    assert_eq!(status, 409, "{refused}");
+    assert_eq!(code(&refused), "STRUCTURED_MEMORY_CHANGED");
+
+    // Another owner's episode, an unknown id and a malformed id all read as unknown.
+    let unknown = cgagentharness::common::random_hex(16);
+    for id in [foreign.as_str(), unknown.as_str(), "not-an-id"] {
+        let (status, missing) = s.post_json(&path(id), confirmed.clone()).await;
+        assert_eq!(status, 404, "{id}: {missing}");
+        assert_eq!(code(&missing), "STRUCTURED_MEMORY_NOT_FOUND");
+    }
+    let store = s.state.structured_memory.as_ref().unwrap();
+    assert_eq!(store.list_episodes("user_bob").unwrap()[0].id, foreign);
+
+    // The delete removes exactly that episode; repeating it is not a silent success.
+    let (status, deleted) = s.post_json(&path(&doomed), confirmed.clone()).await;
+    assert_eq!(status, 200, "{deleted}");
+    assert_eq!(deleted["deleted"], doomed.as_str());
+    let listed = s.get_json("/api/structured-memory/episodes").await.1;
+    assert_eq!(listed["count"], 1, "{listed}");
+    assert_eq!(listed["episodes"][0]["id"], cited.as_str());
+    assert!(s.audit_log().contains("structured_memory_episode_deleted"));
+    assert!(!s.audit_log().contains("operator cleanup"), "the reason is not audited");
+    let (status, again) = s.post_json(&path(&doomed), confirmed).await;
+    assert_eq!(status, 404, "{again}");
+    assert_eq!(code(&again), "STRUCTURED_MEMORY_NOT_FOUND");
+}
+
+#[tokio::test]
 async fn export_is_escaped_owner_local_and_owner_purge_is_atomic_from_http() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), capture()).await;
