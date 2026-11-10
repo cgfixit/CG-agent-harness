@@ -536,19 +536,22 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     )
     .await;
     s.post_json("/api/web", json!({"enabled": false})).await;
-    // The startup tune measures the configured 32768-token model: shipped caps.
+    // The startup tune measures the configured 32768-token model: its caps hold
+    // the raised values, and tuning no longer pulls them down to the shipped
+    // 28000 (it tightens only for a window below 32768).
     let body = wait_for_tuning(&s, 32768).await;
     assert_eq!(body["in_force"]["prompt_cap"], 30000, "{body}");
-    assert_eq!(body["in_force"]["web_total_tokens"], 28000, "{body}");
+    assert_eq!(body["in_force"]["web_total_tokens"], 32000, "{body}");
     let (status, body) = s.post_json("/api/model", json!({"model": "longctx:q8"})).await;
     assert_eq!(status, 200, "{body}");
     let body = wait_for_tuning(&s, 65536).await;
     assert_eq!(body["proposed"]["state"], "scaled_up", "{body}");
-    // Caps double with the window; the budgets grow only to what config allows.
+    // Caps double with the window; the budgets grow to what config asks for,
+    // inside those caps (before, the scaled proposals 48000 / 56000 held them).
     assert_eq!(
         body["in_force"],
-        json!({"prompt_cap": 60000, "prompt_limit": 48000, "limit_source": "chat.compact_prompt_tokens",
-            "web_total_tokens": 56000, "web_total_ceiling": 56000}),
+        json!({"prompt_cap": 60000, "prompt_limit": 50000, "limit_source": "chat.compact_prompt_tokens",
+            "web_total_tokens": 60000, "web_total_ceiling": 64000}),
         "{body}"
     );
     assert_eq!(body["tuning"]["max_tokens"], 8192, "{body}");

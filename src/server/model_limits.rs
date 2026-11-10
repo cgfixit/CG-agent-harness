@@ -7,8 +7,13 @@
 //! then checked by the validators startup and reload use. Shipped values, not
 //! the home's current ones, are scaled, so a home already tuned for a small
 //! window is not halved twice. Applied budgets only ever tighten the configured
-//! ones, except the compaction trigger, which a larger verified window scales up
-//! ([`window_trigger`]); the chat timeout follows the measured speed instead.
+//! ones, and only for a window below that 32,768 ([`Tuning::tightens`]): at or
+//! above it the configured values stand, since startup and reload already held
+//! them to that window's caps. Before, the shipped values acted as ceilings
+//! there, so a raised `max_tokens`, trigger or `web.total_tokens` was silently
+//! held at 4096, 24000 or 28000. The exception upward is the compaction
+//! trigger, which a larger verified window scales up ([`window_trigger`]); the
+//! chat timeout follows the measured speed instead.
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -299,10 +304,18 @@ pub fn propose(
                 .find(|row| row["key"] == key)
                 .and_then(|row| row["proposed"].as_u64())
         };
+        // In force: the configured reply at the tuned window or above, the
+        // smaller of it and the proposal below (`Tuning::tightens`).
+        let configured_reply = current("models.local_llm.max_tokens");
+        let reply_in_force = if window >= TUNED_WINDOW {
+            configured_reply
+        } else {
+            proposed_reply.min(configured_reply)
+        };
         derived_timeout(
             speed,
             compaction::prompt_cap(Some(window)),
-            compaction::reply_reservation(backend, proposed_reply.min(current("models.local_llm.max_tokens"))),
+            compaction::reply_reservation(backend, reply_in_force),
             proposed("web.chat_tool_calls").unwrap_or(0),
         )
     }) {
@@ -432,8 +445,14 @@ pub struct Tuning {
 }
 
 impl Tuning {
+    /// Whether this tuning lowers configured budgets: only when the model's
+    /// window is smaller than the one the shipped budgets were sized for.
+    pub fn tightens(&self) -> bool {
+        self.window < TUNED_WINDOW
+    }
+
     pub fn apply_web(&self, limits: &mut Limits) {
-        if let Some(budget) = &self.web {
+        if let Some(budget) = self.web.as_ref().filter(|_| self.tightens()) {
             limits.total_tokens = limits.total_tokens.min(budget.total_tokens);
             limits.evidence_tokens = limits.evidence_tokens.min(budget.evidence_tokens);
             limits.model_tokens = limits.model_tokens.min(budget.model_tokens);
@@ -865,6 +884,34 @@ mod tests {
         low.total_tokens = 9_000;
         tuning.apply_web(&mut low);
         assert_eq!(low.total_tokens, 9_000);
+    }
+
+    #[test]
+    fn at_the_tuned_window_or_above_configured_budgets_stand() {
+        let cfg = shipped().unwrap();
+        let web = Limits::load(&cfg).unwrap();
+        for window in [TUNED_WINDOW, 65_536] {
+            let profile = loaded(window);
+            let proposal = propose(&profile, None, &cfg, &web, &backend(Some("none")));
+            let tuning = tuning_from("m", &profile, &proposal, None).unwrap();
+            assert!(!tuning.tightens(), "{window}");
+            // An operator who raised a budget inside the caps startup enforces
+            // keeps it: the shipped 28000 is not a ceiling at this window.
+            let mut raised = web.clone();
+            raised.total_tokens = 30_000;
+            raised.chat_tool_calls = 30;
+            tuning.apply_web(&mut raised);
+            assert_eq!(raised.total_tokens, 30_000, "{window}");
+        }
+        // Below it the shipped shape, scaled down, still caps the same value.
+        let profile = loaded(16_384);
+        let proposal = propose(&profile, None, &cfg, &web, &backend(Some("none")));
+        let tuning = tuning_from("m", &profile, &proposal, None).unwrap();
+        assert!(tuning.tightens());
+        let mut raised = web.clone();
+        raised.total_tokens = 30_000;
+        tuning.apply_web(&mut raised);
+        assert_eq!(raised.total_tokens, 14_000);
     }
 
     #[test]

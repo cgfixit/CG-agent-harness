@@ -64,7 +64,8 @@ models:
     # Per-model tuning (flag_is_true; quoted "true" is off; false restores the
     # fixed limits). On /model use and at startup: one short raw /api/generate
     # times this loopback Ollama (no num_ctx; it loads the model like warmup) and
-    # /api/ps gives the loaded window. Token budgets only tighten to fit it; the
+    # /api/ps gives the loaded window. Token budgets only tighten, and only to fit a window
+    # below 32768 (at or above it the values configured here stand, within their ranges); the
     # chat timeout follows the measured speed (120–3600 s); a model declaring no
     # tools gets none. Cloud uses config profiles, never this sample. See /model profile.
     auto_tune: true
@@ -128,8 +129,10 @@ api:
     # Per-turn generation budget for /loop turns. With the default local model
     # (Ollama reasoning=none) the reload-time ceiling is 25904; with reasoning
     # or a compatible backend it is 12952. Set to 0 to keep the legacy 2048
-    # default, or raise it toward the ceiling your model window allows.
-    max_tokens: 8192 # same backend-dependent ceiling as local chat; legacy 0 selects 2048
+    # default. While auto_tune has tuned the model, a loop turn never writes more
+    # than models.local_llm.max_tokens (the measured timeout is sized for that), so
+    # raise both together. Shipped 8192 until 2026-11-10; it ran as 4096.
+    max_tokens: 4096 # same backend-dependent ceiling as local chat; legacy 0 selects 2048
 
 # Server-side /loop runner bounds (Reload limits/SIGHUP; see docs/INSTALL.md
 # and docs/CONSOLE.md). The console reads these from /api/status at runtime and

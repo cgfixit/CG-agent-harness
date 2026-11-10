@@ -454,6 +454,9 @@ and budget decisions remain deterministic.
   Auto-tuning reported a 1,140-second model deadline, 300-second synthesis limit
   and 1,200-second research limit. No Modelfile, context, timeout or provider
   default was changed. Firecrawl now sends `maxAge:0` alongside `storeInCache:false`.
+- The shipped loop reply cap is now 4,096, the value that ran: a tuned loop
+  turn is held at `models.local_llm.max_tokens`. The 8,192 figures above
+  describe the earlier shipped setting.
 - #786 (merged) splits the remaining search deadline across the remaining hops
   and, when time allows, reserves pacing time plus one second for a final public
   Google hop (`web_provider::hop_budget`).

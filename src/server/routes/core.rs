@@ -1241,9 +1241,14 @@ pub(crate) async fn chat_inner(
         })
     };
     let max_tokens = if req.loop_turn {
-        // Only a tuned model's window lowers the loop cap; untuned, it is unchanged.
-        live.loop_max_tokens
-            .min(state.tuning_for(&model).map_or(u64::MAX, |tuning| tuning.max_tokens))
+        // A tuned model's loop reply never exceeds its chat reply cap: the
+        // measured chat timeout was sized for that many tokens. Untuned, the
+        // loop cap is unchanged.
+        live.loop_max_tokens.min(
+            state
+                .tuning_for(&model)
+                .map_or(u64::MAX, |_| state.chat_max_tokens(&model)),
+        )
     } else {
         state.chat_max_tokens(&model)
     };
