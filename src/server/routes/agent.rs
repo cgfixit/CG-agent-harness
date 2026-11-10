@@ -92,7 +92,6 @@ pub async fn agent_checks(State(state): State<Arc<AppState>>) -> Json<Value> {
     }))
 }
 
-/// True when the run's planner and /api/chat target the same backend.
 /// The planner timeout an agent run budgets and passes to its child: the one
 /// `auto_tune` derived when the planner runs the tuned chat model on the very
 /// endpoint chat measured, else the configured value. Stricter than the shared
@@ -121,6 +120,8 @@ fn same_endpoint(a: &str, b: &str) -> bool {
     matches!((parse(a), parse(b)), (Some(a), Some(b)) if a == b)
 }
 
+/// True when the run's planner and /api/chat target the same backend. An
+/// unset or unparseable planner `base_url` counts as shared.
 fn agent_run_shares_chat_backend(state: &AppState) -> bool {
     let deep = state
         .cfg

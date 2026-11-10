@@ -454,7 +454,10 @@ agentic:
       top_k: 3 # At most 1–8 additional files, after operator/model selections.
       excerpt_lines: 40 # Inclusive line window; 1–200, also capped by existing read budgets.
       token_budget: 2048 # 256–8192 conservative UTF-8 byte reservations, including excerpt headers.
-    scan_code_shape: true # inject a bounded repository structure summary into the planner
+    # Refuses a proposed file whose content pairs credential reads with egress,
+    # decoding with dynamic exec, a socket with a shell, or a download piped to a
+    # shell. false turns that scan off; the injection scan still runs.
+    scan_code_shape: true
     max_handoff_chars: 200000
     workspace_root: "data/agentic/workspaces" # home-relative; created when a clone starts
     allow_cloud_providers: true
