@@ -52,7 +52,7 @@ Roles, scrypt bounds and session timeouts: [SECURE_RESEARCH.md](SECURE_RESEARCH.
 |---|---|---|
 | POST | `/api/chat` | One turn; streams SSE when `Accept: text/event-stream` |
 | POST | `/api/chat/attachments` | Upload up to 3 txt/md/json/csv/log/docx files (15 MB each; home quota 64 MB/512 blobs; 503 past `attachments.max_concurrent_uploads`) ([retention](CONSOLE.md#text-file-attachments-and-prompt-preview)) |
-| GET, POST | `/api/notes-corpus` | List owned jailed `.md`/`.txt` metadata (no bodies or host paths), or ingest files under `notes_corpus.*` caps for local prompt retrieval |
+| GET, POST | `/api/notes-corpus` | List owned note metadata and upload limits, or ingest a `.md`/`.txt` batch for local prompt retrieval. File refusals include a zero-based `file_index`. |
 | DELETE | `/api/notes-corpus/{id}` | Unlink one owned note |
 | POST | `/api/chat/cancel` | Cancel the active turn (`/loop stop`) |
 | POST | `/api/loop/start` | Start an owner-bound server-side `/loop` run: `session_id`, optional `goal`/`web_mode`, limit overrides |

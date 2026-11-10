@@ -577,6 +577,17 @@ async fn notes_ingest_honors_custom_file_count() {
     let (status, body) = post_notes_n(&s, 3).await;
     assert_eq!(status, 400, "{body}");
     assert_eq!(code(&body), "NOTES_TOO_MANY");
+    let (_, listed) = s.get_json("/api/notes-corpus").await;
+    assert_eq!(listed["limits"]["max_files_per_request"], 2);
+    let (status, body) = post_notes(&s, &[("ok.md", b"valid"), ("invalid.txt", b"invalid\0")]).await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(code(&body), "NOTES_NUL");
+    assert_eq!(body["detail"]["details"]["file_index"], 1);
+    assert_eq!(
+        s.get_json("/api/notes-corpus").await.1["count"],
+        2,
+        "the refused batch stores nothing"
+    );
 }
 
 #[tokio::test]
