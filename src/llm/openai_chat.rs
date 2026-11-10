@@ -123,36 +123,17 @@ pub struct TurnSampling {
     pub temperature: f64,
 }
 
-pub const DEFAULT_TOOL_MAX_TOKENS: u64 = 512;
-const TOOL_MAX_TOKENS_MIN: u64 = 64;
-const TOOL_MAX_TOKENS_MAX: u64 = 2048;
-
-pub fn parse_tool_max_tokens(number: Option<u64>, key_present: bool) -> Result<u64> {
-    if !key_present {
-        return Ok(DEFAULT_TOOL_MAX_TOKENS);
-    }
-    match number {
-        Some(n) if (TOOL_MAX_TOKENS_MIN..=TOOL_MAX_TOKENS_MAX).contains(&n) => Ok(n),
-        _ => Err(HarnessError::config(
-            "models.local_llm.tool_max_tokens must be an integer from 64 to 2048",
-        )),
-    }
-}
-
-pub fn sampling_for(
-    kind: TurnKind,
-    synthesis_max_tokens: u64,
-    synthesis_temperature: f64,
-    tool_max_tokens: u64,
-) -> TurnSampling {
-    match kind {
-        TurnKind::Tool => TurnSampling {
-            max_tokens: tool_max_tokens.min(synthesis_max_tokens).max(1),
-            temperature: 0.0,
-        },
-        TurnKind::Synthesis => TurnSampling {
-            max_tokens: synthesis_max_tokens,
-            temperature: synthesis_temperature,
+/// One call's reply cap and temperature. A hop that offers tools writes up to
+/// the answer cap, because the model may answer instead of calling a tool: a
+/// smaller planning cap cut such an answer off and it was generated again from
+/// its first token. Tool selection stays at temperature 0; a call that offers
+/// no tools uses the configured temperature.
+pub fn sampling_for(kind: TurnKind, max_tokens: u64, temperature: f64) -> TurnSampling {
+    TurnSampling {
+        max_tokens,
+        temperature: match kind {
+            TurnKind::Tool => 0.0,
+            TurnKind::Synthesis => temperature,
         },
     }
 }
@@ -924,10 +905,10 @@ mod tests {
     }
 
     #[test]
-    fn tool_and_synthesis_payloads_use_different_budgets() {
+    fn tool_and_synthesis_payloads_share_the_answer_budget() {
         let messages = [json!({"role":"user","content":"count the cedars"})];
-        let tool = sampling_for(TurnKind::Tool, 4096, 0.2, DEFAULT_TOOL_MAX_TOKENS);
-        let synthesis = sampling_for(TurnKind::Synthesis, 4096, 0.2, DEFAULT_TOOL_MAX_TOKENS);
+        let tool = sampling_for(TurnKind::Tool, 4096, 0.2);
+        let synthesis = sampling_for(TurnKind::Synthesis, 4096, 0.2);
         let tool_payload = completion_payload("qwen3.8:27b-mlx-cg", &messages, tool, &[], true, false, Some("none"));
         let synthesis_payload = completion_payload(
             "qwen3.8:27b-mlx-cg",
@@ -938,35 +919,14 @@ mod tests {
             false,
             Some("none"),
         );
-        assert_eq!(tool_payload["max_tokens"], 512);
+        // A tools-offered hop may be the answer itself: it gets the whole cap.
+        assert_eq!(tool_payload["max_tokens"], 4096);
         assert_eq!(tool_payload["temperature"].as_f64(), Some(0.0));
         assert_eq!(tool_payload["reasoning_effort"], "none");
         assert_eq!(tool_payload["tool_choice"], "none");
         assert_eq!(synthesis_payload["max_tokens"], 4096);
         assert_eq!(synthesis_payload["temperature"].as_f64(), Some(0.2));
         assert_eq!(synthesis_payload["reasoning_effort"], "none");
-        let shipped = sampling_for(TurnKind::Synthesis, 4096, 0.1, DEFAULT_TOOL_MAX_TOKENS);
-        assert_eq!(
-            (shipped.max_tokens, shipped.temperature),
-            (4096, 0.1),
-            "synthesis keeps the configured chat budget"
-        );
-        assert_eq!(parse_tool_max_tokens(None, false).unwrap(), 512);
-        assert!(parse_tool_max_tokens(Some(32), true).is_err());
-        assert_eq!(parse_tool_max_tokens(Some(1024), true).unwrap(), 1024);
-    }
-
-    #[test]
-    fn the_tool_budget_accepts_only_integers_inside_its_bounds() {
-        for (value, ok) in [(63, false), (64, true), (2048, true), (2049, false), (0, false)] {
-            assert_eq!(parse_tool_max_tokens(Some(value), true).is_ok(), ok, "{value}");
-        }
-        // A present key that is not an integer (quoted, float, null) reaches the
-        // parser as None and must fail closed instead of using the default.
-        assert!(parse_tool_max_tokens(None, true).is_err());
-        let hop = sampling_for(TurnKind::Tool, 256, 0.1, 2048);
-        assert_eq!(hop.max_tokens, 256, "a hop never exceeds the answer ceiling");
-        assert_eq!(hop.temperature, 0.0);
     }
 
     #[tokio::test]

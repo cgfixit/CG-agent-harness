@@ -448,7 +448,8 @@ and budget decisions remain deterministic.
   Restored findings include bounded source passages for critical review. Invalid
   digest JSON retains valid passages and a visible failure. Transport/model
   failure still follows the ordinary failed-turn policy.
-- Tool planning stays at 512 tokens; truncated answers receive full synthesis.
+- Tool planning first ran at 512 tokens with truncated answers regenerated at
+  full synthesis; a hop that offers tools now writes up to the answer cap once.
   The active Qwen profile allowed 4,096 answer tokens, 28,000 total prompt-plus-reply
   tokens, 6,000 evidence tokens, 24,000 compaction trigger and 30 tool calls.
   Auto-tuning reported a 1,140-second model deadline, 300-second synthesis limit

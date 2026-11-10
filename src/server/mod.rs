@@ -206,11 +206,6 @@ pub async fn build_app_with_sources(
         &backend,
     )?;
     cfg.u64_strict("chat.compact_prompt_tokens", compaction::DEFAULT_PROMPT_TOKENS)?;
-    let tool_key = "models.local_llm.tool_max_tokens";
-    crate::llm::openai_chat::parse_tool_max_tokens(
-        cfg.get(tool_key).and_then(|value| value.as_u64()),
-        cfg.get(tool_key).is_some(),
-    )?;
     let mut settings = HarnessSettings::load(&home)?;
     let store = SessionStore::new(&home.sessions_dir())?;
     // Request handlers queue audit lines; one thread appends them in order.
