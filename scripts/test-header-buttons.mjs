@@ -50,6 +50,8 @@ const context = vm.createContext({
   promptHistory:{}, currentStyle:'off', currentStyleIssue:null,
 });
 vm.runInContext([
+  between('let notesViewRevision =', 'async function withNotesDialog('),
+  between('function setCurrentSession(', 'let promptHistory ='),
   between('const hAuthLogin = document.getElementById(', 'if (hAuthLogin) {'),
   between('if (hAuthLogin) {', 'if (hAuthLogout) {'),
   between('if (hAuthLogout) {', 'function openPasswordChange('),
@@ -175,7 +177,10 @@ assert.equal(context.sessionSearchQuery, 'private transcript query', 'a rejected
 const searchSeq = context.sessionSearchSeq;
 const memoryRevision = context.memoryViewRevision;
 context.memoryRefreshTimer = 'logout-memory-poll'; context.memoryRefreshBusy = true;
-node('pane-memory').textContent = 'private memory';
+node('memoryReview').textContent = 'private memory';
+node('notesDialog').open = true;
+node('notesFiles').value = 'private-note.txt';
+node('notesList').textContent = 'private note metadata';
 auth.logout = reply(401); auth.whoami = reply(401);
 await node('hAuthLogout').listeners.click(); await settle();
 assert.deepEqual(shown(), [], 'a 401 logout rechecks whoami and stays hidden when signed out');
@@ -186,7 +191,10 @@ assert.ok(transcriptClears >= 1, 'a 401 logout clears the transcript');
 assert.ok(clearedTimers.includes('logout-memory-poll'), 'logout cancels the old account memory poll');
 assert.ok(context.memoryViewRevision > memoryRevision, 'logout invalidates in-flight memory replies');
 assert.equal(context.memoryRefreshBusy, false);
-assert.equal(node('pane-memory').textContent, '');
+assert.equal(node('memoryReview').textContent, '');
+assert.equal(node('notesDialog').open, false);
+assert.equal(node('notesFiles').value, '');
+assert.equal(node('notesList').textContent, '');
 // The reset does not depend on the follow-up probe: a failed whoami still leaves it reset.
 vm.runInContext("currentSession = 'second-session'", context);
 auth.logout = reply(401); auth.whoami = () => { throw new TypeError('Failed to fetch'); };

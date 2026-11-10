@@ -71,6 +71,8 @@ const context = vm.createContext({
   currentStyle:'off', currentStyleIssue:null, sessionRevision:0, sendBtn:{disabled:false}, input:node('input'),
 });
 vm.runInContext(between('let apiRetryUntil = 0;', 'async function readChatStream(') + '\n' +
+  between('let notesViewRevision =', 'async function withNotesDialog(') + '\n' +
+  between('function setCurrentSession(', 'let promptHistory =') + '\n' +
   between('const hAuthLogin = document.getElementById(', 'refreshHarnessAuth();\nlet memoryRefreshTimer'), context);
 const settle = () => new Promise(setImmediate);
 const submit = async (password, confirmation = password) => {
