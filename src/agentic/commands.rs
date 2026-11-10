@@ -918,6 +918,11 @@ fn cmd_real_repo_run_push(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
 }
 
 fn cmd_real_repo_run_publish(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
+    // Master gate first, as push does through `attach_approved`: a disabled
+    // layer answers with the banner (HTTP 409), never a write refusal.
+    if !ctx.acfg.enabled {
+        return Ok(disabled_noop());
+    }
     if !opts.flag("confirm") {
         err("--confirm is required to open a pull request");
         return Ok(EXIT_REFUSED);

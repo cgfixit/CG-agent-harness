@@ -331,6 +331,50 @@ fn decide_refuses_combined_push_or_publish_before_any_gate_or_record_read() {
     }
 }
 
+/// Unlike the combined `decide` refusal above, push and publish are ordinary
+/// actions: a closed master gate answers with the exit-0 banner (HTTP 409)
+/// whether or not `--confirm` was sent, never with a write refusal.
+#[test]
+fn master_disabled_push_and_publish_banner_before_the_confirm_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let (ctx, _dest, bare, mut rec) = fixture(dir.path());
+    let fakebin = install_fake_gh(dir.path(), &bare);
+    let path = path_with(&fakebin);
+    let log = dir.path().join("gh.log");
+    armed(dir.path(), &[("agentic.enabled", "false")]);
+    let env = [
+        ("PATH", path.as_str()),
+        ("GROK_API_KEY", ""),
+        ("ANTHROPIC_API_KEY", ""),
+        ("DEEPAGENT_API_KEY", ""),
+    ];
+    let record = ctx.runs_dir().join(format!("{}.json", rec.run_id));
+    let idarg = format!("--run-id={}", rec.run_id);
+    for action in ["real-repo-run-push", "real-repo-run-publish"] {
+        rec.pushed = action == "real-repo-run-publish";
+        save_run(&ctx.runs_dir(), &mut rec).unwrap();
+        let before = std::fs::read(&record).unwrap();
+        for confirm in [false, true] {
+            let mut args = vec![action, idarg.as_str(), "--reason=r"];
+            if confirm {
+                args.push("--confirm");
+            }
+            let (code, out, err) = run_agentic(&ctx.config_path, &args, &env, dir.path());
+            assert_eq!(code, 0, "{action} confirm={confirm}: {out} {err}");
+            assert!(
+                out.contains("agentic.enabled is false"),
+                "{action} confirm={confirm}: {out} {err}"
+            );
+            assert_eq!(
+                std::fs::read(&record).unwrap(),
+                before,
+                "{action} confirm={confirm}: record changed"
+            );
+            assert!(!log.exists(), "{action} confirm={confirm}: gh was invoked");
+        }
+    }
+}
+
 #[test]
 fn reject_settles_a_pending_run_whose_clone_is_gone() {
     let dir = tempfile::tempdir().unwrap();
