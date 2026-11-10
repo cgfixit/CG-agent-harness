@@ -231,9 +231,8 @@ headings and nearby qualifiers/table context. Start with two or three
 passages per source; avoid a prefix-only context window. Relevance selection
 saves model context, not the first HTTP download. Oversized/complex pages
 remain explicit failures; do not automatically raise response caps or send
-those failures to Firecrawl under today's contract. (Operator decision,
-2026-11-10: an oversized body and a PDF now go to the enabled fallback, and
-the shipped response cap is 1 MiB; `INVARIANTS.md` has the contract.)
+those failures to Firecrawl under today's contract. (2026-11-10: an oversized
+body or a PDF now goes to the enabled fallback; see `INVARIANTS.md`.)
 
 For explicitly fresh Firecrawl reads, validate maxAge=0 or equivalent current
 API behavior and keep storeInCache=false. Distinguish local fetch timestamp,
