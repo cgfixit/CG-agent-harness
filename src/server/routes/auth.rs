@@ -463,9 +463,21 @@ pub async fn delete_user(
         notes_cleanup = super::notes_corpus::cleanup_owner(&state, owner);
     }
     let live: std::collections::BTreeSet<String> = manager.list_users().into_iter().map(|u| u.user_id).collect();
-    let is_live = |candidate: &str| candidate == "local" || live.contains(candidate);
-    let swept = state.attachments.sweep_dead_owners(&is_live).unwrap_or(0);
-    let notes_swept = state.notes_corpus.sweep_dead_owners(&is_live).unwrap_or(0);
+    let swept = state
+        .attachments
+        .sweep_dead_owners(&|candidate| candidate == "local" || live.contains(candidate))
+        .unwrap_or(0);
+    // Not the set above: the notes sweep reads the accounts itself once it holds
+    // its store lock, so one created while this request ran is not taken for deleted.
+    let notes_swept = state
+        .notes_corpus
+        .sweep_dead_owners(&|| {
+            let mut owners: std::collections::BTreeSet<String> =
+                manager.list_users().into_iter().map(|u| u.user_id).collect();
+            owners.insert("local".into());
+            owners
+        })
+        .unwrap_or(0);
     if let Some(owner) = owner.as_deref() {
         retire_disabled_owner(&state, owner)?;
     }

@@ -1,6 +1,7 @@
 //! Owner-jailed `.md`/`.txt` notes for local chat. Separate from `memory_notes`.
 //! Ranking never confers permission; bytes leave this jail only after owner match.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -207,12 +208,20 @@ impl NotesCorpus {
         self.unlink_where(&|candidate| candidate == owner)
     }
 
-    /// Removes every note whose owner `live` rejects. This is the retry path for
-    /// an account deletion whose cleanup failed part-way, and it reclaims an
-    /// upload that committed after its account was deleted. Run at start and
-    /// after every account deletion, with the attachment sweep.
-    pub fn sweep_dead_owners(&self, live: &dyn Fn(&str) -> bool) -> Result<usize> {
-        self.unlink_where(&|candidate| !live(candidate))
+    /// Removes every note whose owner is not in the set `live_owners` returns.
+    /// This is the retry path for an account deletion whose cleanup failed
+    /// part-way, and it reclaims an upload that committed after its account was
+    /// deleted. Run at start and after every account deletion, with the
+    /// attachment sweep.
+    ///
+    /// `live_owners` is asked once, after the store lock is held and the index
+    /// is read. A note is committed only under that lock, by an account that
+    /// already exists, so an owner missing from a set read at that point is
+    /// gone. A set read earlier can miss an account created while the sweep
+    /// waited for the lock, and the sweep would then delete that account's notes.
+    pub fn sweep_dead_owners(&self, live_owners: &dyn Fn() -> BTreeSet<String>) -> Result<usize> {
+        let live = std::cell::OnceCell::new();
+        self.unlink_where(&|candidate| !live.get_or_init(live_owners).contains(candidate))
     }
 
     fn unlink_where(&self, doomed: &dyn Fn(&str) -> bool) -> Result<usize> {
@@ -540,18 +549,42 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("notes");
         let store = NotesCorpus::open(&root, limits()).unwrap();
+        let only_alice = || BTreeSet::from(["alice".to_string()]);
         // Nothing to sweep leaves the store untouched: no index is written.
-        assert_eq!(store.sweep_dead_owners(&|_| false).unwrap(), 0);
+        assert_eq!(store.sweep_dead_owners(&BTreeSet::new).unwrap(), 0);
         assert!(!root.join(INDEX_NAME).exists());
         store.store("alice", &[file("a.md", "kept")]).unwrap();
         let gone = store
             .store("gone", &[file("b.md", "left behind"), file("c.md", "also")])
             .unwrap();
-        assert_eq!(store.sweep_dead_owners(&|owner| owner == "alice").unwrap(), 2);
+        assert_eq!(store.sweep_dead_owners(&only_alice).unwrap(), 2);
         assert_eq!(store.list_for_owner("alice").unwrap().len(), 1);
         assert!(store.list_for_owner("gone").unwrap().is_empty());
         assert!(gone.iter().all(|note| !root.join(note_rel(note).unwrap()).exists()));
-        assert_eq!(store.sweep_dead_owners(&|owner| owner == "alice").unwrap(), 0);
+        assert_eq!(store.sweep_dead_owners(&only_alice).unwrap(), 0);
+    }
+
+    #[test]
+    fn the_sweep_asks_who_is_live_once_and_only_under_the_store_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = NotesCorpus::open(&dir.path().join("notes"), limits()).unwrap();
+        store
+            .store("alice", &[file("a.md", "one"), file("b.md", "two")])
+            .unwrap();
+        store.store("late", &[file("c.md", "three")]).unwrap();
+        let asked = std::cell::Cell::new(0);
+        let swept = store.sweep_dead_owners(&|| {
+            asked.set(asked.get() + 1);
+            // Uploads commit under this lock. Holding it here means no account can
+            // gain a note between this answer and the deletions that follow it.
+            assert!(
+                store.lock.try_lock().is_err(),
+                "the live set must be read under the store lock"
+            );
+            BTreeSet::from(["alice".to_string(), "late".to_string()])
+        });
+        assert_eq!((swept.unwrap(), asked.get()), (0, 1));
+        assert_eq!(store.list_for_owner("late").unwrap().len(), 1);
     }
 
     #[cfg(unix)]
