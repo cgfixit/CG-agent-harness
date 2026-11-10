@@ -241,6 +241,30 @@ fn decide_status_and_setup_budgets_exceed_child_bounds() {
             shim::REAL_REPO_RUN_OVERHEAD_SEC
         ));
     }
+    // With repository retrieval on, every iteration first lists the clone
+    // (`real_repo_loop` -> `repo_retrieval::retrieve` ->
+    // `workspace::retrieval_paths`): one validated `git ls-files`. The fixed
+    // overhead cannot absorb that for every iteration count, so the shape
+    // budget carries it per iteration.
+    let listing = validated_git_call_sec(workspace::RETRIEVAL_LIST_TIMEOUT_SEC);
+    if shim::REAL_REPO_RUN_RETRIEVAL_SEC < listing {
+        short.push(format!(
+            "REAL_REPO_RUN_RETRIEVAL_SEC: {}s < the child's per-iteration listing bound {listing}s",
+            shim::REAL_REPO_RUN_RETRIEVAL_SEC
+        ));
+    }
+    let mut retrieving = ctx(dir.path());
+    retrieving.retrieval_enabled = true;
+    let planner = 720;
+    for iterations in 1..=10u64 {
+        let budget = shim::real_repo_run_shape_budget_sec(&retrieving, planner, Some(iterations as i64), 1);
+        let child = setup_bounds + iterations * (planner + shim::REAL_REPO_RUN_CHECK_SEC + listing);
+        if budget <= child {
+            short.push(format!(
+                "real-repo-run with retrieval, {iterations} iteration(s): {budget}s <= child bounds {child}s"
+            ));
+        }
+    }
     assert!(
         short.is_empty(),
         "shim budgets below the child's own bounds:\n{}",
@@ -363,6 +387,29 @@ fn budget_formula_and_labels() {
     assert_eq!(shim::real_repo_run_budget_sec(u64::MAX, Some(3), 1), u64::MAX);
     assert_eq!(shim::real_repo_run_budget_sec(u64::MAX / 2, Some(2), 0), u64::MAX);
     assert_eq!(shim::real_repo_run_timeout_sec(u64::MAX / 3 + 1, Some(3), 1), 3600);
+    // Repository retrieval adds one validated listing per iteration. Off, the
+    // shape budget is the base budget, so every number above still holds.
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = ctx(dir.path());
+    assert_eq!(
+        shim::real_repo_run_shape_budget_sec(&c, 720, None, 1),
+        shim::real_repo_run_budget_sec(720, None, 1)
+    );
+    c.retrieval_enabled = true;
+    assert_eq!(
+        shim::real_repo_run_shape_budget_sec(&c, 720, None, 1),
+        3 * 720 + 3 * 120 + 900 + 3 * 60
+    );
+    assert_eq!(shim::real_repo_run_shape_budget_sec(&c, u64::MAX, Some(3), 1), u64::MAX);
+    let mut run = OpsRequest::new("real-repo-run");
+    run.max_iterations = Some(2);
+    assert_eq!(
+        shim::timeout_for(&c, &run).as_secs(),
+        2 * 720 + 2 * 120 + 900 + 2 * 60,
+        "the kill timer uses the same retrieval-aware budget"
+    );
+    run.max_iterations = Some(10);
+    assert_eq!(shim::timeout_for(&c, &run).as_secs(), 3600, "and is still capped");
     assert_eq!(shim::label_for(0), (true, "ok"));
     assert_eq!(shim::label_for(2), (false, "failed"));
     assert_eq!(shim::label_for(3), (false, "env_config"));
@@ -615,6 +662,29 @@ async fn run_validates_shape_before_any_subprocess() {
     // No audit tool_broker line was written for any of the refusals above.
     let audit = s.audit_log();
     assert!(!audit.contains("tool_broker_decision"));
+}
+
+/// The cap check and the kill timer share one budget, so a shape that fits
+/// without repository retrieval can be refused once retrieval is on.
+#[tokio::test]
+async fn repository_retrieval_is_counted_in_the_run_budget() {
+    let model = start_mock_model().await;
+    let mut body = run_body();
+    body["max_iterations"] = json!(2);
+    body["checks"] = json!(["cargo-test", "cargo-clippy", "cargo-fmt", "pytest", "ruff"]);
+    // Off: 2 x (720 + 5 x 120) + 900 = 3540 s fits the 3600 s cap, so the
+    // request reaches the child, which answers with the disabled banner.
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, resp) = s.post_json("/api/agent/run", body.clone()).await;
+    assert_eq!(status, 409, "{resp}");
+    // On: two listings add 120 s.
+    let options = ServerOptions::default().with("agentic.deepagent_github.retrieval.enabled", "true");
+    let s = spawn_server(&model.base_url(), options).await;
+    let (status, resp) = s.post_json("/api/agent/run", body).await;
+    assert_eq!(status, 422, "{resp}");
+    assert_eq!(code(&resp), "AGENTIC_BUDGET_EXCEEDED");
+    assert_eq!(resp["detail"]["details"]["estimated_sec"], 3660);
+    assert_eq!(resp["detail"]["details"]["max_iterations_that_fit"], 1);
 }
 
 #[tokio::test]
