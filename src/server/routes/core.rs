@@ -1788,15 +1788,23 @@ pub(crate) async fn chat_inner(
     } else if portal_auditor {
         json!({"queued": false, "reason": "portal_auditor"})
     } else {
-        crate::server::structured_memory_suggest::enqueue_for_model(
-            &state,
-            &owner,
-            crate::server::structured_memory_suggest::Source::Chat,
-            episode["id"].as_str(),
-            if req.loop_turn { &session.goal } else { &req.message },
-            &reply.body_text,
-            &model,
-        )
+        // Queuing reads and writes the memory store, so it leaves the async worker too.
+        let (state, owner, model) = (state.clone(), owner.clone(), model.clone());
+        let episode_id = episode["id"].as_str().map(str::to_owned);
+        let input = if req.loop_turn { session.goal.clone() } else { req.message.clone() };
+        let output = reply.body_text.clone();
+        super::structured_memory::off_worker(move || {
+            crate::server::structured_memory_suggest::enqueue_for_model(
+                &state,
+                &owner,
+                crate::server::structured_memory_suggest::Source::Chat,
+                episode_id.as_deref(),
+                &input,
+                &output,
+                &model,
+            )
+        })
+        .await
     };
     Ok(Json(json!({
         "session_id": session.session_id,

@@ -4,11 +4,14 @@
 //! prompt. Current facts are loaded only after extraction for conflict/staleness
 //! binding. Canonical facts still require confirm+reason apply.
 
+use std::sync::Arc;
+
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::common::errors::{HarnessError, Result};
 use crate::llm::openai_chat::ChatMessage;
+use crate::server::routes::structured_memory::off_worker;
 use crate::server::state::AppState;
 use crate::server::structured_memory::{
     valid_public_id, ConsolidationRun, Episode, Fact, ProposalDraft, StructuredMemoryStore, SUMMARIZER_VERSION,
@@ -297,12 +300,25 @@ fn error_class(err: &HarnessError) -> &'static str {
     }
 }
 
-pub async fn run_manual(
-    state: &AppState,
-    store: &StructuredMemoryStore,
-    owner: &str,
-    episode_ids: &[String],
-) -> Result<ConsolidationRun> {
+fn store_of(state: &AppState) -> Result<&StructuredMemoryStore> {
+    state
+        .structured_memory
+        .as_ref()
+        .ok_or_else(|| HarnessError::new("STRUCTURED_MEMORY_DISABLED", "structured memory is disabled"))
+}
+
+/// One piece of store work on the blocking pool: a run's SQLite calls never
+/// wait on an async worker, whoever else holds the database.
+async fn on_store<T: Send + 'static>(
+    state: &Arc<AppState>,
+    work: impl FnOnce(&StructuredMemoryStore) -> Result<T> + Send + 'static,
+) -> Result<T> {
+    let state = state.clone();
+    off_worker(move || work(store_of(&state)?)).await
+}
+
+pub async fn run_manual(state: &Arc<AppState>, owner: &str, episode_ids: &[String]) -> Result<ConsolidationRun> {
+    let store = store_of(state)?;
     let ids = StructuredMemoryStore::normalize_episode_ids(episode_ids)?;
     if ids.len() > store.limits().max_consolidation_episodes {
         return Err(HarnessError::new(
@@ -314,8 +330,13 @@ pub async fn run_manual(
         )
         .detail("max_episodes", store.limits().max_consolidation_episodes as u64));
     }
-    let episodes = store.episodes_for_ids(owner, &ids)?;
-    let claimed = store.begin_consolidation_run(owner, &ids, SUMMARIZER_VERSION)?;
+    let claim_owner = owner.to_string();
+    let (episodes, claimed) = on_store(state, move |store| {
+        let episodes = store.episodes_for_ids(&claim_owner, &ids)?;
+        let claimed = store.begin_consolidation_run(&claim_owner, &ids, SUMMARIZER_VERSION)?;
+        Ok((episodes, claimed))
+    })
+    .await?;
     if claimed.state != "running" {
         return Ok(claimed);
     }
@@ -324,21 +345,28 @@ pub async fn run_manual(
         Ok(run) => Ok(run),
         Err(err) => {
             let class = error_class(&err);
-            if class == "cancelled" || store.is_cancel_requested(&claimed.id) {
-                let _ = store.fail_consolidation_run(owner, &claimed.id, "cancelled");
-                if let Ok(run) = store.get_consolidation_run(owner, &claimed.id) {
-                    return Ok(run);
+            let cancelled = class == "cancelled" || store.is_cancel_requested(&claimed.id);
+            let (owner, run_id) = (owner.to_string(), claimed.id.clone());
+            // Recording the failure is best effort; a cancelled run answers with its record.
+            let recorded = on_store(state, move |store| {
+                if !cancelled {
+                    let _ = store.fail_consolidation_run(&owner, &run_id, class);
+                    return Ok(None);
                 }
-            } else {
-                let _ = store.fail_consolidation_run(owner, &claimed.id, class);
+                let _ = store.fail_consolidation_run(&owner, &run_id, "cancelled");
+                Ok(store.get_consolidation_run(&owner, &run_id).ok())
+            })
+            .await;
+            match recorded {
+                Ok(Some(run)) => Ok(run),
+                _ => Err(err),
             }
-            Err(err)
         }
     }
 }
 
 async fn generate_and_finish(
-    state: &AppState,
+    state: &Arc<AppState>,
     store: &StructuredMemoryStore,
     owner: &str,
     run: &ConsolidationRun,
@@ -348,7 +376,11 @@ async fn generate_and_finish(
         return Err(HarnessError::new("STRUCTURED_MEMORY_CANCELLED", "cancelled").detail("cancelled", true));
     }
     let model = state.local_memory_model();
-    store.set_consolidation_model(owner, &run.id, &model)?;
+    let (run_owner, run_id, run_model) = (owner.to_string(), run.id.clone(), model.clone());
+    on_store(state, move |store| {
+        store.set_consolidation_model(&run_owner, &run_id, &run_model)
+    })
+    .await?;
     let user = episode_prompt_payload(episodes);
     // Recalled facts must never appear in this payload (self-confirm fence).
     debug_assert!(!user.contains("\"facts\""));
@@ -370,17 +402,28 @@ async fn generate_and_finish(
         return Err(HarnessError::new("STRUCTURED_MEMORY_CANCELLED", "cancelled").detail("cancelled", true));
     }
     let parsed = parse_consolidator_output(&reply.body_text, store.limits().max_consolidation_candidates)?;
-    let facts = store.list_facts(owner)?;
-    let (bound, rejected) = bind_candidates(
-        &parsed,
-        &run.episode_ids,
-        &facts,
-        store.limits().max_fact_chars,
-        store.limits().max_category_chars,
-        store.limits().min_consolidation_confidence,
-    );
-    let drafts = drafts_from_bound(&bound);
-    store.finish_consolidation_run(owner, &run.id, &reply.model, parsed.candidates.len(), rejected, &drafts)
+    let (owner, run_id, episode_ids) = (owner.to_string(), run.id.clone(), run.episode_ids.clone());
+    on_store(state, move |store| {
+        let facts = store.list_facts(&owner)?;
+        let (bound, rejected) = bind_candidates(
+            &parsed,
+            &episode_ids,
+            &facts,
+            store.limits().max_fact_chars,
+            store.limits().max_category_chars,
+            store.limits().min_consolidation_confidence,
+        );
+        let drafts = drafts_from_bound(&bound);
+        store.finish_consolidation_run(
+            &owner,
+            &run_id,
+            &reply.model,
+            parsed.candidates.len(),
+            rejected,
+            &drafts,
+        )
+    })
+    .await
 }
 
 #[cfg(test)]
