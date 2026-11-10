@@ -40,7 +40,10 @@ LOOPBACK_URL = re.compile(r"http://(localhost|127.0.0.1)")  # DevSkim: ignore DS
 LANGUAGES = {".rs": ("//", '"'), ".py": ("#", "\"'")}
 # DevSkim's own suppression pattern (Suppression.cs). It reads only the first one on a line.
 SUPPRESSION = re.compile(r"DevSkim:\s+ignore\s([a-zA-Z\d,:]+)", re.IGNORECASE)
-ROW = re.compile(r'^\s*\("([^"]+)",\s*(?:Root|Guide|Evidence|Agent),\s*([0-9_]+)\),')
+# One table entry. rustfmt breaks a row wider than max_width over several lines
+# and adds a trailing comma, so whitespace here includes newlines.
+ROW = re.compile(r'\(\s*"([^"]+)",\s*(?:Root|Guide|Evidence|Agent),\s*([0-9_]+),?\s*\)')
+STRING = re.compile(r'"[^"]*"')
 FOLDER_README_WORDS = re.compile(r"^const FOLDER_README_WORDS: usize = ([0-9_]+);", re.M)
 ELAPSED_BOUND = re.compile(r"elapsed\(\)\s*<=?\s*(?:[A-Za-z_:]*::)?Duration::from_(millis|secs)\(\s*([0-9_]+)\s*\)")
 TIMING_FLOOR_MS = 5000
@@ -113,19 +116,25 @@ def insecure_urls(line, marker="//", quotes='"'):
     return [m.group(0) for m in INSECURE_URL.finditer(code) if not LOOPBACK_URL.match(m.group(0))]
 
 
+def budget_table(text):
+    """(rows, unparsed): {path: (cap, line index of the row's opening)} from
+    the DOCS_BUDGET table, and how many of its entries the pattern missed.
+    Each entry holds exactly one string, its path, so a string count that
+    differs from the row count means a row format this lint cannot read."""
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith("const DOCS_BUDGET:")), None)
+    if start is None:
+        return {}, 0
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("];")), len(lines))
+    body = "\n".join("" if line.lstrip().startswith("//") else line for line in lines[start + 1:end])
+    rows = {}
+    for row in ROW.finditer(body):
+        rows[row.group(1)] = (int(row.group(2).replace("_", "")), start + 1 + body.count("\n", 0, row.start()))
+    return rows, len(STRING.findall(body)) - len(rows)
+
+
 def budget_rows(text):
-    """{path: (cap, line index)} from the DOCS_BUDGET table."""
-    rows, inside = {}, False
-    for index, line in enumerate(text.splitlines()):
-        if line.startswith("const DOCS_BUDGET:"):
-            inside = True
-        elif inside and line.startswith("];"):
-            break
-        elif inside:
-            row = ROW.match(line)
-            if row:
-                rows[row.group(1)] = (int(row.group(2).replace("_", "")), index)
-    return rows
+    return budget_table(text)[0]
 
 
 def why_lines_above(lines, index):
@@ -198,7 +207,13 @@ def check_self_manual(report, root):
 
 
 def check_docs_budget(report, root, changed, guard_text):
-    rows = budget_rows(guard_text)
+    rows, unparsed = budget_table(guard_text)
+    if not rows or unparsed:
+        # Never go quiet: an unread table would pass every file and every raise.
+        report.add(
+            "error", "CG003", GUARD, 0,
+            f"read {len(rows)} DOCS_BUDGET rows and could not read {unparsed}; fix ROW in scripts/lint-diff.py.",
+        )
     folder = FOLDER_README_WORDS.search(guard_text)
     folder_words = int(folder.group(1).replace("_", "")) if folder else None
     for path in sorted(changed):

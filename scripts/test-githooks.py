@@ -168,7 +168,7 @@ class GitHooksTests(unittest.TestCase):
             "scripts/lint-diff.py": (ROOT / "scripts" / "lint-diff.py").read_text(encoding="utf-8"),
             "scripts/build-self-manual.py": builder,
             "assets/self/MANUAL.md": "manual\n",
-            "tests/invariant_guard.rs": "const DOCS_BUDGET: &[(&str, Kind, usize)] = &[\n];\n",
+            "tests/invariant_guard.rs": "const DOCS_BUDGET: &[(&str, Kind, usize)] = &[\n    (\"AGENTS.md\", Agent, 9),\n];\n",
             **files,
         }
 

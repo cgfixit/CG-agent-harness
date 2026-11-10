@@ -20,6 +20,12 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     ("AGENTS.md", Agent, {agents}),
 {extra}];
 """
+WRAPPED = """    (
+        "docs/long/SKILL.md",
+        Agent,
+        {cap},
+    ),
+"""
 BUILDER = """import argparse, os
 p = argparse.ArgumentParser(); p.add_argument("--root"); p.add_argument("--out")
 a = p.parse_args()
@@ -76,6 +82,24 @@ class RuleTests(unittest.TestCase):
     def test_budget_rows_stop_at_the_table_end(self):
         text = GUARD.format(agents="1_460", extra='    ("docs/A.md", Guide, 90),\n') + '("late.md", Guide, 1),\n'
         self.assertEqual(module.budget_rows(text), {"AGENTS.md": (1460, 2), "docs/A.md": (90, 3)})
+
+    def test_budget_rows_read_the_multiline_form_rustfmt_writes(self):
+        extra = '    // ("docs/commented.md", Guide, 1),\n' + WRAPPED.format(cap=500) + '    ("docs/A.md", Guide, 90),\n'
+        rows, unparsed = module.budget_table(GUARD.format(agents=5, extra=extra))
+        self.assertEqual(rows, {"AGENTS.md": (5, 2), "docs/long/SKILL.md": (500, 4), "docs/A.md": (90, 9)})
+        self.assertEqual(unparsed, 0)
+
+    def test_an_unreadable_row_is_counted_not_skipped(self):
+        rows, unparsed = module.budget_table(GUARD.format(agents=5, extra='    ("docs/A.md", Guide, 90 + 1),\n'))
+        self.assertEqual((sorted(rows), unparsed), (["AGENTS.md"], 1))
+
+    def test_every_row_of_the_real_table_is_read(self):
+        guard = os.path.join(os.path.dirname(SCRIPT), os.pardir, "tests", "invariant_guard.rs")
+        with open(guard, encoding="utf-8") as handle:
+            rows, unparsed = module.budget_table(handle.read())
+        self.assertEqual(unparsed, 0)
+        self.assertGreater(len(rows), 50)
+        self.assertIn(".claude/skills/cgagentharness-write-policy-redteam/SKILL.md", rows)
 
     def test_timing_bound_pattern(self):
         hit = module.ELAPSED_BOUND.search("assert!(start.elapsed() < std::time::Duration::from_millis(500));")
@@ -161,6 +185,20 @@ class RepositoryTests(unittest.TestCase):
         code, out = self.lint()
         self.assertIn("error CG004: `docs/NEW.md` cap new row at 10", out)
         self.assertNotIn("`AGENTS.md` cap", out)
+
+    def test_a_multiline_row_is_checked_like_any_other(self):
+        self.write("tests/invariant_guard.rs", GUARD.format(agents=5, extra=WRAPPED.format(cap=3)))
+        self.write("docs/long/SKILL.md", "one two three four\n")
+        code, out = self.lint()
+        self.assertEqual(code, 1, out)
+        self.assertIn("docs/long/SKILL.md: error CG003: 4 words, cap 3", out)
+        self.assertIn("tests/invariant_guard.rs:4: error CG004: `docs/long/SKILL.md` cap new row at 3", out)
+
+    def test_an_unreadable_table_fails_instead_of_passing(self):
+        self.write("tests/invariant_guard.rs", GUARD.format(agents=5, extra='    ("docs/A.md", Guide, 90 + 1),\n'))
+        code, out = self.lint()
+        self.assertEqual(code, 1, out)
+        self.assertIn("read 1 DOCS_BUDGET rows and could not read 1", out)
 
     def test_staged_scope_ignores_unstaged_edits(self):
         self.write("src/lib.rs", 'fn main() { let _ = "http://site.fixture/a"; }\n')  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
