@@ -31,6 +31,10 @@ pub const DEFAULT_MAX_WRITE_BYTES: usize = 256_000;
 pub const GIT_VALIDATE_TIMEOUT_SEC: u64 = super::git::VALIDATE_TIMEOUT_SEC;
 pub const DEFAULT_GIT_WRITE_TIMEOUT_SEC: u64 = super::git::DEFAULT_OP_TIMEOUT_SEC;
 pub const DEFAULT_PUSH_TIMEOUT_SEC: u64 = 120;
+/// `git ls-files` for repository retrieval, once per loop iteration. The shim
+/// budgets it, with its validating config read, as
+/// `shim::REAL_REPO_RUN_RETRIEVAL_SEC`; `tests/shim_and_agent_routes.rs` pins the pair.
+pub const RETRIEVAL_LIST_TIMEOUT_SEC: u64 = 30;
 
 /// Canonical repo-relative form, or `None` if unsafe (the WRITE-path rule).
 ///
@@ -446,7 +450,7 @@ impl<'a> RepoWorkspace<'a> {
         let paths = self.run_git(
             "ls-files",
             &["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-            30,
+            RETRIEVAL_LIST_TIMEOUT_SEC,
             &[],
         )?;
         Ok(paths
