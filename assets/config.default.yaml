@@ -192,8 +192,10 @@ web:
   # a provider answer or page body. SearXNG support was removed: provider searxng or a
   # non-empty searxng_url fails boot by name (an empty searxng_url from an older home loads).
   # Fallback hops run in the fixed order tavily -> serpapi -> google-public inside one
-  # web.request_seconds deadline and one search slot; a Tavily first hop leaves at least 2 s
-  # for the next. The hop to public Google ships on, the hop to SerpAPI ships off. A hop falls
+  # web.request_seconds deadline and one search slot. The hops still to run share the time
+  # left equally; when the last one is public Google and time allows, its pacing wait
+  # (pace_ms, at least 3 s) plus 1 s is held back for it first. Time a hop does not use
+  # passes on. The hop to public Google ships on, the hop to SerpAPI ships off. A hop falls
   # through only when it cannot answer: its provider is unusable (transport, timeout, non-200)
   # or a SerpAPI or Tavily quota is spent (a keyed cooldown is skipped). Clean zero results,
   # an answer with rows and a rejected or missing key never fall through.
@@ -470,7 +472,7 @@ agentic:
         model: "claude-opus-5-5"
 
 unslop:
-  enabled: false # opt-in coding-output inspection and rewrite pass
+  enabled: false # opt-in planner probe: counts fixed filler phrases, may nudge the next iteration; never rewrites or gates
   metrics_path: "logs/unslop.jsonl"
 
 # Read-only /diag log inspection. New homes ship logs_enabled as literal true
