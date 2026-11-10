@@ -561,7 +561,7 @@ Future remote exposure requires a separate reviewed change: This release has no 
   - agentic.allowed_read_ops
   - agentic.deepagent_github
 - unslop
-  - unslop.enabled: opt-in coding-output inspection and rewrite pass
+  - unslop.enabled: opt-in planner probe: counts fixed filler phrases, may nudge the next iteration; never rewrites or gates
   - unslop.metrics_path
 - diagnostics: Read-only /diag log inspection. New homes ship logs_enabled as literal true (quoted "true" is off); only admin and portal_auditor accounts may read. An existing home config.yaml is not rewritten.…
   - diagnostics.logs_enabled
@@ -572,11 +572,11 @@ Future remote exposure requires a separate reviewed change: This release has no 
   - diagnostics.model_tool
   - diagnostics.self_knowledge
   - diagnostics.self_manual_max_chunks: 1–8 chunks per turn
-  - diagnostics.self_manual_max_chars: 512–16000 injected characters per turn
 
 ## config: sections and keys (values omitted) (part 9)
 
-- diagnostics.self_manual_min_score: finite, >= 0; Tantivy score floor, 0 keeps every hit
+- diagnostics.self_manual_max_chars: 512–16000 injected characters per turn
+  - diagnostics.self_manual_min_score: finite, >= 0; Tantivy score floor, 0 keeps every hit
   - diagnostics.live_state
 - memory: Account-private structured facts, governed proposals, and optional episodes. Distinct from harness.json.memory_enabled, which only includes pinned /memory notes in the chat prompt. Missing, quoted,…
   - memory.enabled
@@ -593,11 +593,11 @@ Future remote exposure requires a separate reviewed change: This release has no 
   - structured_memory.suggestion_mode: summaries | insights | both; invalid values disable suggestions
   - structured_memory.suggestion_supported
   - structured_memory.suggestion_max_input_chars: clamped to 256–32000; total across input/output, split equally
-  - structured_memory.suggestion_max_queue: clamped to 1–32; queued inputs; one additional generation may be running
 
 ## config: sections and keys (values omitted) (part 10)
 
-- structured_memory.suggestion_queue_ttl_secs: clamped to 1–3600; volatile inputs expire; restart drops them
+- structured_memory.suggestion_max_queue: clamped to 1–32; queued inputs; one additional generation may be running
+  - structured_memory.suggestion_queue_ttl_secs: clamped to 1–3600; volatile inputs expire; restart drops them
   - structured_memory.suggestion_idle_ms: clamped to 10–30000
   - structured_memory.status_poll_ms: clamped to 250–30000; visible Memory pane only
   - structured_memory.max_facts_per_owner: clamped to 1–256
@@ -612,12 +612,12 @@ Future remote exposure requires a separate reviewed change: This release has no 
   - structured_memory.max_export_bytes: clamped to 1 KiB–8 MiB
   - structured_memory.max_selected_facts: clamped to 1–32
   - structured_memory.max_search_query_chars: clamped to 1–256
-  - structured_memory.max_search_results: clamped to 1–64
-  - structured_memory.max_retrieval_results: clamped to 1–16
 
 ## config: sections and keys (values omitted) (part 11)
 
-- structured_memory.max_retrieval_tokens: clamped to 1–16
+- structured_memory.max_search_results: clamped to 1–64
+  - structured_memory.max_retrieval_results: clamped to 1–16
+  - structured_memory.max_retrieval_tokens: clamped to 1–16
   - structured_memory.max_retrieval_token_chars: clamped to 1–64
   - structured_memory.max_search_time_ms: clamped to 10–5000
   - structured_memory.pinned_prompt_chars: clamped to 1–3000
@@ -635,14 +635,14 @@ Future remote exposure requires a separate reviewed change: This release has no 
   - netconnect.throughput
   - netconnect.anomaly_detection
   - netconnect.home_automation
-  - netconnect.allowed_cidrs
-  - netconnect.port_allowlist
-  - netconnect.host_cap
-  - netconnect.rate_limit_per_min
 
 ## config: sections and keys (values omitted) (part 12)
 
-- netconnect.connect_timeout_ms
+- netconnect.allowed_cidrs
+  - netconnect.port_allowlist
+  - netconnect.host_cap
+  - netconnect.rate_limit_per_min
+  - netconnect.connect_timeout_ms
   - netconnect.read_timeout_ms
   - netconnect.max_dials
   - netconnect.diagnostics_targets

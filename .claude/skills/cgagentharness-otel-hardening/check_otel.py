@@ -485,7 +485,7 @@ INVENTORY: tuple[dict[str, object], ...] = (
     },
     {
         "name": "mcp clients (SSE / streamable HTTP)", "category": 3, "controls": {},
-        "url": "docs/MCP_CLIENT.md",
+        "url": "docs/MCP.md",
         "versions": "reqwest clients in src/server/mcp.rs (SSE + streamable HTTP); rmcp =3.5.0 is "
                     "server-only here (features server, transport-streamable-http-server) behind the "
                     "inbound memory server in src/server/mcp_server.rs",
