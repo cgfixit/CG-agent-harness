@@ -27,7 +27,7 @@ Contracts: [INVARIANTS.md](../../INVARIANTS.md); process rules:
 - [`mcp.rs`](mcp.rs): MCP JSON-RPC `StdioClient` and stdio spawn; `SECRET_ENV` names never reach children.
 - [`mcp_policy.rs`](mcp_policy.rs): `StdioCapabilities`: operator-owned network, containment, filesystem and resource grants.
 - [`mcp_worker.rs`](mcp_worker.rs): Linux strict-mode stdio supervisor, a real `main.rs` subcommand; exits 3 elsewhere.
-- [`mod.rs`](mod.rs): module list plus timestamps, random tokens, SHA-256, `is_visibly_blank`, `MAX_PR_BODY_BYTES`, and `refuse_parent_components` (the one path barrier for log, spend and structured-memory paths).
+- [`mod.rs`](mod.rs): module list plus timestamps, random tokens, SHA-256, `is_visibly_blank`, `MAX_PR_BODY_BYTES`, and `refuse_parent_components` (the one parent-directory barrier for log, spend, structured-memory, notification, MCP-key, persona and diagnostics paths).
 - [`private_sqlite.rs`](private_sqlite.rs): owner-only, size-capped SQLite open shared by auth and memory.
 - [`process/`](process/README.md): the Unix half of the argv-list runner.
 - [`process.rs`](process.rs): `RunSpec`/`run`/`run_cancellable`: argv-only runner, `MAX_CAPTURE_BYTES`, `kill_tree`, `which`.

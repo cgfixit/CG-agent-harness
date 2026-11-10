@@ -62,8 +62,8 @@ auditor projection exposes only those redacted fields.
 
 ### API Keys
 
-The left tab is **API Keys**. Its rows come from `env_keys::MANAGED_KEYS`, the
-existing list of values actually consumed by the binary; [supported managed
+The left tab is **API Keys**. Its rows come from `env_keys::MANAGED_KEYS`,
+except the harness and planner keys, which `/api` manages; [supported managed
 keys](INSTALL.md#supported-managed-keys) lists them and explains saved/active
 masks, restarts and environment precedence. Administrators can
 paste/save/replace/clear saved values. GET/POST responses contain only masks and
@@ -82,8 +82,8 @@ from becoming a fresh default-password bootstrap.
 A valid legacy `auth.json` migrates its user hashes, roles, disabled state,
 lockouts, and timestamps; `auth.json.pre-sqlite` preserves the exact private
 recovery copy. Legacy sessions require a new login. The original JSON remains a
-recovery artifact, not the live store. A legacy pending-password account retains
-its existing setup flow. Corrupt, empty, unsafe, or unsupported initialized stores
+recovery artifact, not the live store. A legacy pending-password `admin` signs
+in with a one-time setup code. Corrupt, empty, unsafe, or unsupported initialized stores
 refuse startup; no automatic reset occurs. Failed writes do not publish successful
 in-memory account changes. Stop the server before an operator-controlled backup
 or recovery; preserve the database and initialization marker together, and do
@@ -359,7 +359,7 @@ score, highlighted terms and date, never a provider answer or page body. HTTP 42
 432 and 433 are quota refusals.
 SearXNG support was removed: `provider: searxng` or a non-empty `web.search.searxng_url`
 fails boot by name. `web.search.fallback_to_public_google` (ships true) and the opt-in
-`fallback_to_serpapi` (after Tavily) try the next hop only when a provider is unusable;
+`fallback_to_serpapi` (after Tavily) try the next hop only when a provider is unusable or its quota is spent;
 the answer carries `fallback_from`, each hop logs `web_search_fallback`, and more
 than `fallback_alert_per_hour` (ships 20) SerpAPI fallbacks in a clock hour add one
 `web_search_fallback_burst` audit line.
@@ -474,8 +474,8 @@ its fetched pages reuse the cache.
 ## Security boundaries
 
 When auth is enabled, all operational API reads and writes require an account.
-Public endpoints are static login assets, minimal status, setup status, and login
-or legacy bootstrap. Mutation CSRF remains `X-CyClaw-CSRF`. Forwarding headers
+Public endpoints are static login assets, minimal status, setup status, and login.
+Mutation CSRF remains `X-CyClaw-CSRF`. Forwarding headers
 are refused, and reverse proxies are unsupported. The dedicated
 [machine gateway](MCP.md#private-read-only-memory-gateway) does not inherit console authority.
 

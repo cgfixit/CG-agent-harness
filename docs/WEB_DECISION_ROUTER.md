@@ -454,9 +454,9 @@ and budget decisions remain deterministic.
   Auto-tuning reported a 1,140-second model deadline, 300-second synthesis limit
   and 1,200-second research limit. No Modelfile, context, timeout or provider
   default was changed. Firecrawl now sends `maxAge:0` alongside `storeInCache:false`.
-- Separate draft #786 allocates the existing search deadline across eligible
-  hops and reserves public pacing time. This feature draft remains based on main;
-  combining them requires a trial merge, not a new provider policy.
+- #786 (merged) splits the remaining search deadline across the remaining hops
+  and, when time allows, reserves pacing time plus one second for a final public
+  Google hop (`web_provider::hop_budget`).
 
 ### Runtime observations
 
@@ -525,7 +525,7 @@ exercise slow-hop fallback, bounded listing metadata and Firecrawl request field
 No authenticated Tavily, SerpAPI or Firecrawl request was made; live credit/provider
 availability is unverified. Public Google challenged a real request honestly.
 
-Native setup/TLS work is separate draft #787. Safari private sign-in and console
+Native setup/TLS work merged separately as #787. Safari private sign-in and console
 rendering passed after an operator exception. The operator declined trust-store
 changes, so warning-free Safari and Chrome/Firefox trust are unverified. The
 in-app browser also refused the untrusted certificate. These are not provider

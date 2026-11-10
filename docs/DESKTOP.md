@@ -245,7 +245,7 @@ rebuilds are not claimed.
 
 Reusable Desktop CI checks both architectures, system linkage, nested signatures,
 resources, CLI/worker dispatch, policy tests, extracted ZIP, and dependencies. Artifacts retain
-the exact SHA for 14 days. It runs from bundle and release only; pull requests that
+the exact SHA for 14 days. It runs from bundle, release or dispatch; pull requests that
 change `desktop/` or `src/common/local_tls.rs` (which `desktop/src/backend.rs` includes
 through `#[path]`) run `desktop-check.yml` instead: fmt, clippy, tests and deny without
 packaging. Backend CI stays separate. A successful build is not
