@@ -625,11 +625,21 @@ async fn stdio_drop_kills_process_group_leader() {
 }
 
 #[tokio::test]
-async fn stdio_unterminated_oversized_line_is_refused_before_timeout_and_stderr_is_clipped() {
-    let yaml = stdio_yaml().replace(
-        "        - crash",
-        "        - line_flood\n        - stderr_flood\n        - crash",
-    );
+async fn stdio_unterminated_oversized_line_is_refused_and_stderr_is_private() {
+    let input = tempfile::tempdir().unwrap();
+    let excerpt = input.path().join("excerpt");
+    std::fs::write(&excerpt, "permitted-file-canary").unwrap();
+    let mut grants = fixture_capabilities();
+    grants.read_roots.push(input.path().to_path_buf());
+    let yaml = stdio_yaml()
+        .replace(
+            &serde_json::to_string(&fixture_capabilities()).unwrap(),
+            &serde_json::to_string(&grants).unwrap(),
+        )
+        .replace(
+            "        - crash",
+            "        - line_flood\n        - stderr_flood\n        - crash",
+        );
     let server = McpServer::boot(&yaml, &[("mcp.timeout_sec", "2")]).await;
     let (status, body) = server
         .call(json!({"server":"fixture","tool":"line_flood","confirm":true}))
@@ -644,16 +654,17 @@ async fn stdio_unterminated_oversized_line_is_refused_before_timeout_and_stderr_
         "an unterminated line past the cap must fail before the timeout: {body}"
     );
     let (status, body) = server
-        .call(json!({"server":"fixture","tool":"stderr_flood","confirm":true}))
+        .call(json!({"server":"fixture","tool":"stderr_flood","confirm":true,"arguments":{"path":excerpt}}))
         .await;
     assert_eq!(status, 502, "{body}");
     assert_eq!(code(&body), "MCP_STDIO");
-    let message = body.to_string();
-    assert_eq!(
-        message.matches('界').count(),
-        512,
-        "diagnostic must retain 512 Unicode characters"
-    );
+    assert_eq!(body["detail"]["message"], "stdio MCP child closed");
+    let response = body.to_string();
+    let audit = std::fs::read_to_string(server.state.audit.path()).unwrap();
+    for marker in ["synthetic-stderr-canary", "permitted-file-canary", "界"] {
+        assert!(!response.contains(marker), "stderr reached the response");
+        assert!(!audit.contains(marker), "stderr reached the audit log");
+    }
     let (status, body) = server
         .call(json!({"server":"fixture","tool":"echo","confirm":true,"arguments":{"after":"refusal"}}))
         .await;

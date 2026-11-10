@@ -7,13 +7,12 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[cfg(windows)]
 use super::windows_job::JobChild as Child;
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 #[cfg(not(windows))]
 use tokio::process::{Child, ChildStdin, ChildStdout};
@@ -113,7 +112,6 @@ pub struct StdioClient {
     session: Session<ChildStdout, ChildStdin>,
     pub backend: &'static str,
     pub probe_reason: String,
-    stderr: Arc<Mutex<Vec<u8>>>,
     stderr_task: tokio::task::JoinHandle<()>,
     _wrap: WrappedStdio,
     #[cfg(target_os = "linux")]
@@ -124,22 +122,6 @@ pub struct StdioOutcome {
     pub result: Value,
     pub backend: &'static str,
     pub probe_reason: String,
-}
-
-// Preserve at most 512 Unicode characters. Drain excess bytes so stderr cannot
-// block a valid response, without storing an unbounded log on disk or in RAM.
-const STDERR_BYTES: usize = 512 * 4;
-async fn drain_stderr(mut pipe: impl tokio::io::AsyncRead + Unpin, captured: Arc<Mutex<Vec<u8>>>) {
-    let mut chunk = [0u8; 8192];
-    loop {
-        let Ok(n) = pipe.read(&mut chunk).await else { break };
-        if n == 0 {
-            break;
-        }
-        let mut bytes = captured.lock().unwrap_or_else(|p| p.into_inner());
-        let keep = n.min(STDERR_BYTES - bytes.len());
-        bytes.extend_from_slice(&chunk[..keep]);
-    }
 }
 
 impl StdioClient {
@@ -239,7 +221,6 @@ impl StdioClient {
                 )
             })?
         };
-        let stderr = Arc::new(Mutex::new(Vec::new()));
         let pipe = child
             .stderr
             .take()
@@ -281,13 +262,16 @@ impl StdioClient {
         } else {
             wrap.backend
         };
-        let stderr_task = tokio::spawn(drain_stderr(pipe, stderr.clone()));
+        // Drain diagnostics so a noisy child can respond without exposing its stderr.
+        let stderr_task = tokio::spawn(async move {
+            let mut pipe = pipe;
+            let _ = tokio::io::copy(&mut pipe, &mut tokio::io::sink()).await;
+        });
         Ok(Self {
             child,
             session: Session::new(stdout, stdin, max_frame),
             backend,
             probe_reason: wrap.probe_reason.clone(),
-            stderr,
             stderr_task,
             _wrap: wrap,
             #[cfg(target_os = "linux")]
@@ -297,27 +281,20 @@ impl StdioClient {
 
     pub async fn initialize(&mut self) -> Result<()> {
         let result = self.session.initialize().await;
-        self.explain_close(result).await
+        self.drain_on_close(result).await
     }
 
     pub async fn call_tool(&mut self, name: &str, arguments: Value) -> Result<Value> {
         let result = self.session.call_tool(name, arguments).await;
-        self.explain_close(result).await
+        self.drain_on_close(result).await
     }
 
-    /// A child that closed stdout is explained by its clipped stderr.
-    async fn explain_close<T>(&mut self, result: Result<T>) -> Result<T> {
-        match result {
-            Err(err) if err.code == "MCP_STDIO" && err.message == CHILD_CLOSED => {
-                // Normally EOF follows the completed stderr write. Do not wait
-                // indefinitely for a descendant that inherited the pipe.
-                let _ = tokio::time::timeout(Duration::from_millis(50), &mut self.stderr_task).await;
-                let bytes = self.stderr.lock().unwrap_or_else(|p| p.into_inner());
-                let snip: String = String::from_utf8_lossy(&bytes).chars().take(512).collect();
-                Err(mcp_err("MCP_STDIO", format!("{CHILD_CLOSED}; stderr={snip}")))
-            }
-            other => other,
+    async fn drain_on_close<T>(&mut self, result: Result<T>) -> Result<T> {
+        if matches!(&result, Err(err) if err.code == "MCP_STDIO" && err.message == CHILD_CLOSED) {
+            // A descendant can keep the pipe open after the child exits.
+            let _ = tokio::time::timeout(Duration::from_millis(50), &mut self.stderr_task).await;
         }
+        result
     }
 }
 

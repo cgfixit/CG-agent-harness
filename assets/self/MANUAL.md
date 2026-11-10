@@ -343,7 +343,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - Spend reports partial, unreadable, too large or invalid UTF-8 → Preserve the ledger; inspect permissions, corruption and size. Missing evidence is not zero spend
 - A job finished but no webhook arrived → Check **Job webhooks**, `notification_delivery`/`notification_dropped` audit and `/agent job <id>`. Use guarded delivery replay, never rerun the job
 - Webhook receiver reports duplicates → Deduplicate stable `delivery_id`; retry batch membership can change. Each delivery/replay has at most three attempts
-- MCP stderr log is absent or diagnostics are short → Expected: 2 KiB retained, ≤512 Unicode diagnostic characters. Inspect child/timeout; capture limits
+- MCP reports `stdio MCP child closed` → Reproduce with the child in a controlled environment. MCP diagnostics
 - Command or control missing → Check `/help`, `Resources/COMMIT`; install Latest or a successful main Bundle
 - Local coding loop never fetches a file the planner asked for → Pre-stage ordinary files with `/agent read`. Operator/model READ both refuse sensitive basenames (`sensitive_basename`). Cloud refuses all model…
 - New sessions appear to share old context → Inspect `/prompt`. `/session new` separates history while retaining shared context

@@ -70,6 +70,12 @@ def _handle(message):
             sys.stderr.buffer.flush()
             return {"jsonrpc": "2.0", "id": request_id, "result": {"content": [{"type": "text", "text": json.dumps({"echo": args, "stderr_file_exists": os.path.exists(os.path.join(os.environ["HOME"], "mcp-stderr.log"))})}]}}
         if name == "stderr_flood":
+            try:
+                with open(args["path"], "rb") as stream:
+                    excerpt = stream.read(1024)
+            except OSError:
+                return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32603, "message": "fixture read failed"}}
+            sys.stderr.buffer.write(b"api_key=synthetic-stderr-canary\n" + excerpt + b"\n")
             sys.stderr.buffer.write("界".encode() * (1024 * 1024))
             sys.stderr.buffer.flush()
             os._exit(1)
