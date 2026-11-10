@@ -371,6 +371,10 @@ pub async fn clear_sessions(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<SessionClearRequest>,
 ) -> ApiResult<Json<Value>> {
+    // Every step is synchronous and several wait on SQLite or the disk, so the
+    // whole clear runs on the blocking pool. It also finishes if the client
+    // disconnects part-way.
+    super::structured_memory::off_worker(move || {
     let owner = super::auth::context_owner(user.clone());
     crate::server::structured_memory_suggest::clear_chat_queue(&state, &owner);
     state.diag.forget(&owner);
@@ -427,6 +431,8 @@ pub async fn clear_sessions(
             "Session history was cleared. Derived structured-memory episodes remain unless delete_derived_episodes is confirmed. Facts and proposals are never cleared here."
         }
     })))
+    })
+    .await
 }
 
 pub async fn get_session(
