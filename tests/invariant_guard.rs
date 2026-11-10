@@ -1695,7 +1695,10 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: refreshed feature pointers and trimmed duplicate guidance to 1456 words; retain the cut.
     // why: operator-approved (2026-11-10) rules from the PR #742-#810 review: stale policy, secret-bearing assert
     // messages, stale console replies, tests for changed defaults. 1527 words, rounded up to the next 10.
-    ("AGENTS.md", Agent, 1530),
+    // why: operator-requested (2026-11-10) four facts the #807 audit held back at the cap: hidden
+    // subcommand exit codes, the console MAX_GOAL_CHARS duplicate, the cyclaw/ prefix and the
+    // Copilot skill scope; raised to the reported count.
+    ("AGENTS.md", Agent, 1541),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     // why: now `@AGENTS.md` plus Claude-only lines; 183 words, rounded up to the next 100.
     ("CLAUDE.md", Agent, 400),

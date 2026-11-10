@@ -55,6 +55,9 @@ Text after the stamp, and a stamp placed after the footer marker, still fail.
 ## Suggested merge order of open PRs
 This fixture is not a pull request. It only exercises the body gate.
 
+## McLuhan tetrad
+- **Enhances:** N/A. **Obsoletes:** N/A. **Retrieves:** N/A. **Reverses into:** N/A.
+
 ## ELI5
 
 The marker line and the HTML after it are not part of the template body.
@@ -334,11 +337,39 @@ fn marker_before_required_sections_fails() {
         "Risks to monitor",
         "Checklist",
         "Suggested merge order of open PRs",
+        "McLuhan tetrad",
         "ELI5 (## ELI5 must be the last section heading)",
         STAMP_MISS,
     ] {
         assert!(err.contains(label), "missing {label} was not reported:\n{err}");
     }
+}
+
+/// The tetrad heading is required by itself: a body that is otherwise valid
+/// fails without it, and the script and the workflow name the same rule.
+#[test]
+fn a_body_without_the_tetrad_section_fails() {
+    let body = format!("{}{STAMP}\n", valid_prefix()).replacen("## McLuhan tetrad\n", "McLuhan tetrad\n", 1);
+    let output = run_body("no-tetrad", &body);
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{err}");
+    assert!(err.contains("McLuhan tetrad"), "{err}");
+    assert!(!err.contains("ELI5"), "only the tetrad heading is missing:\n{err}");
+    // Inside ELI5, as PR bodies wrote it before the section existed, does not count.
+    let inline = format!("{}{STAMP}\n", valid_prefix())
+        .replacen("## McLuhan tetrad\n", "", 1)
+        .replacen("## ELI5\n", "## ELI5\n(Think: McLuhan tetrad.)\n", 1);
+    assert_eq!(run_body("inline-tetrad", &inline).status.code(), Some(1));
+    let yml = std::fs::read_to_string(repo_root().join(".github/workflows/pr-template-check.yml")).unwrap();
+    let shell = std::fs::read_to_string(script()).unwrap();
+    assert!(yml.contains(r#"["McLuhan tetrad", /^##[ \t\v\f\r]+mcluhan tetrad[ \t\v\f\r]*$/im],"#));
+    assert!(shell.contains("'^##[[:space:]]+mcluhan tetrad[[:space:]]*$'"));
+    let template = std::fs::read_to_string(repo_root().join(".github/PULL_REQUEST_TEMPLATE.md")).unwrap();
+    let tetrad = template
+        .find("\n## McLuhan tetrad\n")
+        .expect("template has the section");
+    let eli5 = template.rfind("\n## ELI5\n").expect("template has ELI5");
+    assert!(tetrad < eli5, "the tetrad sits above ELI5");
 }
 
 /// An invariant statement that exists only below the marker does not satisfy

@@ -147,6 +147,8 @@ require_header "Checklist" \
   '^#{1,4}[[:space:]]*checklist\b'
 require_header "Suggested merge order of open PRs" \
   '^##[[:space:]]+suggested merge order of open prs[[:space:]]*$'
+require_header "McLuhan tetrad" \
+  '^##[[:space:]]+mcluhan tetrad[[:space:]]*$'
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 shipped_template="$repo_root/.github/PULL_REQUEST_TEMPLATE.md"
