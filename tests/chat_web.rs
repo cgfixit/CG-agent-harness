@@ -2373,7 +2373,7 @@ async fn restored_evidence_does_not_inflate_token_calibration() {
         .token_calibration
         .expect("usage was reported")
         .ratio;
-    assert!(ratio < 1.01, "restored evidence inflated the token ratio to {ratio}");
+    assert!(ratio < 1.01, "restored evidence must not inflate the token ratio");
     fixture.abort();
 }
 
