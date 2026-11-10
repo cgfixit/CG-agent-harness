@@ -1550,3 +1550,90 @@ fn repo_level_run_is_not_refused_on_unfed_context_but_pr_run_is() {
     assert_eq!(code, 2, "PR run must refuse injected PR text: {err}");
     assert!(err.contains("fetched context"), "{err}");
 }
+
+/// A run that fails after its record was saved as "running", but outside the
+/// loop, must still settle the record. Here a check passes and then removes
+/// the file it verified, so the acceptance manifest cannot be built. Backends
+/// that mount the clone read-only refuse the removal and the run exhausts
+/// instead; either way no record may be left "running" once the child exits.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failure_after_acceptance_settles_the_run_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let bare = real_bare_repo_on(dir.path(), "trunk");
+    let bin = install_fake_gh(dir.path(), &bare);
+    let path = path_with(&bin);
+    let model = start_mock_model().await;
+    model.set_reply(ok_reply(
+        "Rationale.\n=== FILE target.txt ===\ngoodbye\n=== END FILE ===\n",
+        1,
+        1,
+    ));
+    let base = format!("\"{}\"", model.base_url());
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    config_with(
+        &home,
+        &[
+            ("agentic.enabled", "true"),
+            ("agentic.deepagent_github.enabled", "true"),
+            ("agentic.deepagent_github.allow_git_write_tools", "true"),
+            ("agentic.deepagent_github.base_url", &base),
+            ("agentic.deepagent_github.model", "\"mock-model\""),
+            ("agentic.deepagent_github.planner_timeout_sec", "30"),
+        ],
+    );
+    let config = home.join("config.yaml");
+    let checks = home.join("checks.json");
+    std::fs::write(
+        &checks,
+        json!({"checks": [{"name": "passes-then-removes", "argv": ["sh", "-c", "grep -q goodbye target.txt && rm target.txt"]}]})
+            .to_string(),
+    )
+    .unwrap();
+    let env: Vec<(&str, &str)> = vec![("PATH", &path), ("GROK_API_KEY", ""), ("ANTHROPIC_API_KEY", "")];
+    if let Err(e) = cgagentharness::agentic::executor::production_sandbox() {
+        if std::env::var_os("CGAH_REQUIRE_CHECK_SANDBOX").is_some() {
+            panic!("hard check sandbox required; cannot skip: {}", e.message);
+        }
+        eprintln!("SKIP a_failure_after_acceptance: no hard sandbox on this host (fail-closed by design)");
+        return;
+    }
+    let (_, out, err) = tokio::task::block_in_place(|| {
+        run_agentic(
+            &config,
+            &[
+                "real-repo-run",
+                "--instruction=x",
+                "--read-file=target.txt",
+                "--checks-file",
+                checks.to_str().unwrap(),
+                "--branch=claude/settle",
+                "--commit-message=m",
+                "--reason=r",
+                "--confirm",
+                "--max-iterations=1",
+            ],
+            &env,
+            &home,
+        )
+    });
+    let runs = home.join("data").join("agentic").join("workspaces").join("runs");
+    let records: Vec<Value> = std::fs::read_dir(&runs)
+        .unwrap_or_else(|e| panic!("no runs directory: {e}; stdout={out} stderr={err}"))
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+        .map(|entry| serde_json::from_slice(&std::fs::read(entry.path()).unwrap()).unwrap())
+        .collect();
+    assert_eq!(records.len(), 1, "stdout={out} stderr={err}");
+    let record = &records[0];
+    assert_ne!(record["status"], "running", "stdout={out} stderr={err}");
+    if err.contains("manifest path missing") {
+        assert_eq!(record["status"], "failed", "{record}");
+        assert_eq!(record["error"], "manifest path missing from worktree", "{record}");
+        assert!(
+            Path::new(record["dest"].as_str().unwrap()).is_dir(),
+            "an unbound accepted candidate stays for inspection and discard"
+        );
+    }
+}

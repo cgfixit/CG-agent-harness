@@ -500,26 +500,49 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         return Err(e);
     }
 
+    // The record now says "running". A failure from here on must settle it,
+    // or reconcile later reports a clean failure as an interrupted worker.
     let mut local_client;
     let cloud_client;
     let client: &dyn ProposerClient = match &provider {
         Some(p) => {
-            let settings = settings_for(&ctx.acfg.deepagent, p)?;
-            cloud_client =
-                CloudProposerClient::new(settings, &ctx.audit, &ctx.scanner, ctx.redactors(), ctx.spend_file())?;
-            &cloud_client
+            let built = settings_for(&ctx.acfg.deepagent, p).and_then(|settings| {
+                CloudProposerClient::new(settings, &ctx.audit, &ctx.scanner, ctx.redactors(), ctx.spend_file())
+            });
+            match built {
+                Ok(built) => {
+                    cloud_client = built;
+                    &cloud_client
+                }
+                Err(e) => {
+                    // No planner ran, so the clone holds nothing to inspect.
+                    settle_failed(&runs_dir, &mut record, &e);
+                    tools.close();
+                    return Err(e);
+                }
+            }
         }
         None => {
-            local_client = LocalProposerClient::new(
+            let built = LocalProposerClient::new(
                 &ctx.audit,
                 &ctx.acfg.deepagent.base_url,
                 &ctx.acfg.deepagent.model,
                 planner_timeout_sec,
                 &std::env::var("DEEPAGENT_API_KEY").unwrap_or_default(),
                 local_reasoning_effort(ctx),
-            )?;
-            local_client.timeout_measured = opts.get("planner-timeout-sec").is_some();
-            &local_client
+            );
+            match built {
+                Ok(built) => {
+                    local_client = built;
+                    local_client.timeout_measured = opts.get("planner-timeout-sec").is_some();
+                    &local_client
+                }
+                Err(e) => {
+                    settle_failed(&runs_dir, &mut record, &e);
+                    tools.close();
+                    return Err(e);
+                }
+            }
         }
     };
     let unslop = if provider.is_none() {
@@ -569,8 +592,19 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         .collect();
     if result.accepted {
         let changed = result.changed_files();
-        let base_head = manifest::git_head(tools.worktree())?;
-        let (_, digest) = manifest::build_manifest(tools.worktree(), &changed, &run_id, &base_head)?;
+        let built = manifest::git_head(tools.worktree()).and_then(|base_head| {
+            manifest::build_manifest(tools.worktree(), &changed, &run_id, &base_head)
+                .map(|(_, digest)| (base_head, digest))
+        });
+        let (base_head, digest) = match built {
+            Ok(built) => built,
+            Err(e) => {
+                // An accepted candidate that cannot be bound is evidence: the
+                // clone stays for inspection and `real-repo-run-discard`.
+                settle_failed(&runs_dir, &mut record, &e);
+                return Err(e);
+            }
+        };
         ctx.audit.log(json!({"event": "agentic_real_repo_manifest_built", "run_id": run_id, "acceptance_digest": digest, "files": changed.len()}));
         record.status = PENDING_DECISION.into();
         record.branch_name = result.branch_name.clone();
@@ -591,6 +625,17 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     save_run(&runs_dir, &mut record)?;
     print_json(&record.to_json());
     Ok(EXIT_OK)
+}
+
+/// Settle a record that was saved as "running" when the run fails outside the
+/// loop. The caller still returns the original error, so the exit code and
+/// stderr are unchanged; a record that cannot be saved only adds a line.
+fn settle_failed(runs_dir: &Path, record: &mut RealRepoRunRecord, error: &HarnessError) {
+    record.status = "failed".into();
+    record.error = Some(error.message.clone());
+    if let Err(save) = save_run(runs_dir, record) {
+        err(&format!("could not record the run failure: {}", save.message));
+    }
 }
 
 /// The review text for a pending candidate: the `--text` worktree diff of
