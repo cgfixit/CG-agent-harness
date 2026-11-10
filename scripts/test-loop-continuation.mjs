@@ -100,7 +100,9 @@ const loopConfigSrc=html.slice(html.indexOf('function applyLoopConfig('),html.in
 function runLoopCase(c){
   vm.runInContext(html.slice(html.indexOf('const LOOP_UNBOUNDED_WARNING ='),html.indexOf('/* The server-side /loop runner')),c);
   vm.runInContext(loopConfigSrc,c);
-  for(const [k,v] of Object.entries({MAX_GOAL_CHARS:2000,DEFAULT_LOOP_TURNS:3,lastStatus:null,AUTO_LOOP_START_MS:5000,cancelAutoLoopStart(){},goalWebNote:()=>'',refreshSessions:async()=>{},
+  const setter=html.indexOf('function setCurrentSession(');
+  vm.runInContext(html.slice(setter,html.indexOf('let promptHistory =',setter)),c);
+  for(const [k,v] of Object.entries({MAX_GOAL_CHARS:2000,DEFAULT_LOOP_TURNS:3,lastStatus:null,AUTO_LOOP_START_MS:5000,cancelAutoLoopStart(){},resetNotesDialog(){},goalWebNote:()=>'',refreshSessions:async()=>{},
     scheduleAutoLoopStart(line,lead){(c.scheduled||(c.scheduled=[])).push(line);}})) if(!(k in c)) c[k]=v;
   return vm.runInContext('(async()=>{switch("loop"){'+loopCase+'}})()',c);
 }

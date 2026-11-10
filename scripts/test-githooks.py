@@ -161,6 +161,33 @@ class GitHooksTests(unittest.TestCase):
                       "refs/tags/release"), "ref rewrite",
         )
 
+    def lint_fixture(self, **files):
+        """The files scripts/lint-diff.py reads, plus the ones under test."""
+        builder = "import sys\nopen(sys.argv[sys.argv.index('--out') + 1], 'w').write('manual\\n')\n"
+        return {
+            "scripts/lint-diff.py": (ROOT / "scripts" / "lint-diff.py").read_text(encoding="utf-8"),
+            "scripts/build-self-manual.py": builder,
+            "assets/self/MANUAL.md": "manual\n",
+            "tests/invariant_guard.rs": "const DOCS_BUDGET: &[(&str, Kind, usize)] = &[\n    (\"AGENTS.md\", Agent, 9),\n];\n",
+            **files,
+        }
+
+    def test_diff_lint_refuses_a_staged_mistake_and_passes_a_clean_commit(self):
+        url = "http" + "://site.fixture/a"
+        self.stage(self.lint_fixture(**{"scripts/new.py": f"URL = '{url}'\n"}))
+        refused = self.hook("pre-commit")
+        self.assert_refused(refused, "scripts/new.py:1: error CG001")
+        self.assertIn("scripts/lint-diff.py --staged failed", refused.stderr)
+        self.stage({"scripts/new.py": "URL = 'https://site.fixture/a'\n"})
+        passed = self.hook("pre-commit")
+        self.assertEqual(passed.returncode, 0, passed.stderr)
+        self.assertNotIn("CG0", passed.stderr)
+
+    def test_diff_lint_is_skipped_where_the_script_is_absent(self):
+        url = "http" + "://site.fixture/a"
+        self.stage({"scripts/new.py": f"URL = '{url}'\n"})
+        self.assertEqual(self.hook("pre-commit").returncode, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
