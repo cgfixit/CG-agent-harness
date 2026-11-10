@@ -89,6 +89,30 @@ pub async fn ingest_notes(
     Ok(Json(notes_corpus::list_json(&stored)))
 }
 
+/// Removes `owner`'s notes for session clear and account deletion and returns
+/// the reply field. An incomplete cleanup is audited and reported, never
+/// hidden: its rows stay listed, so a live owner can retry, and the dead-owner
+/// sweep retries them once the account is gone.
+pub(super) fn cleanup_owner(state: &AppState, owner: &str) -> Value {
+    match state.notes_corpus.unlink_owner(owner) {
+        Ok(removed) => json!({"removed": removed}),
+        Err(e) => {
+            state.audit.log(json!({
+                "event": "notes_corpus_cleanup_incomplete",
+                "owner": owner,
+                "code": e.code,
+                "message": e.message,
+                "details": e.details,
+            }));
+            json!({
+                "removed": e.details.get("removed").cloned().unwrap_or(json!(0)),
+                "retained": e.details.get("retained").cloned().unwrap_or(json!(0)),
+                "error": e.code,
+            })
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct NoteId {
     id: String,

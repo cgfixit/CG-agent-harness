@@ -1,6 +1,7 @@
 //! Owner-jailed `.md`/`.txt` notes for local chat. Separate from `memory_notes`.
 //! Ranking never confers permission; bytes leave this jail only after owner match.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -199,24 +200,58 @@ impl NotesCorpus {
         }
     }
 
+    /// Removes every note owned by `owner`. A row leaves the index only once its
+    /// file is gone (or already absent). A note whose unlink fails stays listed,
+    /// so it keeps counting toward the quota and a later cleanup can retry it;
+    /// the failure is reported after the index is saved.
     pub fn unlink_owner(&self, owner: &str) -> Result<usize> {
+        self.unlink_where(&|candidate| candidate == owner)
+    }
+
+    /// Removes every note whose owner is not in the set `live_owners` returns.
+    /// This is the retry path for an account deletion whose cleanup failed
+    /// part-way, and it reclaims an upload that committed after its account was
+    /// deleted. Run at start and after every account deletion, with the
+    /// attachment sweep.
+    ///
+    /// `live_owners` is asked once, after the store lock is held and the index
+    /// is read. A note is committed only under that lock, by an account that
+    /// already exists, so an owner missing from a set read at that point is
+    /// gone. A set read earlier can miss an account created while the sweep
+    /// waited for the lock, and the sweep would then delete that account's notes.
+    pub fn sweep_dead_owners(&self, live_owners: &dyn Fn() -> BTreeSet<String>) -> Result<usize> {
+        let live = std::cell::OnceCell::new();
+        self.unlink_where(&|candidate| !live.get_or_init(live_owners).contains(candidate))
+    }
+
+    fn unlink_where(&self, doomed: &dyn Fn(&str) -> bool) -> Result<usize> {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let mut manifest = self.load_manifest()?;
-        let mut n = 0usize;
-        let mut keep = Vec::new();
-        for blob in manifest.notes.drain(..) {
-            if blob.owner == owner {
-                if let Ok(rel) = note_rel(&blob) {
-                    let _ = self.jail.remove_file(&rel);
-                }
-                n += 1;
+        let (drop, mut keep): (Vec<_>, Vec<_>) = manifest.notes.drain(..).partition(|n| doomed(&n.owner));
+        if drop.is_empty() {
+            return Ok(0);
+        }
+        let (mut removed, mut retained) = (0usize, 0usize);
+        for blob in drop {
+            let gone = note_rel(&blob).is_ok_and(|rel| match self.jail.remove_file(&rel) {
+                Ok(()) => true,
+                Err(e) => e.kind() == std::io::ErrorKind::NotFound,
+            });
+            if gone {
+                removed += 1;
             } else {
+                retained += 1;
                 keep.push(blob);
             }
         }
         manifest.notes = keep;
         self.save_manifest(&manifest)?;
-        Ok(n)
+        if retained > 0 {
+            return Err(HarnessError::new("IO_ERROR", "could not remove every notes file")
+                .detail("removed", removed)
+                .detail("retained", retained));
+        }
+        Ok(removed)
     }
 
     pub fn verified_texts(&self, owner: &str) -> Result<Vec<VerifiedAttachment>> {
@@ -479,6 +514,77 @@ mod tests {
         assert!(!fence.contains("a.md"));
         store.unlink_id("alice", &alice[0].id).unwrap();
         assert!(store.list_for_owner("alice").unwrap().is_empty());
+    }
+
+    #[test]
+    fn owner_cleanup_keeps_and_reports_a_note_it_could_not_remove() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("notes");
+        let store = NotesCorpus::open(&root, limits()).unwrap();
+        let notes = store
+            .store("alice", &[file("a.md", "one"), file("b.md", "two")])
+            .unwrap();
+        store.store("bob", &[file("c.md", "three")]).unwrap();
+        // A directory where the note was: the unlink fails, and not as "absent".
+        let stuck = root.join(note_rel(&notes[0]).unwrap());
+        std::fs::remove_file(&stuck).unwrap();
+        std::fs::create_dir(&stuck).unwrap();
+        let failed = store.unlink_owner("alice").unwrap_err();
+        assert_eq!(failed.code, "IO_ERROR");
+        assert_eq!(
+            (&failed.details["removed"], &failed.details["retained"]),
+            (&json!(1), &json!(1))
+        );
+        // The row is still listed and charged, so the cleanup can be retried.
+        assert_eq!(store.list_for_owner("alice").unwrap(), [notes[0].clone()]);
+        assert_eq!(store.list_for_owner("bob").unwrap().len(), 1);
+        std::fs::remove_dir(&stuck).unwrap();
+        assert_eq!(store.unlink_owner("alice").unwrap(), 1);
+        assert!(store.list_for_owner("alice").unwrap().is_empty());
+        assert_eq!(store.list_for_owner("bob").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn the_sweep_removes_only_notes_whose_owner_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("notes");
+        let store = NotesCorpus::open(&root, limits()).unwrap();
+        let only_alice = || BTreeSet::from(["alice".to_string()]);
+        // Nothing to sweep leaves the store untouched: no index is written.
+        assert_eq!(store.sweep_dead_owners(&BTreeSet::new).unwrap(), 0);
+        assert!(!root.join(INDEX_NAME).exists());
+        store.store("alice", &[file("a.md", "kept")]).unwrap();
+        let gone = store
+            .store("gone", &[file("b.md", "left behind"), file("c.md", "also")])
+            .unwrap();
+        assert_eq!(store.sweep_dead_owners(&only_alice).unwrap(), 2);
+        assert_eq!(store.list_for_owner("alice").unwrap().len(), 1);
+        assert!(store.list_for_owner("gone").unwrap().is_empty());
+        assert!(gone.iter().all(|note| !root.join(note_rel(note).unwrap()).exists()));
+        assert_eq!(store.sweep_dead_owners(&only_alice).unwrap(), 0);
+    }
+
+    #[test]
+    fn the_sweep_asks_who_is_live_once_and_only_under_the_store_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = NotesCorpus::open(&dir.path().join("notes"), limits()).unwrap();
+        store
+            .store("alice", &[file("a.md", "one"), file("b.md", "two")])
+            .unwrap();
+        store.store("late", &[file("c.md", "three")]).unwrap();
+        let asked = std::cell::Cell::new(0);
+        let swept = store.sweep_dead_owners(&|| {
+            asked.set(asked.get() + 1);
+            // Uploads commit under this lock. Holding it here means no account can
+            // gain a note between this answer and the deletions that follow it.
+            assert!(
+                store.lock.try_lock().is_err(),
+                "the live set must be read under the store lock"
+            );
+            BTreeSet::from(["alice".to_string(), "late".to_string()])
+        });
+        assert_eq!((swept.unwrap(), asked.get()), (0, 1));
+        assert_eq!(store.list_for_owner("late").unwrap().len(), 1);
     }
 
     #[cfg(unix)]
