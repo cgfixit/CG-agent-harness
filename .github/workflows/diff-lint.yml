@@ -1,5 +1,5 @@
 # Fast static checks for mistakes that kept reaching review or a later CI job:
-# an unannotated http:// fixture literal (DevSkim alert after push), a stale
+# an unannotated http:// literal in Rust or Python (DevSkim alert after push), a stale
 # self-manual, a Markdown file over its cap, a raised cap with no `// why:`,
 # and a wall-clock test bound near runner jitter. Rules and their evidence:
 # scripts/lint-diff.py. tests/invariant_guard.rs and tests/self_manual.rs in

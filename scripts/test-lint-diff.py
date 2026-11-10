@@ -31,10 +31,10 @@ with open(os.path.join(a.root, "AGENTS.md")) as f, open(a.out, "w") as out:
 class RuleTests(unittest.TestCase):
     def test_insecure_url_follows_the_devskim_rule(self):
         flagged = [
-            '"http://example.org/docs/a",',
-            'let url = format!("http://passages.invalid:{}/manual", address.port());',
-            'let base = format!("http://{address}/v1"); // a plain comment',
-            '"http://a.example", // DevSkim: ignore DS162092 because another rule',
+            '"http://example.org/docs/a",',  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
+            'let url = format!("http://passages.invalid:{}/manual", address.port());',  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
+            'let base = format!("http://{address}/v1"); // a plain comment',  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
+            '"http://a.example", // DevSkim: ignore DS162092 because another rule',  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
         ]
         clean = [
             '"http://example.org/docs/a", // DevSkim: ignore DS137138 because the downgrade is refused.',
@@ -42,8 +42,8 @@ class RuleTests(unittest.TestCase):
             'let u = "http://localhost:1/x";',
             'let u = "http://127.0.0.1:1/x";',
             'raw.strip_prefix("http://")',
-            "// see http://example.com/docs",
-            'fetch("https://a.example") // formerly http://b.example',
+            "// see http://example.com/docs",  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
+            'fetch("https://a.example") // formerly http://b.example',  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
         ]
         for line in flagged:
             self.assertTrue(module.insecure_urls(line), line)
@@ -53,7 +53,20 @@ class RuleTests(unittest.TestCase):
     def test_an_annotation_on_the_line_above_is_not_accepted(self):
         above = "// DevSkim: ignore DS137138 because this host resolves to the fixture."
         self.assertEqual(module.insecure_urls(above), [])
-        self.assertTrue(module.insecure_urls('let url = format!("http://passages.invalid:{}/", port);'))
+        self.assertTrue(module.insecure_urls('let url = format!("http://passages.invalid:{}/", port);'))  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
+
+    def test_python_lines_use_hash_comments_and_both_quotes(self):
+        note = "# DevSkim: " + "ignore DS137138 because fixture."
+        url = "http" + "://site.fixture/a"
+        python = {"marker": "#", "quotes": "\"'"}
+        self.assertTrue(module.insecure_urls(f"URL = '{url}'", **python))
+        self.assertTrue(module.insecure_urls(f'URL = "{url}"  # a plain comment', **python))
+        self.assertTrue(module.insecure_urls(f"docstring text {url} continues", **python))
+        self.assertTrue(module.insecure_urls(f"URL = '# {url}'", **python))
+        self.assertEqual(module.insecure_urls(f"x = 1  # see {url}", **python), [])
+        self.assertEqual(module.insecure_urls(f"URL = '{url}'  {note}", **python), [])
+        self.assertEqual(module.language("scripts/a.py"), ("#", "\"'"))
+        self.assertIsNone(module.language("docs/a.md"))
 
     def test_budget_rows_stop_at_the_table_end(self):
         text = GUARD.format(agents="1_460", extra='    ("docs/A.md", Guide, 90),\n') + '("late.md", Guide, 1),\n'
@@ -108,23 +121,26 @@ class RepositoryTests(unittest.TestCase):
     def test_each_mistake_is_reported_once(self):
         self.write("src/lib.rs", "\n".join([
             'fn main() {',
-            '    let _ = "http://site.fixture/a";',
+            '    let _ = "http://site.fixture/a";',  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
             '    let _ = "http://site.fixture/b"; // DevSkim: ignore DS137138 because fixture.',
             '    assert!(start.elapsed() < Duration::from_secs(1));',
             '    while start.elapsed() < Duration::from_secs(1) {}',
             '}', '']))
         self.write("AGENTS.md", "one two three four five six\n")
         self.write("docs/README.md", "word " * 151)
+        self.write("scripts/new.py", "URL = 'http" + "://site.fixture/c'\n")
         code, out = self.lint()
         self.assertEqual(code, 1, out)
         self.assertIn("src/lib.rs:2: error CG001", out)
-        self.assertEqual(out.count("CG001"), 1, out)
+        self.assertIn("scripts/new.py:1: error CG001", out)
+        self.assertIn("needs `# DevSkim: ignore", out)
+        self.assertEqual(out.count("CG001"), 2, out)
         self.assertIn("assets/self/MANUAL.md: error CG002", out)
         self.assertIn("AGENTS.md: error CG003: 6 words, cap 5", out)
         self.assertIn("docs/README.md: error CG003: 151 words, cap 150", out)
         self.assertIn("src/lib.rs:4: warning CG005", out)
         self.assertEqual(out.count("CG005"), 1, out)
-        self.assertIn("4 error(s), 1 warning(s)", out)
+        self.assertIn("5 error(s), 1 warning(s)", out)
 
     def test_a_raised_cap_needs_a_new_why_comment(self):
         self.write("tests/invariant_guard.rs", GUARD.format(agents=9, extra=""))
@@ -142,7 +158,7 @@ class RepositoryTests(unittest.TestCase):
         self.assertNotIn("`AGENTS.md` cap", out)
 
     def test_staged_scope_ignores_unstaged_edits(self):
-        self.write("src/lib.rs", 'fn main() { let _ = "http://site.fixture/a"; }\n')
+        self.write("src/lib.rs", 'fn main() { let _ = "http://site.fixture/a"; }\n')  # DevSkim: ignore DS137138 because this is a lint fixture, never fetched.
         self.assertEqual(self.lint("--staged")[0], 0)
         self.git("add", "-A")
         code, out = self.lint("--staged")
