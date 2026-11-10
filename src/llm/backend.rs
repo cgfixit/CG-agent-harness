@@ -112,15 +112,21 @@ pub async fn resolve_local_backend(cfg: &AppConfig) -> Result<ResolvedLocalBacke
     }
     let primary_key = cfg.secret("models.local_llm.api_key")?.trim().to_string();
     if primary_url.is_empty() {
-        // Empty/unreadable config degrades to the Ollama default rather than failing app build.
+        // No endpoint configured: use the Ollama default rather than failing
+        // app build. A configured model and effort still apply; the status
+        // routes report `models.local_llm.model`, so chat must send it too.
         return Ok(ResolvedLocalBackend {
             provider: "ollama".into(),
             base_url: "http://127.0.0.1:11434/v1".into(),
-            model: "qwen3.8:27b-mlx".into(),
+            model: if primary_model.is_empty() {
+                "qwen3.8:27b-mlx".into()
+            } else {
+                primary_model
+            },
             source: "primary".into(),
             api_key: String::new(),
             degraded: false,
-            reasoning_effort: None,
+            reasoning_effort: resolve_reasoning_effort(cfg)?,
         });
     }
     let configured_effort = resolve_reasoning_effort(cfg)?;
@@ -248,5 +254,25 @@ mod tests {
         assert_eq!(other.provider, "lmstudio");
         assert_eq!(other.model, "qwen3.8:27b-mlx-cg");
         assert!(other.reasoning_effort.is_none());
+    }
+
+    #[tokio::test]
+    async fn missing_base_url_keeps_the_configured_model_and_effort() {
+        let sparse = resolved("models:\n  local_llm:\n    model: \"llama3.2\"\n    reasoning_effort: \"none\"\n").await;
+        assert_eq!(sparse.provider, "ollama");
+        assert!(is_loopback_url(&sparse.base_url));
+        assert_eq!(sparse.model, "llama3.2");
+        assert_eq!(sparse.reasoning_effort.as_deref(), Some("none"));
+        // Nothing configured at all still resolves, so the app can start.
+        let empty = resolved("{}").await;
+        assert!(!empty.model.is_empty());
+        assert!(empty.reasoning_effort.is_none());
+        // A malformed effort is refused here as it is with a base_url set.
+        let bad = AppConfig::from_str(
+            "models:\n  local_llm:\n    reasoning_effort: \"bogus\"\n",
+            std::path::Path::new("config.yaml"),
+        )
+        .unwrap();
+        assert_eq!(resolve_local_backend(&bad).await.unwrap_err().code, "CONFIG_ERROR");
     }
 }
