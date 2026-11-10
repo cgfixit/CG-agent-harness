@@ -23,6 +23,9 @@ use crate::common::errors::{HarnessError, Result};
 use crate::common::tool_broker::assert_allowed;
 
 pub const MAX_BYTES: usize = 262_144;
+/// Largest `web.cache_pages`: the most documents the derived cache can hold
+/// under any configuration, and so the bound on listing it.
+pub(super) const MAX_CACHE_PAGES: usize = 256;
 const MAX_CONTEXT: usize = 4000;
 
 /// Smallest `web.evidence_tokens`, and (calibrated) the least room web chat keeps
@@ -106,7 +109,7 @@ impl Limits {
             pace_ms: bound("pace_ms", 250, 100, 5000)?,
             search_cooldown_public_sec: bound("search_cooldown_public_sec", 600, 60, 3600)?,
             search_cooldown_quota_sec: bound("search_cooldown_quota_sec", 0, 0, 3600)?,
-            cache_pages: bound("cache_pages", 128, 1, 256)? as usize,
+            cache_pages: bound("cache_pages", 128, 1, MAX_CACHE_PAGES as u64)? as usize,
             cache_bytes: bound("cache_bytes", 16_777_216, 1_048_576, 33_554_432)? as usize,
             subqueries: bound("subqueries", 3, 1, 5)? as usize,
             rounds: bound("rounds", 2, 1, 2)? as usize,
