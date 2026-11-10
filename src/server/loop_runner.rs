@@ -156,6 +156,16 @@ pub fn loop_turn_prompt(turn: u64, total: Option<u64>, goal: &str) -> String {
     )
 }
 
+/// What the session stores for one server-run loop turn. The model receives
+/// [`loop_turn_prompt`]; storing that too put the goal reminder (up to 2000
+/// characters, already in the system prompt) into the history once per turn,
+/// where it was sent again on every later turn and took half of what the
+/// compaction summarizer read.
+pub fn loop_turn_stored(turn: u64, total: Option<u64>) -> String {
+    let total_label = total.map(|n| n.to_string()).unwrap_or_else(|| "unlimited".to_string());
+    format!("Loop turn {turn} of {total_label}.")
+}
+
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum LoopRunState {
@@ -452,11 +462,8 @@ async fn run_turns(
             }
         };
         turn += 1;
-        let framed = loop_turn_prompt(
-            turn,
-            (run.config.max_turns > 0).then_some(run.config.max_turns),
-            &run.goal,
-        );
+        let total = (run.config.max_turns > 0).then_some(run.config.max_turns);
+        let framed = loop_turn_prompt(turn, total, &run.goal);
         let req = ChatRequest {
             message: framed.clone(),
             session_id: Some(run.session_id.clone()),
@@ -466,6 +473,7 @@ async fn run_turns(
             retrieve: false,
             retrieve_query: None,
             attachment_ids: Vec::new(),
+            stored_message: Some(loop_turn_stored(turn, total)),
         };
         let result = chat_inner(state.clone(), peer, user, req, None, Some(&run.goal)).await;
         let mut terminal: Option<(LoopRunState, String)> = None;
@@ -682,6 +690,20 @@ mod tests {
         );
         assert_eq!(next_tool_failures(3, &[fail("WEB_SEARCH_PACED"), ok]), 0);
         assert_eq!(loop_blocking_web_code(&[fail("WEB_SEARCH_PACED")]), None);
+    }
+
+    #[test]
+    fn the_stored_turn_is_a_short_label_without_the_goal() {
+        let goal = "g ".repeat(900);
+        let sent = loop_turn_prompt(3, Some(50), &goal);
+        let stored = loop_turn_stored(3, Some(50));
+        assert_eq!(stored, "Loop turn 3 of 50.");
+        assert!(
+            sent.starts_with(&stored),
+            "the stored label opens the prompt that was sent"
+        );
+        assert!(sent.len() > 1_800 && stored.len() < 32);
+        assert_eq!(loop_turn_stored(1, None), "Loop turn 1 of unlimited.");
     }
 
     #[test]

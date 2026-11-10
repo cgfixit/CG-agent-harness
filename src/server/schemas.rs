@@ -142,6 +142,12 @@ pub struct ChatRequest {
     /// Local chat/loop blob ids from `POST /api/chat/attachments`. Cloud and `/agent` refuse them.
     #[serde(default)]
     pub attachment_ids: Vec<String>,
+    /// What the session stores as this turn's user message in place of
+    /// `message`. Never read from a request (`skip`): only the server-side
+    /// loop runner sets it, to keep the goal reminder it restates on every
+    /// turn out of the stored history.
+    #[serde(skip)]
+    pub stored_message: Option<String>,
 }
 
 impl Validate for ChatRequest {
