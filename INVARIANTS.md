@@ -483,7 +483,7 @@ callers append inline.
 `cargo deny check` with `unsound = "all"` on the root, `desktop/` and
 `tests/fixtures/cargo-sandbox` lockfiles (fixture: no licenses); each advisory
 ignore carries a removal condition. Workflow actions are SHA-pinned and
-zizmor-linted; Rust pins: 1.88 backend, 1.90 desktop.
+zizmor-linted; Rust pins: 1.89 backend, 1.90 desktop.
 
 - Locked by: `tests/invariant_guard.rs::deny_lists_ban_the_same_telemetry_crates`,
   `.github/workflows/{ci,dependency-advisories,desktop,desktop-check}.yml`.

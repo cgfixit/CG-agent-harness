@@ -4,7 +4,7 @@ The backend and desktop are separate Cargo crates, with independently committed
 manifests, lockfiles, toolchains and `deny.toml` policies. A third lockfile,
 the Seatbelt test fixture `tests/fixtures/cargo-sandbox`, gets the root policy's
 advisories, bans and sources checks in CI. The backend pins Rust
-1.88; `desktop/` pins 1.90. Use rustup's Cargo so the local toolchain files take
+1.89; `desktop/` pins 1.90. Use rustup's Cargo so the local toolchain files take
 effect. CI/release builds use locked resolution. Downloads during dependency
 preparation are separate from the application's offline Cargo verification.
 
@@ -12,13 +12,13 @@ preparation are separate from the application's offline Cargo verification.
 
 | Crate | Purpose / selected features |
 |---|---|
-| `rusqlite` 0.40 | Transactional account store; bundled SQLite avoids a machine-specific SQLite dependency |
+| `rusqlite` 0.41 | Transactional account store; bundled SQLite avoids a machine-specific SQLite dependency |
 | `axum-server` 0.8, `rustls` 0.23 | Shared standalone/sidecar HTTPS; explicit ring provider, ordinary certificate verification |
 | `rcgen` 0.14, `x509-parser` 0.18 | Local P-256 certificate generation and validity/key/name checks; no OpenSSL subprocess |
 | `scraper` 0.27, `html5ever` 0.39, `robotstxt` 0.3 | HTML extraction and permitted robots handling; no browser execution |
 | `tantivy` 0.27 | Embedded BM25 passage retrieval; bounded derived index, no daemon or embeddings |
-| `rmcp = "=3.7.0"` | Inbound MCP memory server (streamable HTTP); exact pin, bumped deliberately (from 3.5.1 on 2026-10-31) |
-| `zip` 9.1.3, `quick-xml` 0.42 | DOCX attachment reader: in-memory ZIP, deflate only; namespace-aware XML. No PDF reader or parser subprocess; limits in [CONSOLE.md](CONSOLE.md#docx-attachments) |
+| `rmcp = "=3.9.0"` | Inbound MCP memory server (streamable HTTP); exact pin, bumped deliberately (RUSTSEC-2026-0462 fix, 2026-11-09) |
+| `zip` 9.2.2, `quick-xml` 0.42 | DOCX attachment reader: in-memory ZIP, deflate only; namespace-aware XML. No PDF reader or parser subprocess; limits in [CONSOLE.md](CONSOLE.md#docx-attachments) |
 | `objc2` / Foundation / WebKit / Security bindings | Native authentication-challenge handling for the exact owned loopback certificate |
 | Keyring ecosystem 1.x stores | OS store for managed provider keys: macOS Keychain, Windows Credential Manager and the maintained D-Bus Linux Secret Service backend |
 
@@ -39,8 +39,8 @@ build dependency does not itself require a CMake executable. See
   `.cargo/config.toml` sets `resolver.incompatible-rust-versions = "fallback"`
   for both crates: plain `cargo update` prefers releases within each crate's
   `rust-version`, and `--ignore-rust-version` or `--precise` remain explicit
-  overrides. `uuid` 1.26 and `rusqlite` 0.40 stay for the same reason (`uuid`
-  1.27 and `rusqlite` 0.41 need Rust 1.89).
+  overrides. Rust 1.89 admits `rusqlite` 0.41 (RUSTSEC-2026-0459); `uuid` 1.27
+  and later are no longer MSRV-held.
 - Incompatible major lines are separate API migrations, not drift: backend
   `axum-server` 0.8, `base64` 0.22, `rand` 0.8, `scrypt` 0.11, `scraper` 0.27 with `html5ever`
   0.39, `windows-sys` 0.59 and the `rmcp` pin; desktop `toml` 0.8.2 and `brotli-decompressor` 6.2,
@@ -112,14 +112,14 @@ point-in-time advisory/license/source check, not proof of vulnerability absence.
 Workflow action pins live in `.github/workflows/` and move with those files,
 not with the lockfiles.
 
-## Last synchronization (2026-11-07)
+## Last synchronization (2026-11-09)
 
-Both locks were already at every compatible MSRV-aware release older than the
-7-day cooldown, with no advisory against a locked version (cargo-deny 0.20.2:
-backend with all features, desktop, fixture). Every candidate `cargo update`
-offered (13 backend, 16 desktop, among them `zip` 9.4.2, `crc32fast` 1.5.4,
-`openssl` 0.10.82, `cc` 1.11.1, `toml` 1.2.1, `jiff` 0.2.39 and `uuid` 1.29.1)
-was published 2026-11-01 or later, so all wait. `rmcp` 3.9.0 and `tauri` 2.12.5
-wait on their deliberate pins; `axum-server` 0.9.0 (2026-11-06) is a new major
-line. Neither lock has changed since 2026-10-31 (#720). Dated results describe
-that pass only; rerun the checks above before trusting them.
+Advisory refresh only, so the cooldown did not apply. RUSTSEC-2026-0459 moved
+the backend to Rust 1.89, `rusqlite` 0.41.1 and `libsqlite3-sys` 0.39.1
+(bundled SQLite 3.54.1); RUSTSEC-2026-0462 moved the `rmcp` pin to 3.9.0.
+Dependabot had already moved `rmcp` to 3.8.0 (#798) and `zip` to 9.2.2 (#800).
+The desktop and fixture locks carry neither crate and did not change. The
+2026-11-07 pass found every other compatible candidate younger than the
+cooldown; `tauri` 2.12.5 waits on its pin and `axum-server` 0.9.0 is a new
+major line. Dated results describe that pass only; rerun the checks above
+before trusting them.

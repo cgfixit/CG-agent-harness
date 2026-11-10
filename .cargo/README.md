@@ -5,7 +5,7 @@ up to this directory, so both crates read it.
 
 - [`config.toml`](config.toml): sets `incompatible-rust-versions = "fallback"` so
   dependency resolution prefers versions compatible with each crate's MSRV
-  (backend 1.88, desktop 1.90). This is a preference, not a compatibility gate;
+  (backend 1.89, desktop 1.90). This is a preference, not a compatibility gate;
   explicit version selection can override it.
 
 Related: [docs/DEPENDENCIES.md](../docs/DEPENDENCIES.md) (pins, watches, audits),
