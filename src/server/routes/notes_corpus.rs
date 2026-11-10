@@ -21,7 +21,14 @@ pub async fn list_notes(
         .notes_corpus
         .list_for_owner(&owner)
         .map_err(|e| notes_corpus::ingest_error(&e))?;
-    Ok(Json(notes_corpus::list_json(&notes)))
+    let limits = state.notes_corpus.limits();
+    let mut response = notes_corpus::list_json(&notes);
+    response["limits"] = json!({
+        "max_files_per_request": limits.max_files_per_request,
+        "max_file_bytes": limits.max_file_bytes,
+        "max_files_per_owner": limits.max_files_per_owner,
+    });
+    Ok(Json(response))
 }
 
 pub async fn ingest_notes(

@@ -112,19 +112,14 @@ impl NotesCorpus {
                     .detail("limit", self.limits.max_files_per_request as u64),
             );
         }
-        let classified: Vec<(IncomingFile, &'static str, String)> = files
+        let classified: Vec<(&IncomingFile, &'static str)> = files
             .iter()
-            .map(|f| {
-                let ext = allowed_ext(&f.filename)?;
-                let text = classify_note(&f.data, self.limits.max_file_bytes)?;
-                Ok((
-                    IncomingFile {
-                        filename: String::new(),
-                        data: f.data.clone(),
-                    },
-                    mime_for(ext),
-                    text,
-                ))
+            .enumerate()
+            .map(|(index, f)| {
+                let at_file = |e: HarnessError| e.detail("file_index", index as u64);
+                let ext = allowed_ext(&f.filename).map_err(at_file)?;
+                classify_note(&f.data, self.limits.max_file_bytes).map_err(at_file)?;
+                Ok((f, mime_for(ext)))
             })
             .collect::<Result<_>>()?;
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
@@ -135,14 +130,14 @@ impl NotesCorpus {
                 .detail("limit", self.limits.max_files_per_owner as u64));
         }
         let used: u64 = manifest.notes.iter().map(|n| n.byte_len).sum();
-        let incoming: u64 = classified.iter().map(|(f, _, _)| f.data.len() as u64).sum();
+        let incoming: u64 = classified.iter().map(|(f, _)| f.data.len() as u64).sum();
         if used.saturating_add(incoming) > self.limits.max_home_bytes {
             return Err(HarnessError::new("NOTES_QUOTA", "notes corpus byte quota reached")
                 .detail("limit_bytes", self.limits.max_home_bytes));
         }
         let mut stored = Vec::new();
         let mut written = Vec::new();
-        for (file, mime, _text) in classified {
+        for (file, mime) in classified {
             let id = Uuid::new_v4().hyphenated().to_string();
             let blob = NoteBlob {
                 id: id.clone(),
@@ -186,9 +181,22 @@ impl NotesCorpus {
         };
         let blob = manifest.notes.remove(idx);
         let rel = note_rel(&blob)?;
-        let _ = self.jail.remove_file(&rel);
+        // A failed index write must leave the note readable, including during other notes' retrieval.
         self.save_manifest(&manifest)?;
-        Ok(())
+        match self.jail.remove_file(&rel) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => {
+                manifest.notes.insert(idx, blob);
+                self.save_manifest(&manifest).map_err(|_| {
+                    HarnessError::new(
+                        "IO_ERROR",
+                        "note file was not removed and its index entry could not be restored",
+                    )
+                })?;
+                Err(HarnessError::new("IO_ERROR", "could not remove the notes file"))
+            }
+        }
     }
 
     pub fn unlink_owner(&self, owner: &str) -> Result<usize> {
@@ -586,6 +594,21 @@ mod tests {
         let index: serde_json::Value = serde_json::from_slice(&std::fs::read(root.join(INDEX_NAME)).unwrap()).unwrap();
         assert_eq!(index["notes"].as_array().unwrap().len(), 1);
         assert!(leftover_tmps(&root).is_empty(), "{:?}", leftover_tmps(&root));
+    }
+
+    #[test]
+    fn failed_delete_index_write_keeps_note_readable() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = NotesCorpus::open(dir.path(), limits()).unwrap();
+        let notes = store
+            .store("alice", &[file("a.md", "keep one"), file("b.md", "keep two")])
+            .unwrap();
+        FAIL_INDEX_BEFORE_RENAME.with(|c| c.set(true));
+        assert_eq!(store.unlink_id("alice", &notes[0].id).unwrap_err().code, "IO_ERROR");
+        let retained = store.verified_texts("alice").unwrap();
+        assert_eq!(retained.len(), 2);
+        assert_eq!(retained[0].text, "keep one");
+        assert_eq!(retained[1].text, "keep two");
     }
 
     #[test]
