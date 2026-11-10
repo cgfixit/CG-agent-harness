@@ -130,12 +130,9 @@ fn revoked_path(home: &Home) -> PathBuf {
 }
 
 fn read_optional_json(path: &std::path::Path) -> Result<Option<Value>> {
-    // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
-    let raw = path.to_string_lossy();
-    if raw.contains("..") {
-        return Err(invalid());
-    }
-    let path = std::path::Path::new(raw.as_ref());
+    // The shared path barrier: a parent component is refused, a name with dots is not.
+    let path = crate::common::refuse_parent_components(path).ok_or_else(invalid)?;
+    let path = path.as_path();
     match std::fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
@@ -442,13 +439,9 @@ impl Notifier {
         if !super::structured_memory::valid_owner(owner) {
             return Ok(0);
         }
-        let path = revoked_path(&self.0.home);
-        // CodeQL rust/path-injection treats `contains("..") == false` as a barrier.
-        let raw = path.to_string_lossy();
-        if raw.contains("..") {
-            return Err(invalid());
-        }
-        let path = std::path::Path::new(raw.as_ref());
+        // The shared path barrier: a parent component is refused, a name with dots is not.
+        let path = crate::common::refuse_parent_components(&revoked_path(&self.0.home)).ok_or_else(invalid)?;
+        let path = path.as_path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
             #[cfg(unix)]
@@ -896,6 +889,16 @@ mod tests {
     fn optional_json_refuses_parent_components() {
         let err = read_optional_json(std::path::Path::new("/tmp/harness/../bearers.json")).unwrap_err();
         assert!(err.to_string().contains("invalid notifications configuration"));
+        // Two dots inside a name are not a parent component.
+        let dir = tempfile::tempdir().unwrap();
+        let dotted = dir.path().join("my..home/data/notifications");
+        std::fs::create_dir_all(&dotted).unwrap();
+        assert_eq!(read_optional_json(&dotted.join("absent.json")).unwrap(), None);
+        std::fs::write(dotted.join("present.json"), b"{\"version\":1}").unwrap();
+        assert_eq!(
+            read_optional_json(&dotted.join("present.json")).unwrap(),
+            Some(serde_json::json!({"version": 1}))
+        );
     }
     #[test]
     fn destination_answers_fail_closed() {

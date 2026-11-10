@@ -202,14 +202,12 @@ pub struct FileStatus {
 
 pub fn file_status(logs_dir: &Path, name: &str) -> FileStatus {
     // Callers pass boot-validated allowlist entries; re-check so a name that is
-    // not a bare file name never reaches the filesystem. CodeQL
-    // rust/path-injection treats `contains("..") == false` as a barrier; the
-    // home is operator-set, but a traversing one is refused here anyway.
-    let path = logs_dir.join(name);
-    let raw = path.to_string_lossy();
-    let meta = (bare_file_name(name) && !raw.contains(".."))
-        .then(|| std::fs::symlink_metadata(Path::new(raw.as_ref())).ok())
+    // not a bare file name never reaches the filesystem. The home is
+    // operator-set, but one with a parent component is refused here anyway.
+    let meta = bare_file_name(name)
+        .then(|| crate::common::refuse_parent_components(&logs_dir.join(name)))
         .flatten()
+        .and_then(|path| std::fs::symlink_metadata(path).ok())
         .filter(|m| m.is_file());
     FileStatus {
         file: name.to_string(),
@@ -876,6 +874,12 @@ mod tests {
             let status = file_status(&logs, bad);
             assert!(!status.present && status.bytes.is_none(), "{bad}");
         }
+        // Two dots inside the home's name are not a parent component.
+        let dotted = home.path().join("my..home/logs");
+        std::fs::create_dir_all(&dotted).unwrap();
+        std::fs::write(dotted.join("audit.jsonl"), "{}\n").unwrap();
+        assert!(file_status(&dotted, "audit.jsonl").present);
+        assert!(!file_status(&dotted.join("../logs"), "audit.jsonl").present);
     }
 
     #[cfg(unix)]
