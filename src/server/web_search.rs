@@ -1089,8 +1089,11 @@ impl WebTool {
     }
 
     pub(super) async fn fetch_page(&self, raw: &str, enabled: bool, audit: &Audit, owner: &str) -> Result<Page> {
-        self.require_enabled(enabled)?;
+        let policy = self.require_enabled(enabled)?;
         self.gate_tool("web_fetch", &[raw.into()], enabled, audit)?;
+        // A content read, like every batch path: the pinned read below also admits
+        // an origin's robots.txt, which is discovery's exception and not a grant.
+        policy.authorize(raw, None)?;
         let page = self.get_or_fallback(raw, None, None, audit, None).await?;
         self.cache_page(&page, None)?;
         self.store_last(&page, None, owner)?;
