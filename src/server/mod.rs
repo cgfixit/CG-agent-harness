@@ -73,7 +73,6 @@ mod web_tavily;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
@@ -145,7 +144,7 @@ pub struct AppOptions {
     /// Test hook: the executable the shim spawns (tests run inside the test
     /// harness binary, whose `current_exe()` is not `cgagentharness`).
     #[cfg(any(test, feature = "test-support"))]
-    pub shim_exe: Option<PathBuf>,
+    pub shim_exe: Option<std::path::PathBuf>,
 }
 
 impl AppOptions {
