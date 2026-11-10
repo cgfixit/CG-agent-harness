@@ -504,8 +504,6 @@ async fn run_inner(
     } else {
         passages.clear();
     }
-    // What the first call sends beyond the history: calibration must count it.
-    let initial_extra = appended_tokens(&messages[history.len()..]);
     let tool_key = "models.local_llm.tool_max_tokens";
     let tool_max = crate::llm::openai_chat::parse_tool_max_tokens(
         state.cfg.get(tool_key).and_then(|value| value.as_u64()),
@@ -515,6 +513,7 @@ async fn run_inner(
     let mut peak_extra = 0u64;
     let mut tools_withheld = false;
     let mut initial_prompt_tools = false;
+    let mut initial_extra = 0u64;
     for turn in 0..=web.limits.chat_tool_calls {
         check_evidence(state, owner, &sources)?;
         let reservation = super::compaction::reply_reservation(&state.backend, cap);
@@ -662,6 +661,9 @@ async fn run_inner(
         }
         if turn == 0 {
             initial_prompt_tools = round_fits;
+            // What the first call sends beyond the history (restored
+            // evidence): calibration must count it.
+            initial_extra = appended_tokens(&messages[history.len()..]);
         }
         // A middle round can be the largest request: earlier results plus the
         // definitions, which the final round may no longer carry.
