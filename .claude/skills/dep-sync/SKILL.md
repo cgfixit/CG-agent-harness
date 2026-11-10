@@ -9,7 +9,7 @@ description: |
   deps" / "fix dependency drift".
 compatibility: |
   Requires: cargo, rustup, cargo-deny, git
-  Context: Independent backend (root, Rust 1.88) and desktop (desktop/, Rust
+  Context: Independent backend (root, Rust 1.89) and desktop (desktop/, Rust
   1.90) Rust crates, each with its own Cargo.lock and deny policy
 ---
 
@@ -44,7 +44,7 @@ For each file in the diff, extract the semantic change, not just the text:
 - `Cargo.lock` / `desktop/Cargo.lock` — resolved version changes (these
   usually follow from the manifest changes above; don't hand-edit a lock,
   regenerate it)
-- `rust-toolchain.toml` — MSRV/channel bump (backend 1.88, desktop 1.90 are
+- `rust-toolchain.toml` — MSRV/channel bump (backend 1.89, desktop 1.90 are
   independently pinned; a bump to one is not a bump to the other)
 - `deny.toml` — advisory ignores, license allowlist, banned-crate changes
 - `.github/workflows/*.yml` (`ci.yml`, `clippy-sarif.yml`, `release.yml`,

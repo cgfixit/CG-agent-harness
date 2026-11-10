@@ -94,7 +94,7 @@ open "CG Agent Harness.app"
 
 The universal app is ad-hoc signed ([Gatekeeper](docs/DESKTOP.md)); its Setup window exports the certificate for [browser trust](docs/SECURE_RESEARCH.md#https-and-native-trust). Releases also attach CLI builds.
 
-**Standalone server, macOS or Linux** (Rust 1.88, a C toolchain; [Install](docs/INSTALL.md)):
+**Standalone server, macOS or Linux** (Rust 1.89, a C toolchain; [Install](docs/INSTALL.md)):
 
 ```bash
 git clone https://github.com/cgfixit/CG-agent-harness.git
