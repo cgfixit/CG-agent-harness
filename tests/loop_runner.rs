@@ -621,6 +621,58 @@ async fn changed_goal_stops_the_run_before_another_model_request() {
     model.abort();
 }
 
+/// A loop turn that finds the single local model busy (the operator's own chat
+/// turn, a memory consolidation, the tuning sample) waits for it. Before, it
+/// failed with `CHAT_BUSY`; two of those two seconds apart aborted the run.
+#[tokio::test]
+async fn a_busy_model_makes_a_loop_turn_wait_not_fail() {
+    let (base, calls) = start_counting_mock().await;
+    let s = spawn_server(&base, ServerOptions::default()).await;
+    let sid = session_with_goal(&s).await;
+    let held = s.state.generation_gate.claim("consolidation").unwrap();
+    let (status, body) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id": sid, "max_turns": 1, "max_failures": 1, "cooldown_ms": 0}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let run_id = body["run"]["run_id"].as_str().unwrap().to_string();
+    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+    let waiting = loop_status(&s, &run_id).await;
+    assert_eq!(waiting["state"], "running", "{waiting}");
+    assert_eq!(waiting["stats"]["consecutive_failures"], 0, "{waiting}");
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "nothing is sent while it waits"
+    );
+    drop(held);
+    let run = wait_for(&s, &run_id, "the turn after the model frees", |run| {
+        run["state"] == "done"
+    })
+    .await;
+    assert_eq!(run["stats"]["turns_completed"], 1, "{run}");
+    assert_eq!(run["stats"]["consecutive_failures"], 0, "{run}");
+
+    // The wait ends at once on /loop stop.
+    let sid = session_with_goal(&s).await;
+    let held = s.state.generation_gate.claim("model_tune").unwrap();
+    let (_, body) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id": sid, "max_turns": 1, "cooldown_ms": 0}),
+        )
+        .await;
+    let run_id = body["run"]["run_id"].as_str().unwrap().to_string();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let (status, stopped) = s.post_json("/api/loop/stop", json!({"run_id": run_id})).await;
+    assert_eq!(status, 200, "{stopped}");
+    let run = wait_for(&s, &run_id, "stop during the wait", |run| run["state"] == "stopped").await;
+    assert_eq!(run["stats"]["turns_completed"], 0, "{run}");
+    drop(held);
+}
+
 #[tokio::test]
 async fn loop_start_status_stop_round_trip() {
     let (url, _count) = start_counting_mock().await;

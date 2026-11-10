@@ -34,6 +34,45 @@ const LOOP_STALL_SIMILARITY: f64 = 0.9;
 /// Mirror of `LOOP_STALL_MAX_WORDS`.
 const LOOP_STALL_MAX_WORDS: usize = 2000;
 
+/// Longest a turn waits for another generation to release the single local
+/// model: twice the longest deadline one local call may have, which is the most
+/// a web turn can take. `/loop stop` ends the wait at once.
+const MODEL_BUSY_WAIT: std::time::Duration =
+    std::time::Duration::from_secs(2 * crate::server::model_limits::MAX_TIMEOUT_SEC);
+const MODEL_BUSY_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+/// Turns in a row that may lose the model between that wait and their own
+/// claim before a busy model counts as a failed turn after all.
+const MAX_BUSY_RETRIES: u32 = 3;
+
+/// Why [`wait_for_model`] gave up.
+enum BusyWait {
+    Stopped,
+    TimedOut,
+}
+
+/// Waits while another generation holds the model: the operator's own chat
+/// turn, a memory consolidation, the tuning sample. A loop turn that found the
+/// model busy used to fail with `CHAT_BUSY`, and two of those two seconds apart
+/// (the shipped cooldown and failure limit) aborted an unattended run.
+async fn wait_for_model(
+    state: &crate::server::state::AppState,
+    cancel: &CancellationToken,
+    limit: std::time::Duration,
+) -> std::result::Result<(), BusyWait> {
+    let started = tokio::time::Instant::now();
+    while state.generation_gate.is_held() {
+        if started.elapsed() >= limit {
+            return Err(BusyWait::TimedOut);
+        }
+        tokio::select! {
+            biased;
+            _ = cancel.cancelled() => return Err(BusyWait::Stopped),
+            _ = tokio::time::sleep(MODEL_BUSY_POLL) => {}
+        }
+    }
+    Ok(())
+}
+
 /// Web tool codes that refuse the same way on every later turn (console
 /// `LOOP_BLOCKING_WEB_CODES`). Only these stop an unattended run.
 pub const LOOP_BLOCKING_WEB_CODES: [&str; 5] = [
@@ -403,6 +442,7 @@ async fn run_turns(
     let peer: SocketAddr = SocketAddr::from(([127, 0, 0, 1], 0));
     let mut last_reply: Option<String> = None;
     let mut turn: u64 = 0;
+    let mut busy_retries: u32 = 0;
     loop {
         let (mut run, user) = {
             let runs = state.loops.runs.lock().unwrap_or_else(|p| p.into_inner());
@@ -451,6 +491,29 @@ async fn run_turns(
                 return;
             }
         };
+        match wait_for_model(&state, &cancel, MODEL_BUSY_WAIT).await {
+            Ok(()) => {}
+            Err(BusyWait::Stopped) => {
+                finish(
+                    &state,
+                    &run_id,
+                    run,
+                    LoopRunState::Stopped,
+                    "stopped by operator".into(),
+                    &events,
+                    &dir,
+                );
+                return;
+            }
+            Err(BusyWait::TimedOut) => {
+                let reason = format!(
+                    "loop aborted — the local model stayed busy for {} minutes",
+                    MODEL_BUSY_WAIT.as_secs() / 60
+                );
+                finish(&state, &run_id, run, LoopRunState::Failed, reason, &events, &dir);
+                return;
+            }
+        }
         turn += 1;
         let framed = loop_turn_prompt(
             turn,
@@ -486,6 +549,7 @@ async fn run_turns(
                 }));
                 let completion = value["usage"]["completion_tokens"].as_u64().unwrap_or(0);
                 let web_events: Vec<Value> = value["web_tools"].as_array().cloned().unwrap_or_default();
+                busy_retries = 0;
                 run.stats.turns_completed += 1;
                 run.stats.total_completion_tokens = run.stats.total_completion_tokens.saturating_add(completion);
                 run.stats.consecutive_failures = 0;
@@ -521,7 +585,15 @@ async fn run_turns(
             Err(error) if error.code == "LOOP_GOAL_CHANGED" => {
                 terminal = Some((LoopRunState::Stopped, error.message));
             }
+            // Another generation took the model between the wait above and
+            // this turn's own claim. Nothing was sent: the turn is not failed
+            // and not counted, and the next pass waits again.
+            Err(error) if error.code == "CHAT_BUSY" && busy_retries < MAX_BUSY_RETRIES => {
+                busy_retries += 1;
+                turn -= 1;
+            }
             Err(error) => {
+                busy_retries = 0;
                 // Failed inference still spends tokens; missing usage contributes no known count.
                 let completion = error.details["known_completion_tokens"]
                     .as_u64()
