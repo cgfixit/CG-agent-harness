@@ -206,18 +206,18 @@ No per-run disk, memory or process-count quota is introduced.
 ## Rebuild and verify
 
 Build prerequisites: Apple Silicon macOS, Xcode Command Line Tools, Git, rustup,
-backend Rust 1.88 and desktop Rust 1.90. Build-time dependency downloads are
+backend Rust 1.89 and desktop Rust 1.90. Build-time dependency downloads are
 separate from shipped runtime behavior. Install those toolchains explicitly;
 the packaging script sets `RUSTUP_AUTO_INSTALL=0`.
 
 ```sh
-rustup toolchain install 1.88 --profile minimal --component rustfmt --component clippy
+rustup toolchain install 1.89 --profile minimal --component rustfmt --component clippy
 rustup toolchain install 1.90 --profile minimal --component rustfmt --component clippy
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test --all-targets --locked
 cargo deny check
-rustup target add --toolchain 1.88 aarch64-apple-darwin x86_64-apple-darwin
+rustup target add --toolchain 1.89 aarch64-apple-darwin x86_64-apple-darwin
 rustup target add --toolchain 1.90 aarch64-apple-darwin x86_64-apple-darwin
 scripts/package-desktop.sh --universal --dmg
 (cd desktop && cargo fmt -- --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked)
@@ -251,7 +251,7 @@ through `#[path]`) run `desktop-check.yml` instead: fmt, clippy, tests and deny 
 packaging. Backend CI stays separate. A successful build is not
 GUI acceptance.
 
-Desktop Rust 1.90 and backend Rust 1.88 stay independently pinned, each crate
+Desktop Rust 1.90 and backend Rust 1.89 stay independently pinned, each crate
 with its own lockfile and `deny.toml`
 ([dependency maintenance](DEPENDENCIES.md#retained-constraints)).
 

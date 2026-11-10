@@ -190,7 +190,7 @@ cargo --version
 rustc --print sysroot
 ```
 
-Preserve a working installation. The repository pins **Rust 1.88 for the
+Preserve a working installation. The repository pins **Rust 1.89 for the
 backend** in `rust-toolchain.toml` and **Rust 1.90 for desktop** in
 `desktop/rust-toolchain.toml`. Use rustup's Cargo on PATH so those files take
 effect; a Homebrew Cargo executable does not enforce them. An unrelated newer
@@ -199,7 +199,7 @@ Clippy version can report different lints.
 Prepare backend components with network access:
 
 ```bash
-rustup toolchain install 1.88 --profile minimal --component clippy --component rustfmt
+rustup toolchain install 1.89 --profile minimal --component clippy --component rustfmt
 ```
 
 For desktop, prepare:
@@ -209,7 +209,7 @@ rustup toolchain install 1.90 --profile minimal --component clippy --component r
 ```
 
 Without Rust, follow the [installation instructions](https://www.rust-lang.org/tools/install).
-From the repository root, `rustup show active-toolchain` should resolve to 1.88;
+From the repository root, `rustup show active-toolchain` should resolve to 1.89;
 inside `desktop/`, it should resolve to 1.90. The packaging script disables
 implicit toolchain installation, so install both before running it.
 
@@ -329,7 +329,7 @@ To build your own universal app from a clean committed checkout, install both
 pinned toolchains ([Rust](#24-rust)), then both target standard libraries:
 
 ```bash
-rustup target add --toolchain 1.88 aarch64-apple-darwin x86_64-apple-darwin
+rustup target add --toolchain 1.89 aarch64-apple-darwin x86_64-apple-darwin
 rustup target add --toolchain 1.90 aarch64-apple-darwin x86_64-apple-darwin
 scripts/package-desktop.sh --universal --dmg
 ```
@@ -822,7 +822,7 @@ tokens, fresh CSRF, and no replay.
 
 | Gate | Evidence and scope |
 |---|---|
-| [Backend CI](../.github/workflows/ci.yml) | Rust 1.88 (`rust-version`), rustfmt, warning-denied Clippy, `cargo deny`, I6, Chrome, Linux/macOS tests and real-repo smoke. Code PRs run focused Windows lifecycle and credential tests; `main`, merge queue and release calls also run the full Windows suite. Linux uses Ubuntu 26.04 (bubblewrap and MCP lifecycle: 24.04). Bundle packages the CLI; Release rebuilds before publication. |
+| [Backend CI](../.github/workflows/ci.yml) | Rust 1.89 (`rust-version`), rustfmt, warning-denied Clippy, `cargo deny`, I6, Chrome, Linux/macOS tests and real-repo smoke. Code PRs run focused Windows lifecycle and credential tests; `main`, merge queue and release calls also run the full Windows suite. Linux uses Ubuntu 26.04 (bubblewrap and MCP lifecycle: 24.04). Bundle packages the CLI; Release rebuilds before publication. |
 | Coding and chat regression tests | Revocation, exact edits, clone jail, reviewed trees, job cancellation, session and goal gates, loop budgets, and failed-chat claim release. See [`tests/`](../tests/). |
 | Native Cargo acceptance | macOS tests prepare locked dependencies, then test Seatbelt and fixed Cargo checks. Linux uses bubblewrap when present; `unshare --net` and Windows Job Object do not provide equivalent confinement. |
 | [Desktop CI](../.github/workflows/desktop.yml) | Bundle, releases, and manual runs build the universal app on Rust 1.90, test desktop policy and packaged backend, verify signatures, checksums, and extraction, then retain ZIP and checksums. |

@@ -10,7 +10,7 @@
 #   1. Installs pkg-config + libdbus-1-dev (the keyring crate's libdbus-sys build
 #      script fails without them; CI installs the same packages).
 #   2. Runs `cargo fetch --locked`, which also makes rustup install the
-#      toolchain pinned in rust-toolchain.toml (1.88 + clippy + rustfmt).
+#      toolchain pinned in rust-toolchain.toml (1.89 + clippy + rustfmt).
 #   3. Exports CARGO_PROFILE_DEV_DEBUG=0 for the session, so debug builds do not
 #      fill the container's disk (full debug target/ reached ~28 GB at link time).
 #   4. Detaches a background prebuild of the artifacts scripts/verify-local.sh
