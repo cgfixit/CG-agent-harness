@@ -292,22 +292,6 @@ fn public_results(
     checkpoint: &dyn Fn() -> Result<()>,
 ) -> Result<Vec<SearchResult>> {
     checkpoint()?;
-    let lower = body.to_ascii_lowercase();
-    if [
-        "/httpservice/retry/enablejs",
-        "unusual traffic",
-        "g-recaptcha",
-        "consent.google.com",
-        "enable javascript to continue",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
-    {
-        return Err(error(
-            "WEB_GOOGLE_CHALLENGE",
-            "Google requires browser interaction; configure a SerpAPI key in API Keys",
-        ));
-    }
     let html = parse_html(body, max_handles, checkpoint)?;
     let anchors = Selector::parse("a[href]").unwrap();
     let headings = Selector::parse("h3").unwrap();
@@ -341,11 +325,34 @@ fn public_results(
         let title = heading.text().collect::<Vec<_>>().join(" ");
         add_result(&mut rows, &mut seen, &title, url.as_str(), "", limit);
     }
-    if rows.is_empty() && !lower.contains("did not match any documents") {
-        return Err(error(
-            "WEB_GOOGLE_UNREADABLE",
-            "Google returned no recognizable listing; configure a SerpAPI key in API Keys",
-        ));
+    // A page with result links is a listing, whatever words it contains: a
+    // search about "unusual traffic" or reCAPTCHA returns titles and snippets
+    // that say so. Looking for the challenge markers anywhere in the body, before
+    // parsing, read such a listing as a challenge and paused public search for
+    // `web.search_cooldown_public_sec`. Only a page without results is one.
+    if rows.is_empty() {
+        let lower = body.to_ascii_lowercase();
+        if [
+            "/httpservice/retry/enablejs",
+            "unusual traffic",
+            "g-recaptcha",
+            "consent.google.com",
+            "enable javascript to continue",
+        ]
+        .iter()
+        .any(|needle| lower.contains(needle))
+        {
+            return Err(error(
+                "WEB_GOOGLE_CHALLENGE",
+                "Google requires browser interaction; configure a SerpAPI key in API Keys",
+            ));
+        }
+        if !lower.contains("did not match any documents") {
+            return Err(error(
+                "WEB_GOOGLE_UNREADABLE",
+                "Google returned no recognizable listing; configure a SerpAPI key in API Keys",
+            ));
+        }
     }
     checkpoint()?;
     Ok(rows)
@@ -1870,6 +1877,26 @@ mod tests {
             "WEB_GOOGLE_CHALLENGE"
         );
         assert!(public_results("<html>unrecognized</html>", 5).is_err());
+        // A real listing about the challenge itself is a listing, not a challenge.
+        let about = public_results(
+            "<a href='/url?q=https%3A%2F%2Fexample.org%2Ffix'><h3>Fix the unusual traffic g-recaptcha page</h3></a>",
+            5,
+        )
+        .unwrap();
+        assert_eq!(about[0].url, "https://example.org/fix");
+        // The same words with no result links are still a challenge.
+        assert_eq!(
+            public_results("<html>Our systems have detected unusual traffic</html>", 5)
+                .unwrap_err()
+                .code,
+            "WEB_GOOGLE_CHALLENGE"
+        );
+        assert_eq!(
+            public_results("<html>Your search did not match any documents</html>", 5)
+                .unwrap()
+                .len(),
+            0
+        );
         assert!(!api_results(br#"{"error":"secret echoed by upstream"}"#, 5)
             .unwrap_err()
             .to_string()
