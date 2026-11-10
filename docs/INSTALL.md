@@ -357,8 +357,8 @@ checks. A signature or a green build is not native acceptance; see
 ## 6. First run
 
 Fresh homes enable login, role permissions, HTTPS and web fetch/search/research
-without a harness API key or configuration edit. The content allowlist starts
-empty; administrators grant sources through `/web allow`, or grant a starter list
+without a harness API key or configuration edit. The allowlist starts with
+one Google search rule; administrators grant sources through `/web allow`, or grant a starter list
 of technical references with
 [`web-allowlist-bootstrap.sh`](../scripts/web-allowlist-bootstrap.sh)
 ([step 9](#step-by-step-in-terminal)). Open the app from
@@ -604,7 +604,7 @@ on first run. Common operator settings follow:
 | `chat.compact_prompt_tokens` / `compact_keep_messages` | 24000 / 10 | Calibrated next-prompt trigger and recent messages retained (2–40); the prompt cap is the hard limit past it. Threshold floor/cap and web interaction: [compaction](CONSOLE.md#local-history-compaction) |
 | `chat.compact_tail_percent` | 25 | Verbatim tail budget as a percent of the trigger, 10–50; whole exchanges, at least the last one |
 | `compaction.summary_max_tokens` | 2048 | Summary output ceiling, clamped 128–2048; missing in an existing home uses 768; sent doubled where the reply is reserved twice |
-| `chat.compact_follow_window` / `compact_max_prefill_sec` | false / 1500 | When enabled, a verified window above 32768 scales the trigger up within this many seconds of measured prefill (clamped 30–1800); false keeps it fixed |
+| `chat.compact_follow_window` / `compact_max_prefill_sec` | false / 1500 | Unless literal `false`, a verified window above 32768 scales the trigger up within this many seconds of measured prefill (clamped 30–1800) |
 | `models.local_llm.inventory.*` | 2.0 s / 262144 bytes | Model-list probe timeout and response cap |
 | `auth.max_concurrent_operations` | 1 | Concurrent scrypt derivations (about 128 MiB each); range 1–4 |
 | `auth.session.idle_timeout_sec` / `absolute_timeout_sec` | 43200 / 604800 | Session expiry without use (recorded at most once a minute), and regardless of use; each 60–2592000 (30 days), else startup stops |

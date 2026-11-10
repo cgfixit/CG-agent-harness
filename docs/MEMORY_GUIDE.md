@@ -226,7 +226,7 @@ auto-consolidate off`, or config `false` plus restart); facts and proposals
 remain. `enabled: false` stops opening the database without deleting it or
 disabling pinned notes, persona or session persistence.
 
-`/clear` clears the display. Sessions Clear has its separate deletion flow: it
-cancels waiting/in-flight chat suggestions and keeps facts and proposals; derived
+`/clear` clears the display. Sessions Clear separately cancels waiting/in-flight chat
+suggestions, deletes your uploaded notes and keeps facts and proposals; derived
 episodes are kept unless you also confirm `delete_derived_episodes`. Export,
 purge and what disabling stops: [rollback](STRUCTURED_MEMORY.md#rollback).

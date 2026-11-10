@@ -75,7 +75,7 @@ injected context survive session changes. The HTML editor button, beside the web
 
 In the dialog, choose **Delete my session history** to confirm or **Cancel**.
 Confirmation stops active chat, clears the conversation, and deletes your saved
-sessions, goals, skill selections, and token totals, retaining other accounts,
+sessions, goals, skill selections, token totals, attachments and uploaded notes, retaining other accounts,
 unassigned legacy records, and unreadable files. Afterward, send a message or use `/session new`. If storage
 fails, resolve the reported problem before retrying; deletion may be partial.
 
@@ -399,11 +399,11 @@ parser is unavailable. Inspect results after every state-changing command.
 | `/memory remember <sentence> :: <reason>` | Confirm a semantic summary on the latest completed episode; no fact write |
 | `/memory facts`, `/memory retrieve <query>`, `/memory search <query>` | List your active facts, force fact retrieval for this chat prompt, or inspect candidates without injection |
 | `/memory save <text> :: <reason>` | Confirm an immediate private fact write |
-| `/model [status]`, `/model list`, `/model use <name>` | Inspect/list/select a local chat model or explicit cloud provider; does not select the coding planner |
+| `/model [status]`, `profile`, `list`, `use <name>` | Inspect/profile/list/select a local chat model or explicit cloud provider; does not select the coding planner |
 | `/net status`, `/net devices`, `/net diag` | Read-only scope and gates, passive neighbors, or the budgeted diagnostics probe. Aliases and refused tier words: [netconnect](netconnect.md) |
 | `/prompt` | Private preview of the next chat system prompt |
 | `/registry` | Combined skill, tool and connector catalog |
-| `/session`, `list`, `info`, `new [title]`, `rename <title>`, `use <id>` | List sessions, inspect the current session, create, rename or reopen one |
+| `/session`, `list`, `info`, `new [title]`, `rename <title>`, `unpin`, `use <id>` | List, inspect, create, rename or reopen sessions, or clear attachment pins |
 | `/skill`, `status`, `use <id...>`, `clear` | Inspect, replace or clear session prompt-skill selection |
 | `/skill check:<profile>` | Select one fixed check for an already staged coding request |
 | `/skills [all\|help\|<name>]` | Inspect wired skills, the full catalog including optional prompt files, help, or skills matching a display name (which can differ from the `/skill use` directory ID) |
@@ -560,9 +560,9 @@ one reply. Above
 `chat.compact_prompt_tokens` (default 24000), it summarizes middle turns,
 keeping the first user message, goal, and whole recent exchanges (at most
 `chat.compact_keep_messages`, seeded 10, and `chat.compact_tail_percent`, 25% of the
-trigger). With `chat.compact_follow_window: true`, an `auto_tune`-verified
+trigger). Unless `chat.compact_follow_window: false` (seeded), an `auto_tune`-verified
 window above 32768 scales the trigger within `chat.compact_max_prefill_sec`
-(seeded 1500) of measured prefill; the seed uses false. The summarizer reads goal and first message, keeps the prior summary
+(seeded 1500) of measured prefill. The summarizer reads goal and first message, keeps the prior summary
 whole, clips other turns at 800 characters within its budget, else history
 stays. The model gets a lossy note yielding to
 exact messages; unsourced codes become `[unverified]`.

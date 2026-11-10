@@ -12,7 +12,7 @@ allowlist/corpus benchmark. How to use memory: [MEMORY_GUIDE.md](MEMORY_GUIDE.md
 | Structured memory | Account-private | `memory/structured.sqlite3` | Human confirm+reason for facts; optional post-success episode staging; optional consolidation or completion suggestions into pending proposals | Facts enter `/prompt` only after an explicit pick (selected facts, `/memory retrieve`, or the per-request `retrieve` flag) **or** the separately gated `auto_retrieval` path, plus assembly recheck. Episodes are never injected. |
 
 Structured memory does **not** migrate, reinterpret, or weaken pinned notes. Session
-deletion continues to preserve notes. Structured facts and proposals are
+deletion preserves pinned notes. Structured facts and proposals are
 independent of chat history. Clearing chats does **not** delete derived
 episodes unless the operator confirms `delete_derived_episodes` on
 `POST /api/sessions/clear`. That cascade still keeps facts, proposals, and
@@ -306,8 +306,9 @@ Audit events record owner-safe ids, revisions, counts, and status. They must
 not record fact text, proposal payloads, episode summaries, or reasons that
 embed content.
 
-Export is generated locally, bounded by `max_export_bytes`, HTML-escaped, and
-owner-filtered. It is not a prompt surface.
+Export is local, HTML-escaped, owner-filtered and marked `Truncated: true`
+when `max_export_bytes` or a row limit (128 proposals, 256 episodes) clips it.
+It is not a prompt surface.
 
 ## HTTP surfaces
 
@@ -338,9 +339,7 @@ when they carry memory content:
 | GET | `/api/structured-memory/consolidation/{id}` | n/a |
 | POST | `/api/structured-memory/consolidation/{id}/cancel` | stop queued/running work |
 
-Existing `/api/memory*` routes are unchanged. `POST /api/sessions/clear`
-accepts optional `delete_derived_episodes`. `/api/chat` and
-`/api/prompt/preview` accept `retrieve` / `retrieve_query` for per-request
+`/api/chat` and `/api/prompt/preview` accept `retrieve` / `retrieve_query` for per-request
 force-include.
 
 ## Evaluation corpus
