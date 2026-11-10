@@ -1693,7 +1693,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved (2026-11-02) raise from 1452 to 1776 for the strict-config trap and the
     // strict-by-default rule for unspecified lenient-vs-strict choices (#764).
     // why: refreshed feature pointers and trimmed duplicate guidance to 1456 words; retain the cut.
-    ("AGENTS.md", Agent, 1460),
+    // why: operator-approved (2026-11-10) rules from the PR #742-#810 review: stale policy, secret-bearing assert
+    // messages, stale console replies, tests for changed defaults. 1527 words, rounded up to the next 10.
+    ("AGENTS.md", Agent, 1530),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     // why: now `@AGENTS.md` plus Claude-only lines; 183 words, rounded up to the next 100.
     ("CLAUDE.md", Agent, 400),
