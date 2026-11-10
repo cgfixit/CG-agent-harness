@@ -109,7 +109,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: "1.88"
+          toolchain: "1.89"
           components: rustfmt
       - run: cargo fmt --all -- --check
 
@@ -127,7 +127,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: "1.88"
+          toolchain: "1.89"
           components: clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -172,7 +172,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: "1.88"
+          toolchain: "1.89"
           components: clippy
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -273,11 +273,11 @@ jobs:
             --mount "type=bind,src=${GITHUB_WORKSPACE},dst=/work,readonly" \
             --workdir /work \
             --env CI=true --env RUSTFLAGS="-D warnings" \
-            --env RUSTUP_TOOLCHAIN=1.88.0 --env CARGO_TARGET_DIR=/tmp/target \
+            --env RUSTUP_TOOLCHAIN=1.89.0 --env CARGO_TARGET_DIR=/tmp/target \
             --env CGAH_REQUIRE_LINUX_BWRAP=1 \
             --env CGAH_REQUIRE_LINUX_MCP=1 \
             --env CGAH_REQUIRE_CHECK_SANDBOX=1 \
-            rust:1.88-bookworm@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0 \
+            rust:1.89-bookworm@sha256:948f9b08a66e7fe01b03a98ef1c7568292e07ec2e4fe90d88c07bb14563c84ff \
             sh -ec 'apt-get update && apt-get install -y --no-install-recommends bubblewrap python3 git pkg-config libdbus-1-dev
                     cargo test --test linux_bwrap --test mcp_client --locked -- --nocapture
                     cargo test --test real_repo_loop real_repo_run_smoke_end_to_end --locked -- --nocapture
@@ -297,7 +297,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: "1.88"
+          toolchain: "1.89"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # Restores the test job's Linux build; only that job saves dev-Linux.
@@ -328,7 +328,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: "1.88"
+          toolchain: "1.89"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # The all-targets test job is the only dev-Windows cache writer.
@@ -371,7 +371,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: "1.88"
+          toolchain: "1.89"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # Restores the test job's Linux build; only that job saves dev-Linux.
@@ -402,7 +402,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
-          toolchain: "1.88"
+          toolchain: "1.89"
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # Restores the test job's Linux build; only that job saves dev-Linux.

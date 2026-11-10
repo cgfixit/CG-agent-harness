@@ -196,7 +196,7 @@ manual's order so old links resolve. Truth order is code, then
   Owns: [src/server/routes/](../src/server/routes/README.md). Tests:
   `tests/smoke_wired_count.rs`, `tests/panels.rs`, the `routes/mod.rs` unit tests.
 - [DEPENDENCIES.md](DEPENDENCIES.md): maintenance for the two Cargo crates,
-  their toolchain pins (1.88 backend, 1.90 desktop) and `deny.toml` policies.
+  their toolchain pins (1.89 backend, 1.90 desktop) and `deny.toml` policies.
   A runtime crate table with purposes and features, the retained constraints
   (dependency watches), how to check and synchronize, and dated audits.
   Owns: `Cargo.toml`, `Cargo.lock`, `deny.toml`, `rust-toolchain.toml`, their
