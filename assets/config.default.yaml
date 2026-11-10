@@ -193,12 +193,14 @@ web:
   # non-empty searxng_url fails boot by name (an empty searxng_url from an older home loads).
   # Fallback hops run in the fixed order tavily -> serpapi -> google-public inside one
   # web.request_seconds deadline and one search slot. The hops still to run share the time
-  # left equally; when the last one is public Google and time allows, its pacing wait
-  # (pace_ms, at least 3 s) plus 1 s is held back for it first. Time a hop does not use
-  # passes on. The hop to public Google ships on, the hop to SerpAPI ships off. A hop falls
-  # through only when it cannot answer: its provider is unusable (transport, timeout, non-200)
-  # or a SerpAPI or Tavily quota is spent (a keyed cooldown is skipped). Clean zero results,
-  # an answer with rows and a rejected or missing key never fall through.
+  # left equally, except a later hop that is cooling down (it takes none); when the last one
+  # is public Google and time allows, the pacing wait still due before its request (none if
+  # the last public search is older than pace_ms, at least 3 s) plus 1 s is held back for it
+  # first. Time a hop does not use passes on. The hop to public Google ships on, the hop to
+  # SerpAPI ships off. A hop falls through only when it cannot answer: its provider is
+  # unusable (transport, timeout, non-200) or a SerpAPI or Tavily quota is spent (a keyed
+  # cooldown is skipped). Clean zero results, an answer with rows and a rejected or missing
+  # key never fall through.
   search:
     provider: auto # auto|google-public|serpapi|tavily
     fallback_to_serpapi: false # literal true: a failed tavily tries SerpAPI when a key is active
