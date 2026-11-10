@@ -423,7 +423,9 @@ impl ScheduleStore {
     /// `gate` runs before the occurrence is consumed. `start` runs only after
     /// that consumption is durable, and only when the gate accepted a timely
     /// occurrence. `last_dispatch = attempted` is written only when `start`
-    /// returns [`DispatchOutcome::Accepted`].
+    /// returns [`DispatchOutcome::Accepted`]. While `start` runs the durable
+    /// row says `start_unconfirmed`: a crash there, or a failed second write,
+    /// must not leave a started job recorded as refused.
     pub fn consume_and_dispatch(
         &self,
         due: &Schedule,
@@ -458,10 +460,12 @@ impl ScheduleStore {
         let timely = now - row.next_fire_at <= self.settings.dispatch_grace_secs as f64;
         row.last_fired_at = Some(row.next_fire_at);
         row.last_occurrence_id = Some(row.next_occurrence_id.clone());
-        let reserved = if !timely && outcome != DispatchOutcome::Refused {
+        let reserved = if outcome == DispatchOutcome::Refused {
+            "skipped_refused"
+        } else if !timely {
             "skipped_late"
         } else {
-            "skipped_refused"
+            "start_unconfirmed"
         };
         row.last_dispatch = Some(reserved.into());
         match row.schedule.as_ref()?.next(now, row.created_at) {
@@ -489,7 +493,15 @@ impl ScheduleStore {
                 DispatchOutcome::Refused => row.last_dispatch = Some("skipped_refused".into()),
             }
         }
-        let _ = self.persist(&g);
+        if let Err(error) = self.persist(&g) {
+            // `start` already ran and cannot be undone. Memory holds the
+            // outcome; the durable row keeps the reservation written above.
+            tracing::warn!(
+                schedule_id = %due.schedule_id,
+                code = %error.code,
+                "schedule outcome was not persisted; the durable row still reads its reservation"
+            );
+        }
         Some(started)
     }
 
@@ -771,6 +783,66 @@ mod tests {
         assert_eq!(row.last_dispatch.as_deref(), Some("skipped_revoked"));
         assert!(store.due(1_060.0).is_empty());
         assert!(store.due(1_120.0).is_empty());
+    }
+
+    /// The row on disk while `start` runs is what a crash would leave behind.
+    #[test]
+    fn a_start_in_flight_is_not_durably_recorded_as_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("schedules.json");
+        let store = ScheduleStore::open(&path).unwrap();
+        let created = store.create(60, req(), "local", 1_000.0).unwrap();
+        let due = store.due(1_060.0).remove(0);
+        let mut in_flight = Vec::new();
+        assert_eq!(
+            store.consume_and_dispatch(
+                &due,
+                1_060.0,
+                || DispatchOutcome::Accepted,
+                || {
+                    in_flight = std::fs::read(&path).unwrap();
+                    DispatchOutcome::Accepted
+                }
+            ),
+            Some(DispatchOutcome::Accepted)
+        );
+        let row = store.get("local", &created.schedule_id).unwrap();
+        assert_eq!(row.last_dispatch.as_deref(), Some("attempted"));
+        // Reopen what was durable mid-start, before the next occurrence is due.
+        let crashed = dir.path().join("crashed.json");
+        std::fs::write(&crashed, &in_flight).unwrap();
+        let recovered = ScheduleStore::open_at(&crashed, 1_070.0, Settings::default()).unwrap();
+        let row = recovered.get("local", &created.schedule_id).unwrap();
+        assert_eq!(row.last_dispatch.as_deref(), Some("start_unconfirmed"));
+        assert_eq!(row.last_fired_at, Some(1_060.0), "the occurrence stays consumed");
+        assert!(recovered.due(1_070.0).is_empty(), "and is never dispatched again");
+    }
+
+    /// A failed write after `start` keeps the in-memory outcome and reports it.
+    #[cfg(unix)]
+    #[test]
+    fn an_unpersisted_outcome_keeps_the_started_job_in_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("schedules.json");
+        let store = ScheduleStore::open(&path).unwrap();
+        let created = store.create(60, req(), "local", 1_000.0).unwrap();
+        let due = store.due(1_060.0).remove(0);
+        let outcome = store.consume_and_dispatch(
+            &due,
+            1_060.0,
+            || DispatchOutcome::Accepted,
+            || {
+                // A directory at the target fails the atomic rename for every uid.
+                std::fs::remove_file(&path).unwrap();
+                std::fs::create_dir(&path).unwrap();
+                std::fs::write(path.join("occupied"), b"x").unwrap();
+                DispatchOutcome::Accepted
+            },
+        );
+        assert_eq!(outcome, Some(DispatchOutcome::Accepted));
+        let row = store.get("local", &created.schedule_id).unwrap();
+        assert_eq!(row.last_dispatch.as_deref(), Some("attempted"));
+        assert!(store.due(1_060.0).is_empty(), "the occurrence is not offered again");
     }
 
     #[test]

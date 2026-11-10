@@ -294,8 +294,9 @@ pub async fn build_app_with_sources(
         web.test_tavily_search = opts.web_test_tavily_search;
     }
     let planner = cfg.limit("agentic.deepagent_github.planner_timeout_sec");
-    let shim = ShimContext::new(&cfg.path, &home.root, &home.tmp_dir(), planner)
+    let mut shim = ShimContext::new(&cfg.path, &home.root, &home.tmp_dir(), planner)
         .map_err(|e| HarnessError::harness_config(format!("cannot locate own executable: {e}")))?;
+    shim.retrieval_enabled = cfg.flag_is_true("agentic.deepagent_github.retrieval.enabled");
     #[cfg(any(test, feature = "test-support"))]
     let shim = match opts.shim_exe {
         Some(exe) => ShimContext { exe, ..shim },
