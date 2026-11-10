@@ -42,8 +42,43 @@ jobs:
           PUBLISH: ${{ inputs.publish || false }}
         run: python3 scripts/release-plan.py
 
-  verify:
+  # Fail in minutes, not after the full build, when this run's token cannot
+  # create releases (#796: run 165 built for hours, then got HTTP 403 at
+  # publish). The probe POSTs an empty body, which GitHub cannot turn into a
+  # release because tag_name is required: 422 means the token passed the
+  # permission check. Only the exact 403 seen in #796 fails the job; any other
+  # status warns and continues, so the probe can never block a release that
+  # publish could have made.
+  preflight:
     needs: plan
+    if: needs.plan.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write # the same scope publish uses; the probe creates nothing
+    steps:
+      - name: Probe release-create permission without creating a release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # gh reads GH_TOKEN from the environment, keeping it out of argv.
+          out=$(printf '{}' | gh api -X POST "repos/$GITHUB_REPOSITORY/releases" --input - --include 2>&1) || true
+          status=$(printf '%s\n' "$out" | awk 'NR == 1 && /^HTTP/ { print $2 }')
+          status=${status:-000}
+          echo "POST /releases with an empty body returned HTTP $status"
+          if [ "$status" = 422 ]; then
+            echo "Token may create releases."
+          elif [ "$status" = 403 ] && printf '%s' "$out" | grep -q 'Resource not accessible by integration'; then
+            echo "::error title=Release token cannot create releases::HTTP 403 Resource not accessible by integration (see #796). Check Settings > Actions > General > Workflow permissions, then re-run."
+            exit 1
+          else
+            echo "::warning title=Release preflight inconclusive::HTTP $status; continuing. Publish will retry the real call."
+          fi
+
+  verify:
+    needs: [plan, preflight]
     if: needs.plan.outputs.should_release == 'true'
     permissions:
       contents: read
