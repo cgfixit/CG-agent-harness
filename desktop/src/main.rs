@@ -192,7 +192,33 @@ fn setup_code(home: &std::path::Path) -> Option<String> {
         .then(|| code.to_string())
 }
 
+/// The status line while a start is in progress. The setup window polls it.
+const STARTING: &str = "Starting owned backend…";
+
+/// The message to show when a start failed but left the status line saying it
+/// is still starting. A failure that already wrote its own message, or one
+/// that left a running backend in place, is not overwritten.
+fn stalled_start_message(current: &str, backend_running: bool, error: &str) -> Option<String> {
+    (!backend_running && current == STARTING).then(|| error.to_string())
+}
+
 fn launch(app: &tauri::AppHandle, initialize_key: Option<String>) -> Result<(), String> {
+    let result = launch_owned(app, initialize_key);
+    if let Err(error) = &result {
+        // The steps after the backend starts (native window, certificate pin,
+        // navigation) return early without touching the status line. At
+        // startup nothing else reports them: stderr is invisible in a GUI app.
+        if let Ok(mut owner) = app.state::<Desktop>().owner.lock() {
+            let replacement = stalled_start_message(&owner.message, owner.backend.is_some(), error);
+            if let Some(message) = replacement {
+                owner.message = message;
+            }
+        }
+    }
+    result
+}
+
+fn launch_owned(app: &tauri::AppHandle, initialize_key: Option<String>) -> Result<(), String> {
     let state = app.state::<Desktop>();
     if !state.instance_owned {
         return Err("Desktop ownership unavailable; relaunch after resolving the conflict.".into());
@@ -213,7 +239,7 @@ fn launch(app: &tauri::AppHandle, initialize_key: Option<String>) -> Result<(), 
             let _ = window.destroy();
         }
     }
-    owner.message = "Starting owned backend…".into();
+    owner.message = STARTING.into();
     let home = backend::home()?;
     match Backend::start(&home, initialize_key) {
         Err(message) => {
@@ -508,6 +534,16 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_failed_start_replaces_only_the_stalled_status_line() {
+        let stalled = super::stalled_start_message(super::STARTING, false, "Native certificate pin timed out");
+        assert_eq!(stalled.as_deref(), Some("Native certificate pin timed out"));
+        // A failure that already reported itself keeps its own message.
+        assert_eq!(super::stalled_start_message("Backend exited early", false, "x"), None);
+        // A refused restart leaves the running backend's status alone.
+        assert_eq!(super::stalled_start_message(super::STARTING, true, "x"), None);
+    }
+
     #[test]
     fn setup_code_tracks_the_current_file() {
         let home = tempfile::tempdir().unwrap();
