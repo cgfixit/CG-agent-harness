@@ -105,9 +105,9 @@ are not excluded by the server home lock; do not run concurrent writers manually
 
 Only the owned exact origin loads in the console webview. Navigation to other
 origins is denied; validated HTTP(S) links need native confirmation before the
-OS opens an external browser. New webviews and downloads are denied. The
-console has no download/export command; plan and PR-body file inputs remain,
-with native chooser acceptance pending. Model/web content uses the
+OS opens an external browser. New webviews and downloads are denied. Session
+export saves Markdown in the harness home. File pickers remain available.
+Model/web content uses the
 existing text renderer and nonce CSP. The external console window receives **no
 native capability**. Only bundled Setup can invoke status, retry, model inventory, offline preparation
 and public-certificate export through native pickers. No generic shell, arbitrary

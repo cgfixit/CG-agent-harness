@@ -496,17 +496,22 @@ dialog p { margin-bottom:12px; }
 :is(#passwordDialog, #soulEditor) input:not([type=checkbox]), #soulContent, #htmlEditorSource { display:block; width:100%; margin-top:6px; padding:8px 10px; background:var(--bg-input); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; }
 :is(#passwordDialog, #soulEditor) input:not([type=checkbox]):focus, #soulContent:focus, #htmlEditorSource:focus { outline:none; border-color:var(--border-focus); box-shadow:0 0 0 2px rgba(212,146,11,.18); }
 :is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) input[type=checkbox] { margin-right:6px; accent-color:var(--accent-amber); }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog) button { padding:8px 14px; margin:4px 8px 8px 0; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; cursor:pointer; }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog) button:hover { background:var(--border); }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog, #notesDialog) button { padding:8px 14px; margin:4px 8px 8px 0; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; cursor:pointer; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog, #notesDialog) button:hover { background:var(--border); }
 /* One primary action per dialog; a destructive one is red, not amber. */
-:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog) button.primary { background:var(--accent-amber); border-color:var(--accent-amber); color:#000; font-weight:700; }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog) button.primary:hover { background:#e8a31c; border-color:#e8a31c; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog, #notesDialog) button.primary { background:var(--accent-amber); border-color:var(--accent-amber); color:#000; font-weight:700; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog, #notesDialog) button.primary:hover { background:#e8a31c; border-color:#e8a31c; }
 :is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button.danger { background:transparent; border-color:var(--accent-red); color:var(--accent-red); font-weight:700; }
 :is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button.danger:hover { background:var(--accent-red); color:#000; }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog) button:disabled { opacity:.45; cursor:default; }
-:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog) :focus-visible { outline:2px solid var(--accent-amber); outline-offset:2px; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog, #notesDialog) button:disabled { opacity:.45; cursor:default; }
+:is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog, #notesDialog) :focus-visible { outline:2px solid var(--accent-amber); outline-offset:2px; }
 #passwordFeedback:empty, #sessionClearFeedback:empty { display:none; }
 #passwordFeedback, #sessionClearFeedback { color:var(--accent-red); }
+#notesDialog input { max-width:100%; margin:6px 0; }
+#notesControls { border:0; min-width:0; }
+#notesStatus, #notesList { white-space:pre-wrap; overflow-wrap:anywhere; }
+#notesList { list-style:none; }
+#notesList li { margin:8px 0; }
 #soulEditor, #htmlEditorDialog { width:min(950px,calc(100% - 32px)); }
 #htmlEditorDialog .html-editor-panes { display:flex; gap:12px; align-items:stretch; }
 #htmlEditorDialog .html-editor-panes label { flex:1; min-width:0; }
@@ -682,7 +687,10 @@ dialog p { margin-bottom:12px; }
         <div class="side-pane active" id="pane-commands" role="tabpanel" aria-labelledby="tab-commands"></div>
         <div class="side-pane" id="pane-sessions" role="tabpanel" aria-labelledby="tab-sessions"></div>
         <div class="side-pane" id="pane-api-keys" role="tabpanel" aria-labelledby="tab-api-keys"><p>Sign in as an administrator to manage credentials.</p></div>
-        <div class="side-pane" id="pane-memory" role="tabpanel" aria-labelledby="tab-memory"><p>Open Memory to review this account's pending proposals.</p></div>
+        <div class="side-pane" id="pane-memory" role="tabpanel" aria-labelledby="tab-memory">
+          <button id="openNotes" type="button" aria-haspopup="dialog">Manage uploaded notes</button>
+          <div id="memoryReview"><p>Open Memory to review this account's pending proposals.</p></div>
+        </div>
         <div class="side-pane" id="pane-users" role="tabpanel" aria-labelledby="tab-users">
           <div id="usersPanelStatus" class="panel-status" hidden></div>
           <div id="usersPanelBody"></div>
@@ -734,6 +742,23 @@ dialog p { margin-bottom:12px; }
   <input id="agentPRBodyFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
   <input id="agentPlanFile" type="file" accept=".md,.txt,text/markdown,text/plain" hidden>
 
+<dialog id="notesDialog" aria-labelledby="notesTitle" aria-describedby="notesDescription">
+  <h2 id="notesTitle">Uploaded notes</h2>
+  <p id="notesDescription">Only your account can manage these notes. Matching text can appear in local chat across your sessions. Try /prompt followed by a query to see what matches.</p>
+  <fieldset id="notesControls" disabled>
+    <legend>Manage notes</legend>
+    <form id="notesForm">
+      <label for="notesFiles">Text or Markdown files</label>
+      <input id="notesFiles" type="file" accept=".txt,.md" multiple aria-describedby="notesLimits" disabled>
+      <button id="notesUpload" type="submit" class="primary" disabled>Upload notes</button>
+    </form>
+    <p id="notesLimits"></p>
+    <button id="notesRefresh" type="button">Refresh list</button>
+    <ul id="notesList" aria-label="Saved notes"></ul>
+  </fieldset>
+  <p id="notesStatus" role="status"></p>
+  <button id="notesClose" type="button">Close</button>
+</dialog>
 <dialog id="analyticsDialog" aria-labelledby="analyticsTitle" aria-describedby="analyticsDescription">
   <div class="analytics-header"><div><h2 id="analyticsTitle">Analytics</h2><p id="analyticsDescription">Your session history · shared spend and coding-run history</p></div>
     <div><button id="refreshAnalytics" type="button">Refresh</button> <button id="closeAnalytics" type="button" autofocus>Close</button></div></div>
@@ -825,8 +850,8 @@ dialog p { margin-bottom:12px; }
 </dialog>
 <dialog id="sessionClearDialog" aria-labelledby="sessionClearTitle" aria-describedby="sessionClearDescription">
   <h2 id="sessionClearTitle">Clear my session history?</h2>
-  <p id="sessionClearDescription">Permanently delete your saved chat sessions, including messages, titles, goals, selected skills and token totals. Other accounts and unassigned legacy sessions are retained. This cannot be undone.</p>
-  <p>Memory notes, persona, web context, coding runs and derived structured-memory episodes are kept unless you also confirm the cascade below. Facts and proposals are never cleared here. Your active chat will stop.</p>
+  <p id="sessionClearDescription">Permanently delete your saved chat sessions, their attachments, and your uploaded notes. Other accounts and unassigned legacy sessions are retained. This cannot be undone.</p>
+  <p>Pinned memory notes, persona, web context, coding runs, facts and proposals stay. Derived episodes stay unless you select the option below. Your active chat will stop.</p>
   <p><label><input type="checkbox" id="sessionClearDerivedEpisodes"> Also delete this account's derived episodes that are not referenced by a pending proposal</label></p>
   <button id="sessionClearCancel" autofocus>Cancel</button>
   <button id="sessionClearConfirm" class="danger">Delete my session history</button>
@@ -899,6 +924,10 @@ let sessionClearing = false;
 let sessionRevision = 0; // Discard replies and navigation responses from an older selection.
 let suggestionNoticeSession = null; // Session that already showed the one-time 'suggestion queued' note.
 let currentSession = null;   // session_id string or null
+function setCurrentSession(id) {
+  if (id !== currentSession) resetNotesDialog();
+  currentSession = id;
+}
 let promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false};
 
 /* Every submitted line is recallable, whatever happened to it: chat turns,
@@ -2056,11 +2085,16 @@ async function exportSessionMarkdown(sessionId, button, feedback, revision) {
     }
     const body = await resp.text();
     if (stale()) return;
+    const saved = 'Saved exports/' + sessionId + '.md in the harness home.';
+    if (!$('desktopWeb').hidden) {
+      feedback.textContent = saved;
+      return;
+    }
     const url = URL.createObjectURL(new Blob([body], { type: 'text/markdown;charset=utf-8' }));
     const link = document.createElement('a'); link.href = url; link.download = sessionId + '.md';
     document.body.appendChild(link); link.click(); link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 30000);
-    feedback.textContent = 'Saved exports/' + sessionId + '.md in the harness home; download offered.';
+    feedback.textContent = saved + ' Download offered.';
   } catch (error) {
     if (!stale()) feedback.textContent = error.name === 'AbortError' ? 'Export timed out.' : error.message;
   } finally {
@@ -2068,6 +2102,130 @@ async function exportSessionMarkdown(sessionId, button, feedback, revision) {
     if (!stale()) button.disabled = false;
   }
 }
+
+/* ── Uploaded notes (separate from saved facts and pinned notes) ── */
+let notesViewRevision = 0;
+let notesLimits = null;
+function resetNotesDialog() {
+  notesViewRevision++;
+  notesLimits = null;
+  $('notesDialog').close();
+  $('notesFiles').value = '';
+  $('notesFiles').disabled = $('notesUpload').disabled = true;
+  $('notesControls').disabled = true;
+  $('notesList').replaceChildren();
+  $('notesLimits').textContent = '';
+  $('notesStatus').textContent = '';
+}
+async function withNotesDialog(work) {
+  const view = notesViewRevision, revision = sessionRevision;
+  const current = () => view === notesViewRevision && revision === sessionRevision && $('notesDialog').open;
+  const controls = $('notesControls'), status = $('notesStatus');
+  if (!current()) return;
+  controls.disabled = true;
+  try { await work(current, status); }
+  catch (error) { if (current()) status.textContent = error.message; }
+  finally { if (current()) controls.disabled = false; }
+}
+async function readNotesList(current) {
+  $('notesList').replaceChildren();
+  const result = await api('/api/notes-corpus');
+  if (!current()) return;
+  notesLimits = result.limits;
+  $('notesFiles').disabled = $('notesUpload').disabled = !notesLimits;
+  $('notesLimits').textContent = notesLimits
+    ? notesLimits.max_files_per_request + ' files per upload · ' + notesLimits.max_file_bytes.toLocaleString() +
+      ' bytes per file · ' + result.count + ' / ' + notesLimits.max_files_per_owner + ' notes saved'
+    : 'Upload limits are unavailable.';
+  if (!result.notes.length) {
+    const empty = document.createElement('li'); empty.textContent = 'No uploaded notes.';
+    $('notesList').appendChild(empty);
+  }
+  for (const note of result.notes) {
+    const row = document.createElement('li');
+    const label = (note.magic_mime === 'text/markdown' ? 'Markdown' : 'Text') + ' · ' +
+      note.byte_len.toLocaleString() + ' bytes · ref ' + note.id.slice(0, 8);
+    row.append(label, document.createElement('br'));
+    const remove = document.createElement('button'), cancel = document.createElement('button');
+    remove.type = cancel.type = 'button';
+    remove.textContent = 'Delete'; cancel.textContent = 'Cancel'; cancel.hidden = true;
+    remove.setAttribute('aria-label', 'Delete ' + label);
+    remove.addEventListener('click', () => {
+      if (cancel.hidden) {
+        cancel.hidden = false; remove.textContent = 'Confirm delete';
+        remove.setAttribute('aria-label', 'Confirm delete ' + label);
+        return;
+      }
+      withNotesDialog(async (current, status) => {
+        status.textContent = 'Deleting note…';
+        await api('/api/notes-corpus/' + encodeURIComponent(note.id), 'DELETE');
+        if (!current()) return;
+        status.textContent = 'Deleted note ' + note.id.slice(0, 8) + '.';
+        try { await readNotesList(current); }
+        catch (error) { if (current()) status.textContent += '\nCould not refresh the list: ' + error.message; }
+        if (current()) $('notesRefresh').focus();
+      });
+    });
+    cancel.addEventListener('click', () => {
+      cancel.hidden = true; remove.textContent = 'Delete';
+      remove.setAttribute('aria-label', 'Delete ' + label); remove.focus();
+    });
+    row.append(remove, cancel);
+    $('notesList').appendChild(row);
+  }
+}
+function refreshNotesDialog() {
+  withNotesDialog(async (current, status) => {
+    status.textContent = 'Loading notes…';
+    await readNotesList(current);
+    if (current()) status.textContent = '';
+  });
+}
+$('openNotes').addEventListener('click', () => {
+  resetNotesDialog();
+  $('notesDialog').showModal();
+  refreshNotesDialog();
+});
+$('notesRefresh').addEventListener('click', refreshNotesDialog);
+$('notesClose').addEventListener('click', resetNotesDialog);
+$('notesDialog').addEventListener('cancel', event => { event.preventDefault(); resetNotesDialog(); });
+$('notesForm').addEventListener('submit', event => {
+  event.preventDefault();
+  if ($('notesControls').disabled || !notesLimits) return;
+  const files = Array.from($('notesFiles').files);
+  withNotesDialog(async (current, status) => {
+    if (!files.length) { status.textContent = 'Choose at least one .txt or .md file.'; return; }
+    if (files.length > notesLimits.max_files_per_request) {
+      status.textContent = 'Choose at most ' + notesLimits.max_files_per_request + ' files. Nothing was uploaded.';
+      return;
+    }
+    const sent = [], lines = [], body = new FormData();
+    for (const file of files) {
+      const reason = !/\.(md|txt)$/i.test(file.name.trim()) || file.name.includes('..') ? 'choose .txt or .md'
+        : !file.size ? 'file is empty' : file.size > notesLimits.max_file_bytes ? 'file is too large' : '';
+      if (reason) lines.push(file.name + ': skipped (' + reason + ').');
+      else { sent.push(file); body.append('file', file, file.name); }
+    }
+    if (!sent.length) { status.textContent = lines.join('\n'); return; }
+    $('notesFiles').value = '';
+    status.textContent = 'Uploading ' + sent.length + ' file(s)…';
+    try {
+      const result = await api('/api/notes-corpus', 'POST', body, ATTACHMENT_UPLOAD_TIMEOUT_MS);
+      if (!current()) return;
+      if (result.notes?.length !== sent.length) throw new Error('The server did not confirm every submitted file.');
+      sent.forEach((file, index) => lines.push(file.name + ': saved (ref ' + result.notes[index].id.slice(0, 8) + ').'));
+    } catch (error) {
+      if (!current()) return;
+      const failed = sent[error.details?.file_index];
+      const rejected = error.status >= 400 && error.status < 500 || error.code === 'NOTES_BUSY';
+      lines.push((failed ? failed.name + ': ' : '') + error.message);
+      lines.push(rejected ? 'The server saved none of the submitted files.' : 'Upload outcome unknown. Check the list before retrying.');
+    }
+    status.textContent = lines.join('\n');
+    try { await readNotesList(current); }
+    catch (error) { if (current()) status.textContent += '\nCould not refresh the list: ' + error.message; }
+  });
+});
 
 /* ── API Keys pane; catalog and persistence remain server-owned ── */
 async function refreshKeys() {
@@ -2849,7 +3007,7 @@ $('sessionClearDialog').addEventListener('cancel', e => { if (sessionClearing) e
 $('sessionClearConfirm').addEventListener('click', async () => {
   if (sessionClearing) return;
   sessionClearing = true;
-  abortInflightSearch(); ++sessionRevision;
+  abortInflightSearch(); ++sessionRevision; resetNotesDialog();
   sendBtn.disabled = true;
   $('sessionClearConfirm').disabled = true;
   $('sessionClearCancel').disabled = true;
@@ -2863,7 +3021,7 @@ $('sessionClearConfirm').addEventListener('click', async () => {
     });
     clearTranscript();
     retryAttachmentIds = null;
-    currentSession = null; promptHistory.session = null; promptHistory.prompts = []; sessionGoal = ''; loopAuto = false; cancelAutoLoopStart('');
+    setCurrentSession(null); promptHistory.session = null; promptHistory.prompts = []; sessionGoal = ''; loopAuto = false; cancelAutoLoopStart('');
     refreshMemoryProposals();
     currentStyle = 'off'; currentStyleIssue = null; paintStyle();
     input.value = '';
@@ -2939,6 +3097,7 @@ async function runSlash(line, webCommand) {
           if (sub === 'use' && rest.length !== 2) { sys('usage: /session use <id> — ids are in /session list or the Sessions pane'); break; }
           const wasSessionless = !currentSession;
           const revision = ++sessionRevision;
+          resetNotesDialog();
           sendBtn.disabled = true;
           abortInflightSearch(); if (inflightChat) await requestLoopStop(); else stopLoop();
           try {
@@ -2953,7 +3112,7 @@ async function runSlash(line, webCommand) {
               if (wasSessionless) adoptPendingHistory(s.session_id);
               promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false};
             }
-            currentSession = s.session_id;
+            setCurrentSession(s.session_id);
             paintSessionTokens(s.tokens);
             sessionGoal = typeof s.goal === 'string' ? s.goal : '';
             loopAuto = false; cancelAutoLoopStart('');
@@ -3017,7 +3176,7 @@ async function runSlash(line, webCommand) {
         if (!currentSession) {
           const created = await api('/api/sessions', 'POST', {});
           adoptPendingHistory(created.session_id);
-          currentSession = created.session_id;
+          setCurrentSession(created.session_id);
           paintSessionTokens(created.tokens);
           $('sSession').textContent = currentSession;
           currentStyle = 'off'; currentStyleIssue = null; paintStyle();
@@ -3430,7 +3589,7 @@ async function runSlash(line, webCommand) {
         }
         if (!['use','clear','status'].includes(action) || (action === 'use' && rest.length < 2)) { sys('usage: /skill use <id...> | clear | status | check:<profile> — /skills all lists ids'); break; }
         if (!currentSession) {
-          const created = await api('/api/sessions', 'POST', {}); adoptPendingHistory(created.session_id); currentSession = created.session_id;
+          const created = await api('/api/sessions', 'POST', {}); adoptPendingHistory(created.session_id); setCurrentSession(created.session_id);
           paintSessionTokens(created.tokens);
           $('sSession').textContent = currentSession;
           currentStyle = 'off'; currentStyleIssue = null; paintStyle();
@@ -3895,7 +4054,7 @@ async function runSlash(line, webCommand) {
         if (!currentSession) {
           const created = await api('/api/sessions', 'POST', { title: Array.from(goalText).slice(0, 40).join('') });
           adoptPendingHistory(created.session_id);
-          currentSession = created.session_id;
+          setCurrentSession(created.session_id);
           paintSessionTokens(created.tokens);
           $('sSession').textContent = currentSession;
           currentStyle = 'off'; currentStyleIssue = null; paintStyle();
@@ -3988,7 +4147,7 @@ async function runSlash(line, webCommand) {
             const created = await api('/api/sessions', 'POST', { title: Array.from(loopGoalText).slice(0, 40).join('') });
             if (loopSetupStale()) break;
             adoptPendingHistory(created.session_id);
-            currentSession = created.session_id;
+            setCurrentSession(created.session_id);
             paintSessionTokens(created.tokens);
             $('sSession').textContent = currentSession;
             currentStyle = 'off'; currentStyleIssue = null; paintStyle();
@@ -4709,7 +4868,7 @@ async function finishChat(r, asLoop) {
     /* A session the server just auto-created starts with style off; the
        status bar must not keep showing a cleared session's preset. */
     const switched = currentSession !== r.session_id;
-    currentSession = r.session_id;
+    setCurrentSession(r.session_id);
     /* Painted after the assignment so the selector is enabled for the
        auto-created session at once, not after the next status poll. */
     if (switched) { currentStyle = 'off'; currentStyleIssue = null; paintStyle(); }
@@ -5846,10 +6005,11 @@ function setPasswordRequired(on) {
    expired session), so neither the next account nor the same user's next
    message inherits the previous view. */
 function resetAccountView() {
+  resetNotesDialog();
   clearTimeout(memoryRefreshTimer); memoryViewRevision++; memoryRefreshBusy = false;
-  clearTranscript(); sessionSearchQuery = ''; sessionSearchSeq++; $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('pane-memory').replaceChildren(); $('usersPanelBody').replaceChildren();
+  clearTranscript(); sessionSearchQuery = ''; sessionSearchSeq++; $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('memoryReview').replaceChildren(); $('usersPanelBody').replaceChildren();
   netconnectRevision++; $('pane-netconnect').replaceChildren();
-  currentSession = null; sessionGoal = ''; loopAuto = false; stopLoop();
+  setCurrentSession(null); sessionGoal = ''; loopAuto = false; stopLoop();
   paintSessionTokens({total:0});
   $('sSession').textContent = 'none'; input.value = ''; retryAttachmentIds = null;
   promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false};
@@ -6113,6 +6273,7 @@ if (hAuthLogout) {
        meanwhile owns a newer revision and must keep it. */
     abortInflightSearch();
     const claimed = ++sessionRevision;
+    resetNotesDialog();
     sendBtn.disabled = true;
     clearPendingAttachments();
     clearAnalytics();
@@ -6260,8 +6421,8 @@ function memoryRunOutcome(run) {
   return run.candidate_count === 0 ? 'No lasting details found to suggest. Nothing was saved.' : 'No suitable new memories to suggest. Nothing was saved.';
 }
 async function refreshMemoryProposals() {
-  const panel = $('pane-memory');
-  if (memoryRefreshBusy || document.hidden || !panel.classList.contains('active') || document.body.classList.contains('signed-out') || document.body.classList.contains('password-required')) return;
+  const pane = $('pane-memory'), panel = $('memoryReview');
+  if (memoryRefreshBusy || document.hidden || !pane.classList.contains('active') || document.body.classList.contains('signed-out') || document.body.classList.contains('password-required')) return;
   if (apiRetryDelay()) { clearTimeout(memoryRefreshTimer); memoryRefreshTimer = setTimeout(refreshMemoryProposals, apiRetryDelay()); return; }
   memoryRefreshBusy = true;
   clearTimeout(memoryRefreshTimer);
@@ -6397,7 +6558,7 @@ async function refreshMemoryProposals() {
   finally {
     if (revision === memoryViewRevision) {
       memoryRefreshBusy = false;
-      if (delay && !document.hidden && panel.classList.contains('active') && !document.body.classList.contains('signed-out') && !document.body.classList.contains('password-required')) memoryRefreshTimer = setTimeout(refreshMemoryProposals, Math.max(delay, apiRetryDelay()));
+      if (delay && !document.hidden && pane.classList.contains('active') && !document.body.classList.contains('signed-out') && !document.body.classList.contains('password-required')) memoryRefreshTimer = setTimeout(refreshMemoryProposals, Math.max(delay, apiRetryDelay()));
     }
   }
 }
