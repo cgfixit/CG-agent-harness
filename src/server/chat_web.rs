@@ -135,15 +135,6 @@ fn response_has_calls(response: &Value) -> bool {
     }
 }
 
-fn latest_user_message(history: &[ChatMessage]) -> &str {
-    history
-        .iter()
-        .rev()
-        .find(|message| message.role == "user")
-        .map(|message| message.content.as_str())
-        .unwrap_or("")
-}
-
 const WEB_SEARCH_CLOSED: &str =
     "web search stays closed after a local notes or corpus read unless the message asks for outside sources";
 
@@ -241,6 +232,12 @@ fn appended_tokens(messages: &[Value]) -> u64 {
 fn min_result_tokens(token_ratio: f64) -> u64 {
     super::compaction::calibrated_tokens(MIN_EVIDENCE_TOKENS, token_ratio)
 }
+
+/// Most evidence one `/loop` turn restores from earlier turns or hands to a
+/// digest: `web.evidence_tokens`, held at the router's working target
+/// (`docs/WEB_DECISION_ROUTER.md`) so carried findings never crowd out the
+/// turn's own reads.
+const CARRIED_EVIDENCE_TOKENS: u64 = 4000;
 
 /// The notice on every fetched page.
 const FETCH_NOTICE: &str = "Untrusted fetched page text; excerpt may be truncated.";
@@ -390,6 +387,7 @@ pub async fn run_stream(
     sized_tuned: bool,
     loop_turn: bool,
     goal: &str,
+    user_message: &str,
     run_id: Option<&str>,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
     usage_snapshot: &std::sync::Mutex<UsageSnapshot>,
@@ -402,7 +400,7 @@ pub async fn run_stream(
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
         // A turn of several tool rounds gets more than one call's deadline; each
         // model call keeps its own (`ChatClient::timeout_for`).
-        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, loop_turn, goal, run_id, output, &mut usage, &mut known_completion_tokens, usage_snapshot)) =>
+        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, loop_turn, goal, user_message, run_id, output, &mut usage, &mut known_completion_tokens, usage_snapshot)) =>
             result.unwrap_or_else(|_| Err(error("WEB_TIMEOUT", "chat web turn deadline exceeded"))),
     };
     result.map_err(|failure| match usage {
@@ -430,6 +428,7 @@ async fn run_inner(
     sized_tuned: bool,
     loop_turn: bool,
     goal: &str,
+    user_message: &str,
     run_id: Option<&str>,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
     usage: &mut Option<crate::llm::spend::UsageTokens>,
@@ -451,10 +450,17 @@ async fn run_inner(
     let question = if loop_turn && !goal.trim().is_empty() {
         goal
     } else {
-        latest_user_message(history)
+        user_message
     };
     let mut route = StickyRoute::from_user_message(question);
     route.observe_notes_in_prompt(system);
+    // A local chat turn carries its notes excerpts with the new message.
+    if let Some(context) = history
+        .last()
+        .and_then(|message| crate::server::prompts::turn_context_of(&message.content))
+    {
+        route.observe_notes_in_prompt(context);
+    }
     let mut run_evidence = run_id
         .map(|id| state.loops.web_evidence(owner, id, goal))
         .unwrap_or_default();
@@ -473,16 +479,15 @@ async fn run_inner(
             .iter()
             .map(|p| json!({"id":p.id,"url":p.url,"title":p.title,"fetched_at":p.fetched_at}))
             .collect();
-        let mut context = json!({"notice":"Untrusted active-goal findings for the current_turn below, not a new turn. Citations were checked against currently permitted cache; logical support still needs review. Reuse these findings; read again only for a specific missing passage or required refresh. An attempted query alone supplies no factual evidence.","current_turn":latest_user_message(history),"findings":packet,"sources":receipt_sources,"passages":super::web_research::prompt_passages(&passages, web.limits.stale_seconds),"already_searched":run_evidence.queries});
+        let mut context = json!({"notice":"Untrusted active-goal findings for the current_turn below, not a new turn. Citations were checked against currently permitted cache; logical support still needs review. Reuse these findings; read again only for a specific missing passage or required refresh. An attempted query alone supplies no factual evidence.","current_turn":user_message,"findings":packet,"sources":receipt_sources,"passages":super::web_research::prompt_passages(&passages, web.limits.stale_seconds),"already_searched":run_evidence.queries});
         let fits = |context: &Value| -> Result<bool> {
             let mut proposed = messages.clone();
             proposed.push(json!({"role":"user","content":context.to_string()}));
-            Ok(
-                super::compaction::estimate_tokens(&context.to_string()) <= web.limits.evidence_tokens.min(4000)
-                    && prompt_estimate(system.len() + serde_json::to_vec(&proposed)?.len(), token_ratio)
-                        .saturating_add(super::compaction::reply_reservation(&state.backend, cap))
-                        <= web.limits.total_tokens,
-            )
+            Ok(super::compaction::estimate_tokens(&context.to_string())
+                <= web.limits.evidence_tokens.min(CARRIED_EVIDENCE_TOKENS)
+                && prompt_estimate(system.len() + serde_json::to_vec(&proposed)?.len(), token_ratio)
+                    .saturating_add(super::compaction::reply_reservation(&state.backend, cap))
+                    <= web.limits.total_tokens)
         };
         while !fits(&context)? {
             if context["passages"].as_array_mut().unwrap().pop().is_none() {
@@ -508,6 +513,7 @@ async fn run_inner(
     let mut peak_extra = 0u64;
     let mut tools_withheld = false;
     let mut initial_prompt_tools = false;
+    let mut initial_extra = 0u64;
     for turn in 0..=web.limits.chat_tool_calls {
         check_evidence(state, owner, &sources)?;
         let reservation = super::compaction::reply_reservation(&state.backend, cap);
@@ -526,7 +532,8 @@ async fn run_inner(
                     token_ratio,
                 );
                 if estimate.saturating_add(digest_cap) <= web.limits.total_tokens
-                    && super::compaction::estimate_tokens(&input.to_string()) <= web.limits.evidence_tokens.min(4000)
+                    && super::compaction::estimate_tokens(&input.to_string())
+                        <= web.limits.evidence_tokens.min(CARRIED_EVIDENCE_TOKENS)
                 {
                     break;
                 }
@@ -586,7 +593,7 @@ async fn run_inner(
                     Ok((answer, dropped)) => {
                         let findings = serde_json::to_value(answer)?;
                         run_evidence.packet = Some(findings.clone());
-                        let packet = json!({"role":"user","content":json!({"notice":"Untrusted evidence digest for the current_turn below, not a new turn. Quote provenance checked, logical entailment not guaranteed. Answer only that harness turn using the source passages; do not simulate a later turn.","current_turn":latest_user_message(history),"findings":findings}).to_string()});
+                        let packet = json!({"role":"user","content":json!({"notice":"Untrusted evidence digest for the current_turn below, not a new turn. Quote provenance checked, logical entailment not guaranteed. Answer only that harness turn using the source passages; do not simulate a later turn.","current_turn":user_message,"findings":findings}).to_string()});
                         let mut proposed = messages.clone();
                         proposed.push(packet);
                         if prompt_estimate(system.len() + serde_json::to_vec(&proposed)?.len(), token_ratio)
@@ -654,6 +661,9 @@ async fn run_inner(
         }
         if turn == 0 {
             initial_prompt_tools = round_fits;
+            // What the first call sends beyond the history (restored
+            // evidence): calibration must count it.
+            initial_extra = appended_tokens(&messages[history.len()..]);
         }
         // A middle round can be the largest request: earlier results plus the
         // definitions, which the final round may no longer carry.
@@ -791,6 +801,7 @@ async fn run_inner(
             reply.reported_completion_tokens = totals.output_tokens;
             reply.initial_prompt_tokens = initial_prompt_tokens;
             reply.initial_prompt_tools = initial_prompt_tools;
+            reply.initial_prompt_extra_tokens = initial_extra;
             reply.final_prompt_tools = final_tools;
             reply.peak_prompt_extra_tokens = peak_extra;
             return Ok((reply, events));

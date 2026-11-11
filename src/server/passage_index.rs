@@ -121,6 +121,7 @@ pub fn retrieve_passages(docs: &[PassageDoc], query: &str, limit: usize) -> Resu
     Ok(crate::server::retrieval_ranking::select_diverse(
         candidates,
         limit,
+        2,
         |p| &p.text,
     ))
 }
