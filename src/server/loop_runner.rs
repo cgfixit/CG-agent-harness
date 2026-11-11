@@ -476,21 +476,6 @@ async fn run_turns(
             finish(&state, &run_id, run, LoopRunState::Done, reason, &events, &dir);
             return;
         }
-        let user = match current_authority(&state, user) {
-            Ok(user) => user,
-            Err(reason) => {
-                finish(
-                    &state,
-                    &run_id,
-                    run,
-                    LoopRunState::Failed,
-                    format!("loop aborted — {reason}"),
-                    &events,
-                    &dir,
-                );
-                return;
-            }
-        };
         match wait_for_model(&state, &cancel, MODEL_BUSY_WAIT).await {
             Ok(()) => {}
             Err(BusyWait::Stopped) => {
@@ -514,6 +499,24 @@ async fn run_turns(
                 return;
             }
         }
+        // After the wait, never before it: the wait can last as long as a
+        // background model job, and an account disabled or demoted meanwhile
+        // must not get the turn that was queued for it.
+        let user = match current_authority(&state, user) {
+            Ok(user) => user,
+            Err(reason) => {
+                finish(
+                    &state,
+                    &run_id,
+                    run,
+                    LoopRunState::Failed,
+                    format!("loop aborted — {reason}"),
+                    &events,
+                    &dir,
+                );
+                return;
+            }
+        };
         turn += 1;
         let framed = loop_turn_prompt(
             turn,

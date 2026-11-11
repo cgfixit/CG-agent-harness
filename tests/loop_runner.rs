@@ -883,6 +883,65 @@ async fn as_account(
 }
 
 #[tokio::test]
+async fn an_account_disabled_during_the_busy_wait_gets_no_turn() {
+    use reqwest::Method;
+    let (model_url, calls) = start_counting_mock().await;
+    let s = spawn_server(
+        &model_url,
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("loop.cooldown_ms", "0"),
+    )
+    .await;
+    let (alice_id, alice) = account(&s, "alice", "operator").await;
+    let (status, created) = as_account(&s, &alice, Method::POST, "/api/sessions", json!({"title": "loop"})).await;
+    assert_eq!(status, 201);
+    let sid = created["session_id"].as_str().unwrap().to_string();
+    // Web off: a web turn re-reads the account itself, so only a plain local
+    // turn shows whether the runner's own check follows the wait.
+    let (status, goal) = as_account(
+        &s,
+        &alice,
+        Method::POST,
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal": "ship it", "web_mode": "off"}),
+    )
+    .await;
+    assert_eq!(status, 200, "{goal}");
+    let held = s.state.generation_gate.claim("consolidation").unwrap();
+    let (status, started) = as_account(
+        &s,
+        &alice,
+        Method::POST,
+        "/api/loop/start",
+        json!({"session_id": sid, "max_turns": 1}),
+    )
+    .await;
+    assert_eq!(status, 200, "{started}");
+    let run_id = started["run"]["run_id"].as_str().unwrap().to_string();
+    // The turn is queued behind the busy model when the account is disabled.
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    assert_eq!(s.state.loops.get(&alice_id, &run_id).unwrap().state.as_str(), "running");
+    s.state.auth.as_ref().unwrap().disable_user("alice").unwrap();
+    drop(held);
+    for _ in 0..200 {
+        let run = s.state.loops.get(&alice_id, &run_id).unwrap();
+        if run.state.terminal() {
+            assert_eq!(run.state.as_str(), "failed", "{}", run.reason);
+            assert!(run.reason.contains("disabled"), "{}", run.reason);
+            assert_eq!(
+                calls.load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "the queued turn must not reach the model"
+            );
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    panic!("the run did not end after its account was disabled during the wait");
+}
+
+#[tokio::test]
 async fn runs_are_owner_bound_and_end_when_the_account_is_disabled() {
     use reqwest::Method;
     let (model_url, _count) = start_counting_mock().await;
