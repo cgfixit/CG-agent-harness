@@ -1,138 +1,124 @@
 # Subprocess lifetime and capture
 
-The synchronous argv runner and Unix shim share one subprocess owner. Nonblocking
-pipe reads and stdin writes share the operation deadline. Capture refuses more
-than 4 MiB of raw stdout and stderr instead of returning truncated machine data;
-the same ceiling covers Git and `gh`. Verification overflow is a setup error.
-Publication overflow is indeterminate because the command may have succeeded;
-the writer records the operation and does not retry it.
+The synchronous argv runner and the Unix shim share one subprocess owner.
+Nonblocking pipe reads and stdin writes share the operation deadline. Capture
+refuses more than 4 MiB of raw stdout and stderr instead of returning truncated
+machine data; the same ceiling covers Git and `gh`. Verification overflow is a
+setup error. Publication overflow is indeterminate, because the command may
+have succeeded: the writer records the operation and does not retry it.
 
 The shim uses a blocking worker with an atomic cancellation flag. Aborting the
-owning future sets that flag; the worker observes it during bounded I/O and
-closes its pipes. No independent reader tasks are detached. Cancellation is
-cooperative and cleanup may finish shortly after the HTTP acknowledgement.
-The direct child remains unreaped until cleanup, so its process-group identity
-cannot be reused before group signaling. This also covers ordinary background
-children whose leader exits while they retain its pipes.
+owning future sets the flag; the worker sees it during bounded I/O and closes
+its pipes. No reader tasks are detached. Cancellation is cooperative, so cleanup
+may finish shortly after the HTTP acknowledgement. The direct child stays
+unreaped until cleanup, so its process-group identity cannot be reused before
+group signaling; that also covers background children whose leader exits while
+they hold its pipes.
 
 On macOS, public `libproc` interfaces record descendants across process groups.
-Cleanup stops observed parents, rechecks process identity, and kills observed
-descendants under time, count, and buffer ceilings. Seatbelt permissions do not change.
+Cleanup stops observed parents, rechecks process identity and kills observed
+descendants under time, count and buffer ceilings. Seatbelt permissions do not
+change.
 
 **Ancestry cleanup is best-effort, not process containment.** A child that forks
-and reparents before observation may escape; enumeration can fail or truncate.
-Start-time checking and signaling are separate syscalls. Server SIGKILL or a
-crash does not run the owner's destructor. Linux keeps group cleanup without
-macOS descendant enumeration. The non-Unix runners retain their prior behavior;
-these Unix capture/lifetime claims do not apply to Windows.
+and reparents before observation may escape, and enumeration can fail or
+truncate. Server SIGKILL or a crash does not run the owner's destructor. Linux
+keeps group cleanup without descendant enumeration. These Unix claims do not
+apply to the Windows runners.
 
 Filesystem and network denial are separate boundaries. The synchronous runner
-has no per-run disk quota or general memory or process-count limit. Kernel calls
-and cleanup can extend the requested deadline. Use isolated
-fixtures and inspect surviving work after interruption; the console correctly
-keeps its descendant-survival warning.
+has no per-run disk quota and no general memory or process-count limit, and
+cleanup can extend the requested deadline. Inspect surviving work after an
+interruption; the console keeps its descendant-survival warning for that reason.
 
 ## Child environments
 
-`src/common/child_env.rs` owns opt-outs for three child kinds.
-`src/common/mcp.rs` applies the MCP kind to stdio servers, which receive
-`DO_NOT_TRACK=1`. `src/agentic/git.rs` and `src/agentic/gh_client.rs` apply the
-GitHub CLI kind, which also receives `GH_TELEMETRY=false`,
-`GH_NO_UPDATE_NOTIFIER=1`, and `GH_NO_EXTENSION_UPDATE_NOTIFIER=1`.
-`src/agentic/executor/runner.rs` applies the verification-check kind, which
-receives `GH_TELEMETRY=false`,
-`HF_HUB_DISABLE_TELEMETRY=1`, and `ANONYMIZED_TELEMETRY=false` with
-`DO_NOT_TRACK=1`. Each spawn site applies these values last and removes
-case-insensitive aliases, so declared or inherited values cannot re-enable
-telemetry on Windows. This proves delivery, not that an arbitrary child honors
-`DO_NOT_TRACK`.
+`src/common/child_env.rs` owns telemetry opt-outs for three child kinds:
 
-One more child carries no request data: `process::KeepAwake` runs
-`/usr/bin/caffeinate -i -w <pid>` on macOS with a fixed argv and an empty
-environment while a detached web research job answers, so idle sleep does not
-cut a long local answer short. Dropping the guard kills and reaps it, `-w` ends
-it if the server dies first, and it never blocks lid-close or manual sleep.
-Elsewhere it holds nothing. A child ended by a signal reports `signal` in
-`process::Output` with `status` unset, not a bare `-1`.
+| Kind | Applied in | Receives |
+|---|---|---|
+| MCP stdio server | `src/common/mcp.rs` | `DO_NOT_TRACK=1` |
+| GitHub CLI | `src/agentic/git.rs`, `src/agentic/gh_client.rs` | that, plus `GH_TELEMETRY=false`, `GH_NO_UPDATE_NOTIFIER=1`, `GH_NO_EXTENSION_UPDATE_NOTIFIER=1` |
+| Verification check | `src/agentic/executor/runner.rs` | `DO_NOT_TRACK=1`, `GH_TELEMETRY=false`, `HF_HUB_DISABLE_TELEMETRY=1`, `ANONYMIZED_TELEMETRY=false` |
+
+Each spawn site applies these last and removes case-insensitive aliases, so a
+declared or inherited value cannot re-enable telemetry on Windows. This proves
+delivery, not that an arbitrary child honors `DO_NOT_TRACK`.
+
+One more child carries no request data: on macOS `process::KeepAwake` runs
+`/usr/bin/caffeinate -i -w <pid>` with a fixed argv and an empty environment
+while a detached web research job answers, so idle sleep does not cut the
+answer short. Dropping the guard kills it, `-w` ends it if the server dies
+first, and it never blocks lid-close or manual sleep. A child ended by a signal
+reports `signal` in `process::Output` with `status` unset.
 
 ## MCP stdio diagnostics
 
-MCP stdio drains and discards stderr so a noisy child can finish without
-filling its pipe. When stdout closes unexpectedly, the client waits up to
-50 ms for the drain and returns a fixed `MCP_STDIO` message. To see child
-diagnostics, reproduce the call with the MCP server in a controlled environment.
+MCP stdio drains and discards stderr, so a noisy child cannot fill its pipe.
+When stdout closes unexpectedly, the client waits up to 50 ms for the drain and
+returns a fixed `MCP_STDIO` message. To see child diagnostics, reproduce the
+call with the server in a controlled environment.
 
-Each response is one newline-delimited JSON line and is refused above
-`mcp.max_result_bytes`, even if unterminated. `mcp.timeout_sec` and child cleanup
-still apply. See [troubleshooting](TROUBLESHOOTING.md).
+Each response is one newline-delimited JSON line, refused above
+`mcp.max_result_bytes` even if unterminated; `mcp.timeout_sec` and child
+cleanup still apply. See [troubleshooting](TROUBLESHOOTING.md).
 
 ### Explicit MCP lifecycle policy
 
-Every stdio server must declare [capabilities](MCP.md#migrate-a-stdio-declaration). In Linux strict
-mode, a transient systemd service owns the supervisor and bubblewrap child in a
-dedicated cgroup v2 hierarchy. The service sets aggregate process and memory
-limits, disables delegation, protects cgroup control files, and kills the whole
-group when its main process ends. A private, authenticated Unix socket detects
-loss of the harness independently of MCP stdin. The worker checks its actual
-cgroup membership and enforced limits before launching the tool. The external
-manager also bounds service lifetime if either process stalls or dies.
+Every stdio server must declare [capabilities](MCP.md#migrate-a-stdio-declaration).
 
-Bubblewrap denies host service/control paths and creates a PID namespace;
-`setsid()` cannot leave the service cgroup. Requested roots, working directory
-and executable cannot expose host `/proc`, `/sys`, `/run`, `/var/run` or `/dev`.
-The child receives its own `/proc` and minimal `/dev`. `network: unrestricted`
-is a separate operator grant, not an HTTP hostname allowlist.
+**Linux strict mode.** A transient systemd service owns the supervisor and the
+bubblewrap child in a dedicated cgroup v2 hierarchy. The service sets aggregate
+process and memory limits, disables delegation, protects cgroup control files
+and kills the whole group when its main process ends. A private, authenticated
+Unix socket detects loss of the harness independently of MCP stdin, and the
+worker checks its cgroup membership and limits before launching the tool.
+Bubblewrap creates a PID namespace, so `setsid()` cannot leave the cgroup.
+Requested roots, working directory and executable cannot expose host `/proc`,
+`/sys`, `/run`, `/var/run` or `/dev`; the child gets its own `/proc` and a
+minimal `/dev`. `network: unrestricted` is a separate operator grant, not an
+HTTP hostname allowlist. Strict mode bounds memory, process count and lifetime
+but imposes no scratch disk quota; a hard-killed harness may leave its private
+temporary directories behind and never deletes operator-granted outputs.
 
-macOS refuses strict lifecycle containment. An explicit `process_group`
-exception retains Seatbelt filesystem/network protection, but runner death and
-detached descendants can escape cleanup. Windows refuses confined/strict stdio.
-Its explicit `job_object` trusted-server exception atomically assigns an unnamed,
-non-inheritable Job Object through `PROC_THREAD_ATTRIBUTE_JOB_LIST` during
-`CreateProcessW` (Windows 10 / Server 2016 or newer). No child instruction runs
-before membership exists. A handle allowlist contains only the three child pipe
-ends; the Job Object has kill-on-close, active-process and aggregate memory
-limits, with neither breakaway flag set. Cancellation/deadline/protocol failure
-closes the client and kills the job. Abrupt runner exit closes the kernel handle
-without relying on Rust destructors. Detached descendants remain members.
+**macOS** refuses strict lifecycle containment. An explicit `process_group`
+exception keeps Seatbelt filesystem and network protection, but runner death
+and detached descendants can escape cleanup.
 
-This exception grants unrestricted filesystem/network access and cannot contain
-requests delegated to another Windows service (for example WMI/COM). It is for
-trusted servers, not hostile-code isolation. There is no OS wall-clock timer on
-the Windows job; the harness request deadline requires a responsive runtime.
-The focused native acceptance observes live child/grandchild process handles,
-heartbeat progress, denied breakaway, actual process/memory limits, nine exit
-paths and a fresh successful call after each. It does not establish filesystem
-or network isolation. The coding executor's check sandbox uses the same
-`JobChild` path, so its checks are also assigned to the kill-on-close job during
-`CreateProcess` (32-process limit, no job memory limit).
-
-Strict mode bounds process memory/count and lifetime; it does not impose a
-scratch disk quota. A hard-killed harness may leave its private temporary
-directories on disk. It does not automatically delete operator-granted outputs.
+**Windows** refuses confined and strict stdio. Its explicit `job_object`
+[trusted-server exception](MCP.md#explicit-windows-trusted-server-exception)
+assigns a Job Object during `CreateProcessW` (Windows 10 / Server 2016 or
+newer), so no child instruction runs before membership exists. Only the three
+child pipe ends are inherited; the job has kill-on-close, active-process and
+aggregate memory limits and neither breakaway flag. Cancellation, a deadline or
+a protocol failure kills the job, an abrupt runner exit closes the kernel
+handle, and detached descendants stay members. There is no OS wall-clock timer
+on the job: the request deadline needs a responsive runtime. The coding
+executor's check sandbox uses the same `JobChild` path (32-process limit, no job
+memory limit).
 
 ## Evidence
 
-`tests/mcp_client.rs` checks allowed and denied reads, writes and network probes
-on Linux and macOS; the required Linux `tests/mcp_lifecycle.rs` job covers
-cancellation, Drop, protocol failure, crashes, deadlines and SIGKILL with a
-detached grandchild, then an empty cgroup, stopped heartbeat, reuse, limits and
-migration denial. `tests/process_lifecycle.rs` covers inherited pipes, blocked
-stdin, overflow, complete output and a short-lived leader with a background
-child; its required macOS case cancels a Seatbelt check in another process group
-while an unrelated sibling survives. `tests/process_writer_outcome.rs` proves one
-accepted mutation, an indeterminate error naming the operation and an audit
-record when a fake `gh` floods stdout.
+`tests/process_lifecycle.rs` covers inherited pipes, blocked stdin, overflow and
+a short-lived leader with a background child; its required macOS case cancels a
+Seatbelt check in another process group while an unrelated sibling survives.
+`tests/process_writer_outcome.rs` proves the indeterminate publication overflow.
+`tests/mcp_client.rs` checks allowed and denied reads, writes and network probes,
+and the required Linux `tests/mcp_lifecycle.rs` job covers cancellation, crashes,
+deadlines and SIGKILL with a detached grandchild, then limits and migration
+denial. The native Windows acceptance observes child and grandchild handles,
+denied breakaway, limits and nine exit paths; it does not establish filesystem
+or network isolation.
 
 ## Desktop ownership and recovery
 
 The desktop parent owns a private inherited control pipe; EOF requests backend
-shutdown and cancellation through the same owners described above. A server home
-lease excludes a second server on Unix (`flock`) and Windows (`LockFileEx`).
-New coding workers hold a per-run lease, and
-decide, push, publish and discard take it and reload the record under it;
-`/agent runs` or status reconciliation marks a running record interrupted only
-after that lease is demonstrably released. There is no PID-file kill authority,
-automatic resume or approval replay. Legacy running state stays unknown. A
-released worker lease proves the worker ended, not that every escaped descendant
-ended. Native window semantics and remaining acceptance are documented in
+shutdown and cancellation through the owners above. A server home lease
+excludes a second server on Unix (`flock`) and Windows (`LockFileEx`). New
+coding workers hold a per-run lease; decide, push, publish and discard take it
+and reload the record under it, and `/agent runs` or status reconciliation marks
+a running record interrupted only after that lease is demonstrably released.
+There is no PID-file kill authority, automatic resume or approval replay, and
+legacy running state stays unknown. A released worker lease proves the worker
+ended, not every escaped descendant. Native window behavior:
 [DESKTOP.md](DESKTOP.md).
