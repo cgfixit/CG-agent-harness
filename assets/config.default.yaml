@@ -46,8 +46,7 @@ models:
     # `ollama serve` and verify context_length on /api/ps (docs/MODELS.md).
     # The harness sends no num_ctx and inherits that window.
     max_tokens: 4096 # 1–25904 with Ollama reasoning=none; otherwise 1–12952 with a 2x reservation
-    tool_max_tokens: 512 # 64–2048; missing uses 512; restart-only
-    temperature: 0.1  # refused outside 0–2; chat answers only (tool turns and the planner send 0). funsies but really dont go higher
+    temperature: 0.1  # refused outside 0–2; answers from a call that offers no tools. A web-enabled hop (it may call a tool or answer) and the planner send 0. funsies but really dont go higher
     timeout_sec: 1800 # refused outside 1–3600 seconds per chat call
     # Explicit local inventory only; no inference, cloud probes or model downloads.
     inventory:
@@ -193,12 +192,14 @@ web:
   # non-empty searxng_url fails boot by name (an empty searxng_url from an older home loads).
   # Fallback hops run in the fixed order tavily -> serpapi -> google-public inside one
   # web.request_seconds deadline and one search slot. The hops still to run share the time
-  # left equally; when the last one is public Google and time allows, its pacing wait
-  # (pace_ms, at least 3 s) plus 1 s is held back for it first. Time a hop does not use
-  # passes on. The hop to public Google ships on, the hop to SerpAPI ships off. A hop falls
-  # through only when it cannot answer: its provider is unusable (transport, timeout, non-200)
-  # or a SerpAPI or Tavily quota is spent (a keyed cooldown is skipped). Clean zero results,
-  # an answer with rows and a rejected or missing key never fall through.
+  # left equally, except a later hop that is cooling down (it takes none); when the last one
+  # is public Google and time allows, the pacing wait still due before its request (none if
+  # the last public search is older than pace_ms, at least 3 s) plus 1 s is held back for it
+  # first. Time a hop does not use passes on. The hop to public Google ships on, the hop to
+  # SerpAPI ships off. A hop falls through only when it cannot answer: its provider is
+  # unusable (transport, timeout, non-200) or a SerpAPI or Tavily quota is spent (a keyed
+  # cooldown is skipped). Clean zero results, an answer with rows and a rejected or missing
+  # key never fall through.
   search:
     provider: auto # auto|google-public|serpapi|tavily
     fallback_to_serpapi: false # literal true: a failed tavily tries SerpAPI when a key is active

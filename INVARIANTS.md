@@ -242,7 +242,7 @@ edits between an authorization check and an OS operation is claimed.
 Chat exposes only two read-only model tools while web is enabled: configured-provider
 search and permitted URL fetch. The dispatcher bounds calls, tokens, time and
 arguments and rechecks current account/URL permissions before reads and evidence
-delivery. A turn that already holds a notes-corpus read (`source=notes_corpus`), or a successful private-notes tool result, does not offer or run `web_search` or its `search_web`/`websearch` aliases unless that user message asks for outside, web, or internet sources. `web.chat_tool_calls` (default 30, range 1–30) remains the tool-round ceiling. Tool hops use `models.local_llm.tool_max_tokens` (default 512) and temperature 0. The answer hop keeps the chat token ceiling and temperature. It cannot mutate policy, credentials, accounts or repositories, including
+delivery. A turn that already holds a notes-corpus read (`source=notes_corpus`), or a successful private-notes tool result, does not offer or run `web_search` or its `search_web`/`websearch` aliases unless that user message asks for outside, web, or internet sources. `web.chat_tool_calls` (default 30, range 1–30) remains the tool-round ceiling. A hop that offers tools writes up to the chat token ceiling at temperature 0, since the model may answer on it instead of calling a tool (a smaller planning cap cut such answers off and they were generated again); a call that offers none keeps the ceiling and the configured temperature. It cannot mutate policy, credentials, accounts or repositories, including
 local `/loop` turns. Search-provider snippets are listings, not fetched
 linked pages; each content fetch still requires its own URL permission. A
 restart-only `web.search.provider` picks the backend: `auto` lets a configured SerpAPI
@@ -583,7 +583,9 @@ stop, status and events are bound to the starting owner; a foreign run reads as
 on stop, a changed or cleared session goal (`LOOP_GOAL_CHANGED`), `loop.max_turns`,
 `loop.max_total_completion_tokens`, `loop.max_failures`
 consecutive failed turns or failed web rounds, unverified `GOAL_DONE`, a
-near-repeat reply, or a web refusal every later turn would repeat. Both budgets
+near-repeat reply, or a web refusal every later turn would repeat. A turn waits
+(stoppable, at most two hours) while another generation holds the model
+instead of counting a failure. Both budgets
 ship finite, 50 turns and 200,000 completion tokens (#675); `0` is an explicit
 opt-in to unlimited, and a home whose file lacks the key keeps the code fallback
 `0`. With both budgets zero, startup and transitions into unbounded on reload
@@ -608,7 +610,7 @@ finish metadata, never replies.
 The initial estimator is UTF-8 `bytes.div_ceil(4)`, not a tokenizer.
 Successful local exchanges persist an observed/estimated prompt-token ratio
 with the session, scoped to model and backend URL: it starts at 1, stays within
-1–3, rises immediately and decays by a half-weight EMA. Missing, zero or non-integer prompt usage leaves calibration unchanged. Web turns calibrate on the first model call's usage, never their aggregate;
+1–3, rises immediately and decays by a half-weight EMA. Missing, zero or non-integer prompt usage leaves calibration unchanged. Web turns calibrate on the first model call's usage, never their aggregate, against an estimate that counts the evidence a `/loop` turn restores ahead of that call;
 summary and cloud usage never train it. An `auto_tune`-verified window above 32768
 scales the compaction trigger up in proportion, within `chat.compact_max_prefill_sec`
 of measured prefill, unless `chat.compact_follow_window` is false.
@@ -628,7 +630,8 @@ and never below their floors; the web dispatcher charges each call's prompt once
 offers tools only while the prompt, definitions, a minimal result and one reply
 fit, runs a batch only when each result's minimum fits, cuts a result to the
 room left, and returns a failed read to the model as its result (a batch that
-fails entirely ends the turn or, after evidence, the tool rounds). A web turn's
+fails entirely ends the tool rounds: the model answers without web evidence
+it does not have, and each failure stays an `ok: false` event). A web turn's
 deadline adds a measured tool-round allowance, at most doubling the chat timeout.
 Startup and reload warn below 4096 remaining input tokens. Ollama with explicit `reasoning_effort: "none"` reserves the reply ceiling
 once; anything else reserves it twice in validation, the hard limit and dispatch
@@ -654,7 +657,12 @@ message alone must fit the trigger; a compacted prompt above the hard limit is
 refused. Otherwise the summary persists atomically with the next successful exchange,
 with calibration, via `write_json_atomic_mode` at `0o600`. The system prompt is
 composed each turn, never stored in `messages`; `Session.goal` and the first
-user message are preserved, even at `MAX_MESSAGES`. The audits `chat_session_compacted`, `chat_compaction_skipped`, `chat_prompt_too_large`
+user message are preserved, even at `MAX_MESSAGES`. A local chat turn's
+per-message sections (earlier web reads, memory facts, manual and attachment
+excerpts, a staged `/diag` excerpt) are fenced ahead of the new message
+(`prompts::with_turn_context`), counted with it and never stored, so a changed
+excerpt leaves the prompt before the last exchange unchanged; `/loop` turns keep
+them in the system prompt. The audits `chat_session_compacted`, `chat_compaction_skipped`, `chat_prompt_too_large`
 (projected sizes) and `chat_busy` store no bodies.
 
 - Locked by: `src/server/compaction.rs`,
@@ -894,8 +902,9 @@ restart-only. The manual is compiled in (`assets/self/MANUAL.md`, regenerated by
 a RAM index and never persisted. The live block renders in-memory state and
 never keys, masked tails, the sandbox backend or allowlist URLs. Both enter only
 local chat turns and `/prompt`, fenced as untrusted and counted as prompt
-tokens; cloud chat, `/loop` and `/agent` never receive them, nor does
-`portal_auditor` receive the live block. Audits hold chunk
+tokens (the live block in the system prompt, excerpts with the new message);
+a message of only stopwords selects no excerpt. Cloud chat, `/loop` and `/agent`
+never receive them, nor does `portal_auditor` receive the live block. Audits hold chunk
 ids, counts and the manual hash, never text. Chat still exposes exactly two
 model tools.
 

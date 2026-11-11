@@ -514,8 +514,15 @@ pub async fn preview(
         diag_context: diag.as_ref().map(|staged| staged.block.as_str()),
         web_reads: web_reads.as_deref(),
     };
-    let composed = crate::server::prompts::compose_system_prompt_detailed(&inputs);
-    let prompt = composed.prompt;
+    // The next local chat turn: its system prompt, then the context it sends
+    // fenced ahead of the new message, shown under its own preamble.
+    let (composed, turn_context) = crate::server::prompts::compose_prompt_parts(&inputs);
+    let turn_context = crate::server::prompts::with_turn_context(&turn_context, "");
+    let prompt = if turn_context.is_empty() {
+        composed.prompt
+    } else {
+        format!("{}\n\n{}", composed.prompt, turn_context.trim_end())
+    };
     // The load result of this very composition: the overlay is read once,
     // so the reported state cannot disagree with the prompt shown.
     let style_load = composed.style;
