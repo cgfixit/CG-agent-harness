@@ -949,11 +949,15 @@ async fn selected_facts_are_revalidated_and_preview_matches_chat() {
         .post_json("/api/chat", json!({"session_id": sid, "message": "use selected facts"}))
         .await;
     assert_eq!(status, 200, "{chat}");
-    let system = model.last_request().unwrap()["messages"][0]["content"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert_eq!(system, prompt);
+    // The preview is the system prompt followed by the context the turn
+    // fences ahead of its new message: selected facts ride there.
+    let request = model.last_request().unwrap();
+    let system = request["messages"][0]["content"].as_str().unwrap();
+    assert!(!system.contains("Prefer metric units in examples."));
+    let sent = common::turn_message(&request);
+    let context = sent.strip_suffix("use selected facts").unwrap().trim_end();
+    assert!(context.contains("Prefer metric units in examples."));
+    assert_eq!(format!("{system}\n\n{context}"), prompt);
     assert_eq!(chat["structured_facts"]["injected"][0]["id"], live["id"]);
     assert_eq!(chat["web_tools"].as_array().unwrap().len(), 0);
 }
@@ -1022,13 +1026,26 @@ async fn adversarial_note_and_fact_share_exact_reserved_budget() {
     assert_eq!(preview["structured_facts"]["budget"]["pinned_used"], 1500);
     assert_eq!(preview["structured_facts"]["budget"]["facts_used"], 1500);
     assert!(preview["structured_facts"]["budget"]["total"].as_u64().unwrap() <= 3000);
+    // Pinned notes stay in the system prompt and facts ride with the new
+    // message; each keeps its reserved slice of the shared 3000 characters.
     let prompt = preview["prompt"].as_str().unwrap();
-    let memory = prompt
+    let (system, context) = prompt.split_once("<<<TURN_CONTEXT>>>").unwrap();
+    let pinned = system
         .split("## Operator memory (harness, read-only)")
         .nth(1)
+        .unwrap_or("");
+    let pinned = pinned
+        .split("Harness context for this turn")
+        .next()
         .unwrap_or("")
         .trim();
-    assert_eq!(memory.chars().count(), 3000);
+    assert_eq!(pinned.chars().count(), 1500);
+    let facts = context
+        .split("## Operator memory facts (harness, read-only)")
+        .nth(1)
+        .unwrap_or("");
+    let facts = facts.split("<<<END_TURN_CONTEXT>>>").next().unwrap_or("").trim();
+    assert_eq!(facts.chars().count(), 1500);
 }
 
 #[tokio::test]

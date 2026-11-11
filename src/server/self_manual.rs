@@ -19,6 +19,32 @@ pub const MANUAL: &str = include_str!("../../assets/self/MANUAL.md");
 /// Longest slice of the user message used as a query; terms are clipped to 32.
 const MAX_QUERY_CHARS: usize = 512;
 const CANDIDATES: usize = 16;
+/// Words that say nothing about the subject of a message. They occur in
+/// almost every chunk, so matching on them picked excerpts for "thanks" or
+/// "what is the capital of France?". Content words stay, including verbs the
+/// manual documents as commands (`help`, `clear`, `use`).
+const STOPWORDS: &[&str] = &[
+    "a", "about", "after", "all", "also", "am", "an", "and", "any", "are", "as", "at", "be", "because", "been", "but",
+    "by", "can", "could", "did", "do", "does", "for", "from", "had", "has", "have", "he", "hello", "her", "here",
+    "hey", "hi", "him", "his", "how", "i", "if", "in", "into", "is", "it", "its", "just", "me", "my", "no", "not",
+    "of", "ok", "okay", "on", "or", "our", "please", "she", "so", "some", "than", "thank", "thanks", "that", "the",
+    "their", "them", "then", "there", "these", "they", "this", "to", "up", "us", "was", "we", "were", "what", "when",
+    "where", "which", "who", "why", "will", "with", "would", "yes", "you", "your",
+];
+
+/// The Tantivy query for `message`: each content word quoted, so the text is
+/// data and never query syntax. `None` when only stopwords, single characters
+/// or punctuation remain: such a message gets no excerpt.
+fn content_expression(message: &str) -> Option<String> {
+    let terms: Vec<String> = message
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|term| term.chars().count() > 1)
+        .filter(|term| !STOPWORDS.contains(&term.to_lowercase().as_str()))
+        .take(32)
+        .map(|term| format!("\"{term}\""))
+        .collect();
+    (!terms.is_empty()).then(|| terms.join(" "))
+}
 
 /// The `diagnostics` self-knowledge settings. Restart-only.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -144,7 +170,7 @@ impl SelfManual {
     /// clipped). `None` when nothing matches.
     pub fn select(&self, message: &str, cfg: &SelfKnowledgeConfig) -> Option<Selection> {
         let query = crate::common::clip_chars(message.trim(), MAX_QUERY_CHARS);
-        let expression = super::retrieval_ranking::tantivy_expression(&query)?;
+        let expression = content_expression(&query)?;
         let parser = QueryParser::for_index(&self.index, vec![self.f_title, self.f_body]);
         let parsed = parser.parse_query_lenient(&expression).0;
         let searcher = self.reader.searcher();
@@ -296,5 +322,23 @@ mod tests {
         config.min_score = 1.0e9;
         assert!(manual.select("web allowlist", &config).is_none());
         assert!(manual.select("   ", &config).is_none());
+    }
+
+    #[test]
+    fn stopwords_and_single_characters_select_nothing() {
+        let manual = SelfManual::build(MANUAL).unwrap();
+        let config = cfg(AppConfig::embedded_default()).unwrap();
+        // Before, each of these picked up to four chunks: every chunk holds
+        // "the", "is" or "what".
+        for message in ["ok", "thanks", "What is this?", "2+2", "and then?", "Why is that so?"] {
+            assert!(manual.select(message, &config).is_none(), "{message}");
+        }
+        assert_eq!(
+            content_expression("What is the /web allowlist?").unwrap(),
+            "\"web\" \"allowlist\""
+        );
+        // A command name the manual documents is content, not a stopword.
+        assert!(manual.select("what does /help do", &config).is_some());
+        assert!(manual.select("how do I use /web allow", &config).is_some());
     }
 }
