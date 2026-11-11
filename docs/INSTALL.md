@@ -593,7 +593,7 @@ on first run. Common operator settings follow:
 |---|---|---|
 | `app.agent_job_poll_ms` | 1500 | Browser job polling interval, clamped to 1–30 s |
 | `api.rate_limit.max_requests` / `window_seconds` | 300 / 240 | Per-IP sliding-window ceiling on every route: 75 a minute sustained, above the 44 a minute a console polls while an `/agent` job runs |
-| `api.harness_loop_rate_limit.*` | 34 / 500 s / 8192 tokens | Separate `/loop` budget; same backend-dependent ceiling as local chat after the legacy `0` → `2048` fallback |
+| `api.harness_loop_rate_limit.*` | 34 / 500 s / 4096 tokens | Separate `/loop` budget; same backend-dependent ceiling as local chat after the legacy `0` → `2048` fallback |
 | `loop.max_turns` / `loop.max_total_completion_tokens` | 50 / 200000 | Per-run caps; zero or absent keys stay unlimited. When both are unlimited, startup and console warn; upgrades preserve configuration. [Reloadable](#reload-limits-without-a-restart) |
 | `models.cloud_chat.enabled` | true | Allows `/model use grok` / `claude`; each provider has its own `enabled` and `model` |
 | `models.cloud_chat.max_tokens` / `timeout_sec` | 10000 / 360 | Cloud reply ceiling and timeout; boot refuses 0 or >32768 tokens, or a timeout outside 1–720 s |

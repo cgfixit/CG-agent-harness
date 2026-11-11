@@ -278,8 +278,9 @@ Keep web.total_tokens=28000 as the current outer prompt-plus-reply allowance.
 This leaves 4,768 tokens below a verified 32,768 window, but calibrated estimation
 and live-window checks are still required. It is not 28K plus the reply.
 
-With the current 8,192 loop answer reservation, at most 19,808 estimated tokens
-remain for all input, tool schemas, evidence and framing under that allowance.
+With the then-shipped 8,192 loop answer reservation, at most 19,808 estimated tokens
+remain for all input, tool schemas, evidence and framing under that allowance
+(the shipped loop cap is now 4,096, the value a tuned turn already ran at).
 With a 4,096 answer, 23,904 remain. These are accounting ceilings, not targets.
 Never add 6,000 evidence tokens on top of a full history window.
 

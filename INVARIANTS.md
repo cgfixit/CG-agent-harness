@@ -615,6 +615,9 @@ with the session, scoped to model and backend URL: it starts at 1, stays within
 summary and cloud usage never train it. An `auto_tune`-verified window above 32768
 scales the compaction trigger up in proportion, within `chat.compact_max_prefill_sec`
 of measured prefill, unless `chat.compact_follow_window` is false.
+`auto_tune` lowers configured budgets only for a window below 32768; at or above
+it the configured values stand inside that window's caps, and a tuned loop turn
+never writes more than the chat reply cap.
 Chat, tool rounds and research retain whether their limits used tuning. Each late
 model call rechecks the live window even after tuning is cleared; limits that no
 longer fit are refused before dispatch.
