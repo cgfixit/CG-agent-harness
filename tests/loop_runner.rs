@@ -333,8 +333,8 @@ async fn loop_budget_counts_failed_inference_without_successful_exchanges() {
     truncated["choices"][0]["finish_reason"] = json!("length");
     for (name, replies, total, turns, failures, state) in [
         ("empty", vec![ok_reply("", 100, 220)], 220, 0, 1, "done"),
-        // Both the truncated tool-sized reply and full-budget synthesis consume tokens.
-        ("truncated", vec![truncated.clone(), truncated], 440, 0, 1, "done"),
+        // A reply cut off at the answer cap is one failed call: it is not generated again.
+        ("truncated", vec![truncated], 220, 0, 1, "done"),
         ("unknown", vec![unknown.clone(), unknown], 0, 0, 2, "failed"),
         (
             "success then failure",

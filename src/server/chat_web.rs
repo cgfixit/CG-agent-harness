@@ -118,15 +118,6 @@ fn hop_kind(tools_offered: bool) -> crate::llm::openai_chat::TurnKind {
     }
 }
 
-fn truncated_answer_needs_synthesis(
-    hop_max_tokens: u64,
-    synthesis_max_tokens: u64,
-    has_calls: bool,
-    finish_reason: Option<&str>,
-) -> bool {
-    hop_max_tokens < synthesis_max_tokens && !has_calls && finish_reason == Some("length")
-}
-
 fn response_has_calls(response: &Value) -> bool {
     match response["choices"][0]["message"].get("tool_calls") {
         None | Some(Value::Null) => false,
@@ -504,11 +495,6 @@ async fn run_inner(
     } else {
         passages.clear();
     }
-    let tool_key = "models.local_llm.tool_max_tokens";
-    let tool_max = crate::llm::openai_chat::parse_tool_max_tokens(
-        state.cfg.get(tool_key).and_then(|value| value.as_u64()),
-        state.cfg.get(tool_key).is_some(),
-    )?;
     let mut evidence_changed = false;
     let mut peak_extra = 0u64;
     let mut tools_withheld = false;
@@ -675,8 +661,11 @@ async fn run_inner(
             .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
             .await?;
         let kind = hop_kind(!available.is_empty());
-        let sampling = crate::llm::openai_chat::sampling_for(kind, cap, temperature, tool_max);
-        let mut response = state
+        // The model may answer on a hop that offers tools, so every hop writes
+        // up to the answer cap: an answer is generated once, never cut at a
+        // smaller planning cap and started again.
+        let sampling = crate::llm::openai_chat::sampling_for(kind, cap, temperature);
+        let response = state
             .chat
             .chat_with_tools_stream(
                 system,
@@ -724,70 +713,12 @@ async fn run_inner(
         completion_tokens =
             completion_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("completion_tokens")));
         check_evidence(state, owner, &sources)?;
-        let mut final_tools = !available.is_empty();
-        let synthesis = crate::llm::openai_chat::sampling_for(
-            crate::llm::openai_chat::TurnKind::Synthesis,
-            cap,
-            temperature,
-            tool_max,
-        );
-        if truncated_answer_needs_synthesis(
-            sampling.max_tokens,
-            synthesis.max_tokens,
-            response_has_calls(&response),
-            response["choices"][0]["finish_reason"].as_str(),
-        ) {
-            state
-                .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
-                .await?;
-            check_evidence(state, owner, &sources)?;
-            response = state
-                .chat
-                .chat_with_tools_stream(
-                    system,
-                    &messages,
-                    model,
-                    synthesis.max_tokens,
-                    synthesis.temperature,
-                    &[],
-                    output.map(|sender| crate::llm::openai_stream::Output {
-                        sender,
-                        validate: &validate,
-                    }),
-                )
-                .await?;
-            let reported = &response["usage"];
-            if reported["completion_tokens"].is_number() {
-                *known_completion_tokens = known_completion_tokens
-                    .saturating_add(crate::llm::openai_chat::token_count(reported.get("completion_tokens")));
-            }
-            for (total, field) in [
-                (&mut totals.input_tokens, "prompt_tokens"),
-                (&mut totals.output_tokens, "completion_tokens"),
-            ] {
-                *total = total
-                    .zip(reported.get(field).filter(|v| v.is_number()))
-                    .map(|(sum, count)| sum.saturating_add(crate::llm::openai_chat::token_count(Some(count))));
-            }
-            *usage_snapshot.lock().unwrap() = UsageSnapshot {
-                pending: Some(totals.clone()),
-                known_completion_tokens: *known_completion_tokens,
-            };
-            prompt_tokens =
-                prompt_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("prompt_tokens")));
-            completion_tokens = completion_tokens
-                .saturating_add(crate::llm::openai_chat::token_count(reported.get("completion_tokens")));
-            final_tools = false;
-        }
+        let final_tools = !available.is_empty();
         check_evidence(state, owner, &sources)?;
         let choice = &response["choices"][0];
         let message = &choice["message"];
         // `"tool_calls": null` (sent by some servers on a plain answer) is no calls.
-        let has_calls = match message.get("tool_calls") {
-            None | Some(Value::Null) => false,
-            Some(Value::Array(calls)) => !calls.is_empty(),
-            Some(_) => true,
-        };
+        let has_calls = response_has_calls(&response);
         if choice["finish_reason"] != "tool_calls" && !has_calls {
             if let Some(id) = run_id {
                 state.loops.save_web_evidence(owner, id, goal, run_evidence.clone());
@@ -1119,43 +1050,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tool_selection_is_small_and_a_truncated_answer_uses_the_full_synthesis_budget() {
-        let tool = crate::llm::openai_chat::sampling_for(
-            hop_kind(true),
-            4096,
-            0.1,
-            crate::llm::openai_chat::DEFAULT_TOOL_MAX_TOKENS,
-        );
-        let synthesis = crate::llm::openai_chat::sampling_for(
-            hop_kind(false),
-            4096,
-            0.1,
-            crate::llm::openai_chat::DEFAULT_TOOL_MAX_TOKENS,
-        );
-        let loop_hop = crate::llm::openai_chat::sampling_for(
-            hop_kind(true),
-            2048,
-            0.1,
-            crate::llm::openai_chat::DEFAULT_TOOL_MAX_TOKENS,
-        );
-        assert_eq!((tool.max_tokens, tool.temperature), (512, 0.0));
-        assert_eq!((synthesis.max_tokens, synthesis.temperature), (4096, 0.1));
-        assert_eq!(
-            (loop_hop.max_tokens, loop_hop.temperature),
-            (512, 0.0),
-            "loop tool selection uses the bounded planning budget"
-        );
-        assert!(truncated_answer_needs_synthesis(512, 4096, false, Some("length")));
-        assert!(!truncated_answer_needs_synthesis(512, 4096, true, Some("length")));
-        assert!(!truncated_answer_needs_synthesis(512, 4096, false, Some("stop")));
-        assert!(
-            !truncated_answer_needs_synthesis(loop_hop.max_tokens, loop_hop.max_tokens, false, Some("length")),
-            "equal caps need no second synthesis"
-        );
-        let fallback =
-            crate::llm::openai_chat::sampling_for(crate::llm::openai_chat::TurnKind::Synthesis, 4096, 0.1, 512);
-        assert_eq!(fallback.max_tokens, 4096);
-        assert_eq!(fallback.temperature, 0.1);
+    fn a_hop_that_offers_tools_writes_up_to_the_answer_cap_at_temperature_zero() {
+        for cap in [4096, 2048] {
+            let tool = crate::llm::openai_chat::sampling_for(hop_kind(true), cap, 0.1);
+            assert_eq!(
+                (tool.max_tokens, tool.temperature),
+                (cap, 0.0),
+                "an answer on a tool hop is never cut short and generated again"
+            );
+            let synthesis = crate::llm::openai_chat::sampling_for(hop_kind(false), cap, 0.1);
+            assert_eq!((synthesis.max_tokens, synthesis.temperature), (cap, 0.1));
+        }
     }
 
     #[test]
