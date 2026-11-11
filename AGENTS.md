@@ -135,9 +135,9 @@ server -> MCP runtime -> declared stdio children / SSE servers
   over another integration test.
 - PRs are draft, one concern, on a driver-prefixed branch (`claude/`, `codex/`,
   `grok/`, `kimi/`, `cyclaw/`, `agent/` when unknown), **based on `main`**, title
-  `[prefix] - Sentence`, body from `.github/PULL_REQUEST_TEMPLATE.md` (run
-  `scripts/check-pr-template.sh` first). Touching a core path requires an
-  explicit invariant statement in the body.
+  `[prefix] - Sentence`, body from `.github/PULL_REQUEST_TEMPLATE.md` with `McLuhan tetrad` and
+  `ELI5` filled (run `scripts/check-pr-template.sh`). Core-path changes need an
+  invariant statement.
 - Refresh `origin/main` and open PR heads/files/checks before publication;
   trial-merge overlapping changes, including generated manuals and doc caps.
 - The advisory `review gate` check reports unresolved threads and running Codex

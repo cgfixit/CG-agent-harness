@@ -287,8 +287,8 @@ search, or reads; listings grant no page access. No repository, shell, policy,
 account, key or mutation tool is exposed. Batches validate before sequential
 reads; `web.chat_tool_calls` bounds all rounds (1–30, default 30).
 
-Routing hops use `models.local_llm.tool_max_tokens` (default 512), temperature 0.
-A truncated answer gets a tool-free synthesis at the chat ceiling. The full
+Tool-offering hops write up to the chat ceiling at temperature 0;
+tool-free calls use `temperature`. The full
 stored goal governs whether outside evidence is requested after a notes read.
 Each call fits prompt, definitions, one reply and minimal results inside
 `web.total_tokens`; insufficient batch room runs no reads. Results shrink to
