@@ -489,29 +489,36 @@ impl AppState {
     }
 
     /// The most `chat.compact_prompt_tokens` can be for `model`, whatever is
-    /// configured: its prompt cap, lowered to any tuned compaction budget.
+    /// configured: its prompt cap, lowered to a tuned compaction budget when
+    /// the tuning tightens (a window below 32768).
     pub fn compact_ceiling(&self, model: &str) -> u64 {
         let cap = self.prompt_cap(model);
         self.tuning_for(model)
+            .filter(|tuning| tuning.tightens())
             .map_or(cap, |tuning| cap.min(tuning.compact_prompt_tokens))
     }
 
     /// The most `web.total_tokens` can be for `model`, whatever is configured:
-    /// its window cap (like [`Self::prompt_cap`]), lowered to any tuned budget.
+    /// its window cap (like [`Self::prompt_cap`]), lowered to a tuned budget
+    /// when the tuning tightens (a window below 32768).
     pub fn web_total_ceiling(&self, model: &str) -> u64 {
         let cap = super::compaction::web_total_cap(self.verified_window(model));
         self.tuning_for(model)
+            .filter(|tuning| tuning.tightens())
             .and_then(|tuning| tuning.web.as_ref().map(|web| web.total_tokens))
             .map_or(cap, |budget| cap.min(budget))
     }
 
-    /// `models.local_llm.max_tokens`, lowered to `model`'s tuning. Startup
-    /// refuses a malformed value, so the default stands only for a missing key.
+    /// `models.local_llm.max_tokens`, lowered to `model`'s tuning when its
+    /// window is smaller than the 32768 the shipped budgets were sized for
+    /// (`Tuning::tightens`). Startup refuses a malformed value, so the default
+    /// stands only for a missing key.
     pub fn chat_max_tokens(&self, model: &str) -> u64 {
         let configured = self
             .cfg
             .u64_or("models.local_llm.max_tokens", super::compaction::DEFAULT_REPLY_TOKENS);
         self.tuning_for(model)
+            .filter(|tuning| tuning.tightens())
             .map_or(configured, |tuning| configured.min(tuning.max_tokens))
     }
 
@@ -527,7 +534,13 @@ impl AppState {
         let Some(tuning) = self.tuning_for(model) else {
             return configured;
         };
-        let tightened = configured.min(tuning.compact_prompt_tokens);
+        // Only a window below 32768 tightens the configured trigger; at or
+        // above it, the value startup held to the prompt cap stands.
+        let tightened = if tuning.tightens() {
+            configured.min(tuning.compact_prompt_tokens)
+        } else {
+            configured
+        };
         if self.cfg.bool_opt("chat.compact_follow_window") == Some(false) {
             return tightened;
         }
@@ -541,8 +554,20 @@ impl AppState {
         // for the measured window (an operator who raised it as the profile
         // advises), so it follows a smaller window down too. A value below the
         // proposal is the operator's own choice and stands.
+        // A value the operator raised above the proposal at such a window
+        // follows a smaller verified window down from itself, not from the
+        // proposal, so it is not pulled back to the proposal while the window
+        // is the measured one.
+        let follows = if tuning.tightens() {
+            proposed
+        } else {
+            // Held to the measured window's cap before it is scaled: startup
+            // accepts any unsigned value here, and an uncapped one overflows.
+            let raised = configured.min(super::compaction::prompt_cap(Some(measured)));
+            proposed.max(raised * window.min(measured) / measured)
+        };
         let tightened = if configured >= tuning.compact_prompt_tokens {
-            tightened.min(proposed)
+            tightened.min(follows)
         } else {
             tightened
         };

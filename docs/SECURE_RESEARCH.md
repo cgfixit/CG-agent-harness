@@ -331,7 +331,7 @@ Google Cloud key) into **Google results (SerpAPI)** or a Tavily key into
 ([managed keys](INSTALL.md#supported-managed-keys)); saving or clearing applies
 to the next search, and an inherited environment value still wins.
 
-An active nonempty SerpAPI key selects the fixed `https://serpapi.com/search.json`
+A lone active SerpAPI key selects the fixed `https://serpapi.com/search.json`
 Google backend, key in the request query. Keyed providers receive the keyword
 query, result count and their own key, never chat history or account credentials.
 Keys never appear in user-facing URLs, model context, returned metadata or errors;
@@ -351,7 +351,7 @@ the Google grant; a home that removed it re-grants it:
 ```
 
 `web.search.provider` is `auto` (above), `google-public`, `serpapi` or `tavily`.
-Tavily needs its key and never changes `auto`. Each search is one basic-depth
+`auto` searches a saved Tavily key before SerpAPI. Each search is one basic-depth
 request (one credit) to the fixed `https://api.tavily.com/search`, key in the
 Authorization header; `include_answer`, `include_raw_content` and `include_images`
 are pinned off; listings keep title, URL, snippet and bounded optional provider rank,

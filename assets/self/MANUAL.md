@@ -422,7 +422,7 @@ Future remote exposure requires a separate reviewed change: This release has no 
 - models
   - models.cloud_chat
   - models.local_llm
-- chat: Local chat prompt compaction. Trigger is estimated next-prompt size, not lifetime TokenTally.total. System prompt and session.goal are never compacted.
+- chat: Local chat prompt compaction. Trigger is estimated next-prompt size, not lifetime TokenTally.total. System prompt and session.goal are never compacted. A web-enabled turn sends its tool results…
   - chat.compact_prompt_tokens: floor=max_tokens + 4096 (hard-limit floor: effective reply reservation + 4096), capped at 30000 (more for a…
   - chat.compact_keep_messages: clamped to 2–40: at most this many recent messages kept verbatim, whole exchanges only
   - chat.compact_tail_percent: clamped to 10–50: verbatim tail budget as a percent of the trigger; at least the last exchange
