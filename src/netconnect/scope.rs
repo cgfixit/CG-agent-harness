@@ -75,10 +75,8 @@ impl Scope {
         let mut cidrs = Vec::with_capacity(entries.len());
         for (index, entry) in entries.iter().enumerate() {
             let cidr = parse_cidr(entry).map_err(|reason| {
-                HarnessError::config(format!(
-                    "netconnect.allowed_cidrs[{index}] {}: {reason}",
-                    preview(entry)
-                ))
+                // Field and reason only: operator text is never echoed (AGENTS.md Traps).
+                HarnessError::config(format!("netconnect.allowed_cidrs[{index}]: {reason}"))
             })?;
             if cidrs.iter().any(|have: &Cidr| have == &cidr) {
                 return Err(HarnessError::config(format!(
@@ -113,15 +111,6 @@ impl Scope {
                 format!("address {addr} is outside netconnect scope"),
             ))
         }
-    }
-}
-
-fn preview(entry: &str) -> String {
-    let clean: String = entry.chars().filter(|c| !c.is_control()).take(64).collect();
-    if clean.is_empty() {
-        "<empty>".to_string()
-    } else {
-        clean
     }
 }
 

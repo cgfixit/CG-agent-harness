@@ -221,6 +221,8 @@ mod tests {
             64,
         )
         .unwrap();
+        // Loopback is in scope and always configured, so an empty read is a regression.
+        assert!(report.addresses().contains(&std::net::Ipv4Addr::LOCALHOST));
         for address in report.addresses() {
             assert!(scope.contains(address));
         }

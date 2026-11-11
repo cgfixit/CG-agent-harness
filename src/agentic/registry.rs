@@ -213,10 +213,10 @@ impl<'a> SkillRegistry<'a> {
         let text = std::fs::read_to_string(path).map_err(|e| rerr(format!("Could not read skills registry: {e}")))?;
         let data: Value =
             serde_json::from_str(&text).map_err(|e| rerr(format!("Could not read skills registry: {e}")))?;
-        if !data.is_object() || data.get("skills").is_none() {
-            return Err(
-                rerr("Skills registry is malformed (missing 'skills')").detail("path", path.display().to_string())
-            );
+        // `apply_skill` indexes `skills` by name, which panics on any other JSON type.
+        if !data.get("skills").is_some_and(Value::is_object) {
+            return Err(rerr("Skills registry is malformed ('skills' must be an object)")
+                .detail("path", path.display().to_string()));
         }
         Ok(data)
     }
@@ -332,5 +332,26 @@ impl<'a> SkillRegistry<'a> {
         Ok(
             json!({"status": "applied", "name": spec.name, "version": new_version, "sha256": new_sha, "governance_score": 100}),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn load_refuses_a_skills_value_that_is_not_an_object() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("registry.json");
+        for skills in [json!([]), json!("x"), Value::Null] {
+            std::fs::write(
+                &path,
+                json!({"version": 1, "skills": skills, "history": []}).to_string(),
+            )
+            .unwrap();
+            assert!(SkillRegistry::load(&path).is_err());
+        }
+        std::fs::write(&path, json!({"version": 1, "skills": {}, "history": []}).to_string()).unwrap();
+        assert!(SkillRegistry::load(&path).is_ok());
     }
 }
