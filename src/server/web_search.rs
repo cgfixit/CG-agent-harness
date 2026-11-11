@@ -574,13 +574,18 @@ impl WebTool {
     pub fn status(&self, enabled: bool, owner: &str) -> Result<Value> {
         let (policy, missing) = self.policy_or_empty()?;
         let stored = self.read_page(&self.context_path(owner), None).is_ok();
+        // Only `auto` follows the saved keys: a Tavily key first, then SerpAPI.
+        let auto = self.search_provider == super::web_provider::SearchProvider::Auto;
+        let search_provider = self.search_provider.describe(
+            auto && !self.search_key()?.trim().is_empty(),
+            auto && !self.tavily_key()?.trim().is_empty(),
+        );
         Ok(
             json!({"enabled": enabled, "allowlist": policy.rules.iter().map(|r| &r.pattern).collect::<Vec<_>>(),
             "rules": policy.rules, "policy_revision": policy.revision,
             "mode": policy.mode, "blocked": policy.blocked,
             "policy_scope":"shared_home", "context_scope":"account", "limits":self.limits,
-            "search_provider": self.search_provider.describe(
-                self.search_provider == super::web_provider::SearchProvider::Auto && !self.search_key()?.is_empty()),
+            "search_provider": search_provider,
             "injected": enabled && stored, "context_stored": stored,
             "has_last": self.read_page(&self.last_path(owner), None).is_ok(), "max_allow": self.limits.max_rules,
             "policy_missing": missing}),

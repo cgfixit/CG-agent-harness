@@ -634,7 +634,7 @@ not a general environment-variable editor or connector credential vault.
 | `ANTHROPIC_API_KEY` | Optional explicit Claude chat and governed cloud coding planner |
 | `DEEPAGENT_API_KEY` | Bearer credential for a configured non-Ollama compatible local planner |
 | `SERPAPI_API_KEY` | Optional fixed search API for chat web search; public Google is the no-key fallback |
-| `TAVILY_API_KEY` | Optional Tavily search, used only when `web.search.provider` is `tavily` (the setting is restart-only; the key applies to the next search); snippets only, never page bodies |
+| `TAVILY_API_KEY` | Optional Tavily search, used first when `web.search.provider` is `auto` or `tavily` (the setting is restart-only; the key applies to the next search); snippets only, never page bodies |
 | `FIRECRAWL_API_KEY` | Optional Firecrawl page reader, used only when `web.firecrawl.enabled` is literal `true` (the setting is restart-only; the key applies to the next read); re-reads a permitted exact URL the built-in fetch could not, so that URL leaves the machine |
 
 Saving a key does not select chat, open coding gates, or install a connector.

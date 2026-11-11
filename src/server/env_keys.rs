@@ -54,7 +54,7 @@ pub const MANAGED_KEYS: [KeySpec; 9] = [
     KeySpec {
         name: "TAVILY_API_KEY",
         label: "Tavily search",
-        detail: "Used only when web.search.provider is tavily (restart-only). Saved changes apply on the next search. Listings carry snippets, never page bodies; linked pages still need URL permission.",
+        detail: "Searched first when web.search.provider is auto (the shipped value) or tavily (restart-only); queries then go to api.tavily.com. Saved changes apply on the next search. Listings carry snippets, never page bodies; linked pages still need URL permission.",
         self_auth: false,
     },
     KeySpec {

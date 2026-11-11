@@ -458,20 +458,24 @@ impl WebTool {
                 "web.search.provider is serpapi but no SerpAPI key is active; add one in API Keys",
             ));
         }
-        // A forced Tavily provider without its key is the operator's error: loud, no fallback.
-        let tavily_key = if self.search_provider == SearchProvider::Tavily {
-            let tavily = self.tavily_key()?;
-            if tavily.trim().is_empty() {
-                return Err(error(
-                    "WEB_SEARCH_KEY_MISSING",
-                    "web.search.provider is tavily but no Tavily key is active; add one in API Keys",
-                ));
+        // A forced Tavily provider without its key is the operator's error: loud, no
+        // fallback. `auto` reads the key too: when one is saved it is searched first.
+        let tavily_key = match &self.search_provider {
+            SearchProvider::Tavily => {
+                let tavily = self.tavily_key()?;
+                if tavily.trim().is_empty() {
+                    return Err(error(
+                        "WEB_SEARCH_KEY_MISSING",
+                        "web.search.provider is tavily but no Tavily key is active; add one in API Keys",
+                    ));
+                }
+                tavily
             }
-            tavily
-        } else {
-            String::new()
+            SearchProvider::Auto => self.tavily_key()?,
+            SearchProvider::Serpapi | SearchProvider::GooglePublic => String::new(),
         };
-        let hops = plan_hops(&self.search_provider, keyed, &self.search_fallback);
+        let tavily_keyed = !tavily_key.trim().is_empty();
+        let hops = plan_hops(&self.search_provider, keyed, tavily_keyed, &self.search_fallback);
         // One broker decision, one search gate and one deadline for the whole chain:
         // fallback never makes a search longer or more concurrent than one search.
         self.gate_tool("web_search", &[query.into()], enabled, audit)?;
@@ -539,17 +543,27 @@ impl WebTool {
                         .await
                     }
                     (Hop::GooglePublic, _) => {
-                        self.google_hop(
-                            query,
-                            count,
-                            enabled,
-                            audit,
-                            endpoint.clone(),
-                            "",
-                            expected_key,
-                            hop_deadline,
-                        )
-                        .await
+                        let listing = self
+                            .google_hop(
+                                query,
+                                count,
+                                enabled,
+                                audit,
+                                endpoint.clone(),
+                                "",
+                                expected_key,
+                                hop_deadline,
+                            )
+                            .await?;
+                        // Keyless auto: a Tavily key saved mid-search discards the
+                        // public listing too, as a SerpAPI key does (`expected_key`).
+                        if self.search_provider == SearchProvider::Auto
+                            && !tavily_keyed
+                            && !self.tavily_key()?.trim().is_empty()
+                        {
+                            return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
+                        }
+                        Ok(listing)
                     }
                 }
             };
@@ -1398,14 +1412,98 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_tavily_key_never_changes_auto() {
+    async fn auto_searches_a_saved_tavily_key_first_then_serpapi_then_public_google() {
+        use std::sync::atomic::Ordering::SeqCst;
+        // Both keys saved: Tavily wins, and SerpAPI is not asked.
         let tv = chain::tavily().await;
         let serp = chain::serpapi().await;
         let chain = chain::Chain::new("{}", "good", &serp, None)
             .await
             .with_tavily("good", &tv);
+        assert_eq!(chain.search("veeam cve").await.unwrap()["provider"], "tavily");
+        assert_eq!((tv.hits.load(SeqCst), serp.hits.load(SeqCst)), (1, 0));
+
+        // Only a Tavily key: auto is Tavily.
+        let tv = chain::tavily().await;
+        let serp = chain::serpapi().await;
+        let chain = chain::Chain::new("{}", "", &serp, None).await.with_tavily("good", &tv);
+        assert_eq!(chain.search("veeam cve").await.unwrap()["provider"], "tavily");
+        assert_eq!((tv.hits.load(SeqCst), serp.hits.load(SeqCst)), (1, 0));
+
+        // Only a SerpAPI key: auto is SerpAPI, as before, and Tavily is never asked.
+        let tv = chain::tavily().await;
+        let serp = chain::serpapi().await;
+        let chain = chain::Chain::new("{}", "good", &serp, None).await.with_tavily("", &tv);
         assert_eq!(chain.search("veeam cve").await.unwrap()["provider"], "google-serpapi");
-        assert_eq!(tv.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!((tv.hits.load(SeqCst), serp.hits.load(SeqCst)), (0, 1));
+
+        // No key: public Google, and neither keyed provider is asked.
+        let tv = chain::tavily().await;
+        let serp = chain::serpapi().await;
+        let google = chain::google().await;
+        let chain = chain::Chain::new("{}", "", &serp, Some(&google))
+            .await
+            .with_tavily("", &tv);
+        assert_eq!(chain.search("veeam cve").await.unwrap()["provider"], "google-public");
+        assert_eq!((tv.hits.load(SeqCst), serp.hits.load(SeqCst)), (0, 0));
+
+        // A forced SerpAPI is not reordered by a saved Tavily key.
+        let tv = chain::tavily().await;
+        let serp = chain::serpapi().await;
+        let chain = chain::Chain::new("web: {search: {provider: serpapi}}", "good", &serp, None)
+            .await
+            .with_tavily("good", &tv);
+        assert_eq!(chain.search("veeam cve").await.unwrap()["provider"], "google-serpapi");
+        assert_eq!(tv.hits.load(SeqCst), 0);
+
+        // Auto with both keys follows the same fallback flags as a forced Tavily:
+        // a down Tavily reaches SerpAPI only when fallback_to_serpapi is on.
+        let serp = chain::serpapi().await;
+        let chain = chain::Chain::new("web: {search: {fallback_to_serpapi: true}}", "good", &serp, None)
+            .await
+            .with_tavily_at("good", chain::refused_addr().await);
+        let value = chain.search("veeam cve").await.unwrap();
+        assert_eq!(value["provider"], "google-serpapi");
+        assert_eq!(value["fallback_from"], json!(["tavily"]));
+        let serp = chain::serpapi().await;
+        let chain = chain::Chain::new("{}", "good", &serp, None)
+            .await
+            .with_tavily_at("good", chain::refused_addr().await);
+        assert_eq!(chain.search("veeam cve").await.unwrap_err().code, "WEB_SEARCH_PROVIDER");
+        assert_eq!(serp.hits.load(SeqCst), 0, "no SerpAPI hop without its flag");
+    }
+
+    #[tokio::test]
+    async fn a_tavily_key_cleared_while_the_search_waits_is_never_sent() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let tv = chain::tavily().await;
+        let serp = chain::serpapi().await;
+        let chain = chain::Chain::new("{}", "", &serp, None).await.with_tavily("good", &tv);
+        // Every permit is taken, so the search reads its key and then waits.
+        let held = chain
+            .web
+            .permits
+            .clone()
+            .acquire_many_owned(chain.web.limits.concurrency as u32)
+            .await
+            .unwrap();
+        let clear = async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            super::super::env_keys::update_keys(
+                &chain.dir.path().join(".env"),
+                &std::collections::BTreeMap::new(),
+                &["TAVILY_API_KEY".to_string()],
+            )
+            .unwrap();
+            drop(held);
+        };
+        let (result, ()) = tokio::join!(chain.search("veeam cve"), clear);
+        assert_eq!(result.unwrap_err().code, "WEB_SEARCH_KEY_CHANGED");
+        assert_eq!(
+            (tv.hits.load(SeqCst), serp.hits.load(SeqCst)),
+            (0, 0),
+            "a cleared key reaches no provider"
+        );
     }
 
     #[tokio::test]
