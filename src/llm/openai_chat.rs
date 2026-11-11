@@ -35,6 +35,11 @@ pub struct ChatResult {
     /// Whether that first request carried tool definitions; calibration counts
     /// them only then.
     pub initial_prompt_tools: bool,
+    /// Uncalibrated tokens that first request carried beyond the system prompt,
+    /// the stored history and tool definitions: the evidence a `/loop` web turn
+    /// restores ahead of its first call. Calibration counts them, or the
+    /// observed/estimated ratio would rise by exactly their share.
+    pub initial_prompt_extra_tokens: u64,
     /// Whether the request that produced `body_text` offered tools; grounding
     /// treats them as available only then.
     pub final_prompt_tools: bool,
@@ -344,6 +349,7 @@ pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatR
         initial_prompt_tokens: initial_prompt_tokens(parsed),
         initial_prompt_tools: false,
         final_prompt_tools: false,
+        initial_prompt_extra_tokens: 0,
         peak_prompt_extra_tokens: 0,
     })
 }

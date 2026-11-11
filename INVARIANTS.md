@@ -607,7 +607,7 @@ finish metadata, never replies.
 The initial estimator is UTF-8 `bytes.div_ceil(4)`, not a tokenizer.
 Successful local exchanges persist an observed/estimated prompt-token ratio
 with the session, scoped to model and backend URL: it starts at 1, stays within
-1–3, rises immediately and decays by a half-weight EMA. Missing, zero or non-integer prompt usage leaves calibration unchanged. Web turns calibrate on the first model call's usage, never their aggregate;
+1–3, rises immediately and decays by a half-weight EMA. Missing, zero or non-integer prompt usage leaves calibration unchanged. Web turns calibrate on the first model call's usage, never their aggregate, against an estimate that counts the evidence a `/loop` turn restores ahead of that call;
 summary and cloud usage never train it. An `auto_tune`-verified window above 32768
 scales the compaction trigger up in proportion, within `chat.compact_max_prefill_sec`
 of measured prefill, unless `chat.compact_follow_window` is false.
