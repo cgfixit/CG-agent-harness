@@ -171,14 +171,16 @@ last_nonempty="$(printf '%s\n' "$body_unix" | sed -e 's/[[:space:]]*$//' | awk '
 filled_stamp='^(🤖 )?Last updated: [0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2} ET$'
 placeholder_stamp='^(🤖 )?Last updated: YYYY-MM-DD HH:MM ET$'
 stamp_ok=0
+is_shipped_template=0
+if [[ "$input" != "-" && -f "$input" ]]; then
+  input_abs="$(cd "$(dirname "$input")" && pwd)/$(basename "$input")"
+  [[ "$input_abs" == "$shipped_template" ]] && is_shipped_template=1
+fi
 if grep -Eq "$filled_stamp" <<<"$last_nonempty"; then
   stamp_ok=1
-elif [[ "$input" != "-" && -f "$input" ]]; then
-  input_abs="$(cd "$(dirname "$input")" && pwd)/$(basename "$input")"
-  if [[ "$input_abs" == "$shipped_template" ]] \
-    && grep -Eq "$placeholder_stamp" <<<"$last_nonempty"; then
-    stamp_ok=1
-  fi
+elif [[ "$is_shipped_template" -eq 1 ]] \
+  && grep -Eq "$placeholder_stamp" <<<"$last_nonempty"; then
+  stamp_ok=1
 fi
 if [[ "$stamp_ok" -ne 1 ]]; then
   missing+=("Last updated timestamp (last line, YYYY-MM-DD HH:MM ET)")
@@ -265,6 +267,51 @@ if [[ -n "$template_missing" || -z "$template_text" ]]; then
   fail=1
 fi
 
+fold_boxes() { sed -E 's/^([[:space:]]*- \[)[xX](\])/\1 \2/; s/[[:space:]]+/ /g; s/^ //; s/ $//'; }
+
+# Filled-section rule (same rule as pr-template-check.yml). A heading alone
+# is not an answer: `## McLuhan tetrad` and `## ELI5` must each hold text the
+# contributor wrote. Lines copied verbatim from the template and the stamp
+# are dropped first, so the template's own questions never count. The tetrad
+# needs each of its four labels followed by an answer on the same line (N/A
+# is an answer); ELI5 needs at least 40 characters. The shipped template is
+# the one input excused, as it is for the placeholder stamp. Light edits to
+# a template line are not detected; a reviewer reads both sections.
+section_text() {
+  awk -v want="$1" '
+    NR == FNR { tmpl[$0] = 1; next }
+    { low = tolower($0) }
+    low ~ want { insec = 1; buf = ""; next }
+    insec && /^#+ / { insec = 0; next }
+    insec && !($0 in tmpl) && low !~ /^(🤖 )?last updated: / { buf = buf $0 "\n" }
+    END { printf "%s", buf }
+  ' <(printf '%s\n' "$template_text" | fold_boxes) <(printf '%s\n' "$body_unix" | fold_boxes)
+}
+if [[ -n "$template_text" && "$is_shipped_template" -ne 1 ]]; then
+  if grep -Eiq '^##[[:space:]]+mcluhan tetrad[[:space:]]*$' <<<"$body_unix"; then
+    # Each label starts its own line first, so one label followed directly
+    # by the next is an empty answer, not an answer that begins with "R".
+    # An answer may open with a backtick or a quote, so any character other
+    # than a space or an asterisk starts one.
+    tetrad_text="$(section_text '^## mcluhan tetrad$' | awk '
+      { line = tolower($0); gsub(/(enhances|obsoletes|retrieves|reverses into):/, "\n@&", line); print line }')"
+    for label in 'enhances' 'obsoletes' 'retrieves' 'reverses into'; do
+      if ! grep -Eq "^@$label:[* ]*[^* ]" <<<"$tetrad_text"; then
+        missing+=("McLuhan tetrad answers (Enhances, Obsoletes, Retrieves and Reverses into each need your own text on the label's line; N/A is allowed)")
+        fail=1
+        break
+      fi
+    done
+  fi
+  if grep -Eq '^## ELI5[[:space:]]*$' <<<"$body_unix"; then
+    eli5_text="$(section_text '^## eli5$' | tr -d '[:space:]')"
+    if [[ "${#eli5_text}" -lt 40 ]]; then
+      missing+=("ELI5 text (write at least 40 characters of your own under ## ELI5)")
+      fail=1
+    fi
+  fi
+fi
+
 if [[ -z "$files_source" ]]; then
   printf 'check-pr-template: core-path rule skipped (set CGAGENTHARNESS_PR_FILES or fetch %s)\n' "$base" >&2
 elif grep -Eq "$core_pattern" <<<"$changed"; then
@@ -285,7 +332,6 @@ elif grep -Eq "$core_pattern" <<<"$changed"; then
   # This comparison uses the template loaded above, including when
   # CGAGENTHARNESS_PR_FILES supplied the file list.
   if [[ -n "$template_text" ]]; then
-    fold_boxes() { sed -E 's/^([[:space:]]*- \[)[xX](\])/\1 \2/; s/[[:space:]]+/ /g; s/^ //; s/ $//'; }
     contributed="$(awk '
       NR == FNR { tmpl[$0] = 1; next }
       {

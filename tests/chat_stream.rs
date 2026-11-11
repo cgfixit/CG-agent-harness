@@ -21,7 +21,14 @@ async fn model() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
     let app = Router::new().route("/v1/chat/completions", axum::routing::post(move |Json(request): Json<Value>| {
         let count = count.clone();
         async move {
-            assert_eq!(request["stream"], true);
+            // Only the tool-free call after a batch that failed entirely is
+            // buffered; every other chat request streams.
+            if request["stream"] != true {
+                assert_eq!(request["tool_choice"], "none");
+                let last = request["messages"].as_array().unwrap().last().unwrap();
+                assert_eq!(last["role"], "tool");
+                return Json(json!({"model":"fixture","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"That page could not be read."}}],"usage":{"prompt_tokens":3,"completion_tokens":2}})).into_response();
+            }
             struct Active(Arc<AtomicUsize>);
             impl Drop for Active { fn drop(&mut self) { self.0.fetch_sub(1, Ordering::SeqCst); } }
             count.fetch_add(1, Ordering::SeqCst);
@@ -43,7 +50,7 @@ async fn model() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
                 if index == 1 { tokio::time::sleep(Duration::from_millis(if prompt == "slow" { 30_000 } else { 150 })).await; }
                 Some((Ok::<_, std::convert::Infallible>(Event::default().data(&frames[index])), (index+1, frames, prompt, guard)))
             });
-            Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_millis(20)))
+            Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_millis(20))).into_response()
         }
     }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
@@ -256,8 +263,12 @@ async fn streamed_tool_calls_keep_url_policy_and_malformed_output_never_commits_
         let events = events(&text);
         let last = events.last().unwrap();
         if message == "tool" {
+            // The denied read is that call's result; the model then answers
+            // without tools and the refusal stays on the turn's events.
             assert_eq!(last["type"], "done");
             assert_eq!(last["data"]["web_tools"][0]["code"], "WEB_ALLOWLIST_EMPTY");
+            assert_eq!(last["data"]["web_tools"][0]["ok"], false);
+            assert_eq!(last["data"]["reply"], "That page could not be read.");
         } else {
             assert_eq!(last["type"], "error");
             assert!(s.state.store.for_owner("local").get(id).unwrap().messages.is_empty());

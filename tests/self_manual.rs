@@ -57,6 +57,18 @@ fn system_prompt(model: &MockModel) -> String {
         .to_string()
 }
 
+/// The new message as sent: a local chat turn fences its per-message context ahead of it.
+fn sent_message(model: &MockModel) -> String {
+    let request = model.last_request().unwrap();
+    let messages = request["messages"].as_array().unwrap();
+    messages.last().unwrap()["content"].as_str().unwrap_or("").to_string()
+}
+
+/// Every message of the last request, for "appears nowhere" checks.
+fn whole_request(model: &MockModel) -> String {
+    model.last_request().unwrap()["messages"].to_string()
+}
+
 async fn enabled_server(model: &MockModel) -> TestServer {
     spawn_server(
         &model.base_url(),
@@ -91,14 +103,22 @@ async fn local_turns_carry_bounded_manual_chunks_and_the_live_block() {
         )
         .await;
     assert_eq!(status, 200, "{body}");
-    let prompt = system_prompt(&model);
+    // The excerpts change with the message, so they ride with it; the live
+    // block is the same all session and stays in the system prompt.
+    let system = system_prompt(&model);
+    let prompt = sent_message(&model);
+    assert!(
+        !system.contains("SELF_MANUAL"),
+        "excerpts stay out of the system prompt"
+    );
+    assert!(prompt.contains("<<<TURN_CONTEXT>>>") && prompt.ends_with("How does the web URL allowlist work?"));
     assert!(prompt.contains("<<<SELF_MANUAL_DATA>>>") && prompt.contains(&format!("sha256 {sha}")));
     let chunks = prompt.matches("### self_manual m").count();
     assert!((1..=2).contains(&chunks), "{chunks} chunks");
     let manual =
         &prompt[prompt.find("<<<SELF_MANUAL_DATA>>>").unwrap()..prompt.find("<<<END_SELF_MANUAL_DATA>>>").unwrap()];
     assert!(manual.chars().count() <= 1500 + 200, "body plus the hash line");
-    assert!(prompt.contains("<<<LIVE_STATE_DATA>>>") && prompt.contains(&format!("session: {sid}")));
+    assert!(system.contains("<<<LIVE_STATE_DATA>>>") && system.contains(&format!("session: {sid}")));
     let rows = injected_rows(&s);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["manual_sha256"], sha);
@@ -120,6 +140,25 @@ async fn local_turns_carry_bounded_manual_chunks_and_the_live_block() {
     assert!(preview["self_manual"]["chunks"].as_array().unwrap().len() <= 2);
     assert_eq!(preview["live_state"], true);
     assert_eq!(model.requests.lock().unwrap().len(), calls);
+
+    // A different question selects different excerpts, and the system prompt
+    // is byte for byte the same: a local runtime keeps the prompt it already
+    // read up to the last exchange. The stored turn is the bare message.
+    let (status, body) = s
+        .post_json(
+            "/api/chat",
+            json!({"session_id": sid, "message": "What does compaction keep verbatim?"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(system_prompt(&model), system);
+    let second = sent_message(&model);
+    assert!(second.contains("<<<SELF_MANUAL_DATA>>>") && second != prompt);
+    let request = model.last_request().unwrap();
+    let history = request["messages"].as_array().unwrap();
+    assert_eq!(history[1]["content"], "How does the web URL allowlist work?");
+    let (_, session) = s.get_json(&format!("/api/sessions/{sid}")).await;
+    assert!(!session.to_string().contains("TURN_CONTEXT"), "context is never stored");
 }
 
 #[tokio::test]
@@ -140,7 +179,7 @@ async fn loop_and_cloud_turns_never_carry_them() {
         )
         .await;
     assert_eq!(status, 200, "{body}");
-    let prompt = system_prompt(&model);
+    let prompt = whole_request(&model);
     assert!(!prompt.contains("SELF_MANUAL") && !prompt.contains("LIVE_STATE"));
     let calls = model.requests.lock().unwrap().len();
     s.post_json(
@@ -164,7 +203,7 @@ async fn switched_off_means_absent() {
         .post_json("/api/chat", json!({"message": "How does the web URL allowlist work?"}))
         .await;
     assert_eq!(status, 200, "{body}");
-    let prompt = system_prompt(&model);
+    let prompt = whole_request(&model);
     assert!(!prompt.contains("SELF_MANUAL") && !prompt.contains("LIVE_STATE"));
     assert!(s.state.self_knowledge.manual.is_none());
 }

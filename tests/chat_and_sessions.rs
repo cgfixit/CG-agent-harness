@@ -1269,17 +1269,15 @@ async fn cancel_aborts_the_in_flight_turn_and_releases_the_gate() {
 }
 
 #[tokio::test]
-async fn a_truncated_tools_offered_answer_is_retried_at_the_synthesis_budget() {
+async fn a_tools_offered_answer_is_generated_once_at_the_answer_ceiling() {
+    // Before, the hop was capped at 512 tokens: a longer direct answer came
+    // back cut off, was thrown away and was generated again without tools.
     let model = start_mock_model().await;
-    model.set_reply(json!([
-        {"model":"mock-model","choices":[{"finish_reason":"length","message":{"role":"assistant","content":"partial"}}],"usage":{"prompt_tokens":10,"completion_tokens":512}},
-        {"model":"mock-model","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"full answer"}}],"usage":{"prompt_tokens":11,"completion_tokens":8}}
-    ]));
+    model.set_reply(ok_reply("full answer", 10, 900));
     let s = spawn_server(
         &model.base_url(),
         ServerOptions::default()
             .with("models.local_llm.max_tokens", "4096")
-            .with("models.local_llm.tool_max_tokens", "512")
             .with("models.local_llm.temperature", "0.1"),
     )
     .await;
@@ -1287,14 +1285,11 @@ async fn a_truncated_tools_offered_answer_is_retried_at_the_synthesis_budget() {
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["reply"], "full answer");
     let requests = model.requests.lock().unwrap();
-    assert_eq!(requests.len(), 2, "{requests:?}");
-    assert_eq!(requests[0]["max_tokens"], 512);
+    assert_eq!(requests.len(), 1, "one model call, no discarded draft: {requests:?}");
+    assert_eq!(requests[0]["max_tokens"], 4096, "the hop may write the whole answer");
     assert_eq!(requests[0]["temperature"].as_f64(), Some(0.0));
     assert!(requests[0].get("tools").is_some());
-    assert_eq!(requests[1]["max_tokens"], 4096, "the answer uses the synthesis ceiling");
-    assert_eq!(requests[1]["temperature"].as_f64(), Some(0.1));
-    assert_eq!(requests[1]["tool_choice"], "none");
-    assert_eq!(body["usage"]["prompt_tokens"], 21);
+    assert_eq!(body["usage"]["completion_tokens"], 900);
 }
 
 #[tokio::test]
@@ -1333,7 +1328,10 @@ async fn loop_turns_need_a_session_a_goal_and_the_tool_allowlist() {
         .await;
     assert_eq!(status, 200, "{body}");
     let req = model.last_request().unwrap();
-    assert_eq!(req["max_tokens"], 512, "tool selection keeps the small planning cap");
+    assert_eq!(
+        req["max_tokens"], 2048,
+        "a loop hop that offers tools may write the whole reply"
+    );
     assert!(req["messages"][0]["content"]
         .as_str()
         .unwrap()

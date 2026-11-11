@@ -415,6 +415,18 @@ impl MockModel {
     }
 }
 
+/// The new message of a recorded model request. A local chat turn fences its
+/// per-message context (facts, manual and attachment excerpts, a staged `/diag`
+/// excerpt) ahead of the operator's text there, not in the system prompt.
+pub fn turn_message(request: &Value) -> String {
+    request["messages"]
+        .as_array()
+        .and_then(|messages| messages.last())
+        .and_then(|message| message["content"].as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
 pub fn ok_reply(text: &str, prompt: u64, completion: u64) -> Value {
     json!({
         "model": "mock-model",
