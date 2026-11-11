@@ -1452,6 +1452,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_tavily_key_cleared_while_the_search_waits_is_never_sent() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let tv = chain::tavily().await;
+        let serp = chain::serpapi().await;
+        let chain = chain::Chain::new("{}", "", &serp, None).await.with_tavily("good", &tv);
+        // Every permit is taken, so the search reads its key and then waits.
+        let held = chain
+            .web
+            .permits
+            .clone()
+            .acquire_many_owned(chain.web.limits.concurrency as u32)
+            .await
+            .unwrap();
+        let clear = async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            super::super::env_keys::update_keys(
+                &chain.dir.path().join(".env"),
+                &std::collections::BTreeMap::new(),
+                &["TAVILY_API_KEY".to_string()],
+            )
+            .unwrap();
+            drop(held);
+        };
+        let (result, ()) = tokio::join!(chain.search("veeam cve"), clear);
+        assert_eq!(result.unwrap_err().code, "WEB_SEARCH_KEY_CHANGED");
+        assert_eq!(
+            (tv.hits.load(SeqCst), serp.hits.load(SeqCst)),
+            (0, 0),
+            "a cleared key reaches no provider"
+        );
+    }
+
+    #[tokio::test]
     async fn fallback_is_off_by_default_and_a_down_tavily_stays_explicit() {
         let serp = chain::serpapi().await;
         let chain = chain::Chain::new(&chain::yaml(""), "good", &serp, None)
