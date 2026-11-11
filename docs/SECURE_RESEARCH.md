@@ -379,9 +379,9 @@ validation and no reuse, retries, proxies, redirects, compression or cookies
 Opt-in `web.firecrawl.enabled` (ships off; needs **Firecrawl page reader** in API
 Keys) is the one exception, for exact reads only: `fetch`, chat `web_fetch` and
 batches, never discovery, crawl or search. When the pinned read gets a 403,
-429 or 503, or a script shell (scripted HTML whose text is under 200
-characters and under 5% of the markup), the authorized URL leaves the machine
-once, to the fixed `https://api.firecrawl.dev/v2/scrape`: basic proxy,
+429 or 503, a script shell (scripted HTML whose text is under 200
+characters and under 5% of the markup), an oversized body or a PDF (10 pages
+at most), the authorized URL leaves the machine once, to the fixed `https://api.firecrawl.dev/v2/scrape`: basic proxy,
 markdown only, `storeInCache: false`. An answer naming another final URL is
 refused as a redirect, and no links are kept. The page carries
 `via: firecrawl`. `web.firecrawl.max_per_hour` (default 20) caps reads, and

@@ -433,16 +433,16 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - web.chat_tool_calls: 1–30 read-only calls per chat or local /loop turn; web.total_tokens usually binds first
   - web.carry_forward_sources: 0 (off) or 1–50 earlier reads (URL/query only, no page text) listed in web turns; reloadable
   - web.goal_web_default: off|fetch|all; restart-only. The mode a /goal gets without --web.
-  - web.response_bytes: 1024–1048576; compressed bodies refused
-  - web.request_seconds: 1–30, includes queue, DNS, headers, body and extraction
+  - web.response_bytes: 1024–1048576; compressed bodies refused. Shipped 262144 until 2026-11-10: uncompressed, many documentation…
+  - web.request_seconds: 1–30, includes queue, DNS, headers, body and extraction; also the one deadline a search's provider hops…
   - web.html_parser_handles: 64–4096; bound open-element/formatting state, restart-only
   - web.concurrency: 1–4 total fetches; restart-only (shared permits)
-  - web.max_rules: 1–256 allowlist rules (one per pattern; a grant names 1–32); restart-only; file cap 4 KiB per rule, at least…
 
 ## config: sections and keys (values omitted) (part 4)
 
-- web.pages: 1–40 per run
-  - web.run_bytes: 1024–8388608 per run
+- web.max_rules: 1–256 allowlist rules (one per pattern; a grant names 1–32); restart-only; file cap 4 KiB per rule, at least…
+  - web.pages: 1–40 per run
+  - web.run_bytes: 1024–8388608 per run; shipped 2097152 until 2026-11-10 (two full responses at the new response_bytes)
   - web.run_seconds: 1–180
   - web.per_site_pages: 1–20
   - web.pace_ms: 100–5000 between requests to an origin; public Google searches wait at least 3000 (code floor)
@@ -454,12 +454,12 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - web.rounds: 1–2 planning/retrieval rounds; one bounded crawl per run
   - web.evidence_tokens: 256–6000, estimated when no tokenizer is available
   - web.model_tokens: 256–2048 maximum synthesis completion
-  - web.total_tokens: 2048–128000, held at 32000 unless auto_tune measured a larger window; sized for a verified 32768-token window
-  - web.research_seconds: 10–3600 discovery and planning deadline
 
 ## config: sections and keys (values omitted) (part 5)
 
-- web.synthesis_seconds: 10–3600 answer deadline, started after discovery; missing keys use 300
+- web.total_tokens: 2048–128000, held at 32000 unless auto_tune measured a larger window; sized for a verified 32768-token window
+  - web.research_seconds: 10–3600 discovery and planning deadline
+  - web.synthesis_seconds: 10–3600 answer deadline, started after discovery; missing keys use 300
   - web.stale_seconds: 60–31536000; fetch age, not publication-date verification
   - web.search
   - web.firecrawl
@@ -472,13 +472,13 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - notifications.queue_capacity: 1–512 retained deliveries; pressure evicts terminal rows before refusing pending work
   - notifications.batch_size: 1–32 metadata events per POST
   - notifications.batch_interval_sec: 1–3600; initial batching delay
-  - notifications.poll_interval_sec: 1–60; durable outbox scan
-  - notifications.max_attempts: 1–3 per delivery/replay; IDs remain stable
-  - notifications.retry_delay_sec: 1–60; exponential backoff base
 
 ## config: sections and keys (values omitted) (part 6)
 
-- notifications.max_backoff_sec: 1–3600; before bounded jitter
+- notifications.poll_interval_sec: 1–60; durable outbox scan
+  - notifications.max_attempts: 1–3 per delivery/replay; IDs remain stable
+  - notifications.retry_delay_sec: 1–60; exponential backoff base
+  - notifications.max_backoff_sec: 1–3600; before bounded jitter
   - notifications.jitter_percent: 0–50; nonnegative random delay
   - notifications.retention_sec: 60–2592000; pending and terminal delivery retention
   - notifications.max_replays: 0–10; explicit owner-confirmed replay cycles
@@ -492,14 +492,14 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - mcp.servers
 - security
   - security.api_key_optional: optional harness metadata key; account login remains required
-  - security.allow_plaintext_key_file: keep managed provider keys in the OS credential store
-- tls
-  - tls.enabled: newly seeded homes use HTTPS; existing configs are not rewritten
-  - tls.auto_generate: unique local cert/key in a private atomic PEM bundle
 
 ## config: sections and keys (values omitted) (part 7)
 
-- tls.certificate_days: 1–365; renew explicitly before expiry
+- security.allow_plaintext_key_file: keep managed provider keys in the OS credential store
+- tls
+  - tls.enabled: newly seeded homes use HTTPS; existing configs are not rewritten
+  - tls.auto_generate: unique local cert/key in a private atomic PEM bundle
+  - tls.certificate_days: 1–365; renew explicitly before expiry
   - tls.cert_file: optional operator PEM chain, relative to home or absolute
   - tls.key_file: paired private PEM key; never overwritten by automatic generation
 - auth
@@ -522,14 +522,14 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - personality.soul_max_chars: clamped to 1–65536
   - personality.prompt_skill_max_chars: clamped to 1–32768
   - personality.prompt_skills_total_chars: clamped to 1–65536
+
+## config: sections and keys (values omitted) (part 8)
+
 - agentic
   - agentic.enabled: master switch; CLI no-ops (exit 0) while false
   - agentic.repo: set owner/name explicitly before enabling coding
   - agentic.mode: "read" | "write"
-
-## config: sections and keys (values omitted) (part 8)
-
-- agentic.writes_enabled: writes need mode=write AND this AND reason AND confirm
+  - agentic.writes_enabled: writes need mode=write AND this AND reason AND confirm
   - agentic.gh_min_version
   - agentic.gh_timeout_sec
   - agentic.gh_retries
@@ -545,13 +545,13 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - diagnostics.logs_max_bytes: 4096–262144 per read
   - diagnostics.logs_inject_max_chars: 512–24000 staged into one prompt
   - diagnostics.logs_allowed_files: bare names [A-Za-z0-9._-]; unslop.metrics_path outside logs/ is not read
-  - diagnostics.model_tool
-  - diagnostics.self_knowledge
-  - diagnostics.self_manual_max_chunks: 1–8 chunks per turn
 
 ## config: sections and keys (values omitted) (part 9)
 
-- diagnostics.self_manual_max_chars: 512–16000 injected characters per turn
+- diagnostics.model_tool
+  - diagnostics.self_knowledge
+  - diagnostics.self_manual_max_chunks: 1–8 chunks per turn
+  - diagnostics.self_manual_max_chars: 512–16000 injected characters per turn
   - diagnostics.self_manual_min_score: finite, >= 0; Tantivy score floor, 0 keeps every hit
   - diagnostics.live_state
 - memory: Account-private structured facts, governed proposals, and optional episodes. Distinct from harness.json.memory_enabled, which only includes pinned /memory notes in the chat prompt. Missing, quoted,…
@@ -568,11 +568,11 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - structured_memory.auto_suggest_coding
   - structured_memory.suggestion_mode: summaries | insights | both; invalid values disable suggestions
   - structured_memory.suggestion_supported
-  - structured_memory.suggestion_max_input_chars: clamped to 256–32000; total across input/output, split equally
 
 ## config: sections and keys (values omitted) (part 10)
 
-- structured_memory.suggestion_max_queue: clamped to 1–32; queued inputs; one additional generation may be running
+- structured_memory.suggestion_max_input_chars: clamped to 256–32000; total across input/output, split equally
+  - structured_memory.suggestion_max_queue: clamped to 1–32; queued inputs; one additional generation may be running
   - structured_memory.suggestion_queue_ttl_secs: clamped to 1–3600; volatile inputs expire; restart drops them
   - structured_memory.suggestion_idle_ms: clamped to 10–30000
   - structured_memory.status_poll_ms: clamped to 250–30000; visible Memory pane only
@@ -586,12 +586,12 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - structured_memory.max_episode_bytes_per_owner: clamped to 256–8 MiB
   - structured_memory.episode_ttl_secs: clamped to 60–31622400 (366 days)
   - structured_memory.max_export_bytes: clamped to 1 KiB–8 MiB
-  - structured_memory.max_selected_facts: clamped to 1–32
-  - structured_memory.max_search_query_chars: clamped to 1–256
 
 ## config: sections and keys (values omitted) (part 11)
 
-- structured_memory.max_search_results: clamped to 1–64
+- structured_memory.max_selected_facts: clamped to 1–32
+  - structured_memory.max_search_query_chars: clamped to 1–256
+  - structured_memory.max_search_results: clamped to 1–64
   - structured_memory.max_retrieval_results: clamped to 1–16
   - structured_memory.max_retrieval_tokens: clamped to 1–16
   - structured_memory.max_retrieval_token_chars: clamped to 1–64
@@ -607,14 +607,14 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - netconnect.passive_listen
   - netconnect.discovery
   - netconnect.port_scan
-  - netconnect.diagnostics
-  - netconnect.throughput
-  - netconnect.anomaly_detection
-  - netconnect.home_automation
 
 ## config: sections and keys (values omitted) (part 12)
 
-- netconnect.allowed_cidrs
+- netconnect.diagnostics
+  - netconnect.throughput
+  - netconnect.anomaly_detection
+  - netconnect.home_automation
+  - netconnect.allowed_cidrs
   - netconnect.port_allowlist
   - netconnect.host_cap
   - netconnect.rate_limit_per_min

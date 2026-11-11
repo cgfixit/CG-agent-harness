@@ -210,6 +210,8 @@ nearby qualifiers/table context: two or three passages per source, never a
 prefix-only window. Relevance selection saves model context, not the first
 HTTP download. Oversized/complex pages remain explicit failures; do not raise
 response caps or send those failures to Firecrawl under today's contract.
+(2026-11-10: an oversized body or a PDF now goes to the enabled fallback; see
+`INVARIANTS.md`.)
 
 For explicitly fresh Firecrawl reads, validate maxAge=0 and keep
 storeInCache=false. Distinguish local fetch timestamp, provider

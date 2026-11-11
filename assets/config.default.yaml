@@ -165,13 +165,13 @@ web:
   # fetch reads permitted URLs only; all also lets unattended /loop turns pick web_search
   # queries. Search listings never grant URL permission. Set fetch to withhold search from
   # unattended turns, or per goal: /goal --web fetch <text>, /loop --web fetch. Invalid values fail boot.
-  response_bytes: 262144 # 1024–1048576; compressed bodies refused
-  request_seconds: 8 # 1–30, includes queue, DNS, headers, body and extraction
+  response_bytes: 1048576 # 1024–1048576; compressed bodies refused. Shipped 262144 until 2026-11-10: uncompressed, many documentation and reference pages are larger, and passage selection keeps the page out of the model's context either way
+  request_seconds: 15 # 1–30, includes queue, DNS, headers, body and extraction; also the one deadline a search's provider hops share. Shipped 8 until 2026-11-10
   html_parser_handles: 4096 # 64–4096; bound open-element/formatting state, restart-only
   concurrency: 4 # 1–4 total fetches; restart-only (shared permits)
   max_rules: 64 # 1–256 allowlist rules (one per pattern; a grant names 1–32); restart-only; file cap 4 KiB per rule, at least 64 KiB
   pages: 40 # 1–40 per run
-  run_bytes: 2097152 # 1024–8388608 per run
+  run_bytes: 8388608 # 1024–8388608 per run; shipped 2097152 until 2026-11-10 (two full responses at the new response_bytes)
   run_seconds: 180 # 1–180
   per_site_pages: 10 # 1–20
   pace_ms: 400 # 100–5000 between requests to an origin; public Google searches wait at least 3000 (code floor)
@@ -216,9 +216,11 @@ web:
     fallback_alert_per_hour: 20 # 1–1000 SerpAPI fallbacks per clock hour before one web_search_fallback_burst audit line
   # Firecrawl, restart-only: an opt-in second reader for exact permitted URLs (/web fetch, the
   # chat web_fetch tool, batch reads; never discovery, crawl or search). It runs only after the
-  # pinned fetch got a server's 403, 429 or 503, or a script shell (scripted HTML whose text is under
-  # 200 chars and under 5% of the markup), and then sends that URL to Firecrawl: one basic scrape,
-  # markdown only, not kept in Firecrawl's cache, no links taken.
+  # pinned fetch got a server's 403, 429 or 503, a script shell (scripted HTML whose text is under
+  # 200 chars and under 5% of the markup), a body over response_bytes or a PDF (the last two by
+  # operator decision, 2026-11-10), and then sends that URL to Firecrawl: one basic scrape,
+  # markdown only, not kept in Firecrawl's cache, no links taken, within twice request_seconds
+  # (at most 60 s). Firecrawl bills a PDF one credit per page; every read pins a 10-page cap.
   # A result whose final URL differs from the request is refused like any redirect. A failed
   # fallback keeps the original outcome, with its code in details.fallback. Needs FIRECRAWL_API_KEY.
   firecrawl:

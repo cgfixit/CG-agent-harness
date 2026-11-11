@@ -1737,7 +1737,8 @@ pub(crate) async fn chat_inner(
     }
     let recorded = state.store.for_owner(&owner).record_exchange_inner(
         &session.session_id,
-        &req.message,
+        // A server-run loop turn stores its short label, not the framing sent.
+        req.stored_message.as_deref().unwrap_or(&req.message),
         &reply.body_text,
         &reply.model,
         &usage,

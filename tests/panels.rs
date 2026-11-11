@@ -287,7 +287,8 @@ async fn start_page_server(body: &'static str, ctype: &'static str) -> std::net:
         )
         .route(
             "/big",
-            get(|| async { ([("content-type", "text/plain")], "x".repeat(600_000)) }),
+            // Over the shipped 1 MiB `web.response_bytes`.
+            get(|| async { ([("content-type", "text/plain")], "x".repeat(1_200_000)) }),
         )
         .route(
             "/bin",

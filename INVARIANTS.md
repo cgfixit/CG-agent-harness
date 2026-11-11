@@ -228,8 +228,12 @@ complexity returns no partial evidence.
 
 The one exception is opt-in `web.firecrawl.enabled` (ships off), for exact reads
 only, never discovery, crawl or search. After a pinned read gets a server's 403,
-429 or 503 or a near-empty script shell, the authorized URL, rechecked just
-before sending, may go once to Firecrawl, so it leaves the machine. Its answer
+429 or 503, a near-empty script shell, a body over `web.response_bytes` or a PDF
+(the last two by operator decision, 2026-11-10; any other content type, and every
+transport, redirect, policy or address refusal, never escalates), the authorized
+URL, rechecked just before sending, may go once to Firecrawl, so it leaves the
+machine. The read has twice `web.request_seconds` (at most 60 s) and pins a
+10-page PDF cap, since Firecrawl bills a PDF per page. Its answer
 must name that URL as final (a redirect is refused), keeps no links, carries
 `via: firecrawl`, and is capped by `web.firecrawl.max_per_hour`. A failed
 fallback keeps the original outcome.
@@ -576,7 +580,8 @@ restart-only `web.goal_web_default` (ships `all`; withhold unattended search wit
 goal; a turn needing compaction continues automatically.
 
 `POST /api/loop/start` runs those turns in a server task that outlives the
-browser. Each turn goes through `chat_inner` (`loop_turn: true`) after re-reading
+browser; the session stores each as a short label (`Loop turn N of M.`), not the
+goal reminder sent with it. Each turn goes through `chat_inner` (`loop_turn: true`) after re-reading
 the starting account: deleted, disabled, password-pending, or no longer
 operator/admin ends the run `failed`. `portal_auditor` cannot start one. Start,
 stop, status and events are bound to the starting owner; a foreign run reads as
@@ -646,7 +651,8 @@ The incoming user paste is never compacted. One local-model call
 reservation) summarizes within 24000 characters and the calibrated budget: goal
 and first message read-only, the prior `[session-compacted]`
 summary intact (else it is unusable), then the newest middle turns clipped to
-800 characters, gaps marked. Ungrounded identifiers become `[unverified]`;
+an equal share of that budget (800 to 4000 characters each, head and tail kept),
+gaps marked. Ungrounded identifiers become `[unverified]`;
 absence claims and corrections quoting no user turn (quotes under 8 characters
 match whole turns) are dropped, unmatched quotes unquoted; identifiers match whole tokens. The tail is whole exchanges
 within `chat.compact_keep_messages` and `chat.compact_tail_percent` of the
