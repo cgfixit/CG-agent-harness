@@ -262,7 +262,7 @@ selected facts are dropped as `cloud_chat`.
   (`FLOAT_KEYS`). A supplied confidence below the floor is rejected; a missing
   one is accepted. Confidence never bypasses human review.
 - **Local model only.** The generation gate is claimed, with no tools or web.
-  Chat wins the gate, and both report busy truthfully.
+  Chat and consolidation contend for it and report busy.
 - **No recalled-memory feedback.** Current facts are loaded only after
   extraction, to bind update/deactivate revision+digest or convert an exact
   content match from add → update.

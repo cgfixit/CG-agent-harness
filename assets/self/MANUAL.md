@@ -264,7 +264,8 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/soul/proposals`: Propose a persona change
 - GET, POST `/api/soul/proposals/{id}`: Review or decide a proposal
 - GET, POST `/api/style`: Output-style catalog and session select (`/style <name>`, `/style off`)
-- GET, POST `/api/skills`, `/api/skills/check`: List skills; describe a `check:<profile>` ID
+- GET `/api/skills`: List skills
+- POST `/api/skills/check`: Describe a `check:<profile>` ID
 - GET, POST `/api/memory`: Pinned-note status and on/off toggle
 - POST `/api/memory/add`, `/api/memory/forget`, `/api/memory/clear`: Save a literal note, remove one, remove all
 - GET `/api/structured-memory`: Truthful status and effective gates
@@ -283,8 +284,10 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/structured-memory/episodes/{id}/summary`: Attach a human semantic summary (confirm + reason)
 - POST `/api/structured-memory/episodes/{id}/delete`: Delete one episode
 - GET, POST `/api/structured-memory/consolidation`: List or start consolidation
-- GET, POST `/api/structured-memory/consolidation/{id}`, `/api/structured-memory/consolidation/{id}/cancel`: Consolidation status; cancel
-- GET, POST `/api/structured-memory/export`, `/api/structured-memory/purge`: Export or purge the owner's memory
+- GET `/api/structured-memory/consolidation/{id}`: Consolidation status
+- POST `/api/structured-memory/consolidation/{id}/cancel`: Cancel
+- GET `/api/structured-memory/export`: Export the owner's memory
+- POST `/api/structured-memory/purge`: Purge the owner's memory
 - GET, POST `/api/web`: Status and on/off toggle
 
 ## api: registered routes (part 7)
@@ -309,10 +312,12 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET `/api/agent/checks`: Check-profile names the browser may request
 - POST `/api/agent/run`: Synchronous run; check names map to fixed argv
 - GET, POST `/api/agent/jobs`: List owned detached jobs or start one
-- GET, POST `/api/agent/jobs/{job_id}`, `/api/agent/jobs/{job_id}/cancel`: Job status; cancel a job
+- GET `/api/agent/jobs/{job_id}`: Job status
+- POST `/api/agent/jobs/{job_id}/cancel`: Cancel a job
 - POST `/api/agent/schedules/preview`: Preview five occurrences and return an owner-bound receipt
 - GET, POST `/api/agent/schedules`: List owned schedules or activate the exact previewed request
-- GET, POST `/api/agent/schedules/{schedule_id}`, `/api/agent/schedules/{schedule_id}/cancel`: One schedule; cancel it
+- GET `/api/agent/schedules/{schedule_id}`: One schedule
+- POST `/api/agent/schedules/{schedule_id}/cancel`: Cancel a schedule
 - GET `/api/agent/runs`, `/api/agent/runs/{run_id}`: Retained run metadata; one run and its diff
 - POST `/api/agent/runs/{run_id}/decision`: Approve (`reason`, confirm) or reject
 - POST `/api/agent/runs/{run_id}/push`, `/api/agent/runs/{run_id}/publish`, `/api/agent/runs/{run_id}/discard`: Push the approved commit, open a draft PR, or discard the run
