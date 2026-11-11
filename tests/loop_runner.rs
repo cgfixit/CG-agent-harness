@@ -899,7 +899,7 @@ async fn an_account_disabled_during_the_busy_wait_gets_no_turn() {
     let sid = created["session_id"].as_str().unwrap().to_string();
     // Web off: a web turn re-reads the account itself, so only a plain local
     // turn shows whether the runner's own check follows the wait.
-    let (status, goal) = as_account(
+    let (status, _) = as_account(
         &s,
         &alice,
         Method::POST,
@@ -907,7 +907,7 @@ async fn an_account_disabled_during_the_busy_wait_gets_no_turn() {
         json!({"goal": "ship it", "web_mode": "off"}),
     )
     .await;
-    assert_eq!(status, 200, "{goal}");
+    assert_eq!(status, 200, "setting the goal with web off");
     let held = s.state.generation_gate.claim("consolidation").unwrap();
     let (status, started) = as_account(
         &s,
@@ -917,7 +917,7 @@ async fn an_account_disabled_during_the_busy_wait_gets_no_turn() {
         json!({"session_id": sid, "max_turns": 1}),
     )
     .await;
-    assert_eq!(status, 200, "{started}");
+    assert_eq!(status, 200, "starting the loop");
     let run_id = started["run"]["run_id"].as_str().unwrap().to_string();
     // The turn is queued behind the busy model when the account is disabled.
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
