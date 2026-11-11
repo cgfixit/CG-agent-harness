@@ -372,6 +372,69 @@ fn a_body_without_the_tetrad_section_fails() {
     assert!(tetrad < eli5, "the tetrad sits above ELI5");
 }
 
+/// The two closing sections need the contributor's own text, not only their
+/// headings: template lines copied verbatim do not count, each tetrad label
+/// needs an answer on its line, and the script and the workflow share the rule.
+#[test]
+fn tetrad_and_eli5_need_contributor_text() {
+    let filled = format!("{}{STAMP}\n", valid_prefix());
+    assert_ok(&run_body("filled-sections", &filled));
+    let tetrad_line = "- **Enhances:** N/A. **Obsoletes:** N/A. **Retrieves:** N/A. **Reverses into:** N/A.\n";
+    let eli5_line = "The marker line and the HTML after it are not part of the template body.\n";
+    assert!(filled.contains(tetrad_line) && filled.contains(eli5_line));
+    let template = std::fs::read_to_string(repo_root().join(".github/PULL_REQUEST_TEMPLATE.md")).unwrap();
+    let copied: String = template
+        .lines()
+        .filter(|line| line.starts_with("- **") && line.contains(":** what does"))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert_eq!(copied.lines().count(), 4, "the template ships four tetrad questions");
+    let cases = [
+        (
+            "tetrad-empty",
+            filled.replacen(tetrad_line, "", 1),
+            "McLuhan tetrad answers",
+        ),
+        (
+            "tetrad-copied",
+            filled.replacen(tetrad_line, &copied, 1),
+            "McLuhan tetrad answers",
+        ),
+        (
+            "tetrad-three",
+            filled.replacen(" **Retrieves:** N/A.", " **Retrieves:**", 1),
+            "McLuhan tetrad answers",
+        ),
+        ("eli5-empty", filled.replacen(eli5_line, "", 1), "ELI5 text"),
+        ("eli5-short", filled.replacen(eli5_line, "Fixed it.\n", 1), "ELI5 text"),
+        (
+            "eli5-copied",
+            filled.replacen(
+                eli5_line,
+                "- Be blunt about anything you did not run or could not check.\n",
+                1,
+            ),
+            "ELI5 text",
+        ),
+    ];
+    for (name, body, label) in cases {
+        let output = run_body(name, &body);
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{name}: {err}");
+        assert!(err.contains(label), "{name}: {err}");
+    }
+    let yml = std::fs::read_to_string(repo_root().join(".github/workflows/pr-template-check.yml")).unwrap();
+    let shell = std::fs::read_to_string(script()).unwrap();
+    for message in [
+        "McLuhan tetrad answers (Enhances, Obsoletes, Retrieves and Reverses into each need your own text on the label's line; N/A is allowed)",
+        "ELI5 text (write at least 40 characters of your own under ## ELI5)",
+    ] {
+        assert!(yml.contains(message) && shell.contains(message), "both files name the rule");
+    }
+    assert!(yml.contains(r#"["enhances", "obsoletes", "retrieves", "reverses into"]"#));
+    assert!(shell.contains("for label in 'enhances' 'obsoletes' 'retrieves' 'reverses into'; do"));
+}
+
 /// An invariant statement that exists only below the marker does not satisfy
 /// the core-path rule. The file list names a core path so that rule runs.
 #[test]

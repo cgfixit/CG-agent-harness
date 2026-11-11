@@ -209,6 +209,33 @@ jobs:
               core.setFailed(`PR template not readable (${e.message}); cannot evaluate the core-path rule`);
               return;
             }
+            // Filled-section rule. Mirrors scripts/check-pr-template.sh. A heading
+            // alone is not an answer: lines copied verbatim from the template and
+            // the stamp are dropped, then the tetrad needs each of its four labels
+            // followed by an answer on the same line (N/A is an answer) and ELI5
+            // needs at least 40 characters of the contributor's own text.
+            const sectionText = (headingRe) => {
+              let buf = [], insec = false;
+              for (const line of bodyLines.map(foldBoxes)) {
+                if (headingRe.test(line)) { insec = true; buf = []; continue; }
+                if (insec && /^#+ /.test(line)) { insec = false; continue; }
+                if (insec && !templateLines.has(line) && !/^(🤖 )?last updated: /i.test(line)) buf.push(line);
+              }
+              return buf.join("\n");
+            };
+            if (/^##[ \t\v\f\r]+mcluhan tetrad[ \t\v\f\r]*$/im.test(body)) {
+              // Each label starts its own line first, so one label followed directly
+              // by the next is an empty answer, not an answer that begins with "R".
+              const tetradText = sectionText(/^## mcluhan tetrad$/i).toLowerCase()
+                .replace(/(enhances|obsoletes|retrieves|reverses into):/g, "\n@$1:");
+              const labels = ["enhances", "obsoletes", "retrieves", "reverses into"];
+              if (!labels.every((label) => new RegExp(`^@${label}:[* ]*[a-z0-9]`, "m").test(tetradText))) {
+                missing.push("McLuhan tetrad answers (Enhances, Obsoletes, Retrieves and Reverses into each need your own text on the label's line; N/A is allowed)");
+              }
+            }
+            if (eli5At.length > 0 && sectionText(/^## eli5$/i).replace(/\s/g, "").length < 40) {
+              missing.push("ELI5 text (write at least 40 characters of your own under ## ELI5)");
+            }
             const contributed = [], other = [];
             let insec = false, seen = false;
             for (const line of body.split(/\r?\n/).map(foldBoxes)) {
