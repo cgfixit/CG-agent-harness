@@ -378,7 +378,11 @@ async fn check_fetch_evidence(loop_turn: bool) {
     }})).route("/v1/chat/completions",post(move |Json(body):Json<Value>| {let requests=recorded.clone();async move {
         requests.lock().unwrap().push(body.clone());
         let messages=body["messages"].as_array().unwrap();
-        if messages.last().unwrap()["role"]=="tool" {
+        if messages.last().unwrap()["role"]=="tool" && messages.last().unwrap()["content"].as_str().unwrap().contains("\"error\"") {
+            // A denied read is that call's result: no tools are offered again and the model says so.
+            assert!(body.get("tools").is_none());
+            Json(common::ok_reply("That page could not be read.",10,2))
+        } else if messages.last().unwrap()["role"]=="tool" {
             let result:Value=serde_json::from_str(messages.last().unwrap()["content"].as_str().unwrap()).unwrap();
             assert!(result["text"].as_str().unwrap().contains("FETCHED_ONLY_EVIDENCE"));
             Json(common::ok_reply("Version 7, from http://docs.example/docs/item?q=version",5000,4)) // DevSkim: ignore DS137138 because this synthetic response names a test URL resolved only to the loopback fixture.
@@ -538,10 +542,14 @@ async fn a_later_web_turn_lists_earlier_reads_only_when_carry_forward_is_on() {
                     let systems = recorded.clone();
                     async move {
                         let messages = body["messages"].as_array().unwrap();
-                        systems
-                            .lock()
-                            .unwrap()
-                            .push(messages[0]["content"].as_str().unwrap_or("").to_string());
+                        // The ledger rides with the new message on a local chat
+                        // turn: record the system prompt and every user turn.
+                        let carried: Vec<&str> = messages
+                            .iter()
+                            .filter(|m| m["role"] == "system" || m["role"] == "user")
+                            .filter_map(|m| m["content"].as_str())
+                            .collect();
+                        systems.lock().unwrap().push(carried.join("\n"));
                         if messages.last().unwrap()["role"] == "tool" {
                             Json(common::ok_reply("Read it.", 10, 2))
                         } else {
@@ -1524,7 +1532,7 @@ async fn check_revoked_source(phase: &'static str) {
 #[tokio::test]
 async fn chat_empty_allowlist_refuses_fetch_and_search() {
     let model = common::start_mock_model().await;
-    model.set_reply(tool_call_reply(
+    model.set_reply(call_then_answer(
         "web_fetch",
         r#"{"url":"http://docs.example/docs/item"}"#,
         "empty_fetch",
@@ -1543,13 +1551,10 @@ async fn chat_empty_allowlist_refuses_fetch_and_search() {
     assert_eq!(status, 200, "{reply}");
     assert_eq!(reply["web_tools"][0]["ok"], false, "{reply}");
     assert_eq!(reply["web_tools"][0]["code"], "WEB_ALLOWLIST_EMPTY", "{reply}");
-    assert!(
-        reply["reply"].as_str().unwrap_or("").contains("WEB_ALLOWLIST_EMPTY"),
-        "{reply}"
-    );
+    assert_failed_batch_is_answered(&model, &reply, "WEB_ALLOWLIST_EMPTY");
     assert_no_serpapi_secret(&reply, &s.home);
 
-    model.set_reply(tool_call_reply(
+    model.set_reply(call_then_answer(
         "web_search",
         r#"{"query":"docs.example"}"#,
         "empty_search",
@@ -1563,7 +1568,35 @@ async fn chat_empty_allowlist_refuses_fetch_and_search() {
         reply["web_tools"][0]["code"], "WEB_ALLOWLIST_EMPTY",
         "empty policy fails closed before Google-pattern matching: {reply}"
     );
+    assert_failed_batch_is_answered(&model, &reply, "WEB_ALLOWLIST_EMPTY");
     assert_no_serpapi_secret(&reply, &s.home);
+}
+
+/// The model is asked to answer after its only web call was refused and writes
+/// nothing. The turn still succeeds: the refusal is the reply, and the failed
+/// read stays in the response and in the session's web ledger.
+#[tokio::test]
+async fn an_empty_answer_after_a_failed_batch_keeps_the_refusal() {
+    let model = common::start_mock_model().await;
+    model.set_reply(json!([
+        tool_call_reply("web_fetch", r#"{"url":"http://docs.example/docs/item"}"#, "empty_fetch"), // DevSkim: ignore DS137138 because docs.example is never contacted; the empty policy refuses it.
+        common::ok_reply("", 20, 0)
+    ]));
+    let s = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
+    let (status, reply) = s
+        .post_json("/api/chat", json!({"message": "Read http://docs.example/docs/item"})) // DevSkim: ignore DS137138 because docs.example is never contacted; the empty policy refuses it.
+        .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["web_tools"][0]["code"], "WEB_ALLOWLIST_EMPTY", "{reply}");
+    let text = reply["reply"].as_str().unwrap();
+    assert!(text.starts_with("Web operation failed: WEB_ALLOWLIST_EMPTY"), "{reply}");
+    let sid = reply["session_id"].as_str().unwrap();
+    let (_, session) = s.get_json(&format!("/api/sessions/{sid}")).await;
+    assert_eq!(
+        session["web_sources"][0]["last_code"], "WEB_ALLOWLIST_EMPTY",
+        "{session}"
+    );
+    assert_eq!(session["web_sources"][0]["failures"], 1, "{session}");
 }
 
 /// After an administrator grants a fixture-origin rule, `web_fetch` succeeds
@@ -1636,7 +1669,7 @@ async fn chat_origin_grant_fetches_within_bound_and_refuses_n_plus_one() {
 #[tokio::test]
 async fn chat_search_without_google_pattern_returns_google_permission() {
     let model = common::start_mock_model().await;
-    model.set_reply(tool_call_reply(
+    model.set_reply(call_then_answer(
         "web_search",
         r#"{"query":"veeam software cve"}"#,
         "google_denied",
@@ -1654,10 +1687,7 @@ async fn chat_search_without_google_pattern_returns_google_permission() {
     assert_eq!(status, 200, "{reply}");
     assert_eq!(reply["web_tools"][0]["ok"], false, "{reply}");
     assert_eq!(reply["web_tools"][0]["code"], "WEB_GOOGLE_PERMISSION", "{reply}");
-    assert!(
-        reply["reply"].as_str().unwrap_or("").contains("WEB_GOOGLE_PERMISSION"),
-        "{reply}"
-    );
+    assert_failed_batch_is_answered(&model, &reply, "WEB_GOOGLE_PERMISSION");
     assert_no_serpapi_secret(&reply, &s.home);
 
     let (status, body) = s
@@ -1696,11 +1726,8 @@ async fn loop_search_after_a_google_challenge_cools_down_without_a_second_reques
     let address = listener.local_addr().unwrap();
     let fixture = tokio::spawn(async move { axum::serve(listener, google).await.unwrap() });
     let model = common::start_mock_model().await;
-    model.set_reply(tool_call_reply(
-        "web_search",
-        r#"{"query":"veeam cve"}"#,
-        "cooldown_search",
-    ));
+    let search = || call_then_answer("web_search", r#"{"query":"veeam cve"}"#, "cooldown_search");
+    model.set_reply(search());
     let s = common::spawn_server(
         &model.base_url(),
         common::ServerOptions {
@@ -1729,12 +1756,15 @@ async fn loop_search_after_a_google_challenge_cools_down_without_a_second_reques
         .await;
     assert_eq!(status, 200, "{first}");
     assert_eq!(first["web_tools"][0]["code"], "WEB_GOOGLE_CHALLENGE", "{first}");
+    assert_failed_batch_is_answered(&model, &first, "WEB_GOOGLE_CHALLENGE");
     assert_eq!(hits.load(Ordering::SeqCst), 1);
+    model.set_reply(search());
     let (status, second) = s
         .post_json("/api/chat", json!({"message":"continue","session_id":sid,"loop":true}))
         .await;
     assert_eq!(status, 200, "a cooled-down search still completes the turn: {second}");
     assert_eq!(second["web_tools"][0]["code"], "WEB_SEARCH_COOLDOWN", "{second}");
+    assert_failed_batch_is_answered(&model, &second, "WEB_SEARCH_COOLDOWN");
     let message = second["web_tools"][0]["message"].as_str().unwrap();
     assert!(message.contains("search is cooling down until "), "{message}");
     assert_eq!(hits.load(Ordering::SeqCst), 1, "no second request reached the provider");
@@ -1960,6 +1990,27 @@ fn tool_call_reply(name: &str, arguments: &str, id: &str) -> Value {
     json!({"model":"mock","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
         "tool_calls":[{"id":id,"type":"function","function":{"name":name,"arguments":arguments}}]}}],
         "usage":{"prompt_tokens":10,"completion_tokens":2}})
+}
+
+/// After a batch that failed entirely, the model is asked once more without
+/// tools, holding each failure (the harness's own code) as that call's result.
+/// Before, the turn ended there with a canned failure line and no answer.
+fn assert_failed_batch_is_answered(model: &common::MockModel, reply: &Value, code: &str) {
+    assert_eq!(reply["reply"], "No web result; answering without it.", "{reply}");
+    let request = model.last_request().unwrap();
+    assert!(request.get("tools").is_none(), "{request}");
+    assert_eq!(request["tool_choice"], "none");
+    let last = request["messages"].as_array().unwrap().last().unwrap();
+    assert_eq!(last["role"], "tool");
+    assert!(last["content"].as_str().unwrap().contains(code), "{last}");
+}
+
+/// A tool call, then the answer the model gives once tools are withdrawn.
+fn call_then_answer(name: &str, arguments: &str, id: &str) -> Value {
+    json!([
+        tool_call_reply(name, arguments, id),
+        common::ok_reply("No web result; answering without it.", 20, 6)
+    ])
 }
 
 fn assert_no_serpapi_secret(body: &Value, home: &std::path::Path) {
@@ -2258,6 +2309,123 @@ async fn active_goal_reuses_a_validated_digest_with_source_urls_without_another_
 async fn repeated_goal_reads_reuse_cache_unless_explicitly_refreshed() {
     check_goal_evidence_reuse(true, None, true, 6000).await;
     check_goal_evidence_reuse(true, Some(true), true, 6000).await;
+}
+
+/// A model that reports the prompt size the harness itself estimates (bytes/4
+/// of every message, plus the tool definitions) must leave the session's token
+/// ratio at 1. Before, a turn that restored earlier evidence compared that
+/// usage with an estimate that left the restored message out, so the ratio
+/// rose by its share and every later budget of the run shrank with it.
+#[tokio::test]
+async fn restored_evidence_does_not_inflate_token_calibration() {
+    let seen = Arc::new(AtomicBool::new(false));
+    let restored = seen.clone();
+    let router = Router::new()
+        .route(
+            "/docs/item",
+            get(|| async {
+                (
+                    [("content-type", "text/plain")],
+                    format!(
+                        "RECOVERY_ANCHOR requires two replicas.{}",
+                        " Each replica is checked before failback.".repeat(20)
+                    ),
+                )
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(move |Json(body): Json<Value>| {
+                let restored = restored.clone();
+                async move {
+                    let messages = body["messages"].as_array().unwrap();
+                    let size = |text: &str| text.len().div_ceil(4) as u64;
+                    let mut prompt: u64 = messages.iter().map(|m| size(m["content"].as_str().unwrap_or(""))).sum();
+                    if let Some(tools) = body.get("tools") {
+                        prompt += size(&tools.to_string());
+                    }
+                    let usage = json!({"prompt_tokens": prompt, "completion_tokens": 10});
+                    let answer = |text: &str| {
+                        let mut reply = common::ok_reply(text, 0, 0);
+                        reply["usage"] = usage.clone();
+                        Json(reply)
+                    };
+                    if body["response_format"]["type"] == "json_object" {
+                        return answer(&json!({"supported":[{"text":"Recovery requires two replicas.","citations":[{"id":"S1","quote":"requires two replicas"}]}],"conflicts":[],"inferences":[],"missing":[]}).to_string());
+                    }
+                    let last = messages.last().unwrap();
+                    let content = last["content"].as_str().unwrap_or("");
+                    if content.contains("Untrusted active-goal findings") {
+                        restored.store(true, Ordering::SeqCst);
+                        return answer("The retained finding still supports two replicas.");
+                    }
+                    if last["role"] == "tool" || content.contains("Untrusted evidence digest") {
+                        return answer("Recovery needs two replicas, per http://docs.example/docs/item."); // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+                    }
+                    let mut call = tool_call_reply(
+                        "web_fetch",
+                        &json!({"url":"http://docs.example/docs/item","query":"RECOVERY_ANCHOR"}).to_string(), // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+                        "read",
+                    );
+                    call["usage"] = usage.clone();
+                    Json(call)
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let fixture = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..common::ServerOptions::default()
+        },
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"})) // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+            .await
+            .0,
+        200
+    );
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let sid = session["session_id"].as_str().unwrap();
+    let goal =
+        json!({"goal":"Read the recovery manual, then review its implication in a second step.","web_mode":"fetch"});
+    assert_eq!(s.post_json(&format!("/api/sessions/{sid}/goal"), goal).await.0, 200);
+    let (status, started) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id":sid,"max_turns":2,"cooldown_ms":0}),
+        )
+        .await;
+    assert_eq!(status, 200, "{started}");
+    let run_id = started["run"]["run_id"].as_str().unwrap();
+    let run = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let (_, value) = s.get_json(&format!("/api/loop/status?run_id={run_id}")).await;
+            if matches!(value["run"]["state"].as_str(), Some("done" | "failed" | "stopped")) {
+                break value["run"].clone();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(run["stats"]["turns_completed"], 2, "{run}");
+    assert!(seen.load(Ordering::SeqCst), "the second turn must restore evidence");
+    let ratio = s
+        .state
+        .store
+        .for_owner("local")
+        .get(sid)
+        .unwrap()
+        .token_calibration
+        .expect("usage was reported")
+        .ratio;
+    assert!(ratio < 1.01, "restored evidence must not inflate the token ratio");
+    fixture.abort();
 }
 
 #[tokio::test]

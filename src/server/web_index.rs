@@ -117,6 +117,14 @@ pub fn retrieve_many(
             .map_err(failed)?;
     }
     writer.commit().map_err(failed)?;
+    // Two passages per page spread hits across pages. With one page there is
+    // nothing to spread across: it may fill the limit (an exact `web_fetch`
+    // asks for three and got two).
+    let per_source = if evidence.iter().map(|p| p.url.as_str()).collect::<BTreeSet<_>>().len() <= 1 {
+        limit
+    } else {
+        2
+    };
     let reader = index.reader().map_err(failed)?;
     let searcher = reader.searcher();
     let mut parser = QueryParser::for_index(&index, vec![title, heading, body]);
@@ -161,6 +169,7 @@ pub fn retrieve_many(
             Ok(crate::server::retrieval_ranking::select_diverse(
                 candidates,
                 limit,
+                per_source,
                 |p| &p.text,
             ))
         })
@@ -1228,6 +1237,36 @@ mod tests {
         .unwrap();
         assert_eq!(hit.len(), 1);
         assert!(hit[0].text.contains("WIDGET_RETRY_COUNT"));
+        // One page may fill the limit: the two-per-page cap spreads hits across
+        // pages and has nothing to spread across here. With a second page in
+        // the lookup, each is held to two again.
+        let sections: String = (0..6)
+            .map(|i| {
+                format!(
+                    "# Section {i}\nfailover drill number {i} covers region {} and rack {}.\n{}\n",
+                    i * 7,
+                    i * 13,
+                    format!("filler{i} ").repeat(180)
+                )
+            })
+            .collect();
+        let long = Page {
+            url: "https://docs.example/failover".into(),
+            content_hash: crate::common::sha256_hex(&sections),
+            chars: sections.chars().count(),
+            text: sections,
+            ..page.clone()
+        };
+        let one = retrieve(std::slice::from_ref(&long), &policy, "failover drill", None, 3).unwrap();
+        assert_eq!(one.len(), 3, "a single page reaches the limit");
+        let other = Page {
+            url: "https://docs.example/other".into(),
+            ..long.clone()
+        };
+        let two = retrieve(&[long.clone(), other], &policy, "failover drill", None, 8).unwrap();
+        for url in ["https://docs.example/failover", "https://docs.example/other"] {
+            assert!(two.iter().filter(|p| p.url == url).count() <= 2, "{url}");
+        }
         // A mixed batch must retain independent rankings, empty result slots,
         // query order, limits, and the same complete evidence as separate calls.
         let queries = [
