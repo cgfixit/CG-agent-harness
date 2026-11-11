@@ -629,7 +629,8 @@ and never below their floors; the web dispatcher charges each call's prompt once
 offers tools only while the prompt, definitions, a minimal result and one reply
 fit, runs a batch only when each result's minimum fits, cuts a result to the
 room left, and returns a failed read to the model as its result (a batch that
-fails entirely ends the turn or, after evidence, the tool rounds). A web turn's
+fails entirely ends the tool rounds: the model answers without web evidence
+it does not have, and each failure stays an `ok: false` event). A web turn's
 deadline adds a measured tool-round allowance, at most doubling the chat timeout.
 Startup and reload warn below 4096 remaining input tokens. Ollama with explicit `reasoning_effort: "none"` reserves the reply ceiling
 once; anything else reserves it twice in validation, the hard limit and dispatch
