@@ -574,13 +574,18 @@ impl WebTool {
     pub fn status(&self, enabled: bool, owner: &str) -> Result<Value> {
         let (policy, missing) = self.policy_or_empty()?;
         let stored = self.read_page(&self.context_path(owner), None).is_ok();
+        // Only `auto` follows the saved keys: a Tavily key first, then SerpAPI.
+        let auto = self.search_provider == super::web_provider::SearchProvider::Auto;
+        let search_provider = self.search_provider.describe(
+            auto && !self.search_key()?.trim().is_empty(),
+            auto && !self.tavily_key()?.trim().is_empty(),
+        );
         Ok(
             json!({"enabled": enabled, "allowlist": policy.rules.iter().map(|r| &r.pattern).collect::<Vec<_>>(),
             "rules": policy.rules, "policy_revision": policy.revision,
             "mode": policy.mode, "blocked": policy.blocked,
             "policy_scope":"shared_home", "context_scope":"account", "limits":self.limits,
-            "search_provider": self.search_provider.describe(
-                self.search_provider == super::web_provider::SearchProvider::Auto && !self.search_key()?.is_empty()),
+            "search_provider": search_provider,
             "injected": enabled && stored, "context_stored": stored,
             "has_last": self.read_page(&self.last_path(owner), None).is_ok(), "max_allow": self.limits.max_rules,
             "policy_missing": missing}),
@@ -998,12 +1003,9 @@ impl WebTool {
                     // `status` tells a server's answer from a connection that never produced one.
                     return Err(error("WEB_FETCH_FAILED", "upstream error").detail("status", status.as_u16()));
                 }
-                if response
-                    .content_length()
-                    .is_some_and(|n| n > self.limits.response_bytes as u64)
-                {
-                    return Err(error("WEB_TOO_LARGE", "response exceeds limit"));
-                }
+                // Encoding and type are refused before size: the opt-in fallback
+                // re-reads an oversized text page, never an image or a compressed
+                // body that also happens to be large.
                 if header(reqwest::header::CONTENT_ENCODING).is_some_and(|v| v != "identity") {
                     return Err(error("WEB_ENCODING_REFUSED", "compressed responses are not enabled"));
                 }
@@ -1018,7 +1020,16 @@ impl WebTool {
                     content_type.as_str(),
                     "text/plain" | "text/html" | "application/xhtml+xml" | "text/markdown"
                 ) {
-                    return Err(error("WEB_NOT_TEXT", "unsupported content type"));
+                    // Whether it is a PDF, never the header itself: the opt-in
+                    // Firecrawl fallback may re-read a PDF (`web_firecrawl::escalates`).
+                    return Err(error("WEB_NOT_TEXT", "unsupported content type")
+                        .detail("pdf", content_type == "application/pdf"));
+                }
+                if response
+                    .content_length()
+                    .is_some_and(|n| n > self.limits.response_bytes as u64)
+                {
+                    return Err(error("WEB_TOO_LARGE", "response exceeds limit"));
                 }
                 let etag = header(reqwest::header::ETAG);
                 let last_modified = header(reqwest::header::LAST_MODIFIED);

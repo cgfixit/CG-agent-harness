@@ -1,7 +1,8 @@
 //! Firecrawl as an opt-in second reader for exact permitted URLs
 //! (`web.firecrawl.enabled`, ships off). It runs only after the pinned fetch got
-//! a server's 403, 429 or 503, or a near-empty HTML extract (a script shell), and
-//! only for exact reads: `/web fetch`, the chat `web_fetch` tool and batch reads,
+//! a server's 403, 429 or 503, a near-empty HTML extract (a script shell), a
+//! body over `web.response_bytes`, or a PDF (operator decision, 2026-11-10: the
+//! last two were honest failures before), and only for exact reads: `/web fetch`, the chat `web_fetch` tool and batch reads,
 //! never discovery, crawl or search. The URL is authorized first and must come
 //! back unchanged: a redirect anywhere is refused, as for the pinned fetch. The
 //! URL leaves the machine, so each read is counted against
@@ -23,6 +24,11 @@ const FIRECRAWL_ENDPOINT: &str = "https://api.firecrawl.dev/v2/scrape";
 const PROVIDER: &str = "firecrawl";
 /// An HTML page whose extract is shorter than this is treated as a script shell.
 pub(super) const THIN_EXTRACT_CHARS: usize = 200;
+/// Pages Firecrawl may parse from one PDF. It bills a PDF one credit per page,
+/// so every read pins this cap; a longer document is read from its first pages.
+pub(super) const PDF_MAX_PAGES: u64 = 10;
+/// Longest a fallback read may take, whatever `web.request_seconds` is.
+const MAX_FALLBACK_SECONDS: u64 = 60;
 
 /// `web.firecrawl.*`, restart-only. `enabled` reads through `flag_is_true`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,9 +69,11 @@ impl HourlyCap {
 /// Whether a pinned read may be re-read by Firecrawl: a server answered 403, 429
 /// or 503, or a fresh 200 HTML page that is a script shell: it carries a script,
 /// extracted to almost nothing, and that text is under 5% of the markup. A short
-/// page, even one with an analytics script (example.com), is an answer. A
-/// transport failure, a redirect, a policy or SSRF refusal and every other code
-/// never escalate.
+/// page, even one with an analytics script (example.com), is an answer. A body
+/// over `web.response_bytes` (`WEB_TOO_LARGE`) and a PDF (`WEB_NOT_TEXT` marked
+/// `pdf`) escalate too: the pinned fetch reached a permitted public server and
+/// only could not use what it sent. A transport failure, a redirect, a policy
+/// or SSRF refusal, any other content type and every other code never escalate.
 pub(super) fn escalates(outcome: &Result<(Page, String)>) -> bool {
     match outcome {
         Ok((page, raw)) => {
@@ -76,13 +84,15 @@ pub(super) fn escalates(outcome: &Result<(Page, String)>) -> bool {
                 && page.chars.saturating_mul(20) < raw.len()
                 && raw.as_bytes().windows(7).any(|w| w.eq_ignore_ascii_case(b"<script"))
         }
-        Err(failure) => {
-            failure.code == "WEB_FETCH_FAILED"
-                && matches!(
-                    failure.details.get("status").and_then(Value::as_u64),
-                    Some(403 | 429 | 503)
-                )
-        }
+        Err(failure) => match failure.code.as_str() {
+            "WEB_FETCH_FAILED" => matches!(
+                failure.details.get("status").and_then(Value::as_u64),
+                Some(403 | 429 | 503)
+            ),
+            "WEB_TOO_LARGE" => true,
+            "WEB_NOT_TEXT" => failure.details.get("pdf") == Some(&Value::Bool(true)),
+            _ => false,
+        },
     }
 }
 
@@ -240,9 +250,13 @@ impl WebTool {
             ));
         }
         let endpoint = self.firecrawl_endpoint();
-        // Firecrawl's own page budget sits inside ours, so its answer can still arrive.
-        let remote_ms = (self.limits.request_seconds * 1000).saturating_sub(1000).max(1000);
-        let fetched = tokio::time::timeout(Duration::from_secs(self.limits.request_seconds + 1), async {
+        // A rendered or parsed read takes longer than a direct fetch: the fallback
+        // gets twice `web.request_seconds` (at most a minute; before, the same 8 s
+        // less one cut most rendered pages off). Firecrawl's own page budget sits
+        // inside ours, so its answer can still arrive.
+        let fallback_seconds = (self.limits.request_seconds * 2).min(MAX_FALLBACK_SECONDS);
+        let remote_ms = (fallback_seconds * 1000).saturating_sub(1000).max(1000);
+        let fetched = tokio::time::timeout(Duration::from_secs(fallback_seconds + 1), async {
             let _permit = self
                 .permits
                 .acquire()
@@ -262,11 +276,16 @@ impl WebTool {
             charged.store(self.limits.response_bytes, Ordering::SeqCst);
             let response = client
                 .post(endpoint)
+                // The pinned client stops at `web.request_seconds`; this request
+                // has the longer fallback budget, so it carries its own.
+                .timeout(Duration::from_secs(fallback_seconds))
                 .bearer_auth(&key)
                 .json(
                     &json!({"url":target.as_str(),"formats":["markdown"],"onlyMainContent":true,
                     "timeout":remote_ms,"waitFor":0,"mobile":false,"skipTlsVerification":false,
-                    "removeBase64Images":true,"blockAds":true,"proxy":"basic","storeInCache":false,"maxAge":0}),
+                    "removeBase64Images":true,"blockAds":true,"proxy":"basic","storeInCache":false,"maxAge":0,
+                    // PDFs only, a bounded number of pages (one credit each); image OCR stays off.
+                    "parsers":[{"type":"pdf","maxPages":PDF_MAX_PAGES}]}),
                 )
                 .send()
                 .await
@@ -388,10 +407,21 @@ mod tests {
             "WEB_DNS",
             "WEB_TIMEOUT",
             "WEB_NOT_TEXT",
-            "WEB_TOO_LARGE",
+            "WEB_ENCODING_REFUSED",
+            "WEB_HEADERS_TOO_LARGE",
+            "WEB_POLICY_CHANGED",
         ] {
             assert!(!escalates(&Err(error(code, "x"))), "{code} without a server status");
         }
+        // Operator decision, 2026-11-10: an oversized body and a PDF also go to
+        // the fallback. Any other non-text type (an image, a zip) does not.
+        assert!(escalates(&Err(error("WEB_TOO_LARGE", "response exceeds limit"))));
+        assert!(escalates(&Err(
+            error("WEB_NOT_TEXT", "unsupported content type").detail("pdf", true)
+        )));
+        assert!(!escalates(&Err(
+            error("WEB_NOT_TEXT", "unsupported content type").detail("pdf", false)
+        )));
         let shell = format!(
             "<html><body><div id=app></div><SCRIPT>{}</script></body></html>",
             "x".repeat(2000)
@@ -572,6 +602,40 @@ mod tests {
                 .route(
                     "/ok",
                     get(|| async { ([("content-type", "text/plain")], "native ".repeat(80)) }),
+                )
+                .route(
+                    "/paper.pdf",
+                    get(|| async { ([("content-type", "application/pdf")], "%PDF-1.7 fixture") }),
+                )
+                .route(
+                    "/image.png",
+                    get(|| async { ([("content-type", "image/png")], "not really a png") }),
+                )
+                .route(
+                    "/huge",
+                    get(|| async {
+                        (
+                            [("content-type", "text/html")],
+                            format!("<p>{}</p>", "long ".repeat(4000)),
+                        )
+                    }),
+                )
+                .route(
+                    "/huge.png",
+                    get(|| async { ([("content-type", "image/png")], "pixel ".repeat(4000)) }),
+                )
+                .route(
+                    "/huge.gz",
+                    get(|| async {
+                        (
+                            [("content-type", "text/html"), ("content-encoding", "gzip")],
+                            "packed ".repeat(4000),
+                        )
+                    }),
+                )
+                .route(
+                    "/slow.pdf",
+                    get(|| async { ([("content-type", "application/pdf")], "%PDF-1.7 fixture") }),
                 );
             let hits = Arc::new(AtomicUsize::new(0));
             let counter = hits.clone();
@@ -584,6 +648,7 @@ mod tests {
                         let pinned = body["formats"] == json!(["markdown"])
                             && body["storeInCache"] == json!(false)
                             && body["maxAge"] == json!(0)
+                            && body["parsers"] == json!([{"type":"pdf","maxPages":PDF_MAX_PAGES}])
                             && body["proxy"] == "basic"
                             && body["skipTlsVerification"] == json!(false)
                             && body.get("actions").is_none();
@@ -598,6 +663,10 @@ mod tests {
                             _ => return (StatusCode::UNAUTHORIZED, Json(json!({"success":false}))),
                         }
                         let url = body["url"].as_str().unwrap_or("").to_string();
+                        if url.ends_with("/slow.pdf") {
+                            // Longer than a 2 s `web.request_seconds`, inside its 4 s fallback budget.
+                            tokio::time::sleep(Duration::from_millis(2300)).await;
+                        }
                         let final_url = if url.ends_with("/moves") {
                             "http://site.fixture/elsewhere".to_string() // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
                         } else {
@@ -648,6 +717,55 @@ mod tests {
     }
 
     const ON: &str = "web: {firecrawl: {enabled: true, max_per_hour: 4}}";
+
+    /// Operator decision, 2026-11-10: a permitted URL whose body is over
+    /// `web.response_bytes`, or is a PDF, is re-read by the fallback when it is
+    /// enabled. Any other type, and both cases with the fallback off, stay the
+    /// failures they were, and nothing leaves the machine for them.
+    #[tokio::test]
+    async fn an_oversized_page_and_a_pdf_are_reread_and_nothing_else_is() {
+        const SMALL: &str = "web: {response_bytes: 4096, firecrawl: {enabled: true, max_per_hour: 4}}";
+        let rig = fixture::rig(SMALL, "good").await;
+        for path in ["huge", "paper.pdf"] {
+            let read = rig.fetch(path).await.unwrap();
+            assert_eq!(read["via"], "firecrawl", "{path}: {read}");
+            assert!(read["text"].as_str().unwrap().contains("Fallback body"), "{path}");
+        }
+        assert_eq!(rig.hits(), 2);
+        assert_eq!(rig.fetch("image.png").await.unwrap_err().code, "WEB_NOT_TEXT");
+        assert_eq!(rig.hits(), 2, "an image is never sent to the fallback");
+        let audit = rig.audit_text();
+        for from in ["WEB_TOO_LARGE", "WEB_NOT_TEXT"] {
+            assert!(audit.contains(&format!("\"from\":\"{from}\"")), "{from}: {audit}");
+        }
+
+        let off = fixture::rig("web: {response_bytes: 4096}", "good").await;
+        assert_eq!(off.fetch("huge").await.unwrap_err().code, "WEB_TOO_LARGE");
+        assert_eq!(off.fetch("paper.pdf").await.unwrap_err().code, "WEB_NOT_TEXT");
+        assert_eq!(off.hits(), 0);
+    }
+
+    /// Size is checked after encoding and type, so an oversized image or a large
+    /// compressed body is refused for what it is and never reaches the fallback.
+    #[tokio::test]
+    async fn an_oversized_image_or_compressed_body_never_reaches_the_fallback() {
+        const SMALL: &str = "web: {response_bytes: 4096, firecrawl: {enabled: true, max_per_hour: 4}}";
+        let rig = fixture::rig(SMALL, "good").await;
+        assert_eq!(rig.fetch("huge.png").await.unwrap_err().code, "WEB_NOT_TEXT");
+        assert_eq!(rig.fetch("huge.gz").await.unwrap_err().code, "WEB_ENCODING_REFUSED");
+        assert_eq!(rig.hits(), 0, "neither URL leaves the machine");
+    }
+
+    /// The fallback budget is twice `web.request_seconds`, and the request itself
+    /// gets that budget: a 2.3 s read succeeds under a 2 s direct-fetch limit.
+    #[tokio::test]
+    async fn a_fallback_read_longer_than_request_seconds_fits_its_own_budget() {
+        const SHORT: &str = "web: {request_seconds: 2, firecrawl: {enabled: true, max_per_hour: 4}}";
+        let rig = fixture::rig(SHORT, "good").await;
+        let read = rig.fetch("slow.pdf").await.unwrap();
+        assert_eq!(read["via"], "firecrawl", "{read}");
+        assert_eq!(rig.hits(), 1);
+    }
 
     /// Reading an origin's robots.txt under a path rule is discovery's politeness
     /// exception. A single fetch is a content read, so it needs a content grant

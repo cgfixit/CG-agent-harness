@@ -228,8 +228,12 @@ complexity returns no partial evidence.
 
 The one exception is opt-in `web.firecrawl.enabled` (ships off), for exact reads
 only, never discovery, crawl or search. After a pinned read gets a server's 403,
-429 or 503 or a near-empty script shell, the authorized URL, rechecked just
-before sending, may go once to Firecrawl, so it leaves the machine. Its answer
+429 or 503, a near-empty script shell, a body over `web.response_bytes` or a PDF
+(the last two by operator decision, 2026-11-10; any other content type, and every
+transport, redirect, policy or address refusal, never escalates), the authorized
+URL, rechecked just before sending, may go once to Firecrawl, so it leaves the
+machine. The read has twice `web.request_seconds` (at most 60 s) and pins a
+10-page PDF cap, since Firecrawl bills a PDF per page. Its answer
 must name that URL as final (a redirect is refused), keeps no links, carries
 `via: firecrawl`, and is capped by `web.firecrawl.max_per_hour`. A failed
 fallback keeps the original outcome.
@@ -245,9 +249,11 @@ arguments and rechecks current account/URL permissions before reads and evidence
 delivery. A turn that already holds a notes-corpus read (`source=notes_corpus`), or a successful private-notes tool result, does not offer or run `web_search` or its `search_web`/`websearch` aliases unless that user message asks for outside, web, or internet sources. `web.chat_tool_calls` (default 30, range 1–30) remains the tool-round ceiling. A hop that offers tools writes up to the chat token ceiling at temperature 0, since the model may answer on it instead of calling a tool (a smaller planning cap cut such answers off and they were generated again); a call that offers none keeps the ceiling and the configured temperature. It cannot mutate policy, credentials, accounts or repositories, including
 local `/loop` turns. Search-provider snippets are listings, not fetched
 linked pages; each content fetch still requires its own URL permission. A
-restart-only `web.search.provider` picks the backend: `auto` lets a configured SerpAPI
-key select the fixed Google-results API transport and no active key public Google;
-a Tavily key never changes `auto`. `google-public`, `serpapi` or `tavily` force one;
+restart-only `web.search.provider` picks the backend: `auto` follows the saved keys
+(operator decision, 2026-11-10): an active Tavily key selects Tavily, else a configured
+SerpAPI key selects the fixed Google-results API transport, else public Google; with both
+keys Tavily wins, so saving a Tavily key sends queries to its fixed endpoint.
+`google-public`, `serpapi` or `tavily` force one;
 the removed `searxng` provider and a non-empty `web.search.searxng_url` fail boot by
 name. Fallback hops follow tavily → serpapi → google-public (the hop to public Google ships on, the hop to SerpAPI off) within one deadline and search slot; they are audited
 with the provider that answered. A hop moves on only when it cannot answer: an unusable provider or a spent SerpAPI or Tavily quota (the next hop costs less or nothing). A rejected or missing key, a refused query and a clean zero-result answer never fall through. Keyed listings (SerpAPI, Tavily) require enabled web and current
@@ -574,7 +580,8 @@ restart-only `web.goal_web_default` (ships `all`; withhold unattended search wit
 goal; a turn needing compaction continues automatically.
 
 `POST /api/loop/start` runs those turns in a server task that outlives the
-browser. Each turn goes through `chat_inner` (`loop_turn: true`) after re-reading
+browser; the session stores each as a short label (`Loop turn N of M.`), not the
+goal reminder sent with it. Each turn goes through `chat_inner` (`loop_turn: true`) after re-reading
 the starting account: deleted, disabled, password-pending, or no longer
 operator/admin ends the run `failed`. `portal_auditor` cannot start one. Start,
 stop, status and events are bound to the starting owner; a foreign run reads as
@@ -613,6 +620,9 @@ with the session, scoped to model and backend URL: it starts at 1, stays within
 summary and cloud usage never train it. An `auto_tune`-verified window above 32768
 scales the compaction trigger up in proportion, within `chat.compact_max_prefill_sec`
 of measured prefill, unless `chat.compact_follow_window` is false.
+`auto_tune` lowers configured budgets only for a window below 32768; at or above
+it the configured values stand inside that window's caps, and a tuned loop turn
+never writes more than the chat reply cap.
 Chat, tool rounds and research retain whether their limits used tuning. Each late
 model call rechecks the live window even after tuning is cleared; limits that no
 longer fit are refused before dispatch.
@@ -641,7 +651,8 @@ The incoming user paste is never compacted. One local-model call
 reservation) summarizes within 24000 characters and the calibrated budget: goal
 and first message read-only, the prior `[session-compacted]`
 summary intact (else it is unusable), then the newest middle turns clipped to
-800 characters, gaps marked. Ungrounded identifiers become `[unverified]`;
+an equal share of that budget (800 to 4000 characters each, head and tail kept),
+gaps marked. Ungrounded identifiers become `[unverified]`;
 absence claims and corrections quoting no user turn (quotes under 8 characters
 match whole turns) are dropped, unmatched quotes unquoted; identifiers match whole tokens. The tail is whole exchanges
 within `chat.compact_keep_messages` and `chat.compact_tail_percent` of the

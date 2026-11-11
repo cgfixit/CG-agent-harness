@@ -502,6 +502,29 @@ async fn cleared_small_window_tuning_still_checks_the_live_window() {
         .unwrap();
 }
 
+/// A configured trigger far above any window is still an unsigned integer
+/// startup accepts. Following the window scales it, so it is held to the
+/// window's prompt cap first: the profile answers 30000 instead of overflowing.
+#[tokio::test]
+async fn a_huge_configured_trigger_is_capped_before_it_is_scaled() {
+    let ollama = start_native_ollama().await;
+    let s = spawn_server(
+        &ollama.openai_url(),
+        ServerOptions::default()
+            .with("models.local_llm.auto_tune", "true")
+            .with("chat.compact_follow_window", "true")
+            .with("chat.compact_prompt_tokens", "562949953421312")
+            .with("api.rate_limit.max_requests", "1000"),
+    )
+    .await;
+    // Web off, so the compaction trigger is the limit in force, not the web budget.
+    s.post_json("/api/web", json!({"enabled": false})).await;
+    let body = wait_for_tuning(&s, 32768).await;
+    assert_eq!(body["in_force"]["limit_source"], "chat.compact_prompt_tokens", "{body}");
+    assert_eq!(body["in_force"]["prompt_cap"], 30000, "{body}");
+    assert_eq!(body["in_force"]["prompt_limit"], 30000, "{body}");
+}
+
 #[tokio::test]
 async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow_budgets() {
     let ollama = start_native_ollama().await;
@@ -536,19 +559,22 @@ async fn a_measured_larger_window_lifts_the_caps_but_only_configured_values_grow
     )
     .await;
     s.post_json("/api/web", json!({"enabled": false})).await;
-    // The startup tune measures the configured 32768-token model: shipped caps.
+    // The startup tune measures the configured 32768-token model: its caps hold
+    // the raised values, and tuning no longer pulls them down to the shipped
+    // 28000 (it tightens only for a window below 32768).
     let body = wait_for_tuning(&s, 32768).await;
     assert_eq!(body["in_force"]["prompt_cap"], 30000, "{body}");
-    assert_eq!(body["in_force"]["web_total_tokens"], 28000, "{body}");
+    assert_eq!(body["in_force"]["web_total_tokens"], 32000, "{body}");
     let (status, body) = s.post_json("/api/model", json!({"model": "longctx:q8"})).await;
     assert_eq!(status, 200, "{body}");
     let body = wait_for_tuning(&s, 65536).await;
     assert_eq!(body["proposed"]["state"], "scaled_up", "{body}");
-    // Caps double with the window; the budgets grow only to what config allows.
+    // Caps double with the window; the budgets grow to what config asks for,
+    // inside those caps (before, the scaled proposals 48000 / 56000 held them).
     assert_eq!(
         body["in_force"],
-        json!({"prompt_cap": 60000, "prompt_limit": 48000, "limit_source": "chat.compact_prompt_tokens",
-            "web_total_tokens": 56000, "web_total_ceiling": 56000}),
+        json!({"prompt_cap": 60000, "prompt_limit": 50000, "limit_source": "chat.compact_prompt_tokens",
+            "web_total_tokens": 60000, "web_total_ceiling": 64000}),
         "{body}"
     );
     assert_eq!(body["tuning"]["max_tokens"], 8192, "{body}");

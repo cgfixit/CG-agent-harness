@@ -745,6 +745,42 @@ async fn loop_start_status_stop_round_trip() {
     s.post_json("/api/loop/stop", json!({"run_id": next})).await;
 }
 
+/// A server-run loop sends the full framing (turn, goal reminder, rules) but
+/// stores a short label: the reminder is already in the system prompt, and
+/// stored once per turn it was re-sent with every later turn.
+#[tokio::test]
+async fn a_server_run_loop_stores_a_short_label_not_the_goal_reminder() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let sid = session_with_goal(&s).await;
+    let (status, body) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id": sid, "max_turns": 2, "cooldown_ms": 0}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let run_id = body["run"]["run_id"].as_str().unwrap().to_string();
+    wait_for(&s, &run_id, "two turns", |run| run["stats"]["turns_completed"] == 2).await;
+    let (_, session) = s.get_json(&format!("/api/sessions/{sid}")).await;
+    let users: Vec<&str> = session["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "user")
+        .filter_map(|m| m["content"].as_str())
+        .collect();
+    assert_eq!(users, ["Loop turn 1 of 2.", "Loop turn 2 of 2."], "{session}");
+    // The model still got the whole framing for the live turn, and the earlier
+    // turn as its short label.
+    let request = model.last_request().unwrap();
+    let messages = request["messages"].as_array().unwrap();
+    let live = messages.last().unwrap()["content"].as_str().unwrap();
+    assert!(live.starts_with("Loop turn 2 of 2. Session goal: ship it"), "{live}");
+    assert!(live.contains("GOAL_DONE"));
+    assert_eq!(messages[1]["content"], "Loop turn 1 of 2.");
+}
+
 #[tokio::test]
 async fn unlimited_turns_do_not_stop_at_five() {
     let (url, count) = start_counting_mock().await;
