@@ -576,7 +576,8 @@ restart-only `web.goal_web_default` (ships `all`; withhold unattended search wit
 goal; a turn needing compaction continues automatically.
 
 `POST /api/loop/start` runs those turns in a server task that outlives the
-browser. Each turn goes through `chat_inner` (`loop_turn: true`) after re-reading
+browser; the session stores each as a short label (`Loop turn N of M.`), not the
+goal reminder sent with it. Each turn goes through `chat_inner` (`loop_turn: true`) after re-reading
 the starting account: deleted, disabled, password-pending, or no longer
 operator/admin ends the run `failed`. `portal_auditor` cannot start one. Start,
 stop, status and events are bound to the starting owner; a foreign run reads as
@@ -646,7 +647,8 @@ The incoming user paste is never compacted. One local-model call
 reservation) summarizes within 24000 characters and the calibrated budget: goal
 and first message read-only, the prior `[session-compacted]`
 summary intact (else it is unusable), then the newest middle turns clipped to
-800 characters, gaps marked. Ungrounded identifiers become `[unverified]`;
+an equal share of that budget (800 to 4000 characters each, head and tail kept),
+gaps marked. Ungrounded identifiers become `[unverified]`;
 absence claims and corrections quoting no user turn (quotes under 8 characters
 match whole turns) are dropped, unmatched quotes unquoted; identifiers match whole tokens. The tail is whole exchanges
 within `chat.compact_keep_messages` and `chat.compact_tail_percent` of the

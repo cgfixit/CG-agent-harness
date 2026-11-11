@@ -563,7 +563,7 @@ keeping the first user message, goal, and whole recent exchanges (at most
 trigger). Unless `chat.compact_follow_window: false` (seeded), an `auto_tune`-verified
 window above 32768 scales the trigger within `chat.compact_max_prefill_sec`
 (seeded 1500) of measured prefill. The summarizer reads goal and first message, keeps the prior summary
-whole, clips other turns at 800 characters within its budget, else history
+whole, clips other turns at 800–4000 characters within its budget, else history
 stays. The model gets a lossy note yielding to
 exact messages; unsourced codes become `[unverified]`.
 
