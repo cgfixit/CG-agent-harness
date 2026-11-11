@@ -1572,6 +1572,33 @@ async fn chat_empty_allowlist_refuses_fetch_and_search() {
     assert_no_serpapi_secret(&reply, &s.home);
 }
 
+/// The model is asked to answer after its only web call was refused and writes
+/// nothing. The turn still succeeds: the refusal is the reply, and the failed
+/// read stays in the response and in the session's web ledger.
+#[tokio::test]
+async fn an_empty_answer_after_a_failed_batch_keeps_the_refusal() {
+    let model = common::start_mock_model().await;
+    model.set_reply(json!([
+        tool_call_reply("web_fetch", r#"{"url":"http://docs.example/docs/item"}"#, "empty_fetch"), // DevSkim: ignore DS137138 because docs.example is never contacted; the empty policy refuses it.
+        common::ok_reply("", 20, 0)
+    ]));
+    let s = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
+    let (status, reply) = s
+        .post_json("/api/chat", json!({"message": "Read http://docs.example/docs/item"})) // DevSkim: ignore DS137138 because docs.example is never contacted; the empty policy refuses it.
+        .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["web_tools"][0]["code"], "WEB_ALLOWLIST_EMPTY", "{reply}");
+    let text = reply["reply"].as_str().unwrap();
+    assert!(text.starts_with("Web operation failed: WEB_ALLOWLIST_EMPTY"), "{reply}");
+    let sid = reply["session_id"].as_str().unwrap();
+    let (_, session) = s.get_json(&format!("/api/sessions/{sid}")).await;
+    assert_eq!(
+        session["web_sources"][0]["last_code"], "WEB_ALLOWLIST_EMPTY",
+        "{session}"
+    );
+    assert_eq!(session["web_sources"][0]["failures"], 1, "{session}");
+}
+
 /// After an administrator grants a fixture-origin rule, `web_fetch` succeeds
 /// within `web.chat_tool_calls` (default 30). The N+1 model tool request is
 /// refused with `WEB_TOOL_LIMIT` and the generation gate is released.

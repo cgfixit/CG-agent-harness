@@ -794,6 +794,17 @@ async fn run_inner(
             }
             state.audit.log(json!({"event":"web_decision","action":if passages.is_empty() { if searches.is_empty() { "answer_local_or_gap" } else { "answer_listing" } } else { "answer_evidence" },"loop_turn":loop_turn,"reads":run_evidence.receipts.len(),"searches":searches.len()}));
             let mut reply = parse_chat_response(&response, model)?;
+            // The model was asked to answer after every web call failed and
+            // wrote nothing. An empty reply would fail the turn and drop the
+            // refusals with it, so the first one is reported as the reply and
+            // the events, the ledger and the usage are kept.
+            if reply.body_text.trim().is_empty() && !events.is_empty() && events.iter().all(|e| e["ok"] == false) {
+                reply.body_text = format!(
+                    "Web operation failed: {} — {}. No successful result was obtained.",
+                    events[0]["code"].as_str().unwrap_or("WEB_FAILED"),
+                    events[0]["message"].as_str().unwrap_or("the web call failed"),
+                );
+            }
             reply.prompt_tokens = prompt_tokens;
             reply.completion_tokens = completion_tokens;
             reply.usage_reported = totals.usage_reported();
