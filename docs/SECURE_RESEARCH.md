@@ -396,11 +396,11 @@ validation and no reuse, retries, proxies, redirects, compression or cookies
 Opt-in `web.firecrawl.enabled` (ships off; needs **Firecrawl page reader** in API
 Keys) is the one exception, for exact reads only: `fetch`, chat `web_fetch` and
 batches, never discovery, crawl or search. When the pinned read gets a server's
-403, 429 or 503, or a script shell (scripted HTML whose text is under 200
-characters and under 5% of the markup), the authorized URL goes to Firecrawl's fixed `https://api.firecrawl.dev/v2/scrape`
+403, 429 or 503, a script shell (scripted HTML with under 200 characters of
+text, under 5% of the markup), an oversized body or a PDF (10 pages at most), the authorized URL goes to Firecrawl's fixed `https://api.firecrawl.dev/v2/scrape`
 once: basic proxy, markdown only, `storeInCache: false`. The answer must name the
-requested URL as final, or it is refused as a redirect; no links are kept, so it
-cannot widen a crawl. The page carries `via: firecrawl`. `web.firecrawl.max_per_hour`
+requested URL as final (else refused as a redirect); no links are kept.
+The page carries `via: firecrawl`. `web.firecrawl.max_per_hour`
 (default 20) caps reads, and batches charge both reads to `web.run_bytes`; HTTP 402
 or 429 pauses Firecrawl like a search quota. A
 failed fallback keeps the original result, with its code in `details.fallback`.
@@ -408,8 +408,8 @@ The HTML parser removes executable/hidden/navigation content and retains heading
 paragraphs, tables, lists and code. Extracts keep canonical URLs, hashes, fetch
 age, validators, extraction version and original passage offsets.
 
-Seeded: 40 page requests, 2 MiB charged bytes, 180 seconds per crawl; 8 seconds
-and 256 KiB per response; 4 concurrent fetches, 400 ms per-origin pacing, 10
+Seeded: 40 page requests, 8 MiB charged bytes, 180 seconds per crawl; 15 seconds
+and 1 MiB per response; 4 concurrent fetches, 400 ms per-origin pacing, 10
 requests per origin; 256 cached pages/16 MiB. A home missing these keys uses 20
 pages, 60 seconds, 2 fetches, 250 ms and 128 pages. `web.*` fields in the shipped YAML
 list validated bounds; [reloadable limits](INSTALL.md#reload-limits-without-a-restart) names the ones an

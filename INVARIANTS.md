@@ -228,8 +228,12 @@ complexity returns no partial evidence.
 
 The one exception is opt-in `web.firecrawl.enabled` (ships off), for exact reads
 only, never discovery, crawl or search. After a pinned read gets a server's 403,
-429 or 503 or a near-empty script shell, the authorized URL, rechecked just
-before sending, may go once to Firecrawl, so it leaves the machine. Its answer
+429 or 503, a near-empty script shell, a body over `web.response_bytes` or a PDF
+(the last two by operator decision, 2026-11-10; any other content type, and every
+transport, redirect, policy or address refusal, never escalates), the authorized
+URL, rechecked just before sending, may go once to Firecrawl, so it leaves the
+machine. The read has twice `web.request_seconds` (at most 60 s) and pins a
+10-page PDF cap, since Firecrawl bills a PDF per page. Its answer
 must name that URL as final (a redirect is refused), keeps no links, carries
 `via: firecrawl`, and is capped by `web.firecrawl.max_per_hour`. A failed
 fallback keeps the original outcome.
