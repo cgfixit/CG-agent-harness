@@ -120,6 +120,20 @@ pub(super) fn plan_hops(provider: &SearchProvider, keyed: bool, fallback: &Fallb
     hops
 }
 
+/// The hops that take a share of the deadline: the one about to run, and each
+/// later hop that is not cooling down. A paused provider answers
+/// `WEB_SEARCH_COOLDOWN` at once, without a request, so time held back for it
+/// only shortened the hop before it.
+pub(super) fn timed_hops(remaining: &[Hop], cooling: impl Fn(Hop) -> bool) -> Vec<Hop> {
+    remaining
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(index, hop)| *index == 0 || !cooling(*hop))
+        .map(|(_, hop)| hop)
+        .collect()
+}
+
 /// Lend unused time forward while reserving a paced public request when possible.
 pub(super) fn hop_budget(
     remaining: std::time::Duration,
@@ -196,6 +210,32 @@ mod tests {
         assert_eq!(
             hop_budget(seconds(8), &[Hop::Tavily, Hop::Serpapi], seconds(4)),
             seconds(4)
+        );
+    }
+
+    #[test]
+    fn a_cooling_later_hop_takes_no_share_of_the_deadline() {
+        use std::time::Duration;
+        use Hop::*;
+        let chain = [Tavily, Serpapi, GooglePublic];
+        assert_eq!(timed_hops(&chain, |_| false), chain);
+        // Public Google paused: the keyed hops split the whole deadline.
+        let timed = timed_hops(&chain, |hop| hop == GooglePublic);
+        assert_eq!(timed, [Tavily, Serpapi]);
+        assert_eq!(
+            hop_budget(Duration::from_secs(8), &timed, Duration::from_secs(4)),
+            Duration::from_secs(4)
+        );
+        // The hop about to run is always timed: its own pause answers at once.
+        assert_eq!(timed_hops(&chain, |_| true), [Tavily]);
+        assert_eq!(
+            hop_budget(
+                Duration::from_secs(8),
+                &timed_hops(&[Serpapi, GooglePublic], |hop| hop == GooglePublic),
+                Duration::from_secs(4)
+            ),
+            Duration::from_secs(8),
+            "a lone keyed hop keeps the whole deadline"
         );
     }
 

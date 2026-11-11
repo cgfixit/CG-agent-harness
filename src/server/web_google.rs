@@ -8,7 +8,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 
 use super::web_policy::{canonical_url, error};
-use super::web_provider::{falls_through, hop_budget, plan_hops, Hop, SearchProvider};
+use super::web_provider::{falls_through, hop_budget, plan_hops, timed_hops, Hop, SearchProvider};
 use super::web_search::{parse_html, run_web_cpu, WebTool};
 use crate::common::audit::Audit;
 use crate::common::credential_store::CredentialStore;
@@ -403,6 +403,20 @@ impl WebTool {
         }
     }
 
+    /// Time held back for a final public Google hop: the pacing wait still due
+    /// before its request may leave (none when the last public search is older
+    /// than the pace), plus one second for the request. Before, the whole pace
+    /// (at least 3 s) was held back on every search, which halved a keyed
+    /// provider's share of the shipped 8 s deadline.
+    pub(super) fn public_search_reserve(&self) -> Duration {
+        let pace = Duration::from_millis(self.limits.pace_ms.max(PUBLIC_SEARCH_PACE_FLOOR_MS));
+        let last = *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner());
+        let due = last.map_or(Duration::ZERO, |sent| {
+            (sent + pace).saturating_duration_since(tokio::time::Instant::now())
+        });
+        due + Duration::from_secs(1)
+    }
+
     /// `web.search.provider` picks the backend; `auto` lets a key choose the fixed
     /// SerpAPI Google backend. A key is sent only to its own provider's fixed
     /// endpoint, never to Google, another provider or a returned result
@@ -478,10 +492,15 @@ impl WebTool {
         for (index, hop) in hops.iter().copied().enumerate() {
             let next = hops.get(index + 1).copied();
             let started = tokio::time::Instant::now();
+            // A later hop that is cooling down answers without a request: it
+            // takes no share. The public reserve is the pacing wait still due.
+            let timed = timed_hops(&hops[index..], |hop| {
+                self.search_cooldown.holding(hop.name(), Instant::now()).is_some()
+            });
             let budget = hop_budget(
                 deadline.saturating_duration_since(started),
-                &hops[index..],
-                Duration::from_millis(self.limits.pace_ms.max(PUBLIC_SEARCH_PACE_FLOOR_MS)) + Duration::from_secs(1),
+                &timed,
+                self.public_search_reserve(),
             );
             if budget.is_zero() {
                 audit
@@ -1115,6 +1134,9 @@ mod tests {
                         if q.get("api_key").is_some_and(|key| key == "slow") {
                             tokio::time::sleep(Duration::from_secs(10)).await;
                         }
+                        if q.get("api_key").is_some_and(|key| key == "late") {
+                            tokio::time::sleep(Duration::from_millis(2500)).await;
+                        }
                         let status = match q.get("api_key").map(String::as_str) {
                             Some("bad") => axum::http::StatusCode::UNAUTHORIZED,
                             Some("quota") => axum::http::StatusCode::TOO_MANY_REQUESTS,
@@ -1559,6 +1581,60 @@ mod tests {
         assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert!(started.elapsed() < Duration::from_secs(8));
+    }
+
+    #[tokio::test]
+    async fn a_keyed_provider_keeps_the_time_public_google_cannot_use() {
+        // SerpAPI answers after 2.5 s of a 4 s deadline. Holding back the whole
+        // 3 s pace plus 1 s left it 2 s, so a healthy answer timed out and the
+        // search fell to public Google.
+        let serp = chain::serpapi().await;
+        let google = chain::google().await;
+        let yaml = "web: {request_seconds: 4, search: {fallback_to_public_google: true}}";
+        let chain = chain::Chain::new(yaml, "late", &serp, Some(&google)).await;
+        assert_eq!(
+            chain.web.public_search_reserve(),
+            Duration::from_secs(1),
+            "no pacing wait is due"
+        );
+        let value = chain.search("veeam cve").await.unwrap();
+        assert_eq!(value["provider"], "google-serpapi");
+        assert!(value.get("fallback_from").is_none());
+        assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let attempt = &chain.audit_events("web_search_attempt")[0];
+        assert_eq!(attempt["code"], "OK");
+        assert!(attempt["budget_ms"].as_u64().unwrap() >= 2900, "{attempt}");
+
+        // A public search just left: its pacing wait is due, so the reserve is
+        // the old one and public Google still gets its turn after a slow hop.
+        *chain.web.public_search_sent.lock().unwrap() = Some(tokio::time::Instant::now());
+        let reserve = chain.web.public_search_reserve();
+        assert!(
+            reserve > Duration::from_millis(3900) && reserve <= Duration::from_secs(4),
+            "{reserve:?}"
+        );
+
+        // Public Google cooling down takes no share at all: a 3 s deadline is
+        // SerpAPI's alone, and its 2.5 s answer arrives.
+        let serp = chain::serpapi().await;
+        let google = chain::google().await;
+        let yaml = "web: {request_seconds: 3, search: {fallback_to_public_google: true}}";
+        let chain = chain::Chain::new(yaml, "late", &serp, Some(&google)).await;
+        *chain.web.public_search_sent.lock().unwrap() = Some(tokio::time::Instant::now());
+        chain
+            .web
+            .search_cooldown
+            .start(
+                "google-public",
+                "WEB_GOOGLE_CHALLENGE",
+                &chain.web.limits,
+                Instant::now(),
+                unix_now(),
+            )
+            .unwrap();
+        let value = chain.search("veeam cve").await.unwrap();
+        assert_eq!(value["provider"], "google-serpapi");
+        assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
