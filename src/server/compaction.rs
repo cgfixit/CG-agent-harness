@@ -33,11 +33,15 @@ pub const MAX_WINDOW: u64 = 131_072;
 /// `web.total_tokens` ceiling at [`MAX_WINDOW`]: what config may set.
 pub const MAX_WEB_TOTAL_TOKENS: u64 = BASE_WEB_TOTAL_TOKENS * (MAX_WINDOW / BASE_WINDOW);
 const SUMMARY_INPUT_CHARS: usize = 24_000;
+/// The least each summarized turn keeps. With many turns this is the clip.
 const SUMMARY_TURN_CHARS: usize = 800;
+/// The most one summarized turn keeps: a short transcript shares the input
+/// budget among its turns instead of clipping each at the minimum.
+const SUMMARY_TURN_MAX_CHARS: usize = 4_000;
 /// Bounds on the read-only pinned context the summarizer sees.
 const GOAL_CHARS: usize = SUMMARY_TURN_CHARS;
 const PINNED_CHARS: usize = 2 * SUMMARY_TURN_CHARS;
-/// Characters a clipped turn keeps from its end.
+/// Characters a clipped goal or first message keeps from its end.
 const CLIP_TAIL_CHARS: usize = SUMMARY_TURN_CHARS / 4;
 /// The error code of a summary the model could not produce usably: empty after
 /// repair, cut off, or prior summaries over the input budget. The turn is then
@@ -550,18 +554,36 @@ fn neutralize(text: &str) -> String {
 
 /// At most `limit` chars: a head, a marker naming what was cut, and the end.
 fn clip(text: &str, limit: usize) -> (String, bool) {
+    clip_keeping(text, limit, CLIP_TAIL_CHARS.min(limit / 4))
+}
+
+/// `text` cut to `limit` characters, `tail` of them from its end, with the gap
+/// named. Unchanged when it already fits.
+fn clip_keeping(text: &str, limit: usize, tail: usize) -> (String, bool) {
     let total = text.chars().count();
     if total <= limit {
         return (text.to_string(), false);
     }
     let marker = format!(" [... {} chars clipped ...] ", total.saturating_sub(limit));
-    let tail = CLIP_TAIL_CHARS.min(limit / 4);
     let head = limit.saturating_sub(tail + marker.chars().count());
     let end: String = text.chars().skip(total - tail).collect();
     (
         format!("{}{marker}{end}", text.chars().take(head).collect::<String>()),
         true,
     )
+}
+
+/// What each of `turns` summarized turns may keep when `free` characters of the
+/// input budget are left for them: an equal share, never under
+/// [`SUMMARY_TURN_CHARS`] and never over [`SUMMARY_TURN_MAX_CHARS`]. A `/loop`
+/// run compacts a handful of long replies; clipped at the minimum, each lost
+/// most of its text while three quarters of the budget went unused.
+fn turn_chars(turns: usize, free: usize) -> usize {
+    // "assistant: " and the newline around each turn.
+    const FRAME: usize = 12;
+    (free / turns.max(1))
+        .saturating_sub(FRAME)
+        .clamp(SUMMARY_TURN_CHARS, SUMMARY_TURN_MAX_CHARS)
 }
 
 fn summary_input(pinned: PinnedContext<'_>, middle: &[Message], max_bytes: usize) -> Result<SummaryInput> {
@@ -632,18 +654,37 @@ fn summary_input(pinned: PinnedContext<'_>, middle: &[Message], max_bytes: usize
     bytes += pinned_block.len();
     // Newest ordinary turns first, contiguous: the first that does not fit ends
     // the selection, and the gap is named rather than silent.
-    let mut selected = Vec::new();
-    let mut clipped_turns = 0;
-    for msg in ordinary.iter().rev() {
-        let (text, clipped) = clip(&msg.text, SUMMARY_TURN_CHARS);
-        let line = format!("{}: {}\n", msg.role, neutralize(&text));
-        if !fits(chars, bytes, &line) {
-            break;
+    let select = |limit: usize| {
+        let (mut chars, mut bytes) = (chars, bytes);
+        let mut selected = Vec::new();
+        let mut clipped_turns = 0;
+        for msg in ordinary.iter().rev() {
+            // A quarter of what a turn keeps comes from its end, where a reply concludes.
+            let (text, clipped) = clip_keeping(&msg.text, limit, limit / 4);
+            let line = format!("{}: {}\n", msg.role, neutralize(&text));
+            if !fits(chars, bytes, &line) {
+                break;
+            }
+            chars += line.chars().count();
+            bytes += line.len();
+            clipped_turns += usize::from(clipped);
+            selected.push(line);
         }
-        chars += line.chars().count();
-        bytes += line.len();
-        clipped_turns += usize::from(clipped);
-        selected.push(line);
+        (selected, clipped_turns)
+    };
+    let free = SUMMARY_INPUT_CHARS
+        .saturating_sub(chars)
+        .min(max_bytes.saturating_sub(bytes));
+    let shared = turn_chars(ordinary.len(), free);
+    let (mut selected, mut clipped_turns) = select(shared);
+    // The share is counted in characters and the call is also bound in bytes,
+    // so multi-byte text can overrun a tight byte budget at the larger share.
+    // The minimum clip then keeps more turns, and keeping turns comes first.
+    if selected.len() < ordinary.len() && shared > SUMMARY_TURN_CHARS {
+        let minimum = select(SUMMARY_TURN_CHARS);
+        if minimum.0.len() > selected.len() {
+            (selected, clipped_turns) = minimum;
+        }
     }
     let omitted_turns = ordinary.len() - selected.len();
     let omitted = if omitted_turns > 0 {
@@ -1242,11 +1283,71 @@ mod tests {
             .unwrap()
             .text;
         assert!(input.contains("DECISION_KEEP"), "{input}");
+        // Two turns share the budget: the long one keeps the 4000-character
+        // maximum, not the 800-character minimum.
         assert!(
-            input.contains("[... 29200 chars clipped ...]"),
+            input.contains("[... 26000 chars clipped ...]"),
             "a clip is marked: {input}"
         );
         assert!(input.chars().count() <= SUMMARY_INPUT_CHARS);
+    }
+
+    #[test]
+    fn a_short_transcript_shares_the_summary_budget_among_its_turns() {
+        assert_eq!(turn_chars(100, 24_000), SUMMARY_TURN_CHARS, "many turns: the minimum");
+        assert_eq!(turn_chars(8, 24_000), 2_988, "a few long turns: an equal share");
+        assert_eq!(turn_chars(1, 24_000), SUMMARY_TURN_MAX_CHARS);
+        assert_eq!(turn_chars(0, 0), SUMMARY_TURN_CHARS);
+        // Four /loop exchanges: a short stored prompt and a long reply each.
+        // Clipped at 800 characters, each reply kept a twentieth of its text
+        // and the call used a quarter of its input budget.
+        let middle: Vec<Message> = (0..8)
+            .map(|i| {
+                if i % 2 == 0 {
+                    msg("user", &format!("Loop turn {} of 50.", i / 2 + 2))
+                } else {
+                    msg(
+                        "assistant",
+                        &format!("OPEN_{i} {} CONCLUSION_{i}", "detail ".repeat(2_200)),
+                    )
+                }
+            })
+            .collect();
+        let input = summary_input(PinnedContext::default(), &middle, usize::MAX).unwrap();
+        assert_eq!((input.omitted_turns, input.clipped_turns), (0, 4));
+        let size = input.text.chars().count();
+        assert!(size <= SUMMARY_INPUT_CHARS && size > 11_000, "{size}");
+        for i in [1, 3, 5, 7] {
+            // Head and tail both survive, so a reply's conclusion is read.
+            assert!(input.text.contains(&format!("OPEN_{i} ")), "{i}");
+            assert!(input.text.contains(&format!(" CONCLUSION_{i}")), "{i}");
+        }
+        // A tight byte budget still bounds the share.
+        let tight = summary_input(PinnedContext::default(), &middle, 6_000).unwrap();
+        assert!(tight.text.len() <= 6_000);
+    }
+
+    #[test]
+    fn multi_byte_turns_keep_the_minimum_clip_when_the_share_would_omit_them() {
+        // Three bytes a character: a share counted in characters overruns a
+        // 6000-byte budget, where the 800-character clip keeps both turns.
+        let middle = vec![
+            msg("user", &format!("QUESTION {}", "\u{8a9e}".repeat(3_000))),
+            msg("assistant", &format!("ANSWER {}", "\u{6f22}".repeat(3_000))),
+        ];
+        let input = summary_input(PinnedContext::default(), &middle, 6_000).unwrap();
+        assert_eq!(input.omitted_turns, 0, "{}", input.text.len());
+        assert!(input.text.len() <= 6_000);
+        assert!(input.text.contains("QUESTION ") && input.text.contains("ANSWER "));
+        // ASCII at the same budget still gets the larger share.
+        let ascii = vec![msg("user", &"q ".repeat(3_000)), msg("assistant", &"a ".repeat(3_000))];
+        let input = summary_input(PinnedContext::default(), &ascii, 6_000).unwrap();
+        assert_eq!(input.omitted_turns, 0);
+        assert!(
+            input.text.len() > 4_000 && input.text.len() <= 6_000,
+            "{}",
+            input.text.len()
+        );
     }
 
     #[test]
