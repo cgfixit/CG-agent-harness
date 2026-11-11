@@ -382,6 +382,9 @@ fn tetrad_and_eli5_need_contributor_text() {
     let tetrad_line = "- **Enhances:** N/A. **Obsoletes:** N/A. **Retrieves:** N/A. **Reverses into:** N/A.\n";
     let eli5_line = "The marker line and the HTML after it are not part of the template body.\n";
     assert!(filled.contains(tetrad_line) && filled.contains(eli5_line));
+    // An answer that opens with a backtick is an answer.
+    let ticked = filled.replacen(" **Obsoletes:** N/A.", " **Obsoletes:** `TurnKind`.", 1);
+    assert_ok(&run_body("tetrad-backtick", &ticked));
     let template = std::fs::read_to_string(repo_root().join(".github/PULL_REQUEST_TEMPLATE.md")).unwrap();
     let copied: String = template
         .lines()

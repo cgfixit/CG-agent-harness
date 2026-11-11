@@ -291,10 +291,12 @@ if [[ -n "$template_text" && "$is_shipped_template" -ne 1 ]]; then
   if grep -Eiq '^##[[:space:]]+mcluhan tetrad[[:space:]]*$' <<<"$body_unix"; then
     # Each label starts its own line first, so one label followed directly
     # by the next is an empty answer, not an answer that begins with "R".
+    # An answer may open with a backtick or a quote, so any character other
+    # than a space or an asterisk starts one.
     tetrad_text="$(section_text '^## mcluhan tetrad$' | awk '
       { line = tolower($0); gsub(/(enhances|obsoletes|retrieves|reverses into):/, "\n@&", line); print line }')"
     for label in 'enhances' 'obsoletes' 'retrieves' 'reverses into'; do
-      if ! grep -Eq "^@$label:[* ]*[[:alnum:]]" <<<"$tetrad_text"; then
+      if ! grep -Eq "^@$label:[* ]*[^* ]" <<<"$tetrad_text"; then
         missing+=("McLuhan tetrad answers (Enhances, Obsoletes, Retrieves and Reverses into each need your own text on the label's line; N/A is allowed)")
         fail=1
         break
