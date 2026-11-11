@@ -456,7 +456,8 @@ and budget decisions remain deterministic.
   default was changed. Firecrawl now sends `maxAge:0` alongside `storeInCache:false`.
 - #786 (merged) splits the remaining search deadline across the remaining hops
   and, when time allows, reserves pacing time plus one second for a final public
-  Google hop (`web_provider::hop_budget`).
+  Google hop (`web_provider::hop_budget`). The reserve is the pacing wait still
+  due, and a cooling later hop takes no share (`web_provider::timed_hops`).
 
 ### Runtime observations
 
