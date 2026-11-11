@@ -582,7 +582,9 @@ stop, status and events are bound to the starting owner; a foreign run reads as
 on stop, a changed or cleared session goal (`LOOP_GOAL_CHANGED`), `loop.max_turns`,
 `loop.max_total_completion_tokens`, `loop.max_failures`
 consecutive failed turns or failed web rounds, unverified `GOAL_DONE`, a
-near-repeat reply, or a web refusal every later turn would repeat. Both budgets
+near-repeat reply, or a web refusal every later turn would repeat. A turn waits
+(stoppable, at most two hours) while another generation holds the model
+instead of counting a failure. Both budgets
 ship finite, 50 turns and 200,000 completion tokens (#675); `0` is an explicit
 opt-in to unlimited, and a home whose file lacks the key keeps the code fallback
 `0`. With both budgets zero, startup and transitions into unbounded on reload
