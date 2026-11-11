@@ -716,6 +716,17 @@ async fn run_inner(
             }
             state.audit.log(json!({"event":"web_decision","action":if passages.is_empty() { if searches.is_empty() { "answer_local_or_gap" } else { "answer_listing" } } else { "answer_evidence" },"loop_turn":loop_turn,"reads":run_evidence.receipts.len(),"searches":searches.len()}));
             let mut reply = parse_chat_response(&response, model)?;
+            // The model was asked to answer after every web call failed and
+            // wrote nothing. An empty reply would fail the turn and drop the
+            // refusals with it, so the first one is reported as the reply and
+            // the events, the ledger and the usage are kept.
+            if reply.body_text.trim().is_empty() && !events.is_empty() && events.iter().all(|e| e["ok"] == false) {
+                reply.body_text = format!(
+                    "Web operation failed: {} — {}. No successful result was obtained.",
+                    events[0]["code"].as_str().unwrap_or("WEB_FAILED"),
+                    events[0]["message"].as_str().unwrap_or("the web call failed"),
+                );
+            }
             reply.prompt_tokens = prompt_tokens;
             reply.completion_tokens = completion_tokens;
             reply.usage_reported = totals.usage_reported();
@@ -827,7 +838,6 @@ async fn run_inner(
         }
         used_calls += calls.len();
         messages.push(batch);
-        let mut batch_failures: Vec<(String, String)> = Vec::new();
         let mut batch_ok = 0usize;
         for (index, call) in calls.iter().enumerate() {
             let id = call["id"]
@@ -978,7 +988,6 @@ async fn run_inner(
                     events.push(
                         json!({"tool":name,"ok":false,"target":target,"code":failure.code,"message":failure.message}),
                     );
-                    batch_failures.push((failure.code.clone(), failure.message.clone()));
                     json!({"error":failure.code,"message":failure.message,
                         "notice":"This read did not run or did not fit. Answer from the other results, or say what could not be read."})
                 }
@@ -1001,35 +1010,15 @@ async fn run_inner(
             messages.push(tool_message(id, &result)?);
         }
         if batch_ok == 0 {
-            if sources.is_empty() && searches.is_empty() {
-                // Every call failed and nothing has succeeded this turn: a refusal
-                // the model cannot fix by asking again (no URL permitted, keyless
-                // search, an unreachable site). End the turn as before, with the
-                // first failure named, rather than spend the remaining rounds on it.
-                let (code, message) = batch_failures.first().cloned().unwrap_or_default();
-                return Ok((
-                    ChatResult {
-                        body_text: format!(
-                            "Web operation failed: {code} — {message}. No successful result was obtained."
-                        ),
-                        model: model.into(),
-                        prompt_tokens,
-                        completion_tokens,
-                        usage_reported: totals.usage_reported(),
-                        reported_prompt_tokens: totals.input_tokens,
-                        reported_completion_tokens: totals.output_tokens,
-                        initial_prompt_tokens,
-                        initial_prompt_tools,
-                        initial_prompt_extra_tokens: initial_extra,
-                        // The last model call offered tools: it returned this batch.
-                        final_prompt_tools: true,
-                        peak_prompt_extra_tokens: peak_extra,
-                    },
-                    events,
-                ));
-            }
-            // Evidence exists but this whole batch failed: the model is told and
-            // answers from what it has; no further round is offered.
+            // Every call in this batch failed. Each failure is already that
+            // call's result, with the harness's own code and message, so the
+            // model is told what could not be read and no further round is
+            // offered: it answers from what it has, or without web evidence.
+            // Before, a first batch that failed (an unreachable site, a search
+            // provider cooling down) replaced the whole reply with a canned
+            // failure line, although the question often needed no web at all.
+            // The events stay `ok: false`, so the console and the loop runner
+            // still see every failed read.
             tools_withheld = true;
         }
     }
