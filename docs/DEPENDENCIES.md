@@ -39,7 +39,7 @@ does not certify safe runtime use of a crate.
   and later are no longer MSRV-held.
 - Incompatible major lines are separate API migrations, not drift: backend
   `axum-server` 0.8, `base64` 0.22, `rand` 0.8, `scrypt` 0.11, `scraper` 0.27 with `html5ever`
-  0.39, `windows-sys` 0.59 and the `rmcp` pin; desktop `toml` 0.8.2 and `brotli-decompressor` 6.2,
+  0.39, `windows-sys` 0.59 and the `rmcp` pin; desktop `toml` 0.8.2,
   held by upstream constraints with `generic-array` and `matchit`. Newer
   available versions alone do not make a valid lockfile stale or justify
   expanding a security refresh into a framework/toolchain migration.
@@ -101,14 +101,15 @@ point-in-time advisory/license/source check, not proof of vulnerability absence.
 Workflow action pins live in `.github/workflows/` and move with those files,
 not with the lockfiles.
 
-## Last synchronization (2026-11-09)
+## Last synchronization (2026-11-11)
 
-Advisory refresh only, so the cooldown did not apply. RUSTSEC-2026-0459 moved
-the backend to Rust 1.89, `rusqlite` 0.41.1 and `libsqlite3-sys` 0.39.1
-(bundled SQLite 3.54.1); RUSTSEC-2026-0462 moved the `rmcp` pin to 3.9.0.
-Dependabot had already moved `rmcp` to 3.8.0 (#798) and `zip` to 9.2.2 (#800).
-The desktop and fixture locks carry neither crate and did not change. The
-2026-11-07 pass found every other compatible candidate younger than the
-cooldown; `tauri` 2.12.5 waits on its pin and `axum-server` 0.9.0 is a new
-major line. Dated results describe that pass only; rerun the checks above
-before trusting them.
+Cooldown refresh, lockfiles only. Backend: `uuid` 1.26.1 to 1.29.0 (the
+desktop lock's version, admitted by Rust 1.89), `cc` 1.11.0, `crc32fast` 1.5.4
+and the lock-only `openssl` 0.10.82 with `openssl-sys` 0.9.118. Desktop:
+`crc32fast` 1.5.4 and lock-only `jiff` 0.2.39 with `jiff-core` 0.1.2. Every
+other compatible candidate was younger than the cooldown, `brotli-decompressor`
+6.3 included. `zip` 9.3.0 and desktop `cc` 1.11.0 stay with Dependabot: each
+also re-resolved unrelated `windows-sys` or `getrandom` edges under Cargo
+1.89/1.90. `tauri` 2.12.5 waits on its pin and `axum-server` 0.9 is a new major
+line. Dated results describe that pass only; rerun the checks above before
+trusting them.
