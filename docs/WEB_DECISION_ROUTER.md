@@ -278,8 +278,9 @@ Keep web.total_tokens=28000 as the current outer prompt-plus-reply allowance.
 This leaves 4,768 tokens below a verified 32,768 window, but calibrated estimation
 and live-window checks are still required. It is not 28K plus the reply.
 
-With the current 8,192 loop answer reservation, at most 19,808 estimated tokens
-remain for all input, tool schemas, evidence and framing under that allowance.
+With the then-shipped 8,192 loop answer reservation, at most 19,808 estimated tokens
+remain for all input, tool schemas, evidence and framing under that allowance
+(the shipped loop cap is now 4,096, the value a tuned turn already ran at).
 With a 4,096 answer, 23,904 remain. These are accounting ceilings, not targets.
 Never add 6,000 evidence tokens on top of a full history window.
 
@@ -455,6 +456,9 @@ and budget decisions remain deterministic.
   Auto-tuning reported a 1,140-second model deadline, 300-second synthesis limit
   and 1,200-second research limit. No Modelfile, context, timeout or provider
   default was changed. Firecrawl now sends `maxAge:0` alongside `storeInCache:false`.
+- Operator decision, 2026-11-10: `auto` now follows the saved keys (Tavily, else
+  SerpAPI, else public Google; Tavily wins with both). Observation 2 above
+  describes the earlier baseline, where a Tavily key never changed `auto`.
 - #786 (merged) splits the remaining search deadline across the remaining hops
   and, when time allows, reserves pacing time plus one second for a final public
   Google hop (`web_provider::hop_budget`). The reserve is the pacing wait still

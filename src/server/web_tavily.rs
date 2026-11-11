@@ -92,6 +92,11 @@ impl WebTool {
                 .acquire()
                 .await
                 .map_err(|_| error("WEB_CANCELLED", "search cancelled"))?;
+            // The permit wait can outlast a key change: a key cleared or
+            // replaced since this search read it is never sent.
+            if self.tavily_key()?.trim() != key {
+                return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
+            }
             let client = self.pinned_client(&endpoint).await?;
             let response = client
                 .post(endpoint)
