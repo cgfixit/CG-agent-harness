@@ -254,16 +254,11 @@ Keep web.total_tokens=28000 as the outer prompt-plus-reply allowance, not 28K
 plus the reply. This leaves 4,768 tokens below a verified 32,768 window, but
 calibrated estimation and live-window checks are still required.
 
-With the then-shipped 8,192 loop answer reservation, at most 19,808 estimated tokens
-remain for all input, tool schemas, evidence and framing; with the 4,096
-answer a tuned turn already ran at (now the shipped loop cap), 23,904 remain.
-These are accounting ceilings, not targets. Never add 6,000 evidence tokens
-on top of a full history window.
+With the shipped 4,096 loop answer cap, 23,904 estimated tokens remain for all
+input, tool schemas, evidence and framing: an accounting ceiling, not a
+target. Never add 6,000 evidence tokens on top of a full history window.
 
 Candidate working targets:
-- Routing/listing-selection output: 512 tokens, temperature 0, reasoning none,
-  separate from the loop answer ceiling (4,096 in the measured profile).
-  Superseded: a tool-offering hop now writes up to the answer cap once.
 - Listings: five initially, ten only if the gap justifies it.
 - Selected pages: up to three initially; two/three passages each.
 - New page evidence: aim for 3,000-4,000 tokens; never exceed the configured
@@ -278,33 +273,14 @@ Candidate working targets:
   Preserve the goal and exact evidence references through compaction, not
   prose assertions that research already happened.
 
-Base timeouts on measured prefill/decode and cold load: reuse
-model_limits.rs's padded estimate (load + prompt/prefill_tps + output/decode_tps,
-with its safety factor and clamps) and the outer turn deadline. A short output
+Base timeouts on measured prefill/decode and cold load, reusing
+model_limits.rs's padded estimate and the outer turn deadline: a short output
 can still have expensive prefill. Shipped per-call timeout is 1,800 seconds,
-auto_tune may replace it, and web-turn allowance can double it. Report the
-effective deadline during benchmarks.
+auto_tune may replace it, and web-turn allowance can double it.
 
-A deferred network experiment is request_seconds=20, versus the preserved 8 seconds,
-with a three-provider allocation roughly 6/6/8 seconds including pacing and
-queueing, lending unused time forward. It is a trial profile, not an applied
-or proven default. Exact-page direct and Firecrawl reads each have their own
-bounded request stage under the outer turn deadline, and Firecrawl's upstream
-timeout must stay inside the local one. Never add an unbounded wait.
-
-## Implementation sequence and affected files
-
-1. Capability and deadline behavior: web_provider.rs, web_google.rs. Keep
-   default chains exact; fix deadline starvation before adding ranking.
-2. Listing triage and page passages: web_google.rs, web_tavily.rs, chat_web.rs,
-   web_index.rs, web_search.rs, with additive optional listing fields.
-   Firecrawl freshness belongs in web_firecrawl.rs.
-3. Goal integration and evidence continuity: chat_web.rs, routes/core.rs,
-   loop_runner.rs, prompts.rs and the web_research pure validators. Keep
-   active-run state bounded and owner-scoped, with no page-body store, and
-   do not call the research runner inside chat.
-4. Reconcile INVARIANTS.md and the owning guides after behavior is verified;
-   change assets/config.default.yaml only for a measured, justified tunable.
+A deferred experiment is request_seconds=20 with a roughly 6/6/8 second
+three-provider allocation; it is a trial profile, not a default. Firecrawl's
+upstream timeout must stay inside the local one.
 
 ## Acceptance and measurement
 
@@ -338,12 +314,10 @@ Required behavior cases:
   partial evidence is not completion.
 
 Measure per-stage p50/p95 time, first-token time, prefill/decode throughput,
-prompt/completion tokens, selected-source coverage, grounded claim rate,
-unsupported-read claims, repeated queries/reads, compactions, Firecrawl calls,
-fallback success and memory pressure/swap growth, on the same prompt set and
-evidence budget, with warm/cold model and cache runs recorded separately.
-Require zero unauthorized egress and zero invented successful-read receipts.
-Passage-anchor recall alone is not an answer-quality win.
+tokens, selected-source coverage, grounded claim rate, unsupported-read
+claims, repeated queries/reads, compactions, Firecrawl calls and fallback
+success on the same prompt set and evidence budget, warm and cold separately.
+Require zero unauthorized egress and zero invented read receipts.
 
 Existing coverage lives in tests/chat_web.rs, tests/loop_runner.rs,
 tests/web_research.rs, tests/web_phase2_redteam.rs, tests/retrieval_ranking.rs
@@ -351,29 +325,15 @@ and module unit tests. No browser/native acceptance is claimed by this plan.
 
 ## Primary external references checked
 
-- [Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search):
-  exposes content/score and bounded chunks for basic, fast and advanced search.
-  Retain basic depth and validate the actual response shape before tuning
-  chunk use; no auto-depth or raw-content upgrade is required.
-- [SerpAPI Google organic results](https://serpapi.com/organic-results):
-  position, snippet, highlighted words and optional date. Preserve provider
-  rank separately from the output list rank.
-- [Google snippets](https://developers.google.com/search/docs/appearance/snippet):
-  query-dependent triage signals, not a receipt for reading the target page.
-- [Firecrawl scrape](https://docs.firecrawl.dev/api-reference/endpoint/scrape):
-  request timeout and cached-read maxAge are separate from cache storage.
-  No paid requests were sent during this research.
-- [Ollama context](https://docs.ollama.com/context-length): larger windows
-  need more memory; verify the allocated context and compute placement. This
-  plan keeps the requested 32K profile.
-
-## Historical lead, not current acceptance
-
-The 2026-11-02 local research record reported better answer-anchor presence from
-BM25 passages than prefixes on five selected pages, but its final retrieved-
-passage Qwen answer failed a thinking-leak guard. It also recorded false read
-claims and an off-domain site-query result. These motivate the acceptance
-cases; they were not rerun here.
+[Tavily Search API](https://docs.tavily.com/documentation/api-reference/endpoint/search)
+(basic depth kept), [SerpAPI organic results](https://serpapi.com/organic-results)
+(provider rank kept apart from list rank),
+[Google snippets](https://developers.google.com/search/docs/appearance/snippet)
+(triage signals, not read receipts),
+[Firecrawl scrape](https://docs.firecrawl.dev/api-reference/endpoint/scrape)
+(maxAge is separate from cache storage) and
+[Ollama context](https://docs.ollama.com/context-length). No paid requests
+were sent during this research.
 
 ## Implemented behavior and measured limits
 
@@ -455,18 +415,14 @@ source-qualifier prompt adjustment did not fix the IANA overstatement
 A real two-turn server goal completed in 61.39 s with one page read, 1,316
 completion tokens and no tool failures. Its second turn reviewed the retained
 findings without another read; `GOAL_DONE` remained explicitly unverified.
-Safari private mode rendered the session, and a further browser-driven loop
-rendered the page receipt and three-finding digest separately. The loaded MLX
+The loaded MLX
 allocation later reported 27.75 GB, so the earlier readiness allocation is not
 a memory ceiling. VM counters showed pre-existing compression/swap; no
 before/after swap claim is made.
 
-Repetition exposed a control-flow defect: two reruns at `86b28ff` ended after
-one server turn with two fetch calls (69.38/75.48 seconds). A diagnostic trace
-showed the second call rephrasing the same section query and returning the
-same cached passages; evidence messages also lacked the current turn. Moving
-the digest before the next tool decision removes the discarded draft answer,
-and explicit turn framing keeps the harness turn visible.
+Two reruns at `86b28ff` ended after one server turn with a second fetch that
+rephrased the same query and returned the same cached passages. Moving the
+digest before the next tool decision and framing each turn explicitly fixed it.
 
 Five consecutive fresh-session RFC runs with that correction completed two server
 turns, one fetch and one validated digest each, with no tool failures or first-turn
@@ -495,9 +451,7 @@ credit/provider availability is unverified. Public Google challenged a real
 request honestly.
 
 Safari private sign-in and console rendering passed after an operator
-exception. The operator declined trust-store changes, so warning-free Safari
-and Chrome/Firefox trust are unverified; these are not provider or routing
-failures.
+exception; warning-free Safari and Chrome/Firefox trust are unverified.
 
 This is a measured 32K starting configuration, not universal tuning.
 Longer real compaction cycles, a larger semantic-quality corpus, stable-load

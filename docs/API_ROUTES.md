@@ -85,13 +85,11 @@ Roles, scrypt bounds and session timeouts: [SECURE_RESEARCH.md](SECURE_RESEARCH.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET, POST | `/api/soul` | Persona state and on/off toggle |
-| GET, POST | `/api/soul/document` | Read or edit the persona document |
+| GET, POST | `/api/soul`, `/api/soul/document` | Persona state and on/off toggle; read or edit the persona document |
 | POST | `/api/soul/proposals` | Propose a persona change |
 | GET, POST | `/api/soul/proposals/{id}` | Review or decide a proposal |
 | GET, POST | `/api/style` | Output-style catalog and session select (`/style <name>`, `/style off`) |
-| GET | `/api/skills` | List skills |
-| POST | `/api/skills/check` | Describe a `check:<profile>` ID |
+| GET, POST | `/api/skills`, `/api/skills/check` | List skills; describe a `check:<profile>` ID |
 | GET, POST | `/api/memory` | Pinned-note status and on/off toggle |
 | POST | `/api/memory/add`, `/api/memory/forget`, `/api/memory/clear` | Save a literal note, remove one, remove all |
 
@@ -112,10 +110,8 @@ Roles, scrypt bounds and session timeouts: [SECURE_RESEARCH.md](SECURE_RESEARCH.
 | POST | `/api/structured-memory/episodes/{id}/summary` | Attach a human semantic summary (confirm + reason) |
 | POST | `/api/structured-memory/episodes/{id}/delete` | Delete one episode |
 | GET, POST | `/api/structured-memory/consolidation` | List or start consolidation |
-| GET | `/api/structured-memory/consolidation/{id}` | Consolidation status |
-| POST | `/api/structured-memory/consolidation/{id}/cancel` | Cancel |
-| GET | `/api/structured-memory/export` | Export the owner's memory |
-| POST | `/api/structured-memory/purge` | Purge the owner's memory |
+| GET, POST | `/api/structured-memory/consolidation/{id}`, `/api/structured-memory/consolidation/{id}/cancel` | Consolidation status; cancel |
+| GET, POST | `/api/structured-memory/export`, `/api/structured-memory/purge` | Export or purge the owner's memory |
 
 Confirmation and gate rules: [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 
@@ -159,14 +155,11 @@ keys minted by `mcp-key`, and console cookies never authorize it
 | GET | `/api/agent/checks` | Check-profile names the browser may request |
 | POST | `/api/agent/run` | Synchronous run; check names map to fixed argv |
 | GET, POST | `/api/agent/jobs` | List owned detached jobs or start one |
-| GET | `/api/agent/jobs/{job_id}` | Job status |
-| POST | `/api/agent/jobs/{job_id}/cancel` | Cancel a job |
+| GET, POST | `/api/agent/jobs/{job_id}`, `/api/agent/jobs/{job_id}/cancel` | Job status; cancel a job |
 | POST | `/api/agent/schedules/preview` | Preview five occurrences and return an owner-bound receipt |
 | GET, POST | `/api/agent/schedules` | List owned schedules or activate the exact previewed request |
-| GET | `/api/agent/schedules/{schedule_id}` | One schedule |
-| POST | `/api/agent/schedules/{schedule_id}/cancel` | Cancel a schedule |
-| GET | `/api/agent/runs` | Retained run metadata |
-| GET | `/api/agent/runs/{run_id}` | One run and its diff |
+| GET, POST | `/api/agent/schedules/{schedule_id}`, `/api/agent/schedules/{schedule_id}/cancel` | One schedule; cancel it |
+| GET | `/api/agent/runs`, `/api/agent/runs/{run_id}` | Retained run metadata; one run and its diff |
 | POST | `/api/agent/runs/{run_id}/decision` | Approve (`reason`, confirm) or reject |
 | POST | `/api/agent/runs/{run_id}/push`, `/api/agent/runs/{run_id}/publish`, `/api/agent/runs/{run_id}/discard` | Push the approved commit, open a draft PR, or discard the run |
 | GET | `/api/notifications` | Owned destinations and retained delivery metadata; no URLs, credentials or job content |

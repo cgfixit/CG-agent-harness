@@ -107,22 +107,19 @@ The parser lowercases the command and one subcommand. Exact subcommands are
 suggests and never reads tables: edit distance 1 or a prefix of at least three
 characters offers nearby names, distant input offers `/net status`, and fuzzy
 matching omits `device`. The console shows `did you mean ...?` with a button
-you can edit and send; the library evaluator sets `executed` false and exits 2
-with code `NETCONNECT_SUGGEST`.
+you can edit and send.
 
-The library evaluator is a test-only executable specification (`test-support`). Exact lines parse as dispatch:
+| Line (any kept alias) | Console behavior |
+|---|---|
+| `/net status`, `/net devices` | Opens the LAN panel with `GET /api/netconnect`; it calls neither tool. When `enabled` is true that read loads the three passive sources, which the CLI `status` command does not. |
+| `/net diag` | Calls `GET /api/netconnect/diag` and prints one row per target and port. A refusal shows the server message. |
+| `/net ports`, `/net watch`, `/net device` | Prints `netconnect refusal: this console does not run active tiers or device control` without loading the panel. |
 
-| Line | Library evaluator | Console (`runSlash`) |
-|---|---|---|
-| `/net status` and the same subcommand on any kept alias | `netconnect_status`. No collector. Exit 0 when `enabled` is true. | Opens the LAN panel with `GET /api/netconnect`. It does not call the status tool. |
-| `/net devices` and aliases | Passive tables through `netconnect_devices`. Exit 0 when `enabled` is true. | Same panel GET, not the devices tool. |
-| `/net diag` | `invoke_tier` for `diagnostics`. Never dials: refuses, and when the tier may run names the route and CLI that do. Exit 4. | Calls `GET /api/netconnect/diag` and prints one row per target and port. A refusal shows the server message. |
-| `/net ports`, `/net watch` | `invoke_tier` for `port_scan` or `passive_listen`. Refuses; no tool exists. Exit 4. | Prints `netconnect refusal: this console does not run active tiers or device control` without loading the panel. |
-| `/net device` | Always `NETCONNECT_REFUSED`, exit 4. No collector. | Same refusal, no panel load. |
-
-When `enabled` is true, the console's panel read loads the three passive sources, including for `/net status`; the CLI `status` command and the `netconnect_status` tool do not.
-
-Supplying an address to `invoke_tier` rechecks it with `Scope::check_target` first: an address outside the scope is `NETCONNECT_REFUSED` (`address <ip> is outside netconnect scope`).
+The library evaluator behind these lines is a test-only executable
+specification (`test-support`): it never dials, answers a near-miss with
+`NETCONNECT_SUGGEST` (exit 2) and an unbuilt tier or `device` with
+`NETCONNECT_REFUSED` (exit 4), and rechecks any supplied address with
+`Scope::check_target` first.
 
 ## Panel
 

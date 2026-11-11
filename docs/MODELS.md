@@ -35,8 +35,7 @@ curl --fail --silent --show-error http://127.0.0.1:11434/api/generate \
 curl --fail --silent --show-error http://127.0.0.1:11434/api/ps
 ```
 
-`/api/ps` must report `context_length` ≥ **32768**; chat warns when a turn
-exceeds it. Otherwise keep `web.total_tokens: 16000` and
+`/api/ps` must report `context_length` ≥ **32768**. Otherwise keep `web.total_tokens: 16000` and
 `web.evidence_tokens: 3000` in the home `config.yaml`.
 
 ### Pin 32768 with a local derived tag
@@ -52,16 +51,13 @@ ollama create qwen3.8:27b-mlx-cg -f scripts/qwen3.8-27b-mlx-cg.Modelfile
 
 That file is `FROM qwen3.8:27b-mlx` with `PARAMETER num_ctx 32768`. Select it
 with `/model use qwen3.8:27b-mlx-cg`; it is local-only, so do not pull it.
-`/model profile` reports `declared.modelfile_num_ctx` and
-`loaded.context_length`; chat uses the loaded value.
+`/model profile` reports the declared and loaded window; chat uses the loaded one.
 The alternative `gemma4-26b-a4b:ud-q4_k_xl-cg` is built the same way from
 `scripts/bakeoff/modelfiles/gemma4-26b-a4b-ud-q4_k_xl-cg.Modelfile`.
 
-The recipe does not disable thinking: for provider `ollama`,
-`models.local_llm.reasoning_effort` ships as `none`, and absent or empty omits
-it. For a 65536 window on a 48 GB Mac, see the
+Thinking is off through `models.local_llm.reasoning_effort: none`, not the
+recipe. For a 65536 window on a 48 GB Mac, see the
 [bake-off report](bakeoff/local-model-bakeoff-2026-10-10.md#windows-above-32768-on-a-48-gb-mac).
-Pinned models under `scripts/live-ollama/` are a separate fingerprint set.
 
 When no model is installed, `/model list` shows an example `ollama pull`
 command to copy into a terminal; the console downloads nothing, and
@@ -119,8 +115,8 @@ and profiles need a restart.
 A reply must finish normally (Claude `end_turn`, Grok `completed`); truncation
 fails with 502 and is not saved.
 
-**Grok Build ACP is not shipped.** `scripts/grok-acp-probe.py` checks only a
-fake runtime's launch contract, not a connection or billing.
+Grok Build ACP is not shipped; `scripts/grok-acp-probe.py` checks only a fake
+runtime's launch contract.
 
 Optional chat fallback ships disabled. To use another compatible local server,
 merge its endpoint and exact inventory ID into these fields, then restart:
@@ -137,9 +133,7 @@ models:
 ```
 
 At startup the resolver keeps the primary only when inventory lists its
-configured model; otherwise it tries the fallback model. If neither is ready,
-startup keeps a degraded primary so the console stays available. With fallback
-off, startup selects the primary without this probe. There is no per-message
-retry or automatic download; restart to reevaluate. Probes are bounded by
-`models.local_llm.inventory` and `probe_timeout_sec`, without proxies or
-redirects ([resolver](../src/llm/backend.rs), [inventory](../src/llm/inventory.rs)).
+configured model; otherwise it tries the fallback. If neither is ready, startup
+keeps a degraded primary so the console stays available. There is no
+per-message retry or automatic download; restart to reevaluate
+([resolver](../src/llm/backend.rs), [inventory](../src/llm/inventory.rs)).

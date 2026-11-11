@@ -120,10 +120,9 @@ session switching, token budgets, a 90%-identical reply or `loop.max_failures`
 consecutive failed turns (default 2; auto retries once) stop it. A `GOAL_DONE`
 line (even `**GOAL_DONE**`) stops it too, but is only model advice.
 
-With `server_loop` in `/api/status`, auto loops outlive tabs. The console reads
-`GET /api/loop/events/<run_id>`, reattaches using `/api/loop/status?session_id=`,
-and stops through `/api/loop/stop`. `POST /api/loop/start` accepts `session_id`,
-optional `goal`/`web_mode`, and limits. Turns persist under the home's `loops/`.
+With `server_loop` in `/api/status`, auto loops outlive tabs: the console
+reattaches through the [loop routes](API_ROUTES.md#chat-model-and-chat-sessions),
+and turns persist under the home's `loops/`.
 Runs recheck account authority each turn and retain bounded, revalidated
 [web evidence references](SECURE_RESEARCH.md#chat-web-tools) through compaction.
 Manual, older-server, compaction-started and attachment loops remain browser-driven.
@@ -259,8 +258,8 @@ in one `/skill use <id...>`. Up to four are retained, with defaults of 6,000
 characters per body and 16,000 total (`personality.prompt_skill_max_chars`,
 `personality.prompt_skills_total_chars`). Frontmatter is stripped.
 
-After chat, `/skill status` reports the last successful snapshot's IDs, character
-counts, and SHA256 hashes, which can differ from current files. A missing,
+After chat, `/skill status` reports the last successful snapshot's IDs, sizes
+and SHA256 hashes, which can differ from current files. A missing,
 empty, unreadable, or invalid selected file blocks chat; restore it or
 `/skill clear`, which removes selections (seeded ones included), not files.
 
@@ -270,16 +269,8 @@ indexed in [AGENTS.md](../AGENTS.md#project-skills); they never enter app chat.
 ### 7.4 Customize response style
 
 Use soul for your usual voice across sessions and a runtime skill for one
-task; neither changes permissions. Start with `/soul edit` and adapt this example:
-
-```text
-Lead with the answer. Use plain, direct language.
-Default to 1–3 short paragraphs; expand when requested.
-Distinguish verified results from assumptions and proposed actions.
-Never sacrifice accuracy or necessary uncertainty for brevity.
-```
-
-Save through the [soul review flow](#72-default-soul-effective-prompt-and-persona-editing),
+task; neither changes permissions. Write the voice you want with `/soul edit`,
+save it through the [soul review flow](#72-default-soul-effective-prompt-and-persona-editing),
 then compare answers in `/session new Style check` (`/clear` is not a fresh
 session). Style guarantees neither length nor correctness; avoid contradictory
 rules across soul, [runtime skills](#73-runtime-skills-and-codex-development-skills)
@@ -287,11 +278,9 @@ and memory.
 
 **Style presets.** `/style <name>` selects a session preset, `/style off` is
 the default and `/style` prints the active one. Shipped in
-[`data/styles/`](../data/styles/): `concise` is brief, `technical` traces
-mechanism, `research` grades evidence, `code-review` leads with blockers at
-file:line, `design` weighs tradeoffs, `troubleshoot` ranks causes with one next
-command, `handoff` briefs another agent, `verify` weighs one claim, `extract`
-uses supplied documents only. An overlay at
+[`data/styles/`](../data/styles/): `concise`, `technical`, `research`,
+`code-review`, `design`, `troubleshoot`, `handoff`, `verify` and `extract`
+(supplied documents only). An overlay at
 `$CGAGENTHARNESS_HOME/styles/<name>.md` wins. Prompt order is soul, style, then
 fixed policy, so style cannot override the contract; an explicit format request
 wins over a preset. `off` removes only style. `/prompt` reports load failures
@@ -318,15 +307,15 @@ and process-group or unrestricted Windows Job Object exceptions, without
 executing a tool ([MCP capabilities](MCP.md#outbound-client-capabilities)).
 `/connectors` and `/registry` are inventories only.
 
-| Capability | Current configuration / action | Actual boundary |
-|---|---|---|
-| Public web text | Chat web tools and `/web` controls in [SECURE_RESEARCH.md](SECURE_RESEARCH.md#search-fetch-and-research) | Search listings, permitted URL fetch, page research and optional context injection |
-| GitHub coding | Explicit `agentic.repo`, gates and prerequisites in [coding pipeline](CODING_PIPELINE.md); `/github` reports status | Separate governed child-process workflow; a chat reply runs no Git command |
-| Local file context for coding | Stage `/agent read <repo-relative-path[#Lx-Ly]>` before confirmation | Bounded reads from the governed clone; no general filesystem mount |
-| `netconnect` | CLI `status`, `devices`, and budgeted `diag`; `/net` aliases; gates ship false | Read-only LAN panel (scope, passive devices, tier state) with no scan button; `/net diag` runs the budgeted probe. Empty scope refuses armed tiers ([netconnect](netconnect.md)) |
-| Log diagnostics | `/diag`; `diagnostics.logs_enabled` ships true; admin or `portal_auditor` | Bounded, redacted tails of allowlisted `<home>/logs/` files; one excerpt staged for the next local turn ([diagnostics](TROUBLESHOOTING.md#diagnostics)) |
-| `fsconnect`, `sqlconnect` | Not implemented | No slash command, datasource picker, filesystem indexing, database connection or YAML switch |
-| `github-public`, `openai-compatible` catalog entries | Inventory only | Neither is a connector or an activation control |
+| Capability | Boundary |
+|---|---|
+| Public web text | Search listings, permitted fetch, page research and optional context injection ([web](SECURE_RESEARCH.md#search-fetch-and-research)) |
+| GitHub coding | A separate governed child-process workflow behind `agentic.repo` and its gates; `/github` reports status, and a chat reply runs no Git command ([coding pipeline](CODING_PIPELINE.md)) |
+| Local file context for coding | `/agent read <repo-relative-path[#Lx-Ly]>` before confirmation: bounded reads from the governed clone, no general filesystem mount |
+| `netconnect` | Gates ship false. Read-only LAN panel with no scan button; `/net diag` runs the budgeted probe, and an empty scope refuses armed tiers ([netconnect](netconnect.md)) |
+| Log diagnostics | `/diag` (admin or `portal_auditor`; `diagnostics.logs_enabled` ships true): bounded, redacted tails of allowlisted `<home>/logs/` files, one excerpt staged for the next local turn ([diagnostics](TROUBLESHOOTING.md#diagnostics)) |
+| `fsconnect`, `sqlconnect` | Not implemented: no slash command, datasource picker, filesystem indexing, database connection or YAML switch |
+| `github-public`, `openai-compatible` catalog entries | Inventory only; neither is a connector or an activation control |
 
 The Setup folder chooser prepares offline Cargo inputs, not chat file access
 ([connector inventory](../src/server/views.rs)).

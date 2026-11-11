@@ -408,10 +408,9 @@ and unsupported metadata refuse without echoing values. Read-only diff
 inspection accepts inert local external-diff and fsmonitor settings.
 
 Authenticated `gh repo clone` also gets isolated Git settings and an empty Git
-template before checkout. Publishing uses the installed
-`gh auth git-credential` helper for HTTPS, not ambient credential commands. A
-GitHub.com SSH origin is accepted and can use the operator's SSH configuration
-and keys. Custom credential helpers and enterprise hosts are refused; absolute
+template. Publishing uses the installed `gh auth git-credential` helper for
+HTTPS; a GitHub.com SSH origin can use the operator's SSH configuration and
+keys. Custom credential helpers and enterprise hosts are refused; absolute
 local remotes remain available for offline runs.
 
 Approval refuses staged changes and index locks. Under the normal index lock it

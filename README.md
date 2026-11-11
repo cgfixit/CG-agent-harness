@@ -50,7 +50,6 @@ flowchart TD
 ```
 
 - **Local first.** Mode `off`, or a notes read you did not ask to go beyond, answers from local context. `fetch` allows exact reads; `all` adds search (`web.goal_web_default` ships `all`).
-- **Reuse before reading.** A run keeps a bounded ledger of receipts and past queries, restored after compaction only when hash, age and permission still check.
 - **One configured chain.** `web.search.provider` and two fallback flags fix the hop order inside one deadline. `auto` follows your saved keys: Tavily, then SerpAPI, then public Google. Zero results, a rejected key or a refused query never fall through.
 - **Digest, then decide.** Quotes and source IDs in the digest are checked before the next tool choice; that proves provenance, not logical support. A failed read goes back to the model as a failure and it answers from what it has. `GOAL_DONE` stays model advice.
 

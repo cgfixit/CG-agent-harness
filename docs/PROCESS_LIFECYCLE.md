@@ -99,16 +99,14 @@ memory limit).
 
 ## Evidence
 
-`tests/process_lifecycle.rs` covers inherited pipes, blocked stdin, overflow and
-a short-lived leader with a background child; its required macOS case cancels a
-Seatbelt check in another process group while an unrelated sibling survives.
-`tests/process_writer_outcome.rs` proves the indeterminate publication overflow.
-`tests/mcp_client.rs` checks allowed and denied reads, writes and network probes,
-and the required Linux `tests/mcp_lifecycle.rs` job covers cancellation, crashes,
-deadlines and SIGKILL with a detached grandchild, then limits and migration
-denial. The native Windows acceptance observes child and grandchild handles,
-denied breakaway, limits and nine exit paths; it does not establish filesystem
-or network isolation.
+`tests/process_lifecycle.rs` (pipes, overflow, background children, and a
+required macOS Seatbelt cancellation across process groups),
+`tests/process_writer_outcome.rs` (indeterminate publication overflow),
+`tests/mcp_client.rs` (allowed and denied reads, writes and network probes) and
+the required Linux `tests/mcp_lifecycle.rs` job (cancellation, crashes,
+deadlines, SIGKILL with a detached grandchild, limits). The native Windows
+acceptance covers breakaway, limits and nine exit paths; it does not establish
+filesystem or network isolation.
 
 ## Desktop ownership and recovery
 

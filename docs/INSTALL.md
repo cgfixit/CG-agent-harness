@@ -48,8 +48,7 @@ setup from a fresh clone or download, from zsh or bash:
 cd CG-agent-harness && scripts/init.sh    # or: bash scripts/init.sh
 ```
 
-Or double-click **init.command** in the clone's top folder: it runs the same
-script in a Terminal window and waits for Return at the end. A folder unpacked
+Or double-click **init.command** in the clone's top folder. A folder unpacked
 from a downloaded ZIP is quarantined: Control-click the file and choose **Open**
 (macOS 15 and later: **Open Anyway** in System Settings → Privacy & Security),
 or run `xattr -dr com.apple.quarantine <folder>` once.
@@ -75,10 +74,7 @@ A failed step offers retry, skip or quit. A rerun skips finished steps and signs
 in with the saved password; when the installed app is older than the latest
 release it asks before updating (never with `--yes`). A `serve` of yours that
 already owns the home is used for setup and left running: choice 2 opens it,
-while choices 1 and 3 stop until you quit it. With `--reset-home` and an
-existing home, the script first deletes the home and its Keychain entries
-through `reset-macos.sh` (interactively: default no, and you type `DELETE`
-after its dry run).
+while choices 1 and 3 stop until you quit it.
 
 | Option | Effect |
 |---|---|
@@ -88,7 +84,7 @@ after its dry run).
 | `--replace-app` | Passed on too, and runs the installer even when `--check` passes (quit the app first) |
 | `--trust-cert`, `--no-profile`, `--no-allowlist` | Trust the console certificate (choices 2 and 3 with the app); skip the profile or allowlist |
 | `--no-auto-memory` | Leave `suggestion_supported` unlisted |
-| `--reset-home` | Delete the previous home and its Keychain entries first (confirmed unless `--yes`) |
+| `--reset-home` | Delete the previous home and its Keychain entries first through `reset-macos.sh`; interactively you type `DELETE` after its dry run |
 
 Each line is logged with a time to `scripts/logs/install.log` (private, ignored by
 git); passwords and setup codes never are. Read the saved password with
@@ -101,17 +97,14 @@ using Rosetta** unchecked. Run every command from the clone, as your user.
 
 1. **Developer tools and code:** `xcode-select --install` (finish the dialog),
    then `git clone https://github.com/cgfixit/CG-agent-harness.git && cd CG-agent-harness`.
-2. **Inventory:** `scripts/install-macos.sh --check` prints one line per tool and
-   exits 1 while something required is missing. It changes nothing.
-3. **Preview:** `scripts/install-macos.sh --dry-run --model <tag>` prints every
-   command the install would run. Pick the tag in [Models](MODELS.md); omit
-   `--model` to pull later (models are multi-GB). Add `--with-gh` for coding.
+2. **Inventory:** `scripts/install-macos.sh --check` changes nothing.
+3. **Preview:** `scripts/install-macos.sh --dry-run --model <tag>`. Pick the tag
+   in [Models](MODELS.md); omit `--model` to pull later (models are multi-GB).
 4. **Install:** the same command without `--dry-run`. The Homebrew and rustup
    installers may ask for your password and print "Next steps"; run those lines,
    then open a new Terminal window so `brew` and `cargo` are on `PATH`. The first
    backend build takes several minutes.
-5. **Confirm:** `scripts/install-macos.sh --check` ends with
-   `everything required is present`.
+5. **Confirm:** `--check` ends with `everything required is present`.
 6. **Model tag:** build the derived default tag
    ([Models](MODELS.md#pin-32768-with-a-local-derived-tag)), or `/model use` an
    installed one later.
@@ -120,12 +113,11 @@ using Rosetta** unchecked. Run every command from the clone, as your user.
    password prompt ([section 7](#7-open-the-console-in-a-browser)). Note the
    printed `CGagentHarness console: https://127.0.0.1:<port>/`.
 8. **Set your password:** fresh homes open a form for the private setup code
-   and a new password of at least 12 characters. The app keeps **Harness → Setup
-   and recovery** open with the code and a **Copy setup code** button until you
-   do (**Cmd and +**, that is Cmd, Shift and =, reopens it); for a terminal
-   server, `cat ~/.CGagentHarness/setup-code`. Until then that session can only
-   change its password or log out, and the CLI and API answer
-   `AUTH_PASSWORD_CHANGE_REQUIRED`. The browser needs its own sign-in.
+   and a new password of at least 12 characters ([first run](#6-first-run)). The
+   app shows the code in **Harness → Setup and recovery** (**Cmd and +**
+   reopens it); for a terminal server, `cat ~/.CGagentHarness/setup-code`. Until
+   then the session can only change its password or log out, and the CLI and
+   API answer `AUTH_PASSWORD_CHANGE_REQUIRED`. The browser needs its own sign-in.
 9. **Optional web allowlist:** with that console origin, sign the CLI in and grant
    the technical-docs starter list:
 
@@ -685,9 +677,7 @@ gh auth status
 git remote get-url origin
 ```
 
-Check both configured model tags, the selected repository and write gates. The
-hidden `agentic test` command checks some configuration and tools but is not a
-complete doctor.
+Check both configured model tags, the selected repository and write gates.
 
 With the rustup-selected Cargo and Clippy from [Rust](#24-rust), run the
 repository gates with application inference omitted:
@@ -699,28 +689,23 @@ CGAGENTHARNESS_HOME="$test_home" SKIP_LIVE=1 scripts/verify-local.sh
 
 The disposable home avoids the app's lock. The script runs formatting,
 warning-denied Clippy, tests with planner keys blanked, CI contracts and a
-`--locked` release build. Missing cargo-deny is a skip, not
-a pass: run `cargo build --locked` and `cargo deny check` in the root and
-`desktop/` with their pinned toolchains ([dependency maintenance](DEPENDENCIES.md)).
-An outer sandbox can block nested Seatbelt; use the operator terminal without
-weakening the profile.
+`--locked` release build. Missing cargo-deny is a skip, not a pass
+([dependency maintenance](DEPENDENCIES.md#check-and-synchronize)). An outer
+sandbox can block nested Seatbelt; use the operator terminal without weakening
+the profile.
 
 For the live chat smoke, set the exact installed tag explicitly:
 
 ```bash
-SMOKE_MODEL=qwen3.8:27b scripts/smoke-ollama.sh
-# Local derived tag after ollama create. Not a fingerprint model.
 SMOKE_MODEL=qwen3.8:27b-mlx-cg scripts/smoke-ollama.sh
 ```
 
 Read the output: the smoke also succeeds when an unavailable endpoint causes a
-skip, and it neither proves real-model acceptance nor tests editing. The
-[coding pipeline](CODING_PIPELINE.md) covers edit, approval and publication
-acceptance; for a source-built app, see
-[rebuild and verify](DESKTOP.md#rebuild-and-verify).
+skip, and it neither proves real-model acceptance nor tests editing. For a
+source-built app, see [rebuild and verify](DESKTOP.md#rebuild-and-verify).
 
-For console interaction checks with installed Chrome and a Node runtime providing
-WebSocket (the recorded local run used Node 24):
+For console interaction checks with installed Chrome and a Node runtime
+providing WebSocket:
 
 ```bash
 node scripts/chat-browser-acceptance.mjs
@@ -734,18 +719,17 @@ chooser, clipboard and quit behavior need manual checks recorded in the PR body.
 
 Use [focused local checks](#11-verify-your-setup) for changed behavior; CI runs
 all targets with provider keys blanked and deterministic model fixtures. Set
-`CGAH_TEST_BINARY` to test another backend, including a bundle copy.
+`CGAH_TEST_BINARY` to test another backend, including a bundle copy. The
+[workflow index](../.github/workflows/README.md) lists every workflow.
 
-| Gate | Evidence and scope |
+| Gate | Scope |
 |---|---|
-| [Backend CI](../.github/workflows/ci.yml) | Rust 1.89 (`rust-version`), rustfmt, warning-denied Clippy, `cargo deny`, I6, Chrome, Linux/macOS tests and real-repo smoke. Code PRs run focused Windows lifecycle and credential tests; `main`, merge queue and release calls also run the full Windows suite. Linux uses Ubuntu 26.04 (bubblewrap and MCP lifecycle: 24.04). |
-| Native Cargo acceptance | macOS tests prepare locked dependencies, then test Seatbelt and fixed Cargo checks. Linux uses bubblewrap when present; `unshare --net` and Windows Job Object do not provide equivalent confinement. |
-| [Desktop CI](../.github/workflows/desktop.yml) | Bundle, releases, and manual runs build the universal app on Rust 1.90, test desktop policy and the packaged backend, and verify signatures, checksums and extraction. |
-| [Desktop check](../.github/workflows/desktop-check.yml) | On PRs and the merge queue, only when `desktop/`, `src/common/local_tls.rs` or `scripts/start-web.sh` changed: desktop fmt, Clippy, tests and `cargo deny`, no packaging. Not required. |
-| [Bundle](../.github/workflows/bundle.yml) | On pushes to `main` only: packages `linux-x86_64` and `macos-arm64` CLIs beside desktop, re-verifies each checksum, then tests loopback binding and exit-3 missing configuration. The Linux CLI needs glibc 2.39+ (Ubuntu 24.04+). |
-| Workflow and source checks | CodeQL, DevSkim, Gitleaks, PR-template/base-branch checks, the advisory review gate and a daily RustSec scan run separately; workflow changes trigger actionlint/zizmor. Optional `live-ollama.yml` fingerprints a pinned real Ollama runtime ([workflow index](../.github/workflows/README.md)). |
-| [Netconnect CI](../.github/workflows/netconnect.yml) | Path-filtered flag, scope, collector, and untrusted-string tests on Linux and macOS, plus a Linux `strace` proof that default `netconnect status` opens no packet socket. |
-| [Release](../.github/workflows/release.yml) | Twice daily, publishes the next patch only when `main` differs and its SHA has a successful Bundle; backend CI, packaging and checksums still gate it ([release controls](RELEASING.md)). |
+| [Backend CI](../.github/workflows/ci.yml) | Rust 1.89: rustfmt, warning-denied Clippy, `cargo deny`, I6, Chrome, Linux/macOS tests, required bubblewrap and MCP lifecycle jobs, real-repo smoke. Code PRs run focused Windows tests; `main`, the merge queue and releases run the full Windows suite. |
+| [Desktop CI](../.github/workflows/desktop.yml), [desktop check](../.github/workflows/desktop-check.yml) | Bundle and release runs build the universal app on Rust 1.90 and verify signatures, checksums and extraction. PRs touching `desktop/`, `src/common/local_tls.rs` or `scripts/start-web.sh` get fmt, Clippy, tests and `cargo deny` without packaging. |
+| [Bundle](../.github/workflows/bundle.yml) | Pushes to `main` only: packages `linux-x86_64` (glibc 2.39+) and `macos-arm64` CLIs beside desktop, re-verifies checksums, tests loopback binding and exit-3 missing configuration. |
+| [Netconnect CI](../.github/workflows/netconnect.yml) | Path-filtered flag, scope and collector tests, plus a Linux `strace` proof that default `netconnect status` opens no packet socket. |
+| [Release](../.github/workflows/release.yml) | Twice daily; publishes only when `main` differs and its SHA has a successful Bundle ([release controls](RELEASING.md)). |
+| Source checks | CodeQL, DevSkim, Gitleaks, PR-template and base-branch checks, the advisory review gate and a daily RustSec scan; workflow edits trigger actionlint and zizmor. |
 
-Passing CI does not prove real-model quality, native GUI behavior, or
-notarized distribution. Windows release legs remain parked.
+Passing CI does not prove real-model quality, native GUI behavior or notarized
+distribution. Windows release legs remain parked.

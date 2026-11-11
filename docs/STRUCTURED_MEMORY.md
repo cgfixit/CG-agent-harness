@@ -336,20 +336,17 @@ live model quality.
 
 ### Asserted baselines (provisional)
 
-These thresholds live in the corpus `thresholds` object, locked by
-`tests/structured_memory_phase7.rs`. They describe this fixture mix, not a
-live-model SLA.
+The corpus `thresholds` object, locked by `tests/structured_memory_phase7.rs`,
+describes this fixture mix, not a live-model SLA:
 
-| Metric | How it is measured | Provisional bar |
-|---|---|---|
-| Candidate proposal precision | Supported retained pending proposals / all retained pending proposals | ≥ 0.80 |
-| Unsupported / hallucinated candidate rate | Unsupported retained / all retained | ≤ 0.20 |
-| Sensitive-content retention rate | Retained proposals from `secret` / `prompt_injection` cases | **0** |
-| Useful recall at small top-k | Labeled relevant facts in FTS hits / relevant | 1.0 on this corpus |
-| False / stale / conflicting recall | Deactivated or cross-owner facts in FTS hits | **0** |
-| Prompt-size overhead | `assemble_memory_sections` with reserved 1500/1500 | combined body ≤ 3000 |
-| Database growth / pruning | Oldest-first episode prune with `max_episodes_per_owner: 2` | unreferenced row dropped; pending-proposal refs kept |
-| Chat / feature-combination regression | `tests/structured_memory.rs` + shipped-gate scan | extend those tests; no live E2E |
+- candidate proposal precision ≥ 0.80 and unsupported candidates ≤ 0.20 of
+  retained pending proposals;
+- **zero** proposals retained from `secret` or `prompt_injection` cases, and
+  **zero** deactivated or cross-owner facts in FTS hits;
+- recall of labeled relevant facts 1.0 on this corpus;
+- combined prompt body ≤ 3000 with the reserved 1500/1500;
+- oldest-first episode pruning drops unreferenced rows and keeps
+  pending-proposal references.
 
 Rejected-class retention is zero for `sensitivity: reject` and core injection
 hits; a confirmed human write can still contain secret-shaped text.

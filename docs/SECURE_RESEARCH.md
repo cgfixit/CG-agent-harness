@@ -426,10 +426,9 @@ flowchart LR
     V -->|yes| R[Answer: support, conflicts, inference, missing or stale]
 ```
 
-Defaults: about 6,000 evidence tokens, 28,000 total model tokens, 1200s
-discovery including cold load, then 1800s answering (300s each if the keys are
-absent). Preload residency covers both
-budgets, capped at one hour; cancellation includes loading. Smaller windows:
+Shipped budgets are 1200s for discovery including cold load, then 1800s
+answering (300s each if the keys are absent); cancellation includes loading.
+Token budgets and smaller windows:
 [MODELS.md](MODELS.md#4-select-an-installed-model-and-check-ollama). Provider
 usage wins; otherwise bytes/4 plus overhead is estimated. Synthesis drops
 unfitting low-ranked passages (`WEB_EVIDENCE_TRIMMED`). Retrieval interleaves
