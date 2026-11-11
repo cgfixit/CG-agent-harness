@@ -110,14 +110,6 @@ fn narrow_tools(definitions: &[Value], route: &StickyRoute) -> Vec<Value> {
         .collect()
 }
 
-fn hop_kind(tools_offered: bool) -> crate::llm::openai_chat::TurnKind {
-    if !tools_offered {
-        crate::llm::openai_chat::TurnKind::Synthesis
-    } else {
-        crate::llm::openai_chat::TurnKind::Tool
-    }
-}
-
 fn response_has_calls(response: &Value) -> bool {
     match response["choices"][0]["message"].get("tool_calls") {
         None | Some(Value::Null) => false,
@@ -660,19 +652,18 @@ async fn run_inner(
         state
             .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
             .await?;
-        let kind = hop_kind(!available.is_empty());
-        // The model may answer on a hop that offers tools, so every hop writes
-        // up to the answer cap: an answer is generated once, never cut at a
-        // smaller planning cap and started again.
-        let sampling = crate::llm::openai_chat::sampling_for(kind, cap, temperature);
+        // The model may answer on a hop that offers tools, so every hop is
+        // sampled as an answer: the answer cap (an answer is generated once,
+        // never cut at a smaller planning cap and started again) and the
+        // configured temperature.
         let response = state
             .chat
             .chat_with_tools_stream(
                 system,
                 &messages,
                 model,
-                sampling.max_tokens,
-                sampling.temperature,
+                cap,
+                temperature,
                 available,
                 output
                     .filter(|_| !loop_turn || available.is_empty() && passages.is_empty())
@@ -1048,20 +1039,6 @@ async fn run_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_hop_that_offers_tools_writes_up_to_the_answer_cap_at_temperature_zero() {
-        for cap in [4096, 2048] {
-            let tool = crate::llm::openai_chat::sampling_for(hop_kind(true), cap, 0.1);
-            assert_eq!(
-                (tool.max_tokens, tool.temperature),
-                (cap, 0.0),
-                "an answer on a tool hop is never cut short and generated again"
-            );
-            let synthesis = crate::llm::openai_chat::sampling_for(hop_kind(false), cap, 0.1);
-            assert_eq!((synthesis.max_tokens, synthesis.temperature), (cap, 0.1));
-        }
-    }
 
     #[test]
     fn sticky_route_denies_web_search_after_a_local_read() {

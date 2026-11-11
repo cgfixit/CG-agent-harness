@@ -1278,7 +1278,7 @@ async fn a_tools_offered_answer_is_generated_once_at_the_answer_ceiling() {
         &model.base_url(),
         ServerOptions::default()
             .with("models.local_llm.max_tokens", "4096")
-            .with("models.local_llm.temperature", "0.1"),
+            .with("models.local_llm.temperature", "0.3"),
     )
     .await;
     let (status, body) = s.post_json("/api/chat", json!({"message": "explain the notes"})).await;
@@ -1287,7 +1287,9 @@ async fn a_tools_offered_answer_is_generated_once_at_the_answer_ceiling() {
     let requests = model.requests.lock().unwrap();
     assert_eq!(requests.len(), 1, "one model call, no discarded draft: {requests:?}");
     assert_eq!(requests[0]["max_tokens"], 4096, "the hop may write the whole answer");
-    assert_eq!(requests[0]["temperature"].as_f64(), Some(0.0));
+    // The call offers tools and may still be the whole answer, so it is
+    // sampled at the configured temperature, not a fixed 0.
+    assert_eq!(requests[0]["temperature"].as_f64(), Some(0.3));
     assert!(requests[0].get("tools").is_some());
     assert_eq!(body["usage"]["completion_tokens"], 900);
 }

@@ -46,7 +46,7 @@ models:
     # `ollama serve` and verify context_length on /api/ps (docs/MODELS.md).
     # The harness sends no num_ctx and inherits that window.
     max_tokens: 4096 # 1–25904 with Ollama reasoning=none; otherwise 1–12952 with a 2x reservation
-    temperature: 0.1  # refused outside 0–2; answers from a call that offers no tools. A web-enabled hop (it may call a tool or answer) and the planner send 0. funsies but really dont go higher
+    temperature: 0.1  # refused outside 0–2; every chat call, including a web-enabled one that may call a tool or answer. The planner sends 0. funsies but really dont go higher
     timeout_sec: 1800 # refused outside 1–3600 seconds per chat call
     # Explicit local inventory only; no inference, cloud probes or model downloads.
     inventory:
