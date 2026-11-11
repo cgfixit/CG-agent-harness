@@ -561,7 +561,10 @@ impl AppState {
         let follows = if tuning.tightens() {
             proposed
         } else {
-            proposed.max(configured * window.min(measured) / measured)
+            // Held to the measured window's cap before it is scaled: startup
+            // accepts any unsigned value here, and an uncapped one overflows.
+            let raised = configured.min(super::compaction::prompt_cap(Some(measured)));
+            proposed.max(raised * window.min(measured) / measured)
         };
         let tightened = if configured >= tuning.compact_prompt_tokens {
             tightened.min(follows)
