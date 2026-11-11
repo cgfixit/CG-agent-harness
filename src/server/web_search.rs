@@ -998,12 +998,9 @@ impl WebTool {
                     // `status` tells a server's answer from a connection that never produced one.
                     return Err(error("WEB_FETCH_FAILED", "upstream error").detail("status", status.as_u16()));
                 }
-                if response
-                    .content_length()
-                    .is_some_and(|n| n > self.limits.response_bytes as u64)
-                {
-                    return Err(error("WEB_TOO_LARGE", "response exceeds limit"));
-                }
+                // Encoding and type are refused before size: the opt-in fallback
+                // re-reads an oversized text page, never an image or a compressed
+                // body that also happens to be large.
                 if header(reqwest::header::CONTENT_ENCODING).is_some_and(|v| v != "identity") {
                     return Err(error("WEB_ENCODING_REFUSED", "compressed responses are not enabled"));
                 }
@@ -1022,6 +1019,12 @@ impl WebTool {
                     // Firecrawl fallback may re-read a PDF (`web_firecrawl::escalates`).
                     return Err(error("WEB_NOT_TEXT", "unsupported content type")
                         .detail("pdf", content_type == "application/pdf"));
+                }
+                if response
+                    .content_length()
+                    .is_some_and(|n| n > self.limits.response_bytes as u64)
+                {
+                    return Err(error("WEB_TOO_LARGE", "response exceeds limit"));
                 }
                 let etag = header(reqwest::header::ETAG);
                 let last_modified = header(reqwest::header::LAST_MODIFIED);

@@ -276,6 +276,9 @@ impl WebTool {
             charged.store(self.limits.response_bytes, Ordering::SeqCst);
             let response = client
                 .post(endpoint)
+                // The pinned client stops at `web.request_seconds`; this request
+                // has the longer fallback budget, so it carries its own.
+                .timeout(Duration::from_secs(fallback_seconds))
                 .bearer_auth(&key)
                 .json(
                     &json!({"url":target.as_str(),"formats":["markdown"],"onlyMainContent":true,
@@ -616,6 +619,23 @@ mod tests {
                             format!("<p>{}</p>", "long ".repeat(4000)),
                         )
                     }),
+                )
+                .route(
+                    "/huge.png",
+                    get(|| async { ([("content-type", "image/png")], "pixel ".repeat(4000)) }),
+                )
+                .route(
+                    "/huge.gz",
+                    get(|| async {
+                        (
+                            [("content-type", "text/html"), ("content-encoding", "gzip")],
+                            "packed ".repeat(4000),
+                        )
+                    }),
+                )
+                .route(
+                    "/slow.pdf",
+                    get(|| async { ([("content-type", "application/pdf")], "%PDF-1.7 fixture") }),
                 );
             let hits = Arc::new(AtomicUsize::new(0));
             let counter = hits.clone();
@@ -643,6 +663,10 @@ mod tests {
                             _ => return (StatusCode::UNAUTHORIZED, Json(json!({"success":false}))),
                         }
                         let url = body["url"].as_str().unwrap_or("").to_string();
+                        if url.ends_with("/slow.pdf") {
+                            // Longer than a 2 s `web.request_seconds`, inside its 4 s fallback budget.
+                            tokio::time::sleep(Duration::from_millis(2300)).await;
+                        }
                         let final_url = if url.ends_with("/moves") {
                             "http://site.fixture/elsewhere".to_string() // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
                         } else {
@@ -719,6 +743,28 @@ mod tests {
         assert_eq!(off.fetch("huge").await.unwrap_err().code, "WEB_TOO_LARGE");
         assert_eq!(off.fetch("paper.pdf").await.unwrap_err().code, "WEB_NOT_TEXT");
         assert_eq!(off.hits(), 0);
+    }
+
+    /// Size is checked after encoding and type, so an oversized image or a large
+    /// compressed body is refused for what it is and never reaches the fallback.
+    #[tokio::test]
+    async fn an_oversized_image_or_compressed_body_never_reaches_the_fallback() {
+        const SMALL: &str = "web: {response_bytes: 4096, firecrawl: {enabled: true, max_per_hour: 4}}";
+        let rig = fixture::rig(SMALL, "good").await;
+        assert_eq!(rig.fetch("huge.png").await.unwrap_err().code, "WEB_NOT_TEXT");
+        assert_eq!(rig.fetch("huge.gz").await.unwrap_err().code, "WEB_ENCODING_REFUSED");
+        assert_eq!(rig.hits(), 0, "neither URL leaves the machine");
+    }
+
+    /// The fallback budget is twice `web.request_seconds`, and the request itself
+    /// gets that budget: a 2.3 s read succeeds under a 2 s direct-fetch limit.
+    #[tokio::test]
+    async fn a_fallback_read_longer_than_request_seconds_fits_its_own_budget() {
+        const SHORT: &str = "web: {request_seconds: 2, firecrawl: {enabled: true, max_per_hour: 4}}";
+        let rig = fixture::rig(SHORT, "good").await;
+        let read = rig.fetch("slow.pdf").await.unwrap();
+        assert_eq!(read["via"], "firecrawl", "{read}");
+        assert_eq!(rig.hits(), 1);
     }
 
     /// Reading an origin's robots.txt under a path rule is discovery's politeness
