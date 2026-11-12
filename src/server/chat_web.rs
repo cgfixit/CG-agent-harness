@@ -110,14 +110,6 @@ fn narrow_tools(definitions: &[Value], route: &StickyRoute) -> Vec<Value> {
         .collect()
 }
 
-fn hop_kind(tools_offered: bool) -> crate::llm::openai_chat::TurnKind {
-    if !tools_offered {
-        crate::llm::openai_chat::TurnKind::Synthesis
-    } else {
-        crate::llm::openai_chat::TurnKind::Tool
-    }
-}
-
 fn response_has_calls(response: &Value) -> bool {
     match response["choices"][0]["message"].get("tool_calls") {
         None | Some(Value::Null) => false,
@@ -344,10 +336,63 @@ fn cut(result: &mut Value, pointer: &str, min: usize, fits: &mut impl FnMut(&Val
     Ok(true)
 }
 
-fn check_evidence(state: &AppState, owner: &str, sources: &[String]) -> Result<()> {
+/// The listing notice when `web.search.result_reads` is on. No longer than
+/// `SEARCH_NOTICE` would need: it replaces that text before the result is sized.
+const GRANTED_SEARCH_NOTICE: &str =
+    "Listings only; pages not fetched. This turn may read listed URLs exactly as given, within its limit.";
+
+/// Sent once when a call that offered no tools comes back with no text after
+/// web activity. A model that still wants another tool call writes one; a
+/// local runtime drops it and returns empty text. Measured on the target
+/// model: the same request answered 0 of 5 times without this note and 5 of 5
+/// with it (issue #772). It lives in this turn's request only, never in the
+/// session.
+const ANSWER_NOW: &str = "Harness note, not a new user turn: no web tools are available for the rest of this turn. Answer the question above now in plain text, from the tool results above and your own knowledge. Cite only URLs that appear in those results, and say plainly what could not be read.";
+
+/// The reply the harness writes when the model returned no text on a call
+/// that offered no tools, after the one retry. It lists what the turn's web
+/// calls did and draws no conclusion. Titles and URLs are provider text.
+fn final_empty_reply(events: &[Value]) -> String {
+    if events.iter().all(|e| e["ok"] == false) {
+        return format!(
+            "Web operation failed: {} — {}. No successful result was obtained.",
+            events[0]["code"].as_str().unwrap_or("WEB_FAILED"),
+            events[0]["message"].as_str().unwrap_or("the web call failed"),
+        );
+    }
+    let mut lines = vec![
+        "The model returned no answer after its web calls, so the harness wrote this reply. It lists what those calls did and draws no conclusion.".to_string(),
+    ];
+    let clip = |value: &Value, limit: usize| crate::common::clip_chars(value.as_str().unwrap_or(""), limit);
+    for event in events {
+        let target = clip(&event["target"], 200);
+        match (event["tool"].as_str().unwrap_or(""), event["ok"].as_bool()) {
+            ("web_fetch", Some(true)) => lines.push(format!("Read: {}", clip(&event["result"]["url"], 200))),
+            ("web_search", Some(true)) => {
+                lines.push(format!("Searched: {target}. Listings only, pages not read:"));
+                for row in event["result"]["results"].as_array().into_iter().flatten().take(5) {
+                    lines.push(format!("- {} — {}", clip(&row["title"], 120), clip(&row["url"], 200)));
+                }
+            }
+            ("web_fetch" | "web_search", Some(false)) => {
+                lines.push(format!("Not read: {target} ({})", clip(&event["code"], 40)));
+            }
+            _ => {}
+        }
+        if lines.len() >= 40 {
+            lines.push("(further web calls omitted)".to_string());
+            break;
+        }
+    }
+    lines.join("\n")
+}
+
+fn check_evidence(state: &AppState, web: &WebTool, owner: &str, sources: &[String]) -> Result<()> {
     authorize_owner(state, owner)?;
     if !sources.is_empty() {
-        let policy = state.web.require_enabled(true)?;
+        // This turn's snapshot: with `web.search.result_reads` on it also
+        // carries the URLs the turn's own searches listed.
+        let policy = web.require_enabled(true)?;
         for source in sources {
             policy.authorize(source, None)?;
         }
@@ -375,6 +420,7 @@ pub async fn run_stream(
     temperature: f64,
     token_ratio: f64,
     web_mode: super::sessions::GoalWebMode,
+    result_reads: bool,
     sized_tuned: bool,
     loop_turn: bool,
     goal: &str,
@@ -391,7 +437,7 @@ pub async fn run_stream(
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
         // A turn of several tool rounds gets more than one call's deadline; each
         // model call keeps its own (`ChatClient::timeout_for`).
-        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, loop_turn, goal, user_message, run_id, output, &mut usage, &mut known_completion_tokens, usage_snapshot)) =>
+        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, result_reads, sized_tuned, loop_turn, goal, user_message, run_id, output, &mut usage, &mut known_completion_tokens, usage_snapshot)) =>
             result.unwrap_or_else(|_| Err(error("WEB_TIMEOUT", "chat web turn deadline exceeded"))),
     };
     result.map_err(|failure| match usage {
@@ -416,6 +462,7 @@ async fn run_inner(
     temperature: f64,
     token_ratio: f64,
     web_mode: super::sessions::GoalWebMode,
+    result_reads: bool,
     sized_tuned: bool,
     loop_turn: bool,
     goal: &str,
@@ -455,6 +502,17 @@ async fn run_inner(
     let mut run_evidence = run_id
         .map(|id| state.loops.web_evidence(owner, id, goal))
         .unwrap_or_default();
+    // `web.search.result_reads` (on as shipped), for a caller the route allows
+    // it (`may_read_search_results`: an administrator): this turn's reads may
+    // also use the exact URLs its own searches list. A loop run carries them
+    // between its turns; a plain chat turn starts with none. Every policy check
+    // below goes through this snapshot, so the shared tool and the saved policy
+    // never see a grant. Without one, a loop run's earlier grants are not
+    // applied and evidence read under them fails `restore`'s policy check.
+    let granting = result_reads
+        .then(|| web.for_search_grants(&run_evidence.granted))
+        .flatten();
+    let web = granting.as_ref().unwrap_or(web);
     let (mut passages, packet) = if !run_evidence.receipts.is_empty() {
         let saved = run_evidence.clone();
         let reader = web.clone();
@@ -500,8 +558,11 @@ async fn run_inner(
     let mut tools_withheld = false;
     let mut initial_prompt_tools = false;
     let mut initial_extra = 0u64;
-    for turn in 0..=web.limits.chat_tool_calls {
-        check_evidence(state, owner, &sources)?;
+    let mut answer_now_sent = false;
+    // One round past the tool-call ceiling: the single ANSWER_NOW retry, which
+    // offers no tools and so cannot spend a call.
+    for turn in 0..=web.limits.chat_tool_calls + 1 {
+        check_evidence(state, web, owner, &sources)?;
         let reservation = super::compaction::reply_reservation(&state.backend, cap);
         // Summarize new passages before choosing more tools, not after drafting an answer.
         if loop_turn && evidence_changed && !passages.is_empty() {
@@ -528,7 +589,7 @@ async fn run_inner(
                 }
             }
             if !selected.is_empty() {
-                check_evidence(state, owner, &sources)?;
+                check_evidence(state, web, owner, &sources)?;
                 state
                     .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
                     .await?;
@@ -574,7 +635,7 @@ async fn run_inner(
                     pending: Some(totals.clone()),
                     known_completion_tokens: *known_completion_tokens,
                 };
-                check_evidence(state, owner, &sources)?;
+                check_evidence(state, web, owner, &sources)?;
                 match super::web_research::Answer::parse(&digest.body_text, &selected) {
                     Ok((answer, dropped)) => {
                         let findings = serde_json::to_value(answer)?;
@@ -655,24 +716,23 @@ async fn run_inner(
         // definitions, which the final round may no longer carry.
         let extra = appended_tokens(&messages[history.len()..]) + if available.is_empty() { 0 } else { offered_tokens };
         peak_extra = peak_extra.max(extra);
-        let validate = || check_evidence(state, owner, &sources);
+        let validate = || check_evidence(state, web, owner, &sources);
         // A tool round may run long: the window must still allow this budget.
         state
             .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
             .await?;
-        let kind = hop_kind(!available.is_empty());
-        // The model may answer on a hop that offers tools, so every hop writes
-        // up to the answer cap: an answer is generated once, never cut at a
-        // smaller planning cap and started again.
-        let sampling = crate::llm::openai_chat::sampling_for(kind, cap, temperature);
+        // The model may answer on a hop that offers tools, so every hop is
+        // sampled as an answer: the answer cap (an answer is generated once,
+        // never cut at a smaller planning cap and started again) and the
+        // configured temperature.
         let response = state
             .chat
             .chat_with_tools_stream(
                 system,
                 &messages,
                 model,
-                sampling.max_tokens,
-                sampling.temperature,
+                cap,
+                temperature,
                 available,
                 output
                     .filter(|_| !loop_turn || available.is_empty() && passages.is_empty())
@@ -712,28 +772,57 @@ async fn run_inner(
             prompt_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("prompt_tokens")));
         completion_tokens =
             completion_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("completion_tokens")));
-        check_evidence(state, owner, &sources)?;
+        check_evidence(state, web, owner, &sources)?;
         let final_tools = !available.is_empty();
-        check_evidence(state, owner, &sources)?;
+        check_evidence(state, web, owner, &sources)?;
         let choice = &response["choices"][0];
         let message = &choice["message"];
         // `"tool_calls": null` (sent by some servers on a plain answer) is no calls.
         let has_calls = response_has_calls(&response);
         if choice["finish_reason"] != "tool_calls" && !has_calls {
+            let mut reply = parse_chat_response(&response, model)?;
+            // No text on a call that offered no tools, after web activity this
+            // turn. Before, only a turn whose every web call failed kept a
+            // reply; any other one (a search that succeeded and a read that was
+            // refused, a spent tool or token budget, a closed search) ended as
+            // 502 EMPTY_MODEL_RESPONSE and lost its results.
+            let empty_final = reply.body_text.trim().is_empty() && available.is_empty() && !events.is_empty();
+            if empty_final && !answer_now_sent {
+                // Ask once more, in this turn's request only. The retry is an
+                // ordinary round: it passes the same token-budget check, its
+                // usage is added to the turn's, and it offers no tools.
+                let mut proposed = messages.clone();
+                proposed.push(json!({"role":"user","content":ANSWER_NOW}));
+                if prompt_estimate(system.len() + serde_json::to_vec(&proposed)?.len(), token_ratio)
+                    .saturating_add(reservation)
+                    <= web.limits.total_tokens
+                {
+                    answer_now_sent = true;
+                    tools_withheld = true;
+                    messages = proposed;
+                    state
+                        .audit
+                        .log(json!({"event":"web_final_empty","action":"retry","loop_turn":loop_turn}));
+                    continue;
+                }
+            }
             if let Some(id) = run_id {
                 state.loops.save_web_evidence(owner, id, goal, run_evidence.clone());
             }
             state.audit.log(json!({"event":"web_decision","action":if passages.is_empty() { if searches.is_empty() { "answer_local_or_gap" } else { "answer_listing" } } else { "answer_evidence" },"loop_turn":loop_turn,"reads":run_evidence.receipts.len(),"searches":searches.len()}));
-            let mut reply = parse_chat_response(&response, model)?;
-            // The model was asked to answer after every web call failed and
-            // wrote nothing. An empty reply would fail the turn and drop the
-            // refusals with it, so the first one is reported as the reply and
-            // the events, the ledger and the usage are kept.
-            if reply.body_text.trim().is_empty() && !events.is_empty() && events.iter().all(|e| e["ok"] == false) {
-                reply.body_text = format!(
-                    "Web operation failed: {} — {}. No successful result was obtained.",
-                    events[0]["code"].as_str().unwrap_or("WEB_FAILED"),
-                    events[0]["message"].as_str().unwrap_or("the web call failed"),
+            if empty_final {
+                // Still nothing (or no room to ask again): the harness writes
+                // the reply, so the events, the ledger and the usage are kept.
+                // When something had succeeded, WEB_FINAL_EMPTY marks the turn
+                // as one without a model answer; a turn whose every call failed
+                // already reads that way.
+                reply.body_text = final_empty_reply(&events);
+                if events.iter().any(|e| e["ok"] == true) {
+                    events.push(json!({"tool":"web","ok":false,"code":"WEB_FINAL_EMPTY",
+                        "message":"the model returned no text on its final call; the harness wrote the reply"}));
+                }
+                state.audit.log(
+                    json!({"event":"web_final_empty","action":"harness_reply","retried":answer_now_sent,"loop_turn":loop_turn}),
                 );
             }
             reply.prompt_tokens = prompt_tokens;
@@ -920,6 +1009,14 @@ async fn run_inner(
                                 }
                             }
                         }
+                        .map(|mut listing| {
+                            // Set before the result is sized, so the text the
+                            // model reads matches what this turn may do.
+                            if web.grants_search_results() {
+                                listing["notice"] = json!(GRANTED_SEARCH_NOTICE);
+                            }
+                            listing
+                        })
                     }
                     "web_fetch" => {
                         let args = fetch_args(args)?;
@@ -930,10 +1027,19 @@ async fn run_inner(
                                     .is_some_and(|url| passages.iter().any(|p| p.url == url.as_str()))
                         });
                         let query = args.query.unwrap_or_else(|| crate::common::clip_chars(question, 200));
+                        // Readable only because one of this turn's searches
+                        // listed it: marked on the result and audited.
+                        let by_grant = web.read_by_search_grant(&args.url);
                         evidence::read(web, &args.url, &query, refresh, &state.audit, owner)
                             .await
-                            .map(|(result, found)| {
+                            .map(|(mut result, found)| {
                                 selected = found;
+                                if by_grant {
+                                    result["granted_by"] = json!("search_result");
+                                    state.audit.log(
+                                        json!({"event":"web_result_read","url":result["url"],"loop_turn":loop_turn}),
+                                    );
+                                }
                                 result
                             })
                     }
@@ -957,7 +1063,7 @@ async fn run_inner(
                 .ok_or_else(|| error("WEB_TOKEN_BUDGET", "web.total_tokens has no room left for this result")),
                 Err(failure) => Err(failure),
             };
-            check_evidence(state, owner, &sources)?;
+            check_evidence(state, web, owner, &sources)?;
             // A refused or failed read is that call's result, not the end of the
             // turn: the model is handed the harness's own code and message (never
             // page text) and answers from the reads that did succeed. A refused
@@ -990,6 +1096,13 @@ async fn run_inner(
                             }
                         }
                     }
+                    if name == "web_search" && web.grants_search_results() {
+                        // Only the rows the model was handed, after sizing.
+                        let added = web.grant_search_results(&result);
+                        run_evidence.granted = web.search_grants();
+                        state.audit.log(json!({"event":"web_result_grants","added":added,
+                            "held":run_evidence.granted.len(),"limit":web.result_reads.max_urls,"loop_turn":loop_turn}));
+                    }
                     batch_ok += 1;
                     result
                 }
@@ -1013,7 +1126,7 @@ async fn run_inner(
                         sources.push(source.to_string());
                     }
                 }
-                check_evidence(state, owner, &sources)?;
+                check_evidence(state, web, owner, &sources)?;
                 events.push(json!({"tool":name,"ok":true,"target":target,"result":result}));
             }
             messages.push(tool_message(id, &result)?);
@@ -1037,20 +1150,6 @@ async fn run_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_hop_that_offers_tools_writes_up_to_the_answer_cap_at_temperature_zero() {
-        for cap in [4096, 2048] {
-            let tool = crate::llm::openai_chat::sampling_for(hop_kind(true), cap, 0.1);
-            assert_eq!(
-                (tool.max_tokens, tool.temperature),
-                (cap, 0.0),
-                "an answer on a tool hop is never cut short and generated again"
-            );
-            let synthesis = crate::llm::openai_chat::sampling_for(hop_kind(false), cap, 0.1);
-            assert_eq!((synthesis.max_tokens, synthesis.temperature), (cap, 0.1));
-        }
-    }
 
     #[test]
     fn sticky_route_denies_web_search_after_a_local_read() {

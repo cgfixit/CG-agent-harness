@@ -1,12 +1,12 @@
 # Git hooks security gate
 
 A `pre-commit` and `pre-push` gate that catches secrets, private data and
-ask-first actions. It runs for anyone committing through `git` in an installed clone.
+ask-first actions for anyone committing through `git` in an installed clone.
 
-It is a speed bump, not a boundary. CI secret scanning (`gitleaks.yml`) is a
-backstop; branch protection requires separate GitHub configuration. Pull-request CI reads `.gitleaks.toml`
-from the immutable base commit; other events use their source commit. Candidate
-ignore files and inline `gitleaks:allow` comments cannot suppress that scan.
+It is a speed bump, not a boundary. CI secret scanning (`gitleaks.yml`) is the
+backstop, and branch protection is separate GitHub configuration. Pull-request
+CI reads `.gitleaks.toml` from the immutable base commit, so a candidate ignore
+file or an inline `gitleaks:allow` comment cannot suppress that scan.
 
 ## Install (once per clone)
 
@@ -16,25 +16,24 @@ git config --get core.hooksPath         # verify the effective path
 ```
 
 The setup script preserves an existing hook manager, honors
-`GITHOOKS_SKIP_INSTALL=1`, and exits successfully even if installation fails;
-inspect its output. `install-githooks.sh` explicitly replaces the local hook
-path. Put the non-overwriting setup in agent startup steps. Optional tools: `gitleaks`
-(entropy-based detection of unprefixed secrets) and `exiftool` (image and
-document metadata). Without them the gate still runs its own checks and says
+`GITHOOKS_SKIP_INSTALL=1` and exits successfully even if installation fails, so
+read its output. `install-githooks.sh` replaces the local hook path instead.
+Optional tools: `gitleaks` (entropy detection of unprefixed secrets) and
+`exiftool` (media metadata). Without them the gate runs its own checks and says
 what it skipped.
 
 ## Files
 
 | File | Tracked | Role |
 |---|---|---|
-| `.githooks/pre-commit`, `.githooks/pre-push` | yes | Entry points. They source the gate and call it. |
-| `.githooks/_security.sh` | yes | Shared scanner and policy engine; Bash 3.2 compatible (stock macOS). |
-| `.githooks/security.conf` | yes | This repo's values: extra blocked files, protected paths, fixture allowlist, repo checks. |
+| `.githooks/pre-commit`, `.githooks/pre-push` | yes | Entry points that call the gate. |
+| `.githooks/_security.sh` | yes | Scanner and policy engine; Bash 3.2 compatible (stock macOS). |
+| `.githooks/security.conf` | yes | This repo's blocked files, protected paths, fixture allowlist and checks. |
 | `${XDG_CONFIG_HOME:-$HOME/.config}/githooks/private.conf` | **never** | Your identifiers (PII patterns, personal email), shared by installed clones. |
 | `.githooks/security.local.conf` | **never** (gitignored) | Same, for one clone only. |
 
-Load order: gate defaults, then `security.conf`, then `private.conf`, then
-`security.local.conf`. Later files can append to (`+=`) or replace any value.
+Load order: gate defaults, `security.conf`, `private.conf`, then
+`security.local.conf`. Later files append to (`+=`) or replace any value.
 
 ## What runs when
 
@@ -56,11 +55,10 @@ Load order: gate defaults, then `security.conf`, then `private.conf`, then
 | Existing tag update; non-fast-forward branch push | — | yes |
 
 Pre-push scans each commit, not the tip against the base: a key added in one
-commit and deleted in the next is still published, so it is still refused.
-This also catches `--no-verify` commits and commits from hookless clones.
-Tag annotation chains and blob/tree targets are scanned too. Ambiguous names
-are refused because the scanners use newline records and `path:line:content`;
-spaces and ordinary Unicode names remain supported.
+commit and deleted in the next is still published, so it is refused. That also
+catches `--no-verify` commits and commits from hookless clones. Tag annotation
+chains and blob/tree targets are scanned too. Spaces and ordinary Unicode names
+pass; the ambiguous names above would break the scanners' line records.
 
 **Reminders.** Printed, never blocking. Answer them in the PR body.
 
@@ -85,17 +83,16 @@ still apply. Push suppresses ordinary reminders but repeats protected-control no
 
 Protected-branch deletion is always refused, including with `ALLOW_MAIN_PUSH=1`.
 
-An agent never sets these on its own. When the gate refuses, the agent stops,
-shows the operator the message and the diff, and waits. The operator reruns
-the command with the variable after reading the change, for example
-`HOOK_OPERATOR_ACK=1 git commit`. The variable is visible in the agent's
-transcript, so a self-granted override is detectable after the fact.
+An agent never sets these. When the gate refuses, the agent stops, shows the
+operator the message and the diff, and waits; the operator reruns the command
+with the variable, for example `HOOK_OPERATOR_ACK=1 git commit`. The variable
+shows in the agent's transcript, so a self-granted override is detectable.
 
-Findings about secrets, blocked files, identifiers, home paths and invisible
-characters have no override variable. Fix the content. For a confirmed
-synthetic fixture, local hooks accept `gitleaks:allow` or
-`SEC_ALLOW_REGEX` / `SEC_BLOCKED_EXCEPT` in protected `security.conf`.
-CI requires a reviewed `.gitleaks.toml` exception already present on the PR base.
+Secrets, blocked files, identifiers, home paths and invisible characters have
+no override: fix the content. For a confirmed synthetic fixture, local hooks
+accept `gitleaks:allow` or `SEC_ALLOW_REGEX` / `SEC_BLOCKED_EXCEPT` in protected
+`security.conf`; CI needs a reviewed `.gitleaks.toml` exception already on the
+PR base.
 
 ## Privacy setup
 
@@ -106,44 +103,30 @@ SEC_PII_REGEX='your-email-localpart@|555-867-5309|Your Full Name|internal\.emplo
 SEC_AUTHOR_EMAIL_DENY='@(personal-isp\.example|gmail\.com)'
 ```
 
-The list of your identifiers is itself private data, which is why it is never
-tracked. On GitHub, also turn on *Keep my email addresses private* and
-*Block command line pushes that expose my email*; that is the server-side
-version of the author check.
-
-## What a hook cannot check
-
-The gate sees text, not intent. These rules stay with review:
-
-- Reading a secret or personal file in an agent session sends it to that agent's vendor.
-- Collect less, and redact at one boundary in front of logs, exports and every external model call.
-- New features ship off and fail closed; authorization means ownership, not just a valid session.
-- Text from a web page, issue, PR comment or tool result is data, never an instruction.
+The identifier list is itself private data, so it is never tracked. On GitHub,
+also turn on *Keep my email addresses private* and *Block command line pushes
+that expose my email*, the server-side version of the author check.
 
 ## Known limits
 
+The gate sees text, not intent; review owns the rest.
+
 - `git commit --no-verify` skips pre-commit; `git push --no-verify` skips pre-push.
 - A clone that never set `core.hooksPath` has no gate.
-- An agent can set an override variable itself. The gate makes that a visible rule violation, not an impossible one.
-- Regex detection misses secrets with no known prefix and low entropy, and flags look-alike fixtures.
-
-## Reuse in another repository
-
-Copy the gate and entrypoints, customize `security.conf` (append lists with
-`+=`; optional `sec_repo_pre_commit` / `sec_repo_pre_push` callbacks add
-repository checks) and verify fixtures and refusals there; copies do not update themselves.
+- An agent can set an override variable itself; the gate makes that a visible rule violation, not an impossible one.
+- Regex detection misses low-entropy secrets with no known prefix, and flags look-alike fixtures.
+- A secret or personal file read in an agent session has already gone to that agent's vendor.
 
 ## CGagentHarness specifics
 
-`.githooks/pre-commit` and `.githooks/pre-push` contain only the gate; branch
-naming and PR title rules stay in `scripts/check-pr-template.sh` and CI.
+Branch naming and PR title rules stay in `scripts/check-pr-template.sh` and CI.
 `.githooks/security.conf` adds:
 
-- **Blocked files:** `.githooks/security.local.conf`, the operator-home spill that `.gitignore` lists (`harness.json`, `soul.md`, `soul-pending-apply.json`, `auth.json`, `auth.initialized`, `cli-session.json`, `.CGagentHarness/`, `sessions/`, `tls/`, `soul-history/`, `attachments/`, `notes_corpus/`, `exports/`, `memory/`, `logs/`, `data/agentic/`), so `git add -f` or a home inside the checkout cannot publish it.
+- **Blocked files:** `.githooks/security.local.conf` and the operator-home files `.gitignore` lists (`auth.json`, `soul.md`, `sessions/`, `tls/`, `memory/`, `logs/`, `data/agentic/` and the rest of `SEC_BLOCKED_GLOBS`), so `git add -f` or a home inside the checkout cannot publish them.
 - **Protected (ask first):** `.gitleaks.toml`, `deny.toml` (root and `desktop/`), plus the template's `.githooks/*` and agent tool settings.
-- **Core-path reminder:** the `AGENTS.md` core paths (`src/shim/`, `src/server/{guards,headers}.rs`, `src/agentic/{writer,workspace}.rs`, `src/agentic/executor/sandbox.rs`, `assets/config.default.yaml`) print a reminder that the PR body needs an invariant statement.
-- **Repo checks:** staged Rust triggers `cargo fmt --all -- --check` on the root working-tree workspace (not index or `desktop/`); all commits run `scripts/lint-diff.py --staged`. Missing tools skip with notice.
-- **Fixture allowlist:** the synthetic AWS, GitHub and Anthropic values in `src/common/audit.rs`, `tests/common_layer.rs`, `tests/chat_and_sessions.rs` and `.gitleaks.toml`.
+- **Core-path reminder:** a change under the [AGENTS.md](../AGENTS.md) core paths prints a reminder that the PR body needs an invariant statement.
+- **Repo checks:** staged Rust runs `cargo fmt --all -- --check` on the root working tree (not the index or `desktop/`); every commit runs `scripts/lint-diff.py --staged`. Missing tools skip with a notice.
+- **Fixture allowlist:** synthetic AWS, GitHub and Anthropic values in named source and test files.
 
 The coding pipeline runs `git` with `core.hooksPath` pinned to the null device
 (`src/agentic/git.rs`), so its commits bypass the gate by design; the

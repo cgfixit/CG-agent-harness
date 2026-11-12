@@ -40,7 +40,10 @@ The enforcement contracts live in [INVARIANTS.md](INVARIANTS.md):
   gates. Forwarded/proxy requests are refused.
 - Content URLs require current whole-policy permission and DNS-pinned public
   destinations. Discovery, cached passages and injected context use the same
-  policy. This is not an OS firewall or permission for model/GitHub connections.
+  policy. One exception ships on (`web.search.result_reads`): an administrator's
+  own chat or `/loop` turn may also read the exact URLs its search listed, for
+  that turn or run. Every other role stays bound by the policy. This is not an
+  OS firewall or permission for model/GitHub connections.
 - Native TLS trust is bound to the owned sidecar's exact certificate; no system
   root install or global validation bypass.
 - I6: the HTTP process never calls the agentic pipeline in-process; it

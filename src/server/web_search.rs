@@ -467,6 +467,13 @@ pub struct WebTool {
     pub(super) search_provider: super::web_provider::SearchProvider,
     /// Per-provider pause after a refusal, shared by every snapshot; lost on restart.
     pub(super) search_cooldown: Arc<super::web_google::SearchCooldown>,
+    /// `web.search.result_reads`; restart-only.
+    pub(super) result_reads: super::web_provider::ResultReads,
+    /// Exact URLs this snapshot's own search listings returned. `None` on the
+    /// shared tool and on every snapshot unless `result_reads` is on and one
+    /// chat turn asked for it (`for_search_grants`); `policy` then lays them
+    /// over the saved policy, in memory, for that turn's reads alone.
+    pub(super) search_grants: Option<Arc<std::sync::Mutex<Arc<std::collections::BTreeSet<String>>>>>,
     /// Test hook replacing the public Google search URL with a fixture.
     /// Compiled only with `test-support`.
     #[cfg(any(test, feature = "test-support"))]
@@ -509,6 +516,8 @@ impl WebTool {
             public_search_sent: Arc::default(),
             search_provider: super::web_provider::SearchProvider::load(cfg)?,
             search_cooldown: Arc::default(),
+            result_reads: super::web_provider::ResultReads::load(cfg)?,
+            search_grants: None,
             #[cfg(any(test, feature = "test-support"))]
             test_public_search: None,
             #[cfg(any(test, feature = "test-support"))]
@@ -532,7 +541,87 @@ impl WebTool {
             .join(format!("web_{}_context.json", crate::common::sha256_hex(owner)))
     }
     pub fn policy(&self) -> Result<Policy> {
-        Policy::load(&self.allow_path(), self.limits.max_rules)
+        let mut policy = Policy::load(&self.allow_path(), self.limits.max_rules)?;
+        if let Some(grants) = &self.search_grants {
+            policy.granted = grants.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        }
+        Ok(policy)
+    }
+
+    /// A snapshot for one chat turn whose reads may also use the exact URLs
+    /// its own searches list, starting from `seed` (a loop run's earlier
+    /// grants). `None` unless `web.search.result_reads.enabled` is literal true.
+    pub(super) fn for_search_grants(&self, seed: &[String]) -> Option<Self> {
+        self.result_reads.enabled.then(|| {
+            let held = seed.iter().take(self.result_reads.max_urls).cloned().collect();
+            Self {
+                search_grants: Some(Arc::new(std::sync::Mutex::new(Arc::new(held)))),
+                ..self.clone()
+            }
+        })
+    }
+
+    /// Whether this snapshot grants reads from its search listings.
+    pub(super) fn grants_search_results(&self) -> bool {
+        self.search_grants.is_some()
+    }
+
+    /// Grant the URLs of one delivered listing, in rank order, up to
+    /// `max_urls` held. Returns how many were added. A URL `canonical_url`
+    /// refuses (credentials, a private or ambiguous spelling) is skipped.
+    pub(super) fn grant_search_results(&self, listing: &Value) -> usize {
+        let Some(grants) = &self.search_grants else {
+            return 0;
+        };
+        let mut held = grants.lock().unwrap_or_else(|p| p.into_inner());
+        let mut next = (**held).clone();
+        let before = next.len();
+        for row in listing["results"].as_array().into_iter().flatten() {
+            if next.len() >= self.result_reads.max_urls {
+                break;
+            }
+            if let Some(url) = row["url"]
+                .as_str()
+                .and_then(|raw| super::web_policy::canonical_url(raw).ok())
+            {
+                next.insert(url.to_string());
+            }
+        }
+        let added = next.len() - before;
+        *held = Arc::new(next);
+        added
+    }
+
+    /// The URLs this snapshot holds, for a loop run to carry to its next turn.
+    pub(super) fn search_grants(&self) -> Vec<String> {
+        self.search_grants
+            .as_ref()
+            .map(|grants| {
+                grants
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .iter()
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Whether `raw` is readable only because a search listed it: the saved
+    /// policy alone would refuse it. Used to mark and audit such a read.
+    pub(super) fn read_by_search_grant(&self, raw: &str) -> bool {
+        let Some(grants) = &self.search_grants else {
+            return false;
+        };
+        let Ok(target) = super::web_policy::canonical_url(raw) else {
+            return false;
+        };
+        grants
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains(target.as_str())
+            && Policy::load(&self.allow_path(), self.limits.max_rules)
+                .is_ok_and(|saved| !saved.blocks(&target) && !saved.permits(&target, None))
     }
 
     pub(super) fn read_page(&self, path: &Path, group: Option<&str>) -> Result<Page> {
@@ -586,6 +675,8 @@ impl WebTool {
             "mode": policy.mode, "blocked": policy.blocked,
             "policy_scope":"shared_home", "context_scope":"account", "limits":self.limits,
             "search_provider": search_provider,
+            // Whether a chat turn may read the exact URLs its own search listed.
+            "search_result_reads": self.result_reads.enabled,
             "injected": enabled && stored, "context_stored": stored,
             "has_last": self.read_page(&self.last_path(owner), None).is_ok(), "max_allow": self.limits.max_rules,
             "policy_missing": missing}),
@@ -1609,6 +1700,127 @@ mod tests {
                 DEFAULT_MAX_RULES
             );
         }
+    }
+
+    /// `web.search.result_reads`: off unless literal `true` (it ships `true`),
+    /// and when on the grants live on one turn's snapshot only. The shared tool, the saved file and a rule
+    /// change made through that snapshot never carry them.
+    #[test]
+    fn search_result_grants_stay_on_one_snapshot_and_out_of_the_saved_policy() {
+        let listing = json!({"results":[
+            {"url":"https://news.example.net/story?id=1"},
+            {"url":"https://user:pw@creds.example.net/"},
+            {"url":"http://127.0.0.1/admin"},
+            {"url":"https://docs.example.org/guide"},
+            {"url":"https://third.example.net/"},
+            {"url":"https://fourth.example.net/"}]}); // DevSkim: ignore DS162092 because the loopback URL must be skipped, never fetched.
+        let dir = tempfile::tempdir().unwrap();
+        let off = AppConfig::from_str("web: {max_rules: 8}", Path::new("config.yaml")).unwrap();
+        let shipped = WebTool::new(dir.path(), &off).unwrap();
+        shipped
+            .allow_rules(&["https://docs.example.org/*".to_string()], "docs", &[], true)
+            .unwrap();
+        assert!(shipped.for_search_grants(&[]).is_none(), "off unless literal true");
+        assert_eq!(shipped.grant_search_results(&listing), 0);
+        let quoted = AppConfig::from_str(
+            "web: {search: {result_reads: {enabled: 'true'}}}",
+            Path::new("config.yaml"),
+        )
+        .unwrap();
+        assert!(WebTool::new(dir.path(), &quoted)
+            .unwrap()
+            .for_search_grants(&[])
+            .is_none());
+        for bad in ["0", "101", "'5'"] {
+            let cfg = AppConfig::from_str(
+                &format!("web: {{search: {{result_reads: {{max_urls: {bad}}}}}}}"),
+                Path::new("config.yaml"),
+            )
+            .unwrap();
+            let failure = WebTool::new(dir.path(), &cfg).unwrap_err();
+            assert!(failure.message.contains("web.search.result_reads.max_urls"), "{bad}");
+        }
+        let on = AppConfig::from_str(
+            "web: {max_rules: 8, search: {result_reads: {enabled: true, max_urls: 3}}}",
+            Path::new("config.yaml"),
+        )
+        .unwrap();
+        let shared = WebTool::new(dir.path(), &on).unwrap();
+        let saved = std::fs::read(shared.allow_path()).unwrap();
+        let turn = shared.for_search_grants(&[]).unwrap();
+        // Rank order, canonical URLs only, at most max_urls held.
+        assert_eq!(turn.grant_search_results(&listing), 3);
+        assert_eq!(
+            turn.search_grants(),
+            [
+                "https://docs.example.org/guide",
+                "https://news.example.net/story?id=1",
+                "https://third.example.net/"
+            ]
+        );
+        assert_eq!(
+            turn.grant_search_results(&listing),
+            0,
+            "the limit is held, not refilled"
+        );
+        let granted = turn.policy().unwrap();
+        assert!(granted.authorize("https://news.example.net/story?id=1", None).is_ok());
+        assert!(granted.authorize("https://news.example.net/story?id=2", None).is_err());
+        assert!(granted.authorize("https://fourth.example.net/", None).is_err());
+        // Marked only when the saved policy alone would refuse the read.
+        assert!(turn.read_by_search_grant("https://news.example.net/story?id=1"));
+        assert!(!turn.read_by_search_grant("https://docs.example.org/guide"));
+        assert!(!turn.read_by_search_grant("https://fourth.example.net/"));
+        // A clone of the turn's snapshot (a blocking worker) sees the same grants.
+        assert!(turn
+            .clone()
+            .policy()
+            .unwrap()
+            .authorize("https://third.example.net/", None)
+            .is_ok());
+        // The shared tool and another turn's snapshot see none of them.
+        assert!(shared
+            .policy()
+            .unwrap()
+            .authorize("https://news.example.net/story?id=1", None)
+            .is_err());
+        assert!(shared
+            .for_search_grants(&[])
+            .unwrap()
+            .policy()
+            .unwrap()
+            .authorize("https://news.example.net/story?id=1", None)
+            .is_err());
+        // A loop run seeds its next turn, within the limit.
+        let seeded = shared.for_search_grants(&turn.search_grants()).unwrap();
+        assert!(seeded
+            .policy()
+            .unwrap()
+            .authorize("https://third.example.net/", None)
+            .is_ok());
+        // A blocked rule wins, and saving through the granting snapshot writes no grant.
+        turn.block_rules(&["https://news.example.net/*".to_string()], true)
+            .unwrap();
+        assert_eq!(
+            turn.policy()
+                .unwrap()
+                .authorize("https://news.example.net/story?id=1", None)
+                .unwrap_err()
+                .code,
+            "WEB_BLOCKED"
+        );
+        assert!(!turn.read_by_search_grant("https://news.example.net/story?id=1"));
+        let written = std::fs::read_to_string(shared.allow_path()).unwrap();
+        assert!(
+            !written.contains("third.example.net") && !written.contains("granted"),
+            "{written}"
+        );
+        turn.unblock("https://news.example.net/*", true).unwrap();
+        assert_eq!(
+            std::fs::read(shared.allow_path()).unwrap(),
+            saved,
+            "the saved policy is unchanged"
+        );
     }
 
     #[test]

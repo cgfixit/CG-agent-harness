@@ -931,6 +931,9 @@ pub(crate) async fn chat_inner(
         session.chat_web_mode(settings.web_enabled && !state.chat_tools_unsupported(&model))
     };
     let chat_tools = chat_web_mode.enabled();
+    // Decided from the account on this request: a server-run loop reloads it
+    // before every turn, so a demoted account loses the grant on its next turn.
+    let result_reads = super::auth::may_read_search_results(&state, user.as_deref());
     let selected_skills = if cloud_selected || portal_auditor {
         Vec::new()
     } else {
@@ -1588,6 +1591,7 @@ pub(crate) async fn chat_inner(
             temperature,
             ratio,
             chat_web_mode,
+            result_reads,
             sized_tuned,
             req.loop_turn,
             &session.goal,

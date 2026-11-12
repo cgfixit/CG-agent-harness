@@ -46,7 +46,7 @@ models:
     # `ollama serve` and verify context_length on /api/ps (docs/MODELS.md).
     # The harness sends no num_ctx and inherits that window.
     max_tokens: 4096 # 1–25904 with Ollama reasoning=none; otherwise 1–12952 with a 2x reservation
-    temperature: 0.1  # refused outside 0–2; answers from a call that offers no tools. A web-enabled hop (it may call a tool or answer) and the planner send 0. funsies but really dont go higher
+    temperature: 0.1  # refused outside 0–2; every chat call, including a web-enabled one that may call a tool or answer. The planner sends 0. funsies but really dont go higher
     timeout_sec: 1800 # refused outside 1–3600 seconds per chat call
     # Explicit local inventory only; no inference, cloud probes or model downloads.
     inventory:
@@ -163,8 +163,10 @@ web:
   carry_forward_sources: 0 # 0 (off) or 1–50 earlier reads (URL/query only, no page text) listed in web turns; reloadable
   goal_web_default: all # off|fetch|all; restart-only. The mode a /goal gets without --web.
   # fetch reads permitted URLs only; all also lets unattended /loop turns pick web_search
-  # queries. Search listings never grant URL permission. Set fetch to withhold search from
-  # unattended turns, or per goal: /goal --web fetch <text>, /loop --web fetch. Invalid values fail boot.
+  # queries. A search listing grants one thing, through search.result_reads below (shipped
+  # on): an administrator's turn may read the exact URLs listed. Set fetch to withhold
+  # search, and with it those reads, from unattended turns, or per goal: /goal --web fetch
+  # <text>, /loop --web fetch. Invalid values fail boot.
   response_bytes: 1048576 # 1024–1048576; compressed bodies refused. Shipped 262144 until 2026-11-10: uncompressed, many documentation and reference pages are larger, and passage selection keeps the page out of the model's context either way
   request_seconds: 15 # 1–30, includes queue, DNS, headers, body and extraction; also the one deadline a search's provider hops share. Shipped 8 until 2026-11-10
   html_parser_handles: 4096 # 64–4096; bound open-element/formatting state, restart-only
@@ -214,6 +216,23 @@ web:
     fallback_to_serpapi: false # literal true: a failed tavily tries SerpAPI when a key is active
     fallback_to_public_google: true # ships on (operator decision, 2026-11-01); literal false turns it off. A failed earlier hop tries public Google (fresh homes seed its URL rule)
     fallback_alert_per_hour: 20 # 1–1000 SerpAPI fallbacks per clock hour before one web_search_fallback_burst audit line
+    # Reads of search results, restart-only. Ships on (operator decision, 2026-11-12; it was
+    # added off on 2026-11-11). On: an administrator's chat or /loop web turn may read the
+    # exact URLs its own searches returned, as listed (no other path or query on that host),
+    # for that turn, or for that /loop run, whether or not the URL policy lists them. Only the
+    # admin role, which keeps the URL policy and could add the same rule; operator turns stay
+    # bound by the policy. A home without accounts has one local user, treated as its
+    # administrator. Off (literal false, or the key missing, as in a home created before this
+    # key): a listed URL is read only if the URL policy already permits it. Nothing is saved
+    # to the URL policy; blocked rules, private addresses and refused redirects still apply,
+    # and an empty allowlist still refuses all web access. Search results are text an outside
+    # party can influence, so with this on the URL policy no longer bounds what an
+    # administrator's searching turn may read: that account's unattended /loop in web mode all
+    # can read whatever its searches return. Each such read is audited as web_result_read.
+    # Block a site with /web block, or set web mode fetch, to narrow it.
+    result_reads:
+      enabled: true # flag_is_true; literal false keeps reads to the URL policy alone
+      max_urls: 20 # 1–100 listed URLs one turn or /loop run may hold; later listings add none
   # Firecrawl, restart-only: an opt-in second reader for exact permitted URLs (/web fetch, the
   # chat web_fetch tool, batch reads; never discovery, crawl or search). It runs only after the
   # pinned fetch got a server's 403, 429 or 503, a script shell (scripted HTML whose text is under

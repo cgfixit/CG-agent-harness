@@ -1,6 +1,6 @@
 # Select an installed model and check Ollama
 
-Index: [README.md](../README.md). Set `OLLAMA_CONTEXT_LENGTH=32768` before starting Ollama for seeded web budgets. The harness sends no `num_ctx`.
+Index: [README.md](../README.md). The harness sends no `num_ctx`; Ollama's own window decides.
 
 ## 4. Select an installed model and check Ollama
 
@@ -12,24 +12,22 @@ ollama list
 curl --fail --silent --show-error http://127.0.0.1:11434/v1/models
 ```
 
-If the endpoint is unavailable, start the existing Ollama app or `ollama serve`.
-Use another terminal for the harness; never start a second daemon on an occupied port.
+If the endpoint is unavailable, start the Ollama app or `ollama serve`, never
+a second daemon on an occupied port.
 
 Seeded `web.total_tokens` 28000 and `web.evidence_tokens` 6000 require a
-**32768-token** window. Chat, pulls and warmup inherit the window Ollama
-started with. Changing it needs
-a full relaunch.
+**32768-token** window. Every request inherits the window Ollama started
+with; changing it needs a full relaunch.
 
 ```bash
 OLLAMA_CONTEXT_LENGTH=32768 ollama serve
 ```
 
-For the Ollama.app GUI, set the same variable on the app's process (for example
-`launchctl setenv OLLAMA_CONTEXT_LENGTH 32768`), then fully quit and relaunch
-the app.
+For the Ollama.app GUI, run `launchctl setenv OLLAMA_CONTEXT_LENGTH 32768`,
+then quit and relaunch it.
 
-After you choose a tag (below) and send a short generate, confirm the loaded
-window. Do not send `num_ctx` in the generate body:
+After choosing a tag (below), send a short generate without `num_ctx` and
+confirm the loaded window:
 
 ```bash
 curl --fail --silent --show-error http://127.0.0.1:11434/api/generate \
@@ -37,51 +35,43 @@ curl --fail --silent --show-error http://127.0.0.1:11434/api/generate \
 curl --fail --silent --show-error http://127.0.0.1:11434/api/ps
 ```
 
-`/api/ps` must report `context_length` ≥ **32768**; chat warns when
-a turn exceeds it. Otherwise keep `web.total_tokens: 16000` and
+`/api/ps` must report `context_length` ≥ **32768**. Otherwise keep `web.total_tokens: 16000` and
 `web.evidence_tokens: 3000` in the home `config.yaml`.
 
 ### Pin 32768 with a local derived tag
 
-A Modelfile `PARAMETER num_ctx` wins over `OLLAMA_CONTEXT_LENGTH` and over a
-`/v1` request. The harness sends no `num_ctx`, so a tag can load a window
-other than the 32768 the seeded budgets assume. The shipped chat and planner
-default is the derived tag below, existing only after `ollama create`; until then the
-inventory reports it `tag_missing`, and `/model use` an installed tag to chat.
+A Modelfile `PARAMETER num_ctx` wins over `OLLAMA_CONTEXT_LENGTH`. The shipped
+chat and planner default is the derived tag below. It exists only after `ollama
+create`; until then inventory reports it `tag_missing`, so `/model use` an
+installed tag to chat.
 
 ```bash
 ollama create qwen3.8:27b-mlx-cg -f scripts/qwen3.8-27b-mlx-cg.Modelfile
 ```
 
 That file is `FROM qwen3.8:27b-mlx` with `PARAMETER num_ctx 32768`. Select it
-with `/model use qwen3.8:27b-mlx-cg`. It is local-only: do not pull it.
-`/model profile` reports `declared.modelfile_num_ctx` and
-`loaded.context_length`; chat uses the loaded value. Confirm `/api/ps` is 32768.
+with `/model use qwen3.8:27b-mlx-cg`; it is local-only, so do not pull it.
+`/model profile` reports the declared and loaded window; chat uses the loaded one.
 The alternative `gemma4-26b-a4b:ud-q4_k_xl-cg` is built the same way from
-`scripts/bakeoff/modelfiles/gemma4-26b-a4b-ud-q4_k_xl-cg.Modelfile` (`num_ctx 32768`,
-temperature 0, `draft_num_predict 2`) and is `tag_missing` until then.
+`scripts/bakeoff/modelfiles/gemma4-26b-a4b-ud-q4_k_xl-cg.Modelfile`.
 
-The recipe does not disable thinking. For provider `ollama`,
-`models.local_llm.reasoning_effort` ships as `none`; absent/empty omits it.
-For a 65536 window on a 48 GB Mac and the values to verify, see the
+Thinking is off through `models.local_llm.reasoning_effort: none`, not the
+recipe. For a 65536 window on a 48 GB Mac, see the
 [bake-off report](bakeoff/local-model-bakeoff-2026-10-10.md#windows-above-32768-on-a-48-gb-mac).
-`SMOKE_MODEL=qwen3.8:27b-mlx-cg scripts/smoke-ollama.sh` selects it. Pinned
-models under `scripts/live-ollama/` are a separate fingerprint set.
 
-Empty `/model list` offers a copyable terminal command. `/api/ollama/pull` serves
-CLI/API clients. Select an exact installed tag. Check the execution backend
+When no model is installed, `/model list` shows an example `ollama pull`
+command to copy into a terminal; the console downloads nothing, and
+`/api/ollama/pull` serves CLI/API clients. Check the execution backend
 independently of the `-mlx` suffix:
 
 ```bash
 ollama show qwen3.8:27b
 ```
 
-Configure both `models.local_llm.model` (chat) and
-`agentic.deepagent_github.model` (planner) with your chosen tag in [first run](INSTALL.md#6-first-run).
-`/model use <tag>` changes chat selection only; check `/status`.
-
-Installation is not verified by the default. Chat uses `models.local_llm.base_url`;
-the planner uses `agentic.deepagent_github.base_url`: both require loopback.
+Set `models.local_llm.model` (chat) and `agentic.deepagent_github.model`
+(planner) to your exact tag in [first run](INSTALL.md#6-first-run); each has
+its own `base_url`, and both require loopback. `/model use <tag>` changes chat
+selection only; check `/status`.
 
 ### Exact-model diagnostics and optional fallback
 
@@ -90,48 +80,46 @@ and planner models**. Both use bounded `/models` inventories:
 
 | State | Meaning / next step |
 |---|---|
-| `installed` | The exact requested ID is listed. Send a short chat to test inference; inventory alone does not run it. |
-| `tag_missing` | Inventory responded but omitted that exact tag. Correct the selection or deliberately install the intended model. |
+| `installed` | The exact ID is listed. Send a short chat to test inference; inventory does not run it. |
+| `tag_missing` | Inventory answered without that exact tag. Correct the selection or install the model. |
 | `unavailable` | Inventory failed, timed out, was oversized or malformed. Check the service and endpoint. |
-| `not_probed` | The endpoint is not an eligible loopback URL, or the planner is a cloud provider. Setup does not probe cloud planners. |
+| `not_probed` | The endpoint is not an eligible loopback URL, or the planner is a cloud provider. |
 
-`/model` reports selection and `/model profile` its loaded window, proposed
-limits and any tuning; `/model use <tag>` persists it without downloading. With
-`models.local_llm.auto_tune: true`, it also loads the model, times one short
-generate and applies per-model limits (budgets only tighten; chat and same-model
-planner timeouts and `web.synthesis_seconds` follow measured speed, up to one
-hour; a tool-less model gets none). `web.research_seconds` only rises, to a
-cold load plus `web.rounds` planning calls at that speed plus one
-`web.run_seconds` crawl.
-Above 32768, proposals scale up; set them in `config.yaml` (`auto_tune` only
-lowers); caps follow the measured window, up to 131072.
-Startup warms/tunes local selection. Changed config models and legacy mismatches
-clear saved selections. `/model use local` restores the configured local backend.
+`/model` reports selection and `/model profile` the loaded window, proposed
+limits and any tuning; `/model use <tag>` persists the selection without
+downloading. With `models.local_llm.auto_tune: true`, it also loads the model,
+times one short generate and applies per-model limits. Token budgets are
+lowered only to fit a window below 32768; at or above it the configured values
+stand within their ranges. Chat and same-model planner timeouts and
+`web.synthesis_seconds` follow measured speed, up to one hour; a model
+declaring no tools gets none. `web.research_seconds` only rises, to a cold
+load plus `web.rounds` planning calls plus one `web.run_seconds` crawl.
+Above 32768, `/model profile` proposes larger budgets to set in `config.yaml`
+yourself; caps follow the measured window, up to 131072. Startup warms and
+tunes the local selection. A changed config model clears a saved selection;
+`/model use local` restores the configured local backend.
 
 Cloud aliases are case-insensitive: `grok|xai`, `claude|anthropic` (configured
-model IDs also work). Missing active keys or disabled providers refuse before
+model IDs also work). A missing active key or disabled provider refuses before
 saving. Save keys in Settings → API Keys and restart; never paste credentials
-into chat. First selection per account/provider/server run requires confirmation
-naming `api.x.ai` or `api.anthropic.com`. Restart resets cloud selection to local.
-Only the new message leaves; history, memory, attachments and tools stay local;
-`/loop` refuses cloud. The coding planner stays separate.
+into chat. The first selection per account, provider and server run requires
+confirmation naming `api.x.ai` or `api.anthropic.com`; restart resets to local.
+Only the new message leaves; history, memory, attachments and tools stay local.
+`/loop` refuses cloud, and the coding planner stays separate.
 
-`/model status` reports provider, key presence and effective profile sources
-(config/profile/default). Optional `models.cloud_chat.<provider>.profile` sets
-context, output, temperature, timeouts, tool-support metadata and RPM; see
-[config](../assets/config.default.yaml). Output/timeouts only tighten shared
-limits; spend gates remain unchanged. Profiles require restart, never sampling.
+`/model status` reports provider, key presence and profile sources. Optional
+`models.cloud_chat.<provider>.profile` sets context, output, temperature,
+timeouts, tool-support metadata and RPM ([config](../assets/config.default.yaml)).
+Output and timeouts only tighten the shared limits, spend gates are unchanged,
+and profiles need a restart.
 A reply must finish normally (Claude `end_turn`, Grok `completed`); truncation
 fails with 502 and is not saved.
 
-**Grok Build ACP is not shipped.** `scripts/grok-acp-probe.py` checks only a
-fake runtime's launch contract (isolated profile, answer-only ACP, no MCP
-servers, no API-key fallback); any connection or billing claim first needs live
-sign-in, entitlement and profile-isolation tests against the current runtime.
+Grok Build ACP is not shipped; `scripts/grok-acp-probe.py` checks only a fake
+runtime's launch contract.
 
-Optional chat fallback ships disabled. If you already run another compatible
-local server, merge its real endpoint and exact inventory ID into these existing
-fields, then restart:
+Optional chat fallback ships disabled. To use another compatible local server,
+merge its endpoint and exact inventory ID into these fields, then restart:
 
 ```yaml
 models:
@@ -144,13 +132,8 @@ models:
       probe_timeout_sec: 1.5
 ```
 
-At backend startup, the resolver keeps the primary only when its configured model
-appears in inventory; otherwise it tries the configured fallback model. If neither
-is ready, startup keeps a degraded primary so the console remains available.
-With fallback off, startup selects the primary without this probe. There is no
-per-message retry or automatic model download, and the coding planner retains its
-separate configuration. Restart to reevaluate fallback after changing services.
-
-Inventory and fallback probes are bounded by `models.local_llm.inventory` and
-`probe_timeout_sec`, without proxies or redirects. See the
-[resolver](../src/llm/backend.rs) and [inventory checks](../src/llm/inventory.rs).
+At startup the resolver keeps the primary only when inventory lists its
+configured model; otherwise it tries the fallback. If neither is ready, startup
+keeps a degraded primary so the console stays available. There is no
+per-message retry or automatic download; restart to reevaluate
+([resolver](../src/llm/backend.rs), [inventory](../src/llm/inventory.rs)).

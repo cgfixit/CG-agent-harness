@@ -8,16 +8,16 @@ This manual is static text bundled with the build and indexed at startup. It is 
 
 ## readme: capability overview
 
-- Web research: Search listings, permitted fetches and crawls, `/web research` jobs with planned subqueries and checked quotes. Starts: On, allowlist mode, one seeded Google rule.
+- Web research: Search listings, permitted fetches and crawls, `/web research` jobs with checked quotes. Starts: On, allowlist mode, one seeded Google rule.
 - Goal loops: `/goal` and `/loop` continue a long piece in a run that outlives the browser. Starts: 50 turns, 200,000 tokens, two failed turns; cloud refuses loops.
-- Memory: Shared pinned notes plus account-private facts you select, recall or accept from proposals. Starts: On; applying a proposal needs review.
-- Local chat: Streaming sessions, transcript search and export, text and DOCX attachments, prompt skills, nine style presets, `/prompt`, sandboxed HTML preview. Starts: Ollama on loopback; no persona or style until you add one.
-- Analytics, diagnostics: Session, token and run history with USD where rates exist, **Estimate draft** before a cloud call, `/diag` redacted log tails. Starts: On; local inference unpriced; `/diag` admin or `portal_auditor` only.
-- Cloud chat: Optional Grok or Claude; only the new message leaves, never history, memory or web context. Starts: Needs a provider key.
+- Memory: Shared pinned notes, uploaded notes you manage in the console, and account-private facts you select, recall or accept from proposals. Starts: On; applying a proposal needs review.
+- Local chat: Streaming sessions, transcript search and export, text and DOCX attachments, skills, style presets, `/prompt`, sandboxed HTML preview. Starts: Ollama on loopback; no persona or style until you add one.
+- Analytics, diagnostics: Session, token and run history, **Estimate draft** before a cloud call, `/diag` redacted log tails. Starts: On; local inference unpriced; `/diag` admin or `portal_auditor` only.
+- Cloud chat: Optional Grok or Claude; only the new message leaves. Starts: Needs a provider key.
 
 ## readme: capability overview (part 2)
 
-- Off by default: Reviewed coding in isolated clones with sandboxed checks and separate Git approval; MCP tools and a read-only memory gateway; Netconnect LAN… Starts: Each needs explicit configuration; only the budgeted `diag` probe sends packets.
+- Off by default: Reviewed coding in isolated clones, MCP tools and a read-only memory gateway, Netconnect LAN observation. Starts: Each needs explicit configuration.
 
 ## agents: process and home map
 
@@ -48,7 +48,7 @@ Fresh configuration requires `auth.enabled: true` and `tls.enabled: true`; exist
 
 ## invariant: Public web evidence requires current content permission
 
-Fresh web settings are enabled with one seeded allow rule, `https://www.google.com/*`, so public Google search listings work before any grant; every other content read needs an administrator's grant, `/web deny` removes the seed like any rule, and a home whose rules are all removed refuses reads (`WEB_ALLOWLIST_EMPTY`). Only an administrator's confirmed switch (`/api/web/mode`, `confirm: true`) selects block-list mode, which reads any public URL no blocked rule covers; a named group still narrows to its allow…
+Fresh web settings are enabled with one seeded allow rule, `https://www.google.com/*`, so public Google search listings work before any grant; every other content read needs an administrator's grant or, on an administrator's own turn, a listing from that turn's search (`web.search.result_reads`, below), `/web deny` removes the seed like any rule, and a home whose rules are all removed refuses reads (`WEB_ALLOWLIST_EMPTY`). Only an administrator's confirmed switch (`/api/web/mode`, `confirm: true`) selects…
 
 ## invariant: The browser never supplies a command
 
@@ -137,7 +137,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 ## console: slash-command quick reference
 
 - `/agent [help]`: Inspect coding commands; full workflow below
-- `/analytics`: Open retained session, token and coding-run analytics; no inference or repository operation
+- `/analytics`: Open read-only session, token and coding-run analytics
 - `/api`, `/api set <KEY> <value>`, `/api clear <KEY>`: Inspect, save or clear a managed credential; prefer the API Keys password fields; persistence
 - `/clear`: Clear visible output, staged coding/review state and chat continuation; saved chats, notes, persona and web context remain
 - `/connectors`: Connector catalog; does not activate connectors
@@ -156,28 +156,28 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/memory consolidate <episode-id> [episode-id ...]`: Selected-episode consolidation into pending proposals; does not apply facts
 - `/memory proposals`: Open the Memory panel; Apply/Reject requires review and a reason
 - `/memory remember <sentence> :: <reason>`: Confirm a semantic summary on the latest completed episode; no fact write
-- `/memory facts`, `/memory retrieve <query>`, `/memory search <query>`: List your active facts, force fact retrieval for this chat prompt, or inspect candidates without injection
+- `/memory facts`, `/memory retrieve <query>`, `/memory search <query>`: List your active facts, start a turn with explicit retrieval, or list candidates without injection
 
 ## console: slash-command quick reference (part 3)
 
 - `/memory save <text> :: <reason>`: Confirm an immediate private fact write
 - `/model [status]`, `profile`, `list`, `use <name>`: Inspect/profile/list/select a local chat model or explicit cloud provider; does not select the coding planner
 - `/net status`, `/net devices`, `/net diag`: Read-only scope and gates, passive neighbors, or the budgeted diagnostics probe. Aliases and refused tier words: netconnect
-- `/prompt`: Private preview of the next chat system prompt
+- `/prompt`: Private preview of the next local chat turn's prompt
 - `/registry`: Combined skill, tool and connector catalog
-- `/session`, `list`, `info`, `new [title]`, `rename <title>`, `unpin`, `use <id>`: List, inspect, create, rename or reopen sessions, or clear attachment pins
+- `/session`, `list`, `info`, `new [title]`, `rename <title>`, `unpin`, `use <id>`: List, inspect, create, rename or reopen sessions; `unpin` clears attachment pins
 - `/skill`, `status`, `use <id...>`, `clear`: Inspect, replace or clear session prompt-skill selection
 - `/skill check:<profile>`: Select one fixed check for an already staged coding request
-- `/skills [all|help|<name>]`: Inspect wired skills, the full catalog including optional prompt files, help, or skills matching a display name (which can differ from the `/skill…
+- `/skills [all|help|<name>]`: Wired skills, the full catalog including optional prompt files, help, or skills matching a display name (not always the `/skill use` directory ID)
 
 ## console: slash-command quick reference (part 4)
 
 - `/soul`, `status`, `on`, `off`, `edit`, `history`, `propose`: Inspect, toggle or open persona editing/proposal flows
-- `/soul apply <id> <reason>`, `reject <id> <reason>`, `review <id>`: Review a retained proposal before explicitly applying or rejecting its exact revision
+- `/soul apply <id> <reason>`, `reject <id> <reason>`, `review <id>`: Review a retained proposal, then apply or reject its exact revision
 - `/status`: Runtime status and unlimited-loop warning; account access required
 - `/style`, `/style <name>`, `/style off`: Inspect/select a session output style, or clear it without changing soul.md
 - `/tokens`: Current session token tally
-- `/tools [all|help|mcp|<name>]`: Inspect registered tools, the full catalog including unwired entries, help, external MCP grants, or one named tool
+- `/tools [all|help|mcp|<name>]`: Registered tools, the full catalog including unwired entries, help, external MCP grants, or one named tool
 - `/users`: Administrator account panel; accounts
 - `/web [status|help]`, `/web on`, `/web off`: Inspect shared-home rules; administrators enable/disable web
 - `/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]`, `/web deny <id-or-pattern>`: Administrator grants are atomic; repeat `--seed` per concrete seed. Every seed must fit a requested rule
@@ -193,128 +193,120 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 ## api: registered routes
 
-- GET `/`: Console page (`assets/static/harness.html` with CSRF/CSP placeholders filled)
-- GET `/preview/html`: Sandboxed inline-only HTML preview, no network.
+- GET `/`: Console page with CSRF/CSP placeholders filled
+- GET `/preview/html`: Sandboxed inline-only HTML preview, no network
 - GET `/static/{name}`: Static console assets
-- GET `/api/status`: Public minimal status; model fields require account access
+- GET `/api/status`: Public minimal status; model fields need an account
 - GET `/api/tools`: Wired-route and tool inventory
-- GET `/api/netconnect`: Read-only LAN panel (query ignored; netconnect.md)
+- GET `/api/netconnect`: Read-only LAN panel, query ignored (netconnect.md)
 - GET `/api/netconnect/diag`: Budgeted TCP probe of configured targets; 409 unless the tier may run (diagnostics)
 - GET `/api/registry`: Skill/tool/connector catalog
 - GET `/api/audit`: Audit events (any role)
-- GET `/api/diag`: `/diag` gate, allowlisted log files, last read and staged excerpt (admin or…
+- GET `/api/diag`: `/diag` gate, allowlisted logs, last read and staged excerpt (admin or `portal_auditor`;…
 - GET `/api/diag/read`: Bounded, redacted tail of one allowlisted log: `file`, optional `last`, `event`,…
-- POST `/api/diag/inject`, `/api/diag/forget`: Stage the last read for the next local chat turn of `session_id`, or drop it
+- POST `/api/diag/inject`, `/api/diag/forget`: Stage the last read for `session_id`'s next local chat turn, or drop it
 - GET `/api/harness/runs`: Retained harness-optimizer runs (`/harness`)
-- GET `/api/analytics/summary`: Owned sessions plus shared spend/coding analytics (`/analytics`; details)
+- GET `/api/analytics/summary`: Owned sessions plus shared spend and coding analytics (details)
+- POST `/api/config/reload`: Administrator reload of the limits allowlist
 
 ## api: registered routes (part 2)
 
-- POST `/api/config/reload`: Reload the limits allowlist (administrator)
 - GET `/api/auth/setup-status`: `setup_code` while the one-time code works; public
 - POST `/api/auth/login`: Login; public with early guards
 - POST `/api/auth/logout`: Revoke the current session
-- GET `/api/auth/whoami`: Current account, role, and `user_id`
+- GET `/api/auth/whoami`: Current account, role and `user_id`
 - POST `/api/auth/password`: Change own password; revokes other sessions
-- GET, POST `/api/auth/users`: List/create accounts, including each `user_id` (administrator; `/users`)
-- DELETE `/api/auth/users/{username}`: Delete an account (administrator)
-- POST `/api/auth/users/{username}/disabled`: Enable/disable an account (administrator)
-- POST `/api/auth/users/{username}/password`: Administrative password reset
-- POST `/api/auth/users/{username}/role`: Change a role (administrator)
+- GET, POST `/api/auth/users`: Administrator list/create, with each `user_id` (`/users`)
+- DELETE `/api/auth/users/{username}`: Administrator delete
+- POST `/api/auth/users/{username}/disabled`, `/api/auth/users/{username}/password`, `/api/auth/users/{username}/role`: Administrator enable/disable, password reset, role change
 - GET, POST `/api/keys`: Managed-key presence (masked tail) and `/api set <KEY> <value>`
 - POST `/api/chat`: One turn; streams SSE when `Accept: text/event-stream`
-- POST `/api/chat/attachments`: Upload up to 3 txt/md/json/csv/log/docx files (15 MB each; home quota 64 MB/512 blobs;…
+- POST `/api/chat/cancel`: Cancel the active turn (`/loop stop`)
+- POST `/api/chat/attachments`: Upload up to 3 txt/md/json/csv/log/docx files; 503 past…
+- GET, POST `/api/notes-corpus`: List owned note metadata and upload limits, or ingest a `.md`/`.txt` batch for local…
+- DELETE `/api/notes-corpus/{id}`: Unlink one owned note
 
 ## api: registered routes (part 3)
 
-- GET, POST `/api/notes-corpus`: List owned note metadata and upload limits, or ingest a `.md`/`.txt` batch for local…
-- DELETE `/api/notes-corpus/{id}`: Unlink one owned note
-- POST `/api/chat/cancel`: Cancel the active turn (`/loop stop`)
 - POST `/api/loop/start`: Start an owner-bound server-side `/loop` run: `session_id`, optional `goal`/`web_mode`,…
 - POST `/api/loop/stop`: Stop by `run_id`
 - GET `/api/loop/status`: One run (`?run_id=`) or a session's run (`?session_id=`)
 - GET `/api/loop/events/{run_id}`: SSE per-turn progress (server loops)
-- POST `/api/sessions/{session_id}/prompt-history`: Owner-scoped composer history line (`{text}`) for ArrowUp recall; last 50, `/api` values…
-- DELETE `/api/sessions/{session_id}/attachment-pins`: Owner-scoped unpin; keeps blobs; refused during generation
-- POST `/api/model`: Select the local model or `grok` / `claude` (`/model use`)
+- POST `/api/model`: Select the local model, `grok` or `claude` (`/model use`)
 - GET `/api/ollama/inventory`: Live loopback tags (`/model list`) plus configured-model readiness
 - GET `/api/ollama/profile`: Selected-model facts (`/model profile`)
-- POST `/api/ollama/pull`: Operator/admin abortable pull; SSE when `Accept: text/event-stream`
+- POST `/api/ollama/pull`, `/api/ollama/pull/cancel`: Operator/admin pull (SSE when `Accept: text/event-stream`), or abort it
+- POST `/api/prompt/preview`: Show the assembled prompt (`/prompt`)
+- POST `/api/slash/parse`: Suggest-don't-guess slash normalizer; never executes mutations
+- GET `/api/spend/summary`: Retained spend summary with completeness and read-time USD
+- POST `/api/spend/predict`: Estimate unsent cloud cost (Estimate draft)
+- GET, POST `/api/sessions`: List your sessions or create an owned one
 
 ## api: registered routes (part 4)
 
-- POST `/api/ollama/pull/cancel`: Abort the in-flight pull
-- POST `/api/prompt/preview`: Show the assembled system prompt (`/prompt`)
-- POST `/api/slash/parse`: Suggest-don't-guess slash normalizer; never executes mutations
-- GET `/api/spend/summary`: Retained spend summary with completeness and read-time USD
-- POST `/api/spend/predict`: Estimate unsent cloud cost (Analytics → Tokens and cost → Estimate draft; details)
-- GET, POST `/api/sessions`: List your sessions or create an owned one
 - GET `/api/sessions/legacy`: Administrator metadata inventory of unassigned legacy sessions
-- POST `/api/sessions/{session_id}/adopt`: Administrator adoption with confirmation and reason; clears prior goal-stage approval
 - POST `/api/sessions/search`: Owned local transcript search (bounds)
-- POST `/api/sessions/clear`: Delete owned sessions, attachments and uploaded notes; retain foreign, legacy, corrupt…
-- GET `/api/sessions/{session_id}`: Load one owned session, with its `web_sources` read ledger
+- POST `/api/sessions/clear`: Delete owned sessions, attachments and uploaded notes; foreign, legacy, corrupt and…
+- GET `/api/sessions/{session_id}`: Load one owned session with its `web_sources` read ledger
+- POST `/api/sessions/{session_id}/adopt`: Administrator adoption with confirmation and reason; clears prior goal-stage approval
 - GET `/api/sessions/{session_id}/export`: Markdown export; also written 0o600 under home/exports
 - POST `/api/sessions/{session_id}/rename`: Rename
+- POST `/api/sessions/{session_id}/goal`: Set goal; optional `web_mode` `off`/`fetch`/`all`, else `web.goal_web_default` (ships…
+- GET, POST `/api/sessions/{session_id}/goal-stage`: Goal staging status and transitions
+- GET, POST `/api/sessions/{session_id}/skills`: Session skill selection
+- GET, POST `/api/sessions/{session_id}/structured-facts`: Structured-memory facts explicitly included in the session
 
 ## api: registered routes (part 5)
 
-- POST `/api/sessions/{session_id}/goal`: Set goal; optional `web_mode` `off`/`fetch`/`all`, else `web.goal_web_default` (ships…
-- GET, POST `/api/sessions/{session_id}/goal-stage`: Goal staging status and transitions
-- GET, POST `/api/sessions/{session_id}/skills`: Skill selection for the session
-- GET, POST `/api/sessions/{session_id}/structured-facts`: Selected structured-memory facts (explicit include)
-- GET, POST `/api/soul`: Persona state and on/off toggle
-- GET, POST `/api/style`: Output-style catalog and session select (`/style <name>` or `/style off`)
-- GET, POST `/api/soul/document`: Read or edit the persona document
+- POST `/api/sessions/{session_id}/prompt-history`: Owner-scoped composer line (`{text}`) for ArrowUp recall; last 50, `/api` values dropped
+- DELETE `/api/sessions/{session_id}/attachment-pins`: Owner-scoped unpin; keeps blobs; refused during generation
+- GET, POST `/api/soul`, `/api/soul/document`: Persona state and on/off toggle; read or edit the persona document
 - POST `/api/soul/proposals`: Propose a persona change
 - GET, POST `/api/soul/proposals/{id}`: Review or decide a proposal
+- GET, POST `/api/style`: Output-style catalog and session select (`/style <name>`, `/style off`)
 - GET `/api/skills`: List skills
 - POST `/api/skills/check`: Describe a `check:<profile>` ID
 - GET, POST `/api/memory`: Pinned-note status and on/off toggle
-- POST `/api/memory/add`: Save a literal note
-- POST `/api/memory/forget`: Remove one note
-- POST `/api/memory/clear`: Remove all notes
+- POST `/api/memory/add`, `/api/memory/forget`, `/api/memory/clear`: Save a literal note, remove one, remove all
 - GET `/api/structured-memory`: Truthful status and effective gates
+- POST `/api/structured-memory/gates`: Administrator gate override, persisted in `memory/structured_gates.json`
+- GET `/api/structured-memory/search`: Facts-only FTS candidates
 
 ## api: registered routes (part 6)
 
-- POST `/api/structured-memory/gates`: Administrator gate override, persisted in `memory/structured_gates.json`
-- GET `/api/structured-memory/search`: Facts-only FTS candidates
 - GET, POST `/api/structured-memory/facts`: List active facts or add one (confirm)
 - GET `/api/structured-memory/facts/{id}`: Recall one fact, including inactive
 - POST `/api/structured-memory/facts/{id}/deactivate`: Deactivate (confirm)
 - GET, POST `/api/structured-memory/proposals`: List or create proposals
-- GET, POST `/api/structured-memory/proposals/{id}`: Review or apply/reject with reason
-- GET `/api/structured-memory/episodes`: List episodes
+- GET, POST `/api/structured-memory/proposals/{id}`: Review, or apply/reject with reason
+- GET `/api/structured-memory/episodes`, `/api/structured-memory/episodes/{id}`: List episodes or read one
 - POST `/api/structured-memory/episodes/purge`: Purge expired episodes
-- GET `/api/structured-memory/episodes/{id}`: One episode
 - POST `/api/structured-memory/episodes/{id}/summary`: Attach a human semantic summary (confirm + reason)
 - POST `/api/structured-memory/episodes/{id}/delete`: Delete one episode
 - GET, POST `/api/structured-memory/consolidation`: List or start consolidation
 - GET `/api/structured-memory/consolidation/{id}`: Consolidation status
 - POST `/api/structured-memory/consolidation/{id}/cancel`: Cancel
-
-## api: registered routes (part 7)
-
 - GET `/api/structured-memory/export`: Export the owner's memory
 - POST `/api/structured-memory/purge`: Purge the owner's memory
 - GET, POST `/api/web`: Status and on/off toggle
+
+## api: registered routes (part 7)
+
 - POST `/api/web/allow`: Atomically grant exact URLs or explicit wildcards with group and seeds
 - POST `/api/web/deny`: Remove a grant
 - POST `/api/web/mode`: Administrator selects allowlist/denylist; denylist requires confirmation
 - POST `/api/web/block`, `/api/web/unblock`: Administrator adds/removes blocks
+- POST `/api/web/check`: Check exact URL permissions locally, without fetching or granting
 - POST `/api/web/fetch`: Read one or more exact permitted URLs within shared resource limits
-- POST `/api/web/check`: Check exact URL permissions locally, without fetching or granting access
 - POST `/api/web/search`: Page search; `engine:"google"` uses `web.search.provider`
 - POST `/api/web/research`: Research permitted sources; question ≤2,000 characters, optional group/URLs
 - POST `/api/web/research/cancel`: Cancel the owner's running research, detached or not
 - POST, GET `/api/web/research/jobs`: Start a detached owner-bound research job (`/web job`) or list owned jobs; `GET…
-- POST `/api/web/inject`: Include your last selection in chat
+- POST `/api/web/inject`, `/api/web/forget`: Include your last selection in chat, or drop injected reads
+- GET `/api/mcp`: Declared MCP servers, namespaced tools and versioned stdio capability policies; no…
 
 ## api: registered routes (part 8)
 
-- POST `/api/web/forget`: Drop injected reads
-- GET `/api/mcp`: Declared MCP servers, namespaced tools and versioned stdio capability policies; does not…
 - POST `/api/mcp/call`: Call one declared MCP tool; `confirm` is never defaulted
 - GET `/api/github/status`: GitHub credential and write-gate posture
 - GET `/api/agent/checks`: Check-profile names the browser may request
@@ -322,98 +314,87 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET, POST `/api/agent/jobs`: List owned detached jobs or start one
 - GET `/api/agent/jobs/{job_id}`: Job status
 - POST `/api/agent/jobs/{job_id}/cancel`: Cancel a job
-- GET `/api/notifications`: Owned destinations and retained delivery metadata; no URLs, credentials or job content
-- POST `/api/notifications/{delivery_id}/replay`: Confirmed owner replay within current grants/limits; never reruns a job
 - POST `/api/agent/schedules/preview`: Preview five occurrences and return an owner-bound receipt
 - GET, POST `/api/agent/schedules`: List owned schedules or activate the exact previewed request
 - GET `/api/agent/schedules/{schedule_id}`: One schedule
+- POST `/api/agent/schedules/{schedule_id}/cancel`: Cancel a schedule
+- GET `/api/agent/runs`, `/api/agent/runs/{run_id}`: Retained run metadata; one run and its diff
+- POST `/api/agent/runs/{run_id}/decision`: Approve (`reason`, confirm) or reject
+- POST `/api/agent/runs/{run_id}/push`, `/api/agent/runs/{run_id}/publish`, `/api/agent/runs/{run_id}/discard`: Push the approved commit, open a draft PR, or discard the run
 
 ## api: registered routes (part 9)
 
-- POST `/api/agent/schedules/{schedule_id}/cancel`: Cancel a schedule
-- GET `/api/agent/runs`: Retained run metadata (gate below)
-- GET `/api/agent/runs/{run_id}`: One run and its diff
-- POST `/api/agent/runs/{run_id}/decision`: Approve (`reason`, confirm) or reject
-- POST `/api/agent/runs/{run_id}/push`: Push the approved commit
-- POST `/api/agent/runs/{run_id}/publish`: Open a draft PR
-- POST `/api/agent/runs/{run_id}/discard`: Discard a run
+- GET `/api/notifications`: Owned destinations and retained delivery metadata; no URLs, credentials or job content
+- POST `/api/notifications/{delivery_id}/replay`: Confirmed owner replay within current grants/limits; never reruns a job
 
 ## troubleshooting: symptom to fix
 
-- Spend reports partial, unreadable, too large or invalid UTF-8 → Preserve the ledger; inspect permissions, corruption and size. Missing evidence is not zero spend
-- A job finished but no webhook arrived → Check **Job webhooks**, `notification_delivery`/`notification_dropped` audit and `/agent job <id>`. Use guarded delivery replay, never rerun the job
-- Webhook receiver reports duplicates → Deduplicate stable `delivery_id`; retry batch membership can change. Each delivery/replay has at most three attempts
-- MCP reports `stdio MCP child closed` → Reproduce with the child in a controlled environment. MCP diagnostics
+- Spend reports partial, unreadable, too large or invalid UTF-8 → Preserve the ledger; inspect permissions and size. Missing evidence is not zero spend
+- A job finished but no webhook arrived → Check **Job webhooks**, `notification_delivery`/`notification_dropped` audit and `/agent job <id>`. Replay the delivery, never rerun the job
+- Webhook receiver reports duplicates → Deduplicate on stable `delivery_id`; batch membership can change. At most three attempts per delivery/replay
+- MCP reports `stdio MCP child closed` → Reproduce the child in a controlled environment. MCP diagnostics
 - Command or control missing → Check `/help`, `Resources/COMMIT`; install Latest or a successful main Bundle
-- Local coding loop never fetches a file the planner asked for → Pre-stage ordinary files with `/agent read`. Operator/model READ both refuse sensitive basenames (`sensitive_basename`). Cloud refuses all model…
-- New sessions appear to share old context → Inspect `/prompt`. `/session new` separates history while retaining shared context
+- Coding loop never fetches a file the planner asked for → Pre-stage ordinary files with `/agent read`. Sensitive basenames refuse operator and model reads (`sensitive_basename`); cloud refuses all model…
+- New sessions share old context → Inspect `/prompt`; `/session new` separates history only
+- Chat denies memory exists or claims it can run `gh` → Inspect `/memory`, `/tools` and `/prompt`; prose cannot run a commands
 
 ## troubleshooting: symptom to fix (part 2)
 
-- Chat denies memory exists or claims it can run `gh` → Inspect `/memory`, `/tools` and `/prompt`; prose cannot run a commands
-- `/memory search` reports retrieval disabled → Enable the store, restart, then `/memory retrieval on`. Search never injects; `/memory retrieve` selects one prompt
-- Automatic completion suggestions do not appear → Inspect `/api/structured-memory` effective `automatic_suggestions`, run status and audit. Check `/memory capture` and `/memory auto-suggest-chat
-- `/memory save` reports store closed → Enable the store and restart; automatic generation and capture may stay off. A prose request is not a save command
-- `/memory consolidate` or auto-consolidator reports the gate off → Enable the store, restart, then `/memory consolidation on`; auto also needs `/memory auto-consolidate on`. Fresh defaults are on; explicit off…
-- Model inventory says `tag_missing`, or fallback is selected unexpectedly → Compare inventory/config and persisted `/model` with the resolved endpoint; restart to reevaluate fallback
-- Soul says missing → Valid existing-home state; use `/soul edit` to create persona, then `/soul on` and `/prompt`
+- Automatic suggestions do not appear → Read **Suggestion activity** and `/api/structured-memory` `automatic_suggestions`; check the `/memory capture` and `auto-suggest-*` gates.…
+- `/memory search`, `save` or `consolidate` reports the store closed or a gate off → Enable the store and restart; then `/memory retrieval on` or `/memory consolidation on`, plus `/memory auto-consolidate on` for auto. Explicit off…
+- Inventory says `tag_missing`, or fallback is selected unexpectedly → Compare inventory/config and persisted `/model`; restart to reevaluate fallback
+- Soul says missing, or is saved but not in chat → `/soul edit` and `/soul on`; confirm Setup home, `/soul status` and `/prompt`; reload a stale editor before saving again
+- Persona/proposal save conflicts or history is full → Review content and history; archive records deliberately. Never blindly retry or delete the persona
+- Selected skill prevents chat → Restore `<home>/skills/<id>/SKILL.md` or `/skill clear`
+- `/loop` does not edit files, or warns its budgets are unlimited → Use goal staging; set a finite cap, then Reload limits
 
 ## troubleshooting: symptom to fix (part 3)
 
-- Soul saved but is not in chat → Confirm Setup home, `/soul status`, editor result and `/prompt`; reload a stale editor before saving again
-- Persona/proposal save conflicts or history is full → Review current content/history; deliberately archive records if needed. Never blindly retry or delete active persona
-- Selected skill prevents chat → Restore `<home>/skills/<id>/SKILL.md` or `/skill clear`; inspect `/prompt`
-- `/loop` does not edit files → Use goal staging
-- Warning: configured `/loop` budgets are unlimited → Set a finite cap, then Reload limits. Upgrades preserve configuration
-- Goal task is stale/interrupted/unavailable → Inspect `/goal task`, `/agent jobs` and `/agent runs`; never infer approval or replay work from `GOAL_DONE`
-- App asks for Rosetta or shows Intel-only kind → Verify the installed universal copy and both executable slices; see hardware before changing the OS
+- Unattended `/loop` ends with `loop aborted` → Fix the cause the run states. A busy model is waited for, not counted; `/loop stop` ends the wait
+- Goal task is stale/interrupted/unavailable → Inspect `/goal task`, `/agent jobs` and `/agent runs`; never infer approval from `GOAL_DONE`
+- App asks for Rosetta or shows Intel-only kind → Verify the installed universal copy; see hardware
 - `401 Unauthorized` on harness requests → Sign in again; a fresh bootstrap account must replace its password. A harness key cannot grant access
-- App reports a home ownership conflict → Quit that owner normally before retrying; do not delete its lock
+- App reports a home ownership conflict → Quit that owner normally; do not delete its lock
+- App waits at startup → Check macOS prompts; quit, move the complete app to Applications and retry. Do not delete the home
+- Changing config appears to do nothing → Reload limits, or Cmd-Q/relaunch or restart `serve`. Window close only hides it
+- Offline preparation fails in the app → See Setup and offline Cargo verification; the app downloads nothing
+- Chat takes too long or times out → Check inventory, `/model` and Setup diagnostics; cancel with `/loop stop` rather than resubmitting
 
 ## troubleshooting: symptom to fix (part 4)
 
-- App waits at startup → Check macOS prompts; quit, move the complete app to Applications and retry; inspect Setup without deleting the home
-- Changing config appears to do nothing → Use Reload limits for supported fields; otherwise Cmd-Q/relaunch or restart `serve`. Window close only hides it
-- Offline preparation fails in the app → Inspect Setup and offline Cargo verification; the app does not download dependencies
-- Chat takes too long or times out → Check inventory, `/model` and Setup diagnostics; cancel with `/loop stop`. Avoid repeated submissions
-- Chat reports `502 HARNESS_LLM_ERROR` with `model server returned HTTP ...` → Check upstream status, endpoint/model and model-server diagnostics. Harness drops error bodies unread, omits them from debug logs and releases the…
-- `cgagentharness: harness binds loopback only` and the server refuses to start → Only loopback is accepted. Omit `--host` or use `127.0.0.1`
-- `Address already in use` when starting `serve` → Use `lsof -i :8790`; stop only the known owner or choose another `--port`. Concurrent servers need separate homes
-
-## troubleshooting: symptom to fix (part 5)
-
-- `gh: command not found` when trying `/agent` commands → `brew install gh && gh auth login`
-- `/agent` commands report "Agentic layer disabled" → Follow coding config, then restart `serve`
-- A write action is refused → Re-read coding console steps and the kill switch; check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE`
-- Managed-key save or legacy migration fails → Keep plaintext opt-in off unless required. Check credential privacy and recovery; do not broaden file access. Windows sharing locks can block…
-- `/diag` says `DIAG_DISABLED` → Set it to `true` in `config.yaml`, then restart `serve`
+- Chat reports `502 HARNESS_LLM_ERROR` with `model server returned HTTP ...` → Check the endpoint, model and model-server logs; the harness drops the error body unread and never logs it
+- `Address already in use` when starting `serve` → `lsof -i :8790`; stop only a known owner or choose another `--port`. Each server needs its own home
+- `/agent` reports `gh: command not found` or "Agentic layer disabled" → `brew install gh && gh auth login`; follow coding config, then restart
+- A write action is refused → See coding console steps and the kill switch; check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE`
+- Managed-key save or legacy migration fails → Keep plaintext opt-in off unless required and do not broaden file access; see credential privacy and recovery
+- `/diag` says `DIAG_DISABLED` → Set literal `true`, then restart
 - `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` → Use an admin or `portal_auditor` account
 - A read or `/diag inject` says `DIAG_SCANNER_REFUSED` → Narrow with `--event`, `--since` or `--last`; nothing from it is shown or staged
 - Chat says `DIAG_SURFACE_FORBIDDEN` → Send a local turn first, or `/diag forget`
+
+## troubleshooting: symptom to fix (part 5)
+
 - `/diag unslop` says `DIAG_NOT_FOUND` → `/diag` reads only `<home>/logs/unslop.jsonl`
 
 ## mcp: external client and private memory gateway
 
-The harness speaks the Model Context Protocol on two independent surfaces. The **outbound client** calls tools of servers an operator declares in `config.yaml`; `mcp.enabled` gates it. The **inbound gateway** serves three read-only memory tools to machine clients on its own loopback listener; `mcp.server.enabled` gates it. Neither inherits the other's keys, grants or listener, and `/loop` never receives MCP tools. Both ship off.
-Outbound client capabilities: Calls need an authenticated operator or administrator, CSRF, a declared namespaced tool in the broker allowlist, and literal `confirm: true`. Discovery, models and repositories cannot expand declarations; disabled or undeclared MCP stays off.
-Migrate a stdio declaration: Stdio declarations need `capabilities` or startup refuses. Review paths and lifecycle policy; upgrades grant no ambient access. Declarations require restart, outside `RELOADABLE`.
+The harness speaks the Model Context Protocol on two independent surfaces, both shipped off. The **outbound client** (`mcp.enabled`) calls tools of servers an operator declares in `config.yaml`. The **inbound gateway** (`mcp.server.enabled`) serves three read-only memory tools to machine clients on its own loopback listener. Neither inherits the other's keys, grants or listener, and `/loop` never receives MCP tools.
+Outbound client capabilities: A call needs an authenticated operator or administrator, CSRF, a declared namespaced tool in the broker allowlist and literal `confirm: true`. Discovery, models and repositories cannot expand declarations.
+Migrate a stdio declaration: A stdio declaration without `capabilities` refuses startup; an upgrade grants no ambient access. Declarations are restart-only.
+Lifecycle choices: Strict mode requires `processes` 8–128, `memory_mb` 64–4096, cgroup v2 and systemd 254 or newer. Counts include supervisor and runtime processes. The harness uses the existing service manager, never sudo; missing controllers or permissions refuse.
 
 ## mcp: external client and private memory gateway (part 2)
 
-Lifecycle choices: Strict mode requires `processes` 8–128, `memory_mb` 64–4096, systemd 254 or newer with `--expand-environment=no`, and cgroup v2. Counts include supervisor and runtime processes; memory covers the cgroup. The harness uses the existing user (or root's system) service manager, never sudo or host namespace changes; missing controllers or permissions refuse.
 Explicit Windows trusted-server exception: Windows cannot enforce this client's filesystem/network sandbox policy. Only for a trusted server, an operator can deliberately declare:
-Inspect and troubleshoot: `/tools mcp` and authenticated `GET /api/mcp` show declarations/grants without spawning or claiming readiness. Success audits backend, policy and probe result; refusals audit policy/error code. Arguments, results and environment secrets stay out of audit.
+Inspect and troubleshoot: `/tools mcp` and `GET /api/mcp` show declarations and grants without spawning or claiming readiness. A success audits backend, policy and probe result; a refusal audits policy and error code. Arguments, results and environment secrets stay out of the audit.
+Private read-only memory gateway: The gateway runs in the harness process over the owner-filtered memory store and listens separately from the console; it opens no second database and does not expose the portal. No home has an inbound listener unless `mcp.server.enabled` is literal `true`, and `mcp.server.tools` defaults empty. The supported tools are `memory_list_facts`, `memory_get_fact`…
+Deliberate local activation: 1. Stop the backend. On Unix the home must be owned by its user with mode `0700`; change an older `0755` home first. 2. Enable structured memory and select exactly the tools to publish:
 
 ## mcp: external client and private memory gateway (part 3)
 
-Private read-only memory gateway: The gateway runs in the harness process, uses the owner-filtered memory store, and listens separately from the console. It does not open another memory database or expose the portal. New and upgraded homes have no inbound listener unless `mcp.server.enabled` is literal `true`. `mcp.server.tools` defaults empty. Supported tools are `memory_list_facts`,…
-Deliberate local activation: 1. Stop the backend before changing listener configuration. Keep the home private; on Unix, its owner must own the directory and its mode must be `0700`. If an older home uses `0755`, explicitly change its permissions to `0700` first. 2. Enable structured memory and select exactly the tools to publish:
-Keys, isolation and revocation: Machine keys are independent of console users and cookies, even when console account authentication is disabled. A key has a public 128-bit ID and a random 256-bit secret. Only the SHA-256 secret hash is stored, compared in constant time; unknown/disabled keys follow a dummy-hash comparison path. No password KDF runs per tool call. The dedicated…
-
-## mcp: external client and private memory gateway (part 4)
-
-Bounds and failures: Limits are under `mcp.server`. Rates use fixed one-minute windows. Authentication, body read and response collection share the request deadline. Synchronous store work holds its concurrency permit until completion even if the caller times out. Request body limits apply to streamed bodies, independent of Content-Length. The complete serialized response is…
-Future remote exposure requires a separate reviewed change: This release has no remote mode. LAN, overlay or public exposure needs a separately reviewed change covering interface selection, TLS, machine identity, revocable scope, Host and Origin rules, bounded load and rollback; each new tool needs its own capability and tests, and none may write canonical facts or inherit coding authority.
+Keys, isolation and revocation: Machine keys are independent of console users and cookies, even with account authentication off. A key has a public 128-bit ID and a random 256-bit secret; only the secret's SHA-256 hash is stored and it is compared in constant time, with a dummy comparison for unknown or disabled keys. Keys live in a dedicated `mcp_keys.sqlite3` with an…
+Bounds and failures: Limits sit under `mcp.server`. Rates use fixed one-minute windows. Authentication, body read and response collection share the request deadline, and store work holds its concurrency permit until it completes even if the caller times out. The body limit applies to streamed bodies regardless of Content-Length; an oversize response fails without a partial…
+Future remote exposure requires a separate reviewed change: There is no remote mode. LAN, overlay or public exposure needs a separately reviewed change covering interface selection, TLS, machine identity, Host and Origin rules, load bounds and rollback. Each new tool needs its own capability and tests, and none may write canonical facts or inherit coding authority.
 
 ## config: sections and keys (values omitted)
 

@@ -128,6 +128,18 @@ pub(super) fn context_owner(user: Option<Extension<UserSummary>>) -> String {
     user.map(|u| u.user_id.clone()).unwrap_or_else(|| "local".into())
 }
 
+/// Whether this caller's web turns may read the exact URLs their own searches
+/// list (`web.search.result_reads`). Only an administrator, who could add the
+/// same URL to the policy anyway, so a listing grants nothing the account
+/// lacks. Every other role stays bound by the URL policy administrators keep.
+/// A home without accounts has one local user, who owns the policy file.
+pub(crate) fn may_read_search_results(state: &AppState, user: Option<&UserSummary>) -> bool {
+    match user {
+        Some(account) => account.role == ROLE_ADMIN,
+        None => state.auth.is_none(),
+    }
+}
+
 fn denied() -> ApiError {
     ApiError::new(StatusCode::FORBIDDEN, PERM_DENIED, "denied")
 }
