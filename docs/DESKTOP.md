@@ -1,7 +1,7 @@
 # CG Agent Harness for macOS
 
 The universal macOS app opens the console in WKWebView and owns its bundled Rust
-backend. Ordinary launch needs no Terminal, browser, Rust, or Python. Coding
+backend. Ordinary launch needs no Terminal, browser, Rust, or Python; coding
 checks need their configured tools. Native acceptance evidence lives in PR bodies.
 
 ## Install and launch
@@ -9,30 +9,30 @@ checks need their configured tools. Native acceptance evidence lives in PR bodie
 1. Unzip the universal archive and move **CG Agent Harness.app** to Applications
    (or a directory you own). Quit an existing copy before replacing it.
 2. Open it from Finder or the Dock. The app installs no login item or service.
-3. Fresh homes enable HTTPS, accounts, roles and web controls. Enter your setup code and new password in **Set your password**. **Harness → Setup and recovery** shows the code with a **Copy setup code**
-   button until the password is replaced; **Cmd and +** (Cmd, Shift, =) reopens it. Closing the password form leaves a lock card. Use at least 12 characters.
-   The native webview verifies its owned certificate without system trust changes.
-   Existing configuration is preserved. That window also shows diagnostics.
+3. Fresh homes enable HTTPS, accounts, roles and web controls. Enter your setup
+   code and a new password of at least 12 characters in **Set your password**.
+   **Harness → Setup and recovery** shows the code with a **Copy setup code**
+   button until the password is replaced; **Cmd and +** (Cmd, Shift, =) reopens
+   it, and it also shows diagnostics. Closing the password form leaves a lock
+   card. The webview verifies its owned certificate without system trust
+   changes. Existing configuration is preserved.
 4. Administrators manage provider credentials in **API Keys**. Web-key (SerpAPI,
-   Tavily, Firecrawl) saves apply immediately; other saved values need a restart. Inherited environment values win. A
-   harness metadata key never grants account access. See [migration, roles and
-   TLS recovery](SECURE_RESEARCH.md). After restart, `/model use grok` or
-   `/model use claude` selects that cloud provider. Local prompt context is
-   excluded; the coding planner remains separate.
+   Tavily, Firecrawl) saves apply immediately; other saved values need a
+   restart, and inherited environment values win. A harness metadata key never
+   grants account access ([roles and TLS recovery](SECURE_RESEARCH.md)).
 5. Web starts enabled with one seeded rule, Google search; an administrator grants
    other sources with `/web allow` ([web permissions](SECURE_RESEARCH.md#web-permissions)).
-   Launch fetches no content. With the shipped local model tag installed, chat
-   needs no config edit. `/model list` and
-   `/model use <exact-tag>` select another installed chat model.
+   Launch fetches no content. `/model list` and `/model use <exact-tag>` select
+   an installed chat model ([Models](MODELS.md)).
 
 The account bar displays the role. Auditors have read-only status and cannot use
 chat, research, users, API Keys, or Sessions data.
 
 This build is **ad-hoc signed, universal (Apple Silicon + Intel), and not notarized**.
-Its signature checks integrity, not publisher identity. Gatekeeper may require per-app approval
-through macOS Privacy & Security, or reject it under managed policy. Do not
+Its signature checks integrity, not publisher identity. Gatekeeper may require
+per-app approval in Privacy & Security, or reject it under managed policy. Do not
 change global Gatekeeper settings or strip quarantine as a blanket workaround.
-The bundle targets macOS 12 or newer; older supported versions remain untested.
+The bundle targets macOS 12 or newer; older versions are untested.
 
 ## Spend and job notifications
 
@@ -44,32 +44,24 @@ rechecks grants before resuming.
 ## Home and credentials
 
 Home precedence is `CGAGENTHARNESS_HOME`, then `USERPROFILE` or `HOME` plus
-`.CGagentHarness`; overrides must be absolute. The app does not migrate data to
-Application Support. Config, sessions, notes, persona, keys, and run evidence
-stay outside the bundle. Check the home in the footer or Setup, and record it
+`.CGagentHarness`; overrides must be absolute. Config, sessions, notes, persona,
+keys, and run evidence stay outside the bundle, and nothing migrates to
+Application Support. Check the home in the footer or Setup, and record it
 separately from `Contents/Resources/COMMIT` when comparing app copies.
 
 Desktop and headless `serve` load managed keys from the OS credential store
 ([key-store contract](../INVARIANTS.md#provider-keys-live-in-the-os-credential-store)).
 Keys stay out of user-facing URLs, readiness files and result links, and
 config or key parse failures show a setup error without quoting values. No
-desktop session elevation exists.
+desktop session elevation exists. Loading a key never grants content, account,
+or repository-write access. Linux without a Secret Service session
+(`DBUS_SESSION_BUS_ADDRESS` unset) fails closed; headless macOS may refuse
+Keychain access for an unsigned binary instead of prompting.
 
-A SerpAPI key selects API-backed Google results without a Google page grant;
-linked pages still require URL permission. Without a key, public Google may hit
-JavaScript or CAPTCHA blocks. Other provider gates
-remain independent. Loading a key never grants content, account, or repository-write
-access. Linux without a Secret Service session (`DBUS_SESSION_BUS_ADDRESS` unset)
-fails closed. Headless macOS may refuse Keychain access for an unsigned binary
-instead of prompting.
-
-Webview storage is private. Sign in after reopening; provider keys remain
-server-side. Sessions, notes, settings, and retained jobs persist through
-the backend. `/agent jobs` and `/agent runs` rediscover retained work.
+Webview storage is private: sign in after reopening. Sessions, notes, settings,
+and retained jobs persist through the backend.
 
 ## Ownership, ports and security boundaries
-
-The process topology is:
 
 ```
 CG Agent Harness.app (Tauri/WKWebView)
@@ -87,80 +79,72 @@ The endpoint applies account, origin, CSRF, and rate checks.
 Setup invokes `desktop_status`, `retry_backend`, `check_models`, `prepare_cargo`,
 and `export_browser_certificate` in `desktop/src/main.rs`. None accepts commands.
 Certificate export uses a native save dialog, writes only the owned public leaf,
-and refuses existing files. Compare its displayed SHA-256 before following
-[browser trust instructions](SECURE_RESEARCH.md#https-and-native-trust). It never installs trust.
+refuses existing files and never installs trust. Compare its displayed SHA-256
+before following [browser trust instructions](SECURE_RESEARCH.md#https-and-native-trust).
 Readiness grants no API authority; the backend API and CLI remain independent.
 
 The globe beside **CG Agent / harness** requests native confirmation, then runs
-bundled `start-web.sh` in Terminal to open the owned server in the default browser.
-It starts no second server: keep the app running. The browser needs its own login
-and local-certificate trust. The script and paths come from the shell, never page
-content. Ordinary browser consoles hide this button.
+bundled `start-web.sh` in Terminal to open the owned server in the default browser
+([browser access](INSTALL.md#7-open-the-console-in-a-browser)). It starts no
+second server. The script and paths come from the shell, never page content;
+ordinary browser consoles hide this button.
 
 An OS-held home lock prevents concurrent desktop and headless server writers on
-Unix and Windows. A private, user/home-scoped Unix socket only focuses an existing desktop;
-it carries no secrets, commands, or PID authority. Different
-homes can run independently. Independent manually invoked agentic CLI commands
-are not excluded by the server home lock; do not run concurrent writers manually.
+Unix and Windows. A private, user/home-scoped Unix socket only focuses an existing
+desktop; it carries no secrets, commands, or PID authority. Different homes run
+independently. Manually invoked agentic CLI commands are not excluded by the
+server home lock; do not run concurrent writers by hand.
 
 Only the owned exact origin loads in the console webview. Navigation to other
 origins is denied; validated HTTP(S) links need native confirmation before the
-OS opens an external browser. New webviews and downloads are denied. Session
-export saves Markdown in the harness home. File pickers remain available.
-Model/web content uses the
-existing text renderer and nonce CSP. The external console window receives **no
-native capability**. Only bundled Setup can invoke status, retry, model inventory, offline preparation
-and public-certificate export through native pickers. No generic shell, arbitrary
-file API, analytics, updater, or crash upload exists.
+OS opens an external browser. New webviews and downloads are denied; session
+export saves Markdown in the harness home, and file pickers remain available.
+Model and web content uses the existing text renderer and nonce CSP. The
+external console window receives **no native capability**; only bundled Setup
+can invoke the five operations above. No generic shell, arbitrary file API,
+analytics, updater, or crash upload exists.
 
 I6 is unchanged: the server never imports agentic implementation. All run,
 approval, commit, push and publication operations cross the existing shim into
 worker mode. Confirmation is not defaulted on; reasons, write gates, revocation,
 accepted-tree binding and separate publication controls remain authoritative.
-Signing and hardened runtime do not constitute the macOS App Sandbox or replace
-the existing Seatbelt execution restrictions. No App Sandbox entitlement is added.
+Signing and hardened runtime are not the macOS App Sandbox and do not replace
+the Seatbelt execution restrictions. No App Sandbox entitlement is added.
 
 ## Finder setup and local inference
 
 Setup discovers Git, gh, Cargo, Rust, Python and Xcode in known directories
 (`~/.cargo/bin`, Homebrew, `/usr/local/bin`, system directories), never inherited
-PATH or the launch directory. Each operation validates readiness separately.
-For explicit operator tool locations, a private, current-user-owned
-`desktop-tools.json` in the application home may contain:
+PATH or the launch directory. For other locations, a private, user-owned
+`desktop-tools.json` in the home may contain:
 
 ```json
 {"directories":["/absolute/operator-owned/tool-directory"]}
 ```
 
 At most eight directories are allowed. Each must be absolute, exist, belong to
-the user, and reject other-user writes. Setup lists default discovery; explicit
-directories apply to backend operations and preparation.
+the user, and reject other-user writes. They apply to backend operations and
+preparation; Setup lists default discovery.
 
 **Check installed chat and planner models** queries configured loopback inventories
 with a deadline, response bound, no proxy, and no redirect. It reports each exact
-tag as present, absent, or failed. It never downloads models or probes cloud planners.
-Submit a short console chat to test inference. `/model use <exact-tag>` changes chat;
-planner settings remain in `agentic.deepagent_github`. Do not infer MLX or any
-other backend merely from a tag suffix. Start the already-installed Ollama app
-if its endpoint is unavailable; no runtime is automatically switched.
-
-When local fallback is enabled, HTTP success is insufficient; inventory must list
-the exact model. A missing primary permits fallback; two missing tags leave the
-primary degraded. Disabled fallback makes no inventory request, and no other tag
-is substituted. `models.local_llm.inventory` bounds the probe (default 2 s and
-262144 bytes; 0.1–30 s and 1024–1048576 bytes); fallback keeps its separate
+tag as present, absent, or failed; it never downloads models, probes cloud
+planners or switches a runtime. Send a short chat to test inference
+([states and fallback](MODELS.md#exact-model-diagnostics-and-optional-fallback)).
+`models.local_llm.inventory` bounds the probe (default 2 s and 262144 bytes;
+0.1–30 s and 1024–1048576 bytes); fallback keeps its separate
 `probe_timeout_sec` (default 1.5 s, 0.1–30). Malformed values are refused.
 
 **Choose repository and prepare offline** runs the bundled `prepare-cargo.py`
-with fixed arguments and an actual native folder choice. Python 3, Cargo, the
-selected Rust toolchain, SDK, Cargo.lock and cached sources are prerequisites.
-It creates the read-only preparation inventory without downloading dependencies
-or models. Setup discards tool output and shows bounded static results. Missing inputs require explicit
-operator preparation; online preparation remains an explicit CLI helper option.
-The app has no automatic toolchain installation.
+with fixed arguments and a native folder choice. Python 3, Cargo, the selected
+Rust toolchain, SDK, Cargo.lock and cached sources are prerequisites. It creates
+the read-only preparation inventory without downloading dependencies or models,
+discards tool output and shows bounded static results. Missing inputs need
+operator preparation; online preparation stays an explicit CLI helper option.
 
-The app adds no automatic cloud inference, model pull, external probe or
-telemetry; a loopback model endpoint does not prove its service stays offline.
+The app adds no automatic toolchain installation, cloud inference, model pull,
+external probe or telemetry; a loopback model endpoint does not prove its
+service stays offline.
 
 ## Closing, quitting and recovery
 
@@ -168,11 +152,10 @@ Close hides a window and keeps the backend alive. Dock reopen and a second
 launch focus the existing home instance. Cmd-Q asks **Keep running** or **Cancel
 work and quit** when chat, a job, a shim operation or preparation is active.
 Shutdown closes the private channel, cancels owned work, and waits before
-terminating its direct child. Parent death requests the same shutdown through
-pipe EOF. Backend failure returns to Setup with a
-controlled retry. Startup protocol reads have a 20-second deadline; OS file
-access mediation and kernel I/O can delay pre-launch file access beyond it.
-If startup keeps waiting, check for a macOS file-access prompt, quit the copy,
+terminating its direct child; parent death requests the same shutdown through
+pipe EOF. Backend failure returns to Setup with a controlled retry. Startup
+protocol reads have a 20-second deadline, which OS file-access mediation can
+exceed. If startup keeps waiting, check for a macOS file-access prompt, quit,
 move the complete app to Applications, and retry. Do not delete the home.
 
 `data/agentic/console-jobs.json` retains at most 32 terminal jobs plus one active
@@ -181,33 +164,31 @@ reattaches or resumes. A persistence failure refuses execution or reports an
 unsaved outcome.
 
 `/agent runs` lists bounded recent records and reconciles released
-Unix/Windows worker leases to `interrupted`. A live lease remains running. Legacy running
-records without ownership evidence stay unknown and cannot be discarded by a
-stale-state guess. `/agent status <id>` inspects retained evidence and available
+Unix/Windows worker leases to `interrupted`; a live lease remains running. Legacy
+running records without ownership evidence stay unknown and cannot be discarded
+on a stale-state guess. `/agent status <id>` inspects retained evidence and
 diff; `/agent discard <id>` removes interrupted or decided work through the
-existing jailed worker operation. Pending proposals still require a decision.
-No approval, commit, push, publication or model request is replayed at startup.
+jailed worker operation. Pending proposals still require a decision. No
+approval, commit, push, publication or model request is replayed at startup.
 Run evidence is retained separately from the rolling console-job list.
 
 Audit, spend, and optional metrics JSONL sinks retain a current file and one `.1`
-file, default 8 MiB each (`logging.max_file_bytes`, 64 KiB–64 MiB). Existing
-oversized logs are retained as the first previous generation until the next
-rotation. Busy/unavailable sinks or oversized events produce a warning and drop
-that event; logging remains best-effort. The desktop discards arbitrary child
-stderr and keeps no growing stdout/stderr log. Private frames, model
-inventory, job evidence and existing worker capture have explicit size bounds.
+file, default 8 MiB each (`logging.max_file_bytes`, 64 KiB–64 MiB); an existing
+oversized log becomes the `.1` file until the next rotation. A busy or
+unavailable sink, or an oversized event, drops that event with a warning;
+logging is best-effort. The desktop discards child stderr and keeps no growing
+stdout/stderr log.
 
 Cancellation is **best-effort ancestry cleanup**, not perfect process containment.
-Kernel waits can exceed deadlines. Backend SIGKILL bypasses destructors; children
-that reparent before observation can survive. Inspect retained runs and surviving
-work before further writes. See [PROCESS_LIFECYCLE.md](PROCESS_LIFECYCLE.md).
-No per-run disk, memory or process-count quota is introduced.
+Kernel waits can exceed deadlines, backend SIGKILL bypasses destructors, and
+children that reparent before observation can survive. Inspect retained runs and
+surviving work before further writes ([process lifecycle](PROCESS_LIFECYCLE.md)).
+There is no per-run disk, memory or process-count quota.
 
 ## Rebuild and verify
 
 Build prerequisites: Apple Silicon macOS, Xcode Command Line Tools, Git, rustup,
-backend Rust 1.89 and desktop Rust 1.90. Build-time dependency downloads are
-separate from shipped runtime behavior. Install those toolchains explicitly;
+backend Rust 1.89 and desktop Rust 1.90. Install both toolchains explicitly;
 the packaging script sets `RUSTUP_AUTO_INSTALL=0`.
 
 ```sh
@@ -227,32 +208,26 @@ scripts/verify-desktop-bundle.sh 'dist/CG Agent Harness.app' universal
 (cd dist && shasum -a 256 -c SHA256SUMS)
 ```
 
-Use rustup's Cargo so each package's toolchain file applies. Build and sign the
-universal sidecar before compiling either shell slice's embedded hash. The
-packager combines both backends with `lipo`, signs that file, then builds both
-shells against its SHA-256. Do not re-sign the sidecar afterward.
+Use rustup's Cargo so each package's toolchain file applies. The packager
+combines both backends with `lipo`, signs that file, then builds both shell
+slices against its SHA-256; do not re-sign the sidecar afterward.
 `scripts/verify-desktop-bundle.sh` hashes the staged `Contents/MacOS/cgagentharness`
 after the final `.app` codesign and requires that SHA-256 to still appear in the
-shell binary (`CGAH_BACKEND_SHA256`). Packaging refuses a
-dirty tree unless `CGAH_ALLOW_DIRTY=1`, which marks the bundle as development.
-It produces `.app`, ZIP, optional DMG, and SHA256SUMS in `dist/`; the bundle's
-`Contents/Resources/COMMIT` identifies the source commit. Build outputs are not
-committed. Universal archives are named `CG-Agent-Harness-macos-universal.zip`;
-omitting `--universal` retains an arm64 development build. Tagged releases wait for
-both backend CI and this desktop job before attaching CLI and app packages.
-Cross-building Intel is not native Intel acceptance, and byte-identical
-rebuilds are not claimed.
+shell binary (`CGAH_BACKEND_SHA256`). Packaging refuses a dirty tree unless
+`CGAH_ALLOW_DIRTY=1`, which marks the bundle as development. Outputs land in
+`dist/`; `Contents/Resources/COMMIT` identifies the source commit. Omitting
+`--universal` keeps an arm64 development build. Cross-building Intel is not
+native Intel acceptance, and byte-identical rebuilds are not claimed.
 
-Reusable Desktop CI checks both architectures, system linkage, nested signatures,
-resources, CLI/worker dispatch, policy tests, extracted ZIP, and dependencies. Artifacts retain
-the exact SHA for 14 days. It runs from bundle, release or dispatch; pull requests that
-change `desktop/` or `src/common/local_tls.rs` (which `desktop/src/backend.rs` includes
-through `#[path]`) run `desktop-check.yml` instead: fmt, clippy, tests and deny without
-packaging. Backend CI stays separate. A successful build is not
-GUI acceptance.
+Desktop CI (bundle, release or dispatch) checks both architectures, system
+linkage, nested signatures, resources, CLI/worker dispatch, policy tests, the
+extracted ZIP, and dependencies; artifacts last 14 days. Pull requests that
+change `desktop/`, `src/common/local_tls.rs` (which `desktop/src/backend.rs`
+includes through `#[path]`) or `scripts/start-web.sh` run `desktop-check.yml`
+instead: fmt, clippy, tests and deny without packaging. A successful build is
+not GUI acceptance.
 
-Desktop Rust 1.90 and backend Rust 1.89 stay independently pinned, each crate
-with its own lockfile and `deny.toml`
+Each crate keeps its own toolchain pin, lockfile and `deny.toml`
 ([dependency maintenance](DEPENDENCIES.md#retained-constraints)).
 
 ## Update, recovery and uninstall
@@ -260,41 +235,30 @@ with its own lockfile and `deny.toml`
 Quit the app before replacing the bundle, verify the archive checksum, then open
 the new copy. Keep the home intact. If a same-home server conflict appears, quit
 that server; never delete a lock file to defeat live ownership. If durable job
-JSON is corrupt or oversized, stop the app and preserve a copy for inspection
-before an operator explicitly archives that one job-history file. Keep separate
-run records, workspaces, credentials and sessions. There is no automatic reset.
+JSON is corrupt or oversized, stop the app and preserve a copy before archiving
+that one job-history file; keep run records, workspaces, credentials and
+sessions. There is no automatic reset.
 
-To uninstall, quit and move the app to Trash. Removing its home is a separate,
-optional destructive action; back up wanted data first. `scripts/reset-macos.sh`
+To uninstall, quit and move the app to Trash. Removing its home is a separate
+destructive action; back up wanted data first. `scripts/reset-macos.sh`
 previews selected home and Keychain removals; `--yes` applies them. The per-user
-focus directory under `/private/tmp` holds only lock/socket files, no credentials.
-No persistent service needs removal.
+focus directory under `/private/tmp` holds only lock/socket files.
 
 ### Reset failure and recovery
 
-Reset checks every selected Keychain service before deletion. A reported
-preflight lookup failure exits 1 without deleting entries or the home. A later
-lookup/delete failure also exits 1, reports the successful-delete count and
-preserves the home; earlier deletions are not rolled back. Read the count: a
-retained home may lack provider keys or its saved admin password. Account
-passwords in `auth.sqlite3` remain unchanged.
+Reset checks every selected Keychain service before deletion. A preflight lookup
+failure exits 1 without deleting entries or the home. A later lookup or delete
+failure also exits 1, reports the successful-delete count and preserves the
+home; earlier deletions are not rolled back, so a retained home may lack
+provider keys or its saved admin password. Account passwords in `auth.sqlite3`
+remain unchanged.
 
 Resolve the Keychain problem, keep the harness stopped, then rerun with the same
-`CGAGENTHARNESS_HOME` and `--yes`. Missing entries are skipped; home removal
-follows successful completion of remaining credential operations. Another failure
-can leave further progress. Before reusing a retained home, re-enter missing keys
-you need; a home backup does not restore Keychain entries.
+`CGAGENTHARNESS_HOME` and `--yes`. Missing entries are skipped; the home is
+removed after the remaining credential operations succeed. Before reusing a
+retained home, re-enter the keys you need; a home backup does not restore
+Keychain entries.
 
-The `security` CLI deletes one item per call and provides this script no
-transaction or rollback. Reset neither exports secrets for fallible restores nor
-restores a shared Keychain. Its progress/retry guarantee covers the selected
-home's service names; other homes, credentials under other service names and
-shared tools stay outside the purge.
-
-## Primary references
-
-- [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
-- [Sidecars](https://v2.tauri.app/develop/sidecar/), [capabilities](https://v2.tauri.app/security/capabilities/), [CSP](https://v2.tauri.app/security/csp/)
-- [Navigation APIs](https://docs.rs/tauri/2.12.0/tauri/webview/struct.WebviewWindowBuilder.html)
-- [macOS bundles](https://v2.tauri.app/distribute/macos-application-bundle/), [signing](https://v2.tauri.app/distribute/sign/macos/)
-- [macOS WebDriver limitation](https://v2.tauri.app/develop/tests/webdriver/)
+The `security` CLI deletes one item per call, with no transaction or rollback.
+Reset covers only the selected home's service names; other homes, credentials
+under other service names and shared tools stay outside the purge.

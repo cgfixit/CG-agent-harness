@@ -1,12 +1,10 @@
 # Dependency maintenance
 
-The backend and desktop are separate Cargo crates, with independently committed
-manifests, lockfiles, toolchains and `deny.toml` policies. A third lockfile,
-the Seatbelt test fixture `tests/fixtures/cargo-sandbox`, gets the root policy's
-advisories, bans and sources checks in CI. The backend pins Rust
-1.89; `desktop/` pins 1.90. Use rustup's Cargo so the local toolchain files take
-effect. CI/release builds use locked resolution. Downloads during dependency
-preparation are separate from the application's offline Cargo verification.
+The backend and desktop are separate Cargo crates with their own manifests,
+lockfiles, toolchains (Rust 1.89 and 1.90) and `deny.toml` policies. A third
+lockfile, the Seatbelt test fixture `tests/fixtures/cargo-sandbox`, gets the
+root policy's advisories, bans and sources checks in CI. Use rustup's Cargo so
+the toolchain files take effect; CI and release builds resolve `--locked`.
 
 ## Runtime additions and boundaries
 
@@ -24,13 +22,11 @@ preparation are separate from the application's offline Cargo verification.
 
 Reqwest 0.13 serves both crates: public fetching disables proxies, redirects,
 compression, retries and reuse and pins checked DNS addresses, while loopback
-certificate pinning never replaces public-web trust. cargo-deny does not certify
-safe runtime use of a crate.
-
-Reqwest's `rustls` feature enables AWS-LC alongside the explicit ring provider.
-Locked `aws-lc-sys` 0.47.0 normally builds with a C compiler; its Rust `cmake`
-build dependency does not itself require a CMake executable. See
-[source-build prerequisites](INSTALL.md#51-standalone-backend) for alternate builds.
+certificate pinning never replaces public-web trust. Its `rustls` feature
+enables AWS-LC beside the explicit ring provider; locked `aws-lc-sys` 0.47.0
+builds with a C compiler and needs no CMake executable
+([source-build prerequisites](INSTALL.md#51-standalone-backend)). cargo-deny
+does not certify safe runtime use of a crate.
 
 ## Retained constraints
 
@@ -43,39 +39,35 @@ build dependency does not itself require a CMake executable. See
   and later are no longer MSRV-held.
 - Incompatible major lines are separate API migrations, not drift: backend
   `axum-server` 0.8, `base64` 0.22, `rand` 0.8, `scrypt` 0.11, `scraper` 0.27 with `html5ever`
-  0.39, `windows-sys` 0.59 and the `rmcp` pin; desktop `toml` 0.8.2 and `brotli-decompressor` 6.2,
+  0.39, `windows-sys` 0.59 and the `rmcp` pin; desktop `toml` 0.8.2,
   held by upstream constraints with `generic-array` and `matchit`. Newer
   available versions alone do not make a valid lockfile stale or justify
   expanding a security refresh into a framework/toolchain migration.
 - Manual refreshes follow Dependabot's 7-day cooldown (`.github/dependabot.yml`):
-  a compatible release younger than a week is not drift yet. A release that
-  fixes an advisory against a locked crate skips the wait, as Dependabot
-  security updates do.
-- The backend license allowlist names only identifiers the locked graph uses.
-  Add an identifier deliberately, with the crate that needs it, rather than
-  keeping unused allowances that would admit a future dependency silently.
+  a compatible release younger than a week is not drift yet, unless it fixes an
+  advisory against a locked crate.
+- The backend license allowlist names only identifiers the locked graph uses;
+  add one deliberately, with the crate that needs it.
 - Desktop Tauri is pinned to `=2.12.4`; its `tauri-utils` 2.10.2 routes
   `urlpattern` through ICU, so no `unic-*` crate and no Git source remains in
   either lock (`cargo tree` must show none).
 - Tantivy 0.27 resolves `lru` 0.18.2 or newer; desktop has no advisory exception.
 - Backend `RUSTSEC-2024-0449` waives unmaintained `unsafe-libyaml` via
-  `serde_yaml_ng`. Owner: `cgfixit`; review maintained, MSRV-compatible YAML
-  replacements weekly and on Cargo Dependabot PRs. Remove the waiver when
-  `unsafe-libyaml` leaves the backend lockfile, after both dependency policies
-  and configuration parsing checks pass. Unused-ignore warnings do not detect
-  available replacements.
-- GHSA-qwgh-2vcv-g2f7 (`block-buffer`) affects only `>=0.11.0, <0.12.1`;
-  the range was corrected upstream on 2026-10-30. Both locks carry 0.10.4 and
-  0.12.1, outside it, so no residual or `deny.toml` ignore is needed (#713,
-  #757). A `scrypt` 0.12 move stays an optional API migration, not a fix.
-- Duplicate versions are warnings under the existing policy. Advisories,
-  unapproved licenses, wildcard requirements and unknown sources remain blocking.
-- Both `deny.toml` files ban push-telemetry and analytics SDK crates
-  (OpenTelemetry, Sentry, PostHog, Segment, Mixpanel, Amplitude, Datadog,
-  Honeycomb, Bugsnag, RudderStack, Statsig, LaunchDarkly, minitrace) by exact
-  name, the CI half of the otel-hardening skill's T5 pattern sweep.
-- Optional runtime services (Google, SerpAPI, Tavily, Firecrawl, Ollama, cloud providers) are not
-  Cargo dependencies; a live-service check is not a dependency or test pass.
+  `serde_yaml_ng`. Owner: `cgfixit`, who reviews maintained, MSRV-compatible
+  YAML replacements weekly and on Cargo Dependabot PRs. Remove the waiver when
+  `unsafe-libyaml` leaves the backend lockfile; an unused-ignore warning does
+  not detect an available replacement.
+- GHSA-qwgh-2vcv-g2f7 (`block-buffer`) affects only `>=0.11.0, <0.12.1`. Both
+  locks carry 0.10.4 and 0.12.1, outside it, so no `deny.toml` ignore is
+  needed; a `scrypt` 0.12 move stays an optional API migration, not a fix.
+- Duplicate versions are warnings. Advisories, unapproved licenses, wildcard
+  requirements and unknown sources block.
+- Both `deny.toml` files ban push-telemetry and analytics SDK crates by exact
+  name (OpenTelemetry, Sentry, PostHog, Segment, Mixpanel, Amplitude, Datadog,
+  Honeycomb, Bugsnag, RudderStack, Statsig, LaunchDarkly, minitrace).
+- Optional runtime services (Google, SerpAPI, Tavily, Firecrawl, Ollama, cloud
+  providers) are not Cargo dependencies; a live-service check is not a
+  dependency or test pass.
 
 ## Check and synchronize
 
@@ -91,18 +83,15 @@ cargo build --locked
 cargo deny check
 ```
 
-Use cargo-deny 0.20 or
-newer (CI's action bundles 0.20.2); 0.18 rejects `deny.toml`'s `unsound = "all"`.
-Check Cargo's exit status;
-do not infer success from a grep match or suppress errors. The update command is
-a preview and leaves the lockfile unchanged; `--locked` alone does not mean all
-available versions are installed. Review compatibility and upstream changes.
-For an authorized update, omit `--dry-run --locked` (the MSRV-aware resolver
-setting is committed in `.cargo/config.toml`), inspect the manifest/lock diff,
-and rerun both crates' formatting,
-Clippy, tests, dependency policy, release builds and applicable native/package
-acceptance. Do not change global rustup overrides to satisfy a dependency.
-The `dep-sync` skill scripts this pass against `origin/main`.
+Use cargo-deny 0.20 or newer (CI's action bundles 0.20.2); 0.18 rejects
+`deny.toml`'s `unsound = "all"`. Check Cargo's exit status rather than a grep
+match. The update command is a preview that leaves the lockfile unchanged. For
+an authorized update, omit `--dry-run --locked`, inspect the manifest and lock
+diff, including dependency edges of crates you did not name, and rerun both
+crates' formatting, Clippy, tests, dependency policy, release builds and any
+native or package acceptance that applies. Do not change global rustup
+overrides to satisfy a dependency. The `dep-sync` skill scripts this pass
+against `origin/main`.
 
 Exact versions are authoritative in the lockfiles. Consult
 the [RustSec advisory database](https://rustsec.org/advisories/) and upstream
@@ -112,14 +101,15 @@ point-in-time advisory/license/source check, not proof of vulnerability absence.
 Workflow action pins live in `.github/workflows/` and move with those files,
 not with the lockfiles.
 
-## Last synchronization (2026-11-09)
+## Last synchronization (2026-11-11)
 
-Advisory refresh only, so the cooldown did not apply. RUSTSEC-2026-0459 moved
-the backend to Rust 1.89, `rusqlite` 0.41.1 and `libsqlite3-sys` 0.39.1
-(bundled SQLite 3.54.1); RUSTSEC-2026-0462 moved the `rmcp` pin to 3.9.0.
-Dependabot had already moved `rmcp` to 3.8.0 (#798) and `zip` to 9.2.2 (#800).
-The desktop and fixture locks carry neither crate and did not change. The
-2026-11-07 pass found every other compatible candidate younger than the
-cooldown; `tauri` 2.12.5 waits on its pin and `axum-server` 0.9.0 is a new
-major line. Dated results describe that pass only; rerun the checks above
-before trusting them.
+Cooldown refresh, lockfiles only. Backend: `uuid` 1.26.1 to 1.29.0 (the
+desktop lock's version, admitted by Rust 1.89), `cc` 1.11.0, `crc32fast` 1.5.4
+and the lock-only `openssl` 0.10.82 with `openssl-sys` 0.9.118. Desktop:
+`crc32fast` 1.5.4 and lock-only `jiff` 0.2.39 with `jiff-core` 0.1.2. Every
+other compatible candidate was younger than the cooldown, `brotli-decompressor`
+6.3 included. `zip` 9.3.0 and desktop `cc` 1.11.0 stay with Dependabot: each
+also re-resolved unrelated `windows-sys` or `getrandom` edges under Cargo
+1.89/1.90. `tauri` 2.12.5 waits on its pin and `axum-server` 0.9 is a new major
+line. Dated results describe that pass only; rerun the checks above before
+trusting them.

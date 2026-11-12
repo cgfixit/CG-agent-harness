@@ -4,8 +4,7 @@ Optional, disarmed-by-default coding loop ([README](../README.md#design-invarian
 
 ## 9. (Optional, advanced) Arm the coding pipeline
 
-Coding execution is optional and disarmed by default. Complete it only to
-authorize work in a selected repository.
+Complete this section only to authorize work in a repository you select.
 
 ```mermaid
 flowchart LR
@@ -18,11 +17,11 @@ flowchart LR
     R --> A["/agent approve reason"] --> U["/agent push reason"] --> D["/agent publish reason: draft PR"]
 ```
 
-Every arrow after the clone is its own gate; model prose crosses none.
-The combined write policy ships closed: `agentic.enabled`,
-`agentic.deepagent_github.enabled` and `allow_git_write_tools` are false. Individual
-settings such as `mode: write`, `writes_enabled: true` and cloud-provider flags
-are not all false. Inspect the complete policy before enabling its master gates.
+Every arrow after the clone is its own gate; model prose crosses none. The
+combined write policy ships closed: `agentic.enabled`,
+`agentic.deepagent_github.enabled` and `allow_git_write_tools` are false. Other
+settings, such as `mode: write` and `writes_enabled: true`, do not ship false,
+so read the whole policy before enabling the master gates.
 
 ### 9.1 Install and authenticate the GitHub CLI
 
@@ -36,10 +35,6 @@ gh auth status
 
 ### 9.2 Edit the configuration file
 
-Restart after editing the planner model, endpoint, provider, timeout, output
-limit or reasoning settings: runs, jobs and schedules bind to the startup
-values, and the child refuses changed settings with exit 3 before repository work.
-
 The first `serve` creates `~/.CGagentHarness/config.yaml` from
 `assets/config.default.yaml`. Open it:
 
@@ -47,9 +42,9 @@ The first `serve` creates `~/.CGagentHarness/config.yaml` from
 open -e ~/.CGagentHarness/config.yaml
 ```
 
-Merge the following fields into the existing configuration. Fresh homes set `agentic.repo: ""`; select your own `owner/name` before enabling
-the coding layer. Repository package metadata is not a runtime target. The repo
-field is a selector string, not a boolean gate. Use the installed model chosen in [model setup](MODELS.md):
+Merge these fields into the existing file. Fresh homes set `agentic.repo: ""`;
+it is a selector string, not a gate, so name your own `owner/name`. Use the
+installed model chosen in [model setup](MODELS.md):
 
 ```yaml
 agentic:
@@ -72,61 +67,65 @@ agentic:
 
 All five write gates must permit an operation, and approval, push and
 publication each need their own reason and confirmation
-([contract](../INVARIANTS.md#every-write-to-a-repository-is-gated)). Keep
-cloud-provider child flags false when their parent allow flag is false.
-`agentic.gh_timeout_sec` (ships 30) and `gh_retries` (ships 2) bound each
-`gh` call; a pair whose worst case reaches the 900-second run setup budget is
+([contract](../INVARIANTS.md#every-write-to-a-repository-is-gated)). Keep the
+cloud-provider child flags false while their parent allow flag is false.
+`agentic.gh_timeout_sec` (ships 30) and `gh_retries` (ships 2) bound each `gh`
+call; a pair whose worst case reaches the 900-second run setup budget is
 refused at load.
+
+Restart after editing the planner model, endpoint, provider, timeout, output
+limit or reasoning settings. Runs, jobs and schedules bind to the startup
+values, and the child refuses changed settings with exit 3 before any
+repository work.
 
 ### 9.3 Run it from the console
 
-Select the repository in configuration, then prepare its committed Cargo.lock
-into the same application home. From the harness checkout, substitute the actual
-repository path and configured home:
+Prepare the selected repository's committed `Cargo.lock` into the same
+application home. From the harness checkout:
 
 ```bash
 python3 scripts/prepare-cargo.py /path/to/selected/repository "$HOME/.CGagentHarness"
 ```
 
 In the app, **Harness → Setup and recovery → Choose repository and prepare
-offline** runs the same bundled helper with a native folder chooser;
-prerequisites and custom tool paths are in
-[desktop setup](DESKTOP.md#finder-setup-and-local-inference). Preparation
+offline** runs the same helper with a native folder chooser
+([desktop setup](DESKTOP.md#finder-setup-and-local-inference)). Preparation
 defaults to offline; rerun with `--online` only after reviewing which locked
-dependencies are missing. Checks stay offline
+dependencies are missing. Checks always stay offline
 ([offline Cargo verification](#offline-cargo-verification)).
 
-Back in the app or browser console:
+Back in the console:
 
 1. `/agent run codex/fix-topic Describe the intended change` stages an instruction.
-2. `/agent checks` lists supported profiles. The server default is `cargo-test`;
-   `/agent checks cargo-fmt` is an example explicit selection.
+2. `/agent checks` lists the supported profiles. The server default is
+   `cargo-test`; `/agent checks cargo-fmt` selects another.
 3. `/agent read src/lib.rs#L40-L80` declares a bounded existing-file window
    (up to 8 staged paths). A **local** planner may also request reads
    ([Bounded edits](#bounded-edits)); a **cloud** planner refuses them, so
-   pre-stage what that run may see here.
+   pre-stage what that run may see.
 4. `/agent confirm <reason>` submits a job and returns its ID immediately.
-5. `/agent job <job-id>` resumes monitoring after refresh and account login; the optional harness key may stay empty.
-6. `/agent status <run-id>` displays the candidate and complete diff. A truncated
-   diff cannot satisfy console approval.
-7. `/agent approve <run-id> <reason>` commits after explicit diff review.
-8. `/agent push <run-id> <reason>` separately pushes the approved branch.
-9. Complete the actual repository PR template in a local Markdown file.
+5. `/agent job <job-id>` resumes monitoring after a refresh or a new login.
+6. `/agent status <run-id>` shows the candidate and its complete diff. A
+   truncated diff cannot satisfy console approval.
+7. `/agent approve <run-id> <reason>` commits after you have reviewed the diff.
+8. `/agent push <run-id> <reason>` pushes the approved branch.
+9. Fill in the repository's PR template in a local Markdown file.
    `/agent pr-body <run-id>` selects and previews it; then
-   `/agent publish <run-id> <reason>` separately opens the draft PR.
+   `/agent publish <run-id> <reason>` opens the draft PR.
 
 `/agent cancel` discards only a staged request. `/agent stop <job-id>` requests
 cancellation; escaped or interrupted descendants may survive. `/agent reject
-<run-id>` rejects a candidate; `/agent discard <run-id>` cleans up a terminal run.
+<run-id>` rejects a candidate and `/agent discard <run-id>` cleans up a
+terminal run.
 
 CLI writes need `--reason=<why> --confirm` (publication also a reviewed
 `--body-file`); API writes need `reason`, `confirm: true` and, for publication,
-`body`. Combined approval/push/publication is refused.
-See [Git approval and publication](#git-approval-and-publication).
+`body`. A combined approve/push/publish request is refused
+([Git approval and publication](#git-approval-and-publication)).
 
 ### 9.4 Stage a session goal as a coding task
 
-After preparing the repository, tools and deliberate write configuration above:
+With the repository, tools and write configuration above in place:
 
 ```text
 /goal Fix the arithmetic bug and pass the declared Cargo test
@@ -136,75 +135,66 @@ After preparing the repository, tools and deliberate write configuration above:
 /agent iterations 1
 ```
 
-Staging stores a reviewable goal/branch request; it creates no worker.
-Review the request before `/agent confirm <reason>`. One iteration is the default;
-retries remain bounded by the coding pipeline's configured/requested limits.
+Staging stores a reviewable goal and branch request and creates no worker;
+review it before `/agent confirm <reason>`. One iteration is the default.
 
-Use `/goal task` to inspect progress or restore an unsubmitted stage after page
-refresh. The server binds submission to the current goal and stage and saves the
-job association before releasing the worker. A changed goal or duplicate submission
-is refused; inspect the existing job before deliberately staging another request.
+`/goal task` shows progress or restores an unsubmitted stage after a page
+refresh. The server binds submission to the current goal and stage; a changed
+goal or a duplicate submission is refused, so inspect the existing job before
+staging another.
 
-A checked candidate reports **awaiting_review**. `/agent status <run-id>` presents
+A checked candidate reports **awaiting_review**. `/agent status <run-id>` shows
 the complete diff, ignored and attribute-hidden changes included
-([approval binding](../INVARIANTS.md#approval-is-bound-to-what-was-reviewed));
-`/agent approve <run-id> <reason>` is a separate decision.
-**completed_local** requires checked-tree evidence and an approved commit, not a
-push, publication, or proof of every subjective goal; push and publication are
-separate steps ([Run it from the console](#93-run-it-from-the-console)).
+([approval binding](../INVARIANTS.md#approval-is-bound-to-what-was-reviewed)),
+and `/agent approve` is a separate decision. **completed_local** means
+checked-tree evidence and an approved commit, not a push, a publication or
+proof of every subjective goal.
 
-Each session retains one current stage; jobs/runs retain their own evidence within
-their documented limits. Reopening never replays execution or approval. Changing
-or clearing the chat goal does not cancel an already authorized coding job:
-`/agent stop <job-id>` is the explicit cancellation request.
+Reopening a session never replays execution or approval. Changing or clearing the chat
+goal does not cancel an authorized coding job: `/agent stop <job-id>` does.
 
 ### 9.5 The kill switch
 
 To disable writes for a newly launched backend without editing its config, set
-this environment variable before launch (shown here for `serve`):
+this before launch:
 
 ```bash
 export CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1
 ```
 
-Values `1`, `true`, `yes`, and `on` block writes regardless of YAML; the switch
-cannot enable writes. It is read at process start, so restart with it set, or
-revoke `agentic.writes_enabled` to block later mutation boundaries in an active
-child. Neither cancels a running Git command or check.
+`1`, `true`, `yes` and `on` block writes regardless of YAML; the switch cannot
+enable them. It is read at process start, so restart with it set, or revoke
+`agentic.writes_enabled` to block later mutation boundaries in an active child.
+Neither cancels a running Git command or check.
 
 ## Bounded edits
 
-Declare each file needed by the task with `--read-file src/lib.rs`, or select
-an inclusive line window with `--read-file 'src/lib.rs#L590-L630'`. The same
-selector can be staged with `/agent read src/lib.rs#L590-L630`. A `#Lstart-Lend`
-suffix is reserved for this interface. Select one window per file. Missing,
-unsafe, oversized and omitted selections are reported explicitly.
+Declare each file the task needs with `--read-file src/lib.rs`, or one inclusive
+line window per file with `--read-file 'src/lib.rs#L590-L630'`
+(`/agent read src/lib.rs#L590-L630` in the console). Missing, unsafe, oversized
+and omitted selections are reported explicitly.
 
 During a **local** planner run the model may also emit `=== READ path ===` or
 `=== READ path#Lstart-Lend ===`. Those lines are stripped before proposal
-parsing, jailed like operator `--read-file` values, capped at 6 accepted model
-selectors per run, and shown on the **next** iteration only. They are data, not
-commands, and do not bypass confirm, reason, or write gates. Operator-declared
-paths are never replaced. An unclosed `=== FILE ===` / `=== EDITS ===` block in
-the model reply leaves later READ lines in the body instead of extracting them.
+parsing, jailed like operator selections, capped at 6 accepted model selectors
+per run and shown on the **next** iteration only. They are data, not commands:
+they bypass no confirm, reason or write gate and never replace
+operator-declared paths. An unclosed `=== FILE ===` or `=== EDITS ===` block
+leaves later READ lines in the body instead of extracting them.
 
-After clone-jail canonicalization, both operator `--read-file` and local
-planner `=== READ ===` selectors are refused when any path segment is `.git`
-name-equivalent (`is_dotgit_name`). They are also refused (`sensitive_basename`)
-when the final path segment matches `agentic.deepagent_github.denied_read_basenames`
-(default `.env` / `.env.*`, `*.pem`, `id_rsa` / `id_rsa*` / `id_ed25519*` /
-`id_ecdsa*`, `credentials*` / `credentials.json`, `.npmrc`, `.netrc`, `*.p12`;
-name-equivalence folded). The deny-list is not a secret scanner: secrets can use
-arbitrary names. The clone jail stops path escape and clone Git metadata reads.
-It is not a secrets control.
+After clone-jail canonicalization, operator and model selectors are refused
+when any path segment is `.git` name-equivalent, or when the final segment
+matches `agentic.deepagent_github.denied_read_basenames` (default `.env` and
+`.env.*`, `*.pem`, `id_rsa*`, `id_ed25519*`, `id_ecdsa*`, `credentials*`,
+`.npmrc`, `.netrc`, `*.p12`; name-equivalence folded). The jail stops path
+escape and clone Git metadata reads. Neither it nor the deny-list is a secret
+scanner: secrets can use any name.
 
-Read ceilings are 4,000 characters per file and 12,000 total, with a
-256,000-byte internal file-read ceiling. The exact displayed span is retained
-separately from headings. These are character budgets, not a claim of exact
-Qwen token counts. Context includes the full-file SHA-256 and a completeness
-flag. A later attempt takes a fresh snapshot; having written a file earlier
-never authorizes blind replacement. Predeclare new paths when corrections may
-need to read them in later attempts.
+Read ceilings are 4,000 characters per file and 12,000 in total, under a
+256,000-byte internal file-read ceiling. Context carries the full-file SHA-256
+and a completeness flag. A later attempt takes a fresh snapshot, and having
+written a file earlier never authorizes blind replacement, so predeclare new
+paths a correction may need to read.
 
 For existing large files the planner can emit:
 
@@ -215,47 +205,38 @@ For existing large files the planner can emit:
 ```
 
 Use JSON escapes and one edit per file. `old` must be nonempty, unique in the
-whole original (including overlapping matches), and contained in the actual
-displayed excerpt. Hash mismatch, hidden/ambiguous text, duplicate destinations,
-invalid JSON, mixed block formats and incomplete trailing markers reject the
-whole proposal. `FILE` blocks are for new files or fully displayed current
-originals; they cannot overwrite a partially viewed file.
+whole original (overlapping matches included) and inside the displayed excerpt.
+A hash mismatch, hidden or ambiguous text, duplicate destinations, invalid
+JSON, mixed block formats or an incomplete trailing marker rejects the whole
+proposal. `FILE` blocks are for new files or fully displayed originals; they
+cannot overwrite a partially viewed file.
 
-Model output is judged before it lands: `real_repo_loop.rs` applies the
+Model output is judged before it lands. `real_repo_loop.rs` applies the
 injection, edit-budget and protected-path decisions to all final replacement
 content, and `workspace.rs::apply_proposal` rechecks protected destinations and
-aggregate size before staging, with exact-content binding on each edit.
-Response bytes are bounded by the handoff ceiling (`max_handoff_chars`); large
-original files still count toward the final write budget. Raw, canonical and
-landed destinations pass protected-path policy, including Unicode and case
-equivalents. `deepagent_github.protected_write_paths` is a refusal list — a
-candidate touching one of those destinations is rejected — not a scope that
-edits must stay inside. Proposal writes refuse symlink ancestors/leaves.
-Protected tests and build configuration stay protected, with no tests-directory
-exemption: inline existing tests may be read, and operator-authored regression
-PRs are the reviewed mechanism for new protected tests. Do not weaken that
-policy to get a proposal accepted.
+aggregate size before staging, with exact-content binding on each edit. Raw,
+canonical and landed destinations pass protected-path policy, including Unicode
+and case equivalents, and proposal writes refuse symlink ancestors and leaves.
+`deepagent_github.protected_write_paths` is a refusal list, not a scope edits
+must stay inside. Protected tests and build configuration have no
+tests-directory exemption: existing tests may be read, and new protected tests
+arrive through operator-authored PRs. Do not weaken that policy to get a
+proposal accepted.
 
-Every file's existence/content precondition is checked before staging. Retained
-parent directory capabilities avoid following a newly substituted symlink while
-installing a leaf. Replacements are staged, current originals rechecked, and
-renamed; ordinary later application errors roll back earlier replacements. A
-failed rollback is fatal, quarantines the run and preserves its recovery backup.
-Checks see the resulting batch only after successful application. Failed Cargo
-checks include bounded stdout and stderr in the next attempt's feedback.
+Replacements are staged, originals rechecked, then renamed. A later
+application error rolls back earlier replacements; a failed rollback is fatal,
+quarantines the run and keeps its recovery backup. Checks see the batch only
+after it applies, and a failed Cargo check feeds bounded stdout and stderr into
+the next attempt.
 
-This is not crash-atomic or safe against a concurrent writer: comparison and
-rename are separate syscalls. Do not edit an active disposable clone; empty new
-parent directories may remain after a staging failure.
-
-`tests/exact_edits.rs` drives a real offline Seatbelt Cargo failure and exact
-correction; other tests cover multi-file edits, stale state, protected aliases,
-budgets, parser refusal and rollback. Real-model acceptance remains separate.
+This is not crash-atomic or safe against a concurrent writer, so do not edit
+an active disposable clone. `tests/exact_edits.rs` drives a real offline
+Seatbelt Cargo failure and its exact correction.
 
 ## Optional repository retrieval
 
-To supply relevant files without hand-selecting every path, merge this into
-the active home's existing `agentic.deepagent_github` mapping and restart:
+To supply relevant files without hand-selecting every path, merge this into the
+home's `agentic.deepagent_github` mapping and restart:
 
 ```yaml
 agentic:
@@ -269,20 +250,18 @@ agentic:
       token_budget: 2048
 ```
 
-It ships **off**; absent, quoted or non-boolean `enabled` stays off. This is
-local-planner-only and grants no execution authority. The same staged request,
-`/agent confirm <reason>`, sandboxed checks, diff review and separate approval
-steps remain necessary. Cloud planners never receive automatically retrieved
-files. `/agent read` and accepted local model READ requests take priority.
+It ships **off**; an absent, quoted or non-boolean `enabled` stays off.
+Retrieval is local-planner-only and grants no execution authority: the staged
+request, `/agent confirm <reason>`, sandboxed checks, diff review and separate
+approvals all remain. Cloud planners never receive retrieved files, and
+`/agent read` and accepted model READ requests take priority.
 
-The child lists tracked and non-ignored untracked paths, examines at most `max_files`
-paths in lexical order, and builds a separate Tantivy RAM index over bounded
-UTF-8 source. It retrieves at most `top_k` files using up to 32 path-boosted
-terms. Excerpts center on matches; lexical search does not guarantee repository
-coverage. Use explicit windows for large repositories, synonyms, or long lines.
-Each step rebuilds the index and re-reads each selected file; its full SHA-256
-must still match before inclusion. Run status records a per-step retrieval
-trace (indexed files and bytes, whether a limit was hit, and the files supplied).
+Each step, the child lists tracked and non-ignored untracked paths, examines at
+most `max_files` in lexical order and builds a Tantivy RAM index over bounded
+UTF-8 source. It retrieves at most `top_k` files, re-reads each one and
+includes it only if its full SHA-256 still matches. Lexical search does not
+guarantee coverage: use explicit windows for large repositories, synonyms or
+long lines.
 
 | Setting | Accepted range | Bound |
 |---|---:|---|
@@ -292,106 +271,97 @@ trace (indexed files and bytes, whether a limit was hit, and the files supplied)
 | `excerpt_lines` | 1–200 | Maximum line window, also clipped by character budgets |
 | `token_budget` | 256–8192 | Conservative UTF-8-byte reservation including rendered headers |
 
-Reservations are not vendor token usage. Existing 4,000-character per-file and
-12,000-character aggregate read limits still apply. The full-file read ceiling,
-clone capability and denied-basename rules apply before indexing. Leaf symlinks,
-paths escaping the clone, `.git` name-equivalent segments, binary/invalid UTF-8, oversized files, unsafe path text and
-injection-scanner hits are excluded. Ignored untracked files are not enumerated;
-tracked files remain candidates even if a later ignore rule names them. This
-is not a general secret scanner: secrets can appear in arbitrary source files.
+Reservations are not vendor token usage, and the per-file and aggregate
+[read ceilings](#bounded-edits), the clone jail and the denied-basename rules
+apply before indexing. Leaf symlinks, paths escaping the clone, `.git`
+name-equivalent segments, binary or invalid UTF-8, oversized files, unsafe path
+text and injection-scanner hits are excluded. Tracked files stay candidates
+even if a later ignore rule names them.
 
-`/agent status <run-id>` displays each step's indexed counts, whether a bound
-limited selection, and a table of selected lines, full-file SHA-256 and reserved
-bytes. The run record and audit retain only this metadata. Source is not copied
-to the public web cache or indexed with sessions/structured memory. Review the
-actual diff; retrieval does not approve it or enable whole-file replacement
-when only an excerpt was shown.
+`/agent status <run-id>` shows each step's indexed counts, whether a bound
+limited selection, and the selected lines, hashes and reserved bytes. The run
+record and audit keep only that metadata; source is not copied to the web cache
+or indexed with sessions or structured memory.
 
 ## Cloud planner data egress
 
-With `deepagent_github.allow_cloud_providers`
-and a provider enabled, `--confirm-online` does not send a short plan prompt —
-it sends the real working context for that iteration. `real_repo_loop.rs`
-assembles, per attempt: the operator's instruction, the approved plan (if
-staged), the prior attempt's check failure feedback, and a bounded excerpt of
-every source file the run declared or read via `/agent read` (within the
-[read ceilings](#bounded-edits); an explicit `#L10-L40` selector sends only
-that window) plus the GitHub text of a selected `/agent pr` or `/agent issue`,
-fetched and injection-scanned only when selected. A cloud planner never expands that
-read set from model `=== READ ===` output (`apply_model_read_request` refuses
-with `cloud_proposer`); a local planner still refuses denied basenames
-(`sensitive_basename`) after the jail. Requested reads displace rather than
-accumulate under the same char budgets on a local planner.
-`CloudProposerClient::invoke`
-passes that assembled prompt through `sanitize_handoff` — an injection scan
-and secret-pattern redaction pass (built-in shapes plus
-`policy.privacy.redact_secrets_like`) — and
-then sends it to the selected provider's API (`api.x.ai` or
-`api.anthropic.com`). Redaction catches known secret shapes; it does not
-strip proprietary source code, comments, or issue content, and none of that
-data is reviewable before it leaves the machine. Treat enabling a cloud
-provider as authorizing repository-content egress for every subsequent
-`--confirm-online` run, not as a one-time low-risk toggle.
+With `deepagent_github.allow_cloud_providers` and a provider enabled,
+`--confirm-online` sends the real working context for each iteration, not a
+short plan prompt. Per attempt, `real_repo_loop.rs` assembles:
+
+- the operator's instruction and the approved plan, if staged;
+- the prior attempt's check-failure feedback;
+- a bounded excerpt of every source file the run declared or read with
+  `/agent read`, within the [read ceilings](#bounded-edits) (a `#L10-L40`
+  selector sends only that window);
+- the GitHub text of a selected `/agent pr` or `/agent issue`, fetched and
+  injection-scanned only when selected.
+
+A cloud planner never expands that read set from model `=== READ ===` output
+(`apply_model_read_request` refuses with `cloud_proposer`).
+`CloudProposerClient::invoke` passes the assembled prompt through
+`sanitize_handoff`, an injection scan plus secret-pattern redaction (built-in
+shapes and `policy.privacy.redact_secrets_like`), then sends it to `api.x.ai`
+or `api.anthropic.com`. Redaction catches known secret shapes only. It does not
+strip proprietary source, comments or issue content, and none of that data is
+reviewable before it leaves the machine. Treat enabling a cloud provider as
+authorizing repository-content egress for every later `--confirm-online` run.
 
 Cloud proposals require an explicit normal completion: Grok
 `choices[0].finish_reason: "stop"` or Claude `stop_reason: "end_turn"`.
-Truncated, missing, malformed, or continuation states are refused before any
-proposal is applied, even when the returned prefix contains a complete edit
-block. These billed 2xx responses are recorded once as `failed_after_billing`
-and are not retried automatically. Reduce the task or adjust
-`agentic.deepagent_github.planner_max_tokens` before retrying a truncated run.
+Truncated, missing, malformed or continuation states are refused before any
+proposal is applied, even when the returned prefix holds a complete edit block.
+These billed 2xx responses are recorded once as `failed_after_billing` and
+never retried automatically. Reduce the task or raise
+`agentic.deepagent_github.planner_max_tokens` before retrying.
 
 ## Offline Cargo verification
 
 The operator prepares dependencies; untrusted checks never fetch them. Tool
 discovery runs from the filesystem root, outside the candidate. Select an
-installed compiler through `PATH` and, for rustup, `RUSTUP_TOOLCHAIN`; candidate
-toolchain files cannot select executables. Provision tools/components first.
-Preparation never installs a toolchain or model.
+installed compiler through `PATH` and, for rustup, `RUSTUP_TOOLCHAIN`: candidate
+toolchain files cannot select executables, and preparation never installs a
+toolchain or model.
 
 Prepare once per lockfile and application home, as in
-[Run it from the console](#93-run-it-from-the-console). The offline default and
-`--online` both require an existing Cargo.lock and installed cargo/rustc/rustdoc.
-Neither runs build scripts or tests. Cargo vendor uses locked resolution and
-produces a separate source snapshot under
-`data/agentic/cargo-prepared/<lock-sha256>`. Existing snapshots are refused,
-never overwritten; use a separate disposable home to reprepare. Do not place the
-home or snapshot inside the candidate. The snapshot records the concrete
-toolchain and macOS SDK/linker/runtime paths. Moving/removing those
-installations requires preparation again. The helper needs only Python 3's
-standard library; Cargo still validates locks and checksums
-([Cargo vendor](https://doc.rust-lang.org/cargo/commands/cargo-vendor.html)).
+[Run it from the console](#93-run-it-from-the-console). Both modes need an
+existing `Cargo.lock` and installed cargo/rustc/rustdoc, and neither runs build
+scripts or tests. `cargo vendor` writes a locked source snapshot under
+`data/agentic/cargo-prepared/<lock-sha256>`. An existing snapshot is refused,
+never overwritten; use a separate disposable home to prepare again, and keep
+home and snapshot outside the candidate. The snapshot records the concrete
+toolchain and macOS SDK, linker and runtime paths, so moving those
+installations means preparing again.
 
-Run the harness with `CGAGENTHARNESS_HOME` set to that application home. Keep
-Cargo.lock unchanged in proposals; new dependencies require separately reviewed
-preparation. No model retry can make uncached dependencies available offline.
-Missing components, sources, permission failures and Cargo timeouts return setup
-errors; compile/test failures remain feedback for a correction.
+Run the harness with `CGAGENTHARNESS_HOME` set to that home, and keep
+`Cargo.lock` unchanged in proposals: new dependencies need a separately
+reviewed preparation, and no model retry can make uncached dependencies
+available. Missing components or sources, permission failures and Cargo
+timeouts are setup errors; compile and test failures are feedback for a
+correction.
 
 ### Execution boundary
 
-Every verification creates and removes owned scratch containing HOME, CARGO_HOME,
-build outputs and temporary files. The real user home and credentials are not
-passed through. Cargo receives the prepared source configuration, explicit
-compiler/rustdoc, `--frozen` (except `cargo fmt`), and `CARGO_NET_OFFLINE=true`. SDKROOT and the direct
-Clang linker avoid xcrun attempting to write into the operator's cache.
+Every verification creates and removes owned scratch holding HOME, CARGO_HOME,
+build outputs and temporary files; the real user home and credentials are not
+passed through. Cargo receives the prepared source configuration, an explicit
+compiler and rustdoc, `--frozen` (except `cargo fmt`) and
+`CARGO_NET_OFFLINE=true`.
 
-On macOS, Seatbelt denies network operations including loopback. Candidate files,
-`.git`, vendor sources, toolchain and runtime inputs are read-only. File data reads
-are restricted to those inputs, scratch, named OS/SDK roots, the root directory
-itself and the system OpenSSL configuration file needed by Homebrew Cargo. The
-whole home, `/usr/local`, `/opt/homebrew`, `/private` and `/Library` are not granted.
-Only scratch is writable. Tests that generate source-tree artifacts must instead
-use the supplied temporary directory; granting candidate writes would also expose
-Git metadata and hooks to build scripts.
+On macOS, Seatbelt denies network operations, loopback included. Candidate
+files, `.git`, vendor sources, toolchain and runtime inputs are read-only, and
+file reads are limited to those inputs, scratch, named OS and SDK roots and the
+system OpenSSL configuration file. The whole home, `/usr/local`,
+`/opt/homebrew`, `/private` and `/Library` are not granted. Only scratch is
+writable, so tests that generate source-tree artifacts must use the supplied
+temporary directory: granting candidate writes would expose Git metadata and
+hooks to build scripts.
 
-File metadata discovery remains allowed. OS libraries and SDKs are readable.
-Seatbelt is not a memory/disk quota. Unix pipe capture has deadline and byte
-bounds; escaped descendants remain a [lifecycle limit](PROCESS_LIFECYCLE.md). Linux bubblewrap applies its own allowlisted
-read-only filesystem with writable scratch; the `linux-netns` fallback and
-Windows Job Objects provide no filesystem policy. Windows preparation uses
-platform executable suffixes/path separators but native Windows acceptance is
-unverified.
+Seatbelt is not a memory or disk quota, and escaped descendants remain a
+[lifecycle limit](PROCESS_LIFECYCLE.md). Linux bubblewrap applies its own
+allowlisted read-only filesystem with writable scratch; the `linux-netns`
+fallback and Windows Job Objects provide no filesystem policy, and native
+Windows acceptance is unverified.
 
 ### Required native gate
 
@@ -404,92 +374,76 @@ GROK_API_KEY= ANTHROPIC_API_KEY= DEEPAGENT_API_KEY= CARGO_NET_OFFLINE=true \
   cargo test --test macos_cargo --locked --offline -- --nocapture
 ```
 
-Run on macOS outside an outer sandbox that prohibits nested Seatbelt; missing
+Run on macOS outside an outer sandbox that prohibits nested Seatbelt; a missing
 sandbox capability fails the gate. The tests build real fixtures and verify
 denied outside, symlink, candidate, Git and cache access, a blocked loopback
-listener, scratch cleanup and refusal of stale prepared inputs, using synthetic
-markers. They prove Cargo execution and tested boundaries, not real-model acceptance.
+listener, scratch cleanup and refusal of stale prepared inputs.
 
-**Linux confinement evidence.** Linux CI (`CI=true`) fails if `bwrap` is missing.
-The ordinary test matrix may report a classified confinement skip when a
+**Linux confinement evidence.** Linux CI fails if `bwrap` is missing. The
+ordinary test matrix may report a classified confinement skip when a
 GitHub-hosted runner refuses `RTM_NEWADDR`; that is not confinement proof. The
-separate `Linux bubblewrap confinement (required)` job runs the same suite in a
-pinned container with namespace/mount capabilities. Docs-only pull requests
+separate `Linux bubblewrap confinement (required)` job runs the suite in a
+pinned container with namespace and mount capabilities, where
+`CGAH_REQUIRE_LINUX_BWRAP` makes every probe failure fatal. Its probes must show
+candidate reads and scratch writes working, secret reads, symlink reads and
+candidate writes denied, and a connection to an owned host listener refused
+from inside a different network namespace. Docs-only pull requests
 (`scripts/ci-docs-only.sh`) skip compile jobs, this one included; the invariant
-guard still runs. Setting `CGAH_REQUIRE_LINUX_BWRAP` (any value) makes every probe
-failure fatal and also refuses a non-Linux host; it is a test-only requirement,
-not a production gate. Python 3 probes must execute successfully, demonstrate
-candidate reads and scratch writes, and explicitly observe denied secret/symlink
-reads and candidate writes. The network probe first connects to an owned host
-listener outside the sandbox, then requires a different network namespace and
-connection denial inside it; no public endpoint or generic nonzero exit counts.
+guard still runs.
 
 ## Git approval and publication
 
 The retained clone is data, including its local Git configuration and index.
-Approval must commit the bytes and modes that were reviewed. Separate push and
-publication must continue to refer to that approved commit.
+Approval must commit the bytes and modes that were reviewed, and push and
+publication must keep referring to that approved commit.
 
-Ordinary Git commands do not guarantee that binding. Pre-staged files can enter
-a commit; a literal `*` filename can match neighbors; hooks can run despite
-`--no-verify`; clean filters can replace index bytes; and replacement refs can
-reinterpret the base tree. Remote trees do not normally install `.git/config`
-or hooks, but contaminated retained metadata can. Index and pathspec failures
-need no hook.
+Ordinary Git commands do not guarantee that: pre-staged files can enter a
+commit, a literal `*` filename can match neighbors, hooks and clean filters can
+run, and replacement refs can reinterpret the base tree. Workspace operations,
+manifest reads and disposable verification therefore use one Git helper. It clears ambient variables, global and system config and
+system attributes; disables hooks, fsmonitor, signing, maintenance and
+replacement objects; and uses literal pathspecs. Local config is limited to
+ordinary clone metadata: includes, custom programs, filters, transport rewrites
+and unsupported metadata refuse without echoing values. Read-only diff
+inspection accepts inert local external-diff and fsmonitor settings.
 
-Workspace operations, manifest reads, and disposable verification use one Git
-helper. It clears ambient variables, global and system config, and system
-attributes; disables hooks, fsmonitor, signing, maintenance, and replacement
-objects; and uses literal pathspecs. Local config is limited to ordinary clone
-metadata. Includes, custom programs, filters, transport rewrites, and unsupported
-metadata refuse without echoing values. Read-only diff inspection accepts inert
-local external-diff and fsmonitor settings.
+Authenticated `gh repo clone` also gets isolated Git settings and an empty Git
+template. Publishing uses the installed `gh auth git-credential` helper for
+HTTPS; a GitHub.com SSH origin can use the operator's SSH configuration and
+keys. Custom credential helpers and enterprise hosts are refused; absolute
+local remotes remain available for offline runs.
 
-Authenticated `gh repo clone` also receives isolated Git settings and an empty
-Git template before initial checkout. Publishing Git operations use the installed
-`gh auth git-credential` helper for HTTPS rather than ambient Git credential
-commands. The selected GitHub.com repository also accepts an SSH origin, which
-can use the operator's SSH configuration and keys. Custom Git credential
-helpers and enterprise hosts are not accepted; absolute local remotes remain
-available for offline runs.
+Approval refuses staged changes and index locks. Under the normal index lock it
+builds a private index from the accepted base, inserts only the accepted raw
+blobs and modes and writes that tree, so replacement objects and grafts cannot
+reinterpret the base. Acceptance digests include mode. A failure after a
+durable branch commit is indeterminate and needs inspection.
 
-Approval refuses staged changes and index locks. Under the normal index lock, it
-builds a private index from the accepted base, inserts only accepted raw blobs
-and modes, and writes that tree. Replacement objects and grafts cannot reinterpret
-the base. Acceptance digests include mode; older records need a new run. Failure
-after a durable branch commit is indeterminate and requires inspection.
+Content-transforming attributes (`filter`, `text`, `eol`,
+`working-tree-encoding`, `ident`) are refused for selected changes, which
+deliberately excludes LFS and newline-normalizing workflows.
 
-Content-transforming attributes (`filter`, `text`, `eol`, `working-tree-encoding`,
-`ident`) are refused for selected changes. This deliberately includes LFS and
-newline-normalizing workflows: silently bypassing their transformations could
-commit incorrect representations. Supporting them requires a separately reviewed
-acceptance contract for both worktree and committed representations.
+Run records pin the origin and approved commit. Push refuses changed branches
+or destinations and sends an object-ID refspec to the pinned URL. Publication
+reads the remote branch, refuses mismatches and opens the draft against the
+branch the clone checked out (its recorded `origin/HEAD`), not a fixed `main`.
+Every operation rechecks write policy, reason and confirmation. Older unpinned
+records cannot be pushed, though inspection and cleanup still work.
 
-Run records pin the origin and approved commit. Push refuses changed branches or
-destinations and sends an object-ID refspec to the pinned URL. Publication reads
-the remote branch, refuses mismatches, and opens the draft against the branch the
-clone checked out (its recorded `origin/HEAD`), not a fixed `main`. Every operation rechecks write policy,
-reason, and confirmation. Older unpinned records cannot be pushed; inspection and cleanup remain available.
-
-`tests/git_approval.rs` covers staged changes, glob filenames, hooks, filters,
-index locks, modes, branch and destination drift and replacement objects in
-disposable repositories. It is not an exhaustive Git security audit.
-
-The index lock coordinates normal Git writers, not a hostile process that ignores
-locks and races filesystem metadata. Remote readback is point in time; another
-authorized actor can later change the branch. Abrupt death and escaped descendants
-retain the [process-lifecycle](PROCESS_LIFECYCLE.md) limits. Global Git settings
-remain unchanged.
+`tests/git_approval.rs` covers these cases in disposable repositories; it is
+not an exhaustive Git security audit. The index lock coordinates normal Git
+writers, not a hostile process that ignores locks.
+Remote readback is point in time: another authorized actor can change the
+branch later. Abrupt death and escaped descendants keep the
+[process-lifecycle](PROCESS_LIFECYCLE.md) limits.
 
 ## Isolation check
 
 The HTTP server reaches agentic execution only through the twelve
-`shim::ACTIONS`. `tests/invariant_guard.rs` checks every non-agentic tree against
-`src/agentic` in both directions, including macro indirection and grouped,
-renamed or function-local `use` bindings; comments do not trigger it. Child
-exit codes are the entire interface; a signal
-death reports `-1` plus a stderr line naming the signal
+`shim::ACTIONS`, and `tests/invariant_guard.rs` checks every non-agentic tree
+against `src/agentic` in both directions
 ([I6](../INVARIANTS.md#i6--process-isolation-between-the-console-and-the-agentic-pipeline)).
-
-`writer.rs` is a separate gate from [bounded edits](#bounded-edits): it guards
-the single executable GitHub write op (`gh pr create`, always `--draft`).
+Child exit codes are the entire interface; a signal death reports `-1` plus a
+stderr line naming the signal. `writer.rs` is a separate gate from
+[bounded edits](#bounded-edits): it guards the single executable GitHub write
+op (`gh pr create`, always `--draft`).
