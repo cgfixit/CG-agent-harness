@@ -1751,7 +1751,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-requested (2026-11-10) four facts the #807 audit held back at the cap: hidden
     // subcommand exit codes, the console MAX_GOAL_CHARS duplicate, the cyclaw/ prefix and the
     // Copilot skill scope; raised to the reported count.
-    ("AGENTS.md", Agent, 1541),
+    // why: operator decision (2026-11-12): +200; the file sat exactly at 1541, so every added word needed a cut.
+    ("AGENTS.md", Agent, 1741),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     // why: now `@AGENTS.md` plus Claude-only lines; 183 words, rounded up to the next 100.
     ("CLAUDE.md", Agent, 400),
@@ -1786,7 +1787,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-requested (2026-11-08) 15% trim with the research-loop router section added; measured
     // 1,325 words, rounded up to the next 10 so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 107 words net of the post-#834 additions; measured 1223, rounded up to the next 10 so the cut stays cut.
-    ("README.md", Root, 1230),
+    // why: operator decision (2026-11-12): +200; the 2026-11-11 trim left 7 words of room.
+    ("README.md", Root, 1430),
     ("SECURITY.md", Root, 690),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
     // why: the sandboxed HTML preview route row; measured 1840 words.
