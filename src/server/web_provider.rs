@@ -87,9 +87,10 @@ impl Fallback {
     }
 }
 
-/// `web.search.result_reads`, restart-only and off as shipped (operator
-/// decision, 2026-11-11). When on, a chat or `/loop` web turn may read the exact
-/// URLs its own search listings returned, for that turn or loop run only.
+/// `web.search.result_reads`, restart-only. Ships on (operator decision,
+/// 2026-11-12); a missing key is off, like every `flag_is_true` gate. When on,
+/// a chat or `/loop` web turn may read the exact URLs its own search listings
+/// returned, for that turn or loop run only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ResultReads {
     pub enabled: bool,

@@ -862,9 +862,6 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         // #647 Phase 2: spending another search provider is opt-in; the free public
         // Google hop ships on (asserted below).
         "web.search.fallback_to_serpapi",
-        // Operator decision (2026-11-11): reading the URLs a search listed is opt-in;
-        // as shipped a listing grants no page access.
-        "web.search.result_reads.enabled",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
     }
@@ -873,6 +870,14 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
     assert!(
         cfg.flag_is_true("web.search.fallback_to_public_google"),
         "web.search.fallback_to_public_google must ship true"
+    );
+    // why: operator decision (2026-11-12): a turn may read the exact URLs its own search
+    // listed, for that turn or loop run. It was added off the day before. The bounds that
+    // stay (exact URL, memory only, blocked rules win) are asserted in web_policy and
+    // web_search unit tests and in tests/chat_web.rs.
+    assert!(
+        cfg.flag_is_true("web.search.result_reads.enabled"),
+        "web.search.result_reads.enabled must ship true"
     );
     // Context about the harness itself ships on as literal booleans; it grants no tool.
     // why: 2026-11-01, new homes ship /diag log reads on. model_tool stays closed above.

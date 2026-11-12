@@ -500,7 +500,7 @@ async fn run_inner(
     let mut run_evidence = run_id
         .map(|id| state.loops.web_evidence(owner, id, goal))
         .unwrap_or_default();
-    // `web.search.result_reads` (off as shipped): this turn's reads may also
+    // `web.search.result_reads` (on as shipped): this turn's reads may also
     // use the exact URLs its own searches list. A loop run carries them between
     // its turns; a plain chat turn starts with none. Every policy check below
     // goes through this snapshot, so the shared tool and the saved policy never

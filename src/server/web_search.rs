@@ -675,6 +675,8 @@ impl WebTool {
             "mode": policy.mode, "blocked": policy.blocked,
             "policy_scope":"shared_home", "context_scope":"account", "limits":self.limits,
             "search_provider": search_provider,
+            // Whether a chat turn may read the exact URLs its own search listed.
+            "search_result_reads": self.result_reads.enabled,
             "injected": enabled && stored, "context_stored": stored,
             "has_last": self.read_page(&self.last_path(owner), None).is_ok(), "max_allow": self.limits.max_rules,
             "policy_missing": missing}),
@@ -1700,8 +1702,8 @@ mod tests {
         }
     }
 
-    /// `web.search.result_reads`: off as shipped, and when on the grants live
-    /// on one turn's snapshot only. The shared tool, the saved file and a rule
+    /// `web.search.result_reads`: off unless literal `true` (it ships `true`),
+    /// and when on the grants live on one turn's snapshot only. The shared tool, the saved file and a rule
     /// change made through that snapshot never carry them.
     #[test]
     fn search_result_grants_stay_on_one_snapshot_and_out_of_the_saved_policy() {

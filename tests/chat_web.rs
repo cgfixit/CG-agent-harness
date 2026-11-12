@@ -308,7 +308,7 @@ async fn goal_web_modes_persist_filter_definitions_and_reject_mixed_batches_befo
         .await;
     assert_eq!(cleared["goal_web_mode"], "all");
     // No mode named: the shipped default is all, so an unattended loop may search;
-    // search listings grant no URL permission, so fetches stay policy-gated.
+    // a listing grants only same-turn reads of its exact URLs (web.search.result_reads).
     let (status, defaulted) = s
         .post_json(
             &format!("/api/sessions/{sid}/goal"),
@@ -2912,24 +2912,26 @@ async fn listing_fixture() -> (std::net::SocketAddr, Arc<AtomicUsize>, tokio::ta
 
 /// A server whose public search is `listing_fixture` and whose URL policy
 /// permits only that search host: the listed page itself is not permitted.
+/// `result_reads` sets `web.search.result_reads.enabled`; `None` leaves the
+/// shipped value, which is on.
 async fn listing_server(
     model: &common::MockModel,
     address: std::net::SocketAddr,
-    result_reads: bool,
+    result_reads: Option<bool>,
 ) -> common::TestServer {
+    let mut options = common::ServerOptions::default()
+        .with("logging.audit_queue_lines", "0")
+        .with("web.pace_ms", "100");
+    if let Some(on) = result_reads {
+        options = options.with("web.search.result_reads.enabled", if on { "true" } else { "false" });
+    }
     let s = common::spawn_server(
         &model.base_url(),
         common::ServerOptions {
             web_resolve: Some(("google.fixture".into(), address)),
             resolve_extra: vec![("docs.example".into(), address)],
             public_search: Some(url::Url::parse("http://google.fixture/search").unwrap()), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
-            ..common::ServerOptions::default()
-                .with("logging.audit_queue_lines", "0")
-                .with("web.pace_ms", "100")
-                .with(
-                    "web.search.result_reads.enabled",
-                    if result_reads { "true" } else { "false" },
-                )
+            ..options
         },
     )
     .await;
@@ -2953,7 +2955,8 @@ const LISTED_PAGE: &str = r#"{"url":"http://docs.example/page"}"#; // DevSkim: i
 async fn an_empty_final_reply_after_a_search_and_a_refused_read_is_retried_once_then_written_by_the_harness() {
     let (address, reads, task) = listing_fixture().await;
     let model = common::start_mock_model().await;
-    let s = listing_server(&model, address, false).await;
+    // Literal false: reads follow the URL policy alone, so the listed page is refused.
+    let s = listing_server(&model, address, Some(false)).await;
 
     // The retry answers.
     model.set_reply(json!([
@@ -2979,7 +2982,11 @@ async fn an_empty_final_reply_after_a_search_and_a_refused_read_is_retried_once_
         (&tools[1]["ok"], &tools[1]["code"]),
         (&json!(false), &json!("WEB_HOST_DENIED"))
     );
-    assert_eq!(reads.load(Ordering::SeqCst), 0, "a listing grants no read as shipped");
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        0,
+        "with result reads off a listing grants no read"
+    );
     {
         let requests = model.requests.lock().unwrap();
         assert_eq!(requests.len(), 4, "exactly one extra model call");
@@ -3037,14 +3044,15 @@ async fn an_empty_final_reply_after_a_search_and_a_refused_read_is_retried_once_
     task.abort();
 }
 
-/// `web.search.result_reads` (off as shipped): a turn may read the exact URL
-/// its own search listed. Not another URL on that host, not on a later turn,
-/// not past a blocked rule, and nothing is written to the saved policy.
+/// `web.search.result_reads` as shipped (on, operator decision 2026-11-12): a
+/// turn may read the exact URL its own search listed. Not another URL on that
+/// host, not on a later turn, not past a blocked rule, and nothing is written
+/// to the saved policy.
 #[tokio::test]
-async fn a_turn_may_read_the_exact_urls_its_own_search_listed_when_enabled() {
+async fn a_turn_may_read_the_exact_urls_its_own_search_listed() {
     let (address, reads, task) = listing_fixture().await;
     let model = common::start_mock_model().await;
-    let s = listing_server(&model, address, true).await;
+    let s = listing_server(&model, address, None).await;
     let saved = std::fs::read(s.home.join("data/tools/web_allowlist.json")).ok();
     let search_then = |url: &str, answer: &str| {
         json!([
@@ -3173,7 +3181,7 @@ async fn a_loop_run_keeps_its_search_result_grants_between_turns() {
         requests: Arc::default(),
         delay_ms: Arc::default(),
     };
-    let s = listing_server(&model, address, true).await;
+    let s = listing_server(&model, address, None).await;
     let (_, session) = s.post_json("/api/sessions", json!({"title":"loop"})).await;
     let sid = session["session_id"].as_str().unwrap().to_string();
     let (status, goal) = s

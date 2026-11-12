@@ -163,9 +163,10 @@ web:
   carry_forward_sources: 0 # 0 (off) or 1–50 earlier reads (URL/query only, no page text) listed in web turns; reloadable
   goal_web_default: all # off|fetch|all; restart-only. The mode a /goal gets without --web.
   # fetch reads permitted URLs only; all also lets unattended /loop turns pick web_search
-  # queries. Search listings grant no URL permission unless search.result_reads is enabled
-  # below. Set fetch to withhold search from unattended turns, or per goal: /goal --web fetch
-  # <text>, /loop --web fetch. Invalid values fail boot.
+  # queries. A search listing grants one thing, through search.result_reads below (shipped
+  # on): that turn may read the exact URLs listed. Set fetch to withhold search, and with it
+  # those reads, from unattended turns, or per goal: /goal --web fetch <text>, /loop --web
+  # fetch. Invalid values fail boot.
   response_bytes: 1048576 # 1024–1048576; compressed bodies refused. Shipped 262144 until 2026-11-10: uncompressed, many documentation and reference pages are larger, and passage selection keeps the page out of the model's context either way
   request_seconds: 15 # 1–30, includes queue, DNS, headers, body and extraction; also the one deadline a search's provider hops share. Shipped 8 until 2026-11-10
   html_parser_handles: 4096 # 64–4096; bound open-element/formatting state, restart-only
@@ -215,15 +216,19 @@ web:
     fallback_to_serpapi: false # literal true: a failed tavily tries SerpAPI when a key is active
     fallback_to_public_google: true # ships on (operator decision, 2026-11-01); literal false turns it off. A failed earlier hop tries public Google (fresh homes seed its URL rule)
     fallback_alert_per_hour: 20 # 1–1000 SerpAPI fallbacks per clock hour before one web_search_fallback_burst audit line
-    # Reads of search results, restart-only (operator decision, 2026-11-11). Off: a listed URL
-    # is read only if the URL policy already permits it. On: a chat or /loop web turn may also
-    # read the exact URLs its own searches returned, as listed (no other path or query on that
-    # host), for that turn, or for that /loop run. Nothing is saved to the URL policy; blocked
-    # rules, private addresses and refused redirects still apply, and an empty allowlist still
-    # refuses all web access. Search results are text an outside party can influence, so this
-    # widens what the model may read: each such read is audited as web_result_read.
+    # Reads of search results, restart-only. Ships on (operator decision, 2026-11-12; it was
+    # added off on 2026-11-11). On: a chat or /loop web turn may read the exact URLs its own
+    # searches returned, as listed (no other path or query on that host), for that turn, or
+    # for that /loop run, whether or not the URL policy lists them. Off (literal false, or the
+    # key missing, as in a home created before this key): a listed URL is read only if the URL
+    # policy already permits it. Nothing is saved to the URL policy; blocked rules, private
+    # addresses and refused redirects still apply, and an empty allowlist still refuses all
+    # web access. Search results are text an outside party can influence, so with this on the
+    # URL policy no longer bounds what a searching turn may read: an unattended /loop in web
+    # mode all can read whatever its searches return. Each such read is audited as
+    # web_result_read. Block a site with /web block, or set web mode fetch, to narrow it.
     result_reads:
-      enabled: false # flag_is_true; literal true lets a turn read the URLs its own searches listed
+      enabled: true # flag_is_true; literal false keeps reads to the URL policy alone
       max_urls: 20 # 1–100 listed URLs one turn or /loop run may hold; later listings add none
   # Firecrawl, restart-only: an opt-in second reader for exact permitted URLs (/web fetch, the
   # chat web_fetch tool, batch reads; never discovery, crawl or search). It runs only after the

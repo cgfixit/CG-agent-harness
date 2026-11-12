@@ -357,7 +357,7 @@ pub struct Policy {
     #[serde(skip)]
     pub revision: String,
     /// Exact URLs one chat turn's or loop run's own search listings returned
-    /// (`web.search.result_reads`, off as shipped). Memory only: never read
+    /// (`web.search.result_reads`, on as shipped). Memory only: never read
     /// from or written to the policy file, and no part of `revision`. Only
     /// `WebTool::policy` on that turn's snapshot fills it.
     #[serde(skip)]
