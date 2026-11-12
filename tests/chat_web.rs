@@ -308,7 +308,7 @@ async fn goal_web_modes_persist_filter_definitions_and_reject_mixed_batches_befo
         .await;
     assert_eq!(cleared["goal_web_mode"], "all");
     // No mode named: the shipped default is all, so an unattended loop may search;
-    // search listings grant no URL permission, so fetches stay policy-gated.
+    // a listing grants only same-turn reads of its exact URLs (web.search.result_reads).
     let (status, defaulted) = s
         .post_json(
             &format!("/api/sessions/{sid}/goal"),
@@ -2882,4 +2882,471 @@ async fn restored_goal_evidence_fits_the_remaining_turn_budget() {
     assert_eq!(run["stats"]["turns_completed"], 2, "{run}");
     assert!(seen.load(Ordering::SeqCst), "the second turn must reach inference");
     fixture.abort();
+}
+
+/// A page site and a stand-in for public Google whose one result is that
+/// site's `/page`. Returns the address both hosts resolve to and how often
+/// `/page` and `/other` were read.
+async fn listing_fixture() -> (std::net::SocketAddr, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let count = reads.clone();
+    let page = move || {
+        let count = count.clone();
+        async move {
+            count.fetch_add(1, Ordering::SeqCst);
+            ([("content-type", "text/plain")], "LISTED_PAGE_EVIDENCE")
+        }
+    };
+    let router = Router::new()
+        .route(
+            "/search",
+            get(|| async { "<a href='/url?q=http%3A%2F%2Fdocs.example%2Fpage'><h3>Listed page</h3></a>" }),
+        )
+        .route("/page", get(page.clone()))
+        .route("/other", get(page));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    (address, reads, task)
+}
+
+/// A server whose public search is `listing_fixture`, with no URL rule yet.
+async fn listing_spawn(
+    model: &common::MockModel,
+    address: std::net::SocketAddr,
+    options: common::ServerOptions,
+) -> common::TestServer {
+    common::spawn_server(
+        &model.base_url(),
+        common::ServerOptions {
+            web_resolve: Some(("google.fixture".into(), address)),
+            resolve_extra: vec![("docs.example".into(), address)],
+            public_search: Some(url::Url::parse("http://google.fixture/search").unwrap()), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            ..options
+                .with("logging.audit_queue_lines", "0")
+                .with("web.pace_ms", "100")
+        },
+    )
+    .await
+}
+
+/// A server whose public search is `listing_fixture` and whose URL policy
+/// permits only that search host: the listed page itself is not permitted.
+/// `result_reads` sets `web.search.result_reads.enabled`; `None` leaves the
+/// shipped value, which is on.
+async fn listing_server(
+    model: &common::MockModel,
+    address: std::net::SocketAddr,
+    result_reads: Option<bool>,
+) -> common::TestServer {
+    let mut options = common::ServerOptions::default();
+    if let Some(on) = result_reads {
+        options = options.with("web.search.result_reads.enabled", if on { "true" } else { "false" });
+    }
+    let s = listing_spawn(model, address, options).await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://google.fixture/*"})) // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            .await
+            .0,
+        200
+    );
+    s
+}
+
+const LISTED_PAGE: &str = r#"{"url":"http://docs.example/page"}"#; // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+
+/// The measured failure (issue #772): a search succeeds, the read of its
+/// result is refused, tools are withdrawn, and the model returns no text on
+/// the call that offers none. Before, that was 502 EMPTY_MODEL_RESPONSE and
+/// the search result was lost. Now the harness asks once more in the same
+/// turn, and if that is empty too it writes the reply itself.
+#[tokio::test]
+async fn an_empty_final_reply_after_a_search_and_a_refused_read_is_retried_once_then_written_by_the_harness() {
+    let (address, reads, task) = listing_fixture().await;
+    let model = common::start_mock_model().await;
+    // Literal false: reads follow the URL policy alone, so the listed page is refused.
+    let s = listing_server(&model, address, Some(false)).await;
+
+    // The retry answers.
+    model.set_reply(json!([
+        tool_call_reply("web_search", r#"{"query":"listed page"}"#, "final_search"),
+        tool_call_reply("web_fetch", LISTED_PAGE, "final_fetch"),
+        common::ok_reply("", 20, 63),
+        common::ok_reply("Answered from the listing.", 30, 9)
+    ]));
+    let (status, reply) = s.post_json("/api/chat", json!({"message":"Search and tell me"})).await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["reply"], "Answered from the listing.", "{reply}");
+    let tools = reply["web_tools"].as_array().unwrap();
+    assert_eq!(
+        tools.len(),
+        2,
+        "the mixed events are kept and nothing is added: {reply}"
+    );
+    assert_eq!(
+        (&tools[0]["tool"], &tools[0]["ok"]),
+        (&json!("web_search"), &json!(true))
+    );
+    assert_eq!(
+        (&tools[1]["ok"], &tools[1]["code"]),
+        (&json!(false), &json!("WEB_HOST_DENIED"))
+    );
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        0,
+        "with result reads off a listing grants no read"
+    );
+    {
+        let requests = model.requests.lock().unwrap();
+        assert_eq!(requests.len(), 4, "exactly one extra model call");
+        let empty = &requests[2];
+        assert!(empty.get("tools").is_none(), "{empty}");
+        assert_eq!(empty["messages"].as_array().unwrap().last().unwrap()["role"], "tool");
+        let retry = &requests[3];
+        assert!(retry.get("tools").is_none(), "the retry offers no tools: {retry}");
+        let note = retry["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(note["role"], "user");
+        assert!(
+            note["content"].as_str().unwrap().contains("no web tools are available"),
+            "{note}"
+        );
+    }
+    // Both calls of the final step are billed, and the note is not stored.
+    assert_eq!(reply["usage"]["prompt_tokens"], 10 + 10 + 20 + 30, "{reply}");
+    assert_eq!(reply["usage"]["completion_tokens"], 2 + 2 + 63 + 9, "{reply}");
+    let sid = reply["session_id"].as_str().unwrap();
+    let (_, session) = s.get_json(&format!("/api/sessions/{sid}")).await;
+    assert!(!session["messages"].to_string().contains("Harness note"), "{session}");
+    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    assert!(audit.contains(r#""event":"web_final_empty""#) && audit.contains(r#""action":"retry""#));
+
+    // The retry is empty too: the harness writes the reply and marks the turn.
+    model.requests.lock().unwrap().clear();
+    model.set_reply(json!([
+        tool_call_reply("web_search", r#"{"query":"listed page"}"#, "final_search"),
+        tool_call_reply("web_fetch", LISTED_PAGE, "final_fetch"),
+        common::ok_reply("", 20, 63)
+    ]));
+    let (status, reply) = s
+        .post_json("/api/chat", json!({"message":"Search and tell me again"}))
+        .await;
+    assert_eq!(status, 200, "{reply}");
+    let text = reply["reply"].as_str().unwrap();
+    assert!(
+        text.starts_with("The model returned no answer after its web calls"),
+        "{text}"
+    );
+    let listed = "Listed page — http://docs.example/page"; // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+    let refused = "Not read: http://docs.example/page (WEB_HOST_DENIED)"; // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+    assert!(text.contains(listed) && text.contains(refused), "{text}");
+    let tools = reply["web_tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 3, "{reply}");
+    assert_eq!(tools[0]["ok"], true);
+    assert_eq!(tools[1]["code"], "WEB_HOST_DENIED");
+    assert_eq!(
+        (&tools[2]["ok"], &tools[2]["code"]),
+        (&json!(false), &json!("WEB_FINAL_EMPTY"))
+    );
+    assert_eq!(model.requests.lock().unwrap().len(), 4, "one retry, never a second");
+    assert_eq!(reply["usage"]["completion_tokens"], 2 + 2 + 63 + 63, "{reply}");
+    assert!(!s.state.generation_gate.is_held());
+    task.abort();
+}
+
+/// `web.search.result_reads` as shipped (on, operator decision 2026-11-12): a
+/// turn may read the exact URL its own search listed. Not another URL on that
+/// host, not on a later turn, not past a blocked rule, and nothing is written
+/// to the saved policy.
+#[tokio::test]
+async fn a_turn_may_read_the_exact_urls_its_own_search_listed() {
+    let (address, reads, task) = listing_fixture().await;
+    let model = common::start_mock_model().await;
+    let s = listing_server(&model, address, None).await;
+    let saved = std::fs::read(s.home.join("data/tools/web_allowlist.json")).ok();
+    let search_then = |url: &str, answer: &str| {
+        json!([
+            tool_call_reply("web_search", r#"{"query":"listed page"}"#, "grant_search"),
+            tool_call_reply("web_fetch", &json!({"url":url}).to_string(), "grant_fetch"),
+            common::ok_reply(answer, 20, 6)
+        ])
+    };
+
+    model.set_reply(search_then("http://docs.example/page", "Read the listed page.")); // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+    let (status, reply) = s.post_json("/api/chat", json!({"message":"Search and read"})).await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["reply"], "Read the listed page.", "{reply}");
+    let tools = reply["web_tools"].as_array().unwrap();
+    assert_eq!(tools[0]["ok"], true, "{reply}");
+    assert!(
+        tools[0]["result"]["notice"]
+            .as_str()
+            .unwrap()
+            .contains("may read listed URLs"),
+        "{reply}"
+    );
+    assert_eq!(tools[1]["ok"], true, "{reply}");
+    assert_eq!(tools[1]["result"]["granted_by"], "search_result", "{reply}");
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    let handed = model.last_request().unwrap()["messages"].to_string();
+    assert!(handed.contains("LISTED_PAGE_EVIDENCE"), "{handed}");
+    let sid = reply["session_id"].as_str().unwrap().to_string();
+
+    // The next turn starts with no grant: the same URL is refused again.
+    model.set_reply(json!([
+        tool_call_reply("web_fetch", LISTED_PAGE, "later_fetch"),
+        common::ok_reply("No web result; answering without it.", 20, 6)
+    ]));
+    let (status, reply) = s
+        .post_json("/api/chat", json!({"message":"Read it again", "session_id":sid}))
+        .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["web_tools"][0]["code"], "WEB_HOST_DENIED", "{reply}");
+    assert_eq!(reads.load(Ordering::SeqCst), 1, "a grant ends with its turn");
+
+    // Exact URL only: another path on the listed host is not granted.
+    model.set_reply(search_then("http://docs.example/other", "Only the listing.")); // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+    let (status, reply) = s
+        .post_json("/api/chat", json!({"message":"Search and read another"}))
+        .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["web_tools"][1]["code"], "WEB_HOST_DENIED", "{reply}");
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+
+    // The saved policy holds no grant, and every granted read is audited.
+    assert_eq!(
+        std::fs::read(s.home.join("data/tools/web_allowlist.json")).ok(),
+        saved,
+        "the saved URL policy is unchanged"
+    );
+    let (_, web) = s.get_json("/api/web").await;
+    assert!(!web.to_string().contains("docs.example"), "{web}");
+    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    assert_eq!(audit.matches(r#""event":"web_result_read""#).count(), 1, "{audit}");
+    assert!(audit.contains(r#""event":"web_result_grants""#), "{audit}");
+
+    // A blocked rule wins over a grant.
+    let (status, blocked) = s
+        .post_json("/api/web/block", json!({"urls":["http://docs.example/*"]})) // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+        .await;
+    assert_eq!(status, 200, "{blocked}");
+    model.set_reply(search_then("http://docs.example/page", "Blocked.")); // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+    let (status, reply) = s
+        .post_json("/api/chat", json!({"message":"Search and read blocked"}))
+        .await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["web_tools"][1]["code"], "WEB_BLOCKED", "{reply}");
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    task.abort();
+}
+
+/// Search-result reads follow the role that keeps the URL policy. On one
+/// server, with the same listing, an `operator` turn stays bound by the
+/// allowlist and an administrator's turn may read what its search listed. The
+/// console is told which applies to the signed-in account.
+#[tokio::test]
+async fn only_an_administrators_turn_may_read_its_search_results() {
+    let (address, reads, task) = listing_fixture().await;
+    let model = common::start_mock_model().await;
+    let options = common::ServerOptions::default().with("auth.enabled", "true");
+    let s = listing_spawn(&model, address, options).await;
+    let cookie = |response: &reqwest::Response| {
+        let header = response.headers()["set-cookie"].to_str().unwrap();
+        header.split(';').next().unwrap().to_string()
+    };
+    let send = |session: &str, method: reqwest::Method, path: &str, body: Value| {
+        s.req(method, path).header("cookie", session).json(&body).send()
+    };
+    let login = |name: &'static str, password: String| {
+        let request = s.client.post(s.url("/api/auth/login"));
+        async move {
+            let body = json!({"username":name,"password":password});
+            let response = request.json(&body).send().await.unwrap();
+            assert_eq!(response.status(), 200, "{name} signs in");
+            response
+        }
+    };
+    let setup_code = std::fs::read_to_string(s.home.join("setup-code")).unwrap();
+    let setup_code = setup_code.trim().to_string();
+    let secret = "result-reads-fixture-password";
+    let bootstrap = cookie(&login("admin", setup_code.clone()).await);
+    let changed = send(
+        &bootstrap,
+        reqwest::Method::POST,
+        "/api/auth/password",
+        json!({"current_password":setup_code,"password":secret}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(changed.status(), 200);
+    let admin = cookie(&changed);
+    let post = reqwest::Method::POST;
+    let created = send(
+        &admin,
+        post.clone(),
+        "/api/auth/users",
+        json!({"username":"operator","role":"operator","password":secret}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(created.status(), 200);
+    let operator = cookie(&login("operator", secret.into()).await);
+    let search_host = "http://google.fixture/*"; // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+    let allowed = send(&admin, post.clone(), "/api/web/allow", json!({"url":search_host}))
+        .await
+        .unwrap();
+    assert_eq!(allowed.status(), 200);
+
+    // The mock model repeats its last reply, so each turn gets the script anew.
+    let script = json!([
+        tool_call_reply("web_search", r#"{"query":"listed page"}"#, "role_search"),
+        tool_call_reply("web_fetch", LISTED_PAGE, "role_fetch"),
+        common::ok_reply("Answered.", 20, 6)
+    ]);
+    model.set_reply(script.clone());
+    let chat = json!({"message":"Search and read"});
+
+    let reply: Value = send(&operator, post.clone(), "/api/chat", chat.clone())
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let tools = reply["web_tools"].as_array().expect("web tools ran");
+    assert_eq!(tools[0]["ok"], true, "an operator may still search: {reply}");
+    let notice = tools[0]["result"]["notice"].as_str().unwrap();
+    assert!(
+        notice.contains("require their own URL permission"),
+        "no grant is offered: {reply}"
+    );
+    assert_eq!(tools[1]["code"], "WEB_HOST_DENIED", "{reply}");
+    assert_eq!(reads.load(Ordering::SeqCst), 0, "the listed page was not contacted");
+    let status: Value = send(&operator, reqwest::Method::GET, "/api/web", Value::Null)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(status["search_result_reads"], false, "{status}");
+
+    model.set_reply(script);
+    let reply: Value = send(&admin, post, "/api/chat", chat)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(reply["web_tools"][1]["ok"], true, "{reply}");
+    assert_eq!(
+        reply["web_tools"][1]["result"]["granted_by"], "search_result",
+        "{reply}"
+    );
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    let status: Value = send(&admin, reqwest::Method::GET, "/api/web", Value::Null)
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(status["search_result_reads"], true, "{status}");
+
+    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    assert_eq!(
+        audit.matches(r#""event":"web_result_read""#).count(),
+        1,
+        "one granted read"
+    );
+    assert_eq!(
+        audit.matches(r#""event":"web_result_grants""#).count(),
+        1,
+        "one listing granted"
+    );
+    task.abort();
+}
+
+/// A server-run `/loop` carries its search-result grants from one turn to the
+/// next: turn 1 searches, turn 2 reads the page that search listed.
+#[tokio::test]
+async fn a_loop_run_keeps_its_search_result_grants_between_turns() {
+    let (address, reads, task) = listing_fixture().await;
+    let handed = Arc::new(AtomicBool::new(false));
+    let saw = handed.clone();
+    let model_router = Router::new()
+        .route(
+            "/v1/models",
+            get(|| async { Json(json!({"data":[{"id":"mock-model"}]})) }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(move |Json(body): Json<Value>| {
+                let saw = saw.clone();
+                async move {
+                    // The evidence digest after a read asks for JSON; give it none.
+                    if body.get("response_format").is_some() {
+                        return Json(common::ok_reply("{}", 5, 1));
+                    }
+                    let messages = body["messages"].as_array().unwrap();
+                    let results: Vec<_> = messages.iter().filter(|m| m["role"] == "tool").collect();
+                    if results.iter().any(|m| {
+                        m["content"]
+                            .as_str()
+                            .is_some_and(|c| c.contains("LISTED_PAGE_EVIDENCE"))
+                    }) {
+                        saw.store(true, Ordering::SeqCst);
+                    }
+                    let second = messages.iter().any(|m| {
+                        m["role"] == "user" && m["content"].as_str().is_some_and(|c| c.starts_with("Loop turn 2"))
+                    });
+                    Json(match (second, results.is_empty()) {
+                        (false, true) => tool_call_reply("web_search", r#"{"query":"listed page"}"#, "loop_search"),
+                        (true, true) => tool_call_reply("web_fetch", LISTED_PAGE, "loop_fetch"),
+                        (false, false) => common::ok_reply("Listing noted.", 10, 3),
+                        (true, false) => common::ok_reply("Read the listed page.", 10, 3),
+                    })
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let model_address = listener.local_addr().unwrap();
+    let model_task = tokio::spawn(async move { axum::serve(listener, model_router).await.unwrap() });
+    let model = common::MockModel {
+        base: format!("http://{model_address}"), // DevSkim: ignore DS137138 because this test-only model binds only to loopback.
+        reply: Arc::default(),
+        requests: Arc::default(),
+        delay_ms: Arc::default(),
+    };
+    let s = listing_server(&model, address, None).await;
+    let (_, session) = s.post_json("/api/sessions", json!({"title":"loop"})).await;
+    let sid = session["session_id"].as_str().unwrap().to_string();
+    let (status, goal) = s
+        .post_json(
+            &format!("/api/sessions/{sid}/goal"),
+            json!({"goal":"read the listed page"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{goal}");
+    let (status, started) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id":sid, "max_turns":2, "cooldown_ms":0}),
+        )
+        .await;
+    assert_eq!(status, 200, "{started}");
+    let run_id = started["run"]["run_id"].as_str().unwrap().to_string();
+    let mut run = Value::Null;
+    for _ in 0..400 {
+        run = s.get_json(&format!("/api/loop/status?run_id={run_id}")).await.1["run"].clone();
+        if run["stats"]["turns_completed"] == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(run["stats"]["turns_completed"], 2, "{run}");
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        1,
+        "turn 2 read the page turn 1's search listed"
+    );
+    assert!(handed.load(Ordering::SeqCst), "the model was handed the page text");
+    task.abort();
+    model_task.abort();
 }

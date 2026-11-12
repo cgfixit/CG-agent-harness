@@ -265,22 +265,22 @@ flags (`/web search -- --help`), or single-quote it
 ### Chat web tools
 
 Local chat and `/loop` offer only `web_search` (configured-provider listings)
-and `web_fetch` (an exact permitted URL); listings grant no page access. No
-repository, shell, policy, account, key or mutation tool is exposed. Batches
-validate before sequential reads; `web.chat_tool_calls` bounds all rounds
-(1–30, default 30).
+and `web_fetch` (an exact permitted URL); listings grant admin-turn exact-URL
+reads (`web.search.result_reads.enabled`). No repository, shell, policy,
+account, key or mutation tool is exposed. Batches validate before sequential
+reads; `web.chat_tool_calls` bounds all rounds (1–30, default 30).
 
-Tool-offering hops write up to the chat ceiling at temperature 0; tool-free
-calls use `temperature`. Each call fits prompt, definitions, one reply and
+Every hop writes up to the chat ceiling at the configured `temperature`.
+Each call fits prompt, definitions, one reply and
 minimal results inside `web.total_tokens`; a batch without room runs no reads,
 and results shrink to the remaining calibrated room. `WEB_TOKEN_BUDGET`
 reports refusal; `WEB_TOOLS_WITHHELD` reserves an answer after evidence.
 A failed read returns its own `ok: false` outcome. A batch that fails entirely,
-including a turn's first, ends the tool rounds: the model is asked once more
-without tools and answers from what it has, and the fixed "Web operation
-failed: CODE" line appears only when that answer is empty. Usage includes
-completed model calls; missing upstream counts remain unknown. Cancellation
-aborts the whole turn.
+including a turn's first, ends the tool rounds: the model is asked once more,
+without tools, to answer. An empty answer is retried once, then
+harness-written (`WEB_FINAL_EMPTY`, or "Web operation failed: CODE" if all
+failed). Usage includes completed model calls; missing upstream counts remain
+unknown. Cancellation aborts the whole turn.
 
 `web_fetch` selects up to three BM25 passages from the page it read, using
 `query` (1–200 characters); lookups that rank several pages keep at most two
@@ -460,8 +460,8 @@ Research questions, answers, controller state and web selections belong to the
 initiating random account identity, so a recreated username inherits nothing;
 a deleted account's selections can remain on disk, inaccessible.
 
-Search listings grant nothing: every follow-up read independently passes
-current policy, account and public-address checks. Policy is rechecked at
+Beyond admin-turn reads, listings grant nothing: every other read independently
+passes current policy, account and public-address checks. Policy is rechecked at
 dispatch, cache/index/context reads, storage, model use and delivery;
 revocation discards in-flight evidence and blocks revoked cache, but cannot
 erase earlier conversation text or model requests

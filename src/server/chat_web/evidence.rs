@@ -21,6 +21,9 @@ pub(crate) struct RunEvidence {
     pub receipts: Vec<Receipt>,
     pub queries: Vec<String>,
     pub packet: Option<Value>,
+    /// Exact URLs this run's search listings returned, when
+    /// `web.search.result_reads` is on. They end with the run.
+    pub granted: Vec<String>,
 }
 
 impl RunEvidence {

@@ -138,7 +138,8 @@ This loop does not edit files, run skills as programs, or run coding checks.
 `--web` on `/goal` or `/loop` sets the chat tools of every turn while the goal is
 set; without it the goal takes `web.goal_web_default` (ships `all`,
 restart-only). `fetch` excludes search, `off` excludes web context and tools.
-Search listings never grant URL permission. Preflight shows the mode.
+Listings grant admin-turn exact-URL reads (`web.search.result_reads.enabled`)
+only. Preflight shows the mode.
 A server restart does not resume a loop; goal-to-coding execution
 is the separate [goal staging](CODING_PIPELINE.md#94-stage-a-session-goal-as-a-coding-task) workflow.
 

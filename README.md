@@ -38,7 +38,7 @@ flowchart TD
     D -->|no| E{Outside evidence needed?}
     E -->|no| C
     E -->|all| F[One query through the configured chain<br/>tavily → serpapi → google-public, one deadline]
-    F --> G[Model picks pages; listings grant no URL]
+    F --> G[Model picks pages; listings grant admin-turn reads]
     E -->|fetch: URL known| G
     G --> I[Exact permitted read; cache unless refresh]
     I -->|403, 429, 503 or script shell, if opted in| J[Firecrawl re-reads the same URL]
