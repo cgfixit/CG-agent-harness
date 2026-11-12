@@ -95,6 +95,27 @@ fn refuses_bad_ports_and_missing_binary_with_exit_3() {
 }
 
 #[test]
+fn desktop_url_refuses_anything_but_one_exact_loopback_origin() {
+    for args in [
+        &["http://127.0.0.1:0"][..],
+        &["http://127.0.0.1:65536"],
+        &["https://example.invalid:443"],
+        &["http://127.0.0.1:1@example.invalid"],
+        &["http://127.0.0.1:8790/path"],
+        &["http://127.0.0.1:8790", "extra"],
+        &[],
+    ] {
+        let out = Command::new("bash")
+            .arg(script())
+            .arg("--desktop-url")
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(3), "{args:?}: {}", stderr(&out));
+    }
+}
+
+#[test]
 fn refuses_a_port_that_is_already_listening() {
     let dir = tempfile::tempdir().unwrap();
     let held = TcpListener::bind((LOOPBACK, 0)).unwrap();

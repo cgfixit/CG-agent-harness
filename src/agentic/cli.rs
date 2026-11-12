@@ -107,9 +107,8 @@ const VALUE_OPTS: [&str; 15] = [
     "max-iterations",
     "run-id",
 ];
-const VALUE_OPTS_EXTRA: [&str; 5] = ["decision", "provider", "out", "planner-timeout-sec", "planner-identity"];
+const VALUE_OPTS_EXTRA: [&str; 4] = ["decision", "provider", "planner-timeout-sec", "planner-identity"];
 const FLAG_OPTS: [&str; 6] = ["repo", "no-diff", "confirm", "confirm-online", "push", "publish"];
-const FLAG_OPTS_EXTRA: [&str; 1] = ["confirm-publish"];
 
 impl Opts {
     pub fn parse(args: &[String]) -> Result<Self, String> {
@@ -124,7 +123,7 @@ impl Opts {
                 Some((k, v)) => (k.to_string(), Some(v.to_string())),
                 None => (body.to_string(), None),
             };
-            if FLAG_OPTS.contains(&key.as_str()) || FLAG_OPTS_EXTRA.contains(&key.as_str()) {
+            if FLAG_OPTS.contains(&key.as_str()) {
                 if inline.is_some() {
                     return Err(format!("--{key} takes no value"));
                 }
@@ -214,5 +213,19 @@ fn run(args: &[OsString]) -> u8 {
             eprintln!("agentic {}: {}: {}", inv.action, err.code, err.message);
             exit_code_for(&err)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Opts;
+
+    #[test]
+    fn options_no_command_reads_are_refused_as_unknown() {
+        for arg in ["--confirm-publish", "--out=x"] {
+            let err = Opts::parse(&[arg.to_string()]).unwrap_err();
+            assert!(err.starts_with("unknown option"), "{arg} must not parse");
+        }
+        assert!(Opts::parse(&["--confirm".to_string()]).unwrap().flag("confirm"));
     }
 }
