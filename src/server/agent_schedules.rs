@@ -581,7 +581,10 @@ pub fn parse_request(value: &Value) -> crate::common::errors::Result<AgentRunReq
         )
     };
     let request: AgentRunRequest = serde_json::from_value(value.clone()).map_err(|_| invalid())?;
-    if !request.validate().is_empty() {
+    // A stored row is not proof it passed `AgentScheduleCreate::validate`: a
+    // recovered or older file can hold one with no goal binding, and
+    // `prepare_run` treats a missing binding as nothing to check.
+    if request.goal_stage.is_none() || !request.validate().is_empty() {
         return Err(invalid());
     }
     Ok(request)
@@ -600,6 +603,14 @@ mod tests {
             "confirm": true,
             "goal_stage": {"session_id": "aaaaaaaaaaaa", "stage_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"} // DevSkim: ignore DS173237 because this is a 32-hex stage_id fixture, not a credential.
         })
+    }
+
+    #[test]
+    fn fire_time_parse_refuses_a_row_without_a_goal_binding() {
+        assert!(parse_request(&req()).is_ok());
+        let mut unbound = req();
+        unbound.as_object_mut().unwrap().remove("goal_stage");
+        assert_eq!(parse_request(&unbound).unwrap_err().code, "INVALID_SCHEDULE_REQUEST");
     }
 
     #[test]

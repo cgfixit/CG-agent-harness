@@ -128,6 +128,8 @@ fn cli_exit_codes_for_disabled_and_bad_scope() {
         "127.0.0.0/16".to_string(),
     ])
     .unwrap();
+    // Loopback is in scope and always configured, so an empty answer is a regression.
+    assert!(addresses(&body).contains(&Ipv4Addr::LOCALHOST), "{stdout}");
     for address in addresses(&body) {
         assert!(scope.contains(address));
     }
