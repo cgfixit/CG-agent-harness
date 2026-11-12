@@ -75,20 +75,12 @@ impl SelfKnowledgeConfig {
                 as f32,
         };
         Ok(Self {
-            self_knowledge: missing_on(cfg, "diagnostics.self_knowledge")?,
+            self_knowledge: cfg.flag_missing_on("diagnostics.self_knowledge")?,
             max_chunks,
             max_chars,
             min_score,
-            live_state: missing_on(cfg, "diagnostics.live_state")?,
+            live_state: cfg.flag_missing_on("diagnostics.live_state")?,
         })
-    }
-}
-
-fn missing_on(cfg: &AppConfig, key: &str) -> Result<bool> {
-    match cfg.get(key) {
-        None => Ok(true),
-        Some(serde_yaml_ng::Value::Bool(b)) => Ok(*b),
-        Some(_) => Err(HarnessError::config(format!("{key} must be a literal YAML boolean"))),
     }
 }
 

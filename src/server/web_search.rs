@@ -550,7 +550,7 @@ impl WebTool {
 
     /// A snapshot for one chat turn whose reads may also use the exact URLs
     /// its own searches list, starting from `seed` (a loop run's earlier
-    /// grants). `None` unless `web.search.result_reads.enabled` is literal true.
+    /// grants). `None` when `web.search.result_reads.enabled` is literal false.
     pub(super) fn for_search_grants(&self, seed: &[String]) -> Option<Self> {
         self.result_reads.enabled.then(|| {
             let held = seed.iter().take(self.result_reads.max_urls).cloned().collect();
@@ -1702,9 +1702,10 @@ mod tests {
         }
     }
 
-    /// `web.search.result_reads`: off unless literal `true` (it ships `true`),
-    /// and when on the grants live on one turn's snapshot only. The shared tool, the saved file and a rule
-    /// change made through that snapshot never carry them.
+    /// `web.search.result_reads`: on when the key is missing or literal `true`,
+    /// off at literal `false`, refused at load for anything else. When on the
+    /// grants live on one turn's snapshot only. The shared tool, the saved file
+    /// and a rule change made through that snapshot never carry them.
     #[test]
     fn search_result_grants_stay_on_one_snapshot_and_out_of_the_saved_policy() {
         let listing = json!({"results":[
@@ -1715,22 +1716,36 @@ mod tests {
             {"url":"https://third.example.net/"},
             {"url":"https://fourth.example.net/"}]}); // DevSkim: ignore DS162092 because the loopback URL must be skipped, never fetched.
         let dir = tempfile::tempdir().unwrap();
-        let off = AppConfig::from_str("web: {max_rules: 8}", Path::new("config.yaml")).unwrap();
+        let off = AppConfig::from_str(
+            "web: {max_rules: 8, search: {result_reads: {enabled: false}}}",
+            Path::new("config.yaml"),
+        )
+        .unwrap();
         let shipped = WebTool::new(dir.path(), &off).unwrap();
         shipped
             .allow_rules(&["https://docs.example.org/*".to_string()], "docs", &[], true)
             .unwrap();
-        assert!(shipped.for_search_grants(&[]).is_none(), "off unless literal true");
+        assert!(shipped.for_search_grants(&[]).is_none(), "off at literal false");
         assert_eq!(shipped.grant_search_results(&listing), 0);
-        let quoted = AppConfig::from_str(
-            "web: {search: {result_reads: {enabled: 'true'}}}",
-            Path::new("config.yaml"),
-        )
-        .unwrap();
-        assert!(WebTool::new(dir.path(), &quoted)
-            .unwrap()
-            .for_search_grants(&[])
-            .is_none());
+        // A home written before the key existed has no key: it reads as on.
+        let absent = AppConfig::from_str("web: {max_rules: 8}", Path::new("config.yaml")).unwrap();
+        let older_home = WebTool::new(dir.path(), &absent).unwrap();
+        assert!(older_home.for_search_grants(&[]).is_some(), "a missing key is on");
+        assert_eq!(older_home.status(true, "").unwrap()["search_result_reads"], true);
+        // The shared tool holds no grant in either case.
+        assert_eq!(older_home.grant_search_results(&listing), 0);
+        for quoted in ["'true'", "'false'", "1"] {
+            let cfg = AppConfig::from_str(
+                &format!("web: {{search: {{result_reads: {{enabled: {quoted}}}}}}}"),
+                Path::new("config.yaml"),
+            )
+            .unwrap();
+            let failure = WebTool::new(dir.path(), &cfg).unwrap_err();
+            assert!(
+                failure.message.contains("web.search.result_reads.enabled"),
+                "{quoted} is refused by key"
+            );
+        }
         for bad in ["0", "101", "'5'"] {
             let cfg = AppConfig::from_str(
                 &format!("web: {{search: {{result_reads: {{max_urls: {bad}}}}}}}"),

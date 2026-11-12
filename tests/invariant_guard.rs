@@ -372,6 +372,48 @@ fn self_knowledge_reads_no_file_and_never_reaches_agent_runs() {
     assert!(!reload.contains("\"diagnostics"), "diagnostics stays restart-only");
 }
 
+/// A `MISSING_MEANS_ON` switch reads as on when its key is absent, so the
+/// startup drift report skips it. That is only true while the code reads it
+/// through `flag_missing_on`: one read through `flag_is_true` would treat the
+/// same absent key as off with no warning. No other key may use the accessor,
+/// because it must never open a gate that has to stay closed until an
+/// operator opens it.
+#[test]
+fn missing_means_on_switches_are_read_only_through_their_accessor() {
+    use cgagentharness::common::config::MISSING_MEANS_ON;
+    let mut reads = Vec::new();
+    for (path, text) in read_tree(&root()) {
+        for key in MISSING_MEANS_ON {
+            assert!(
+                !text.contains(&format!("flag_is_true(\"{key}\")")),
+                "{path} reads {key} through flag_is_true"
+            );
+        }
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find(".flag_missing_on(") {
+            let after = &rest[at + ".flag_missing_on(".len()..];
+            let key = after
+                .strip_prefix('"')
+                .and_then(|s| s.split_once('"'))
+                .map(|(key, _)| key.to_string());
+            match key {
+                Some(key) => reads.push(key),
+                // The accessor's own unit test passes each listed key by name.
+                None => assert!(
+                    path.ends_with("common/config.rs"),
+                    "{path} calls flag_missing_on without a literal key"
+                ),
+            }
+            rest = after;
+        }
+    }
+    reads.sort();
+    reads.dedup();
+    let mut listed: Vec<String> = MISSING_MEANS_ON.iter().map(|k| k.to_string()).collect();
+    listed.sort();
+    assert_eq!(reads, listed, "flag_missing_on reads exactly the MISSING_MEANS_ON keys");
+}
+
 #[test]
 fn netconnect_dials_only_through_the_budgeted_dialer() {
     // Sockets and name lookups. Only connect.rs may open a socket, and
@@ -875,6 +917,9 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
     // its own search listed, for that turn or loop run. It was added off the day before. The
     // bounds that stay (exact URL, memory only, blocked rules win, admin role only) are
     // asserted in web_policy and web_search unit tests and in tests/chat_web.rs.
+    // why: operator decision (2026-11-12), later the same day: a home whose config.yaml
+    // lacks the key reads it as on (`MISSING_MEANS_ON`), so an existing home gets the
+    // shipped behaviour without an edit. Literal false still turns it off.
     assert!(
         cfg.flag_is_true("web.search.result_reads.enabled"),
         "web.search.result_reads.enabled must ship true"
