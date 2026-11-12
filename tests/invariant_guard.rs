@@ -1751,8 +1751,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-requested (2026-11-10) four facts the #807 audit held back at the cap: hidden
     // subcommand exit codes, the console MAX_GOAL_CHARS duplicate, the cyclaw/ prefix and the
     // Copilot skill scope; raised to the reported count.
-    // why: operator decision (2026-11-12): +200; the file sat exactly at 1541, so every added word needed a cut.
-    ("AGENTS.md", Agent, 1741),
+    // why: operator decision (2026-11-12): set to 1776, the cap it had on 2026-11-02; the file sat exactly at 1541, so every added word needed a cut.
+    ("AGENTS.md", Agent, 1776),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     // why: now `@AGENTS.md` plus Claude-only lines; 183 words, rounded up to the next 100.
     ("CLAUDE.md", Agent, 400),
