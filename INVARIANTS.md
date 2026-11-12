@@ -246,9 +246,18 @@ edits between an authorization check and an OS operation is claimed.
 Chat exposes only two read-only model tools while web is enabled: configured-provider
 search and permitted URL fetch. The dispatcher bounds calls, tokens, time and
 arguments and rechecks current account/URL permissions before reads and evidence
-delivery. A turn that already holds a notes-corpus read (`source=notes_corpus`), or a successful private-notes tool result, does not offer or run `web_search` or its `search_web`/`websearch` aliases unless that user message asks for outside, web, or internet sources. `web.chat_tool_calls` (default 30, range 1–30) remains the tool-round ceiling. Every hop writes up to the chat token ceiling at the configured temperature, since the model may answer on a hop that offers tools instead of calling one (a smaller planning cap cut such answers off and they were generated again). It cannot mutate policy, credentials, accounts or repositories, including
+delivery. A turn that already holds a notes-corpus read (`source=notes_corpus`), or a successful private-notes tool result, does not offer or run `web_search` or its `search_web`/`websearch` aliases unless that user message asks for outside, web, or internet sources. `web.chat_tool_calls` (default 30, range 1–30) remains the tool-round ceiling. Every hop writes up to the chat token ceiling at the configured temperature, since the model may answer on a hop that offers tools instead of calling one (a smaller planning cap cut such answers off and they were generated again). When a hop that offers no tools returns no text after web activity, the harness asks once more in that turn with a note that no tools remain: no tool is offered, no call is spent, the usage is counted and the note is never stored. If that is empty too, the harness writes a reply listing what the web calls did and, when something had succeeded, marks the turn `WEB_FINAL_EMPTY`, which a `/loop` counts toward `loop.max_failures`. It cannot mutate policy, credentials, accounts or repositories, including
 local `/loop` turns. Search-provider snippets are listings, not fetched
-linked pages; each content fetch still requires its own URL permission. A
+linked pages; each content fetch still requires its own URL permission.
+Restart-only `web.search.result_reads.enabled` (ships false; operator decision,
+2026-11-11) is the one exception: a chat or `/loop` web turn may then read the exact
+URLs its own search listings returned, as listed, for that turn or that loop run
+only, at most `max_urls` (default 20) held. The grant lives in memory on that
+turn's policy snapshot and is never written to `tools/web_allowlist.json`. Blocked
+rules, private addresses, refused redirects and an empty allowlist still refuse;
+each such read is audited as `web_result_read`. Model output still grants
+nothing: the model only chooses among URLs a provider returned. Listings are text
+an outside party can influence, so enabling this widens what the model may read. A
 restart-only `web.search.provider` picks the backend: `auto` follows the saved keys
 (operator decision, 2026-11-10): an active Tavily key selects Tavily, else a configured
 SerpAPI key selects the fixed Google-results API transport, else public Google; with both

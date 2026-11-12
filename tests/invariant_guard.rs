@@ -862,6 +862,9 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         // #647 Phase 2: spending another search provider is opt-in; the free public
         // Google hop ships on (asserted below).
         "web.search.fallback_to_serpapi",
+        // Operator decision (2026-11-11): reading the URLs a search listed is opt-in;
+        // as shipped a listing grants no page access.
+        "web.search.result_reads.enabled",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
     }

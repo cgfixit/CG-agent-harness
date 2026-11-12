@@ -87,6 +87,25 @@ impl Fallback {
     }
 }
 
+/// `web.search.result_reads`, restart-only and off as shipped (operator
+/// decision, 2026-11-11). When on, a chat or `/loop` web turn may read the exact
+/// URLs its own search listings returned, for that turn or loop run only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ResultReads {
+    pub enabled: bool,
+    /// Listed URLs one turn or loop run may hold.
+    pub max_urls: usize,
+}
+
+impl ResultReads {
+    pub fn load(cfg: &AppConfig) -> Result<Self> {
+        Ok(Self {
+            enabled: cfg.flag_is_true("web.search.result_reads.enabled"),
+            max_urls: cfg.u64_in("web.search.result_reads.max_urls", 20, 1..=100)? as usize,
+        })
+    }
+}
+
 /// One provider attempt in a search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Hop {

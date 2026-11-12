@@ -4598,7 +4598,7 @@ async function runLoopTurns() {
         continue;
       }
       if (loopState.blockedTool) { stopLoop('loop stopped — ' + loopState.blockedTool + '; goal remains incomplete. Check /web status and the reported permission, provider or budget error before retrying /loop.' + (WEB_TOOL_NEXT_STEP[loopState.blockedTool] ? ' ' + WEB_TOOL_NEXT_STEP[loopState.blockedTool] : '')); return; }
-      if ((loopState.toolFailures || 0) >= MAX_LOOP_FAILURES) { stopLoop('loop stopped — every web read failed on ' + MAX_LOOP_FAILURES + ' turns in a row; check /web status and the reported codes before retrying /loop'); return; }
+      if ((loopState.toolFailures || 0) >= MAX_LOOP_FAILURES) { stopLoop('loop stopped — web reads failed or the model gave no answer on ' + MAX_LOOP_FAILURES + ' turns in a row; check /web status and the reported codes before retrying /loop'); return; }
       loopState.failures = 0;
       loopState.remaining -= 1;
       if (loopState.lastReply && repliesNearlyRepeat(loopState.lastReply, reply)) {
@@ -4894,7 +4894,9 @@ async function finishChat(r, asLoop) {
       /* One read's failure is not the loop's: count turns on which every read failed.
          A search cooldown or pace refusal is a deliberate pause, not a failure (loop_runner.rs mirrors this). */
       const counted = failedTools.filter(tool => tool.code !== 'WEB_SEARCH_COOLDOWN' && tool.code !== 'WEB_SEARCH_PACED');
-      if (webEvents.some(tool => tool.ok === true)) loopState.toolFailures = 0;
+      /* WEB_FINAL_EMPTY: the model wrote no answer and the harness wrote the reply; that turn counts even with a read that worked. */
+      if (failedTools.some(tool => tool.code === 'WEB_FINAL_EMPTY')) loopState.toolFailures = (loopState.toolFailures || 0) + 1;
+      else if (webEvents.some(tool => tool.ok === true)) loopState.toolFailures = 0;
       else if (counted.length) loopState.toolFailures = (loopState.toolFailures || 0) + 1;
       sys('web: ' + failedTools.length + ' read(s) failed this turn (' + failedTools.map(tool => tool.code || 'WEB_TOOL_FAILED').join(', ') + '); the model was told and the loop continues');
     } else loopState.toolFailures = 0;
