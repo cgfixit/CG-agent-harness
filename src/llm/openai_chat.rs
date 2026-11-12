@@ -116,31 +116,13 @@ pub fn strip_leading_reasoning(text: &str) -> &str {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TurnKind {
-    Tool,
-    Synthesis,
-}
-
+/// One call's reply cap and temperature. Chat sends the configured values on
+/// every call: a call that offers tools may write the whole answer instead of
+/// calling one, so it is sampled like any other answer.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TurnSampling {
     pub max_tokens: u64,
     pub temperature: f64,
-}
-
-/// One call's reply cap and temperature. A hop that offers tools writes up to
-/// the answer cap, because the model may answer instead of calling a tool: a
-/// smaller planning cap cut such an answer off and it was generated again from
-/// its first token. Tool selection stays at temperature 0; a call that offers
-/// no tools uses the configured temperature.
-pub fn sampling_for(kind: TurnKind, max_tokens: u64, temperature: f64) -> TurnSampling {
-    TurnSampling {
-        max_tokens,
-        temperature: match kind {
-            TurnKind::Tool => 0.0,
-            TurnKind::Synthesis => temperature,
-        },
-    }
 }
 
 pub fn completion_payload(
@@ -911,28 +893,29 @@ mod tests {
     }
 
     #[test]
-    fn tool_and_synthesis_payloads_share_the_answer_budget() {
+    fn a_payload_sends_the_given_cap_temperature_and_effort() {
         let messages = [json!({"role":"user","content":"count the cedars"})];
-        let tool = sampling_for(TurnKind::Tool, 4096, 0.2);
-        let synthesis = sampling_for(TurnKind::Synthesis, 4096, 0.2);
-        let tool_payload = completion_payload("qwen3.8:27b-mlx-cg", &messages, tool, &[], true, false, Some("none"));
-        let synthesis_payload = completion_payload(
-            "qwen3.8:27b-mlx-cg",
-            &messages,
-            synthesis,
-            &[],
-            true,
-            false,
-            Some("none"),
-        );
-        // A tools-offered hop may be the answer itself: it gets the whole cap.
-        assert_eq!(tool_payload["max_tokens"], 4096);
-        assert_eq!(tool_payload["temperature"].as_f64(), Some(0.0));
-        assert_eq!(tool_payload["reasoning_effort"], "none");
-        assert_eq!(tool_payload["tool_choice"], "none");
-        assert_eq!(synthesis_payload["max_tokens"], 4096);
-        assert_eq!(synthesis_payload["temperature"].as_f64(), Some(0.2));
-        assert_eq!(synthesis_payload["reasoning_effort"], "none");
+        let sampling = TurnSampling {
+            max_tokens: 4096,
+            temperature: 0.2,
+        };
+        let tool = json!({"type":"function","function":{"name":"web_search"}});
+        // Offering tools changes the tool fields only, never the sampling.
+        for tools in [vec![], vec![tool]] {
+            let payload = completion_payload(
+                "qwen3.8:27b-mlx-cg",
+                &messages,
+                sampling,
+                &tools,
+                true,
+                false,
+                Some("none"),
+            );
+            assert_eq!(payload["max_tokens"], 4096);
+            assert_eq!(payload["temperature"].as_f64(), Some(0.2));
+            assert_eq!(payload["reasoning_effort"], "none");
+            assert_eq!(payload["tool_choice"], if tools.is_empty() { "none" } else { "auto" });
+        }
     }
 
     #[tokio::test]

@@ -58,7 +58,7 @@ MCP, cloud or repository permissions are implied by routing between evidence.
    reads but no discovery search. Goal mode all enables both tools, not URL
    access. Keyed listings require account/web authority; public Google also
    requires current URL policy. A fresh home only seeds Google's URL rule.
-   Search results never grant permission to read their destinations.
+   Search results grant an administrator's turn exact-URL reads (`web.search.result_reads.enabled`, shipped on), nothing more; other roles keep the URL policy.
 
 4. Current recoverable search codes are WEB_SEARCH_PROVIDER, WEB_TIMEOUT,
    WEB_SEARCH_COOLDOWN and WEB_SEARCH_QUOTA for keyed hops. Missing/rejected
@@ -451,7 +451,7 @@ and budget decisions remain deterministic.
   digest JSON retains valid passages and a visible failure. Transport/model
   failure still follows the ordinary failed-turn policy.
 - Tool planning first ran at 512 tokens with truncated answers regenerated at
-  full synthesis; a hop that offers tools now writes up to the answer cap once.
+  full synthesis; a tool-offering hop now answers once, at the configured cap and temperature.
   The active Qwen profile allowed 4,096 answer tokens, 28,000 total prompt-plus-reply
   tokens, 6,000 evidence tokens, 24,000 compaction trigger and 30 tool calls.
   Auto-tuning reported a 1,140-second model deadline, 300-second synthesis limit

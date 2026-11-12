@@ -283,12 +283,12 @@ that literal argument. Other flag rules are in the
 
 Local chat and `/loop` offer only `web_search` (configured-provider listings)
 and `web_fetch` (an exact permitted URL). The model chooses supplied local context,
-search, or reads; listings grant no page access. No repository, shell, policy,
+search, or reads; listings grant admin-turn exact-URL reads (`web.search.result_reads.enabled`). No repository, shell, policy,
 account, key or mutation tool is exposed. Batches validate before sequential
 reads; `web.chat_tool_calls` bounds all rounds (1–30, default 30).
 
-Tool-offering hops write up to the chat ceiling at temperature 0;
-tool-free calls use `temperature`. The full
+Every hop writes up to the chat ceiling at the configured
+`temperature`, tool-offering or not. The full
 stored goal governs whether outside evidence is requested after a notes read.
 Each call fits prompt, definitions, one reply and minimal results inside
 `web.total_tokens`; insufficient batch room runs no reads. Results shrink to
@@ -485,10 +485,10 @@ Research questions, answers, controller state, and web selections belong to the
 initiating random account identity, so a recreated username inherits nothing.
 Deleted accounts can leave private selections on disk, inaccessible to replacements.
 
-Chat `web_fetch` reaches URLs permitted by the active mode, bounded by
+Chat `web_fetch` reaches URLs permitted by the active mode or listed that turn, bounded by
 `web.chat_tool_calls`. Fresh homes permit only Google search; a home with no rules
 left refuses page fetching with `WEB_ALLOWLIST_EMPTY`; confirmed denylist mode broadens public access.
-Search listings grant nothing: follow-up reads independently pass current policy,
+Listings otherwise grant nothing: other reads independently pass current policy,
 account and public-address checks.
 
 Policy is rechecked at dispatch, cache/index/context reads, storage, model use,

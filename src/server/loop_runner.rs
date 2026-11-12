@@ -112,7 +112,8 @@ pub fn loop_blocking_web_code(events: &[Value]) -> Option<String> {
     None
 }
 
-/// Turns on which every web read failed, after this turn (console mirror).
+/// Turns on which every web read failed or the model gave no answer after its
+/// web calls, after this turn (console mirror).
 /// `WEB_SEARCH_COOLDOWN` and `WEB_SEARCH_PACED` are deliberate pauses the model
 /// was told not to retry: a turn whose only failures are those pauses neither
 /// counts nor resets the streak.
@@ -121,7 +122,14 @@ pub fn next_tool_failures(previous: u64, events: &[Value]) -> u64 {
         .iter()
         .filter(|e| e.get("ok") == Some(&Value::Bool(false)))
         .collect();
-    if failed.is_empty() || events.iter().any(|e| e.get("ok") == Some(&Value::Bool(true))) {
+    // WEB_FINAL_EMPTY: the model wrote no answer and the harness wrote the reply.
+    // That turn counts even though a read succeeded on it.
+    if failed
+        .iter()
+        .any(|e| e.get("code").and_then(Value::as_str) == Some("WEB_FINAL_EMPTY"))
+    {
+        previous + 1
+    } else if failed.is_empty() || events.iter().any(|e| e.get("ok") == Some(&Value::Bool(true))) {
         0
     } else if failed.iter().all(|e| {
         matches!(
@@ -575,7 +583,7 @@ async fn run_turns(
                     terminal = Some((
                         LoopRunState::Done,
                         format!(
-                            "loop stopped — every web read failed on {} turns in a row",
+                            "loop stopped — web reads failed or the model gave no answer on {} turns in a row",
                             run.config.max_failures
                         ),
                     ));
@@ -717,8 +725,11 @@ mod tests {
         );
         let mut evidence = super::super::chat_web::evidence::RunEvidence::default();
         evidence.searched("question");
+        // Search-result read grants ride with the run and end with it.
+        evidence.granted = vec!["https://listed.example/page".into()];
         manager.save_web_evidence("alice", "run", "goal", evidence.clone());
         assert_eq!(manager.web_evidence("alice", "run", "goal").queries, vec!["question"]);
+        assert_eq!(manager.web_evidence("alice", "run", "goal").granted.len(), 1);
         for (owner, run, goal) in [
             ("bob", "run", "goal"),
             ("alice", "different", "goal"),
@@ -730,6 +741,7 @@ mod tests {
         assert_eq!(manager.web_evidence("alice", "run", "goal").queries.len(), 1);
         manager.runs.lock().unwrap().get_mut("run").unwrap().cancel.cancel();
         assert!(manager.web_evidence("alice", "run", "goal").queries.is_empty());
+        assert!(manager.web_evidence("alice", "run", "goal").granted.is_empty());
         manager.save_web_evidence("alice", "run", "goal", evidence);
     }
 
@@ -746,6 +758,9 @@ mod tests {
         );
         assert_eq!(next_tool_failures(3, &[fail("WEB_SEARCH_COOLDOWN"), ok.clone()]), 0);
         assert_eq!(next_tool_failures(3, &[]), 0);
+        // A turn the harness had to answer counts, even with a read that worked.
+        assert_eq!(next_tool_failures(1, &[ok.clone(), fail("WEB_FINAL_EMPTY")]), 2);
+        assert_eq!(loop_blocking_web_code(&[ok.clone(), fail("WEB_FINAL_EMPTY")]), None);
         assert_eq!(loop_blocking_web_code(&[fail("WEB_SEARCH_COOLDOWN")]), None);
     }
 

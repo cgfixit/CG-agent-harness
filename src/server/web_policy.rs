@@ -356,6 +356,12 @@ pub struct Policy {
     pub blocked: Vec<Rule>,
     #[serde(skip)]
     pub revision: String,
+    /// Exact URLs one chat turn's or loop run's own search listings returned
+    /// (`web.search.result_reads`, on as shipped). Memory only: never read
+    /// from or written to the policy file, and no part of `revision`. Only
+    /// `WebTool::policy` on that turn's snapshot fills it.
+    #[serde(skip)]
+    pub granted: std::sync::Arc<std::collections::BTreeSet<String>>,
 }
 
 impl Policy {
@@ -366,6 +372,7 @@ impl Policy {
             mode: Mode::Allowlist,
             blocked: Vec::new(),
             revision: String::new(),
+            granted: Default::default(),
         }
     }
 
@@ -529,10 +536,14 @@ impl Policy {
 
     /// A named group always narrows to that group's allow rules, in either
     /// mode. Without one, a denylist permits whatever no blocked rule covers.
-    /// Blocked rules win over allow rules in both modes.
+    /// Blocked rules win over allow rules in both modes, and over `granted`:
+    /// a granted URL is one exact canonical URL, read without a group only.
     pub fn permits(&self, target: &Url, group: Option<&str>) -> bool {
         if self.blocks(target) {
             return false;
+        }
+        if group.is_none() && self.granted.contains(target.as_str()) {
+            return true;
         }
         if self.mode == Mode::Denylist && group.is_none() {
             return true;
@@ -847,6 +858,64 @@ mod tests {
             "kept blocks still apply after returning to the allowlist"
         );
         assert!(policy.authorize("https://docs.example.org/public", None).is_ok());
+    }
+
+    #[test]
+    fn a_granted_url_is_exact_ungrouped_blockable_and_never_serialized() {
+        let mut policy = Policy {
+            rules: vec![Rule::new("https://docs.example.org/*", "docs", &[]).unwrap()],
+            blocked: vec![Policy::block_rule("https://blocked.example.net/*").unwrap()],
+            ..Policy::empty()
+        };
+        let before = serde_json::to_string(&policy).unwrap();
+        policy.granted = std::sync::Arc::new(
+            [
+                "https://news.example.net/story?id=1",
+                "https://blocked.example.net/page",
+            ]
+            .map(String::from)
+            .into(),
+        );
+        assert!(policy.authorize("https://news.example.net/story?id=1", None).is_ok());
+        // Exact: no other path, query or scheme on that host, and no group.
+        let other_scheme = "http://news.example.net/story?id=1"; // DevSkim: ignore DS137138 because this URL is only parsed and refused, never contacted.
+        for other in [
+            "https://news.example.net/story?id=2",
+            "https://news.example.net/story",
+            "https://news.example.net/",
+            other_scheme,
+        ] {
+            assert_eq!(
+                policy.authorize(other, None).unwrap_err().code,
+                "WEB_HOST_DENIED",
+                "{other}"
+            );
+        }
+        assert_eq!(
+            policy
+                .authorize("https://news.example.net/story?id=1", Some("docs"))
+                .unwrap_err()
+                .code,
+            "WEB_HOST_DENIED"
+        );
+        // A blocked rule wins over a grant.
+        assert_eq!(
+            policy
+                .authorize("https://blocked.example.net/page", None)
+                .unwrap_err()
+                .code,
+            "WEB_BLOCKED"
+        );
+        // A private spelling is refused before any grant is consulted.
+        policy.granted = std::sync::Arc::new(["http://127.0.0.1/".to_string()].into());
+        assert!(policy.authorize("http://127.0.0.1/", None).is_err()); // DevSkim: ignore DS162092 because this asserts a loopback URL is refused.
+                                                                       // Grants never reach the file, and an empty allowlist still refuses all.
+        assert_eq!(serde_json::to_string(&policy).unwrap(), before);
+        let empty = Policy {
+            granted: policy.granted.clone(),
+            ..Policy::empty()
+        };
+        assert!(empty.refuses_all());
     }
 
     #[test]
