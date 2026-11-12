@@ -365,7 +365,7 @@ decisions stay deterministic.
   failure still follows the ordinary failed-turn policy.
 - A batch whose calls all fail, including a turn's first, ends the tool rounds:
   the model answers once more without tools, and the fixed "Web operation
-  failed" line is the reply only when that answer is empty. Each failure stays
+  failed" line is the reply only when that answer and one retry are empty. Each failure stays
   an `ok: false` event, so a provider cool-down no longer repeats one canned
   reply across loop turns.
 - Tool planning first ran at 512 tokens with truncated answers regenerated at
