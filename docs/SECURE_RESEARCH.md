@@ -283,7 +283,7 @@ that literal argument. Other flag rules are in the
 
 Local chat and `/loop` offer only `web_search` (configured-provider listings)
 and `web_fetch` (an exact permitted URL). The model chooses supplied local context,
-search, or reads; listings grant same-turn exact-URL reads (`web.search.result_reads.enabled`). No repository, shell, policy,
+search, or reads; listings grant admin-turn exact-URL reads (`web.search.result_reads.enabled`). No repository, shell, policy,
 account, key or mutation tool is exposed. Batches validate before sequential
 reads; `web.chat_tool_calls` bounds all rounds (1–30, default 30).
 

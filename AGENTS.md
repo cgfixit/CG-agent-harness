@@ -43,7 +43,7 @@ server -> MCP runtime -> declared stdio children / SSE servers
 | Changing | Read first / trap |
 |----------|-------------------|
 | Accounts, TLS, ownership, auditor role | [Secure portal](docs/SECURE_RESEARCH.md#accounts-and-roles), [native trust](docs/DESKTOP.md#ownership-ports-and-security-boundaries) |
-| Chat search/fetch, providers, goal web routing | [Search permissions](docs/SECURE_RESEARCH.md#google-search), [router](docs/WEB_DECISION_ROUTER.md): `auto` prefers a saved Tavily key, then SerpAPI. Listings grant same-turn exact-URL reads (`web.search.result_reads`). |
+| Chat search/fetch, providers, goal web routing | [Search permissions](docs/SECURE_RESEARCH.md#google-search), [router](docs/WEB_DECISION_ROUTER.md): `auto` prefers a saved Tavily key, then SerpAPI. Listings grant admin-turn exact-URL reads (`web.search.result_reads`). |
 | Exact fetch fallback | [Firecrawl](docs/SECURE_RESEARCH.md#fetch-discovery-and-research): opt-in, sends URLs off-machine; same-URL results only, never discovery/crawl/research. |
 | Web research/jobs | [Research](docs/SECURE_RESEARCH.md#fetch-discovery-and-research), [job contract](INVARIANTS.md#a-detached-run-cannot-outlive-its-gates): local model, separate discovery/synthesis deadlines; owner-bound jobs survive tabs, not restart. |
 | Provider keys | [Credential storage](docs/INSTALL.md#supported-managed-keys): inherited environment (even empty) wins; saved SerpAPI/Tavily/Firecrawl keys apply next search/read. |

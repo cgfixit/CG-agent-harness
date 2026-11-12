@@ -151,12 +151,17 @@ pub async fn web_status(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
 ) -> ApiResult<Json<Value>> {
+    // Every other caller of `status` is administrator-only; this read is not.
+    let result_reads = super::auth::may_read_search_results(&state, user.as_deref());
     let owner = super::auth::context_owner(user);
-    state
+    let mut status = state
         .web_snapshot()
         .status(web_enabled(&state), &owner)
-        .map(Json)
-        .map_err(|e| web_err(&e))
+        .map_err(|e| web_err(&e))?;
+    if !result_reads {
+        status["search_result_reads"] = json!(false);
+    }
+    Ok(Json(status))
 }
 
 pub async fn web_toggle(

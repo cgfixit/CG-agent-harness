@@ -420,6 +420,7 @@ pub async fn run_stream(
     temperature: f64,
     token_ratio: f64,
     web_mode: super::sessions::GoalWebMode,
+    result_reads: bool,
     sized_tuned: bool,
     loop_turn: bool,
     goal: &str,
@@ -436,7 +437,7 @@ pub async fn run_stream(
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
         // A turn of several tool rounds gets more than one call's deadline; each
         // model call keeps its own (`ChatClient::timeout_for`).
-        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, sized_tuned, loop_turn, goal, user_message, run_id, output, &mut usage, &mut known_completion_tokens, usage_snapshot)) =>
+        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, result_reads, sized_tuned, loop_turn, goal, user_message, run_id, output, &mut usage, &mut known_completion_tokens, usage_snapshot)) =>
             result.unwrap_or_else(|_| Err(error("WEB_TIMEOUT", "chat web turn deadline exceeded"))),
     };
     result.map_err(|failure| match usage {
@@ -461,6 +462,7 @@ async fn run_inner(
     temperature: f64,
     token_ratio: f64,
     web_mode: super::sessions::GoalWebMode,
+    result_reads: bool,
     sized_tuned: bool,
     loop_turn: bool,
     goal: &str,
@@ -500,12 +502,16 @@ async fn run_inner(
     let mut run_evidence = run_id
         .map(|id| state.loops.web_evidence(owner, id, goal))
         .unwrap_or_default();
-    // `web.search.result_reads` (on as shipped): this turn's reads may also
-    // use the exact URLs its own searches list. A loop run carries them between
-    // its turns; a plain chat turn starts with none. Every policy check below
-    // goes through this snapshot, so the shared tool and the saved policy never
-    // see a grant.
-    let granting = web.for_search_grants(&run_evidence.granted);
+    // `web.search.result_reads` (on as shipped), for a caller the route allows
+    // it (`may_read_search_results`: an administrator): this turn's reads may
+    // also use the exact URLs its own searches list. A loop run carries them
+    // between its turns; a plain chat turn starts with none. Every policy check
+    // below goes through this snapshot, so the shared tool and the saved policy
+    // never see a grant. Without one, a loop run's earlier grants are not
+    // applied and evidence read under them fails `restore`'s policy check.
+    let granting = result_reads
+        .then(|| web.for_search_grants(&run_evidence.granted))
+        .flatten();
     let web = granting.as_ref().unwrap_or(web);
     let (mut passages, packet) = if !run_evidence.receipts.is_empty() {
         let saved = run_evidence.clone();

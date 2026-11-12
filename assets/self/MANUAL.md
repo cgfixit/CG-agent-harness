@@ -48,7 +48,7 @@ Fresh configuration requires `auth.enabled: true` and `tls.enabled: true`; exist
 
 ## invariant: Public web evidence requires current content permission
 
-Fresh web settings are enabled with one seeded allow rule, `https://www.google.com/*`, so public Google search listings work before any grant; every other content read needs an administrator's grant or, for one turn, a listing from that turn's own search (`web.search.result_reads`, below), `/web deny` removes the seed like any rule, and a home whose rules are all removed refuses reads (`WEB_ALLOWLIST_EMPTY`). Only an administrator's confirmed switch (`/api/web/mode`, `confirm: true`) selects block-list mode,…
+Fresh web settings are enabled with one seeded allow rule, `https://www.google.com/*`, so public Google search listings work before any grant; every other content read needs an administrator's grant or, on an administrator's own turn, a listing from that turn's search (`web.search.result_reads`, below), `/web deny` removes the seed like any rule, and a home whose rules are all removed refuses reads (`WEB_ALLOWLIST_EMPTY`). Only an administrator's confirmed switch (`/api/web/mode`, `confirm: true`) selects…
 
 ## invariant: The browser never supplies a command
 

@@ -195,7 +195,7 @@ See [migration and operation](docs/SECURE_RESEARCH.md).
 
 Fresh web settings are enabled with one seeded allow rule, `https://www.google.com/*`,
 so public Google search listings work before any grant; every other content read
-needs an administrator's grant or, for one turn, a listing from that turn's own search (`web.search.result_reads`, below), `/web deny` removes the seed like any rule, and a
+needs an administrator's grant or, on an administrator's own turn, a listing from that turn's search (`web.search.result_reads`, below), `/web deny` removes the seed like any rule, and a
 home whose rules are all removed refuses reads (`WEB_ALLOWLIST_EMPTY`). Only an administrator's confirmed switch
 (`/api/web/mode`, `confirm: true`) selects block-list mode, which reads any
 public URL no blocked rule covers; a named group still narrows to its allow
@@ -250,14 +250,14 @@ delivery. A turn that already holds a notes-corpus read (`source=notes_corpus`),
 local `/loop` turns. Search-provider snippets are listings, not fetched
 linked pages; each content fetch still requires its own URL permission.
 Restart-only `web.search.result_reads.enabled` (ships true; operator decision,
-2026-11-12, one day after it was added off) is the one exception: a chat or `/loop` web turn may read the exact
+2026-11-12, one day after it was added off) is the one exception: an administrator's chat or `/loop` web turn may read the exact
 URLs its own search listings returned, as listed, for that turn or that loop run
-only, at most `max_urls` (default 20) held. Literal `false`, or a home whose config lacks the key, keeps reads to the URL policy alone. The grant lives in memory on that
+only, at most `max_urls` (default 20) held. Only `admin` (operator decision, 2026-11-12, after review): that role keeps the URL policy and could add the same rule, so a listing grants nothing the account lacks. `operator` turns stay bound by the policy, and `/api/web` reports the setting off to them. A home without accounts has one local user, who owns the policy file and is treated as its administrator. A server-run loop reloads the account before each turn, so a demoted account loses the grant on its next turn and evidence read under it no longer restores. Literal `false`, or a home whose config lacks the key, keeps reads to the URL policy alone. The grant lives in memory on that
 turn's policy snapshot and is never written to `tools/web_allowlist.json`. Blocked
 rules, private addresses, refused redirects and an empty allowlist still refuse;
 each such read is audited as `web_result_read`. Model output still grants
 nothing: the model only chooses among URLs a provider returned. Listings are text
-an outside party can influence, so while this is on the URL policy does not bound what a searching turn reads: an unattended `/loop` in web mode `all` can read whatever its searches return. Blocked rules and web mode `fetch` narrow it. A
+an outside party can influence, so while this is on the URL policy does not bound what an administrator's searching turn reads: that account's unattended `/loop` in web mode `all` can read whatever its searches return. Blocked rules and web mode `fetch` narrow it. A
 restart-only `web.search.provider` picks the backend: `auto` follows the saved keys
 (operator decision, 2026-11-10): an active Tavily key selects Tavily, else a configured
 SerpAPI key selects the fixed Google-results API transport, else public Google; with both
