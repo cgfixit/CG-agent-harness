@@ -222,16 +222,19 @@ web:
     # for that turn, or for that /loop run, whether or not the URL policy lists them. Only the
     # admin role, which keeps the URL policy and could add the same rule; operator turns stay
     # bound by the policy. A home without accounts has one local user, treated as its
-    # administrator. Off (literal false, or the key missing, as in a home created before this
-    # key): a listed URL is read only if the URL policy already permits it. Nothing is saved
-    # to the URL policy; blocked rules, private addresses and refused redirects still apply,
+    # administrator. Off (literal false): a listed URL is read only if the URL policy already
+    # permits it. This switch is not a flag_is_true gate: a missing key means on (operator
+    # decision, 2026-11-12), so a home created before this key gets it on at its next start
+    # without an edit; literal true/false is used as written and any other value fails boot.
+    # Nothing is saved to the URL policy; blocked rules, private addresses and refused
+    # redirects still apply,
     # and an empty allowlist still refuses all web access. Search results are text an outside
     # party can influence, so with this on the URL policy no longer bounds what an
     # administrator's searching turn may read: that account's unattended /loop in web mode all
     # can read whatever its searches return. Each such read is audited as web_result_read.
     # Block a site with /web block, or set web mode fetch, to narrow it.
     result_reads:
-      enabled: true # flag_is_true; literal false keeps reads to the URL policy alone
+      enabled: true # literal false keeps reads to the URL policy alone; a missing key reads as on
       max_urls: 20 # 1–100 listed URLs one turn or /loop run may hold; later listings add none
   # Firecrawl, restart-only: an opt-in second reader for exact permitted URLs (/web fetch, the
   # chat web_fetch tool, batch reads; never discovery, crawl or search). It runs only after the

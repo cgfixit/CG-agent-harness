@@ -88,9 +88,11 @@ impl Fallback {
 }
 
 /// `web.search.result_reads`, restart-only. Ships on (operator decision,
-/// 2026-11-12); a missing key is off, like every `flag_is_true` gate. When on,
-/// a chat or `/loop` web turn may read the exact URLs its own search listings
-/// returned, for that turn or loop run only.
+/// 2026-11-12). `enabled` is a `MISSING_MEANS_ON` switch, not a `flag_is_true`
+/// gate: a home whose config was written before the key reads as on, literal
+/// `false` turns it off, and any other value fails boot. When on, an
+/// administrator's chat or `/loop` web turn may read the exact URLs its own
+/// search listings returned, for that turn or loop run only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ResultReads {
     pub enabled: bool,
@@ -101,7 +103,7 @@ pub struct ResultReads {
 impl ResultReads {
     pub fn load(cfg: &AppConfig) -> Result<Self> {
         Ok(Self {
-            enabled: cfg.flag_is_true("web.search.result_reads.enabled"),
+            enabled: cfg.flag_missing_on("web.search.result_reads.enabled")?,
             max_urls: cfg.u64_in("web.search.result_reads.max_urls", 20, 1..=100)? as usize,
         })
     }

@@ -45,8 +45,18 @@ pub(crate) fn resolve_secret(value: &str) -> Result<String> {
     std::env::var(name).map_err(|_| HarnessError::config("environment secret reference is unavailable"))
 }
 
-/// Switches that read as on when the key is missing (`server::self_manual::SelfKnowledgeConfig`).
-pub const MISSING_MEANS_ON: &[&str] = &["diagnostics.self_knowledge", "diagnostics.live_state"];
+/// Switches that read as on when the key is missing, each read through
+/// [`AppConfig::flag_missing_on`]: the two self-knowledge switches
+/// (`server::self_manual::SelfKnowledgeConfig`) and reads of a turn's own
+/// search results (`server::web_provider::ResultReads`).
+// why: operator decision (2026-11-12): a home whose config.yaml was written before
+// `web.search.result_reads.enabled` existed gets the shipped behaviour without an edit.
+// Every other gate keeps `flag_is_true`, where a missing key is off.
+pub const MISSING_MEANS_ON: &[&str] = &[
+    "diagnostics.self_knowledge",
+    "diagnostics.live_state",
+    "web.search.result_reads.enabled",
+];
 
 /// Shipped numbers the code reads as floating point. [`AppConfig::load`]
 /// requires a finite number for these and an unquoted non-negative integer
@@ -363,6 +373,18 @@ impl AppConfig {
         matches!(self.get(dotted), Some(Value::Bool(true)))
     }
 
+    /// For a [`MISSING_MEANS_ON`] switch only, never a gate that must stay
+    /// closed until an operator opens it. A missing key is on, a literal
+    /// boolean is used as written, and any other value is refused by key, so
+    /// a quoted `"true"` or `"false"` cannot pass as either.
+    pub fn flag_missing_on(&self, dotted: &str) -> Result<bool> {
+        match self.get(dotted) {
+            None => Ok(true),
+            Some(Value::Bool(b)) => Ok(*b),
+            Some(_) => Err(HarnessError::config(format!("{dotted} must be a literal YAML boolean"))),
+        }
+    }
+
     pub fn str_or(&self, dotted: &str, default: &str) -> String {
         match self.get(dotted) {
             Some(Value::String(s)) => s.clone(),
@@ -579,6 +601,39 @@ fn collect_numbers(node: &Value, prefix: String, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A missing-means-on switch: absent is on, a literal boolean is kept, and
+    /// anything else is refused by key without echoing the value. Such a key is
+    /// not reported as drift, because it does not read as off.
+    #[test]
+    fn a_missing_means_on_switch_is_on_when_absent_and_strict_when_present() {
+        let load = |text: &str| AppConfig::from_str(text, std::path::Path::new("config.yaml")).unwrap();
+        for key in MISSING_MEANS_ON {
+            let nested = |value: &str| {
+                let mut text = value.to_string();
+                for part in key.rsplit('.') {
+                    text = format!("{{{part}: {text}}}");
+                }
+                text
+            };
+            assert!(load("app: {}").flag_missing_on(key).unwrap(), "{key} absent");
+            assert!(load(&nested("true")).flag_missing_on(key).unwrap(), "{key} true");
+            assert!(!load(&nested("false")).flag_missing_on(key).unwrap(), "{key} false");
+            for bad in ["'true'", "'false'", "1", "null", "SECRETISH"] {
+                let failure = load(&nested(bad)).flag_missing_on(key).unwrap_err();
+                assert!(failure.message.contains(key), "{key} names itself");
+                assert!(!failure.message.contains("SECRETISH"), "the value is not echoed");
+            }
+            assert!(
+                !load("app: {}").missing_shipped_true_flags().iter().any(|k| k == key),
+                "{key} is not drift when absent"
+            );
+        }
+        // An ordinary gate is still off when missing and is still reported.
+        let bare = load("app: {}");
+        assert!(!bare.flag_is_true("auth.enabled"));
+        assert!(bare.missing_shipped_true_flags().iter().any(|k| k == "auth.enabled"));
+    }
 
     #[test]
     fn misplaced_local_model_block_is_not_silently_ignored() {
