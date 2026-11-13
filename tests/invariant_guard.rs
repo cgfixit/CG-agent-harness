@@ -400,7 +400,7 @@ fn missing_means_on_switches_are_read_only_through_their_accessor() {
                 Some(key) => reads.push(key),
                 // The accessor's own unit test passes each listed key by name.
                 None => assert!(
-                    path.ends_with("common/config.rs"),
+                    path.replace('\\', "/").ends_with("common/config.rs"),
                     "{path} calls flag_missing_on without a literal key"
                 ),
             }
