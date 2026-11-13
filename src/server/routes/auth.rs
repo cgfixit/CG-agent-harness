@@ -371,12 +371,8 @@ pub async fn create_user(State(state): State<Arc<AppState>>, req: Request<Body>)
     let account = actor(&state, &req)?;
     require_user_admin(&account)?;
     let ValidJson(body) = ValidJson::<AuthCreateUserRequest>::from_request(req, &()).await?;
-    // Canonicalize BEFORE the operator/admin comparison.
     let role = validate_role(body.role.as_deref().unwrap_or(crate::common::authn::DEFAULT_ROLE))
         .map_err(|e| map_auth_error(&e))?;
-    if account.role == ROLE_OPERATOR && role == ROLE_ADMIN {
-        return Err(denied());
-    }
     let st = state.clone();
     let created = run_password_operation(state.auth_operation_permits.clone(), move || {
         manager(&st).and_then(|m| {
@@ -397,13 +393,9 @@ pub async fn set_password(
     req: Request<Body>,
 ) -> ApiResult<Json<Value>> {
     let account = actor(&state, &req)?;
-    let mgr = manager(&state)?;
-    let target = mgr
+    manager(&state)?
         .get_user(&username)
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "AUTH_USER_NOT_FOUND", "unknown user"))?;
-    if account.role == ROLE_OPERATOR && target.role == ROLE_ADMIN {
-        return Err(denied());
-    }
     require_user_admin(&account)?;
     let ValidJson(body) = ValidJson::<AuthSetPasswordRequest>::from_request(req, &()).await?;
     let st = state.clone();

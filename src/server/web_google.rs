@@ -749,6 +749,11 @@ impl WebTool {
                 .await
                 .map_err(|_| error("WEB_CANCELLED", "search cancelled"))?;
             let client = self.pinned_client(&endpoint).await?;
+            // The permit and DNS waits can outlast a key change: a key cleared
+            // or replaced since this search read it is never sent.
+            if self.search_key()?.trim() != key.trim() {
+                return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
+            }
             let response = client
                 .get(endpoint)
                 .query(&[
@@ -1514,6 +1519,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_serpapi_key_cleared_while_the_search_waits_is_never_sent() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let serp = chain::serpapi().await;
+        let chain = chain::Chain::new("{}", "good", &serp, None).await;
+        // Every permit is taken, so the search reads its key and then waits.
+        let held = chain
+            .web
+            .permits
+            .clone()
+            .acquire_many_owned(chain.web.limits.concurrency as u32)
+            .await
+            .unwrap();
+        let clear = async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            super::super::env_keys::update_keys(
+                &chain.dir.path().join(".env"),
+                &std::collections::BTreeMap::new(),
+                &["SERPAPI_API_KEY".to_string()],
+            )
+            .unwrap();
+            drop(held);
+        };
+        let (result, ()) = tokio::join!(chain.search("veeam cve"), clear);
+        assert_eq!(result.unwrap_err().code, "WEB_SEARCH_KEY_CHANGED");
+        assert_eq!(serp.hits.load(SeqCst), 0, "a cleared key reaches no provider");
+    }
+
+    #[tokio::test]
     async fn fallback_is_off_by_default_and_a_down_tavily_stays_explicit() {
         let serp = chain::serpapi().await;
         let chain = chain::Chain::new(&chain::yaml(""), "good", &serp, None)
@@ -1993,6 +2026,12 @@ mod tests {
                 .code,
             "WEB_ALLOWLIST_EMPTY"
         );
+        // `api_search` sends only the key that is saved now.
+        super::super::env_keys::write_keys(
+            &path,
+            &std::collections::BTreeMap::from([("SERPAPI_API_KEY".into(), "fixture-secret-key".into())]),
+        )
+        .unwrap();
         let rows = web
             .api_search(endpoint.clone(), "veeam", 5, "fixture-secret-key")
             .await
