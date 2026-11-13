@@ -273,6 +273,17 @@ impl WebTool {
                     "policy changed before the fallback read; nothing was sent",
                 ));
             }
+            // So may the key: one cleared or replaced since this read began is never sent.
+            if self
+                .provider_key("FIRECRAWL_API_KEY", self.firecrawl_key_from_file)?
+                .trim()
+                != key
+            {
+                return Err(error(
+                    "WEB_FALLBACK_KEY_CHANGED",
+                    "Firecrawl key changed before the fallback read; nothing was sent",
+                ));
+            }
             charged.store(self.limits.response_bytes, Ordering::SeqCst);
             let response = client
                 .post(endpoint)
@@ -916,6 +927,49 @@ mod tests {
         );
         assert!(failure.details.get("charged_bytes").is_none(), "nothing was sent");
         assert_eq!(rig.hits(), 0, "a revoked URL never reaches Firecrawl");
+    }
+
+    #[tokio::test]
+    async fn a_key_cleared_while_the_fallback_waits_is_never_sent() {
+        let rig = fixture::rig(
+            "web: {concurrency: 1, firecrawl: {enabled: true, max_per_hour: 4}}",
+            "good",
+        )
+        .await;
+        let web = rig.web.clone();
+        let cfg = AppConfig::from_str("{}", std::path::Path::new("config.yaml")).unwrap();
+        let audit = Audit::new(rig.dir.path().join("audit-race.jsonl"), &cfg);
+        let read = tokio::spawn(async move {
+            web.fetch("http://site.fixture/gate", true, &audit, "local") // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                .await
+        });
+        // Same queueing as the revoked-rule case: the fallback reads its key, then
+        // waits for the only permit while the key is cleared.
+        rig.gate_hit.notified().await;
+        let held = rig.web.permits.clone().acquire_owned();
+        tokio::pin!(held);
+        tokio::select! {
+            biased;
+            _ = &mut held => unreachable!("the pinned read holds the only permit"),
+            _ = tokio::task::yield_now() => {}
+        }
+        rig.gate_go.notify_one();
+        let held = held.await.unwrap();
+        while rig.web.firecrawl_spent.0.lock().unwrap().1 == 0 {
+            tokio::task::yield_now().await;
+        }
+        super::super::env_keys::update_keys(
+            &rig.dir.path().join(".env"),
+            &std::collections::BTreeMap::new(),
+            &["FIRECRAWL_API_KEY".to_string()],
+        )
+        .unwrap();
+        drop(held);
+        let failure = read.await.unwrap().unwrap_err();
+        assert_eq!(failure.code, "WEB_FETCH_FAILED");
+        assert_eq!(failure.details["fallback"], "WEB_FALLBACK_KEY_CHANGED");
+        assert!(failure.details.get("charged_bytes").is_none(), "nothing was sent");
+        assert_eq!(rig.hits(), 0, "a cleared key never reaches Firecrawl");
     }
 
     #[tokio::test]

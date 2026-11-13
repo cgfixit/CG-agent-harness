@@ -2325,8 +2325,10 @@ impl StructuredMemoryStore {
                 |r| r.get(0),
             )
             .map_err(sql)?;
+        // Only active facts are indexed; deactivation already removed the rest,
+        // and a second delete from the contentless index corrupts it.
         let mut fts_stmt = tx
-            .prepare("SELECT id, category, content FROM facts WHERE owner_id=?1")
+            .prepare("SELECT id, category, content FROM facts WHERE owner_id=?1 AND active=1")
             .map_err(sql)?;
         let fts_rows: Vec<(i64, String, String)> = fts_stmt
             .query_map(params![owner], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
@@ -3320,14 +3322,16 @@ pub fn merge_recall(selected: RecallResult, retrieved: RecallResult, max: usize)
     let mut merged = RecallResult::empty();
     let mut seen = std::collections::BTreeSet::new();
     for fact in selected.injected.into_iter().chain(retrieved.injected) {
+        // A duplicate is skipped before the limit, so an injected fact is never
+        // also reported as dropped.
+        if !seen.insert(fact.id.clone()) {
+            continue;
+        }
         if merged.injected.len() >= max {
             merged.dropped.push(DroppedSelection {
                 id: fact.id,
                 reason: "over_limit",
             });
-            continue;
-        }
-        if !seen.insert(fact.id.clone()) {
             continue;
         }
         merged.injected.push(fact);
@@ -3482,6 +3486,34 @@ mod tests {
 
         let mixed = format_selected_facts(&[selected, retrieved]);
         assert!(mixed.starts_with("The following facts include structured-memory search results"));
+    }
+
+    #[test]
+    fn merged_recall_never_drops_a_fact_it_injected() {
+        let fact = |id: &str, source| RecalledFact {
+            id: id.to_string(),
+            revision: 1,
+            category: String::new(),
+            content: id.to_string(),
+            source,
+        };
+        let recall = |injected| RecallResult {
+            injected,
+            dropped: Vec::new(),
+        };
+        let selected = recall(vec![fact("a", "selected"), fact("b", "selected")]);
+        // Search found the selected fact `a` again, and one new fact `c`.
+        let retrieved = recall(vec![fact("a", "fts"), fact("c", "fts")]);
+        let merged = merge_recall(selected, retrieved, 1);
+        let ids = |ids: Vec<&str>| ids.into_iter().map(str::to_string).collect::<Vec<_>>();
+        assert_eq!(
+            merged.injected.iter().map(|f| f.id.clone()).collect::<Vec<_>>(),
+            ids(vec!["a"])
+        );
+        assert_eq!(
+            merged.dropped.iter().map(|d| d.id.clone()).collect::<Vec<_>>(),
+            ids(vec!["b", "c"])
+        );
     }
 
     #[test]
@@ -4286,6 +4318,29 @@ mod tests {
         assert!(store.list_facts("user_alice").unwrap().is_empty());
         assert_eq!(store.episode_count("user_alice").unwrap(), 0);
         assert_eq!(store.list_facts("user_bob").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn purge_leaves_other_owners_searchable_after_a_deactivation() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let retired = store
+            .add_fact("user_alice", "alice retired nebula fact", "pref", "add")
+            .unwrap();
+        store
+            .add_fact("user_alice", "alice live nebula fact", "pref", "add")
+            .unwrap();
+        store
+            .add_fact("user_bob", "bob live nebula fact", "pref", "add")
+            .unwrap();
+        // Deactivation already removed this row from the shared index; a purge
+        // that deleted it again would corrupt the index for every owner.
+        store
+            .deactivate_fact("user_alice", &retired.id, retired.revision, "retire")
+            .unwrap();
+        store.purge_owner("user_alice", "reset").unwrap();
+        let hits = store.search_facts_fts("user_bob", "nebula", 5).unwrap();
+        assert_eq!(hits.len(), 1);
     }
 
     #[test]
