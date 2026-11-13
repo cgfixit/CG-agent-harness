@@ -940,6 +940,9 @@ impl<'a> RepoWorkspace<'a> {
         Ok(out)
     }
 
+    /// Untracked, non-ignored paths: a test probe only. `status` hides ignored
+    /// files that approve would still commit, so review uses [`Self::tracked_files`].
+    #[cfg(any(test, feature = "test-support"))]
     pub fn untracked_files(&self) -> Result<Vec<String>> {
         let tool = "status";
         let out = self.run_git(
