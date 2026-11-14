@@ -327,7 +327,7 @@ mod tests {
         for n in 1..=pages {
             text.push_str(&format!(
                 "\n# Page {n}\nPAGE_{n}_OPENING {}\n",
-                "body words ".repeat(60)
+                "value of the run ".repeat(40)
             ));
         }
         text
@@ -349,6 +349,17 @@ mod tests {
         let middle = (2..30).filter(|n| fence.contains(&format!("PAGE_{n}_OPENING"))).count();
         assert!(middle >= 3, "pages in between are sampled too: {middle}");
         assert!(fence.contains("truncated=true"), "never presented as fully read");
+        // A question whose only overlap is stopwords ("of", "the") is a miss too.
+        let vague = fence_for_query_budget(
+            &store,
+            "local",
+            &ids,
+            "Give a one-paragraph overview of the attachment.",
+            budget,
+        )
+        .unwrap();
+        assert!(vague.contains("[no passage matched the query"), "{vague}");
+        assert!(vague.contains("PAGE_30_OPENING"));
         // The empty query keeps the start-of-file view.
         let start = fence_for_query_budget(&store, "local", &ids, "", budget).unwrap();
         assert!(!start.contains("no passage matched") && !start.contains("PAGE_30_OPENING"));

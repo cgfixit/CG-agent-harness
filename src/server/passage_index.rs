@@ -86,8 +86,8 @@ pub fn retrieve_passages(docs: &[PassageDoc], query: &str, limit: usize) -> Resu
     let mut parser = QueryParser::for_index(&index, vec![heading, body]);
     parser.set_field_boost(heading, 1.3);
 
-    let Some(prepared) =
-        PreparedQuery::new(query).map_err(|_| HarnessError::new("ATTACHMENT_INDEX_FAILED", "invalid identifier"))?
+    let Some(prepared) = PreparedQuery::content(query)
+        .map_err(|_| HarnessError::new("ATTACHMENT_INDEX_FAILED", "invalid identifier"))?
     else {
         return Ok(Vec::new());
     };

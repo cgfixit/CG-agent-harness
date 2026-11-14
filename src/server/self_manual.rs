@@ -19,19 +19,6 @@ pub const MANUAL: &str = include_str!("../../assets/self/MANUAL.md");
 /// Longest slice of the user message used as a query; terms are clipped to 32.
 const MAX_QUERY_CHARS: usize = 512;
 const CANDIDATES: usize = 16;
-/// Words that say nothing about the subject of a message. They occur in
-/// almost every chunk, so matching on them picked excerpts for "thanks" or
-/// "what is the capital of France?". Content words stay, including verbs the
-/// manual documents as commands (`help`, `clear`, `use`).
-const STOPWORDS: &[&str] = &[
-    "a", "about", "after", "all", "also", "am", "an", "and", "any", "are", "as", "at", "be", "because", "been", "but",
-    "by", "can", "could", "did", "do", "does", "for", "from", "had", "has", "have", "he", "hello", "her", "here",
-    "hey", "hi", "him", "his", "how", "i", "if", "in", "into", "is", "it", "its", "just", "me", "my", "no", "not",
-    "of", "ok", "okay", "on", "or", "our", "please", "she", "so", "some", "than", "thank", "thanks", "that", "the",
-    "their", "them", "then", "there", "these", "they", "this", "to", "up", "us", "was", "we", "were", "what", "when",
-    "where", "which", "who", "why", "will", "with", "would", "yes", "you", "your",
-];
-
 /// The Tantivy query for `message`: each content word quoted, so the text is
 /// data and never query syntax. `None` when only stopwords, single characters
 /// or punctuation remain: such a message gets no excerpt.
@@ -39,7 +26,7 @@ fn content_expression(message: &str) -> Option<String> {
     let terms: Vec<String> = message
         .split(|c: char| !c.is_alphanumeric())
         .filter(|term| term.chars().count() > 1)
-        .filter(|term| !STOPWORDS.contains(&term.to_lowercase().as_str()))
+        .filter(|term| !super::retrieval_ranking::is_stopword(term))
         .take(32)
         .map(|term| format!("\"{term}\""))
         .collect();
