@@ -225,10 +225,6 @@ pub fn real_repo_run_shape_budget_sec(
     }
 }
 
-pub fn real_repo_run_timeout_sec(planner_timeout_sec: u64, max_iterations: Option<i64>, check_count: usize) -> u64 {
-    real_repo_run_budget_sec(planner_timeout_sec, max_iterations, check_count).min(REAL_REPO_RUN_MAX_TIMEOUT_SEC)
-}
-
 /// Where the child lives and what it needs.
 #[derive(Debug, Clone)]
 pub struct ShimContext {
@@ -238,8 +234,9 @@ pub struct ShimContext {
     pub tmp_dir: PathBuf,
     pub planner_timeout_sec: u64,
     /// `agentic.deepagent_github.retrieval.enabled` as the server loaded it.
-    /// The child reads the file itself; a flag turned on without a restart is
-    /// budgeted as off, which is the budget every run had before this field.
+    /// The child reads the file itself, so the flag is a `planner_identity`
+    /// input: changed without a restart, the child refuses with exit 3 before
+    /// spending time this budget does not cover.
     pub retrieval_enabled: bool,
 }
 
