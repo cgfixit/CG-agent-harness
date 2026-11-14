@@ -708,9 +708,9 @@ dialog p { margin-bottom:12px; }
         <input id="input" autocomplete="off" spellcheck="false"
                title="Up/Down: recall the last 50 saved prompts in this session; Down restores your draft"
                placeholder="message the agent, or /help for commands (↑/↓ history)" />
-        <input id="attach" type="file" multiple accept=".txt,.md,.json,.csv,.log,.docx" hidden
-               title="attach up to 3 text or DOCX files (15 MB each) for local chat only" />
-        <button id="attachBtn" type="button" aria-label="Attach files" title="Attach up to 3 text or DOCX files (15 MB each) for local chat only">
+        <input id="attach" type="file" multiple accept=".txt,.md,.json,.csv,.log,.docx,.pdf" hidden
+               title="attach up to 3 text, DOCX or PDF files (15 MB each) for local chat only; PDF text layer only, no OCR" />
+        <button id="attachBtn" type="button" aria-label="Attach files" title="Attach up to 3 text, DOCX or PDF files (15 MB each) for local chat only; PDF text layer only, no OCR">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg><span id="attachCount"></span>
         </button>
         <button id="send">SEND</button>
@@ -748,8 +748,8 @@ dialog p { margin-bottom:12px; }
   <fieldset id="notesControls" disabled>
     <legend>Manage notes</legend>
     <form id="notesForm">
-      <label for="notesFiles">Text or Markdown files</label>
-      <input id="notesFiles" type="file" accept=".txt,.md" multiple aria-describedby="notesLimits" disabled>
+      <label for="notesFiles">Text, Markdown or PDF files (PDF text only, no OCR)</label>
+      <input id="notesFiles" type="file" accept=".txt,.md,.pdf" multiple aria-describedby="notesLimits" disabled>
       <button id="notesUpload" type="submit" class="primary" disabled>Upload notes</button>
     </form>
     <p id="notesLimits"></p>
@@ -2143,7 +2143,7 @@ async function readNotesList(current) {
   }
   for (const note of result.notes) {
     const row = document.createElement('li');
-    const label = (note.magic_mime === 'text/markdown' ? 'Markdown' : 'Text') + ' · ' +
+    const label = (note.magic_mime === 'text/markdown' ? 'Markdown' : note.magic_mime === 'application/pdf' ? 'PDF' : 'Text') + ' · ' +
       note.byte_len.toLocaleString() + ' bytes · ref ' + note.id.slice(0, 8);
     row.append(label, document.createElement('br'));
     const remove = document.createElement('button'), cancel = document.createElement('button');
@@ -2194,14 +2194,14 @@ $('notesForm').addEventListener('submit', event => {
   if ($('notesControls').disabled || !notesLimits) return;
   const files = Array.from($('notesFiles').files);
   withNotesDialog(async (current, status) => {
-    if (!files.length) { status.textContent = 'Choose at least one .txt or .md file.'; return; }
+    if (!files.length) { status.textContent = 'Choose at least one .txt, .md or .pdf file.'; return; }
     if (files.length > notesLimits.max_files_per_request) {
       status.textContent = 'Choose at most ' + notesLimits.max_files_per_request + ' files. Nothing was uploaded.';
       return;
     }
     const sent = [], lines = [], body = new FormData();
     for (const file of files) {
-      const reason = !/\.(md|txt)$/i.test(file.name.trim()) || file.name.includes('..') ? 'choose .txt or .md'
+      const reason = !/\.(md|txt|pdf)$/i.test(file.name.trim()) || file.name.includes('..') ? 'choose .txt, .md or .pdf'
         : !file.size ? 'file is empty' : file.size > notesLimits.max_file_bytes ? 'file is too large' : '';
       if (reason) lines.push(file.name + ': skipped (' + reason + ').');
       else { sent.push(file); body.append('file', file, file.name); }

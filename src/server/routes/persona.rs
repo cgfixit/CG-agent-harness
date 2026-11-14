@@ -426,14 +426,20 @@ pub async fn preview(
     let attachment_fence = if portal_auditor {
         String::new()
     } else {
-        crate::server::retrieval::assemble_local_untrusted(
-            crate::server::retrieval::RetrievalSurface::PromptPreview,
-            &state.attachments,
-            &state.notes_corpus,
-            &owner,
-            &ids,
-            req.retrieve_query.as_deref(),
-        )
+        // Blocking: verified rereads hash every blob and may run PDF extraction.
+        let (st, owner, ids, query) = (state.clone(), owner.clone(), ids.clone(), req.retrieve_query.clone());
+        tokio::task::spawn_blocking(move || {
+            crate::server::retrieval::assemble_local_untrusted(
+                crate::server::retrieval::RetrievalSurface::PromptPreview,
+                &st.attachments,
+                &st.notes_corpus,
+                &owner,
+                &ids,
+                query.as_deref(),
+            )
+        })
+        .await
+        .map_err(|_| crate::server::attachments::upload_error(&crate::common::pdf_text::refusal("PDF_WORKER_FAILED")))?
         .map_err(|e| crate::server::attachments::upload_error(&e))?
     };
     // Shown, not consumed: the next local chat turn of this session takes it.

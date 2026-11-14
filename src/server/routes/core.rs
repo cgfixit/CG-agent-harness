@@ -1147,14 +1147,20 @@ pub(crate) async fn chat_inner(
     let attachment_fence = if portal_auditor {
         String::new()
     } else {
-        crate::server::retrieval::assemble_local_untrusted(
-            surface,
-            &state.attachments,
-            &state.notes_corpus,
-            &owner,
-            &ids,
-            Some(attachment_query.as_str()),
-        )
+        // Blocking: verified rereads hash every blob and may run PDF extraction.
+        let (st, owner, ids) = (state.clone(), owner.clone(), ids.clone());
+        tokio::task::spawn_blocking(move || {
+            crate::server::retrieval::assemble_local_untrusted(
+                surface,
+                &st.attachments,
+                &st.notes_corpus,
+                &owner,
+                &ids,
+                Some(attachment_query.as_str()),
+            )
+        })
+        .await
+        .map_err(|_| attachments::upload_error(&crate::common::pdf_text::refusal("PDF_WORKER_FAILED")))?
         .map_err(|e| attachments::upload_error(&e))?
     };
     // The bundled manual and live state reach local chat turns only: never

@@ -1,4 +1,5 @@
-//! Owner-jailed `.md`/`.txt` notes for local chat. Separate from `memory_notes`.
+//! Owner-jailed `.md`/`.txt`/`.pdf` notes for local chat. Separate from `memory_notes`.
+//! PDFs keep their original bytes; text comes from `common::pdf_text` on read.
 //! Ranking never confers permission; bytes leave this jail only after owner match.
 
 use std::collections::BTreeSet;
@@ -13,6 +14,7 @@ use uuid::Uuid;
 use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 use crate::common::injection::Scanner;
+use crate::common::pdf_text;
 use crate::common::sha256_bytes_hex;
 use crate::server::attachments::{
     atomic_write_in_jail, neutralize_sentinels, open_jail, owner_rel, unlink_all, whole_file_fence, IncomingFile,
@@ -21,6 +23,9 @@ use crate::server::attachments::{
 use crate::server::passage_index::SourceKind;
 
 const INDEX_NAME: &str = "index.json";
+/// PDF extraction time one upload or one prompt assembly may spend across
+/// notes. Results are cached by digest, so repeat turns do not parse again.
+const PDF_EXTRACTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 const DEFAULT_MAX_FILES_PER_OWNER: u64 = 64;
 const DEFAULT_MAX_FILE_BYTES: u64 = 524_288;
 const DEFAULT_MAX_HOME_BYTES: u64 = 8_388_608;
@@ -113,13 +118,14 @@ impl NotesCorpus {
                     .detail("limit", self.limits.max_files_per_request as u64),
             );
         }
+        let deadline = std::time::Instant::now() + PDF_EXTRACTION_BUDGET;
         let classified: Vec<(&IncomingFile, &'static str)> = files
             .iter()
             .enumerate()
             .map(|(index, f)| {
                 let at_file = |e: HarnessError| e.detail("file_index", index as u64);
                 let ext = allowed_ext(&f.filename).map_err(at_file)?;
-                classify_note(&f.data, self.limits.max_file_bytes).map_err(at_file)?;
+                classify_note(&f.data, self.limits.max_file_bytes, ext == "pdf", deadline).map_err(at_file)?;
                 Ok((f, mime_for(ext)))
             })
             .collect::<Result<_>>()?;
@@ -232,6 +238,12 @@ impl NotesCorpus {
             return Ok(0);
         }
         let (mut removed, mut retained) = (0usize, 0usize);
+        let pdfs: Vec<String> = drop
+            .iter()
+            .filter(|n| n.magic_mime == pdf_text::MIME)
+            .map(|n| n.sha256.clone())
+            .collect();
+        pdf_text::forget(&pdfs);
         for blob in drop {
             let gone = note_rel(&blob).is_ok_and(|rel| match self.jail.remove_file(&rel) {
                 Ok(()) => true,
@@ -259,6 +271,7 @@ impl NotesCorpus {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let manifest = self.load_manifest()?;
         let scanner = Scanner::core();
+        let deadline = std::time::Instant::now() + PDF_EXTRACTION_BUDGET;
         let mut out = Vec::new();
         for blob in manifest.notes.iter().filter(|n| n.owner == owner) {
             let rel = note_rel(blob)?;
@@ -271,7 +284,8 @@ impl NotesCorpus {
             if bytes.len() as u64 != blob.byte_len || sha256_bytes_hex(&bytes) != blob.sha256 {
                 return Err(HarnessError::new("NOTES_NOT_FOUND", "note is not readable"));
             }
-            let text = classify_note(&bytes, self.limits.max_file_bytes)?;
+            let pdf = blob.magic_mime == pdf_text::MIME;
+            let text = classify_note(&bytes, self.limits.max_file_bytes, pdf, deadline)?;
             let injection_hits = scanner.scan(&text).len();
             let (text, sentinels_removed) = neutralize_sentinels(&text);
             out.push(VerifiedAttachment {
@@ -333,19 +347,23 @@ fn allowed_ext(filename: &str) -> Result<&'static str> {
     match base.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).as_deref() {
         Some("md") => Ok("md"),
         Some("txt") => Ok("txt"),
-        _ => Err(HarnessError::new("NOTES_TYPE", "only .md and .txt notes are accepted")),
+        Some("pdf") => Ok("pdf"),
+        _ => Err(HarnessError::new(
+            "NOTES_TYPE",
+            "only .md, .txt and .pdf notes are accepted",
+        )),
     }
 }
 
 fn mime_for(ext: &str) -> &'static str {
-    if ext == "md" {
-        "text/markdown"
-    } else {
-        "text/plain"
+    match ext {
+        "md" => "text/markdown",
+        "pdf" => pdf_text::MIME,
+        _ => "text/plain",
     }
 }
 
-fn classify_note(data: &[u8], max_bytes: u64) -> Result<String> {
+fn classify_note(data: &[u8], max_bytes: u64, pdf: bool, deadline: std::time::Instant) -> Result<String> {
     if data.is_empty() {
         return Err(HarnessError::new("NOTES_EMPTY", "file is empty"));
     }
@@ -353,6 +371,9 @@ fn classify_note(data: &[u8], max_bytes: u64) -> Result<String> {
         return Err(
             HarnessError::new("NOTES_TOO_LARGE", "file exceeds the notes size limit").detail("limit_bytes", max_bytes),
         );
+    }
+    if pdf {
+        return pdf_text::extract(data, deadline).map(|text| text.to_string());
     }
     if data.contains(&0) {
         return Err(HarnessError::new("NOTES_NUL", "NUL bytes are not allowed in notes"));
@@ -397,8 +418,10 @@ pub fn list_json(notes: &[NoteBlob]) -> Value {
 
 pub fn ingest_error(err: &HarnessError) -> crate::server::errors::ApiError {
     let status = match err.code.as_str() {
-        "NOTES_TOO_LARGE" | "NOTES_QUOTA" => axum::http::StatusCode::PAYLOAD_TOO_LARGE,
-        "NOTES_BUSY" => axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        "NOTES_TOO_LARGE" | "NOTES_QUOTA" | "PDF_LIMIT" => axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+        "NOTES_BUSY" | "PDF_BUSY" => axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        "PDF_TIMEOUT" => axum::http::StatusCode::REQUEST_TIMEOUT,
+        "PDF_WORKER_FAILED" => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
         "NOTES_NOT_FOUND" => axum::http::StatusCode::NOT_FOUND,
         "IO_ERROR" => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
         "ATTACHMENT_SURFACE_FORBIDDEN" => axum::http::StatusCode::BAD_REQUEST,
@@ -427,6 +450,27 @@ mod tests {
             filename: name.into(),
             data: body.as_bytes().to_vec(),
         }
+    }
+
+    #[test]
+    fn pdf_notes_are_stored_as_pdf_and_retrieved_as_page_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = NotesCorpus::open(dir.path(), limits()).unwrap();
+        let pdf = IncomingFile {
+            filename: "paper.pdf".into(),
+            data: crate::common::pdf_text::fixture_pdf(&[&["cover"], &["NOTES_PDF_FACT lives here"]], false),
+        };
+        let notes = store.store("alice", &[pdf, file("plain.md", "markdown")]).unwrap();
+        assert_eq!(notes[0].magic_mime, "application/pdf");
+        let fence = store.fence_for_query("alice", "NOTES_PDF_FACT", 4000).unwrap();
+        assert!(fence.contains("# Page 2\nNOTES_PDF_FACT lives here"), "{fence}");
+        assert!(store.fence_for_query("bob", "NOTES_PDF_FACT", 4000).unwrap().is_empty());
+        let bad = store.store("alice", &[file("fake.pdf", "not a pdf")]).unwrap_err();
+        assert_eq!(bad.code, "PDF_MALFORMED");
+        assert_eq!(
+            store.store("alice", &[file("x.docx", "no")]).unwrap_err().code,
+            "NOTES_TYPE"
+        );
     }
 
     #[test]

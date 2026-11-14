@@ -1,4 +1,5 @@
-//! Chat text-file attachments (issue 148 track 6A). Zero extra crates.
+//! Chat text-file attachments (issue 148 track 6A); DOCX and text-only PDF
+//! (issue 813, `common::pdf_text`) are extracted, never rendered.
 //!
 //! Uploaded bytes are untrusted. Storage names are UUIDs. The original
 //! filename never lands on disk, in audit, or in the prompt fence.
@@ -18,6 +19,7 @@ use uuid::Uuid;
 
 use crate::common::errors::{HarnessError, Result};
 use crate::common::injection::Scanner;
+use crate::common::pdf_text;
 use crate::common::sha256_bytes_hex;
 use crate::server::errors::ApiError;
 use crate::server::passage_index::SourceKind;
@@ -33,6 +35,9 @@ pub const MAX_HOME_BLOBS: usize = 512;
 const MULTIPART_OVERHEAD: u64 = 256 * 1024;
 pub const MAX_REQUEST_BYTES: u64 = MAX_FILE_BYTES * MAX_FILES_PER_REQUEST as u64 + MULTIPART_OVERHEAD;
 const MAX_LOSSY_REPLACEMENTS: usize = 32;
+/// Extraction time one upload or one prompt assembly may spend across its
+/// PDFs, queueing included; each PDF is also held to `pdf_text::FILE_DEADLINE`.
+const EXTRACTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 #[cfg(unix)]
 const BLOB_MODE: u32 = 0o600;
 const INDEX_NAME: &str = "index.json";
@@ -200,18 +205,44 @@ impl AttachmentStore {
         Ok(stored)
     }
 
+    /// Verified bytes are snapshotted under the store lock; extraction (a PDF
+    /// worker can take seconds) runs after it is released, and the rows are
+    /// re-checked under the lock before any text is returned, so a clear or
+    /// account deletion during extraction yields `ATTACHMENT_NOT_FOUND`.
+    /// Blocking: async callers use `spawn_blocking`.
     pub fn verified_texts(&self, owner: &str, ids: &[String]) -> Result<Vec<VerifiedAttachment>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
+        let snapshot = {
+            let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+            self.verified_bytes_locked(owner, ids)?
+        };
+        let scanner = Scanner::core();
+        let deadline = std::time::Instant::now() + EXTRACTION_BUDGET;
+        let mut out = Vec::with_capacity(snapshot.len());
+        for (blob, bytes) in snapshot {
+            let class = classify_bytes_until(&bytes, guessed_ext_from_mime(&blob.magic_mime), deadline)?;
+            let injection_hits = scanner.scan(&class.text).len();
+            let (text, sentinels_removed) = neutralize_sentinels(&class.text);
+            out.push(VerifiedAttachment {
+                blob,
+                text,
+                sentinels_removed,
+                injection_hits,
+            });
+        }
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        self.verified_texts_locked(owner, ids)
+        let manifest = self.load_manifest()?;
+        if !out.iter().all(|item| manifest.blobs.contains(&item.blob)) {
+            return Err(HarnessError::new("ATTACHMENT_NOT_FOUND", "attachment is not readable"));
+        }
+        Ok(out)
     }
 
-    fn verified_texts_locked(&self, owner: &str, ids: &[String]) -> Result<Vec<VerifiedAttachment>> {
+    fn verified_bytes_locked(&self, owner: &str, ids: &[String]) -> Result<Vec<(AttachmentBlob, Vec<u8>)>> {
         let jail = &self.jail;
         let manifest = self.load_manifest()?;
-        let scanner = Scanner::core();
         let mut out = Vec::with_capacity(ids.len());
         for id in ids {
             let blob = manifest
@@ -231,15 +262,7 @@ impl AttachmentStore {
             if bytes.len() as u64 != blob.byte_len || sha256_bytes_hex(&bytes) != blob.sha256 {
                 return Err(HarnessError::new("ATTACHMENT_NOT_FOUND", "attachment is not readable"));
             }
-            let class = classify_bytes(&bytes, guessed_ext_from_mime(&blob.magic_mime))?;
-            let injection_hits = scanner.scan(&class.text).len();
-            let (text, sentinels_removed) = neutralize_sentinels(&class.text);
-            out.push(VerifiedAttachment {
-                blob,
-                text,
-                sentinels_removed,
-                injection_hits,
-            });
+            out.push((blob, bytes));
         }
         Ok(out)
     }
@@ -274,6 +297,11 @@ impl AttachmentStore {
         let (mut keep, drop): (Vec<_>, Vec<_>) = manifest.blobs.drain(..).partition(|b| b.owner != owner);
         let (mut removed, mut retained) = (0usize, 0usize);
         let mut first_error: Option<std::io::Error> = None;
+        let forgotten: Vec<String> = drop
+            .iter()
+            .filter(|b| b.magic_mime == pdf_text::MIME)
+            .map(|b| b.sha256.clone())
+            .collect();
         for blob in drop {
             let outcome = blob_rel(&blob)
                 .map_err(|e| std::io::Error::other(e.message))
@@ -293,6 +321,7 @@ impl AttachmentStore {
         }
         manifest.blobs = keep;
         self.save_manifest(&manifest)?;
+        crate::common::pdf_text::forget(&forgotten);
         if let Some(e) = first_error {
             return Err(
                 HarnessError::new("IO_ERROR", format!("cannot remove attachment blob: {e}"))
@@ -434,10 +463,11 @@ pub(crate) fn atomic_write_in_jail(
 
 pub fn upload_error(err: &HarnessError) -> ApiError {
     let status = match err.code.as_str() {
-        "ATTACHMENT_TOO_LARGE" | "ATTACHMENT_QUOTA" => axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+        "ATTACHMENT_TOO_LARGE" | "ATTACHMENT_QUOTA" | "PDF_LIMIT" => axum::http::StatusCode::PAYLOAD_TOO_LARGE,
         "ATTACHMENT_MEDIA" => axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
-        "ATTACHMENT_BUSY" => axum::http::StatusCode::SERVICE_UNAVAILABLE,
-        "ATTACHMENT_TIMEOUT" => axum::http::StatusCode::REQUEST_TIMEOUT,
+        "ATTACHMENT_BUSY" | "PDF_BUSY" => axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        "ATTACHMENT_TIMEOUT" | "PDF_TIMEOUT" => axum::http::StatusCode::REQUEST_TIMEOUT,
+        "PDF_WORKER_FAILED" => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
         "ATTACHMENT_OWNER_GONE" => axum::http::StatusCode::FORBIDDEN,
         // Storage failures are the server's, not the upload's: a client must
         // not retry the file as if it were malformed.
@@ -592,7 +622,7 @@ pub fn classify_file(file: &IncomingFile) -> Result<ClassifiedText> {
         return Err(HarnessError::new("ATTACHMENT_EMPTY", "file is empty"));
     }
     let ext = allowed_extension(&file.filename)?;
-    classify_bytes(&file.data, ext)
+    classify_bytes_until(&file.data, ext, std::time::Instant::now() + EXTRACTION_BUDGET)
 }
 
 #[cfg(test)]
@@ -706,7 +736,15 @@ pub fn audit_record(owner: &str, blobs: &[AttachmentBlob]) -> Value {
     })
 }
 
-fn classify_bytes(data: &[u8], ext: &str) -> Result<ClassifiedText> {
+fn classify_bytes_until(data: &[u8], ext: &str, deadline: std::time::Instant) -> Result<ClassifiedText> {
+    // Before the NUL and signature checks, which refuse PDF bytes under any
+    // other extension. Only a `.pdf` name whose bytes parse as PDF gets here.
+    if ext == "pdf" {
+        return pdf_text::extract(data, deadline).map(|text| ClassifiedText {
+            magic_mime: pdf_text::MIME,
+            text: text.to_string(),
+        });
+    }
     if ext == "docx" {
         return super::docx::extract(data).map(|text| ClassifiedText {
             magic_mime: super::docx::MIME,
@@ -790,6 +828,7 @@ fn allowed_extension(filename: &str) -> Result<&'static str> {
         "csv" => Ok("csv"),
         "log" => Ok("log"),
         "docx" => Ok("docx"),
+        "pdf" => Ok("pdf"),
         _ => Err(HarnessError::new(
             "ATTACHMENT_TYPE",
             "file extension is not an allowed text type",
@@ -803,6 +842,7 @@ fn guessed_ext_from_mime(mime: &str) -> &'static str {
         "text/csv" => "csv",
         "application/json" => "json",
         super::docx::MIME => "docx",
+        pdf_text::MIME => "pdf",
         _ => "txt",
     }
 }
@@ -1020,6 +1060,59 @@ mod tests {
         assert_eq!(err.code, "ATTACHMENT_CONTENT_LENGTH");
         assert!(check_content_length(Some(MAX_REQUEST_BYTES + 1), 1).is_err());
         assert!(check_content_length(Some(20), 20).is_ok());
+    }
+
+    fn pdf_part(name: &str, pages: &[&[&str]]) -> IncomingFile {
+        IncomingFile {
+            filename: name.into(),
+            data: crate::common::pdf_text::fixture_pdf(pages, false),
+        }
+    }
+
+    #[test]
+    fn pdf_attachments_store_original_bytes_and_reread_page_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = AttachmentStore::open(tmp.path()).unwrap();
+        let blobs = store
+            .store(
+                "alice",
+                &[pdf_part("Paper.PDF", &[&["intro"], &["PDF_ATTACH_FACT on two"]])],
+            )
+            .unwrap();
+        assert_eq!(blobs[0].magic_mime, "application/pdf");
+        let ids = vec![blobs[0].id.clone()];
+        let text = &store.verified_texts("alice", &ids).unwrap()[0].text;
+        assert!(text.contains("# Page 2\nPDF_ATTACH_FACT on two"), "{text}");
+        assert_eq!(
+            store.verified_texts("bob", &ids).unwrap_err().code,
+            "ATTACHMENT_NOT_FOUND"
+        );
+        let fence = crate::server::attachment_index::fence_for_query(&store, "alice", &ids, "PDF_ATTACH_FACT").unwrap();
+        assert!(
+            fence.contains("application/pdf") && fence.contains("PDF_ATTACH_FACT"),
+            "{fence}"
+        );
+    }
+
+    #[test]
+    fn a_bad_pdf_refuses_the_whole_batch_and_pdf_bytes_need_the_pdf_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = AttachmentStore::open(tmp.path()).unwrap();
+        let err = store
+            .store("alice", &[part("ok.txt", "fine"), part("fake.pdf", "plain text")])
+            .unwrap_err();
+        assert_eq!(err.code, "PDF_MALFORMED");
+        assert_eq!(upload_error(&err).status, axum::http::StatusCode::BAD_REQUEST);
+        assert_eq!(store.blob_count(), 0);
+        let mut disguised = pdf_part("paper.md", &[&["x"]]);
+        // Binary PDF bytes stop at the NUL check; header-only ones at the signature check.
+        let code = classify_file(&disguised).unwrap_err().code;
+        assert!(matches!(code.as_str(), "ATTACHMENT_NUL" | "ATTACHMENT_TYPE"), "{code}");
+        disguised.data = crate::common::pdf_text::fixture_pdf(&[&["x"]], true);
+        disguised.filename = "locked.pdf".into();
+        assert_eq!(classify_file(&disguised).unwrap_err().code, "PDF_ENCRYPTED");
+        let blank = pdf_part("blank.pdf", &[&[]]);
+        assert_eq!(classify_file(&blank).unwrap_err().code, "PDF_NO_TEXT");
     }
 
     #[test]

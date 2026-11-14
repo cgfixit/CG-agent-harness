@@ -408,6 +408,32 @@ async fn extract_in_worker(
     .await
 }
 
+/// Local text-only PDF extraction (`common::pdf_text`) under the fetch permit
+/// and request deadline. Returns the extracted text as both body and text.
+async fn pdf_in_worker(
+    data: Vec<u8>,
+    target: &url::Url,
+    deadline: tokio::time::Instant,
+    permit: OwnedSemaphorePermit,
+) -> Result<(String, (String, String, Vec<String>))> {
+    let title = target
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .filter(|name| !name.is_empty())
+        .map(|name| crate::common::clip_chars(name, 120))
+        .unwrap_or_else(|| "PDF document".to_string());
+    let hard = deadline.into_std();
+    run_web_cpu(deadline, permit, move |_| {
+        let text = crate::common::pdf_text::extract(&data, hard).map_err(|e| {
+            error("WEB_NOT_TEXT", "PDF text could not be extracted locally")
+                .detail("pdf", true)
+                .detail("pdf_code", e.code)
+        })?;
+        Ok((text.to_string(), (title, text.to_string(), Vec::new())))
+    })
+    .await
+}
+
 /// All HTML consumers share cancellation, the request deadline and fetch capacity.
 pub(super) async fn run_web_cpu<T: Send + 'static>(
     deadline: tokio::time::Instant,
@@ -1107,14 +1133,16 @@ impl WebTool {
                     .unwrap_or("")
                     .trim()
                     .to_ascii_lowercase();
-                if !matches!(
-                    content_type.as_str(),
-                    "text/plain" | "text/html" | "application/xhtml+xml" | "text/markdown"
-                ) {
-                    // Whether it is a PDF, never the header itself: the opt-in
-                    // Firecrawl fallback may re-read a PDF (`web_firecrawl::escalates`).
-                    return Err(error("WEB_NOT_TEXT", "unsupported content type")
-                        .detail("pdf", content_type == "application/pdf"));
+                let pdf = content_type == crate::common::pdf_text::MIME;
+                if !pdf
+                    && !matches!(
+                        content_type.as_str(),
+                        "text/plain" | "text/html" | "application/xhtml+xml" | "text/markdown"
+                    )
+                {
+                    // Never the header itself. A PDF is read below; only a PDF whose
+                    // local extraction fails is marked `pdf` for the opt-in fallback.
+                    return Err(error("WEB_NOT_TEXT", "unsupported content type").detail("pdf", false));
                 }
                 if response
                     .content_length()
@@ -1140,8 +1168,14 @@ impl WebTool {
                     content_type.clone(),
                     target.clone(),
                 );
-                let (body, (title, text, links)) =
-                    extract_in_worker(body, kind, base, self.limits.html_parser_handles, deadline, permit).await?;
+                // A PDF keeps `web.response_bytes`, so batch byte budgets still hold;
+                // a failed local extraction stays `WEB_NOT_TEXT` marked `pdf` for the
+                // opt-in fallback. Its link annotations are never collected.
+                let (body, (title, text, links)) = if pdf {
+                    pdf_in_worker(bytes.clone(), &target, deadline, permit).await?
+                } else {
+                    extract_in_worker(body, kind, base, self.limits.html_parser_handles, deadline, permit).await?
+                };
                 raw_body = body;
                 Page {
                     url: target.to_string(),

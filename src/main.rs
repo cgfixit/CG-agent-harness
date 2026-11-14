@@ -28,6 +28,9 @@ enum Command {
     /// Private supervised MCP stdio worker; no network listener.
     #[command(hide = true)]
     McpStdioWorker,
+    /// Text-only PDF parser child: PDF bytes on stdin, JSON on stdout (issue 813).
+    #[command(hide = true)]
+    PdfTextWorker,
     /// Account-authenticated web operations through the running portal.
     #[command(
         after_help = "EXAMPLES (quote wildcard patterns in your shell)\n  cgagentharness web allow 'https://www.veeam.com/*' 'https://example.org/*' --group vendors\n  cgagentharness web check https://www.veeam.com/\n  cgagentharness web research --group vendors 'Compare the backup approaches'\n  cgagentharness web research --url https://www.veeam.com/ 'Summarize products and permitted internal links'\n\nRules and web on/off are shared by this home, not per session. Selected web context is account-private. *.example.org excludes example.org; exact www and apex hosts are distinct. Every destination needs a matching rule; redirects and private addresses are refused."
@@ -85,6 +88,7 @@ fn main() -> ExitCode {
     match cli.command {
         Command::McpKey { action } => report(cgagentharness::server::mcp_keys::run(action)),
         Command::McpStdioWorker => ExitCode::from(cgagentharness::common::mcp_worker::main()),
+        Command::PdfTextWorker => ExitCode::from(cgagentharness::common::pdf_text::worker_main()),
         Command::Web { url, action } => report(cgagentharness::server::client::web(action, url)),
         Command::Account { url, action } => report(cgagentharness::server::client::account(action, url)),
         Command::Tls { action } => report(cgagentharness::server::client::tls(action)),

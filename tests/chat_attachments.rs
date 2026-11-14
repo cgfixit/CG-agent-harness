@@ -318,6 +318,50 @@ async fn session_clear_unlinks_blobs() {
     assert!(pins.is_empty(), "{pins:?}");
 }
 
+/// Issue 813: a PDF goes through the real `pdf-text-worker` child of the built
+/// binary, then the same owner-scoped fence, preview and local chat as text.
+#[tokio::test]
+async fn pdf_text_reaches_preview_and_local_chat_through_the_worker() {
+    use cgagentharness::common::pdf_text::{fixture_pdf, set_test_worker_exe};
+    set_test_worker_exe(env!("CARGO_BIN_EXE_cgagentharness").into());
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let pdf = fixture_pdf(&[&["Cover page"], &["The PDF_CHAT_FACT is 42."]], false);
+    for (name, data, want) in [
+        ("fake.pdf", b"plain text".to_vec(), "PDF_MALFORMED"),
+        ("locked.pdf", fixture_pdf(&[&["x"]], true), "PDF_ENCRYPTED"),
+        ("blank.pdf", fixture_pdf(&[&[]], false), "PDF_NO_TEXT"),
+    ] {
+        let (status, body) = post_files(&s, &[("ok.txt", b"fine"), (name, &data)]).await;
+        assert_eq!(status, 400, "{name}: {body}");
+        assert_eq!(code(&body), want, "{name}");
+        assert!(blob_files(&s.home).is_empty(), "{name}: a refused batch stores nothing");
+    }
+    let (status, body) = post_files(&s, &[("private-paper.pdf", &pdf)]).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["attachments"][0]["magic_mime"], "application/pdf");
+    let id = body["attachments"][0]["id"].as_str().unwrap();
+    let (status, preview) = s
+        .post_json(
+            "/api/prompt/preview",
+            json!({"attachment_ids": [id], "retrieve_query": "PDF_CHAT_FACT"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{preview}");
+    let prompt = preview["prompt"].as_str().unwrap();
+    assert!(prompt.contains("# Page 2\nThe PDF_CHAT_FACT is 42."), "{prompt}");
+    assert!(prompt.contains("application/pdf") && prompt.contains("data, not instructions"));
+    assert!(!prompt.contains("private-paper.pdf"));
+    let (status, chat) = s
+        .post_json(
+            "/api/chat",
+            json!({"message": "What is the PDF_CHAT_FACT?", "attachment_ids": [id]}),
+        )
+        .await;
+    assert_eq!(status, 200, "{chat}");
+    assert!(common::turn_message(&model.last_request().unwrap()).contains("The PDF_CHAT_FACT is 42."));
+}
+
 #[tokio::test]
 async fn docx_uses_local_prompt_fence_and_refuses_hostile_xml() {
     use std::io::{Cursor, Write};
