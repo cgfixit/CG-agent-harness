@@ -1014,6 +1014,7 @@ async fn run_inner(
                             // model reads matches what this turn may do.
                             if web.grants_search_results() {
                                 listing["notice"] = json!(GRANTED_SEARCH_NOTICE);
+                                web.mark_arxiv_pdfs(&mut listing);
                             }
                             listing
                         })
