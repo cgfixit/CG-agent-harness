@@ -157,17 +157,15 @@ pub fn retrieve_many(
                     .get(i)
                     .ok_or_else(|| error("WEB_INDEX_FAILED", "invalid passage index row"))?
                     .clone();
-                if !prepared.identifier_matches([p.text.as_str(), p.title.as_str(), p.heading.as_str()]) {
-                    continue;
-                }
+                let matched = prepared.identifier_matches([p.text.as_str(), p.title.as_str(), p.heading.as_str()]);
                 p.score = score + prepared.exact_bonus(&p.text);
                 let score = p.score;
                 let tie_key = p.id.clone();
                 let diversity_key = p.url.clone();
-                candidates.push(RankedCandidate::new(p, score, tie_key, diversity_key));
+                candidates.push((matched, RankedCandidate::new(p, score, tie_key, diversity_key)));
             }
             Ok(crate::server::retrieval_ranking::select_diverse(
-                candidates,
+                crate::server::retrieval_ranking::prefer_identifier_matches(candidates),
                 limit,
                 per_source,
                 |p| &p.text,
