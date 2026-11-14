@@ -241,10 +241,12 @@ web:
   # Firecrawl, restart-only: an opt-in second reader for exact permitted URLs (/web fetch, the
   # chat web_fetch tool, batch reads; never discovery, crawl or search). It runs only after the
   # pinned fetch got a server's 403, 429 or 503, a script shell (scripted HTML whose text is under
-  # 200 chars and under 5% of the markup), a body over response_bytes or a PDF (the last two by
-  # operator decision, 2026-11-10), and then sends that URL to Firecrawl: one basic scrape,
-  # markdown only, not kept in Firecrawl's cache, no links taken, within twice request_seconds
-  # (at most 60 s). Firecrawl bills a PDF one credit per page; every read pins a 10-page cap.
+  # 200 chars and under 5% of the markup), a body over response_bytes or a PDF that local
+  # extraction refuses as textless, over a limit or malformed (the last two by operator decision,
+  # 2026-11-10; a busy, timed-out, failed or encrypted PDF read stays local), and then sends that
+  # URL to Firecrawl: one basic scrape, markdown only, not kept in Firecrawl's cache, no links
+  # taken, within twice request_seconds (at most 60 s). Firecrawl bills a PDF one credit per page;
+  # every read pins a 10-page cap.
   # A result whose final URL differs from the request is refused like any redirect. A failed
   # fallback keeps the original outcome, with its code in details.fallback. Needs FIRECRAWL_API_KEY.
   firecrawl:

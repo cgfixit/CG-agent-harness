@@ -178,16 +178,31 @@ fn run_isolated(data: &[u8], deadline: Instant) -> Result<String> {
         crate::common::process::ProcessError::Timeout { .. } => refusal("PDF_TIMEOUT"),
         _ => refusal("PDF_WORKER_FAILED"),
     })?;
-    let reply: WorkerReply = serde_json::from_str(output.stdout.trim()).map_err(|_| match output.signal {
-        // SIGXCPU or an allocation failure under the address-space limit.
-        Some(_) => refusal("PDF_LIMIT"),
-        None => refusal("PDF_WORKER_FAILED"),
-    })?;
+    let reply: WorkerReply =
+        serde_json::from_str(output.stdout.trim()).map_err(|_| refusal(unanswered_worker_code(output.signal)))?;
     match (output.status, reply) {
         (Some(0), WorkerReply::Text { text }) if text.len() <= MAX_OUTPUT_BYTES => Ok(text),
         (_, WorkerReply::Refused { code }) => Err(refusal(&code)),
         _ => Err(refusal("PDF_WORKER_FAILED")),
     }
+}
+
+/// The refusal for a worker that ended without a reply. Only the document can
+/// exhaust the heap ceiling or address-space limit: an allocation failure under
+/// either aborts the child (SIGABRT; panics unwind and exit, they do not
+/// abort). The CPU limit sits past the parent's kill deadline, so SIGXCPU is a
+/// timeout. Any other signal, or none, is a local worker failure, never a
+/// document limit, so it cannot qualify for a remote fallback.
+fn unanswered_worker_code(signal: Option<i32>) -> &'static str {
+    #[cfg(unix)]
+    match signal {
+        Some(libc::SIGABRT) => return "PDF_LIMIT",
+        Some(libc::SIGXCPU) => return "PDF_TIMEOUT",
+        _ => {}
+    }
+    #[cfg(not(unix))]
+    let _ = signal;
+    "PDF_WORKER_FAILED"
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1332,5 +1347,18 @@ mod tests {
     fn refusal_messages_are_fixed_and_unknown_codes_are_generic() {
         assert_eq!(refusal("PDF_ENCRYPTED").message, "encrypted PDFs are not supported");
         assert_eq!(refusal("lopdf said: /secret.pdf").code, "PDF_WORKER_FAILED");
+    }
+
+    #[test]
+    fn a_worker_without_a_reply_is_a_document_limit_only_after_an_allocation_abort() {
+        assert_eq!(unanswered_worker_code(None), "PDF_WORKER_FAILED");
+        #[cfg(unix)]
+        {
+            assert_eq!(unanswered_worker_code(Some(libc::SIGABRT)), "PDF_LIMIT");
+            assert_eq!(unanswered_worker_code(Some(libc::SIGXCPU)), "PDF_TIMEOUT");
+            for signal in [libc::SIGSEGV, libc::SIGKILL, libc::SIGBUS, libc::SIGTERM] {
+                assert_eq!(unanswered_worker_code(Some(signal)), "PDF_WORKER_FAILED", "{signal}");
+            }
+        }
     }
 }
