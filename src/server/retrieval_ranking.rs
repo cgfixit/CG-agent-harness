@@ -73,7 +73,8 @@ impl PreparedQuery {
             return Ok(None);
         };
         // Only the identifier-shaped words (`widget_open`, `Vec::new`) must match
-        // exactly. A whole-query pattern made `How does widget_open fail?` require
+        // exactly, and only while some candidate has one (see
+        // `prefer_identifier_matches`). A whole-query pattern made `How does widget_open fail?` require
         // that literal sentence, so a question about an identifier found nothing.
         // Tokens are cut on identifier syntax, so `foo_bar/baz_qux` and
         // `` `foo_bar`,`baz_qux` `` are two identifiers, not one literal.
@@ -141,6 +142,19 @@ impl<T> RankedCandidate<T> {
             diversity_key,
         }
     }
+}
+
+/// The candidates flagged as containing a queried identifier, or every
+/// candidate when none is. A PDF renders `d_model` as `d model`, so an
+/// identifier missing from every passage leaves the BM25 ranking to choose
+/// instead of returning no hits at all.
+pub(super) fn prefer_identifier_matches<T>(candidates: Vec<(bool, RankedCandidate<T>)>) -> Vec<RankedCandidate<T>> {
+    let any = candidates.iter().any(|(matched, _)| *matched);
+    candidates
+        .into_iter()
+        .filter(|(matched, _)| *matched || !any)
+        .map(|(_, candidate)| candidate)
+        .collect()
 }
 
 /// The best `limit` candidates (at most [`HIT_CAP`]), near-duplicates dropped,
