@@ -27,6 +27,12 @@ pub(super) const THIN_EXTRACT_CHARS: usize = 200;
 /// Pages Firecrawl may parse from one PDF. It bills a PDF one credit per page,
 /// so every read pins this cap; a longer document is read from its first pages.
 pub(super) const PDF_MAX_PAGES: u64 = 10;
+/// Local PDF refusals about the document itself, which a remote reader may
+/// handle (operator decision O3, #772). Local capacity and infrastructure
+/// failures (`PDF_BUSY`, `PDF_TIMEOUT`, `PDF_WORKER_FAILED`), an encrypted
+/// document and any unknown code stay local: they never become remote egress
+/// or spend.
+pub(super) const PDF_ESCALATES: [&str; 3] = ["PDF_NO_TEXT", "PDF_LIMIT", "PDF_MALFORMED"];
 /// Longest a fallback read may take, whatever `web.request_seconds` is.
 const MAX_FALLBACK_SECONDS: u64 = 60;
 
@@ -70,10 +76,12 @@ impl HourlyCap {
 /// or 503, or a fresh 200 HTML page that is a script shell: it carries a script,
 /// extracted to almost nothing, and that text is under 5% of the markup. A short
 /// page, even one with an analytics script (example.com), is an answer. A body
-/// over `web.response_bytes` (`WEB_TOO_LARGE`) and a PDF (`WEB_NOT_TEXT` marked
-/// `pdf`) escalate too: the pinned fetch reached a permitted public server and
-/// only could not use what it sent. A transport failure, a redirect, a policy
-/// or SSRF refusal, any other content type and every other code never escalate.
+/// over `web.response_bytes` (`WEB_TOO_LARGE`) and a PDF whose document local
+/// extraction refused (`WEB_NOT_TEXT` marked `pdf`, with a `pdf_code` in
+/// [`PDF_ESCALATES`]) escalate too: the pinned fetch reached a permitted public
+/// server and only could not use what it sent. A transport failure, a redirect,
+/// a policy or SSRF refusal, any other content type and every other code never
+/// escalate.
 pub(super) fn escalates(outcome: &Result<(Page, String)>) -> bool {
     match outcome {
         Ok((page, raw)) => {
@@ -90,7 +98,14 @@ pub(super) fn escalates(outcome: &Result<(Page, String)>) -> bool {
                 Some(403 | 429 | 503)
             ),
             "WEB_TOO_LARGE" => true,
-            "WEB_NOT_TEXT" => failure.details.get("pdf") == Some(&Value::Bool(true)),
+            "WEB_NOT_TEXT" => {
+                failure.details.get("pdf") == Some(&Value::Bool(true))
+                    && failure
+                        .details
+                        .get("pdf_code")
+                        .and_then(Value::as_str)
+                        .is_some_and(|code| PDF_ESCALATES.contains(&code))
+            }
             _ => false,
         },
     }
@@ -437,9 +452,25 @@ mod tests {
         // Operator decision, 2026-11-10: an oversized body and a PDF also go to
         // the fallback. Any other non-text type (an image, a zip) does not.
         assert!(escalates(&Err(error("WEB_TOO_LARGE", "response exceeds limit"))));
-        assert!(escalates(&Err(
-            error("WEB_NOT_TEXT", "unsupported content type").detail("pdf", true)
-        )));
+        let pdf = |code: &str| error("WEB_NOT_TEXT", "x").detail("pdf", true).detail("pdf_code", code);
+        for code in PDF_ESCALATES {
+            assert!(escalates(&Err(pdf(code))), "{code}");
+        }
+        // O3: local capacity, infrastructure and encryption failures, and any
+        // code this list does not know, never send the URL to Firecrawl.
+        for code in [
+            "PDF_BUSY",
+            "PDF_TIMEOUT",
+            "PDF_WORKER_FAILED",
+            "PDF_ENCRYPTED",
+            "PDF_SOMETHING_NEW",
+        ] {
+            assert!(!escalates(&Err(pdf(code))), "{code}");
+        }
+        assert!(
+            !escalates(&Err(error("WEB_NOT_TEXT", "x").detail("pdf", true))),
+            "a PDF refusal without a code"
+        );
         assert!(!escalates(&Err(
             error("WEB_NOT_TEXT", "unsupported content type").detail("pdf", false)
         )));
@@ -647,6 +678,13 @@ mod tests {
                     }),
                 )
                 .route(
+                    "/locked.pdf",
+                    get(|| async {
+                        let pdf = crate::common::pdf_text::fixture_pdf(&[&["LOCKED_PDF_FACT"]], true);
+                        ([("content-type", "application/pdf")], pdf)
+                    }),
+                )
+                .route(
                     "/junk.pdf",
                     get(|| async {
                         (
@@ -793,6 +831,18 @@ mod tests {
         assert_eq!(unreadable.code, "WEB_NOT_TEXT");
         assert_eq!(unreadable.details["pdf_code"], "PDF_MALFORMED");
         assert_eq!(off.hits(), 0);
+    }
+
+    /// O3 (#772): an encrypted PDF is a local refusal, not a document the remote
+    /// reader may try, so the URL never leaves the machine even with Firecrawl on.
+    #[tokio::test]
+    async fn an_encrypted_pdf_stays_local_with_the_fallback_enabled() {
+        let rig = fixture::rig(ON, "good").await;
+        let refused = rig.fetch("locked.pdf").await.unwrap_err();
+        assert_eq!(refused.code, "WEB_NOT_TEXT");
+        assert_eq!(refused.details["pdf_code"], "PDF_ENCRYPTED");
+        assert!(refused.details.get("fallback").is_none(), "{:?}", refused.details);
+        assert_eq!(rig.hits(), 0, "Firecrawl was called for an encrypted PDF");
     }
 
     /// A readable PDF is extracted locally and never reaches the fallback.
