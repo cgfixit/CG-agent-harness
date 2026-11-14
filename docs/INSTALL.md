@@ -724,7 +724,7 @@ all targets with provider keys blanked and deterministic model fixtures. Set
 
 | Gate | Scope |
 |---|---|
-| [Backend CI](../.github/workflows/ci.yml) | Rust 1.89: rustfmt, warning-denied Clippy, `cargo deny`, I6, Chrome, Linux/macOS tests, required bubblewrap and MCP lifecycle jobs, real-repo smoke. Code PRs run focused Windows tests; `main`, the merge queue and releases run the full Windows suite. |
+| [Backend CI](../.github/workflows/ci.yml) | Rust 1.89: rustfmt, warning-denied Clippy, `cargo deny`, I6, Chrome, Linux/macOS tests, required bubblewrap and MCP lifecycle jobs, real-repo smoke. Focused Windows checks fail CI. Full Windows tests warn on `main` pushes and fail merge-queue and release CI. |
 | [Desktop CI](../.github/workflows/desktop.yml), [desktop check](../.github/workflows/desktop-check.yml) | Bundle and release runs build the universal app on Rust 1.90 and verify signatures, checksums and extraction. PRs touching `desktop/`, `src/common/local_tls.rs` or `scripts/start-web.sh` get fmt, Clippy, tests and `cargo deny` without packaging. |
 | [Bundle](../.github/workflows/bundle.yml) | Pushes to `main` only: packages `linux-x86_64` (glibc 2.39+) and `macos-arm64` CLIs beside desktop, re-verifies checksums, tests loopback binding and exit-3 missing configuration. |
 | [Netconnect CI](../.github/workflows/netconnect.yml) | Path-filtered flag, scope and collector tests, plus a Linux `strace` proof that default `netconnect status` opens no packet socket. |

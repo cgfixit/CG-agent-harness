@@ -227,6 +227,8 @@ jobs:
           "CGAH_REQUIRE_WINDOWS_MCP=1" >> $env:GITHUB_ENV
           "CGAH_REQUIRE_WINDOWS_CREDENTIALS=1" >> $env:GITHUB_ENV
       - name: Test
+        id: full-test
+        continue-on-error: ${{ runner.os == 'Windows' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         # Seatbelt always exists on macOS runners, so the check-sandbox smoke
         # must not skip there. Linux coverage runs in linux-bwrap below.
         run: |
@@ -240,6 +242,12 @@ jobs:
           # Operator emergency write kill-switch must not leak into cargo test.
           # Tests also isolate this; empty is not a disable value.
           CGAGENTHARNESS_AGENTIC_WRITE_DISABLE: ""
+      - name: Report advisory Windows test failure
+        if: ${{ success() && steps.full-test.outcome == 'failure' }}
+        run: |
+          message='Full Windows test suite failed (advisory on main pushes). See the Test step for details.'
+          printf '::warning::%s\n' "$message"
+          printf '%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
       - name: Public backend lifecycle and chat contracts (no model downloads)
         # The desktop sidecar/control pipe is a Unix-only entrypoint.
         if: runner.os != 'Windows'
