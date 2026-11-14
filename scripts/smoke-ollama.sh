@@ -28,7 +28,8 @@ echo "== home $CGAGENTHARNESS_HOME"
 echo "== bind guard"
 # Watchdog, not a bare `if`: if the loopback guard ever regresses the server
 # actually starts and this assertion would hang forever instead of failing.
-"$BIN" serve --host 0.0.0.0 --port "$PORT" & probe=$!
+bind_err="$CGAGENTHARNESS_HOME/bind-guard.err"
+"$BIN" serve --host 0.0.0.0 --port "$PORT" 2>"$bind_err" & probe=$!
 ( sleep 20; kill -9 "$probe" 2>/dev/null ) & watchdog=$!
 bind_code=0; wait "$probe" || bind_code=$?
 kill "$watchdog" 2>/dev/null || true
@@ -36,6 +37,11 @@ case "$bind_code" in
   0)   echo "non-loopback bind must be refused, but serve exited 0"; exit 1 ;;
   137) echo "non-loopback bind must be refused, but serve kept listening"; exit 1 ;;
 esac
+# Any other non-zero exit (a panic, or a home/settings failure before the host
+# check) is not the refusal: require the refusal itself, as bundle.yml does.
+if [ "$bind_code" -ne 1 ] || ! grep -q 'binds loopback only' "$bind_err"; then
+  echo "expected the loopback refusal (exit 1), got exit $bind_code:"; cat "$bind_err"; exit 1
+fi
 
 # The refused bind seeded the fresh configuration. Set the explicitly selected
 # local endpoint before server startup, without requiring a YAML dependency.
