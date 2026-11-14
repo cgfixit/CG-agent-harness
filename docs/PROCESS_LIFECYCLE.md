@@ -26,6 +26,15 @@ truncate. Server SIGKILL or a crash does not run the owner's destructor. Linux
 keeps group cleanup without descendant enumeration. These Unix claims do not
 apply to the Windows runners.
 
+`cgagentharness browser` and `cgagentharness browser-verify` are separate
+session processes. Each one owns its Playwright sidecar until the session
+exits. They are not MCP stdio calls, and they do not run inside the coding
+check Seatbelt. The sidecar's loopback proxy is the egress check. A Playwright
+route abort is a second check, not the only one. Cleanup closes the sidecar's
+stdin, so it closes Chrome and exits; one that lingers five seconds is killed.
+There is no `libproc` descendant walk here, so this is not whole-tree
+containment. An untrusted candidate profile is unsupported on this host.
+
 Filesystem and network denial are separate boundaries. The synchronous runner
 has no per-run disk quota and no general memory or process-count limit, and
 cleanup can extend the requested deadline. Inspect surviving work after an

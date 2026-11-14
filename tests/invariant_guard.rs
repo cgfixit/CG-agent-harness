@@ -495,6 +495,7 @@ fn only_registered_process_owners_construct_commands() {
     const OWNERS: &[&str] = &[
         "shim/mod.rs",
         "common/process.rs",
+        "common/browser_host.rs",
         "common/mcp.rs",
         "common/mcp_worker.rs",
         "common/windows_job.rs",

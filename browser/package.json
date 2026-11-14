@@ -1,0 +1,9 @@
+{
+  "name": "cgagentharness-browser-sidecar",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Pinned Playwright sidecar. The harness prepares it. A session never installs or downloads a browser.",
+  "dependencies": {
+    "playwright": "1.65.1"
+  }
+}

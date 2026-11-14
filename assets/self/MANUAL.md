@@ -474,14 +474,19 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - web.stale_seconds: 60–31536000; fetch age, not publication-date verification
   - web.search
   - web.firecrawl
-- notifications: Completion webhooks are explicit operator configuration and restart-only.
+- browser: Completion webhooks are explicit operator configuration and restart-only.
+  - browser.enabled
+  - browser.sidecar
+  - browser.max_turns: model turns per task, clamped to 1–40
+  - browser.timeout_sec: whole task; the child tree is killed after it, clamped to 30–1800
+- notifications
   - notifications.enabled
-  - notifications.schema_version
-  - notifications.destinations: max 8: explicit id, owner, enabled, url, events, use_bearer, rate_per_minute
 
 ## config: sections and keys (values omitted) (part 6)
 
-- notifications.webhook_url: legacy global URL must be migrated explicitly; never invent an owner
+- notifications.schema_version
+  - notifications.destinations: max 8: explicit id, owner, enabled, url, events, use_bearer, rate_per_minute
+  - notifications.webhook_url: legacy global URL must be migrated explicitly; never invent an owner
   - notifications.private_url_allowlist: exact URLs only; loopback/RFC1918/ULA require this grant
   - notifications.queue_capacity: 1–512 retained deliveries; pressure evicts terminal rows before refusing pending work
   - notifications.batch_size: 1–32 metadata events per POST
@@ -493,10 +498,10 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - notifications.jitter_percent: 0–50; nonnegative random delay
   - notifications.retention_sec: 60–2592000; pending and terminal delivery retention
   - notifications.max_replays: 0–10; explicit owner-confirmed replay cycles
-  - notifications.timeout_sec: 1–30, includes DNS and request
 
 ## config: sections and keys (values omitted) (part 7)
 
+- notifications.timeout_sec: 1–30, includes DNS and request
 - mcp: External MCP tools. Off until an operator declares servers. Never auto-discover. SSE loopback is an explicit toggle and ships off. MCP tools never appear on /loop. stdio command[0] must be an…
   - mcp.server
   - mcp.enabled
@@ -518,13 +523,13 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - auth.max_concurrent_operations
   - auth.session
 - logging
-  - logging.request_log
-  - logging.audit_file
-  - logging.spend_file
 
 ## config: sections and keys (values omitted) (part 8)
 
-- logging.max_file_bytes: clamped to 64 KiB–64 MiB; oversized events are dropped
+- logging.request_log
+  - logging.audit_file
+  - logging.spend_file
+  - logging.max_file_bytes: clamped to 64 KiB–64 MiB; oversized events are dropped
   - logging.audit_lease_wait_ms: clamped to 0–5000
   - logging.audit_lease_retry_ms: clamped to 1–1000
   - logging.audit_queue_lines: 0, or clamped to 64–65536
@@ -548,11 +553,11 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - agentic.allowed_read_ops
   - agentic.deepagent_github
 - unslop
-  - unslop.enabled: opt-in planner probe: counts fixed filler phrases, may nudge the next iteration; never rewrites or gates
-  - unslop.metrics_path
 
 ## config: sections and keys (values omitted) (part 9)
 
+- unslop.enabled: opt-in planner probe: counts fixed filler phrases, may nudge the next iteration; never rewrites or gates
+  - unslop.metrics_path
 - diagnostics: Read-only /diag log inspection. New homes ship logs_enabled as literal true (quoted "true" is off); only admin and portal_auditor accounts may read. An existing home config.yaml is not rewritten.…
   - diagnostics.logs_enabled
   - diagnostics.logs_max_lines: 1–1000 per read
@@ -565,14 +570,14 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - diagnostics.self_manual_max_chars: 512–16000 injected characters per turn
   - diagnostics.self_manual_min_score: finite, >= 0; Tantivy score floor, 0 keeps every hit
   - diagnostics.live_state
+
+## config: sections and keys (values omitted) (part 10)
+
 - memory: Account-private structured facts, governed proposals, and optional episodes. Distinct from harness.json.memory_enabled, which only includes pinned /memory notes in the chat prompt. Missing, quoted,…
   - memory.enabled
 - structured_memory
   - structured_memory.enabled
-
-## config: sections and keys (values omitted) (part 10)
-
-- structured_memory.episode_capture
+  - structured_memory.episode_capture
   - structured_memory.explicit_recall
   - structured_memory.retrieval
   - structured_memory.auto_retrieval
@@ -586,14 +591,14 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - structured_memory.suggestion_max_queue: clamped to 1–32; queued inputs; one additional generation may be running
   - structured_memory.suggestion_queue_ttl_secs: clamped to 1–3600; volatile inputs expire; restart drops them
   - structured_memory.suggestion_idle_ms: clamped to 10–30000
-  - structured_memory.status_poll_ms: clamped to 250–30000; visible Memory pane only
-  - structured_memory.max_facts_per_owner: clamped to 1–256
-  - structured_memory.max_fact_chars: clamped to 1–4000
-  - structured_memory.max_category_chars: clamped to 1–64
 
 ## config: sections and keys (values omitted) (part 11)
 
-- structured_memory.max_proposals_per_owner: clamped to 1–128
+- structured_memory.status_poll_ms: clamped to 250–30000; visible Memory pane only
+  - structured_memory.max_facts_per_owner: clamped to 1–256
+  - structured_memory.max_fact_chars: clamped to 1–4000
+  - structured_memory.max_category_chars: clamped to 1–64
+  - structured_memory.max_proposals_per_owner: clamped to 1–128
   - structured_memory.max_reason_chars: clamped to 1–1000
   - structured_memory.max_episodes_per_owner: clamped to 1–1024
   - structured_memory.max_episode_summary_chars: clamped to 32–4000
@@ -606,14 +611,14 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - structured_memory.max_retrieval_results: clamped to 1–16
   - structured_memory.max_retrieval_tokens: clamped to 1–16
   - structured_memory.max_retrieval_token_chars: clamped to 1–64
-  - structured_memory.max_search_time_ms: clamped to 10–5000
-  - structured_memory.pinned_prompt_chars: clamped to 1–3000
-  - structured_memory.selected_fact_prompt_chars: clamped to 1–3000
-  - structured_memory.max_consolidation_episodes: clamped to 1–16
 
 ## config: sections and keys (values omitted) (part 12)
 
-- structured_memory.max_consolidation_candidates: clamped to 1–16
+- structured_memory.max_search_time_ms: clamped to 10–5000
+  - structured_memory.pinned_prompt_chars: clamped to 1–3000
+  - structured_memory.selected_fact_prompt_chars: clamped to 1–3000
+  - structured_memory.max_consolidation_episodes: clamped to 1–16
+  - structured_memory.max_consolidation_candidates: clamped to 1–16
   - structured_memory.min_consolidation_confidence: clamped to 0–1
   - structured_memory.auto_consolidation_idle_ms: clamped to 20–60000
 - netconnect: LAN observation. Every gate ships false. A tier is effective only when `enabled` and that tier's flag are both the literal boolean true; quoted "true" is off. `allowed_cidrs` is empty, so every…
@@ -633,13 +638,13 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - netconnect.read_timeout_ms
   - netconnect.max_dials
   - netconnect.diagnostics_targets
-  - netconnect.throughput_endpoint
-  - netconnect.ha_endpoint
-  - netconnect.mqtt_endpoint
-  - netconnect.untrusted_string_max_chars
 
 ## config: sections and keys (values omitted) (part 13)
 
+- netconnect.throughput_endpoint
+  - netconnect.ha_endpoint
+  - netconnect.mqtt_endpoint
+  - netconnect.untrusted_string_max_chars
 - scheduling: Durable schedules: restart-only tuning, never execution/write authority. New interval and cron schedules require an owner-bound preview receipt.
   - scheduling.poll_interval_ms: 250–5000
   - scheduling.dispatch_grace_secs: 5–30; older occurrences are skipped

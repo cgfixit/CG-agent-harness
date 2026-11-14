@@ -15,6 +15,9 @@ debug/
 /cgagent-fused/
 # ── Local Python virtualenv (scripts/ is stdlib-only) ─────────
 /.venv/
+# Playwright install for browser/sidecar.mjs. The pin is browser/package.json
+# and browser/package-lock.json. A session must not npm-install this itself.
+/browser/node_modules/
 # ── In-tree Python scripts ────────────────────────────────────
 __pycache__/
 *.pyc

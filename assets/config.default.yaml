@@ -254,6 +254,16 @@ web:
     max_per_hour: 20 # 1–1000 Firecrawl reads per clock hour; a 402 or 429 also pauses it for search_cooldown_quota_sec
 
 # Completion webhooks are explicit operator configuration and restart-only.
+browser:
+  # Model-driven browsing through browser/sidecar.mjs (docs/DESKTOP.md#browser-sessions).
+  # Literal true lets administrators POST /api/browser/run. Restart-only.
+  enabled: false
+  # Playwright sidecar, relative to the server's working directory. Prepare it
+  # once with PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci in browser/.
+  sidecar: "browser/sidecar.mjs"
+  max_turns: 12  # model turns per task, clamped to 1–40
+  timeout_sec: 300  # whole task; the child tree is killed after it, clamped to 30–1800
+
 notifications:
   enabled: false
   schema_version: 1

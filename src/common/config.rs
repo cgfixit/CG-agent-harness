@@ -146,6 +146,8 @@ pub const NUMERIC_LIMITS: &[Limit<u64>] = &[
     // Ceiling: no reply outlives the largest window the caps scale to.
     refuse("agentic.deepagent_github.planner_max_tokens", 3072, 1, 131_072),
     clamp("app.agent_job_poll_ms", 1500, 1000, 30_000),
+    clamp("browser.max_turns", 12, 1, 40),
+    clamp("browser.timeout_sec", 300, 30, 1800),
     clamp("chat.compact_keep_messages", 8, 2, 40),
     clamp("chat.compact_max_prefill_sec", 120, 30, 1800),
     clamp("chat.compact_tail_percent", 25, 10, 50),

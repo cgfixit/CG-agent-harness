@@ -14,8 +14,12 @@ the server or the shim.
 
 - Locked by: `tests/invariant_guard.rs` (source checks in both directions).
   Console-side process creation is restricted to `shim/mod.rs`, `common/process.rs`,
-  `common/mcp.rs`, `common/mcp_worker.rs` and `common/windows_job.rs`; shared
-  runners preserve I6.
+  `common/browser_host.rs`, `common/mcp.rs`, `common/mcp_worker.rs` and
+  `common/windows_job.rs`; shared runners preserve I6. The browser host is a
+  session process, not an MCP call and not a coding-sandbox check. `/api/browser/run`
+  is admin-only behind literal `browser.enabled`; origins come only from the request,
+  the child gets `browser_host::child_environment` (no provider keys), and non-GET
+  page loads are held for the operator.
 - A SIGKILL'd child may leak a clone, but cannot corrupt server memory or bypass
   guards. The exit-code contract is 0 ok / 2 failed / 3 env_config / 4 write_refused.
 
