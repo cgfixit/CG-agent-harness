@@ -4248,9 +4248,14 @@ async function runSlash(line, webCommand) {
            server re-validates them, refuses blocked ones and runs the task. */
         const words = rest.slice();
         const origins = [];
-        while (words.length && /^https?:\/\//i.test(words[0])) origins.push(words.shift());
+        /* A bare domain (docs.python.org) means https; an IP or port needs its scheme. */
+        const site = /^(https?:\/\/\S+|[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/\S*)?)$/i;
+        while (words.length && site.test(words[0])) {
+          const w = words.shift();
+          origins.push(/^https?:\/\//i.test(w) ? w : 'https://' + w);
+        }
         const task = words.join(' ').trim();
-        if (!origins.length || !task) { sys('usage: /browse <url> [url ...] <task> — administrator only; browser.enabled must be literal true'); break; }
+        if (!origins.length || !task) { sys('usage: /browse <site> [site ...] <task>, e.g. /browse docs.python.org find the latest Python version — administrator only; browser.enabled must be literal true'); break; }
         sys('Browsing ' + origins.join(', ') + ' with the local model; this can take a few minutes.');
         const r = await api('/api/browser/run', 'POST', {task, origins}, BROWSE_WAIT_MS);
         if (staleReview()) break;
