@@ -56,8 +56,7 @@ The alternative `gemma4-26b-a4b:ud-q4_k_xl-cg` is built the same way from
 `scripts/bakeoff/modelfiles/gemma4-26b-a4b-ud-q4_k_xl-cg.Modelfile`.
 
 Thinking is off through `models.local_llm.reasoning_effort: none`, not the
-recipe. For a 65536 window on a 48 GB Mac, see the
-[bake-off report](bakeoff/local-model-bakeoff-2026-10-10.md#windows-above-32768-on-a-48-gb-mac).
+recipe.
 
 When no model is installed, `/model list` shows an example `ollama pull`
 command to copy into a terminal; the console downloads nothing, and
