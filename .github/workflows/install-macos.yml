@@ -91,7 +91,9 @@ jobs:
           scripts/init.sh --yes --choice 0 --app-dir "$RUNNER_TEMP/Applications"
           log=scripts/logs/install.log
           grep -q 'admin password replaced and saved in your login keychain' "$log"
-          grep -q 'allowlist-bootstrap: done: 14 of' "$log"
+          # The bootstrap's own 14 rules; the total also counts rules a fresh home is seeded with.
+          grep -q 'allowlist-bootstrap: 14 new rule(s)' "$log"
+          grep -q 'allowlist-bootstrap: done: ' "$log"
           if grep -qiE 'setup code [0-9a-z]{4}-' "$log"; then echo 'the install log holds a setup code'; exit 1; fi
           home=$(cd "$HOME/.CGagentHarness" && pwd -P)
           security find-generic-password -a admin -s "CGagentHarness admin ($home)" >/dev/null
