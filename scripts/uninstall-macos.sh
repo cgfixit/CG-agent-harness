@@ -88,7 +88,7 @@ homes() {
   launchd=$(launchctl getenv CGAGENTHARNESS_HOME 2>/dev/null || true)
   [ -z "$launchd" ] || [ "$launchd" = "${CGAGENTHARNESS_HOME:-$HOME/.CGagentHarness}" ] || printf '%s\n' "$launchd"
 }
-cert_hashes() { security find-certificate -a -c "$cert_cn" -Z "$login_kc" 2>/dev/null | awk '/^SHA-1 hash:/ {print $3}'; }
+cert_hashes() { security find-certificate -a -c "$cert_cn" -Z "$login_kc" 2>/dev/null | awk '/^SHA-1 hash:/ {print $3}'; } # DevSkim: ignore DS126858 because SHA-1 is only the keychain item id security delete-certificate -Z takes, not a hash for integrity.
 brew_has() { have brew && brew list "$1" "$2" >/dev/null 2>&1; }
 # Homebrew has shipped the Ollama app as both of these cask names.
 ollama_cask() { local c; for c in ollama ollama-app; do brew_has --cask "$c" && { echo "$c"; return 0; }; done; return 1; }
