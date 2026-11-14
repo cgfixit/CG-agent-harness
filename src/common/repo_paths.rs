@@ -16,7 +16,8 @@ pub fn canonical_repo_relative_path(target: &str) -> Option<String> {
         return None;
     }
     let parts: Vec<&str> = normalized.split('/').filter(|p| !p.is_empty() && *p != ".").collect();
-    if parts.is_empty() {
+    // Re-check after dropping `.` segments: `./-rf` must not canonicalize to `-rf`.
+    if parts.first().is_none_or(|first| first.starts_with('-')) {
         return None;
     }
     for part in &parts {
@@ -64,6 +65,10 @@ mod tests {
             "",
             "/etc/passwd",
             "-rf",
+            "./-rf",
+            ".\\-x",
+            "././-flag",
+            "//-rf",
             "../secret",
             "a/../../secret",
             "a/b:c",
@@ -92,12 +97,13 @@ mod tests {
 
     proptest::proptest! {
         /// Whatever this function accepts must already be free of the shapes
-        /// it exists to reject: no leading '/', no '..' segment, no drive
+        /// it exists to reject: no leading '/' or '-', no '..' segment, no drive
         /// letter, no UNC prefix, no trailing space/dot on any segment.
         #[test]
         fn accepted_paths_never_contain_a_rejected_shape(raw in "[A-Za-z0-9 _./\\\\:-]{0,40}") {
             if let Some(p) = canonical_repo_relative_path(&raw) {
                 prop_assert!(!p.starts_with('/'));
+                prop_assert!(!p.starts_with('-'));
                 prop_assert!(!p.split('/').any(|seg| seg == ".." || seg.is_empty()));
                 prop_assert!(!is_windows_absolute(&p));
                 for seg in p.split('/') {
