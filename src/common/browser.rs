@@ -403,9 +403,9 @@ impl Session {
                 },
             };
         }
-        Decision::Handoff {
-            reason: format!("effect of {role} is unclassified; operator takeover required"),
-        }
+        // Buttons, menus and the like may run: the sidecar holds every non-GET
+        // request, so a click can change the page but not write to a server.
+        Decision::Allow
     }
 
     fn decide_type(&self, ref_id: &str, text: &str) -> Decision {
@@ -667,6 +667,32 @@ mod tests {
             .is_allow());
         let keyed = session.decide(&json!({"action":"press_enter","ref_id": filter.ref_id, "key":"a"}));
         assert!(matches!(keyed, Decision::Refuse { .. }));
+    }
+
+    #[test]
+    fn buttons_may_be_clicked_but_secret_fields_never() {
+        let mut session = Session::general(["https://example.com"]).unwrap();
+        let draft = |role: &str, name: &str, input| ElementDraft {
+            role: role.into(),
+            name: name.into(),
+            href: None,
+            input,
+            snapshot_ref: None,
+        };
+        let obs = session
+            .mint(
+                vec![],
+                vec![
+                    draft("button", "Start", InputKind::None),
+                    draft("menuitem", "Games", InputKind::None),
+                    draft("textbox", "Password", InputKind::Secret),
+                ],
+            )
+            .unwrap();
+        let click = |i: usize| session.decide(&json!({"action":"click","ref_id": obs.elements[i].ref_id}));
+        assert!(click(0).is_allow());
+        assert!(click(1).is_allow());
+        assert!(matches!(click(2), Decision::Handoff { .. }));
     }
 
     #[test]

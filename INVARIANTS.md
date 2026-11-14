@@ -18,8 +18,8 @@ the server or the shim.
   `common/windows_job.rs`; shared runners preserve I6. The browser host is a
   session process, not an MCP call and not a coding-sandbox check. `/api/browser/run`
   is admin-only behind literal `browser.enabled`; origins come only from the request,
-  the child gets `browser_host::child_environment` (no provider keys), non-GET
-  page loads are held for the operator, origins on the web block list are
+  the child gets `browser_host::child_environment` (no provider keys), every non-GET
+  request is held for the operator, origins on the web block list are
   refused, and a granted name must resolve to public addresses.
 - A SIGKILL'd child may leak a clone, but cannot corrupt server memory or bypass
   guards. The exit-code contract is 0 ok / 2 failed / 3 env_config / 4 write_refused.

@@ -272,7 +272,8 @@ it may reach. The server runs
 kills its tree after `browser.timeout_sec`. The local model
 (`models.local_llm.model`) drives Playwright through `browser/sidecar.mjs`;
 prepare it once with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci` in `browser/`.
-Buttons, password fields and non-GET form submissions stay with the operator.
+The model may click, but password fields and every non-GET request stay with
+the operator.
 One task runs at a time.
 
 ## Later: native computer use

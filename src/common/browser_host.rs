@@ -396,7 +396,7 @@ pub fn run_task(
     let mut sidecar = Sidecar::start(script, &session, headless)?;
     let tools = browser_tools();
     let mut messages = vec![
-        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. A refusal is not success. A Handoff, or held_for_operator, means only the operator can do that step: say so and stop. Call finish with your answer once the page shows it.", origins.join(", "))}),
+        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus and tabs. A refusal is not success. A Handoff, or held_for_operator, means only the operator can do that step: say so and stop. Call finish with your answer once the page shows it.", origins.join(", "))}),
         json!({"role":"user","content": task}),
     ];
     let mut calls = 0usize;
@@ -531,7 +531,7 @@ fn browser_tools() -> Value {
         {"type":"function","function":{"name":"navigate","description":"Open an http(s) URL in this session.","parameters":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}}},
         {"type":"function","function":{"name":"observe","description":"Read the current page and mint fresh element refs.","parameters":{"type":"object","properties":{}}}},
         {"type":"function","function":{"name":"select_tab","description":"Select a tab by its visible name.","parameters":{"type":"object","properties":{"tab":{"type":"string"}},"required":["tab"]}}},
-        {"type":"function","function":{"name":"click","description":"Activate the element with this ref from the latest observation.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"}},"required":["ref_id"]}}},
+        {"type":"function","function":{"name":"click","description":"Click a button, menu item, tab or link by its ref from the latest observation. Requests that would send data are held for the operator.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"}},"required":["ref_id"]}}},
         {"type":"function","function":{"name":"type","description":"Type into a text box ref from the latest observation.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"},"text":{"type":"string"}},"required":["ref_id","text"]}}},
         {"type":"function","function":{"name":"press_enter","description":"Press Enter on a text box ref from the latest observation. The key is always Enter.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"}},"required":["ref_id"]}}},
         {"type":"function","function":{"name":"follow_link","description":"Follow a link ref from the latest observation.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"}},"required":["ref_id"]}}},
@@ -604,7 +604,7 @@ fn truncate(text: &str, max: usize) -> String {
 }
 
 /// Enter submits a GET search; a password field hands off; Enter in a POST
-/// form is held, as the submit button it stands in for would be.
+/// form and a button whose script POSTs are both held.
 pub fn run_enter_demo(sidecar: &Path, headless: bool) -> Result<String, String> {
     let steps = [
         json!({"action":"type","ref_id":"@Query","text":"github cgfixit"}),
@@ -612,6 +612,7 @@ pub fn run_enter_demo(sidecar: &Path, headless: bool) -> Result<String, String> 
         json!({"action":"type","ref_id":"@Password","text":"hunter2","expect":"handoff"}),
         json!({"action":"type","ref_id":"@Amount","text":"500"}),
         json!({"action":"press_enter","ref_id":"@Amount","expect":"held"}),
+        json!({"action":"click","ref_id":"@Save","expect":"held"}),
     ];
     run_fixture(
         SEARCH_PAGE,
@@ -712,6 +713,7 @@ const SEARCH_PAGE: &str = r#"
 </form>
 <label>Password <input type="password" aria-label="Password"></label>
 <form method="post" action="/send"><label>Amount <input aria-label="Amount"></label></form>
+<button onclick="fetch('/save', {method: 'POST'})">Save</button>
 <script>
 document.getElementById('find').addEventListener('submit', (event) => {
   event.preventDefault();

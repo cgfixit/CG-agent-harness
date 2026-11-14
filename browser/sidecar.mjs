@@ -227,12 +227,14 @@ async function start(message) {
       route.abort("blockedbyclient");
       return;
     }
-    // Enter in a text box submits its form just like the submit button the
-    // policy hands to the operator, so a non-GET page load is held here.
-    if (request.isNavigationRequest() && request.method() !== "GET") {
-      if (held.length < 20) held.push(`${request.method()} ${url.slice(0, 200)}`);
-      // 204 ends the navigation without replacing the page; nothing reaches the site.
-      route.fulfill({ status: 204, body: "" });
+    // Clicks and Enter may run, so anything that could write to a server
+    // waits for the operator: every request but GET and HEAD is held here.
+    const method = request.method();
+    if (method !== "GET" && method !== "HEAD") {
+      if (held.length < 20) held.push(`${method} ${url.slice(0, 200)}`);
+      // A held page load answers 204 so the page stays; a fetch/XHR fails.
+      if (request.isNavigationRequest()) route.fulfill({ status: 204, body: "" });
+      else route.abort("blockedbyclient");
       return;
     }
     route.continue();
@@ -268,6 +270,8 @@ async function handle(message) {
       const locator = await locatorFor(message.target);
       await locator.click({ timeout: 5000 });
       await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+      // Let script-driven menus render and any held request register first.
+      await page.waitForLoadState("networkidle", { timeout: 2000 }).catch(() => {});
       return observe();
     }
     case "type": {
