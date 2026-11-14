@@ -74,9 +74,9 @@ call; a pair whose worst case reaches the 900-second run setup budget is
 refused at load.
 
 Restart after editing the planner model, endpoint, provider, timeout, output
-limit or reasoning settings. Runs, jobs and schedules bind to the startup
-values, and the child refuses changed settings with exit 3 before any
-repository work.
+limit or reasoning settings, or the repository retrieval switch. Runs, jobs
+and schedules bind to the startup values, and the child refuses changed
+settings with exit 3 before any repository work.
 
 ### 9.3 Run it from the console
 
