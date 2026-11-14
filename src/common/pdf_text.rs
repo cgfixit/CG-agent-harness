@@ -12,8 +12,12 @@
 //! links, actions, JavaScript, forms and embedded files are never decoded,
 //! followed or executed. No OCR. Encrypted PDFs are refused, including ones
 //! that open with an empty password. Text order follows the content stream,
-//! which can differ from the visual order of columns and tables.
+//! with nearby fragments on the same horizontal baseline recombined by position.
+//! Columns and tables can still differ from visual order.
 
+mod inline_order;
+
+use inline_order::{InlineOrder, Widths};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -455,8 +459,12 @@ fn page_text(
     let Ok(fonts) = doc.get_page_fonts(page_id) else {
         return Ok(String::new());
     };
+    let mut widths = BTreeMap::new();
     let mut encodings = BTreeMap::new();
     for (name, font) in fonts {
+        if let Some(metrics) = Widths::read(font, doc) {
+            widths.insert(name.clone(), metrics);
+        }
         if let Some(codec) = builtin_symbolic(font) {
             encodings.insert(name, codec);
             continue;
@@ -472,14 +480,17 @@ fn page_text(
     let Ok(content) = lopdf::content::Content::decode(&content) else {
         return Ok(String::new());
     };
-    let mut walker = TextWalker::default();
+    let mut walker = TextWalker {
+        widths: Some(&widths),
+        ..TextWalker::default()
+    };
     for op in &content.operations {
         walker.apply(&op.operator, &op.operands, &encodings);
         if walker.out.len() > MAX_OUTPUT_BYTES * 4 {
             return Err(PdfFailure::Limit);
         }
     }
-    Ok(walker.out)
+    Ok(walker.order.finish(walker.out))
 }
 
 /// How a font's string bytes become text.
@@ -569,6 +580,9 @@ fn dingbat_char(byte: u8) -> Option<char> {
 struct TextWalker<'a> {
     out: String,
     encoding: Option<&'a FontCodec<'a>>,
+    widths: Option<&'a BTreeMap<Vec<u8>, Widths>>,
+    current_widths: Option<&'a Widths>,
+    order: InlineOrder,
     line_y: Option<f32>,
     /// `Tf` size and the text matrix's vertical scale: a line break is a
     /// vertical move of over half an em, so superscripts stay on their line.
@@ -576,7 +590,7 @@ struct TextWalker<'a> {
     scale: Option<f32>,
     /// Font and size saved by `q`, restored by `Q`; nesting past
     /// [`MAX_STATE_DEPTH`] is not tracked.
-    saved: Vec<(Option<&'a FontCodec<'a>>, f32)>,
+    saved: Vec<(Option<&'a FontCodec<'a>>, Option<&'a Widths>, f32)>,
     /// A `T*`-style move to the next line, written only once the next text
     /// shows where it lands: a `Tm` back onto the baseline of the last shown
     /// text (the next cell of a table row) is a space, anything else a newline.
@@ -621,6 +635,7 @@ impl<'a> TextWalker<'a> {
             self.newline();
         }
         self.shown_y = self.line_y;
+        let start = self.out.len();
         match encoding {
             FontCodec::Mapped(encoding) => {
                 if let Ok(text) = lopdf::Document::decode_text(encoding, bytes) {
@@ -630,11 +645,21 @@ impl<'a> TextWalker<'a> {
             FontCodec::Symbol => self.out.extend(bytes.iter().filter_map(|b| symbol_char(*b))),
             FontCodec::Dingbats => self.out.extend(bytes.iter().filter_map(|b| dingbat_char(*b))),
         }
+        if self.widths.is_some() {
+            self.order
+                .record(self.current_widths, bytes, self.font_size, start..self.out.len());
+        }
     }
 
     fn apply(&mut self, operator: &str, operands: &[lopdf::Object], encodings: &'a BTreeMap<Vec<u8>, FontCodec<'a>>) {
+        if self.widths.is_some() {
+            self.order.apply(operator, operands);
+        }
         match operator {
             "Tf" => {
+                self.current_widths = self
+                    .widths
+                    .and_then(|widths| widths.get(operands.first()?.as_name().ok()?));
                 self.encoding = operands
                     .first()
                     .and_then(|o| o.as_name().ok())
@@ -655,7 +680,11 @@ impl<'a> TextWalker<'a> {
                     return;
                 };
                 for item in items {
-                    match number(item) {
+                    let gap = number(item);
+                    if let Some(gap) = gap {
+                        self.order.kern(gap, self.font_size);
+                    }
+                    match gap {
                         // Thousandths of an em. Measured on pdfTeX output, kerning
                         // stays within -50..100 and justified word gaps within
                         // -400..-150, so -120 separates them at any font size.
@@ -697,10 +726,13 @@ impl<'a> TextWalker<'a> {
                 self.line_y = y;
             }
             "T*" => self.pending_break = true,
-            "q" if self.saved.len() < MAX_STATE_DEPTH => self.saved.push((self.encoding, self.font_size)),
+            "q" if self.saved.len() < MAX_STATE_DEPTH => {
+                self.saved.push((self.encoding, self.current_widths, self.font_size))
+            }
             "Q" => {
-                if let Some((encoding, size)) = self.saved.pop() {
+                if let Some((encoding, widths, size)) = self.saved.pop() {
                     self.encoding = encoding;
+                    self.current_widths = widths;
                     self.font_size = size;
                 }
             }

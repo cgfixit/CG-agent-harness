@@ -12,3 +12,14 @@ PDFs may be added; the guard's `DOCS_PDFS` list in
   PowerShell users.
 - `rust_cheat_sheet_a4.pdf`: one-page Rust syntax reference.
 - `reminder.txt`: the operator's own study reminder; not guidance.
+
+## Harness web and PDF evidence pilot (November 2026)
+
+[Read the pilot report](pdf-web-evidence-pilot.txt) for the #874 extraction
+rerun, answer misses, context and turn times, MiniLM passage ranking, and
+other places to try smaller handoffs. The production change repairs PDF
+reading order; the two HTML cases are controls.
+
+[Native app: RFC 9309 PDF passage](screenshots/rfc9309-native.jpg) ·
+[Firefox: Python HTML passage](screenshots/tomllib-firefox.jpg).
+Both captures are cropped to the results.

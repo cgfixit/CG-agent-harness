@@ -1,0 +1,185 @@
+Harness pilot: web pages, PDF reading order, and smaller models
+November 14, 2026
+
+Decision
+Fix PDF reading order first; that is the only production change here.
+Keep the deployed digest and model settings. Quotes only is worth testing
+as a fast path when its quotes cover the question. Qwen 4B can draft a
+short digest, but the four-source pilot did not support making it the
+default.
+
+MiniLM is not part of Harness. Harness ranks passages lexically (BM25)
+and has no embedding path; DEPENDENCIES.md and STRUCTURED_MEMORY.md keep
+embeddings out of scope. This pilot called all-minilm:22m through a local
+Ollama API with temporary wiring. Next step: evaluate MiniLM as a
+candidate-passage ranker beside lexical ranking (see Next experiment),
+keeping the original source text for exact lookup. The evidence so far
+is four documents, a literal phrase rubric, no measured context savings
+and no end-to-end MiniLM -> Qwen run. Adopting it would need its own PR,
+an operator decision, and updates to those two contracts.
+
+Inputs and controls
+- Python 3.13 tomllib HTML: https://docs.python.org/3.13/library/tomllib.html
+- SQLite ON CONFLICT HTML: https://www.sqlite.org/lang_conflict.html
+- Robots Exclusion Protocol PDF: https://www.rfc-editor.org/rfc/rfc9309.pdf
+- JSON Canonicalization Scheme PDF: https://www.rfc-editor.org/rfc/rfc8785.pdf
+
+The local experiment drove Harness's web planner, exact authorized fetch,
+extractor, passage ranking, digest validation, and final answer with the
+same public documents, questions, and model files before and after #874.
+The two HTML controls returned the same passages. The baseline binary was
+built from 30a3e51 with Rust 1.99; the rerun used 9ba657c plus the PDF fix
+with the repository's pinned Rust 1.89. The branches and toolchains differ,
+so the paired content observations are stronger than any estimate of
+the fix's effect on time. The baseline is an experiment, not a release SLA.
+
+Ollama 0.40.16 reported 32,768 context for qwen3.8:27b-mlx-cg
+(b957244f7477) and 8,192 context for qwen3.5:4b (7f3251fa6878). The larger
+model planned and answered all completed turns and wrote the current
+digest. Both 4B modes used the same input and a 1,024-token output cap.
+The three requested modes were current digest, quotes only, and 4B JSON
+with quotes. A second pass tried the same 4B model with a constrained JSON
+schema. This used temporary experiment wiring; there is no production
+routing or configuration change.
+
+Context and total turn time
+24 attempts per revision. Each section below compares medians before ->
+after. End-to-end time includes planning, actual Harness fetch/read,
+digest where applicable, and final generation; failed attempts count to
+their failure time. Prompt counts are Ollama's actual prompt eval counts
+for the final model, with the whole assembled answer prompt included.
+Savings are medians of per-case comparisons against paired current runs
+after the fix. They are input tokens used, not allocated context size.
+
+Mode              Attempts/rev  Final prompt tokens   Tokens saved   Total seconds
+Current digest    8             4057.5 -> 3942        reference      31.8 -> 29.5
+Quotes only       8             2799.5 -> 2781        1188.5 (30.5%) 17.4 -> 16.0
+4B JSON + quotes  4             2898.5 -> 2804*       1138   (28.8%) 19.2 -> 18.2*
+4B schema + quotes
+                  4             2991   -> 2968         995.5 (25.4%) 19.7 -> 18.3
+
+* Two of four JSON attempts per revision produced final answers. Both
+  after the fix used the quotes fallback; zero of four 4B JSON digests
+  were accepted, versus one of four before. The SQLite and RFC 9309
+  attempts exhausted the 1,024-token output cap. Python and RFC 8785
+  produced unusable JSON for the digest contract and fell back.
+* The constrained schema produced four final answers and three accepted
+  digests on both revisions. The RFC 8785 citation failed validation.
+  Across four after-fix cases, median 4B input was 1,342.5 tokens and its
+  digest stage was 1.57 seconds with the schema. With current digest,
+  that stage was 11.55 seconds across eight runs. These are local warm
+  observations; hardware, caching, residency, prompt, and concurrency
+  can all change time. After-fix total turn ranges: current 24.5-34.3 s,
+  quotes 11.5-18.7 s, plain JSON 16.9-20.2 s (including failures), and
+  schema 13.8-21.0 s.
+
+What each mode missed
+- RFC 9309, extraction: PDF fragments separated parts of sentences.
+  After #874 the wider passages contained the initial-authority, 4xx,
+  and cache clauses. Quotes-only recovered the 24-hour rule and its
+  unreachable exception in both reruns (previously 0/2). Even after
+  extraction was fixed, the narrower quote set did not give enough
+  evidence for the initial authority and 4xx cases. The current digest's
+  final answers covered all four questions after the fix; some correct
+  statements before the fix were weaker as source-supported evidence.
+  The 4B schema answer recovered the cache rule but still omitted the
+  initial authority and 4xx, and validation dropped one claim.
+- RFC 8785, selection: repaired full text contains the duplicate-name
+  rejection and NaN/Infinity failure rules. A targeted authorized cached
+  search found both. The broad fetch still failed to select those clauses
+  for the digest; asking a larger or smaller model to compress those
+  same passages cannot recover missing source evidence. Presence in
+  extracted text, presence in ranked evidence, and an answer's coverage
+  are separate checks.
+- SQLite, claim support: 4B with schema attached a real IGNORE quote to
+  a FAIL claim on both revisions. The quote existed but supported the
+  wrong clause; the 27B answer caught the mismatch. The extraction fix
+  could not change that. A valid quote ID alone does not prove support.
+- Python, selection: the selected passages were identical before and
+  after. Checks covered the binary file requirement, TOML string input,
+  malformed input, and the float callback; some caveats fell outside the
+  selected text. A targeted follow-up is preferable when an exact caveat
+  is needed. See the separate MiniLM comparison below.
+
+MiniLM compared with Harness ranking and Qwen
+MiniLM (all-minilm:22m, 1b226e2802db) produces 384-dimensional embeddings.
+It cannot write a summary. Qwen 4B consumed ranked passages and generated
+claims; MiniLM was evaluated one stage earlier, choosing passages on the
+same four corrected source caches. The two can be composed, but this
+session did not benchmark an end-to-end MiniLM -> Qwen pipeline.
+
+For each source, the exact query from the first current-digest run was
+embedded alongside the source. The existing lexical ranking and MiniLM
+both returned three original Harness passages (up to 1,200 characters
+each). Full passages were too large for MiniLM without truncation, so
+we embedded whitespace-wrapped fragments of up to 200 characters with
+truncation disabled. Each original passage took its best fragment score
+using normalized dot product. Each ranking ran three times with identical
+top three results. We counted hand-selected phrases present in returned
+passages (case and whitespace normalized, RFC references stripped), not
+model answers. The denominator is a rubric, not a claim that each phrase
+exists in the cached source.
+
+Source    Rubric phrases in full cache   Existing   MiniLM   Batch median
+Python    5 / 6                          4 / 6      5 / 6      0.071 s
+SQLite    7 / 7                          7 / 7      7 / 7      0.072 s
+RFC 9309  6 / 6                          6 / 6      6 / 6      0.426 s
+RFC 8785  7 / 7                          1 / 7      3 / 7      0.678 s
+
+MiniLM additionally found the no-writer caveat on Python and nested
+object sorting and preserved array order in RFC 8785. It still missed
+the RFC 8785 duplicate-name and NaN/Infinity rules on the broad query.
+The Python float callback's return-type phrase did not match the full
+cached text under this literal rubric (spacing around the extractions'
+punctuation matters); that is a scoring limitation, not a missing rule. Embedding time includes the local API
+round trip, batching and ranking, not the downstream answer turn.
+The fixed three-passage budget yields no demonstrated MiniLM context
+savings vs. lexical retrieval; the context savings above come from the
+handoff modes. There is no direct MiniLM-vs-Qwen answer quality score.
+Model reference: https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2
+
+Production behavior and limits
+The shared PDF text walker restores adjacent horizontal fragments even
+when they appear out of order within a line. It uses font widths when
+available and limits merging to nearby fragments on the same baseline.
+The web cache re-reads older PDF entries instead of continuing to serve
+the scrambled text; HTML extraction and HTML cache eligibility are
+unchanged. Attachment, notes, and web readers use the shared extractor.
+Existing bounded PDF worker and refusal paths stay in place. This is
+text-layer recovery; it does not add OCR, infer entire document flow,
+or repair every table, rotated span, or multi-column layout. Check the
+maintained Console guide for operational behavior.
+
+Other places to try small handoffs
+1. Search across several web pages: rank and deduplicate passages with
+   embeddings; give the answer model original URL/section/quote evidence.
+   Keep a targeted exact lookup for negations, numbers and identifiers.
+2. Long CI, build, command and read-only tool output: parse status and
+   failures deterministically, then summarize repeated context. Preserve
+   the failing command, exit code, file and unaltered error excerpt.
+3. PRs, issues and release notes: surface decisions and unresolved items
+   with stable links and timestamps. Fetch the original when attribution,
+   a disputed statement or an exact instruction matters.
+4. Goal loops and chat checkpoints: compress completed work into bounded
+   state carrying user constraints, evidence, failed attempts and next
+   steps. Preserve the full record for retrieval; any durable memory
+   change remains a proposal subject to the existing approval path.
+
+Next experiment
+Compare hybrid lexical + MiniLM passage recall against exact targeted
+reads, then run the strongest retrieval candidate through quotes only and
+the schema-constrained 4B handoff. Keep difficult clauses and failure
+cases in the rubric. Verify that every material claim follows from its
+quote, retry targeted reads when evidence is thin, and fall back to a
+larger model where needed. Keep better retrieval, reliable compression
+and measured end-to-end gains as separate reasons to change a default.
+
+Product verification
+The signed arm64 app and Firefox over verified loopback HTTPS both
+showed the corrected RFC 9309 clause in the actual console. In Firefox,
+the first PDF request was refused with an empty allowlist; after an
+exact grant, fetch and cached search showed the corrected result.
+An exact grant and fetch for the Python HTML control also succeeded.
+Separate HTTPS probes checked that v1 cached PDFs were no longer served,
+v2 retrieval worked, and upload and note intake accepted an allowed
+PDF. Cropped console screenshots are linked from this folder's index.

@@ -493,13 +493,13 @@ A two-second cooperative deadline bounds parsing in process.
 
 ### PDF text
 
-Attachments, notes and exact web reads share one local reader of page text: no
-OCR, images, forms, links, scripts or embedded files. Columns follow stream
-order; a table row stays on one line.
+Attachments, notes and exact web reads extract page text without OCR, images,
+forms, links, scripts or embedded files. Nearby inline fragments rejoin by
+position; columns follow stream order. Refetch cached PDFs.
 
 Ligatures fold, hyphenated breaks join, and running headers and page numbers
-drop. A first line lists textless pages; `# Page N` headings mark
-passages. A query matching nothing samples evenly spaced page openings.
+drop. The first line lists textless pages; `# Page N` marks passages. Unmatched
+queries sample evenly spaced page openings.
 
 Refusals: `PDF_MALFORMED`, `PDF_ENCRYPTED`, `PDF_NO_TEXT`, `PDF_LIMIT` (15 MiB,
 200 pages, 8 MiB decoded per stream or page, 32 MiB per file, 1 MiB text),
