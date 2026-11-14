@@ -1842,6 +1842,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the 2026-11-11 trim-and-refresh pass cut 78 words net of the post-#834 additions; measured 1675 after review restored one row per method and path.
     // why: operator decision (2026-11-12): cap set to 1776, about 100 words of room, so a new route row does not need a cap change.
     ("docs/API_ROUTES.md", Guide, 1776),
+    // why: operator-requested (2026-11-14) browser- and computer-use status and roadmap; measured 869, about 100 words of room.
+    ("docs/Browser-Use.md", Guide, 970),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 605 words net of the post-#834 additions; measured 2943, rounded up to the next 10 so the cut stays cut.
@@ -1856,7 +1858,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 776 words net of the post-#834 additions; measured 5117, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 5120, within a few words of the file.
-    ("docs/CONSOLE.md", Guide, 5320),
+    // why: operator-requested (2026-11-14) /browse row in the slash quick reference; +30 over 5320.
+    ("docs/CONSOLE.md", Guide, 5350),
     // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
     // why: the 2026-10-20 dep-sync folded the dated 2026-09 audit notes into Retained constraints; 944 words, keep the cut.
     // why: operator-approved +200 (2026-10-22) so dated advisory notes such as RUSTSEC-2026-0384 fit without trimming history.

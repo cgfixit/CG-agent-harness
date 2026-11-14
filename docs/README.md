@@ -148,6 +148,11 @@ manual's order so old links resolve. Truth order is code, then
   Owns: `desktop/` (see its [README](../desktop/README.md)), `src/server/desktop.rs`,
   `scripts/package-desktop.sh`, `scripts/verify-desktop-bundle.sh`.
   Tests: `scripts/test-desktop-backend.py`, `.github/workflows/desktop.yml`.
+- [Browser-Use.md](Browser-Use.md): what `/browse` does today, its limits,
+  and the roadmap for broader browser and computer use, with and without Kimi.
+  Owns: `browser/`, `src/common/{browser,browser_host,computer}.rs`,
+  `src/server/routes/browser.rs`. Tests: `examples/browser_policy.rs`,
+  `scripts/browser-use-eval.sh`.
 - [PROCESS_LIFECYCLE.md](PROCESS_LIFECYCLE.md): how child processes are run,
   bounded and killed: the 4 MiB capture ceiling, cooperative cancellation,
   best-effort descendant cleanup, child environments, MCP stdio lifecycle

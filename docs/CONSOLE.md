@@ -351,6 +351,7 @@ parser is unavailable.
 | `/agent [help]` | Inspect coding commands; full workflow below |
 | `/analytics` | Open read-only session, token and coding-run [analytics](SPEND_AND_NOTIFICATIONS.md#analytics-sessions-tokens-and-coding-runs) |
 | `/api`, `/api set <KEY> <value>`, `/api clear <KEY>` | Inspect, save or clear a managed credential; prefer the API Keys password fields; [persistence](INSTALL.md#8-persistence-optional-keys-and-recovery) |
+| `/browse <site> [site ...] <task>` | Administrator browser task: the local model drives Chrome on the named sites only; [status and roadmap](Browser-Use.md) |
 | `/clear` | Clear visible output, staged coding/review state and chat continuation; saved chats, notes, persona and web context remain |
 | `/connectors` | Connector catalog; does not activate connectors |
 | `/diag [status]`, `/diag audit\|spend\|unslop\|errors [flags]`, `/diag inject\|forget` | Read allowlisted logs or stage one excerpt; aliases `/diagnostics`, `/logs`; [diagnostics](TROUBLESHOOTING.md#diagnostics) |

@@ -17,7 +17,8 @@ This manual is static text bundled with the build and indexed at startup. It is 
 
 ## readme: capability overview (part 2)
 
-- Off by default: Reviewed coding in isolated clones, MCP tools and a read-only memory gateway, Netconnect LAN observation. Starts: Each needs explicit configuration.
+- Browser tasks: `/browse <site> <task>`: the local model drives Chrome on the sites you name; anything that would send data waits for you. Status and roadmap. Starts: Off; an administrator sets `browser.enabled`.
+- Off by default: Reviewed coding in isolated clones, MCP tools and a read-only memory gateway, Netconnect LAN observation, browser tasks. Starts: Each needs explicit configuration.
 
 ## agents: process and home map
 
@@ -143,6 +144,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/agent [help]`: Inspect coding commands; full workflow below
 - `/analytics`: Open read-only session, token and coding-run analytics
 - `/api`, `/api set <KEY> <value>`, `/api clear <KEY>`: Inspect, save or clear a managed credential; prefer the API Keys password fields; persistence
+- `/browse <site> [site ...] <task>`: Administrator browser task: the local model drives Chrome on the named sites only; status and roadmap
 - `/clear`: Clear visible output, staged coding/review state and chat continuation; saved chats, notes, persona and web context remain
 - `/connectors`: Connector catalog; does not activate connectors
 - `/diag [status]`, `/diag audit|spend|unslop|errors [flags]`, `/diag inject|forget`: Read allowlisted logs or stage one excerpt; aliases `/diagnostics`, `/logs`; diagnostics
@@ -150,20 +152,20 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/goal`, `/goal [--web off|fetch|all] [text]`, `/goal clear`: Inspect, set or clear the saved session goal and its web mode
 - `/goal stage <branch>`, `/goal task`: Explicitly stage coding from a goal or inspect its task linkage
 - `/harness`: List retained optimizer runs; does not start optimization
-- `/help [topic|search words|all]`: Searchable topic guide, full command catalog and insertable examples
 
 ## console: slash-command quick reference (part 2)
 
+- `/help [topic|search words|all]`: Searchable topic guide, full command catalog and insertable examples
 - `/loop [auto] [--web off|fetch|all] [n] [goal text]`, `/loop stop`: Goal-driven chat continuation; goal text sets the goal first; `auto` toggles and starts after 5 s; exact `stop` also cancels a streaming chat turn
 - `/memory`, `status`, `on`, `off`, `add <note>`, `forget <id>`, `clear`: Shared pinned notes; operator memory notes
 - `/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate|auto-suggest-chat|auto-suggest-coding on|off`: Administrator-only structured-memory gate overrides; `on` or `off` is required. `/memory on` stays pinned notes
 - `/memory consolidate <episode-id> [episode-id ...]`: Selected-episode consolidation into pending proposals; does not apply facts
 - `/memory proposals`: Open the Memory panel; Apply/Reject requires review and a reason
 - `/memory remember <sentence> :: <reason>`: Confirm a semantic summary on the latest completed episode; no fact write
-- `/memory facts`, `/memory retrieve <query>`, `/memory search <query>`: List your active facts, start a turn with explicit retrieval, or list candidates without injection
 
 ## console: slash-command quick reference (part 3)
 
+- `/memory facts`, `/memory retrieve <query>`, `/memory search <query>`: List your active facts, start a turn with explicit retrieval, or list candidates without injection
 - `/memory save <text> :: <reason>`: Confirm an immediate private fact write
 - `/model [status]`, `profile`, `list`, `use <name>`: Inspect/profile/list/select a local chat model or explicit cloud provider; does not select the coding planner
 - `/net status`, `/net devices`, `/net diag`: Read-only scope and gates, passive neighbors, or the budgeted diagnostics probe. Aliases and refused tier words: netconnect
@@ -172,10 +174,10 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/session`, `list`, `info`, `new [title]`, `rename <title>`, `unpin`, `use <id>`: List, inspect, create, rename or reopen sessions; `unpin` clears attachment pins
 - `/skill`, `status`, `use <id...>`, `clear`: Inspect, replace or clear session prompt-skill selection
 - `/skill check:<profile>`: Select one fixed check for an already staged coding request
-- `/skills [all|help|<name>]`: Wired skills, the full catalog including optional prompt files, help, or skills matching a display name (not always the `/skill use` directory ID)
 
 ## console: slash-command quick reference (part 4)
 
+- `/skills [all|help|<name>]`: Wired skills, the full catalog including optional prompt files, help, or skills matching a display name (not always the `/skill use` directory ID)
 - `/soul`, `status`, `on`, `off`, `edit`, `history`, `propose`: Inspect, toggle or open persona editing/proposal flows
 - `/soul apply <id> <reason>`, `reject <id> <reason>`, `review <id>`: Review a retained proposal, then apply or reject its exact revision
 - `/status`: Runtime status and unlimited-loop warning; account access required
@@ -184,15 +186,18 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/tools [all|help|mcp|<name>]`: Registered tools, the full catalog including unwired entries, help, external MCP grants, or one named tool
 - `/users`: Administrator account panel; accounts
 - `/web [status|help]`, `/web on`, `/web off`: Inspect shared-home rules; administrators enable/disable web
-- `/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]`, `/web deny <id-or-pattern>`: Administrator grants are atomic; repeat `--seed` per concrete seed. Every seed must fit a requested rule
 
 ## console: slash-command quick reference (part 5)
 
+- `/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]`, `/web deny <id-or-pattern>`: Administrator grants are atomic; repeat `--seed` per concrete seed. Every seed must fit a requested rule
 - `/web mode allowlist|denylist`, `/web block <pattern-or-host> [...]`, `/web unblock <id-or-pattern>`: Administrator. The header globe (red X) switches modes after a confirmation dialog. `denylist` reads every public URL except blocked rules; a host…
 - `/web check <URL> [URL ...] [--group name]`: Exact permission diagnostic, with no network request or grant
 - `/web cancel`, `/web fetch <URL> [URL ...] [--group name] [--crawl]`, `/web forget`, `/web inject`: Cancel research; fetch permitted URLs (`--crawl` follows links); clear/select extracts
 - `/web job [id]`, `/web jobs`: Show the newest or one owned detached research job, or list them; jobs outlive the tab, not a restart (research)
 - `/web pages [--group name] <query>`, `/web research [--group name] [--url URL ...] <question>`: Permitted-page discovery or local-model research; repeat `--url` per starting point; no new authority
+
+## console: slash-command quick reference (part 6)
+
 - `/web search [--count 1..10] [--engine google|pages] [--group name] <query>`: Google listings by default; a group selects permitted-page search
 
 ## api: registered routes
