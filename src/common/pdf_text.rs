@@ -466,7 +466,13 @@ struct TextWalker<'a> {
     /// vertical move of over half an em, so superscripts stay on their line.
     font_size: f32,
     scale: Option<f32>,
+    /// Font and size saved by `q`, restored by `Q`; nesting past
+    /// [`MAX_STATE_DEPTH`] is not tracked.
+    saved: Vec<(Option<&'a lopdf::Encoding<'a>>, f32)>,
 }
+
+/// The PDF graphics-state nesting limit implementations are expected to support.
+const MAX_STATE_DEPTH: usize = 28;
 
 fn number(o: &lopdf::Object) -> Option<f32> {
     match o {
@@ -562,6 +568,13 @@ impl<'a> TextWalker<'a> {
                 self.line_y = y;
             }
             "T*" => self.newline(),
+            "q" if self.saved.len() < MAX_STATE_DEPTH => self.saved.push((self.encoding, self.font_size)),
+            "Q" => {
+                if let Some((encoding, size)) = self.saved.pop() {
+                    self.encoding = encoding;
+                    self.font_size = size;
+                }
+            }
             _ => {}
         }
     }
@@ -620,8 +633,9 @@ fn normalize_page(raw: &str) -> Vec<String> {
     lines
 }
 
-/// Key for a running header or footer: case and digits ignored, so
-/// "Page 3 of 9" and "Page 4 of 9" match.
+/// Key for a running header or footer: case, spacing and digit values
+/// ignored, so "Page 3 of 9" and "Page 4 of 9" share a key. A shared key alone
+/// is not enough to remove a line; see [`page_numbered`].
 fn furniture_key(line: &str) -> String {
     line.chars()
         .filter(|c| !c.is_whitespace())
@@ -635,46 +649,68 @@ fn furniture_key(line: &str) -> String {
         .collect()
 }
 
+/// An edge line's page index and its numbers.
+type EdgeLine = (usize, Vec<Option<i64>>);
+
+/// Every number in the line, in order; an overlong run counts as distinct.
+fn numbers(line: &str) -> Vec<Option<i64>> {
+    line.split(|c: char| !c.is_ascii_digit())
+        .filter(|run| !run.is_empty())
+        .map(|run| run.parse::<i64>().ok())
+        .collect()
+}
+
+/// Lines sharing a key are furniture only when each number in them is either
+/// the same on every page or moves in step with the page index (a page
+/// number). "Revenue: $100" .. "$400" on pages 1..4 is content and stays.
+fn page_numbered(lines: &[EdgeLine]) -> bool {
+    let Some((_, first)) = lines.first() else {
+        return false;
+    };
+    (0..first.len()).all(|at| {
+        let value = |(_, nums): &EdgeLine| nums.get(at).copied().flatten();
+        let constant = lines.iter().all(|l| value(l).is_some() && value(l) == value(&lines[0]));
+        let offset = |l: &EdgeLine| value(l).map(|v| v - l.0 as i64);
+        let paged = lines
+            .iter()
+            .all(|l| offset(l).is_some() && offset(l) == offset(&lines[0]));
+        constant || paged
+    })
+}
+
 /// Removes lines that repeat at the top or bottom of most pages (running
 /// headers, footers, page numbers): they cost context and skew ranking.
 fn strip_furniture(pages: &mut [Vec<String>]) {
-    let edges = |page: &Vec<String>| -> Vec<String> {
-        let first = page.iter().find(|l| !l.is_empty());
-        let last = page.iter().rev().find(|l| !l.is_empty());
-        let mut keys: Vec<String> = first.into_iter().chain(last).map(|l| furniture_key(l)).collect();
-        keys.dedup();
-        keys
+    let edges = |page: &Vec<String>| -> Vec<usize> {
+        let first = page.iter().position(|l| !l.is_empty());
+        let last = page.iter().rposition(|l| !l.is_empty());
+        let mut at: Vec<usize> = first.into_iter().chain(last).collect();
+        at.dedup();
+        at
     };
     let with_text = pages.iter().filter(|p| !p.is_empty()).count();
     if with_text < 4 {
         return;
     }
-    let mut counts: HashMap<String, usize> = HashMap::new();
-    for page in pages.iter() {
-        for key in edges(page) {
-            *counts.entry(key).or_default() += 1;
+    let mut groups: HashMap<String, Vec<EdgeLine>> = HashMap::new();
+    for (index, page) in pages.iter().enumerate() {
+        let mut seen = std::collections::HashSet::new();
+        for at in edges(page) {
+            let key = furniture_key(&page[at]);
+            if seen.insert(key.clone()) {
+                groups.entry(key).or_default().push((index, numbers(&page[at])));
+            }
         }
     }
-    let repeated: std::collections::HashSet<String> = counts
+    let repeated: std::collections::HashSet<String> = groups
         .into_iter()
-        .filter(|(key, n)| !key.is_empty() && *n * 2 >= with_text && *n >= 3)
+        .filter(|(key, lines)| {
+            !key.is_empty() && lines.len() * 2 >= with_text && lines.len() >= 3 && page_numbered(lines)
+        })
         .map(|(key, _)| key)
         .collect();
     for page in pages.iter_mut() {
-        let mut edge = edges(page);
-        edge.retain(|k| repeated.contains(k));
-        if edge.is_empty() {
-            continue;
-        }
-        let first = page.iter().position(|l| !l.is_empty());
-        let last = page.iter().rposition(|l| !l.is_empty());
-        for at in [last, first]
-            .into_iter()
-            .flatten()
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .rev()
-        {
+        for at in edges(page).into_iter().rev() {
             if repeated.contains(&furniture_key(&page[at])) {
                 page.remove(at);
             }
@@ -872,6 +908,46 @@ mod tests {
             .all(|(i, p)| p == &vec![format!("Body {}", i + 1)]));
         assert!(undecodable("\u{FFFD}\u{FFFD}a"));
         assert!(!undecodable("plain text \u{FFFD}"));
+    }
+
+    #[test]
+    fn distinct_numbers_at_page_edges_are_content_not_furniture() {
+        let page = |first: String, n: usize| vec![first, format!("body {n}"), format!("{n}")];
+        let mut pages: Vec<Vec<String>> = (1..=4).map(|n| page(format!("Revenue: ${n}00"), n)).collect();
+        strip_furniture(&mut pages);
+        // The bare page numbers go; every revenue figure stays.
+        for (i, p) in pages.iter().enumerate() {
+            assert_eq!(p, &vec![format!("Revenue: ${}00", i + 1), format!("body {}", i + 1)]);
+        }
+        let mut only: Vec<Vec<String>> = (1..=4).map(|n| vec![format!("Revenue: ${n}00")]).collect();
+        strip_furniture(&mut only);
+        assert!(only.iter().all(|p| p.len() == 1), "{only:?}");
+        // A header carrying a constant volume and a running page number still goes.
+        let words = ["alpha", "beta", "gamma", "delta"];
+        let mut headed: Vec<Vec<String>> = (1..=4)
+            .map(|n| vec![format!("Vol. 3, p. {}", n + 10), format!("text {}", words[n - 1])])
+            .collect();
+        strip_furniture(&mut headed);
+        assert!(
+            headed.iter().zip(words).all(|(p, w)| p == &vec![format!("text {w}")]),
+            "{headed:?}"
+        );
+    }
+
+    #[test]
+    fn graphics_state_restore_returns_to_the_saved_font() {
+        let mut fonts = BTreeMap::new();
+        fonts.insert(b"F1".to_vec(), lopdf::Encoding::SimpleEncoding(b"WinAnsiEncoding"));
+        let mut w = TextWalker::default();
+        w.apply("Tf", &["F1".into(), 10.into()], &fonts);
+        w.apply("q", &[], &fonts);
+        w.apply("Tf", &["Missing".into(), 4.into()], &fonts);
+        assert!(w.encoding.is_none());
+        w.apply("Q", &[], &fonts);
+        assert!(w.encoding.is_some());
+        assert_eq!(w.font_size, 10.0);
+        w.apply("Q", &[], &fonts);
+        assert!(w.encoding.is_some(), "an unbalanced Q keeps the current font");
     }
 
     #[test]

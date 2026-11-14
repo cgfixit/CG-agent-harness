@@ -134,9 +134,11 @@ impl AttachmentStore {
         if files.is_empty() {
             return Err(HarnessError::new("ATTACHMENT_EMPTY", "request contained no files"));
         }
+        // One extraction budget for the whole batch, not one per file.
+        let deadline = std::time::Instant::now() + EXTRACTION_BUDGET;
         let mut classified = Vec::with_capacity(files.len());
         for file in files {
-            classified.push(classify_file(file)?);
+            classified.push(classify_file_until(file, deadline)?);
         }
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         if !owner_live() {
@@ -612,6 +614,10 @@ pub fn parse_multipart_limited(body: &[u8], boundary: &str, max_files: usize) ->
 }
 
 pub fn classify_file(file: &IncomingFile) -> Result<ClassifiedText> {
+    classify_file_until(file, std::time::Instant::now() + EXTRACTION_BUDGET)
+}
+
+fn classify_file_until(file: &IncomingFile, deadline: std::time::Instant) -> Result<ClassifiedText> {
     if file.data.len() as u64 > MAX_FILE_BYTES {
         return Err(
             HarnessError::new("ATTACHMENT_TOO_LARGE", "file exceeds the 15 MB limit")
@@ -622,7 +628,7 @@ pub fn classify_file(file: &IncomingFile) -> Result<ClassifiedText> {
         return Err(HarnessError::new("ATTACHMENT_EMPTY", "file is empty"));
     }
     let ext = allowed_extension(&file.filename)?;
-    classify_bytes_until(&file.data, ext, std::time::Instant::now() + EXTRACTION_BUDGET)
+    classify_bytes_until(&file.data, ext, deadline)
 }
 
 #[cfg(test)]
@@ -1113,6 +1119,13 @@ mod tests {
         assert_eq!(classify_file(&disguised).unwrap_err().code, "PDF_ENCRYPTED");
         let blank = pdf_part("blank.pdf", &[&[]]);
         assert_eq!(classify_file(&blank).unwrap_err().code, "PDF_NO_TEXT");
+    }
+
+    #[test]
+    fn a_spent_batch_budget_refuses_later_pdfs() {
+        let pdf = pdf_part("late.pdf", &[&["uncached LATE_BATCH text"]]);
+        let spent = std::time::Instant::now() - std::time::Duration::from_millis(1);
+        assert_eq!(classify_file_until(&pdf, spent).unwrap_err().code, "PDF_TIMEOUT");
     }
 
     #[test]
