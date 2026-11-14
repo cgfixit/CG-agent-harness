@@ -1721,3 +1721,103 @@ async fn a_busy_store_does_not_stall_other_requests_behind_a_session_clear() {
     settled(&s, "local").await;
     assert!(store.list_pending_proposals("local").unwrap().is_empty());
 }
+
+/// D7 (#603) qualification corpus: labels frozen before any model output.
+/// Changing it after a qualification run voids that run; the digest makes the
+/// edit explicit in review. Line endings are normalized for Windows checkouts.
+const D7_CORPUS: &str = include_str!("fixtures/structured_memory/d7/corpus.json");
+const D7_CORPUS_SHA256: &str = "4496fb83f4137a082cd344dc5a85449e24be4d17f2bc9755eca5603013ca2fbf";
+
+#[test]
+fn d7_corpus_is_frozen_well_formed_and_reaches_the_model_unaltered() {
+    use cgagentharness::common::audit::Redactors;
+    use cgagentharness::common::config::AppConfig;
+    use cgagentharness::common::injection::Scanner;
+    use std::collections::BTreeSet;
+
+    let text = D7_CORPUS.replace("\r\n", "\n");
+    assert_eq!(
+        cgagentharness::common::sha256_bytes_hex(text.as_bytes()),
+        D7_CORPUS_SHA256,
+        "D7 corpus changed; any qualification run against the old labels is void"
+    );
+    let corpus: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(corpus["modes"], json!(["summaries", "insights", "both"]));
+    assert_eq!(corpus["repeats"], 3);
+    let classes: BTreeSet<&str> = corpus["scoring"]["violation_classes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    let cases = corpus["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 12);
+
+    let shipped = AppConfig::from_str(AppConfig::embedded_default(), std::path::Path::new("config.yaml")).unwrap();
+    let redactors = Redactors::from_config(&shipped);
+    let (mut ids, mut covered) = (BTreeSet::new(), BTreeSet::new());
+    let (mut insights, mut summaries) = (0usize, 0usize);
+    for (n, case) in cases.iter().enumerate() {
+        let id = case["id"].as_str().unwrap();
+        assert_eq!(id, format!("D7-{:02}", n + 1));
+        assert!(ids.insert(id));
+        covered.insert(case["class"].as_str().unwrap());
+        for side in ["input", "output"] {
+            let value = case[side].as_str().unwrap();
+            // The enqueue scan and redaction must not pre-empt the model, or the
+            // case would test the filter instead of the model under qualification.
+            assert_eq!(
+                Scanner::core().count_matches(value),
+                0,
+                "{id} {side} trips the injection scan"
+            );
+            assert_eq!(redactors.redact(value), value, "{id} {side} is altered by redaction");
+        }
+        match case["source"].as_str().unwrap() {
+            "chat" => {}
+            // Only accepted runs reach the model (coding_completed).
+            "coding" => {
+                let evidence: Value = serde_json::from_str(case["output"].as_str().unwrap()).unwrap();
+                assert_eq!(evidence["status"], "pending_decision", "{id}");
+            }
+            other => panic!("{id} has unknown source {other}"),
+        }
+        let mention = case["summary_must_mention"].as_array().unwrap();
+        match case["summary"].as_str().unwrap() {
+            "required" => {
+                assert!(!mention.is_empty(), "{id}");
+                summaries += 1;
+            }
+            "optional" => assert!(mention.is_empty(), "{id}"),
+            other => panic!("{id} has unknown summary rule {other}"),
+        }
+        for (k, label) in case["eligible_insights"].as_array().unwrap().iter().enumerate() {
+            assert_eq!(label["id"], format!("{id}-I{}", k + 1));
+            assert!(
+                matches!(label["polarity"].as_str(), Some("positive" | "negative")),
+                "{id}"
+            );
+            for field in ["subject", "claim", "qualifier"] {
+                assert!(!label[field].as_str().unwrap().is_empty(), "{id} {field}");
+            }
+            insights += 1;
+        }
+        let must_not = case["must_not"].as_array().unwrap();
+        assert!(!must_not.is_empty(), "{id} needs at least one forbidden claim");
+        for rule in must_not {
+            assert!(classes.contains(rule["violation"].as_str().unwrap()), "{id}");
+        }
+    }
+    for class in corpus["required_classes"].as_array().unwrap() {
+        assert!(covered.contains(class.as_str().unwrap()), "missing {class}");
+    }
+    // The pass rule's stated thresholds must follow from the labels.
+    let need = |positives: usize| (positives * 3 * 9).div_ceil(10);
+    assert_eq!((insights, summaries), (5, 5));
+    assert_eq!(
+        (need(insights), need(summaries), need(insights + summaries)),
+        (14, 14, 27)
+    );
+    let rule = corpus["scoring"]["pass_rule"].as_str().unwrap();
+    assert!(rule.contains("14 of 15") && rule.contains("27 of 30"));
+}
