@@ -41,7 +41,7 @@ flowchart TD
     F --> G[Model picks pages; listings grant admin-turn reads]
     E -->|fetch: URL known| G
     G --> I[Exact permitted read; cache unless refresh]
-    I -->|403, 429, 503 or script shell, if opted in| J[Firecrawl re-reads the same URL]
+    I -->|403, 429, 503, script shell, oversized body or unreadable PDF, if opted in| J[Firecrawl re-reads the same URL]
     I --> H[Up to 3 BM25 passages per page, receipt IDs]
     J --> H
     H --> K[Digest, at most 1,024 tokens; quotes and IDs validated]

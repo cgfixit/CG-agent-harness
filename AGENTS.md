@@ -34,7 +34,8 @@ server -> MCP runtime -> declared stdio children / SSE servers
   `4` refused. Through the shim, a non-zero child exit is HTTP
   200 with `ok=false`; shim failures map to 400/502/504 and the disabled-layer
   banner to 409. Other subcommands (`serve`, `account`, `web`, `tls`,
-  `mcp-key`) exit `1` on error; hidden `desktop` and `mcp-stdio-worker` exit `3`.
+  `mcp-key`) exit `1` on error; hidden `desktop` and `mcp-stdio-worker` exit `3`;
+  hidden `pdf-text-worker` exits `0` text, `2` refused, `3` unusable environment.
 - Application state: `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`); coding writes
   stay in pipeline-created clones under `data/agentic/workspaces`.
 - Before changing a feature, read its guide below and owning `INVARIANTS.md`

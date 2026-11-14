@@ -45,6 +45,12 @@ Each spawn site applies these last and removes case-insensitive aliases, so a
 declared or inherited value cannot re-enable telemetry on Windows. This proves
 delivery, not that an arbitrary child honors `DO_NOT_TRACK`.
 
+The PDF text worker (`cgagentharness pdf-text-worker`, run by
+`src/common/pdf_text.rs`) also gets an empty environment, and unlike the other
+runner children it limits itself: CPU time, a zero file-size limit, a 768 MiB
+heap and, on Linux, a 1 GiB address space
+([contract](../INVARIANTS.md#i6--process-isolation-between-the-console-and-the-agentic-pipeline)).
+
 One more child carries no request data: on macOS `process::KeepAwake` runs
 `/usr/bin/caffeinate -i -w <pid>` with a fixed argv and an empty environment
 while a detached web research job answers, so idle sleep does not cut the
