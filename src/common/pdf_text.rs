@@ -132,6 +132,22 @@ pub fn set_test_worker_exe(path: std::path::PathBuf) {
     let _ = TEST_WORKER_EXE.set(path);
 }
 
+/// This binary's path, resolved once. Linux reports a replaced executable as
+/// `<path> (deleted)`, which cannot be spawned, so a lookup per read would
+/// refuse every PDF after an in-place upgrade until the server restarts.
+#[cfg(not(any(test, feature = "test-support")))]
+fn worker_exe() -> Option<&'static std::path::PathBuf> {
+    static EXE: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
+    EXE.get_or_init(|| std::env::current_exe().ok()).as_ref()
+}
+
+/// Resolves the worker path at server startup, as the shim does for its child,
+/// before the binary on disk can be replaced under a running server.
+pub fn resolve_worker_exe() {
+    #[cfg(not(any(test, feature = "test-support")))]
+    let _ = worker_exe();
+}
+
 fn run_isolated(data: &[u8], deadline: Instant) -> Result<String> {
     #[cfg(any(test, feature = "test-support"))]
     let exe = match TEST_WORKER_EXE.get() {
@@ -139,7 +155,7 @@ fn run_isolated(data: &[u8], deadline: Instant) -> Result<String> {
         None => return extract_in_process(data, deadline).map_err(PdfFailure::into_error),
     };
     #[cfg(not(any(test, feature = "test-support")))]
-    let exe = std::env::current_exe().map_err(|_| refusal("PDF_WORKER_FAILED"))?;
+    let exe = worker_exe().ok_or_else(|| refusal("PDF_WORKER_FAILED"))?.clone();
     let timeout = deadline.saturating_duration_since(Instant::now());
     if timeout.is_zero() {
         return Err(refusal("PDF_TIMEOUT"));

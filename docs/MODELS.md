@@ -61,8 +61,10 @@ recipe. For a 65536 window on a 48 GB Mac, see the
 
 When no model is installed, `/model list` shows an example `ollama pull`
 command to copy into a terminal; the console downloads nothing, and
-`/api/ollama/pull` serves CLI/API clients. Check the execution backend
-independently of the `-mlx` suffix:
+`/api/ollama/pull` serves CLI/API clients. Its
+`models.local_llm.pull.timeout_sec` is an idle deadline (headers, then each gap
+between progress chunks), not a cap on the whole download. Check the execution
+backend independently of the `-mlx` suffix:
 
 ```bash
 ollama show qwen3.8:27b

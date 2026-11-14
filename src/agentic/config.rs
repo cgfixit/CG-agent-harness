@@ -16,7 +16,7 @@ use crate::llm::backend::is_loopback_url;
 pub const DEFAULT_REPO: &str = "";
 pub const DEFAULT_ALLOWED_READ_OPS: [&str; 6] =
     ["pr_view", "pr_list", "pr_diff", "issue_view", "issue_list", "repo_view"];
-pub const DEFAULT_PROTECTED_WRITE_PATH_PREFIXES: [&str; 20] = [
+pub const DEFAULT_PROTECTED_WRITE_PATH_PREFIXES: [&str; 24] = [
     "tests/",
     "conftest.py",
     ".github/",
@@ -37,6 +37,12 @@ pub const DEFAULT_PROTECTED_WRITE_PATH_PREFIXES: [&str; 20] = [
     "Cargo.lock",
     "deny.toml",
     "rustfmt.toml",
+    // why: Cargo merges the clone's own .cargo/config.toml with the prepared
+    // `--config`, so `target.<triple>.runner` could replace every test binary.
+    ".cargo/",
+    ".rustfmt.toml",
+    "clippy.toml",
+    ".clippy.toml",
 ];
 /// Conservative default-on READ basename deny-list. Patterns match the final
 /// path segment after name-equivalence folding; `*` is the only wildcard
