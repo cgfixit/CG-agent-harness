@@ -7,6 +7,9 @@ use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 
 const MAX_SPANS: usize = 32_768;
+/// Vertical offset, in em, within which text counts as raised or lowered
+/// rather than a separate line.
+const RAISED_EM: f32 = 0.6;
 
 pub(super) struct Widths {
     values: HashMap<u16, f32>,
@@ -198,7 +201,7 @@ impl InlineOrder {
         }
         let newlines: Vec<_> = text.match_indices('\n').map(|(i, _)| i).collect();
         let mut edits: Vec<(Range<usize>, String)> = Vec::new();
-        for mut line in self.lines.into_values() {
+        for (&key, line) in &self.lines {
             if !line.windows(2).any(|w| {
                 w[1].x < w[0].x
                     || newlines
@@ -207,7 +210,11 @@ impl InlineOrder {
             }) {
                 continue;
             }
+            if interleaves_raised_text(&self.lines, key, line) {
+                continue;
+            }
             let first = line[0].text.start;
+            let mut line: Vec<&Span> = line.iter().collect();
             line.sort_by(|a, b| a.x.total_cmp(&b.x));
             // Keep independent columns and overlapping drawings in stream order.
             if line.windows(2).any(|w| {
@@ -247,6 +254,23 @@ impl InlineOrder {
     }
 }
 
+/// Superscripts and subscripts sit a fraction of an em off the baseline, so
+/// they land under another key. Rejoining the baseline's spans around one
+/// would strand it ("VBL+16" -> "VBL 16" with a lone "+" later), so a line
+/// with such text drawn between its spans keeps stream order. Separate lines
+/// are at least about one em apart and do not block the repair.
+fn interleaves_raised_text(lines: &BTreeMap<i64, Vec<Span>>, key: i64, line: &[Span]) -> bool {
+    let em = line.iter().map(|s| s.em).fold(0.0, f32::max);
+    let reach = (em * RAISED_EM * 100.0).ceil() as i64;
+    let start = line.iter().map(|s| s.text.start).min().unwrap_or(0);
+    let end = line.iter().map(|s| s.text.end).max().unwrap_or(0);
+    lines
+        .range(key.saturating_sub(reach)..=key.saturating_add(reach))
+        .filter(|(&other, _)| other != key)
+        .flat_map(|(_, spans)| spans)
+        .any(|s| s.text.start < end && s.text.end > start)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,6 +300,32 @@ mod tests {
             order.record(Some(&font), b"Second", 10.0, 6..12);
             assert_eq!(order.finish(text.clone()), text);
         }
+    }
+
+    #[test]
+    fn keeps_superscripts_attached_to_their_line() {
+        // GPT-3's "[VBL+16]": the raised "+" is drawn between two baseline spans.
+        let font = Widths {
+            values: HashMap::new(),
+            default: Some(500.0),
+            two_bytes: false,
+        };
+        let mut order = InlineOrder::default();
+        let mut text = String::new();
+        let mut draw = |x: f32, y: f32, size: f32, fragment: &str| {
+            order.apply("Tm", &[1.into(), 0.into(), 0.into(), 1.into(), x.into(), y.into()]);
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            let start = text.len();
+            text.push_str(fragment);
+            order.record(Some(&font), fragment.as_bytes(), size, start..text.len());
+        };
+        draw(0.0, 700.0, 10.0, "networks [VBL");
+        draw(65.0, 703.6, 7.0, "+");
+        draw(68.5, 700.0, 10.0, "16], RL2");
+        let extracted = order.finish(text.clone());
+        assert_eq!(extracted, text);
     }
 
     #[test]
