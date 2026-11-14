@@ -1726,7 +1726,7 @@ async fn a_busy_store_does_not_stall_other_requests_behind_a_session_clear() {
 /// Changing it after a qualification run voids that run; the digest makes the
 /// edit explicit in review. Line endings are normalized for Windows checkouts.
 const D7_CORPUS: &str = include_str!("fixtures/structured_memory/d7/corpus.json");
-const D7_CORPUS_SHA256: &str = "4496fb83f4137a082cd344dc5a85449e24be4d17f2bc9755eca5603013ca2fbf";
+const D7_CORPUS_SHA256: &str = "4496fb83f4137a082cd344dc5a85449e24be4d17f2bc9755eca5603013ca2fbf"; // DevSkim: ignore DS173237 because this is the fixture's SHA-256, not a secret.
 
 #[test]
 fn d7_corpus_is_frozen_well_formed_and_reaches_the_model_unaltered() {
