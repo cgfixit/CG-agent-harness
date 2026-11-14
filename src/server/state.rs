@@ -76,7 +76,7 @@ pub struct AppState {
     pub home: Home,
     pub cfg: SharedConfig,
     pub runtime: std::sync::RwLock<Arc<super::config_reload::RuntimeLimits>>,
-    pub settings: Mutex<HarnessSettings>,
+    pub settings: Arc<Mutex<HarnessSettings>>,
     pub store: SessionStore,
     pub chat_owner: super::web_research::ResearchState,
     /// Native control shutdown/EOF, distinct from an owner's request cancellation.

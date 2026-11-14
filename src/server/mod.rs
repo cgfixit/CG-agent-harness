@@ -276,7 +276,9 @@ pub async fn build_app_with_sources(
     let api_key = opts
         .api_key
         .or_else(|| std::env::var(crate::common::apikey::API_KEY_ENV).ok());
+    let settings = Arc::new(Mutex::new(settings));
     let mut web = WebTool::new(&home.tools_dir(), &cfg)?;
+    web.settings = Some(settings.clone());
     web.search_key_from_file = opts.key_file_sources.contains("SERPAPI_API_KEY");
     web.tavily_key_from_file = opts.key_file_sources.contains("TAVILY_API_KEY");
     web.firecrawl_key_from_file = opts.key_file_sources.contains("FIRECRAWL_API_KEY");
@@ -381,7 +383,7 @@ pub async fn build_app_with_sources(
         home,
         cfg: cfg.clone(),
         runtime: std::sync::RwLock::new(Arc::new(runtime)),
-        settings: Mutex::new(settings),
+        settings,
         store,
         attachments,
         notes_corpus,

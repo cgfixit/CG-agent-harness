@@ -489,6 +489,90 @@ async fn web_fetch_crawl_follows_permitted_links_over_http_route() {
 }
 
 #[tokio::test]
+async fn web_disable_discards_inflight_fetch_batch_crawl_and_search() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::sync::Notify;
+    use tokio::time::{timeout, Duration};
+
+    let model = start_mock_model().await;
+    for mode in ["fetch", "batch", "crawl", "search"] {
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let hits = Arc::new(AtomicUsize::new(0));
+        let fixture = Router::new().fallback(get({
+            let started = started.clone();
+            let release = release.clone();
+            let hits = hits.clone();
+            move |uri: axum::http::Uri| {
+                let started = started.clone();
+                let release = release.clone();
+                let hits = hits.clone();
+                async move {
+                    hits.fetch_add(1, Ordering::SeqCst);
+                    if uri.path() == "/robots.txt" {
+                        return ([("content-type", "text/plain")], "User-agent: *\nAllow: /\n");
+                    }
+                    if uri.path() == "/docs/start" {
+                        started.notify_one();
+                        release.notified().await;
+                    }
+                    (
+                        [("content-type", "text/html")],
+                        "<title>Fixture</title><p>DISABLED_RESPONSE_MARKER</p><a href='/docs/next'>Next</a>",
+                    )
+                }
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let fixture_task = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+        let s = Arc::new(
+            spawn_server(
+                &model.base_url(),
+                ServerOptions {
+                    web_resolve: Some(("docs.example".into(), address)),
+                    ..ServerOptions::default().with("web.pace_ms", "100")
+                },
+            )
+            .await,
+        );
+        let root = format!("http://docs.example:{}", address.port()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        let start = format!("{root}/docs/start");
+        let next = format!("{root}/docs/next");
+        assert_eq!(s.post_json("/api/web/allow", json!({"url":start})).await.0, 200);
+        assert_eq!(s.post_json("/api/web/allow", json!({"url":next})).await.0, 200);
+        let (route, body) = match mode {
+            "fetch" => ("/api/web/fetch", json!({"url":start})),
+            "batch" => ("/api/web/fetch", json!({"urls":[start,next]})),
+            "crawl" => ("/api/web/fetch", json!({"urls":[start],"crawl":true})),
+            _ => ("/api/web/search", json!({"query":"fixture"})),
+        };
+        let pending = {
+            let s = s.clone();
+            tokio::spawn(async move { s.post_json(route, body).await })
+        };
+        timeout(Duration::from_secs(5), started.notified()).await.unwrap();
+        let sent = hits.load(Ordering::SeqCst);
+        assert_eq!(s.post_json("/api/web", json!({"enabled":false})).await.0, 200);
+        release.notify_one();
+        let (status, body) = timeout(Duration::from_secs(5), pending).await.unwrap().unwrap();
+        assert_eq!(status, 409, "mode {mode} must refuse disabled delivery");
+        assert_eq!(code(&body), "WEB_DISABLED");
+        assert_eq!(hits.load(Ordering::SeqCst), sent, "no later destination may be sent");
+        assert!(!body.to_string().contains("DISABLED_RESPONSE_MARKER"));
+        assert_eq!(s.post_json("/api/web", json!({"enabled":true})).await.0, 200);
+        assert_eq!(s.get_json("/api/web").await.1["has_last"], false);
+        assert!(
+            !s.home.join("tools/web_cache").exists(),
+            "disabled response must not be cached"
+        );
+        let (status, _) = s.post_json("/api/web/fetch", json!({"url":next})).await;
+        assert_eq!(status, 200, "a fresh read works after re-enabling");
+        fixture_task.abort();
+    }
+}
+
+#[tokio::test]
 async fn web_tool_is_allowlist_only_ssrf_safe_and_bounded() {
     let model = start_mock_model().await;
     let page = start_page_server("<html><head><style>x{}</style><script>evil()</script></head><body><h1>Title</h1><p>Hello &amp; welcome to the docs page</p></body></html>", "text/html; charset=utf-8").await;
