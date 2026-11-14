@@ -17,6 +17,9 @@ on:
       - "scripts/start-web.sh"
       - "scripts/reset-macos.sh"
       - "scripts/test-reset-macos.py"
+      - "scripts/uninstall-macos.sh"
+      - "scripts/test-uninstall-macos.py"
+      - "uninstall.command"
       - "scripts/web-allowlist-bootstrap.sh"
       - ".github/workflows/install-macos.yml"
   workflow_dispatch:
@@ -29,7 +32,7 @@ concurrency:
 
 jobs:
   reset-contract:
-    name: reset refusal contract (portable command doubles)
+    name: reset and uninstall contracts (portable command doubles)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -39,6 +42,7 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 scripts/test-reset-macos.py -v
+      - run: python3 scripts/test-uninstall-macos.py -v
 
   install:
     name: install-macos.sh and start-macos.sh (macos-latest)

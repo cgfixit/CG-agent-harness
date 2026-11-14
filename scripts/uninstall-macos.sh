@@ -32,7 +32,6 @@ cert_cn='CG Agent Harness local portal'
 login_kc=$HOME/Library/Keychains/login.keychain-db
 marker='# Added by CG-agent-harness scripts/init.sh'
 dry=0 interactive=1 keep_clone=0 toolchain_rm=0 rustup_rm=0 ollama_rm=0 models_rm=0 gh_rm=0 extra_app_dir=''
-[ -t 0 ] || interactive=0
 
 usage() { sed -n '2,21p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 while [ "$#" -gt 0 ]; do
@@ -53,6 +52,12 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
+
+# Without a terminal nothing can be asked or typed: only --yes or --dry-run proceed.
+if [ "$interactive" = 1 ] && [ ! -t 0 ]; then
+  [ "$dry" = 1 ] || { echo 'uninstall-macos: no terminal to confirm in; rerun in Terminal, or pass --yes (or --dry-run)' >&2; exit 4; }
+  interactive=0
+fi
 
 say() { printf '==> %s\n' "$*"; }
 warn() { printf 'uninstall-macos: warning: %s\n' "$*" >&2; }
