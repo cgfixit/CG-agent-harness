@@ -70,7 +70,7 @@ fn argv_builder_uses_single_element_form_for_dash_leading_values() {
     );
     assert_eq!(
         shim::timeout_for(&c, &req).as_secs(),
-        shim::real_repo_run_timeout_sec(720, Some(2), 1)
+        shim::real_repo_run_budget_sec(720, Some(2), 1)
     );
     // A speed-derived planner timeout budgets the child and crosses as one element.
     req.planner_timeout_sec = Some(150);
@@ -81,7 +81,7 @@ fn argv_builder_uses_single_element_form_for_dash_leading_values() {
     assert!(!tuned.contains(&"--confirm".to_string()));
     assert_eq!(
         shim::timeout_for(&c, &req).as_secs(),
-        shim::real_repo_run_timeout_sec(150, Some(2), 1)
+        shim::real_repo_run_budget_sec(150, Some(2), 1)
     );
     // Push and publish outlast the child's own bounds. Publish runs four git
     // calls (origin URL 30 s, rev-parse 30 s, ls-remote DEFAULT_PUSH_TIMEOUT_SEC,
@@ -381,16 +381,22 @@ fn budget_formula_and_labels() {
         shim::real_repo_run_budget_sec(0, Some(2), 2),
         2 * 720 + 2 * 2 * 120 + 900
     );
-    assert_eq!(shim::real_repo_run_timeout_sec(720, Some(10), 8), 3600);
+    let dir = tempfile::tempdir().unwrap();
+    let mut c = ctx(dir.path());
+    let mut capped = OpsRequest::new("real-repo-run");
+    capped.max_iterations = Some(10);
+    capped.checks = Some(vec![json!({}); 8]);
+    assert_eq!(shim::timeout_for(&c, &capped).as_secs(), 3600);
     // An extreme operator planner timeout saturates instead of overflowing
     // (debug panic) or wrapping under the 3600s cap (release).
     assert_eq!(shim::real_repo_run_budget_sec(u64::MAX, Some(3), 1), u64::MAX);
     assert_eq!(shim::real_repo_run_budget_sec(u64::MAX / 2, Some(2), 0), u64::MAX);
-    assert_eq!(shim::real_repo_run_timeout_sec(u64::MAX / 3 + 1, Some(3), 1), 3600);
+    capped.planner_timeout_sec = Some(u64::MAX / 3 + 1);
+    capped.max_iterations = Some(3);
+    capped.checks = Some(vec![json!({})]);
+    assert_eq!(shim::timeout_for(&c, &capped).as_secs(), 3600);
     // Repository retrieval adds one validated listing per iteration. Off, the
     // shape budget is the base budget, so every number above still holds.
-    let dir = tempfile::tempdir().unwrap();
-    let mut c = ctx(dir.path());
     assert_eq!(
         shim::real_repo_run_shape_budget_sec(&c, 720, None, 1),
         shim::real_repo_run_budget_sec(720, None, 1)
@@ -487,6 +493,8 @@ async fn planner_settings_drift_refuses_sync_and_detached_runs() {
         ("planner_timeout_sec", "1200"),
         ("planner_max_tokens", "8192"),
         ("provider", "openai_compatible"),
+        // Sizes the shim's kill timer per iteration; the server budgets its startup value.
+        ("retrieval.enabled", "true"),
     ] {
         config_with(
             &s.home,
