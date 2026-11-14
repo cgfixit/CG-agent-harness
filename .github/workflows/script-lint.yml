@@ -1,5 +1,5 @@
 # Static checks for the repository's helper scripts: shellcheck on every
-# tracked shell script (and the root init.command launcher) and git hook, a full compile of every Python script,
+# tracked shell script (and the root init.command and uninstall.command launchers) and git hook, a full compile of every Python script,
 # and `node --check` on every .mjs script. Hook behavior runs in disposable
 # repositories; application contract tests live in ci.yml. Lists use `git ls-files`
 # so a new script is linted without editing this workflow.
@@ -11,6 +11,7 @@ on:
     paths:
       - "scripts/**"
       - "init.command"
+      - "uninstall.command"
       - ".githooks/**"
       - ".claude/hooks/**"
       - ".claude/skills/**"
@@ -19,6 +20,7 @@ on:
     paths:
       - "scripts/**"
       - "init.command"
+      - "uninstall.command"
       - ".githooks/**"
       - ".claude/hooks/**"
       - ".claude/skills/**"
@@ -50,7 +52,7 @@ jobs:
           set -euo pipefail
           # Git pathspec `*` also matches `/`, so 'scripts/*.sh' and
           # '.claude/skills/*.sh' reach nested helpers (live-ollama/, skill dirs).
-          mapfile -d '' files < <(git ls-files -z -- 'scripts/*.sh' 'init.command' '.githooks/*' '.claude/hooks/*.sh' '.claude/skills/*.sh' ':!:*.md')
+          mapfile -d '' files < <(git ls-files -z -- 'scripts/*.sh' 'init.command' 'uninstall.command' '.githooks/*' '.claude/hooks/*.sh' '.claude/skills/*.sh' ':!:*.md')
           test "${#files[@]}" -gt 0
           printf '%s\n' "${files[@]}"
           docker run --rm -v "${PWD}:/mnt:ro" -w /mnt \

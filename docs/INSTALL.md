@@ -624,9 +624,14 @@ Verify and replace the complete app bundle. Upgrade does not rewrite existing
 defaults, model selection, persona, or skills; merge new fields instead of
 replacing `config.yaml` with `assets/config.default.yaml`. An older binary may
 not understand newer state, so restore its matching backup when rolling back.
-To uninstall, quit and remove the app; home deletion is a separate destructive
-action ([desktop uninstall](DESKTOP.md#update-recovery-and-uninstall)).
-The scripts leave these behind, all optional to remove:
+To undo `init.sh`, double-click **uninstall.command** in the clone (or run
+`scripts/uninstall-macos.sh`; `--dry-run` previews, `--help` lists flags). It
+prints its plan and removes nothing until you type `UNINSTALL`: every home
+reset below, the app and its `~/Library` data, the marked profile lines whose
+tool is gone, then the clone, which it keeps when it holds uncommitted or
+unpushed work. To keep the home, quit and remove only the app
+([desktop uninstall](DESKTOP.md#update-recovery-and-uninstall)).
+The scripts leave these behind; the uninstaller removes each:
 
 | Left by | Item | Remove with |
 |---|---|---|
@@ -637,7 +642,9 @@ The scripts leave these behind, all optional to remove:
 | `init.sh` | "CG Agent Harness admin password" in the login keychain; marked lines in your shell profile; `scripts/logs/` | `reset-macos.sh --yes`; delete the lines under `# Added by CG-agent-harness`; `rm -rf scripts/logs` |
 
 Homebrew, rustup, Ollama, models and `gh` are general tools; the installer
-never removes them. A failed reset can leave the home with credentials already
+never removes them. The uninstaller removes rustup, the pinned toolchain,
+Ollama, models or `gh` only when you answer yes or pass its `--remove-*` flag,
+and never Homebrew or the Command Line Tools. A failed reset can leave the home with credentials already
 removed: follow [reset failure and recovery](DESKTOP.md#reset-failure-and-recovery)
 before retrying or reusing it.
 

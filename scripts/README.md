@@ -13,12 +13,13 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 [Terminal walkthrough](../docs/INSTALL.md#step-by-step-in-terminal); once signed in,
 [CONSOLE.md](../docs/CONSOLE.md) is the user guide.
 
-- [`init.sh`](init.sh): Apple Silicon first-time setup (Finder: double-click [`init.command`](../init.command)): installer, shell PATH, admin password into Keychain, allowlist, then opens app, browser or both; log in `logs/install.log`.
+- [`init.sh`](init.sh): Apple Silicon first-time setup (Finder: [`init.command`](../init.command)): installer, shell PATH, admin password into Keychain, allowlist, then opens app, browser or both; log in `logs/install.log`.
 - [`install-macos.sh`](install-macos.sh): idempotent macOS installer: missing tools, backend build, checksummed release app; `--check`, `--dry-run`, `--replace-app`.
 - [`start-macos.sh`](start-macos.sh): starts Ollama (app or `ollama serve`) and the app, then the app's own origin through `start-web.sh --desktop-url`; `--standalone`, `--trust-cert`, `--no-ollama`, `--no-browser`.
 - [`start-web.sh`](start-web.sh): starts the console on loopback (default 8790) and opens a browser; bundled into the `.app`, so byte changes need a rebuild.
 - [`web-allowlist-bootstrap.sh`](web-allowlist-bootstrap.sh): grants a technical-docs web allowlist through `cgagentharness web allow` (admin login needed); extra lines from `CGAH_GRANTS_FILE`.
 - [`reset-macos.sh`](reset-macos.sh): dry-runs, or with `--yes` deletes, the harness home and Keychain entries.
+- [`uninstall-macos.sh`](uninstall-macos.sh) ([`uninstall.command`](../uninstall.command)): undoes `init.sh` after a preview: home, Keychain, app, clone; shared tools opt-in.
 - [`smoke-ollama.sh`](smoke-ollama.sh): live smoke of the release binary against local Ollama; optional `FINGERPRINT_OUT`.
 - [`qwen3.8-27b-mlx-cg.Modelfile`](qwen3.8-27b-mlx-cg.Modelfile): `ollama create` recipe pinning `num_ctx` 32768 ([MODELS.md](../docs/MODELS.md)).
 - [`live-ollama/`](live-ollama/): pinned Ollama, two checksummed models, baseline and fingerprint for `live-ollama.yml`.
@@ -27,10 +28,10 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 ## Verification and CI
 
 - [`verify-local.sh`](verify-local.sh): broad opt-in lint/test/build/live-smoke runner; missing cargo-deny or Node skips those checks, and `SKIP_LIVE=1` skips smoke.
-- [`lint-diff.py`](lint-diff.py): seconds-fast lint of what a branch changes (`--staged` for the index): unannotated `http://` Rust or Python literals, stale self-manual, docs caps and unexplained cap raises fail; short wall-clock test bounds warn. Runs in `diff-lint.yml` (with [`test-lint-diff.py`](test-lint-diff.py)) and at commit.
+- [`lint-diff.py`](lint-diff.py): fast lint of a branch's changes (`--staged` for the index): unannotated `http://` Rust or Python literals, stale self-manual, docs caps and unexplained cap raises fail; short wall-clock test bounds warn. Runs in `diff-lint.yml` (with [`test-lint-diff.py`](test-lint-diff.py)) and at commit.
 - [`lint-workflows.sh`](lint-workflows.sh): `workflow-lint.yml`'s actionlint and zizmor at the same pins, from PATH or a rootless fallback; zizmor's online audits stay CI-only.
 - [`check-pr-template.sh`](check-pr-template.sh): local PR-body gate mirroring `pr-template-check.yml`, including its Cursor and trailing Claude Code footer strips but not its Dependabot exemption.
-- [`ci-docs-only.sh`](ci-docs-only.sh): classifies changed paths so qualifying PRs skip selected CI compile/test jobs; other event types run everything.
+- [`ci-docs-only.sh`](ci-docs-only.sh): classifies changed paths so qualifying PRs skip selected compile/test jobs; other events run everything.
 - [`browser-acceptance.mjs`](browser-acceptance.mjs): native Chrome acceptance against a disposable fixture (manual, after `browser-fixture.py --http`).
 - [`chat-browser-acceptance.mjs`](chat-browser-acceptance.mjs): real-browser slash-command tests against a mock API.
 - [`test-analytics.mjs`](test-analytics.mjs): analytics and spend helpers, logout clearing.
@@ -38,8 +39,8 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 - [`test-auth-deadlines.mjs`](test-auth-deadlines.mjs): console fetch helpers against headers-first replies.
 - [`test-delivery-review.mjs`](test-delivery-review.mjs): delivery UI handlers across logout and late replay.
 - [`test-desktop-setup.mjs`](test-desktop-setup.mjs): Setup status, action errors, stale replies and setup-code guidance.
-- [`test-first-run-password.mjs`](test-first-run-password.mjs): one-form first-run setup: private setup code plus new password through restricted login and CSRF-protected replacement; cross-tab completion, expired restricted sessions, wrong codes, other-account sign-in.
-- [`test-header-buttons.mjs`](test-header-buttons.mjs): header automation buttons hide until account state is known.
+- [`test-first-run-password.mjs`](test-first-run-password.mjs): first-run setup code plus new password via restricted login and CSRF-protected replacement; cross-tab, expired-session, wrong-code and other-account cases.
+- [`test-header-buttons.mjs`](test-header-buttons.mjs): automation buttons hide until account state loads.
 - [`test-loop-continuation.mjs`](test-loop-continuation.mjs): `/loop` turn prompt, `GOAL_DONE` marker, stall checks.
 - [`test-nl-search-routing.mjs`](test-nl-search-routing.mjs): natural-language search predicate against server phrasings.
 - [`test-review-gate.mjs`](test-review-gate.mjs): the review-gate workflows' inline scripts against GitHub API fixtures.
@@ -66,7 +67,7 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 
 - [`ensure-githooks.sh`](ensure-githooks.sh): idempotent setup preserving existing hook managers; called by SessionStart, Copilot and `init.sh` ([GITHOOKS.md](../docs/GITHOOKS.md)).
 - [`install-githooks.sh`](install-githooks.sh): older once-per-clone installer with a gitleaks hint; nothing automated runs it.
-- [`browser-fixture.py`](browser-fixture.py): creates and serves a disposable arithmetic repo fixture; no real GitHub writes.
+- [`browser-fixture.py`](browser-fixture.py): serves a disposable arithmetic repo fixture; no real GitHub writes.
 - [`mcp-fixture.py`](mcp-fixture.py): disposable stdio and SSE MCP server for the MCP and process-lifecycle tests.
 - [`mcp-windows-fixture.py`](mcp-windows-fixture.py): Windows Job Object fixture used by `tests/mcp_windows.rs` only.
 - [`grok-acp-probe.py`](grok-acp-probe.py): credential-free probe of a fake Grok ACP launch contract; Grok ACP is not shipped.
