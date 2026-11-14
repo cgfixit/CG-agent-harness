@@ -451,6 +451,7 @@ impl WebTool {
         if !enabled {
             return Err(error("WEB_DISABLED", "web access is disabled"));
         }
+        self.check_enabled()?;
         // The saved key is read only when a SerpAPI hop could run.
         let reads_key = match &self.search_provider {
             SearchProvider::GooglePublic => false,
@@ -494,6 +495,7 @@ impl WebTool {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
         let mut fallback_from: Vec<&str> = Vec::new();
         for (index, hop) in hops.iter().copied().enumerate() {
+            self.check_enabled()?;
             let next = hops.get(index + 1).copied();
             let started = tokio::time::Instant::now();
             // A later hop that is cooling down answers without a request: it
@@ -581,6 +583,7 @@ impl WebTool {
             audit.log(json!({"event":"web_search_attempt","provider":hop.name(),
                 "budget_ms":budget.as_millis(),"elapsed_ms":started.elapsed().as_millis(),
                 "code":result.as_ref().map_or_else(|e| e.code.as_str(), |_| "OK")}));
+            self.check_enabled()?;
             match result {
                 Ok(mut value) => {
                     filter_sites(query, &mut value);
@@ -748,7 +751,9 @@ impl WebTool {
                 .acquire()
                 .await
                 .map_err(|_| error("WEB_CANCELLED", "search cancelled"))?;
+            self.check_enabled()?;
             let client = self.pinned_client(&endpoint).await?;
+            self.check_enabled()?;
             // The permit and DNS waits can outlast a key change: a key cleared
             // or replaced since this search read it is never sent.
             if self.search_key()?.trim() != key.trim() {
@@ -938,6 +943,65 @@ mod tests {
             "no query text"
         );
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn web_disable_stops_paced_public_and_queued_keyed_searches() {
+        use std::sync::{Arc, Mutex};
+        for provider in [
+            SearchProvider::GooglePublic,
+            SearchProvider::Serpapi,
+            SearchProvider::Tavily,
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let (mut web, audit, dir) = public_tool(listener.local_addr().unwrap());
+            let settings = Arc::new(Mutex::new(crate::common::home::HarnessSettings::default()));
+            web.settings = Some(settings.clone());
+            web.search_provider = provider.clone();
+            web.tavily_key_from_file = true;
+            super::super::env_keys::write_keys(
+                &dir.path().join(".env"),
+                &std::collections::BTreeMap::from([
+                    ("SERPAPI_API_KEY".into(), "fixture-serp-key".into()),
+                    ("TAVILY_API_KEY".into(), "fixture-tavily-key".into()),
+                ]),
+            )
+            .unwrap();
+            let endpoint = web.test_public_search.clone().unwrap();
+            web.test_tavily_search = Some(endpoint.clone());
+            let public = provider == SearchProvider::GooglePublic;
+            let held = if public {
+                *web.public_search_sent.lock().unwrap() = Some(tokio::time::Instant::now());
+                None
+            } else {
+                Some(
+                    web.permits
+                        .clone()
+                        .acquire_many_owned(web.limits.concurrency as u32)
+                        .await
+                        .unwrap(),
+                )
+            };
+            let read = web.google_search_at("fixture", 1, true, &audit, endpoint);
+            tokio::pin!(read);
+            tokio::select! {
+                biased;
+                _ = &mut read => panic!("search must wait for pacing or a permit"),
+                _ = tokio::task::yield_now() => {}
+            }
+            settings.lock().unwrap().web_enabled = false;
+            drop(held);
+            assert_eq!(read.await.unwrap_err().code, "WEB_DISABLED");
+            assert!(
+                tokio::time::timeout(Duration::from_millis(10), listener.accept())
+                    .await
+                    .is_err(),
+                "disabled searches must never connect"
+            );
+            assert!(!std::fs::read_to_string(dir.path().join("audit.jsonl"))
+                .unwrap()
+                .contains("web_search_sent"));
+        }
     }
 
     /// A public-Google fixture tool: `google.fixture` resolves to `address`.

@@ -373,6 +373,12 @@ Fetch accepts exact URLs only; wildcard patterns belong in `allow`.
 A `fetch` batch validates all targets before any request and shares page, byte,
 time and per-site limits. Partial reads report coverage and failures.
 
+`/web off` takes effect for running reads at the next dispatch, storage or
+delivery check. Queued and paced requests recheck enablement before sending,
+including search providers and Firecrawl fallback. A response arriving while web
+is off is discarded with `WEB_DISABLED`; earlier cached pages remain on disk.
+Re-enable web to start a fresh read.
+
 Every content request is DNS-pinned to checked public addresses with TLS hostname
 validation and no reuse, retries, proxies, redirects, compression or cookies
 ([contract](../INVARIANTS.md#public-web-evidence-requires-current-content-permission)).

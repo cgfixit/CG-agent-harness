@@ -97,7 +97,9 @@ impl WebTool {
             if self.tavily_key()?.trim() != key {
                 return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
             }
+            self.check_enabled()?;
             let client = self.pinned_client(&endpoint).await?;
+            self.check_enabled()?;
             let response = client
                 .post(endpoint)
                 .bearer_auth(key)

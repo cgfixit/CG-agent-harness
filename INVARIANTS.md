@@ -238,7 +238,9 @@ must name that URL as final (a redirect is refused), keeps no links, carries
 `via: firecrawl`, and is capped by `web.firecrawl.max_per_hour`. A failed
 fallback keeps the original outcome.
 
-Policy is reloaded before dispatch and before storage or delivery. Revoked or
+Live web enablement and URL policy are rechecked after permit, DNS and pacing
+waits, before dispatch and before storage or delivery. Disabling web refuses
+later sends and discards responses at these boundaries with `WEB_DISABLED`. Revoked or
 unproven saved evidence is inaccessible, including old shared plain-text context.
 Revocation cannot erase historical chat or content already sent to a model. No atomicity against arbitrary external file
 edits between an authorization check and an OS operation is claimed.

@@ -62,7 +62,7 @@ Contracts live in [INVARIANTS.md](INVARIANTS.md) and fail `cargo test`, not revi
 - **Loopback only.** Non-loopback binds are refused; fresh homes require HTTPS and account login. Research, cloud providers and model runtimes still reach the network.
 - **Process isolation (I6).** The console never calls the coding pipeline in-process; it spawns `cgagentharness agentic …` through an allowlisted [shim](src/shim/mod.rs).
 - **Writes are gated.** The three write gates ship false; approval, push and publication each need a reason and confirmation, and checks run under Seatbelt or bubblewrap.
-- **Web needs current permission.** Reads are DNS-pinned to public addresses and rechecked against URL policy at dispatch, storage and delivery.
+- **Web needs current permission.** Reads are DNS-pinned to public addresses. Live web enablement and URL policy are rechecked after waits, before dispatch, storage and delivery.
 - **Strict config.** Gates need literal YAML `true`; malformed numbers stop startup.
 - **Secrets stay out.** Provider keys live in the OS credential store and never reach a response, log line or model context.
 - **No telemetry.** `deny.toml` bans push-telemetry crates; CI runs `cargo deny` and pins actions.
