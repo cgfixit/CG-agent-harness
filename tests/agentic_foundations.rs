@@ -197,6 +197,7 @@ fn canonical_and_dotgit_helpers() {
     for bad in [
         "/etc/passwd",
         "-flag",
+        "./-flag",
         "..",
         "a/../b",
         "C:\\x",
@@ -247,6 +248,7 @@ fn apply_proposal_refuses_jail_escapes_and_oversize_content() {
         "../outside.txt",
         "/tmp/abs.txt",
         "-x.txt",
+        "./-x.txt",
         ".git/config",
         ".GIT/hooks/pre-commit",
         "sub/.git/config",

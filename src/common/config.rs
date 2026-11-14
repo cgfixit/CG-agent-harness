@@ -529,6 +529,8 @@ impl AppConfig {
             "agentic.deepagent_github.provider",
             "agentic.deepagent_github.planner_timeout_sec",
             "agentic.deepagent_github.planner_max_tokens",
+            // Adds a listing per iteration to the shim's kill timer (`shim::REAL_REPO_RUN_RETRIEVAL_SEC`).
+            "agentic.deepagent_github.retrieval.enabled",
             "models.local_llm.reasoning_effort",
         ]
         .map(|key| self.get(key));
@@ -660,7 +662,10 @@ mod tests {
         config.raw["web"]["chat_tool_calls"] = 1.into();
         assert_eq!(config.planner_identity().unwrap(), identity);
         config.raw["models"]["local_llm"]["reasoning_effort"] = "high".into();
-        assert_ne!(config.planner_identity().unwrap(), identity);
+        let reasoning = config.planner_identity().unwrap();
+        assert_ne!(reasoning, identity);
+        config.raw["agentic"]["deepagent_github"]["retrieval"]["enabled"] = true.into();
+        assert_ne!(config.planner_identity().unwrap(), reasoning);
     }
 
     #[test]
