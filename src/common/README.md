@@ -5,6 +5,7 @@ Primitives shared by every side of the I6 boundary. No module here may import
 Contracts: [INVARIANTS.md](../../INVARIANTS.md); process rules:
 [docs/PROCESS_LIFECYCLE.md](../../docs/PROCESS_LIFECYCLE.md).
 
+- [`alloc_cap.rs`](alloc_cap.rs): the binary's global allocator; a pass-through until a worker child arms its heap ceiling.
 - [`apikey.rs`](apikey.rs): the `API_KEY_ENV` name; presence is reported, never grants authority.
 - [`atomic.rs`](atomic.rs): atomic bytes/JSON writes: stage, sync, rename, optional Unix mode.
 - [`audit.rs`](audit.rs): redacted audit JSONL with bounded retention; the server normally queues appends to one writer thread.

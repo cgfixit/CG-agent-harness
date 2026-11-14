@@ -1,6 +1,7 @@
 //! Shared primitives used by both the server and the agentic child process.
 //! Nothing here may reference `crate::agentic` or `crate::server`.
 
+pub mod alloc_cap;
 pub mod apikey;
 pub mod atomic;
 pub mod audit;

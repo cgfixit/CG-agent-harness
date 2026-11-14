@@ -28,6 +28,7 @@ const INDEX_NAME: &str = "index.json";
 const PDF_EXTRACTION_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 const DEFAULT_MAX_FILES_PER_OWNER: u64 = 64;
 const DEFAULT_MAX_FILE_BYTES: u64 = 524_288;
+const DEFAULT_MAX_PDF_BYTES: u64 = 8_388_608;
 const DEFAULT_MAX_HOME_BYTES: u64 = 8_388_608;
 const DEFAULT_MAX_FILES_PER_REQUEST: u64 = 8;
 const DEFAULT_MAX_CONCURRENT: u64 = 2;
@@ -39,6 +40,8 @@ const NOTES_MULTIPART_OVERHEAD_BYTES: u64 = 256 * 1024;
 pub struct NotesLimits {
     pub max_files_per_owner: usize,
     pub max_file_bytes: u64,
+    /// Stored size of one `.pdf` note; its extracted text must fit `max_file_bytes`.
+    pub max_pdf_bytes: u64,
     pub max_home_bytes: u64,
     pub max_files_per_request: usize,
     pub max_concurrent_ingests: usize,
@@ -50,6 +53,11 @@ impl NotesLimits {
             max_files_per_owner: cfg.u64_in("notes_corpus.max_files_per_owner", DEFAULT_MAX_FILES_PER_OWNER, 1..=256)?
                 as usize,
             max_file_bytes: cfg.u64_in("notes_corpus.max_file_bytes", DEFAULT_MAX_FILE_BYTES, 1024..=1_048_576)?,
+            max_pdf_bytes: cfg.u64_in(
+                "notes_corpus.max_pdf_bytes",
+                DEFAULT_MAX_PDF_BYTES,
+                1024..=pdf_text::MAX_INPUT_BYTES as u64,
+            )?,
             max_home_bytes: cfg.u64_in(
                 "notes_corpus.max_home_bytes",
                 DEFAULT_MAX_HOME_BYTES,
@@ -65,10 +73,13 @@ impl NotesLimits {
         })
     }
 
+    /// Body cap for one notes upload: every file at the text limit, or PDFs up
+    /// to what the home budget could ever accept, whichever is larger.
     pub fn max_request_bytes(&self) -> usize {
-        let n = (self.max_files_per_request as u64)
-            .saturating_mul(self.max_file_bytes)
-            .saturating_add(NOTES_MULTIPART_OVERHEAD_BYTES);
+        let files = self.max_files_per_request as u64;
+        let text = files.saturating_mul(self.max_file_bytes);
+        let pdf = files.saturating_mul(self.max_pdf_bytes).min(self.max_home_bytes);
+        let n = text.max(pdf).saturating_add(NOTES_MULTIPART_OVERHEAD_BYTES);
         usize::try_from(n).unwrap_or(usize::MAX)
     }
 }
@@ -125,7 +136,7 @@ impl NotesCorpus {
             .map(|(index, f)| {
                 let at_file = |e: HarnessError| e.detail("file_index", index as u64);
                 let ext = allowed_ext(&f.filename).map_err(at_file)?;
-                classify_note(&f.data, self.limits.max_file_bytes, ext == "pdf", deadline).map_err(at_file)?;
+                classify_note(&f.data, &self.limits, ext == "pdf", deadline).map_err(at_file)?;
                 Ok((f, mime_for(ext)))
             })
             .collect::<Result<_>>()?;
@@ -267,25 +278,24 @@ impl NotesCorpus {
         Ok(removed)
     }
 
+    /// Bytes are read and digest-checked under the store lock; PDF extraction
+    /// runs after it is released, so a slow PDF never blocks uploads, deletes
+    /// or other owners' prompts. A note deleted meanwhile is left out.
     pub fn verified_texts(&self, owner: &str) -> Result<Vec<VerifiedAttachment>> {
-        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        let manifest = self.load_manifest()?;
+        let snapshot = {
+            let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+            self.verified_bytes_locked(owner)?
+        };
+        if snapshot.is_empty() {
+            return Ok(Vec::new());
+        }
         let scanner = Scanner::core();
         let deadline = std::time::Instant::now() + PDF_EXTRACTION_BUDGET;
-        let mut out = Vec::new();
-        for blob in manifest.notes.iter().filter(|n| n.owner == owner) {
-            let rel = note_rel(blob)?;
-            let bytes = match self.jail.read(&rel) {
-                Ok(bytes) => bytes,
-                // Cleanup can unlink a blob before an interrupted or failed index save.
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(_) => return Err(HarnessError::new("NOTES_NOT_FOUND", "note is not readable")),
-            };
-            if bytes.len() as u64 != blob.byte_len || sha256_bytes_hex(&bytes) != blob.sha256 {
-                return Err(HarnessError::new("NOTES_NOT_FOUND", "note is not readable"));
-            }
+        let mut out = Vec::with_capacity(snapshot.len());
+        for (blob, bytes) in snapshot {
             let pdf = blob.magic_mime == pdf_text::MIME;
-            let text = classify_note(&bytes, self.limits.max_file_bytes, pdf, deadline)?;
+            let text = classify_note(&bytes, &self.limits, pdf, deadline)?;
+            drop(bytes);
             let injection_hits = scanner.scan(&text).len();
             let (text, sentinels_removed) = neutralize_sentinels(&text);
             out.push(VerifiedAttachment {
@@ -300,6 +310,37 @@ impl NotesCorpus {
                 sentinels_removed,
                 injection_hits,
             });
+        }
+        #[cfg(test)]
+        if let Some(hook) = AFTER_EXTRACTION.with(|c| c.borrow_mut().take()) {
+            hook(self);
+        }
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let manifest = self.load_manifest()?;
+        out.retain(|item| {
+            manifest
+                .notes
+                .iter()
+                .any(|n| n.owner == item.blob.owner && n.id == item.blob.id && n.sha256 == item.blob.sha256)
+        });
+        Ok(out)
+    }
+
+    fn verified_bytes_locked(&self, owner: &str) -> Result<Vec<(NoteBlob, Vec<u8>)>> {
+        let manifest = self.load_manifest()?;
+        let mut out = Vec::new();
+        for blob in manifest.notes.into_iter().filter(|n| n.owner == owner) {
+            let rel = note_rel(&blob)?;
+            let bytes = match self.jail.read(&rel) {
+                Ok(bytes) => bytes,
+                // Cleanup can unlink a blob before an interrupted or failed index save.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => return Err(HarnessError::new("NOTES_NOT_FOUND", "note is not readable")),
+            };
+            if bytes.len() as u64 != blob.byte_len || sha256_bytes_hex(&bytes) != blob.sha256 {
+                return Err(HarnessError::new("NOTES_NOT_FOUND", "note is not readable"));
+            }
+            out.push((blob, bytes));
         }
         Ok(out)
     }
@@ -317,7 +358,12 @@ impl NotesCorpus {
         }
         match super::attachment_index::passage_fence(&verified, query, budget, SourceKind::NotesCorpus) {
             Ok(Some(fence)) => Ok(fence),
-            Ok(None) | Err(_) => Ok(whole_file_fence(&verified, budget, SourceKind::NotesCorpus)),
+            Ok(None) => Ok(super::attachment_index::spread_fence(
+                &verified,
+                budget,
+                SourceKind::NotesCorpus,
+            )),
+            Err(_) => Ok(whole_file_fence(&verified, budget, SourceKind::NotesCorpus)),
         }
     }
 
@@ -363,17 +409,33 @@ fn mime_for(ext: &str) -> &'static str {
     }
 }
 
-fn classify_note(data: &[u8], max_bytes: u64, pdf: bool, deadline: std::time::Instant) -> Result<String> {
+/// A PDF may be up to `max_pdf_bytes` on disk; its extracted text, like a
+/// `.md`/`.txt` note, must still fit `max_file_bytes`, so retrieval memory per
+/// note is unchanged.
+fn classify_note(data: &[u8], limits: &NotesLimits, pdf: bool, deadline: std::time::Instant) -> Result<String> {
     if data.is_empty() {
         return Err(HarnessError::new("NOTES_EMPTY", "file is empty"));
     }
+    let max_bytes = if pdf {
+        limits.max_pdf_bytes
+    } else {
+        limits.max_file_bytes
+    };
     if data.len() as u64 > max_bytes {
         return Err(
             HarnessError::new("NOTES_TOO_LARGE", "file exceeds the notes size limit").detail("limit_bytes", max_bytes),
         );
     }
     if pdf {
-        return pdf_text::extract(data, deadline).map(|text| text.to_string());
+        let text = pdf_text::extract(data, deadline)?;
+        if text.len() as u64 > limits.max_file_bytes {
+            return Err(
+                HarnessError::new("NOTES_TOO_LARGE", "extracted PDF text exceeds the notes size limit")
+                    .detail("limit_bytes", limits.max_file_bytes)
+                    .detail("extracted_text", true),
+            );
+        }
+        return Ok(text.to_string());
     }
     if data.contains(&0) {
         return Err(HarnessError::new("NOTES_NUL", "NUL bytes are not allowed in notes"));
@@ -388,8 +450,13 @@ fn note_rel(blob: &NoteBlob) -> Result<PathBuf> {
 }
 
 #[cfg(test)]
+type ExtractionHook = Box<dyn FnOnce(&NotesCorpus)>;
+
+#[cfg(test)]
 thread_local! {
     static FAIL_INDEX_BEFORE_RENAME: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Runs once in `verified_texts` after extraction, before the recheck.
+    static AFTER_EXTRACTION: std::cell::RefCell<Option<ExtractionHook>> = const { std::cell::RefCell::new(None) };
 }
 
 /// The shared jailed atomic write, labelled for notes errors. Tests can fail
@@ -439,6 +506,7 @@ mod tests {
         NotesLimits {
             max_files_per_owner: 64,
             max_file_bytes: 524_288,
+            max_pdf_bytes: 8_388_608,
             max_home_bytes: 8_388_608,
             max_files_per_request: 8,
             max_concurrent_ingests: 2,
@@ -471,6 +539,70 @@ mod tests {
             store.store("alice", &[file("x.docx", "no")]).unwrap_err().code,
             "NOTES_TYPE"
         );
+    }
+
+    #[test]
+    fn a_pdf_note_is_bounded_by_its_own_size_and_its_text_by_the_note_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = crate::common::pdf_text::fixture_pdf(&[&["short PDF_CAP_FACT body"]], false);
+        let roomy = NotesLimits {
+            max_file_bytes: data.len() as u64 - 1,
+            max_pdf_bytes: data.len() as u64,
+            ..limits()
+        };
+        let store = NotesCorpus::open(&dir.path().join("a"), roomy).unwrap();
+        let pdf = |data: &[u8]| IncomingFile {
+            filename: "paper.pdf".into(),
+            data: data.to_vec(),
+        };
+        // Over the text limit on disk, inside the PDF limit: accepted.
+        store.store("alice", &[pdf(&data)]).unwrap();
+        assert!(store
+            .fence_for_query("alice", "PDF_CAP_FACT", 4000)
+            .unwrap()
+            .contains("PDF_CAP_FACT"));
+        // The same bytes as `.md` still meet the text limit.
+        let md = IncomingFile {
+            filename: "paper.md".into(),
+            data: data.clone(),
+        };
+        assert_eq!(store.store("alice", &[md]).unwrap_err().code, "NOTES_TOO_LARGE");
+        let tight_pdf = NotesLimits {
+            max_pdf_bytes: data.len() as u64 - 1,
+            ..roomy
+        };
+        let store = NotesCorpus::open(&dir.path().join("b"), tight_pdf).unwrap();
+        assert_eq!(store.store("alice", &[pdf(&data)]).unwrap_err().code, "NOTES_TOO_LARGE");
+        let tiny_text = NotesLimits {
+            max_file_bytes: 10,
+            ..roomy
+        };
+        let store = NotesCorpus::open(&dir.path().join("c"), tiny_text).unwrap();
+        let err = store.store("alice", &[pdf(&data)]).unwrap_err();
+        assert_eq!(err.code, "NOTES_TOO_LARGE");
+        assert_eq!(err.details.get("extracted_text"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn extraction_runs_unlocked_and_leaves_out_a_note_deleted_meanwhile() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = NotesCorpus::open(dir.path(), limits()).unwrap();
+        let pdf = IncomingFile {
+            filename: "paper.pdf".into(),
+            data: crate::common::pdf_text::fixture_pdf(&[&["DELETED_PDF_FACT"]], false),
+        };
+        let notes = store.store("alice", &[pdf, file("kept.md", "KEPT_FACT")]).unwrap();
+        let doomed = notes[0].id.clone();
+        AFTER_EXTRACTION.with(|c| {
+            *c.borrow_mut() = Some(Box::new(move |store: &NotesCorpus| {
+                assert!(store.lock.try_lock().is_ok(), "extraction must not hold the notes lock");
+                store.unlink_id("alice", &doomed).unwrap();
+            }))
+        });
+        let texts = store.verified_texts("alice").unwrap();
+        assert!(AFTER_EXTRACTION.with(|c| c.borrow().is_none()), "hook ran");
+        assert_eq!(texts.len(), 1);
+        assert!(texts[0].text.contains("KEPT_FACT"));
     }
 
     #[test]
@@ -673,6 +805,7 @@ mod tests {
         let tight = NotesLimits {
             max_files_per_owner: 1,
             max_file_bytes: 64,
+            max_pdf_bytes: 64,
             max_home_bytes: 8_388_608,
             max_files_per_request: 8,
             max_concurrent_ingests: 2,
@@ -690,13 +823,23 @@ mod tests {
 
     #[test]
     fn request_byte_limit_covers_boot_legal_pairs() {
+        // Eight 8 MiB PDFs can never pass the 8 MiB home budget, so the body cap stops there.
         assert_eq!(
             limits().max_request_bytes() as u64,
+            8_388_608 + NOTES_MULTIPART_OVERHEAD_BYTES
+        );
+        let text_only = NotesLimits {
+            max_pdf_bytes: 1024,
+            ..limits()
+        };
+        assert_eq!(
+            text_only.max_request_bytes() as u64,
             8 * 524_288 + NOTES_MULTIPART_OVERHEAD_BYTES
         );
         let max_legal = NotesLimits {
             max_files_per_owner: 64,
             max_file_bytes: 1_048_576,
+            max_pdf_bytes: 15 * 1_048_576,
             max_home_bytes: 8_388_608,
             max_files_per_request: 16,
             max_concurrent_ingests: 2,

@@ -6,6 +6,10 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
+/// Pass-through until a worker child arms it (see `common::alloc_cap`).
+#[global_allocator]
+static ALLOCATOR: cgagentharness::common::alloc_cap::CappedAlloc = cgagentharness::common::alloc_cap::CappedAlloc;
+
 #[derive(Parser)]
 #[command(
     name = "cgagentharness",

@@ -12,7 +12,7 @@ use crate::llm::backend::ResolvedLocalBackend;
 use super::state::AppState;
 use super::web_search::Limits;
 
-pub const RELOADABLE: [&str; 28] = [
+pub const RELOADABLE: [&str; 29] = [
     "api.rate_limit.max_requests",
     "api.rate_limit.window_seconds",
     "api.harness_loop_rate_limit.max_requests",
@@ -23,6 +23,7 @@ pub const RELOADABLE: [&str; 28] = [
     "loop.max_failures",
     "loop.cooldown_ms",
     "web.response_bytes",
+    "web.pdf_response_bytes",
     "web.request_seconds",
     "web.pages",
     "web.run_bytes",

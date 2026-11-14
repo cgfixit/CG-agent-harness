@@ -371,7 +371,8 @@ send `engine: "google"` and optional `count` (1–10, default 5) for listings.
 ### Fetch, discovery and research
 
 Fetch accepts exact URLs only; wildcard patterns belong in `allow`.
-An `application/pdf` response within `web.response_bytes` is read locally as
+An `application/pdf` response within `web.pdf_response_bytes` (8 MiB; a budgeted
+run's remaining `web.run_bytes` if less) is read locally as
 [page text](CONSOLE.md#pdf-text); its links are never collected.
 A `fetch` batch validates all targets before any request and shares page, byte,
 time and per-site limits. Partial reads report coverage and failures.

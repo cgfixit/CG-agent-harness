@@ -26,6 +26,7 @@ pub async fn list_notes(
     response["limits"] = json!({
         "max_files_per_request": limits.max_files_per_request,
         "max_file_bytes": limits.max_file_bytes,
+        "max_pdf_bytes": limits.max_pdf_bytes,
         "max_files_per_owner": limits.max_files_per_owner,
     });
     Ok(Json(response))

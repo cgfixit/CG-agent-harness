@@ -536,7 +536,7 @@ impl WebTool {
                     self.get_or_fallback(url, group, cached.as_ref(), audit, Some(left))
                         .await
                 }
-                None => self.get(url, group, cached.as_ref()).await,
+                None => self.get(url, group, cached.as_ref(), self.pdf_cap(Some(left))).await,
             }
         };
         match tokio::time::timeout_at(deadline, read).await {
@@ -557,8 +557,9 @@ impl WebTool {
                         .get("charged_bytes")
                         .and_then(Value::as_u64)
                         .map_or(one, |charged| charged as usize),
-                    _ if fallback.is_some() && self.firecrawl.enabled => one * 2,
-                    _ => one,
+                    // A run deadline can cut off a PDF read past `response_bytes`: charge its cap.
+                    _ if fallback.is_some() && self.firecrawl.enabled => self.pdf_cap(Some(left)).max(one) + one,
+                    _ => self.pdf_cap(Some(left)).max(one),
                 };
                 let code = match failed {
                     Ok(Err(e)) => e.code,

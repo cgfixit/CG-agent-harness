@@ -4,8 +4,8 @@
 //! [`extract`] is the only entry point callers use. It parses in the hidden
 //! `pdf-text-worker` child of this executable, under a hard kill deadline,
 //! because a parser call cannot be cancelled once it runs on a thread. The
-//! child limits its own address space (Linux), CPU time and file writes before
-//! it reads a byte. Results are cached in memory by content digest; a cache hit
+//! child limits its own heap (every OS, `common::alloc_cap`), address space
+//! (Linux), CPU time and file writes before it reads a byte. Results are cached in memory by content digest; a cache hit
 //! never replaces the caller's owner and digest checks, which run first.
 //!
 //! Only page content streams are read. Images, form XObjects, annotations,
@@ -44,6 +44,9 @@ const MAX_OBJECTS: usize = 400_000;
 /// Linux address-space ceiling the worker sets on itself.
 #[cfg(target_os = "linux")]
 const WORKER_ADDRESS_SPACE_BYTES: u64 = 1024 * 1024 * 1024;
+/// Heap ceiling armed in the worker on every OS (`common::alloc_cap`); below
+/// the Linux address-space cap so it is the bound that normally trips.
+const WORKER_HEAP_BYTES: usize = 768 * 1024 * 1024;
 /// Concurrent workers across uploads, previews, chat turns, loops and web reads.
 const MAX_WORKERS: usize = 2;
 /// Cached extractions: entries and total text bytes held in memory.
@@ -178,6 +181,8 @@ enum WorkerReply {
 /// stdout. Exit 0 with text, 2 refused, 3 for an unusable environment.
 pub fn worker_main() -> u8 {
     use std::io::{Read, Write};
+    // First, so the parse below is counted. Exceeding it aborts this child.
+    crate::common::alloc_cap::arm(WORKER_HEAP_BYTES);
     if limit_self().is_err() {
         return 3;
     }
@@ -436,9 +441,13 @@ fn page_text(
     };
     let mut encodings = BTreeMap::new();
     for (name, font) in fonts {
+        if let Some(codec) = builtin_symbolic(font) {
+            encodings.insert(name, codec);
+            continue;
+        }
         match font.get_font_encoding_with_limit(doc, MAX_PAGE_CONTENT_BYTES) {
             Ok(encoding) => {
-                encodings.insert(name, encoding);
+                encodings.insert(name, FontCodec::Mapped(encoding));
             }
             Err(e) if from_lopdf(&e) == PdfFailure::Limit => return Err(PdfFailure::Limit),
             Err(_) => {}
@@ -457,10 +466,93 @@ fn page_text(
     Ok(walker.out)
 }
 
+/// How a font's string bytes become text.
+enum FontCodec<'a> {
+    /// The font's `/Encoding` or `/ToUnicode`, as lopdf reads it.
+    Mapped(lopdf::Encoding<'a>),
+    /// Built-in encoding of the standard Symbol font (Greek, math).
+    Symbol,
+    /// Built-in encoding of ZapfDingbats (check marks, bullets, boxes).
+    Dingbats,
+}
+
+/// Symbol and ZapfDingbats carry their own built-in encodings. With no
+/// `/Encoding` or `/ToUnicode`, lopdf would read them as StandardEncoding:
+/// Symbol's "a" (alpha) as a Latin "a", and a Dingbats check mark as "4".
+fn builtin_symbolic<'a>(font: &lopdf::Dictionary) -> Option<FontCodec<'a>> {
+    if font.has(b"Encoding") || font.has(b"ToUnicode") {
+        return None;
+    }
+    let base = font.get(b"BaseFont").and_then(lopdf::Object::as_name).ok()?;
+    // A subset font is named `ABCDEF+Name`.
+    let base = base.split(|b| *b == b'+').next_back().unwrap_or(base);
+    if base.starts_with(b"Symbol") {
+        Some(FontCodec::Symbol)
+    } else if base.starts_with(b"ZapfDingbats") || base.starts_with(b"Dingbats") {
+        Some(FontCodec::Dingbats)
+    } else {
+        None
+    }
+}
+
+/// Adobe Symbol built-in encoding. Unlisted printable ASCII is unchanged;
+/// bracket and integral extension pieces have no text and are dropped.
+fn symbol_char(byte: u8) -> Option<char> {
+    const UPPER: &str = "ΑΒΧΔΕΦΓΗΙϑΚΛΜΝΟΠΘΡΣΤΥςΩΞΨΖ";
+    const LOWER: &str = "αβχδεφγηιϕκλμνοπθρστυϖωξψζ";
+    // 0xA1..=0xE5: ϒ′≤⁄∞ƒ♣♦♥♠↔←↑→↓°±″≥×∝∂•÷≠≡≈…⏐⎯↵ℵℑℜ℘⊗⊕∅∩∪⊃⊇⊄⊂⊆∈∉∠∇®©™∏√⋅¬∧∨⇔⇐⇑⇒⇓◊〈®©™∑
+    const HIGH: &str = "ϒ′≤⁄∞ƒ♣♦♥♠↔←↑→↓°±″≥×∝∂•÷≠≡≈…⏐⎯↵ℵℑℜ℘⊗⊕∅∩∪⊃⊇⊄⊂⊆∈∉∠∇®©™∏√⋅¬∧∨⇔⇐⇑⇒⇓◊〈®©™∑";
+    match byte {
+        b'A'..=b'Z' => UPPER.chars().nth(usize::from(byte - b'A')),
+        b'a'..=b'z' => LOWER.chars().nth(usize::from(byte - b'a')),
+        b'"' => Some('∀'),
+        b'$' => Some('∃'),
+        b'\'' => Some('∋'),
+        b'*' => Some('∗'),
+        b'-' => Some('−'),
+        b'@' => Some('≅'),
+        b'\\' => Some('∴'),
+        b'^' => Some('⊥'),
+        b'`' => Some('‾'),
+        b'~' => Some('∼'),
+        0x20..=0x7E => Some(char::from(byte)),
+        0xA0 => Some('€'),
+        0xA1..=0xE5 => HIGH.chars().nth(usize::from(byte - 0xA1)),
+        0xF1 => Some('〉'),
+        0xF2 => Some('∫'),
+        _ => None,
+    }
+}
+
+/// ZapfDingbats: the marks forms and lists use; any other glyph is a bullet,
+/// never the Latin letter or digit its code happens to share.
+fn dingbat_char(byte: u8) -> Option<char> {
+    match byte {
+        b' ' => Some(' '),
+        b'3' => Some('✓'),
+        b'4' => Some('✔'),
+        b'5' => Some('✕'),
+        b'6' => Some('✖'),
+        b'7' => Some('✗'),
+        b'8' => Some('✘'),
+        b'H' => Some('★'),
+        b'l' => Some('●'),
+        b'm' => Some('❍'),
+        b'n' => Some('■'),
+        b'o' => Some('❏'),
+        b'p' => Some('❐'),
+        b'q' => Some('❑'),
+        b'r' => Some('❒'),
+        b'u' => Some('◆'),
+        0x21..=0xFE => Some('•'),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 struct TextWalker<'a> {
     out: String,
-    encoding: Option<&'a lopdf::Encoding<'a>>,
+    encoding: Option<&'a FontCodec<'a>>,
     line_y: Option<f32>,
     /// `Tf` size and the text matrix's vertical scale: a line break is a
     /// vertical move of over half an em, so superscripts stay on their line.
@@ -468,7 +560,12 @@ struct TextWalker<'a> {
     scale: Option<f32>,
     /// Font and size saved by `q`, restored by `Q`; nesting past
     /// [`MAX_STATE_DEPTH`] is not tracked.
-    saved: Vec<(Option<&'a lopdf::Encoding<'a>>, f32)>,
+    saved: Vec<(Option<&'a FontCodec<'a>>, f32)>,
+    /// A `T*`-style move to the next line, written only once the next text
+    /// shows where it lands: a `Tm` back onto the baseline of the last shown
+    /// text (the next cell of a table row) is a space, anything else a newline.
+    pending_break: bool,
+    shown_y: Option<f32>,
 }
 
 /// The PDF graphics-state nesting limit implementations are expected to support.
@@ -504,17 +601,22 @@ impl<'a> TextWalker<'a> {
         let (Some(encoding), Some(lopdf::Object::String(bytes, _))) = (self.encoding, operand) else {
             return;
         };
-        if let Ok(text) = lopdf::Document::decode_text(encoding, bytes) {
-            self.out.push_str(&text);
+        if std::mem::take(&mut self.pending_break) {
+            self.newline();
+        }
+        self.shown_y = self.line_y;
+        match encoding {
+            FontCodec::Mapped(encoding) => {
+                if let Ok(text) = lopdf::Document::decode_text(encoding, bytes) {
+                    self.out.push_str(&text);
+                }
+            }
+            FontCodec::Symbol => self.out.extend(bytes.iter().filter_map(|b| symbol_char(*b))),
+            FontCodec::Dingbats => self.out.extend(bytes.iter().filter_map(|b| dingbat_char(*b))),
         }
     }
 
-    fn apply(
-        &mut self,
-        operator: &str,
-        operands: &[lopdf::Object],
-        encodings: &'a BTreeMap<Vec<u8>, lopdf::Encoding<'a>>,
-    ) {
+    fn apply(&mut self, operator: &str, operands: &[lopdf::Object], encodings: &'a BTreeMap<Vec<u8>, FontCodec<'a>>) {
         match operator {
             "Tf" => {
                 self.encoding = operands
@@ -525,11 +627,11 @@ impl<'a> TextWalker<'a> {
             }
             "Tj" => self.show(operands.first()),
             "'" => {
-                self.newline();
+                self.pending_break = true;
                 self.show(operands.first());
             }
             "\"" => {
-                self.newline();
+                self.pending_break = true;
                 self.show(operands.get(2));
             }
             "TJ" => {
@@ -548,6 +650,9 @@ impl<'a> TextWalker<'a> {
                 }
             }
             "Td" | "TD" => {
+                if std::mem::take(&mut self.pending_break) {
+                    self.newline();
+                }
                 let tx = operands.first().and_then(number).unwrap_or(0.0);
                 let dy = operands.get(1).and_then(number).unwrap_or(0.0) * self.scale.unwrap_or(1.0);
                 self.line_y = self.line_y.map(|y| y + dy);
@@ -560,6 +665,14 @@ impl<'a> TextWalker<'a> {
             "Tm" => {
                 let y = operands.get(5).and_then(number);
                 self.scale = operands.get(3).and_then(number).map(f32::abs).filter(|d| *d > 0.0);
+                if std::mem::take(&mut self.pending_break) {
+                    match (self.shown_y, y) {
+                        (Some(shown), Some(y)) if (shown - y).abs() <= self.half_em() => self.space(),
+                        _ => self.newline(),
+                    }
+                    self.line_y = y;
+                    return;
+                }
                 match (self.line_y, y) {
                     (Some(prev), Some(y)) if (prev - y).abs() > self.half_em() => self.newline(),
                     (Some(_), Some(_)) => self.space(),
@@ -567,7 +680,7 @@ impl<'a> TextWalker<'a> {
                 }
                 self.line_y = y;
             }
-            "T*" => self.newline(),
+            "T*" => self.pending_break = true,
             "q" if self.saved.len() < MAX_STATE_DEPTH => self.saved.push((self.encoding, self.font_size)),
             "Q" => {
                 if let Some((encoding, size)) = self.saved.pop() {
@@ -636,17 +749,20 @@ fn normalize_page(raw: &str) -> Vec<String> {
 /// Key for a running header or footer: case, spacing and digit values
 /// ignored, so "Page 3 of 9" and "Page 4 of 9" share a key. A shared key alone
 /// is not enough to remove a line; see [`page_numbered`].
+/// A run of digits is one `#`, so page 9 and page 10 share a key; whether
+/// the numbers themselves make the line furniture is `page_numbered`'s call.
 fn furniture_key(line: &str) -> String {
-    line.chars()
-        .filter(|c| !c.is_whitespace())
-        .map(|c| {
-            if c.is_ascii_digit() {
-                '#'
-            } else {
-                c.to_ascii_lowercase()
+    let mut key = String::new();
+    for c in line.chars().filter(|c| !c.is_whitespace()) {
+        if c.is_ascii_digit() {
+            if !key.ends_with('#') {
+                key.push('#');
             }
-        })
-        .collect()
+        } else {
+            key.push(c.to_ascii_lowercase());
+        }
+    }
+    key
 }
 
 /// An edge line's page index and its numbers.
@@ -680,7 +796,28 @@ fn page_numbered(lines: &[EdgeLine]) -> bool {
 
 /// Removes lines that repeat at the top or bottom of most pages (running
 /// headers, footers, page numbers): they cost context and skew ranking.
+/// A second pass finds a page number drawn just inside a running header or
+/// footer once that is gone. It runs only if the first removed something and
+/// removes only bare page numbers, never a line of prose that now sits at an edge.
 fn strip_furniture(pages: &mut [Vec<String>]) {
+    if strip_furniture_once(pages, false) {
+        strip_furniture_once(pages, true);
+    }
+}
+
+/// `3`, `- 3 -`, `Page 3`, `p. 3`, `3 of 40`, `3 | 40`.
+fn bare_page_number(line: &str) -> bool {
+    let lower = line.trim().to_lowercase();
+    let rest = lower
+        .split_whitespace()
+        .filter(|w| !matches!(*w, "page" | "pg" | "pg." | "p." | "of"))
+        .collect::<String>();
+    lower.len() <= 24
+        && rest.chars().any(|c| c.is_ascii_digit())
+        && rest.chars().all(|c| c.is_ascii_digit() || "-–—|/.()[]".contains(c))
+}
+
+fn strip_furniture_once(pages: &mut [Vec<String>], only_bare: bool) -> bool {
     let edges = |page: &Vec<String>| -> Vec<usize> {
         let first = page.iter().position(|l| !l.is_empty());
         let last = page.iter().rposition(|l| !l.is_empty());
@@ -690,7 +827,7 @@ fn strip_furniture(pages: &mut [Vec<String>]) {
     };
     let with_text = pages.iter().filter(|p| !p.is_empty()).count();
     if with_text < 4 {
-        return;
+        return false;
     }
     let mut groups: HashMap<String, Vec<EdgeLine>> = HashMap::new();
     for (index, page) in pages.iter().enumerate() {
@@ -709,9 +846,12 @@ fn strip_furniture(pages: &mut [Vec<String>]) {
         })
         .map(|(key, _)| key)
         .collect();
+    if repeated.is_empty() {
+        return false;
+    }
     for page in pages.iter_mut() {
         for at in edges(page).into_iter().rev() {
-            if repeated.contains(&furniture_key(&page[at])) {
+            if repeated.contains(&furniture_key(&page[at])) && (!only_bare || bare_page_number(&page[at])) {
                 page.remove(at);
             }
         }
@@ -722,6 +862,7 @@ fn strip_furniture(pages: &mut [Vec<String>]) {
             page.pop();
         }
     }
+    true
 }
 
 fn page_list(pages: &[usize]) -> String {
@@ -937,7 +1078,10 @@ mod tests {
     #[test]
     fn graphics_state_restore_returns_to_the_saved_font() {
         let mut fonts = BTreeMap::new();
-        fonts.insert(b"F1".to_vec(), lopdf::Encoding::SimpleEncoding(b"WinAnsiEncoding"));
+        fonts.insert(
+            b"F1".to_vec(),
+            FontCodec::Mapped(lopdf::Encoding::SimpleEncoding(b"WinAnsiEncoding")),
+        );
         let mut w = TextWalker::default();
         w.apply("Tf", &["F1".into(), 10.into()], &fonts);
         w.apply("q", &[], &fonts);
@@ -948,6 +1092,50 @@ mod tests {
         assert_eq!(w.font_size, 10.0);
         w.apply("Q", &[], &fonts);
         assert!(w.encoding.is_some(), "an unbalanced Q keeps the current font");
+    }
+
+    #[test]
+    fn symbol_and_dingbats_fonts_use_their_built_in_encodings() {
+        let font = |base: &str, extra: Option<(&str, lopdf::Object)>| {
+            let mut d = lopdf::dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => base };
+            if let Some((k, v)) = extra {
+                d.set(k, v);
+            }
+            d
+        };
+        assert!(matches!(
+            builtin_symbolic(&font("Symbol", None)),
+            Some(FontCodec::Symbol)
+        ));
+        assert!(matches!(
+            builtin_symbolic(&font("ABCDEF+SymbolMT", None)),
+            Some(FontCodec::Symbol)
+        ));
+        assert!(matches!(
+            builtin_symbolic(&font("ZapfDingbats", None)),
+            Some(FontCodec::Dingbats)
+        ));
+        assert!(builtin_symbolic(&font("Helvetica", None)).is_none());
+        // An explicit encoding or Unicode map is the font's own; keep lopdf's reading.
+        let mapped = font("Symbol", Some(("Encoding", "WinAnsiEncoding".into())));
+        assert!(builtin_symbolic(&mapped).is_none());
+
+        let symbol = |bytes: &[u8]| bytes.iter().filter_map(|b| symbol_char(*b)).collect::<String>();
+        assert_eq!(symbol(b"abg DSW p=3.14"), "αβγ ΔΣΩ π=3.14");
+        assert_eq!(symbol(&[0xA3, 0xB1, 0xA5, 0xE5, 0xF2, 0xD6, 0xB9, 0xCE]), "≤±∞∑∫√≠∈");
+        let dingbats = |bytes: &[u8]| bytes.iter().filter_map(|b| dingbat_char(*b)).collect::<String>();
+        assert_eq!(
+            dingbats(b"4 Yes 8 No n"),
+            "✔ ••• ✘ •❏ ■",
+            "never the digit 4 or a letter"
+        );
+
+        let mut fonts = BTreeMap::new();
+        fonts.insert(b"S".to_vec(), FontCodec::Symbol);
+        let mut w = TextWalker::default();
+        w.apply("Tf", &["S".into(), 12.into()], &fonts);
+        w.apply("Tj", &[lopdf::Object::string_literal("a+b")], &fonts);
+        assert_eq!(w.out, "α+β");
     }
 
     #[test]
@@ -1013,6 +1201,70 @@ mod tests {
         w.apply("Td", &[0.into(), Object::Real(-1.2)], &enc);
         w.out.push('b');
         assert_eq!(w.out, "a\nb");
+    }
+
+    #[test]
+    fn a_page_number_inside_a_running_header_is_furniture_too() {
+        let words = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"];
+        let mut pages: Vec<Vec<String>> = (1..=6)
+            .map(|n| {
+                let w = words[n - 1];
+                vec![
+                    "Journal of Results, Vol. 3".into(),
+                    n.to_string(),
+                    format!("{w} opens"),
+                    format!("{w} ends"),
+                ]
+            })
+            .collect();
+        strip_furniture(&mut pages);
+        assert!(
+            pages
+                .iter()
+                .zip(words)
+                .all(|(p, w)| p == &vec![format!("{w} opens"), format!("{w} ends")]),
+            "{pages:?}"
+        );
+        for bare in ["3", "- 3 -", "Page 3", "p. 3", "3 of 40", "3 | 40"] {
+            assert!(bare_page_number(bare), "{bare}");
+        }
+        for prose in ["Chapter 3", "Table 3 shows", "3.5 GHz", ""] {
+            assert!(!bare_page_number(prose), "{prose}");
+        }
+        // Page 9 and page 10 are the same furniture.
+        let mut long: Vec<Vec<String>> = (1..=15)
+            .map(|n| vec![format!("{} of the body", words[n % 6]), n.to_string()])
+            .collect();
+        strip_furniture(&mut long);
+        assert!(long.iter().all(|p| p.len() == 1), "{long:?}");
+    }
+
+    #[test]
+    fn table_cells_on_one_baseline_stay_on_one_line() {
+        let mut fonts = BTreeMap::new();
+        fonts.insert(
+            b"F1".to_vec(),
+            FontCodec::Mapped(lopdf::Encoding::SimpleEncoding(b"WinAnsiEncoding")),
+        );
+        let mut w = TextWalker::default();
+        let at =
+            |x: i64, y: i64| -> Vec<lopdf::Object> { vec![1.into(), 0.into(), 0.into(), 1.into(), x.into(), y.into()] };
+        let tj = |t: &str| vec![lopdf::Object::string_literal(t)];
+        w.apply("Tf", &["F1".into(), 10.into()], &fonts);
+        // How report generators draw a table: one BT/Tm/Tj/T*/ET per cell.
+        for (y, row) in [(700, ["Item", "Qty", "$3.50"]), (686, ["Widget", "2", "$7.00"])] {
+            for (i, cell) in row.iter().enumerate() {
+                w.apply("Tm", &at(72 + 80 * i as i64, y), &fonts);
+                w.apply("Tj", &tj(cell), &fonts);
+                w.apply("T*", &[], &fonts);
+            }
+        }
+        // A paragraph's T* lines still break.
+        w.apply("Tm", &at(72, 600), &fonts);
+        w.apply("Tj", &tj("first line"), &fonts);
+        w.apply("T*", &[], &fonts);
+        w.apply("Tj", &tj("second line"), &fonts);
+        assert_eq!(w.out, "Item Qty $3.50\nWidget 2 $7.00\nfirst line\nsecond line");
     }
 
     #[test]

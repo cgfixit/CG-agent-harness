@@ -13,12 +13,37 @@ pub(super) struct PreparedQuery {
     lowercase: String,
 }
 
+/// Words that say nothing about the subject of a message. They occur in
+/// almost every chunk, so matching on them picked excerpts for "thanks" or
+/// "what is the capital of France?". Content words stay, including verbs the
+/// manual documents as commands (`help`, `clear`, `use`).
+pub(super) const STOPWORDS: &[&str] = &[
+    "a", "about", "after", "all", "also", "am", "an", "and", "any", "are", "as", "at", "be", "because", "been", "but",
+    "by", "can", "could", "did", "do", "does", "for", "from", "had", "has", "have", "he", "hello", "her", "here",
+    "hey", "hi", "him", "his", "how", "i", "if", "in", "into", "is", "it", "its", "just", "me", "my", "no", "not",
+    "of", "ok", "okay", "on", "or", "our", "please", "she", "so", "some", "than", "thank", "thanks", "that", "the",
+    "their", "them", "then", "there", "these", "they", "this", "to", "up", "us", "was", "we", "were", "what", "when",
+    "where", "which", "who", "why", "will", "with", "would", "yes", "you", "your",
+];
+
+pub(super) fn is_stopword(term: &str) -> bool {
+    STOPWORDS.contains(&term.to_lowercase().as_str())
+}
+
 /// Tantivy query text: the whole query as a boosted phrase plus each
 /// alphanumeric term quoted. `None` when the query has no terms.
 pub(super) fn tantivy_expression(query: &str) -> Option<String> {
+    expression_from(query, false)
+}
+
+/// `content_only` drops [`STOPWORDS`] from the terms: in a document every
+/// chunk shares "of" and "the", so a question whose only overlap is a
+/// stopword would otherwise rank arbitrary passages as hits.
+fn expression_from(query: &str, content_only: bool) -> Option<String> {
     let terms: Vec<_> = query
         .split(|c: char| !c.is_alphanumeric())
         .filter(|s| !s.is_empty())
+        .filter(|s| !(content_only && is_stopword(s)))
         .take(MAX_TERMS)
         .collect();
     if terms.is_empty() {
@@ -33,7 +58,18 @@ pub(super) fn tantivy_expression(query: &str) -> Option<String> {
 
 impl PreparedQuery {
     pub fn new(query: &str) -> std::result::Result<Option<Self>, regex::Error> {
-        let Some(expression) = tantivy_expression(query) else {
+        Self::build(query, false)
+    }
+
+    /// As [`PreparedQuery::new`], without stopword terms; `None` when only
+    /// stopwords remain. Attachment and notes retrieval use it so such a
+    /// question is a miss, not a match on "of".
+    pub fn content(query: &str) -> std::result::Result<Option<Self>, regex::Error> {
+        Self::build(query, true)
+    }
+
+    fn build(query: &str, content_only: bool) -> std::result::Result<Option<Self>, regex::Error> {
+        let Some(expression) = expression_from(query, content_only) else {
             return Ok(None);
         };
         // Only the identifier-shaped words (`widget_open`, `Vec::new`) must match
