@@ -266,6 +266,7 @@ impl WebTool {
             .mutation
             .lock()
             .map_err(|_| error("WEB_CACHE_INVALID", "cache lock failed"))?;
+        self.check_enabled()?;
         page.validate(&self.policy()?, group)?;
         let path = self.cache_path(&page.url);
         let payload = serde_json::to_vec(page)?;
@@ -305,6 +306,7 @@ impl WebTool {
     pub(super) async fn discover_from(&self, group: Option<&str>, starts: &[String]) -> Result<Coverage> {
         let start = Instant::now();
         let deadline = start + Duration::from_secs(self.limits.run_seconds);
+        self.check_enabled()?;
         let policy = self.policy()?;
         let mut queue = VecDeque::new();
         let mut coverage = Coverage::default();
@@ -365,6 +367,7 @@ impl WebTool {
         let mut site_last: BTreeMap<String, Instant> = BTreeMap::new();
         let mut robots: BTreeMap<String, Option<String>> = BTreeMap::new();
         while let Some((raw, explicit)) = queue.pop_front() {
+            self.check_enabled()?;
             let url = match self.policy()?.authorize(&raw, group) {
                 Ok(u) => u,
                 Err(e) => {
@@ -407,6 +410,7 @@ impl WebTool {
                         .push(json!({"url":robot_url,"code":"WEB_ROBOTS_NOT_PERMITTED"}));
                     None
                 };
+                self.check_enabled()?;
                 robots.insert(origin.clone(), body);
             }
             if url.path() == "/robots.txt" && url.query().is_none() {
@@ -468,11 +472,13 @@ impl WebTool {
                     }
                 }
             }
+            self.check_enabled()?;
             if coverage.budget_exhausted.is_some() {
                 coverage.unvisited.push(raw);
                 break;
             }
         }
+        self.check_enabled()?;
         coverage.unvisited.extend(queue.into_iter().map(|(u, _)| u).take(256));
         coverage.elapsed_ms = start.elapsed().as_millis();
         Ok(coverage)
@@ -600,6 +606,7 @@ impl WebTool {
         let mut last = BTreeMap::new();
         let mut pages = Vec::new();
         for (index, target) in targets.iter().enumerate() {
+            self.check_enabled()?;
             if let Some(page) = self
                 .crawl_get(
                     target,
@@ -617,11 +624,13 @@ impl WebTool {
                 coverage.searched.push(page.url.clone());
                 pages.push(page);
             }
+            self.check_enabled()?;
             if coverage.budget_exhausted.is_some() {
                 coverage.unvisited.extend(targets[index..].iter().cloned());
                 break;
             }
         }
+        self.check_enabled()?;
         let policy = self.policy()?;
         for page in &pages {
             page.validate(&policy, group)?;
@@ -712,6 +721,7 @@ impl WebTool {
         })
         .await
         .map_err(|_| error("WEB_INDEX_FAILED", "passage search failed"))??;
+        self.check_enabled()?;
         let current = self.policy()?;
         let found: Vec<_> = found
             .into_iter()

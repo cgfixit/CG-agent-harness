@@ -461,6 +461,8 @@ pub(super) async fn run_web_cpu<T: Send + 'static>(
 #[derive(Debug, Clone)]
 pub struct WebTool {
     pub(super) tools_dir: PathBuf,
+    /// Server snapshots share live settings; standalone callers supply their own enablement.
+    pub(super) settings: Option<Arc<Mutex<crate::common::home::HarnessSettings>>>,
     /// Test hook: pin a fixture host to an address, skipping the lookup and
     /// `validate_addresses`. Compiled only with `test-support`.
     #[cfg(any(test, feature = "test-support"))]
@@ -523,6 +525,7 @@ impl WebTool {
         let limits = Limits::load(cfg)?;
         Ok(Self {
             tools_dir: tools_dir.into(),
+            settings: None,
             #[cfg(any(test, feature = "test-support"))]
             test_resolve: None,
             #[cfg(any(test, feature = "test-support"))]
@@ -851,7 +854,20 @@ impl WebTool {
         self.status(enabled, owner)
     }
 
+    pub(super) fn check_enabled(&self) -> Result<()> {
+        if let Some(settings) = &self.settings {
+            let settings = settings
+                .lock()
+                .map_err(|_| error("WEB_DISABLED", "settings unavailable"))?;
+            if !settings.web_enabled {
+                return Err(error("WEB_DISABLED", "web access is disabled"));
+            }
+        }
+        Ok(())
+    }
+
     pub fn require_enabled(&self, enabled: bool) -> Result<Policy> {
+        self.check_enabled()?;
         if !enabled {
             return Err(error("WEB_DISABLED", "web access is disabled"));
         }
@@ -1042,6 +1058,7 @@ impl WebTool {
     ) -> Result<(Page, String)> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
         tokio::time::timeout_at(deadline, async {
+            self.check_enabled()?;
             // Keep the permit until the worker actually exits, including its
             // bounded cleanup after cancellation or the original request deadline.
             let permit = self
@@ -1050,6 +1067,7 @@ impl WebTool {
                 .acquire_owned()
                 .await
                 .map_err(|_| error("WEB_CANCELLED", "fetch cancelled"))?;
+            self.check_enabled()?;
             let policy = self.policy()?;
             let target = policy.authorize_read(raw, group)?;
             let client = self.pinned_client(&target).await?;
@@ -1077,6 +1095,12 @@ impl WebTool {
                 if let Some(ready) = super::web_google::public_pace(last, pace_ms, search_deadline)? {
                     tokio::time::sleep_until(ready).await;
                 }
+                self.check_enabled()?;
+                let current = self.policy()?;
+                current.authorize_read(target.as_str(), group)?;
+                if current.revision != policy.revision {
+                    return Err(error("WEB_POLICY_CHANGED", "policy changed before request"));
+                }
                 let sent = tokio::time::Instant::now();
                 *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner()) = Some(sent);
                 // The broker decision is written before this wait; this line's timestamp is the send.
@@ -1084,6 +1108,7 @@ impl WebTool {
                     "waited_ms":(sent - waiting).as_millis() as u64,
                     "gap_ms":last.map(|at| (sent - at).as_millis() as u64)}));
             }
+            self.check_enabled()?;
             let mut response = request
                 .send()
                 .await
@@ -1196,6 +1221,7 @@ impl WebTool {
                     via: None,
                 }
             };
+            self.check_enabled()?;
             let current = self.policy()?;
             current.authorize_read(&page.url, group)?;
             if current.revision != policy.revision {
@@ -1217,6 +1243,7 @@ impl WebTool {
             .mutation
             .lock()
             .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
+        self.check_enabled()?;
         page.validate(&self.policy()?, group)?;
         crate::common::atomic::write_json_atomic_mode(&self.last_path(owner), &serde_json::to_value(page)?, 0o600)
     }
@@ -1236,6 +1263,7 @@ impl WebTool {
         let page = self.get_or_fallback(raw, None, None, audit, None).await?;
         self.cache_page(&page, None)?;
         self.store_last(&page, None, owner)?;
+        self.check_enabled()?;
         page.validate(&self.policy()?, None)?;
         Ok(page)
     }

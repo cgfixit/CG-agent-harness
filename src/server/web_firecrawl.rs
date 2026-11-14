@@ -169,6 +169,7 @@ impl WebTool {
         budget: Option<usize>,
     ) -> Result<Page> {
         let pinned = self.get_raw(raw, group, cached).await;
+        self.check_enabled()?;
         if !self.firecrawl.enabled || !escalates(&pinned) {
             return pinned.map(|(page, _)| page);
         }
@@ -191,6 +192,7 @@ impl WebTool {
             self.firecrawl_read(raw, group, audit, &fallback_charge).await
         };
         let fallback_charge = fallback_charge.load(Ordering::SeqCst);
+        self.check_enabled()?;
         match read {
             Ok(mut page) => {
                 audit.log(json!({"event":"web_fetch_fallback","provider":PROVIDER,"from":from,"ok":true}));
@@ -262,7 +264,9 @@ impl WebTool {
                 .acquire()
                 .await
                 .map_err(|_| error("WEB_CANCELLED", "fetch cancelled"))?;
+            self.check_enabled()?;
             let client = self.pinned_client(&endpoint).await?;
+            self.check_enabled()?;
             // Permission may change while this waits for a permit or DNS: recheck it
             // immediately before the URL leaves the machine, as the pinned fetch does.
             let current = self.policy()?;
@@ -334,6 +338,7 @@ impl WebTool {
                 return Err(failure);
             }
         };
+        self.check_enabled()?;
         let current = self.policy()?;
         current.authorize_read(target.as_str(), group)?;
         if current.revision != policy.revision {
@@ -955,6 +960,65 @@ mod tests {
         );
         assert!(failure.details.get("charged_bytes").is_none(), "nothing was sent");
         assert_eq!(rig.hits(), 0, "a revoked URL never reaches Firecrawl");
+    }
+
+    #[tokio::test]
+    async fn web_disable_stops_queued_direct_and_fallback_reads() {
+        for fallback in [false, true] {
+            let mut rig = fixture::rig(
+                "web: {concurrency: 1, firecrawl: {enabled: true, max_per_hour: 4}}",
+                "good",
+            )
+            .await;
+            let settings = std::sync::Arc::new(std::sync::Mutex::new(crate::common::home::HarnessSettings::default()));
+            rig.web.settings = Some(settings.clone());
+            let web = rig.web.clone();
+            let cfg = AppConfig::from_str("{}", std::path::Path::new("config.yaml")).unwrap();
+            let audit = Audit::new(rig.dir.path().join("audit-disable.jsonl"), &cfg);
+            let held = if fallback {
+                None
+            } else {
+                Some(rig.web.permits.clone().acquire_owned().await.unwrap())
+            };
+            let read = web.fetch("http://site.fixture/gate", true, &audit, "local"); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+            tokio::pin!(read);
+            // Polling registers the direct read on the held permit, or starts the pinned request.
+            tokio::select! {
+                biased;
+                _ = &mut read => panic!("read must wait"),
+                _ = tokio::task::yield_now() => {}
+            }
+            if fallback {
+                let task = async {
+                    rig.gate_hit.notified().await;
+                    let held = rig.web.permits.clone().acquire_owned();
+                    tokio::pin!(held);
+                    tokio::select! {
+                        biased;
+                        _ = &mut held => unreachable!("pinned read holds permit"),
+                        _ = tokio::task::yield_now() => {}
+                    }
+                    rig.gate_go.notify_one();
+                    let held = held.await.unwrap();
+                    while rig.web.firecrawl_spent.0.lock().unwrap().1 == 0 {
+                        tokio::task::yield_now().await;
+                    }
+                    settings.lock().unwrap().web_enabled = false;
+                    drop(held);
+                };
+                let (result, ()) = tokio::join!(read, task);
+                assert_eq!(result.unwrap_err().code, "WEB_DISABLED");
+            } else {
+                settings.lock().unwrap().web_enabled = false;
+                drop(held);
+                assert_eq!(read.await.unwrap_err().code, "WEB_DISABLED");
+                assert!(tokio::time::timeout(Duration::from_millis(10), rig.gate_hit.notified())
+                    .await
+                    .is_err());
+            }
+            assert_eq!(rig.hits(), 0, "disabled reads must never reach the provider");
+            assert!(!rig.dir.path().join("tools/web_cache").exists());
+        }
     }
 
     #[tokio::test]
