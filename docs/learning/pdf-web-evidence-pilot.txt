@@ -2,11 +2,21 @@ Harness pilot: web pages, PDF reading order, and smaller models
 November 14, 2026
 
 Decision
-Fix PDF reading order first. Keep the deployed digest and model settings for
-now. Quotes alone are worth testing as a fast path when they cover the
-question. Use MiniLM to propose candidate passages and keep the original
-source text available for exact lookup. Qwen 4B can draft a short digest,
-but the four-source pilot did not support using it as a default replacement.
+Fix PDF reading order first; that is the only production change here.
+Keep the deployed digest and model settings. Quotes only is worth testing
+as a fast path when its quotes cover the question. Qwen 4B can draft a
+short digest, but the four-source pilot did not support making it the
+default.
+
+MiniLM is not part of Harness. Harness ranks passages lexically (BM25)
+and has no embedding path; DEPENDENCIES.md and STRUCTURED_MEMORY.md keep
+embeddings out of scope. This pilot called all-minilm:22m through a local
+Ollama API with temporary wiring. Next step: evaluate MiniLM as a
+candidate-passage ranker beside lexical ranking (see Next experiment),
+keeping the original source text for exact lookup. The evidence so far
+is four documents, a literal phrase rubric, no measured context savings
+and no end-to-end MiniLM -> Qwen run. Adopting it would need its own PR,
+an operator decision, and updates to those two contracts.
 
 Inputs and controls
 - Python 3.13 tomllib HTML: https://docs.python.org/3.13/library/tomllib.html
