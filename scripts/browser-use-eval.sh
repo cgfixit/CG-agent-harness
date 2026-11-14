@@ -3,7 +3,7 @@
 # The enter check submits a search box. The qwen check asks the local model to
 # change the board. Both fail closed when the visible page is wrong.
 set -eu
-root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 cd "$root"
 bin="$root/target/debug/cgagentharness"
 sidecar="$root/browser/sidecar.mjs"

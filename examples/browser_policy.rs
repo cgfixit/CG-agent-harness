@@ -90,7 +90,7 @@ fn main() {
         expectation: ExpectationSource::Exploratory {
             text: "the model said it passed".into(),
         },
-        revision: "261efd9af709c9214e0a2a3e260ee4ee4ed375cd".into(),
+        revision: "example-revision".into(),
         assertions: vec![AssertionRecord {
             name: "message present after reload".into(),
             status: AssertionStatus::Passed,
