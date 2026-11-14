@@ -965,7 +965,7 @@ mod tests {
         });
         let path = home.config_path();
         let write = |cfg: &Value| {
-            crate::common::atomic::write_atomic(&path, &serde_json::to_vec(cfg).unwrap(), Some(0o600)).unwrap();
+            AppConfig::write_private(&path, &serde_json::to_string(cfg).unwrap()).unwrap();
         };
         for revoke in [false, true] {
             write(&config);
