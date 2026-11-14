@@ -109,17 +109,15 @@ pub fn retrieve_passages(docs: &[PassageDoc], query: &str, limit: usize) -> Resu
             .get(i)
             .cloned()
             .ok_or_else(|| HarnessError::new("ATTACHMENT_INDEX_FAILED", "invalid passage index row"))?;
-        if !prepared.identifier_matches([p.text.as_str(), p.heading.as_str()]) {
-            continue;
-        }
+        let matched = prepared.identifier_matches([p.text.as_str(), p.heading.as_str()]);
         p.score = score + prepared.exact_bonus(&p.text);
         let tie_key = p.passage_id();
         let diversity_key = p.source_id.clone();
         let score = p.score;
-        candidates.push(RankedCandidate::new(p, score, tie_key, diversity_key));
+        candidates.push((matched, RankedCandidate::new(p, score, tie_key, diversity_key)));
     }
     Ok(crate::server::retrieval_ranking::select_diverse(
-        candidates,
+        crate::server::retrieval_ranking::prefer_identifier_matches(candidates),
         limit,
         2,
         |p| &p.text,
@@ -165,6 +163,40 @@ mod tests {
         assert!(hits.iter().any(|h| h.text.contains("foo::bar_baz")), "{hits:?}");
         let empty = retrieve_passages(&docs, "\".*\"", 8).unwrap();
         assert!(empty.is_empty(), "{empty:?}");
+    }
+
+    #[test]
+    fn identifier_absent_from_every_passage_falls_back_to_term_ranking() {
+        // PDF text renders the subscript in `d_model` as `d model`.
+        let pages = [
+            "# Page 1\nAuthors and affiliations of the transformer paper.",
+            "# Page 5\nWe employ h = 8 parallel attention heads with d model = 512.",
+        ];
+        let docs: Vec<PassageDoc> = pages
+            .iter()
+            .enumerate()
+            .map(|(i, text)| PassageDoc {
+                source: SourceKind::Attachment,
+                source_id: format!("blob-{i}"),
+                heading: String::new(),
+                text: (*text).into(),
+                sha256: "abc".into(),
+                start: 0,
+                end: text.len(),
+                score: 0.0,
+            })
+            .collect();
+        let hits = retrieve_passages(&docs, "attention heads and d_model", 8).unwrap();
+        assert_eq!(hits.first().map(|h| h.source_id.as_str()), Some("blob-1"), "{hits:?}");
+        // Once one passage holds the identifier, the others are still filtered.
+        let mut exact = docs.clone();
+        exact[0].text.push_str(" d_model appears here.");
+        let hits = retrieve_passages(&exact, "attention heads and d_model", 8).unwrap();
+        assert_eq!(
+            hits.iter().map(|h| h.source_id.as_str()).collect::<Vec<_>>(),
+            vec!["blob-0"],
+            "{hits:?}"
+        );
     }
 
     #[test]
