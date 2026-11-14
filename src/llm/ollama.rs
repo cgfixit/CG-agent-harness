@@ -135,11 +135,24 @@ pub fn pull_payload(model: &str) -> Value {
 }
 
 pub(crate) fn http_client(timeout: Duration) -> Result<reqwest::Client> {
+    client_builder()
+        .timeout(timeout)
+        .build()
+        .map_err(|e| HarnessError::new(OLLAMA_ERROR, format!("cannot build http client: {e}")))
+}
+
+fn client_builder() -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .no_proxy()
         .dns_resolver(std::sync::Arc::new(super::backend::LoopbackOnlyDns))
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(timeout)
+}
+
+/// The pull client has no whole-request timeout: a multi-gigabyte download is
+/// bounded by `pull_model`'s idle deadline, its byte bound and the cancel token.
+fn pull_client(idle: Duration) -> Result<reqwest::Client> {
+    client_builder()
+        .connect_timeout(idle)
         .build()
         .map_err(|e| HarnessError::new(OLLAMA_ERROR, format!("cannot build http client: {e}")))
 }
@@ -301,6 +314,8 @@ pub async fn run_warmup(backend: &ResolvedLocalBackend, model: &str, cfg: &AppCo
 }
 
 /// Stream NDJSON pull progress. `on_event` receives sanitized status objects.
+/// `limits.timeout` is an idle deadline: it bounds the wait for response
+/// headers and each gap between body chunks, never the whole transfer.
 pub async fn pull_model(
     native: &str,
     model: &str,
@@ -313,11 +328,13 @@ pub async fn pull_model(
     }
     let payload = pull_payload(model);
     debug_assert!(!payload.to_string().contains("num_ctx"));
-    let client = http_client(limits.timeout)?;
+    let client = pull_client(limits.timeout)?;
     let request = client.post(format!("{native}/api/pull")).json(&payload);
     let response = tokio::select! {
         _ = cancel.cancelled() => return Err(static_err("pull aborted")),
-        response = request.send() => response.map_err(|_| static_err("pull request failed"))?,
+        response = tokio::time::timeout(limits.timeout, request.send()) => response
+            .map_err(|_| static_err("pull request stalled"))?
+            .map_err(|_| static_err("pull request failed"))?,
     };
     if !response.status().is_success() {
         return Err(static_err("pull refused"));
@@ -328,7 +345,9 @@ pub async fn pull_model(
     loop {
         let chunk = tokio::select! {
             _ = cancel.cancelled() => return Err(static_err("pull aborted")),
-            chunk = response.chunk() => chunk.map_err(|_| static_err("pull stream failed"))?,
+            chunk = tokio::time::timeout(limits.timeout, response.chunk()) => chunk
+                .map_err(|_| static_err("pull stream stalled"))?
+                .map_err(|_| static_err("pull stream failed"))?,
         };
         let Some(chunk) = chunk else {
             break;
