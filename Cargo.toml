@@ -68,6 +68,8 @@ html5ever = "0.39"
 robotstxt = "0.3"
 tantivy = { version = "0.27.0", default-features = false, features = ["mmap", "lz4-compression", "stemmer"] }
 keyring-core = "=1.0.1"
+# Text-only PDF extraction, run in the `pdf-text-worker` child (src/common/pdf_text.rs).
+lopdf = { version = "0.47", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }

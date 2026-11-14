@@ -16,7 +16,8 @@ the toolchain files take effect; CI and release builds resolve `--locked`.
 | `scraper` 0.27, `html5ever` 0.39, `robotstxt` 0.3 | HTML extraction and permitted robots handling; no browser execution |
 | `tantivy` 0.27 | Embedded BM25 passage retrieval; bounded derived index, no daemon or embeddings |
 | `rmcp = "=3.9.0"` | Inbound MCP memory server (streamable HTTP); exact pin, bumped deliberately (RUSTSEC-2026-0462 fix, 2026-11-09) |
-| `zip` 9.2.2, `quick-xml` 0.42 | DOCX attachment reader: in-memory ZIP, deflate only; namespace-aware XML. No PDF reader or parser subprocess; limits in [CONSOLE.md](CONSOLE.md#docx-attachments) |
+| `zip` 9.2.2, `quick-xml` 0.42 | DOCX attachment reader: in-memory ZIP, deflate only; namespace-aware XML; limits in [CONSOLE.md](CONSOLE.md#docx-attachments) |
+| `lopdf` 0.47 (default features off) | Text-only PDF reader for attachments, notes and web reads, run in the `pdf-text-worker` child; bounded decompression; [limits](CONSOLE.md#pdf-text) |
 | `objc2` / Foundation / WebKit / Security bindings | Native authentication-challenge handling for the exact owned loopback certificate |
 | Keyring ecosystem 1.x stores | OS store for managed provider keys: macOS Keychain, Windows Credential Manager and the maintained D-Bus Linux Secret Service backend |
 

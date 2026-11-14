@@ -51,8 +51,8 @@ Roles, scrypt bounds and session timeouts: [SECURE_RESEARCH.md](SECURE_RESEARCH.
 |---|---|---|
 | POST | `/api/chat` | One turn; streams SSE when `Accept: text/event-stream` |
 | POST | `/api/chat/cancel` | Cancel the active turn (`/loop stop`) |
-| POST | `/api/chat/attachments` | Upload up to 3 txt/md/json/csv/log/docx files; 503 past `attachments.max_concurrent_uploads` ([limits and retention](CONSOLE.md#text-file-attachments-and-prompt-preview)) |
-| GET, POST | `/api/notes-corpus` | List owned note metadata and upload limits, or ingest a `.md`/`.txt` batch for local prompt retrieval; file refusals carry a zero-based `file_index` |
+| POST | `/api/chat/attachments` | Upload up to 3 txt/md/json/csv/log/docx/pdf files; 503 past `attachments.max_concurrent_uploads` ([limits and retention](CONSOLE.md#text-file-attachments-and-prompt-preview)) |
+| GET, POST | `/api/notes-corpus` | List owned note metadata and upload limits, or ingest a `.md`/`.txt`/`.pdf` batch for local prompt retrieval; file refusals carry a zero-based `file_index` |
 | DELETE | `/api/notes-corpus/{id}` | Unlink one owned note |
 | POST | `/api/loop/start` | Start an owner-bound server-side `/loop` run: `session_id`, optional `goal`/`web_mode`, limit overrides |
 | POST | `/api/loop/stop` | Stop by `run_id` |

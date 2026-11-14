@@ -18,7 +18,7 @@ Fresh home, loopback fixture model. [60-second demo](docs/screenshots/demo/CG-Ag
 | **Web research** | Search listings, permitted fetches and crawls, `/web research` jobs with checked quotes. | On, allowlist mode, one seeded Google rule. |
 | **Goal loops** | `/goal` and `/loop` continue a long piece in a run that outlives the browser. | 50 turns, 200,000 tokens, two failed turns; cloud refuses loops. |
 | **Memory** | Shared pinned notes, [uploaded notes with retryable cleanup](docs/CONSOLE.md#text-file-attachments-and-prompt-preview), and account-private facts you select, recall or accept from proposals. | On; applying a proposal needs review. |
-| **Local chat** | Streaming sessions, transcript search and export, text and DOCX attachments, skills, style presets, `/prompt`, sandboxed HTML preview. | Ollama on loopback; no persona or style until you add one. |
+| **Local chat** | Streaming sessions, transcript search and export, text, DOCX and text-layer PDF attachments, skills, style presets, `/prompt`, sandboxed HTML preview. | Ollama on loopback; no persona or style until you add one. |
 | **Analytics, diagnostics** | Session, token and run history, **Estimate draft** before a cloud call, `/diag` redacted log tails. | On; local inference unpriced; `/diag` admin or `portal_auditor` only. |
 | **Cloud chat** | Optional Grok or Claude; only the new message leaves. | Needs a provider key. |
 | **Off by default** | Reviewed coding in isolated clones, MCP tools and a read-only memory gateway, Netconnect LAN observation. | Each needs explicit configuration. |

@@ -624,6 +624,13 @@ mod tests {
                     get(|| async { ([("content-type", "application/pdf")], "%PDF-1.7 fixture") }),
                 )
                 .route(
+                    "/real.pdf",
+                    get(|| async {
+                        let pdf = crate::common::pdf_text::fixture_pdf(&[&["Local PDF_WEB_FACT body"]], false);
+                        ([("content-type", "application/pdf")], pdf)
+                    }),
+                )
+                .route(
                     "/image.png",
                     get(|| async { ([("content-type", "image/png")], "not really a png") }),
                 )
@@ -735,8 +742,8 @@ mod tests {
     const ON: &str = "web: {firecrawl: {enabled: true, max_per_hour: 4}}";
 
     /// Operator decision, 2026-11-10: a permitted URL whose body is over
-    /// `web.response_bytes`, or is a PDF, is re-read by the fallback when it is
-    /// enabled. Any other type, and both cases with the fallback off, stay the
+    /// `web.response_bytes`, or is a PDF that local extraction (issue 813)
+    /// cannot read, is re-read by the fallback when it is enabled. Any other type, and both cases with the fallback off, stay the
     /// failures they were, and nothing leaves the machine for them.
     #[tokio::test]
     async fn an_oversized_page_and_a_pdf_are_reread_and_nothing_else_is() {
@@ -757,8 +764,29 @@ mod tests {
 
         let off = fixture::rig("web: {response_bytes: 4096}", "good").await;
         assert_eq!(off.fetch("huge").await.unwrap_err().code, "WEB_TOO_LARGE");
-        assert_eq!(off.fetch("paper.pdf").await.unwrap_err().code, "WEB_NOT_TEXT");
+        let unreadable = off.fetch("paper.pdf").await.unwrap_err();
+        assert_eq!(unreadable.code, "WEB_NOT_TEXT");
+        assert_eq!(unreadable.details["pdf_code"], "PDF_MALFORMED");
         assert_eq!(off.hits(), 0);
+    }
+
+    /// A readable PDF is extracted locally and never reaches the fallback.
+    #[tokio::test]
+    async fn a_readable_pdf_is_read_locally_without_the_fallback() {
+        let rig = fixture::rig(ON, "good").await;
+        let read = rig.fetch("real.pdf").await.unwrap();
+        assert!(read["via"].is_null(), "{read}");
+        assert_eq!(read["content_type"], "application/pdf");
+        assert_eq!(read["title"], "real.pdf");
+        assert!(read["links"].as_array().unwrap().is_empty());
+        assert!(
+            read["text"]
+                .as_str()
+                .unwrap()
+                .contains("# Page 1\nLocal PDF_WEB_FACT body"),
+            "{read}"
+        );
+        assert_eq!(rig.hits(), 0);
     }
 
     /// Size is checked after encoding and type, so an oversized image or a large
