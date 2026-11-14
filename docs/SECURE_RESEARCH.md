@@ -423,7 +423,9 @@ but supplies no evidence. Links are deduplicated, paced and policy-checked.
 There is no sitemap discovery, provider key or cloud fallback.
 
 Tantivy rebuilds a bounded in-memory BM25 index from permitted cached extracts,
-with exact phrase and identifier matching (`a_b`, `a::b`), title and heading
+with exact phrase and identifier matching (`a_b`, `a::b`; when no passage
+holds the identifier, as PDFs print `d_model` as `d model`, term ranking
+alone), title and heading
 boosts, and deduplication. Derived cache corruption grants nothing.
 Validators reduce bytes, not requests.
 
