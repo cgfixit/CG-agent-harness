@@ -98,6 +98,10 @@ pub struct ResultReads {
     pub enabled: bool,
     /// Listed URLs one turn or loop run may hold.
     pub max_urls: usize,
+    /// `web.search.result_reads.arxiv_pdf` (`flag_is_true`; ships true, operator
+    /// decision 2026-11-14, #883): a listed `https://arxiv.org/abs/<id>` also
+    /// grants exactly [`arxiv_pdf_twin`], within `max_urls`.
+    pub arxiv_pdf: bool,
 }
 
 impl ResultReads {
@@ -105,8 +109,35 @@ impl ResultReads {
         Ok(Self {
             enabled: cfg.flag_missing_on("web.search.result_reads.enabled")?,
             max_urls: cfg.u64_in("web.search.result_reads.max_urls", 20, 1..=100)? as usize,
+            arxiv_pdf: cfg.flag_is_true("web.search.result_reads.arxiv_pdf"),
         })
     }
+}
+
+/// The full text of a listed arXiv abstract page: `https://arxiv.org/abs/<id>`
+/// becomes `https://arxiv.org/pdf/<id>`, same host and paper identifier
+/// (`1706.03762`, `hep-th/9901001`, either with `vN`). `None` for any other
+/// host, scheme, port, credentials, query, fragment or path.
+pub(super) fn arxiv_pdf_twin(listed: &url::Url) -> Option<url::Url> {
+    static ID: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"^(?:[0-9]{4}\.[0-9]{4,5}|[a-z]+(?:-[a-z]+)*(?:\.[A-Z]{2})?/[0-9]{7})(?:v[0-9]{1,3})?$")
+            .expect("static arXiv identifier pattern")
+    });
+    if listed.scheme() != "https"
+        || listed.host_str() != Some("arxiv.org")
+        || listed.port().is_some()
+        || !listed.username().is_empty()
+        || listed.password().is_some()
+        || listed.query().is_some()
+        || listed.fragment().is_some()
+    {
+        return None;
+    }
+    let id = listed.path().strip_prefix("/abs/")?;
+    if !ID.is_match(id) {
+        return None;
+    }
+    super::web_policy::canonical_url(&format!("https://arxiv.org/pdf/{id}")).ok()
 }
 
 /// One provider attempt in a search.
@@ -218,6 +249,50 @@ impl FallbackBurst {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn arxiv_pdf_twin_maps_only_exact_abstract_urls() {
+        let twin = |raw: &str| arxiv_pdf_twin(&url::Url::parse(raw).unwrap()).map(|u| u.to_string());
+        for (abs, pdf) in [
+            ("https://arxiv.org/abs/1706.03762", "https://arxiv.org/pdf/1706.03762"),
+            (
+                "https://arxiv.org/abs/1706.03762v7",
+                "https://arxiv.org/pdf/1706.03762v7",
+            ),
+            ("https://arxiv.org/abs/2401.12345", "https://arxiv.org/pdf/2401.12345"),
+            (
+                "https://ARXIV.org/abs/hep-th/9901001",
+                "https://arxiv.org/pdf/hep-th/9901001",
+            ),
+            (
+                "https://arxiv.org/abs/math.GT/0309136v2",
+                "https://arxiv.org/pdf/math.GT/0309136v2",
+            ),
+        ] {
+            assert_eq!(twin(abs).as_deref(), Some(pdf), "{abs}");
+        }
+        for raw in [
+            "http://arxiv.org/abs/1706.03762", // DevSkim: ignore DS137138 because this plain-HTTP spelling is a refused test input, never requested.
+            "https://www.arxiv.org/abs/1706.03762",
+            "https://export.arxiv.org/abs/1706.03762",
+            "https://arxiv.org.evil.example/abs/1706.03762",
+            "https://arxiv.org:8443/abs/1706.03762",
+            "https://user@arxiv.org/abs/1706.03762",
+            "https://arxiv.org/abs/1706.03762?context=cs",
+            "https://arxiv.org/abs/1706.03762#sec",
+            "https://arxiv.org/abs/1706.03762/",
+            "https://arxiv.org/abs/1706.03762v",
+            "https://arxiv.org/abs/../pdf/1706.03762",
+            "https://arxiv.org/abs/1706.03762/../../list",
+            "https://arxiv.org/pdf/1706.03762",
+            "https://arxiv.org/html/1706.03762",
+            "https://arxiv.org/abs/",
+            "https://arxiv.org/abs/hep-th/990100",
+            "https://arxiv.org/abs/HEP-TH/9901001",
+        ] {
+            assert_eq!(twin(raw), None, "{raw}");
+        }
+    }
 
     #[test]
     fn hop_budgets_reserve_pacing_and_lend_unused_time_forward() {
