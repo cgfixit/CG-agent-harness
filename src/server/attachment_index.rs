@@ -163,7 +163,11 @@ fn spread_text(text: &str, share: usize) -> String {
     }
     if starts.len() < 2 {
         // No headings: fixed windows stand in for sections.
-        starts = chunk_text(text).into_iter().map(|(start, ..)| start).collect();
+        // Whitespace-only text has no chunks; keep the single opening section.
+        let windows: Vec<usize> = chunk_text(text).into_iter().map(|(start, ..)| start).collect();
+        if !windows.is_empty() {
+            starts = windows;
+        }
     }
     let total = starts.len();
     let note = |picked: usize| {
@@ -378,5 +382,12 @@ mod tests {
         let sampled = spread_text(&long_pdf_text(200), 4000);
         assert!(sampled.chars().count() <= 4000);
         assert!(sampled.contains("# Page 200"), "the last page is always sampled");
+    }
+
+    #[test]
+    fn whitespace_only_text_longer_than_its_share_does_not_panic() {
+        let blank = " \n".repeat(3000);
+        let spread = spread_text(&blank, 500);
+        assert!(spread.chars().count() <= 500, "{}", spread.chars().count());
     }
 }
