@@ -238,6 +238,9 @@ web:
     result_reads:
       enabled: true # literal false keeps reads to the URL policy alone; a missing key reads as on
       max_urls: 20 # 1–100 listed URLs one turn or /loop run may hold; later listings add none
+      # A listed https://arxiv.org/abs/<id> also grants exactly https://arxiv.org/pdf/<id> (its full
+      # text, read by the local PDF reader), counted in max_urls. Literal true only; missing is off.
+      arxiv_pdf: true
   # Firecrawl, restart-only: an opt-in second reader for exact permitted URLs (/web fetch, the
   # chat web_fetch tool, batch reads; never discovery, crawl or search). It runs only after the
   # pinned fetch got a server's 403, 429 or 503, a script shell (scripted HTML whose text is under
