@@ -2,7 +2,7 @@
 //! [`CappedAlloc`] as its global allocator; it is a pass-through to `System`
 //! until a worker process calls [`arm`] once at start. Armed, it counts live
 //! heap bytes and refuses an allocation that would pass the ceiling, which
-//! aborts that child (the parent then reports it as a failed worker).
+//! aborts that child (the PDF parent then reports `PDF_LIMIT`).
 //!
 //! Unarmed cost: one relaxed atomic load per allocation and free. Bytes
 //! allocated before arming and freed after it are not counted, so the bound
