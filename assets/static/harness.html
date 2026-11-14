@@ -3023,7 +3023,7 @@ $('sessionClearConfirm').addEventListener('click', async () => {
       delete_derived_episodes: deleteDerived
     });
     clearTranscript();
-    retryAttachmentIds = null;
+    clearPendingAttachments();
     setCurrentSession(null); promptHistory.session = null; promptHistory.prompts = []; sessionGoal = ''; loopAuto = false; cancelAutoLoopStart('');
     refreshMemoryProposals();
     currentStyle = 'off'; currentStyleIssue = null; paintStyle();
@@ -3113,6 +3113,9 @@ async function runSlash(line, webCommand) {
               : await api('/api/sessions/' + encodeURIComponent(rest[1] || ''));
             if (revision !== sessionRevision) break;
             clearTranscript();
+            /* Files chosen (or refused) for the previous session never ride
+               this one's first message or loop. */
+            clearPendingAttachments();
             /* Lines typed before any session join the one now opened. */
             if (wasSessionless && sub === 'new') adoptPendingHistory(s.session_id);
             else {
