@@ -1060,6 +1060,51 @@ fn shipped_defaults_protect_agent_instruction_files() {
 }
 
 #[test]
+fn shipped_defaults_protect_rust_check_configuration() {
+    // The default cargo profiles run inside the clone, so a candidate that could
+    // write these files could make its own checks pass (a target runner of
+    // `true`, formatting disabled, lints allowed).
+    let yaml = cgagentharness::common::config::AppConfig::embedded_default();
+    let defaults: Vec<String> = cgagentharness::agentic::config::DEFAULT_PROTECTED_WRITE_PATH_PREFIXES
+        .iter()
+        .map(|p| p.to_string())
+        .collect();
+    for entry in [
+        ".cargo/",
+        "rustfmt.toml",
+        ".rustfmt.toml",
+        "clippy.toml",
+        ".clippy.toml",
+        "Cargo.toml",
+    ] {
+        assert!(
+            yaml.contains(&format!("- \"{entry}\"")),
+            "shipped config.default.yaml must list {entry} in protected_write_paths"
+        );
+        assert!(
+            defaults.iter().any(|p| p == entry),
+            "Rust defaults must protect {entry}"
+        );
+    }
+    for path in [
+        ".cargo/config.toml",
+        ".cargo/config",
+        ".rustfmt.toml",
+        "crates/a/clippy.toml",
+        ".clippy.toml",
+    ] {
+        assert!(
+            cgagentharness::agentic::real_repo_loop::matches_protected_path(path, &defaults),
+            "{path} must be refused by the default protected list"
+        );
+    }
+    assert!(!cgagentharness::agentic::real_repo_loop::matches_protected_path(
+        "src/cargo/mod.rs",
+        &defaults
+    ));
+}
+
+#[test]
 fn shipped_defaults_deny_sensitive_read_basenames() {
     let yaml = cgagentharness::common::config::AppConfig::embedded_default();
     assert!(

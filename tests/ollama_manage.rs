@@ -1192,3 +1192,82 @@ async fn pull_refuses_a_progress_line_over_max_response_bytes() {
     assert_eq!(finished.len(), 1, "{finished:?}");
     assert_eq!(finished[0]["ok"], false);
 }
+
+/// A native server whose `/api/pull` sends `lines` progress lines `gap_ms`
+/// apart, then either reports success or holds the stream open in silence.
+async fn start_paced_pull(lines: usize, gap_ms: u64, finish: bool) -> String {
+    let app = Router::new()
+        .route(
+            "/v1/models",
+            get(|| async { Json(json!({"data": [{"id": shipped_model()}]})) }),
+        )
+        .route(
+            "/api/tags",
+            get(|| async { Json(json!({"models": [{"name": "tinyllama:latest", "size": 1}]})) }),
+        )
+        .route(
+            "/api/pull",
+            post(move || async move {
+                let body = futures_util::stream::unfold(0usize, move |step| async move {
+                    if step < lines {
+                        tokio::time::sleep(Duration::from_millis(gap_ms)).await;
+                        return Some((
+                            Ok::<_, std::io::Error>("{\"status\":\"downloading\"}\n".to_string()),
+                            step + 1,
+                        ));
+                    }
+                    if step == lines && finish {
+                        return Some((Ok("{\"status\":\"success\"}\n".to_string()), step + 1));
+                    }
+                    if finish {
+                        return None;
+                    }
+                    std::future::pending().await
+                });
+                axum::http::Response::new(axum::body::Body::from_stream(body))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("{base}/v1")
+}
+
+#[tokio::test]
+async fn pull_outlives_timeout_sec_while_progress_keeps_arriving() {
+    // Six lines 400 ms apart take 2.4 s: longer than the 1 s deadline, but no
+    // single gap is. A whole-transfer timeout would cut this pull off.
+    let endpoint = start_paced_pull(6, 400, true).await;
+    let s = spawn_server(
+        &endpoint,
+        ServerOptions::default().with("models.local_llm.pull.timeout_sec", "1"),
+    )
+    .await;
+    let (status, body) = s
+        .post_json("/api/ollama/pull", json!({"model": "tinyllama:latest"}))
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["state"], "installed", "{body}");
+}
+
+#[tokio::test]
+async fn pull_fails_when_the_stream_goes_silent_for_timeout_sec() {
+    // One line, then silence with the connection held open: only the idle
+    // deadline can end this pull.
+    let endpoint = start_paced_pull(1, 0, false).await;
+    let s = spawn_server(
+        &endpoint,
+        ServerOptions::default().with("models.local_llm.pull.timeout_sec", "1"),
+    )
+    .await;
+    let started = std::time::Instant::now();
+    let (status, body) = s
+        .post_json("/api/ollama/pull", json!({"model": "tinyllama:latest"}))
+        .await;
+    assert_eq!(status, 502, "{body}");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "idle deadline did not fire"
+    );
+    assert!(s.audit_log().contains("\"ollama_pull_finished\""));
+}
