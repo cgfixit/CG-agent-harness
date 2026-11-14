@@ -327,7 +327,8 @@ URL grant.
 - **Tavily** sends one basic-depth request (one credit) to the fixed
   `https://api.tavily.com/search`, key in the Authorization header. Listings
   keep title, URL, snippet and bounded provider metadata, never a provider
-  answer or page body. HTTP 429, 432 and 433 are quota refusals.
+  answer or page body. If the effective key changes during DNS, the search
+  refuses before sending. HTTP 429, 432 and 433 are quota refusals.
 - **Public Google**, with no active key, requests the permitted search URL and
   parses organic result links in order. It never runs JavaScript, solves
   CAPTCHA, adopts cookies or invents results; challenges, redirects and

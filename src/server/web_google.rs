@@ -1550,6 +1550,62 @@ mod tests {
         assert_eq!(serp.hits.load(SeqCst), 0, "no SerpAPI hop without its flag");
     }
 
+    async fn tavily_key_during_dns(replacement: Option<&str>) {
+        use std::sync::{atomic::Ordering::SeqCst, Arc};
+        use tokio::sync::Notify;
+
+        let tv = chain::tavily().await;
+        let serp = chain::serpapi().await;
+        let mut chain = chain::Chain::new(TAVILY_CHAIN, "good", &serp, None)
+            .await
+            .with_tavily("good", &tv);
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        chain.web.test_dns_wait = Some((started.clone(), release.clone()));
+
+        let change_key = async {
+            tokio::time::timeout(Duration::from_secs(3), started.notified())
+                .await
+                .expect("search must reach the DNS fixture");
+            let (sets, clears) = match replacement {
+                Some(key) => (
+                    std::collections::BTreeMap::from([("TAVILY_API_KEY".into(), key.into())]),
+                    vec![],
+                ),
+                None => (std::collections::BTreeMap::new(), vec!["TAVILY_API_KEY".into()]),
+            };
+            super::super::env_keys::update_keys(&chain.dir.path().join(".env"), &sets, &clears).unwrap();
+            release.notify_one();
+        };
+        let (result, ()) = tokio::join!(chain.search("fixture query"), change_key);
+
+        if replacement == Some("good") {
+            let result = result.unwrap();
+            assert_eq!(result["provider"], "tavily");
+            assert_eq!(result["results"][0]["title"], "Tavily row");
+            assert_eq!(tv.hits.load(SeqCst), 1);
+        } else {
+            assert_eq!(result.unwrap_err().code, "WEB_SEARCH_KEY_CHANGED");
+            assert_eq!(tv.hits.load(SeqCst), 0, "Tavily received a request after rotation");
+        }
+        assert_eq!(serp.hits.load(SeqCst), 0, "a key change must not trigger fallback");
+    }
+
+    #[tokio::test]
+    async fn tavily_key_cleared_during_dns_never_sends() {
+        tavily_key_during_dns(None).await;
+    }
+
+    #[tokio::test]
+    async fn tavily_key_replaced_during_dns_never_sends() {
+        tavily_key_during_dns(Some("replacement")).await;
+    }
+
+    #[tokio::test]
+    async fn tavily_key_unchanged_during_dns_can_send() {
+        tavily_key_during_dns(Some("good")).await;
+    }
+
     #[tokio::test]
     async fn a_tavily_key_cleared_while_the_search_waits_is_never_sent() {
         use std::sync::atomic::Ordering::SeqCst;
