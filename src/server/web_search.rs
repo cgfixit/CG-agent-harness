@@ -470,6 +470,9 @@ pub struct WebTool {
     /// Test hook: more exact fixture hosts. Compiled only with `test-support`.
     #[cfg(any(test, feature = "test-support"))]
     pub test_resolve_extra: Vec<(String, SocketAddr)>,
+    // Pause the synthetic DNS answer until the test has updated authority.
+    #[cfg(test)]
+    pub(super) test_dns_wait: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
     pub(super) search_key_from_file: bool,
     /// Whether this process loaded `TAVILY_API_KEY` from the saved store itself.
     pub(super) tavily_key_from_file: bool,
@@ -530,6 +533,8 @@ impl WebTool {
             test_resolve: None,
             #[cfg(any(test, feature = "test-support"))]
             test_resolve_extra: Vec::new(),
+            #[cfg(test)]
+            test_dns_wait: None,
             permits: Arc::new(Semaphore::new(limits.concurrency)),
             limits,
             search_key_from_file: false,
@@ -1018,7 +1023,14 @@ impl WebTool {
         let host = target.host_str().unwrap().trim_matches(['[', ']']);
         let port = target.port_or_known_default().unwrap();
         let addresses = match self.fixture_address(host) {
-            Some(addr) => vec![addr],
+            Some(addr) => {
+                #[cfg(test)]
+                if let Some((started, release)) = &self.test_dns_wait {
+                    started.notify_one();
+                    release.notified().await;
+                }
+                vec![addr]
+            }
             None => {
                 let addresses = crate::common::dns::lookup_bounded(host, port)
                     .await
