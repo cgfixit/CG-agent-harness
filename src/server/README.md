@@ -33,7 +33,7 @@ The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs) and
 - [`memory_notes.rs`](memory_notes.rs): `/memory` pinned notes in `memory/notes.json`; injected only when on.
 - [`mod.rs`](mod.rs): module tree, `build_app` test boundary, `serve_blocking` loopback bind and shutdown.
 - [`model_limits.rs`](model_limits.rs): per-model budget proposals for `/model profile` and gated `auto_tune`.
-- [`notes_corpus.rs`](notes_corpus.rs): owner-jailed `.md`/`.txt` corpus for local chat retrieval.
+- [`notes_corpus.rs`](notes_corpus.rs): owner-jailed `.md`/`.txt`/`.pdf` corpus for local chat retrieval.
 - [`notification_outbox.rs`](notification_outbox.rs): bounded outbox of delivery metadata persisted before any network attempt.
 - [`notifications.rs`](notifications.rs): owner-bound completion webhooks, bearer tokens, pinned addresses, replay.
 - [`passage_index.rs`](passage_index.rs): request-local BM25 `retrieve_passages` over already-authorized text.

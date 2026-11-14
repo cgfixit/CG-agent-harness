@@ -32,7 +32,7 @@ Paths are relative to `CGAGENTHARNESS_HOME` (default `~/.CGagentHarness`).
 |---|---|---|
 | Chat history | Successful exchanges in `sessions/*.json`; account-owned | Bounded recent messages from the selected session accompany later chat. Not a durable-fact extractor. |
 | Pinned notes | `/memory add <literal text>` writes `memory/notes.json`; shared home | In the prompt while `/memory on`; see [Pinned notes](#pinned-notes). |
-| Uploaded notes | `.md`/`.txt` files added under **Memory → Manage uploaded notes**; account-private | Matching passages reach local chat as untrusted excerpts ([Console](CONSOLE.md)). Not facts, not pins. |
+| Uploaded notes | `.md`/`.txt`/`.pdf` files added under **Memory → Manage uploaded notes**; account-private | Matching passages reach local chat as untrusted excerpts ([Console](CONSOLE.md)). Not facts, not pins. |
 | Persona / soul | `soul.md`; shared home; edit/save or reviewed `/soul apply <id> <reason>` | `/soul on\|off` controls prompt inclusion. |
 | Structured facts | Private `memory/structured.sqlite3`; `/memory save`, governed fact HTTP writes, or approved proposals | List with `/memory facts`; select for explicit recall or use gated lexical (FTS5) facts-only retrieval. Saving alone does not put a fact in the prompt. |
 | Pending proposals | Same private store; a model or operator may propose | Memory cards show suggested text, sources and revision. Pending text never enters chat. |

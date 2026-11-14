@@ -28,6 +28,7 @@ Contracts: [INVARIANTS.md](../../INVARIANTS.md); process rules:
 - [`mcp_policy.rs`](mcp_policy.rs): `StdioCapabilities`: operator-owned network, containment, filesystem and resource grants.
 - [`mcp_worker.rs`](mcp_worker.rs): Linux strict-mode stdio supervisor, a real `main.rs` subcommand; exits 3 elsewhere.
 - [`mod.rs`](mod.rs): module list plus timestamps, random tokens, SHA-256, `is_visibly_blank`, `MAX_PR_BODY_BYTES`, and `refuse_parent_components` (the one parent-directory barrier for log, spend, structured-memory, notification, MCP-key, persona and diagnostics paths).
+- [`pdf_text.rs`](pdf_text.rs): text-only PDF extraction in the hidden `pdf-text-worker` child; fixed `PDF_*` refusals, digest cache.
 - [`private_sqlite.rs`](private_sqlite.rs): owner-only, size-capped SQLite open shared by auth and memory.
 - [`process/`](process/README.md): the Unix half of the argv-list runner.
 - [`process.rs`](process.rs): `RunSpec`/`run`/`run_cancellable`: argv-only runner, `MAX_CAPTURE_BYTES`, `kill_tree`, `which`.

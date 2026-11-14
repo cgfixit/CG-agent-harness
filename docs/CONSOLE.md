@@ -438,8 +438,8 @@ prepared tools; native Cargo verification uses the prepared offline sandbox in
 
 ### Text-file attachments and prompt preview
 
-The paperclip beside Send chooses up to three `.txt`, `.md`, `.json`, `.csv`, or
-`.log` files, each at most 15 MiB; other formats are refused. `/prompt` uploads
+The paperclip beside Send chooses up to three `.txt`, `.md`, `.json`, `.csv`,
+`.log`, `.docx` or `.pdf` files, each at most 15 MiB; other formats are refused. `/prompt` uploads
 and previews their fenced, untrusted text, and the next message sends their IDs
 once. A failed preview retains them; a session or account change clears them.
 Uploads count toward the home quota until session or owner cleanup, and clipped
@@ -447,7 +447,7 @@ sections say they are incomplete.
 
 Sessions retain at most 12 owner-scoped blob IDs. The next local turn may
 BM25-search them and inject matching passages into the attachment fence.
-`.md` and `.txt` notes ingested at `/api/notes-corpus` use a separate home jail
+`.md`, `.txt` and `.pdf` notes ingested at `/api/notes-corpus` use a separate home jail
 but share that local prompt budget (`source=notes_corpus`). Local loops include
 these sources; cloud chat and `/agent` refuse attachment IDs or live pins with
 `ATTACHMENT_SURFACE_FORBIDDEN` and never receive notes-corpus bytes.
@@ -481,7 +481,7 @@ The file picker also accepts `.docx`. Only UTF-8 main-document text is read:
 paragraphs, tables, explicit tabs and breaks. Directly hidden/deleted runs and
 field instructions are excluded. Headers, footers, images/OCR, style-based
 visibility, macros and embedded files are not interpreted; relationships and
-URLs are never followed. PDF remains unsupported.
+URLs are never followed.
 
 DOCX uses the same 15 MiB/file, three-file request, home quota, owner checks,
 injection scan, private UUID storage and local-chat-only fence as text uploads.
@@ -491,6 +491,22 @@ custom entities/DTDs, non-UTF-8 XML and malformed or empty documents. Fixed
 safety ceilings: 256 parts, 256 KiB directory, 16 MiB declared expansion,
 64 KiB content-types XML, 1 MiB document XML/output, and 128 XML levels.
 A two-second cooperative deadline bounds parsing in process.
+
+### PDF text
+
+Attachments, notes and exact web reads share one local PDF reader. It decodes
+page text only: no OCR, images, forms, links, scripts or embedded files.
+Encrypted files are refused. Columns and tables follow content-stream order.
+
+For a 32,768-token model, ligatures fold, hyphenated breaks join and running
+headers drop. A first line lists textless pages; `# Page N` headings mark
+passages.
+
+Refusals: `PDF_MALFORMED`, `PDF_ENCRYPTED`, `PDF_NO_TEXT`, `PDF_LIMIT` (15 MiB,
+200 pages, 8 MiB decoded per stream or page, 32 MiB per file, 1 MiB text),
+`PDF_TIMEOUT` (5 s per file, 10 s per upload or prompt), `PDF_BUSY`,
+`PDF_WORKER_FAILED`. Parsing runs in a [killable child](../INVARIANTS.md#i6--process-isolation-between-the-console-and-the-agentic-pipeline).
+Notes keep `notes_corpus.max_file_bytes`; web PDFs keep `web.response_bytes`.
 
 ### Streaming chat and cancellation
 

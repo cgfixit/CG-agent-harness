@@ -11,7 +11,7 @@ This manual is static text bundled with the build and indexed at startup. It is 
 - Web research: Search listings, permitted fetches and crawls, `/web research` jobs with checked quotes. Starts: On, allowlist mode, one seeded Google rule.
 - Goal loops: `/goal` and `/loop` continue a long piece in a run that outlives the browser. Starts: 50 turns, 200,000 tokens, two failed turns; cloud refuses loops.
 - Memory: Shared pinned notes, uploaded notes with retryable cleanup, and account-private facts you select, recall or accept from proposals. Starts: On; applying a proposal needs review.
-- Local chat: Streaming sessions, transcript search and export, text and DOCX attachments, skills, style presets, `/prompt`, sandboxed HTML preview. Starts: Ollama on loopback; no persona or style until you add one.
+- Local chat: Streaming sessions, transcript search and export, text, DOCX and text-layer PDF attachments, skills, style presets, `/prompt`, sandboxed HTML preview. Starts: Ollama on loopback; no persona or style until you add one.
 - Analytics, diagnostics: Session, token and run history, **Estimate draft** before a cloud call, `/diag` redacted log tails. Starts: On; local inference unpriced; `/diag` admin or `portal_auditor` only.
 - Cloud chat: Optional Grok or Claude; only the new message leaves. Starts: Needs a provider key.
 
@@ -222,8 +222,8 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET, POST `/api/keys`: Managed-key presence (masked tail) and `/api set <KEY> <value>`
 - POST `/api/chat`: One turn; streams SSE when `Accept: text/event-stream`
 - POST `/api/chat/cancel`: Cancel the active turn (`/loop stop`)
-- POST `/api/chat/attachments`: Upload up to 3 txt/md/json/csv/log/docx files; 503 past…
-- GET, POST `/api/notes-corpus`: List owned note metadata and upload limits, or ingest a `.md`/`.txt` batch for local…
+- POST `/api/chat/attachments`: Upload up to 3 txt/md/json/csv/log/docx/pdf files; 503 past…
+- GET, POST `/api/notes-corpus`: List owned note metadata and upload limits, or ingest a `.md`/`.txt`/`.pdf` batch for…
 - DELETE `/api/notes-corpus/{id}`: Unlink one owned note
 
 ## api: registered routes (part 3)

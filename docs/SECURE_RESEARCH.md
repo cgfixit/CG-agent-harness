@@ -370,6 +370,8 @@ send `engine: "google"` and optional `count` (1–10, default 5) for listings.
 ### Fetch, discovery and research
 
 Fetch accepts exact URLs only; wildcard patterns belong in `allow`.
+An `application/pdf` response within `web.response_bytes` is read locally as
+[page text](CONSOLE.md#pdf-text); its links are never collected.
 A `fetch` batch validates all targets before any request and shares page, byte,
 time and per-site limits. Partial reads report coverage and failures.
 
@@ -381,8 +383,8 @@ Opt-in `web.firecrawl.enabled` (ships off; needs **Firecrawl page reader** in AP
 Keys) is the one exception, for exact reads only: `fetch`, chat `web_fetch` and
 batches, never discovery, crawl or search. When the pinned read gets a 403,
 429 or 503, a script shell (scripted HTML whose text is under 200
-characters and under 5% of the markup), an oversized body or a PDF (10 pages
-at most), the authorized URL leaves the machine once, to the fixed `https://api.firecrawl.dev/v2/scrape`: basic proxy,
+characters and under 5% of the markup), an oversized body or a PDF that local
+[text extraction](CONSOLE.md#pdf-text) refuses (10 pages at most), the authorized URL leaves the machine once, to the fixed `https://api.firecrawl.dev/v2/scrape`: basic proxy,
 markdown only, `storeInCache: false`. An answer naming another final URL is
 refused as a redirect, and no links are kept. The page carries
 `via: firecrawl`. `web.firecrawl.max_per_hour` (default 20) caps reads, and

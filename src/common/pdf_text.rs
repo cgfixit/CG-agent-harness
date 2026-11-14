@@ -462,6 +462,10 @@ struct TextWalker<'a> {
     out: String,
     encoding: Option<&'a lopdf::Encoding<'a>>,
     line_y: Option<f32>,
+    /// `Tf` size and the text matrix's vertical scale: a line break is a
+    /// vertical move of over half an em, so superscripts stay on their line.
+    font_size: f32,
+    scale: Option<f32>,
 }
 
 fn number(o: &lopdf::Object) -> Option<f32> {
@@ -473,6 +477,11 @@ fn number(o: &lopdf::Object) -> Option<f32> {
 }
 
 impl<'a> TextWalker<'a> {
+    /// Half the current em in user space; unknown sizes break on any move.
+    fn half_em(&self) -> f32 {
+        (self.font_size * self.scale.unwrap_or(1.0) * 0.5).max(0.01)
+    }
+
     fn newline(&mut self) {
         if !self.out.is_empty() && !self.out.ends_with('\n') {
             self.out.push('\n');
@@ -506,6 +515,7 @@ impl<'a> TextWalker<'a> {
                     .first()
                     .and_then(|o| o.as_name().ok())
                     .and_then(|name| encodings.get(name));
+                self.font_size = operands.get(1).and_then(number).map(f32::abs).unwrap_or(0.0);
             }
             "Tj" => self.show(operands.first()),
             "'" => {
@@ -522,8 +532,10 @@ impl<'a> TextWalker<'a> {
                 };
                 for item in items {
                     match number(item) {
-                        // Thousandths of text space: a wide negative gap is a word break.
-                        Some(gap) if gap < -250.0 => self.space(),
+                        // Thousandths of an em. Measured on pdfTeX output, kerning
+                        // stays within -50..100 and justified word gaps within
+                        // -400..-150, so -120 separates them at any font size.
+                        Some(gap) if gap < -120.0 => self.space(),
                         Some(_) => {}
                         None => self.show(Some(item)),
                     }
@@ -531,18 +543,19 @@ impl<'a> TextWalker<'a> {
             }
             "Td" | "TD" => {
                 let tx = operands.first().and_then(number).unwrap_or(0.0);
-                let ty = operands.get(1).and_then(number).unwrap_or(0.0);
-                if ty.abs() > 0.01 {
+                let dy = operands.get(1).and_then(number).unwrap_or(0.0) * self.scale.unwrap_or(1.0);
+                self.line_y = self.line_y.map(|y| y + dy);
+                if dy.abs() > self.half_em() {
                     self.newline();
-                    self.line_y = self.line_y.map(|y| y + ty);
-                } else if tx.abs() > 0.01 {
+                } else if tx.abs() > 0.01 || dy.abs() > 0.01 {
                     self.space();
                 }
             }
             "Tm" => {
                 let y = operands.get(5).and_then(number);
+                self.scale = operands.get(3).and_then(number).map(f32::abs).filter(|d| *d > 0.0);
                 match (self.line_y, y) {
-                    (Some(prev), Some(y)) if (prev - y).abs() > 0.5 => self.newline(),
+                    (Some(prev), Some(y)) if (prev - y).abs() > self.half_em() => self.newline(),
                     (Some(_), Some(_)) => self.space(),
                     _ => self.newline(),
                 }
@@ -894,6 +907,36 @@ mod tests {
         );
         w.out.push_str("same");
         assert_eq!(w.out, "Hello world\nnext same");
+    }
+
+    #[test]
+    fn line_breaks_are_em_relative_and_justified_word_gaps_are_spaces() {
+        use lopdf::Object;
+        let enc = BTreeMap::new();
+        let mut w = TextWalker::default();
+        w.apply("Tf", &["F1".into(), 10.into()], &enc);
+        w.out.push_str("Vaswani");
+        // A 3-unit superscript raise at 10pt is under half an em: same line.
+        w.apply("Td", &[30.into(), 3.into()], &enc);
+        w.out.push('*');
+        w.apply("Td", &[0.into(), (-14).into()], &enc);
+        w.out.push_str("The");
+        // pdfTeX justification: -180 is a word gap, -40 is kerning.
+        w.apply("TJ", &[Object::Array(vec![(-180).into(), (-40).into()])], &enc);
+        w.out.push_str("first");
+        assert_eq!(w.out, "Vaswani *\nThe first");
+        // Under a scaled text matrix the same rule holds in user space.
+        let mut w = TextWalker::default();
+        w.apply("Tf", &["F1".into(), 1.into()], &enc);
+        w.apply(
+            "Tm",
+            &[9.into(), 0.into(), 0.into(), 9.into(), 72.into(), 700.into()],
+            &enc,
+        );
+        w.out.push('a');
+        w.apply("Td", &[0.into(), Object::Real(-1.2)], &enc);
+        w.out.push('b');
+        assert_eq!(w.out, "a\nb");
     }
 
     #[test]
