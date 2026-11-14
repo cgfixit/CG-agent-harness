@@ -91,6 +91,8 @@ struct Span {
     x: f32,
     end: f32,
     em: f32,
+    /// Em along the baseline's normal; baseline offsets use the vertical scale.
+    vem: f32,
     text: Range<usize>,
 }
 
@@ -181,8 +183,15 @@ impl InlineOrder {
             return;
         };
         let em = size * self.scale.0;
+        let vem = size * self.scale.1.abs();
         let end = x + width * em / 1000.0;
-        if self.spans == MAX_SPANS || !end.is_finite() || !y.is_finite() || y.abs() > 1e6 || em <= 0.0 {
+        if self.spans == MAX_SPANS
+            || !end.is_finite()
+            || !y.is_finite()
+            || y.abs() > 1e6
+            || em <= 0.0
+            || !vem.is_finite()
+        {
             self.disabled = true;
             return;
         }
@@ -192,7 +201,7 @@ impl InlineOrder {
         // point apart on the same baseline after rounding.
         let key = (y * 100.0).round() as i64;
         let key = self.lines.range(key - 4..=key + 4).next().map_or(key, |(&key, _)| key);
-        self.lines.entry(key).or_default().push(Span { x, end, em, text });
+        self.lines.entry(key).or_default().push(Span { x, end, em, vem, text });
     }
 
     pub(super) fn finish(self, text: String) -> String {
@@ -260,8 +269,8 @@ impl InlineOrder {
 /// with such text drawn between its spans keeps stream order. Separate lines
 /// are at least about one em apart and do not block the repair.
 fn interleaves_raised_text(lines: &BTreeMap<i64, Vec<Span>>, key: i64, line: &[Span]) -> bool {
-    let em = line.iter().map(|s| s.em).fold(0.0, f32::max);
-    let reach = (em * RAISED_EM * 100.0).ceil() as i64;
+    let vem = line.iter().map(|s| s.vem).fold(0.0, f32::max);
+    let reach = (vem * RAISED_EM * 100.0).ceil() as i64;
     let start = line.iter().map(|s| s.text.start).min().unwrap_or(0);
     let end = line.iter().map(|s| s.text.end).max().unwrap_or(0);
     lines
@@ -305,27 +314,33 @@ mod tests {
     #[test]
     fn keeps_superscripts_attached_to_their_line() {
         // GPT-3's "[VBL+16]": the raised "+" is drawn between two baseline spans.
+        // A horizontally compressed matrix (0.8) must not shrink the vertical
+        // reach: the 5.2-point rise is still about half the 10-point em.
         let font = Widths {
             values: HashMap::new(),
             default: Some(500.0),
             two_bytes: false,
         };
-        let mut order = InlineOrder::default();
-        let mut text = String::new();
-        let mut draw = |x: f32, y: f32, size: f32, fragment: &str| {
-            order.apply("Tm", &[1.into(), 0.into(), 0.into(), 1.into(), x.into(), y.into()]);
-            if !text.is_empty() {
-                text.push('\n');
-            }
-            let start = text.len();
-            text.push_str(fragment);
-            order.record(Some(&font), fragment.as_bytes(), size, start..text.len());
-        };
-        draw(0.0, 700.0, 10.0, "networks [VBL");
-        draw(65.0, 703.6, 7.0, "+");
-        draw(68.5, 700.0, 10.0, "16], RL2");
-        let extracted = order.finish(text.clone());
-        assert_eq!(extracted, text);
+        for (sx, rise) in [(1.0_f32, 3.6_f32), (0.8, 5.2)] {
+            let mut order = InlineOrder::default();
+            let mut text = String::new();
+            let mut draw = |x: f32, y: f32, size: f32, fragment: &str| {
+                order.apply("Tm", &[sx.into(), 0.into(), 0.into(), 1.into(), x.into(), y.into()]);
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                let start = text.len();
+                text.push_str(fragment);
+                order.record(Some(&font), fragment.as_bytes(), size, start..text.len());
+            };
+            // Each glyph advances half an em: 5 points at size 10, 3.5 at size 7.
+            let plus = 13.0 * 5.0 * sx;
+            draw(0.0, 700.0, 10.0, "networks [VBL");
+            draw(plus, 700.0 + rise, 7.0, "+");
+            draw(plus + 3.5 * sx, 700.0, 10.0, "16], RL2");
+            let extracted = order.finish(text.clone());
+            assert_eq!(extracted, text, "horizontal scale {sx}");
+        }
     }
 
     #[test]
