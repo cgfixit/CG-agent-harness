@@ -92,14 +92,17 @@ impl WebTool {
                 .acquire()
                 .await
                 .map_err(|_| error("WEB_CANCELLED", "search cancelled"))?;
-            // The permit wait can outlast a key change: a key cleared or
-            // replaced since this search read it is never sent.
+            // Refuse an already changed key before starting DNS.
             if self.tavily_key()?.trim() != key {
                 return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
             }
             self.check_enabled()?;
             let client = self.pinned_client(&endpoint).await?;
             self.check_enabled()?;
+            // DNS may have outlasted a key change.
+            if self.tavily_key()?.trim() != key {
+                return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
+            }
             let response = client
                 .post(endpoint)
                 .bearer_auth(key)

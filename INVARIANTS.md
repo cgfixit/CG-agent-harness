@@ -280,7 +280,8 @@ account authority, independently of page URL grants; public Google and linked-pa
 fetches retain URL policy checks. Tavily requests pin `include_answer`,
 `include_raw_content` and `include_images` off and retain bounded listing fields,
 so no provider-written answer or page body enters a listing. Saved SerpAPI and Tavily
-keys apply on the next search; explicit environment values retain precedence. Challenges and provider failures never become
+keys apply on the next search; explicit environment values retain precedence. Both providers
+recheck their effective key after DNS and before sending. Challenges and provider failures never become
 fabricated results. A provider refusal starts a bounded cooldown: a public Google
 challenge or block (an answer, not a failed connection), or a SerpAPI or Tavily quota refusal, pauses
 that provider in memory and later searches answer `WEB_SEARCH_COOLDOWN` before any request; a
