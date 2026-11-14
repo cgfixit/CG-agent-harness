@@ -2249,13 +2249,7 @@ fn runtime_markdown(manifest: &Path) -> Vec<String> {
 /// Exact checkout paths exempt from the new-file rule and the group word cap.
 /// Entries need owner approval. No wildcards and no environment switch.
 /// An agent must not add a path.
-const DOCS_BUDGET_OWNER_EXEMPT: &[(&str, &str)] = &[
-    // why: owner approved 2026-10-10. Measured bake-off report from one ordered pass. It picks no winner.
-    (
-        "docs/bakeoff/local-model-bakeoff-2026-10-10.md",
-        "owner approved 2026-10-10: measured bake-off report, one ordered pass, picks no winner",
-    ),
-];
+const DOCS_BUDGET_OWNER_EXEMPT: &[(&str, &str)] = &[];
 
 #[test]
 fn markdown_stays_on_the_docs_budget() {
