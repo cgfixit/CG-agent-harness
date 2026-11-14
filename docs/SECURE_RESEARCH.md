@@ -267,7 +267,9 @@ flags (`/web search -- --help`), or single-quote it
 Local chat and `/loop` offer only `web_search` (configured-provider listings)
 and `web_fetch` (an exact permitted URL); listings grant admin-turn exact-URL
 reads (`web.search.result_reads.enabled`, on unless literal `false`, even in a
-home whose config predates the key). No repository, shell, policy,
+home whose config predates the key). A listed `https://arxiv.org/abs/<id>` also
+grants exactly `https://arxiv.org/pdf/<id>`, its `full_text_url`, within
+`max_urls` (`result_reads.arxiv_pdf`, literal `true` only). No repository, shell, policy,
 account, key or mutation tool is exposed. Batches validate before sequential
 reads; `web.chat_tool_calls` bounds all rounds (1–30, default 30).
 

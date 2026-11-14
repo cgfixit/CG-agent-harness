@@ -639,12 +639,42 @@ impl WebTool {
                 .as_str()
                 .and_then(|raw| super::web_policy::canonical_url(raw).ok())
             {
+                let twin = self.arxiv_pdf_twin(&url);
                 next.insert(url.to_string());
+                if let Some(twin) = twin.filter(|_| next.len() < self.result_reads.max_urls) {
+                    next.insert(twin.to_string());
+                }
             }
         }
         let added = next.len() - before;
         *held = Arc::new(next);
         added
+    }
+
+    /// The arXiv PDF a listed abstract page also grants, when
+    /// `web.search.result_reads.arxiv_pdf` is on.
+    fn arxiv_pdf_twin(&self, listed: &url::Url) -> Option<url::Url> {
+        self.result_reads
+            .arxiv_pdf
+            .then(|| super::web_provider::arxiv_pdf_twin(listed))
+            .flatten()
+    }
+
+    /// Names, on each listed arXiv abstract row, the PDF that row also grants,
+    /// so the model knows the full text is readable. Set before sizing.
+    pub(super) fn mark_arxiv_pdfs(&self, listing: &mut Value) {
+        if self.search_grants.is_none() {
+            return;
+        }
+        for row in listing["results"].as_array_mut().into_iter().flatten() {
+            let twin = row["url"]
+                .as_str()
+                .and_then(|raw| super::web_policy::canonical_url(raw).ok())
+                .and_then(|url| self.arxiv_pdf_twin(&url));
+            if let Some(twin) = twin {
+                row["full_text_url"] = Value::String(twin.to_string());
+            }
+        }
     }
 
     /// The URLs this snapshot holds, for a loop run to carry to its next turn.
@@ -2105,5 +2135,90 @@ mod tests {
         assert!(
             Limits::load(&AppConfig::from_str("web: {concurrency: 0}", Path::new("config.yaml")).unwrap()).is_err()
         );
+    }
+
+    #[test]
+    fn a_listed_arxiv_abstract_also_grants_exactly_its_pdf() {
+        let dir = tempfile::tempdir().unwrap();
+        let listing = json!({"results":[
+            {"url":"https://arxiv.org/abs/1706.03762v7"},
+            {"url":"https://arxiv.org/abs/hep-th/9901001"},
+            {"url":"https://arxiv.org/abs/1706.03762?context=cs"},
+            {"url":"https://www.arxiv.org/abs/2101.00001"}
+        ]});
+        let tool = |yaml: &str| {
+            let cfg = AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap();
+            let tool = WebTool::new(dir.path(), &cfg).unwrap();
+            tool.allow_rules(&["https://docs.example.org/*".to_string()], "docs", &[], true)
+                .unwrap();
+            tool
+        };
+        let on = tool("web: {max_rules: 8, search: {result_reads: {max_urls: 6, arxiv_pdf: true}}}");
+        let turn = on.for_search_grants(&[]).unwrap();
+        let mut marked = listing.clone();
+        turn.mark_arxiv_pdfs(&mut marked);
+        assert_eq!(
+            marked["results"][0]["full_text_url"],
+            "https://arxiv.org/pdf/1706.03762v7"
+        );
+        assert_eq!(
+            marked["results"][1]["full_text_url"],
+            "https://arxiv.org/pdf/hep-th/9901001"
+        );
+        assert!(
+            marked["results"][2].get("full_text_url").is_none(),
+            "a query string has no twin"
+        );
+        assert!(
+            marked["results"][3].get("full_text_url").is_none(),
+            "only the exact arxiv.org host"
+        );
+        // Two rows with twins and two without fill the six slots.
+        assert_eq!(turn.grant_search_results(&listing), 6);
+        let policy = turn.policy().unwrap();
+        assert!(policy.authorize("https://arxiv.org/pdf/1706.03762v7", None).is_ok());
+        assert!(policy.authorize("https://arxiv.org/pdf/hep-th/9901001", None).is_ok());
+        assert!(turn.read_by_search_grant("https://arxiv.org/pdf/1706.03762v7"));
+        for refused in [
+            "https://arxiv.org/pdf/1706.03762v6",
+            "https://arxiv.org/pdf/1706.03762",
+            "https://arxiv.org/pdf/2101.00001",
+            "https://arxiv.org/abs/1706.03762",
+        ] {
+            assert!(policy.authorize(refused, None).is_err(), "{refused}");
+        }
+        // The shared tool holds no twin; a block rule still wins over it.
+        assert!(on
+            .policy()
+            .unwrap()
+            .authorize("https://arxiv.org/pdf/1706.03762v7", None)
+            .is_err());
+        turn.block_rules(&["https://arxiv.org/pdf/*".to_string()], true)
+            .unwrap();
+        assert_eq!(
+            turn.policy()
+                .unwrap()
+                .authorize("https://arxiv.org/pdf/1706.03762v7", None)
+                .unwrap_err()
+                .code,
+            "WEB_BLOCKED"
+        );
+        // The twin counts against max_urls: with one slot, only the listed URL.
+        let one = tool("web: {max_rules: 8, search: {result_reads: {max_urls: 1, arxiv_pdf: true}}}");
+        let turn = one.for_search_grants(&[]).unwrap();
+        assert_eq!(turn.grant_search_results(&listing), 1);
+        assert_eq!(turn.search_grants(), ["https://arxiv.org/abs/1706.03762v7"]);
+        // Missing or quoted is off: flag_is_true, not a missing-means-on switch.
+        for yaml in [
+            "web: {max_rules: 8}",
+            "web: {max_rules: 8, search: {result_reads: {arxiv_pdf: 'true'}}}",
+        ] {
+            let turn = tool(yaml).for_search_grants(&[]).unwrap();
+            let mut unmarked = listing.clone();
+            turn.mark_arxiv_pdfs(&mut unmarked);
+            assert!(unmarked["results"][0].get("full_text_url").is_none(), "{yaml}");
+            turn.grant_search_results(&listing);
+            assert!(!turn.search_grants().iter().any(|u| u.contains("/pdf/")), "{yaml}");
+        }
     }
 }
