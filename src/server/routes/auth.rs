@@ -393,10 +393,10 @@ pub async fn set_password(
     req: Request<Body>,
 ) -> ApiResult<Json<Value>> {
     let account = actor(&state, &req)?;
+    require_user_admin(&account)?;
     manager(&state)?
         .get_user(&username)
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "AUTH_USER_NOT_FOUND", "unknown user"))?;
-    require_user_admin(&account)?;
     let ValidJson(body) = ValidJson::<AuthSetPasswordRequest>::from_request(req, &()).await?;
     let st = state.clone();
     run_password_operation(state.auth_operation_permits.clone(), move || {

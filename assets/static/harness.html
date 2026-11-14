@@ -5507,7 +5507,7 @@ async function refreshDeliveries(message = '') {
   try {
     const data=await api('/api/notifications'); if(!current()) return;
     $('notificationRows').replaceChildren(); $('notificationDestinations').replaceChildren();
-    $('notificationStatus').textContent=typeof message==='string' && message ? message : data.enabled ? 'Retained delivery metadata. In-flight requests may finish after a grant is revoked.' : 'Completion delivery is disabled. No outbound worker is running.';
+    $('notificationStatus').textContent=typeof message==='string' && message ? message : data.enabled ? 'Retained delivery metadata. Requests already sent may finish after a grant is revoked.' : 'Completion delivery is disabled. No outbound worker is running.';
     for(const destination of data.destinations) {
       const row=document.createElement('p');row.textContent=destination.id+' · '+(destination.authorized_now?'authorized':'disabled or revoked')+' · '+destination.events.join(', ')+' · '+destination.rate_per_minute+' batches/minute';$('notificationDestinations').append(row);
     }
