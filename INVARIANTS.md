@@ -44,8 +44,9 @@ Process edges; update this map when adding one.
   `cgagentharness pdf-text-worker` through `common::process::run`: fixed argv, empty
   environment, PDF bytes on stdin, one JSON reply under the 4 MiB capture ceiling, a
   5 s kill deadline and at most two at once. Before reading, the worker caps its own
-  CPU time and core and regular-file writes to zero, and on Linux its address space
-  at 1 GiB. That bounds parsing; it is not a sandbox (no filesystem or network
+  CPU time, sets core and regular-file writes to zero, arms a 768 MiB heap ceiling
+  on every OS (`common::alloc_cap`; over it the child aborts) and on Linux caps its
+  address space at 1 GiB. That bounds parsing; it is not a sandbox (no filesystem or network
   denial). Text is cached in memory by content digest only after the caller's
   owner and digest checks; refusals carry fixed `PDF_*` codes, never parser text.
 - **Keep-awake child (macOS):** while a `/web research` run holds the model,
@@ -236,7 +237,8 @@ complexity returns no partial evidence.
 
 The one exception is opt-in `web.firecrawl.enabled` (ships off), for exact reads
 only, never discovery, crawl or search. After a pinned read gets a server's 403,
-429 or 503, a near-empty script shell, a body over `web.response_bytes` or a PDF
+429 or 503, a near-empty script shell, a body over `web.response_bytes` (a PDF:
+`web.pdf_response_bytes`) or a PDF
 that local text extraction refuses (the last two by operator decision, 2026-11-10; any other content type, and every
 transport, redirect, policy or address refusal, never escalates), the authorized
 URL, rechecked just before sending, may go once to Firecrawl, so it leaves the

@@ -168,14 +168,19 @@ impl WebTool {
         audit: &Audit,
         budget: Option<usize>,
     ) -> Result<Page> {
-        let pinned = self.get_raw(raw, group, cached).await;
+        let pinned = self.get_raw(raw, group, cached, self.pdf_cap(budget)).await;
         self.check_enabled()?;
         if !self.firecrawl.enabled || !escalates(&pinned) {
             return pinned.map(|(page, _)| page);
         }
         let pinned_charge = match &pinned {
             Ok((page, _)) => page.transfer_bytes,
-            Err(_) => self.limits.response_bytes,
+            // A PDF read past `response_bytes` reports what it actually transferred.
+            Err(e) => e
+                .details
+                .get("charged_bytes")
+                .and_then(Value::as_u64)
+                .map_or(self.limits.response_bytes, |n| n as usize),
         };
         // Codes only: never the URL, a key or provider text.
         let from = match &pinned {
@@ -631,6 +636,26 @@ mod tests {
                     }),
                 )
                 .route(
+                    "/big.pdf",
+                    get(|| async {
+                        let lines: Vec<String> = (0..40)
+                            .map(|n| format!("BIG_PDF_FACT line {n} of a long paper body"))
+                            .collect();
+                        let page: Vec<&str> = lines.iter().map(String::as_str).collect();
+                        let pdf = crate::common::pdf_text::fixture_pdf(&[&page, &page, &page], false);
+                        ([("content-type", "application/pdf")], pdf)
+                    }),
+                )
+                .route(
+                    "/junk.pdf",
+                    get(|| async {
+                        (
+                            [("content-type", "application/pdf")],
+                            format!("%PDF-1.7\n{}", "junk ".repeat(2000)),
+                        )
+                    }),
+                )
+                .route(
                     "/image.png",
                     get(|| async { ([("content-type", "image/png")], "not really a png") }),
                 )
@@ -1062,6 +1087,57 @@ mod tests {
         assert_eq!(failure.details["fallback"], "WEB_FALLBACK_KEY_CHANGED");
         assert!(failure.details.get("charged_bytes").is_none(), "nothing was sent");
         assert_eq!(rig.hits(), 0, "a cleared key never reaches Firecrawl");
+    }
+
+    /// Operator decision, 2026-11-14: a PDF answer may use `web.pdf_response_bytes`
+    /// (arXiv papers); HTML and text keep `web.response_bytes`.
+    #[tokio::test]
+    async fn a_pdf_has_its_own_body_cap_and_html_does_not() {
+        let rig = fixture::rig("web: {response_bytes: 4096}", "").await;
+        let read = rig.fetch("big.pdf").await.unwrap();
+        assert!(read["bytes"].as_u64().unwrap() > 4096, "{read}");
+        assert!(read["text"].as_str().unwrap().contains("BIG_PDF_FACT line 39"));
+        assert_eq!(rig.fetch("huge").await.unwrap_err().code, "WEB_TOO_LARGE");
+
+        let tight = fixture::rig("web: {response_bytes: 4096, pdf_response_bytes: 4096}", "").await;
+        let refused = tight.fetch("big.pdf").await.unwrap_err();
+        assert_eq!(refused.code, "WEB_TOO_LARGE");
+        assert_eq!(refused.details["pdf"], true);
+    }
+
+    /// In a budgeted batch a PDF is read only up to what `web.run_bytes` has left,
+    /// and a failure past `web.response_bytes` charges what actually arrived.
+    #[tokio::test]
+    async fn a_batch_reads_a_pdf_within_the_run_budget_and_charges_what_arrived() {
+        let url = |p: &str| vec![format!("http://site.fixture/{p}")]; // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        let fitted = fixture::rig("web: {response_bytes: 4096, run_bytes: 4096}", "").await;
+        let batch = fitted
+            .web
+            .fetch_many(&url("big.pdf"), None, true, &fitted.audit, "local")
+            .await
+            .unwrap();
+        assert_eq!(batch["coverage"]["failed"][0]["code"], "WEB_TOO_LARGE", "{batch}");
+        assert!(batch["coverage"]["charged_bytes"].as_u64().unwrap() <= 4096);
+
+        let roomy = fixture::rig("web: {response_bytes: 4096, run_bytes: 1048576}", "").await;
+        let batch = roomy
+            .web
+            .fetch_many(&url("big.pdf"), None, true, &roomy.audit, "local")
+            .await
+            .unwrap();
+        let page = &batch["pages"][0];
+        assert!(page["text"].as_str().unwrap().contains("BIG_PDF_FACT"), "{batch}");
+        assert_eq!(batch["coverage"]["charged_bytes"], page["transfer_bytes"]);
+        assert!(page["transfer_bytes"].as_u64().unwrap() > 4096);
+
+        let junk = "%PDF-1.7\n".len() + "junk ".len() * 2000;
+        let batch = roomy
+            .web
+            .fetch_many(&url("junk.pdf"), None, true, &roomy.audit, "local")
+            .await
+            .unwrap();
+        assert_eq!(batch["coverage"]["failed"][0]["code"], "WEB_NOT_TEXT", "{batch}");
+        assert_eq!(batch["coverage"]["charged_bytes"], junk, "not the 4096-byte allowance");
     }
 
     #[tokio::test]

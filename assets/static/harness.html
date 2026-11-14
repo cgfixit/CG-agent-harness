@@ -2135,7 +2135,8 @@ async function readNotesList(current) {
   $('notesFiles').disabled = $('notesUpload').disabled = !notesLimits;
   $('notesLimits').textContent = notesLimits
     ? notesLimits.max_files_per_request + ' files per upload · ' + notesLimits.max_file_bytes.toLocaleString() +
-      ' bytes per file · ' + result.count + ' / ' + notesLimits.max_files_per_owner + ' notes saved'
+      ' bytes per text file · ' + (notesLimits.max_pdf_bytes || notesLimits.max_file_bytes).toLocaleString() +
+      ' bytes per PDF · ' + result.count + ' / ' + notesLimits.max_files_per_owner + ' notes saved'
     : 'Upload limits are unavailable.';
   if (!result.notes.length) {
     const empty = document.createElement('li'); empty.textContent = 'No uploaded notes.';
@@ -2202,7 +2203,9 @@ $('notesForm').addEventListener('submit', event => {
     const sent = [], lines = [], body = new FormData();
     for (const file of files) {
       const reason = !/\.(md|txt|pdf)$/i.test(file.name.trim()) || file.name.includes('..') ? 'choose .txt, .md or .pdf'
-        : !file.size ? 'file is empty' : file.size > notesLimits.max_file_bytes ? 'file is too large' : '';
+        : !file.size ? 'file is empty'
+        : file.size > (/\.pdf$/i.test(file.name.trim()) ? notesLimits.max_pdf_bytes || notesLimits.max_file_bytes
+          : notesLimits.max_file_bytes) ? 'file is too large' : '';
       if (reason) lines.push(file.name + ': skipped (' + reason + ').');
       else { sent.push(file); body.append('file', file, file.name); }
     }

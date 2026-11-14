@@ -114,7 +114,8 @@ attachments:
 # Separate from structured memory. Cloud and /agent never receive these bytes.
 notes_corpus:
   max_files_per_owner: 64 # 1–256
-  max_file_bytes: 524288 # 1024–1048576
+  max_file_bytes: 524288 # 1024–1048576; also caps a PDF note's extracted text
+  max_pdf_bytes: 8388608 # 1024–15728640 stored size of one .pdf note; max_home_bytes still applies
   max_home_bytes: 8388608 # 1048576–33554432
   max_files_per_request: 8 # 1–16
   max_concurrent_ingests: 2 # 1–8
@@ -168,6 +169,7 @@ web:
   # search, and with it those reads, from unattended turns, or per goal: /goal --web fetch
   # <text>, /loop --web fetch. Invalid values fail boot.
   response_bytes: 1048576 # 1024–1048576; compressed bodies refused. Shipped 262144 until 2026-11-10: uncompressed, many documentation and reference pages are larger, and passage selection keeps the page out of the model's context either way
+  pdf_response_bytes: 8388608 # 1024–15728640; an application/pdf body (text layer read locally). A budgeted run reads at most what web.run_bytes has left
   request_seconds: 15 # 1–30, includes queue, DNS, headers, body and extraction; also the one deadline a search's provider hops share. Shipped 8 until 2026-11-10
   html_parser_handles: 4096 # 64–4096; bound open-element/formatting state, restart-only
   concurrency: 4 # 1–4 total fetches; restart-only (shared permits)

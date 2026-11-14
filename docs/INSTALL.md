@@ -493,14 +493,14 @@ hits, shared fetch capacity, locks and cancellation survive, so tightening a
 ceiling can answer HTTP 429 at once; SIGHUP recovers a ceiling that blocks the
 route itself. The route never writes YAML or changes permissions.
 
-`src/server/config_reload.rs::RELOADABLE` lists the 28 keys; the shipped YAML
+`src/server/config_reload.rs::RELOADABLE` lists the 29 keys; the shipped YAML
 comments state each range, and startup shares the bounds:
 
 | Group | Reloadable keys |
 |---|---|
 | API | `api.rate_limit.max_requests`, `.window_seconds`; `api.harness_loop_rate_limit.max_requests`, `.window_seconds`, `.max_tokens` |
 | Loop | `loop.max_turns`, `max_total_completion_tokens`, `max_failures`, `cooldown_ms` |
-| Web limits | `web.response_bytes`, `request_seconds`, `pages`, `run_bytes`, `run_seconds`, `per_site_pages`, `pace_ms`, `cache_pages`, `cache_bytes` |
+| Web limits | `web.response_bytes`, `pdf_response_bytes`, `request_seconds`, `pages`, `run_bytes`, `run_seconds`, `per_site_pages`, `pace_ms`, `cache_pages`, `cache_bytes` |
 | Web research | `web.subqueries`, `rounds`, `evidence_tokens`, `model_tokens`, `total_tokens`, `research_seconds`, `synthesis_seconds`, `stale_seconds`, `chat_tool_calls`, `carry_forward_sources` |
 
 Both loop caps zero or absent sets `/api/status.loop.unbounded`; a transition

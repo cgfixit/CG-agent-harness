@@ -461,19 +461,18 @@ turns' reads all failed. A browser-driven loop waits out a rate limit's
 counts it as a failed turn.
 
 Open **Memory → Manage uploaded notes** to upload, refresh or delete your
-account’s UTF-8 notes. The picker shows configured limits and reports skipped
+account’s `.md`, `.txt` and `.pdf` notes. The picker shows configured limits and reports skipped
 files; the server accepts or rejects a batch together. Saved notes use
 reference IDs, not filenames. A local message supplies the retrieval query, and
 `/prompt` shows matching passages. Notes stay separate from facts and pins.
 
 Incomplete history-clear or account-deletion cleanup reports `notes_cleanup`
 and a `notes_corpus_cleanup_incomplete` audit event, without note names or text.
-Failed unlinks retain their rows and quota charges. If saving the index fails
-after unlink, stale rows also remain charged; retrieval skips missing blobs so
-surviving notes remain usable, while unreadable or altered blobs still refuse.
+Failed unlinks, and stale rows after a failed index save, stay charged;
+retrieval skips missing blobs, while unreadable or altered blobs still refuse.
 Restore storage access, then clear history again or delete the listed notes.
-Deleted accounts' notes retry at server start or the next account deletion.
-This recovery uses indexed rows; it does not find older, unindexed orphan files.
+Deleted accounts' notes retry at server start or the next account deletion;
+unindexed orphan files are not found.
 
 ### DOCX attachments
 
@@ -494,19 +493,20 @@ A two-second cooperative deadline bounds parsing in process.
 
 ### PDF text
 
-Attachments, notes and exact web reads share one local PDF reader. It decodes
-page text only: no OCR, images, forms, links, scripts or embedded files.
-Encrypted files are refused. Columns and tables follow content-stream order.
+Attachments, notes and exact web reads share one local reader of page text: no
+OCR, images, forms, links, scripts or embedded files. Columns follow stream
+order; a table row stays on one line.
 
-For a 32,768-token model, ligatures fold, hyphenated breaks join and running
-headers drop. A first line lists textless pages; `# Page N` headings mark
-passages.
+Ligatures fold, hyphenated breaks join, and running headers and page numbers
+drop. A first line lists textless pages; `# Page N` headings mark
+passages. A query matching nothing samples evenly spaced page openings.
 
 Refusals: `PDF_MALFORMED`, `PDF_ENCRYPTED`, `PDF_NO_TEXT`, `PDF_LIMIT` (15 MiB,
 200 pages, 8 MiB decoded per stream or page, 32 MiB per file, 1 MiB text),
 `PDF_TIMEOUT` (5 s per file, 10 s per upload or prompt), `PDF_BUSY`,
-`PDF_WORKER_FAILED`. Parsing runs in a [killable child](../INVARIANTS.md#i6--process-isolation-between-the-console-and-the-agentic-pipeline).
-Notes keep `notes_corpus.max_file_bytes`; web PDFs keep `web.response_bytes`.
+`PDF_WORKER_FAILED`. Parsing runs in a [killable child](../INVARIANTS.md#i6--process-isolation-between-the-console-and-the-agentic-pipeline)
+with a 768 MiB heap. Size caps: `notes_corpus.max_pdf_bytes`, text within
+`max_file_bytes`; `web.pdf_response_bytes`, within a run's remaining `run_bytes`.
 
 ### Streaming chat and cancellation
 

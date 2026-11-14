@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::io::Read;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -23,6 +24,9 @@ use crate::common::errors::{HarnessError, Result};
 use crate::common::tool_broker::assert_allowed;
 
 pub const MAX_BYTES: usize = 262_144;
+/// Default `web.pdf_response_bytes` (operator decision, 2026-11-14: arXiv papers
+/// are usually 0.5–5 MB; HTML keeps `web.response_bytes`).
+pub const PDF_RESPONSE_BYTES: usize = 8_388_608;
 /// Largest `web.cache_pages`: the most documents the derived cache can hold
 /// under any configuration, and so the bound on listing it.
 pub(super) const MAX_CACHE_PAGES: usize = 256;
@@ -57,6 +61,9 @@ pub(crate) fn research_request_timeout_sec(research_seconds: u64, synthesis_seco
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Limits {
     pub response_bytes: usize,
+    /// Body cap for an `application/pdf` answer (`web.pdf_response_bytes`). A
+    /// budgeted run reads a PDF only up to what `web.run_bytes` has left.
+    pub pdf_response_bytes: usize,
     pub request_seconds: u64,
     pub html_parser_handles: usize,
     pub concurrency: usize,
@@ -98,6 +105,12 @@ impl Limits {
             |name: &str, default: u64, min: u64, max: u64| cfg.u64_in(&format!("web.{name}"), default, min..=max);
         Ok(Self {
             response_bytes: bound("response_bytes", MAX_BYTES as u64, 1024, 1_048_576)? as usize,
+            pdf_response_bytes: bound(
+                "pdf_response_bytes",
+                PDF_RESPONSE_BYTES as u64,
+                1024,
+                crate::common::pdf_text::MAX_INPUT_BYTES as u64,
+            )? as usize,
             request_seconds: bound("request_seconds", 8, 1, 30)?,
             html_parser_handles: bound("html_parser_handles", 512, 64, 4096)? as usize,
             concurrency: bound("concurrency", 2, 1, 4)? as usize,
@@ -668,7 +681,13 @@ impl WebTool {
             return Err(error("WEB_EVIDENCE_INVALID", "saved extract must be a file"));
         }
         let mut bytes = Vec::new();
-        let cap = self.limits.response_bytes * 8 + 65_536;
+        // A PDF page holds at most `pdf_text::MAX_OUTPUT_BYTES` of text, whatever its body cap.
+        let cap = self
+            .limits
+            .response_bytes
+            .max(crate::common::pdf_text::MAX_OUTPUT_BYTES)
+            * 8
+            + 65_536;
         file.take(cap as u64 + 1).read_to_end(&mut bytes)?;
         if bytes.len() > cap {
             return Err(error("WEB_EVIDENCE_INVALID", "saved extract exceeds limit"));
@@ -1033,8 +1052,15 @@ impl WebTool {
             .map_err(|_| error("WEB_FETCH_FAILED", "HTTP setup failed"))
     }
 
-    pub(super) async fn get(&self, raw: &str, group: Option<&str>, cached: Option<&Page>) -> Result<Page> {
-        self.get_raw(raw, group, cached).await.map(|(page, _)| page)
+    /// `pdf_cap` is the body limit if the answer is a PDF; see `pdf_cap`.
+    pub(super) async fn get(
+        &self,
+        raw: &str,
+        group: Option<&str>,
+        cached: Option<&Page>,
+        pdf_cap: usize,
+    ) -> Result<Page> {
+        self.get_raw(raw, group, cached, pdf_cap).await.map(|(page, _)| page)
     }
 
     pub(super) async fn get_raw(
@@ -1042,22 +1068,36 @@ impl WebTool {
         raw: &str,
         group: Option<&str>,
         cached: Option<&Page>,
+        pdf_cap: usize,
     ) -> Result<(Page, String)> {
-        self.get_raw_paced(raw, group, cached, None).await
+        self.get_raw_paced(raw, group, cached, None, pdf_cap).await
+    }
+
+    /// The PDF body limit for one read: `web.pdf_response_bytes`, or less when
+    /// a budgeted run has only `left` bytes of `web.run_bytes` remaining.
+    pub(super) fn pdf_cap(&self, left: Option<usize>) -> usize {
+        left.map_or(self.limits.pdf_response_bytes, |left| {
+            left.min(self.limits.pdf_response_bytes)
+        })
     }
 
     /// `pace` (`pace_ms`, the caller's deadline) spaces public Google searches.
     /// It is checked and stamped just before the send, after the permit wait and
     /// DNS, so queueing behind other fetches cannot shorten the gap.
+    ///
+    /// A failure after more than `web.response_bytes` of a PDF arrived carries
+    /// `charged_bytes`, so run accounting never charges less than was transferred.
     pub(super) async fn get_raw_paced(
         &self,
         raw: &str,
         group: Option<&str>,
         cached: Option<&Page>,
         pace: Option<(u64, tokio::time::Instant, &Audit)>,
+        pdf_cap: usize,
     ) -> Result<(Page, String)> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
-        tokio::time::timeout_at(deadline, async {
+        let transferred = AtomicUsize::new(0);
+        let result = tokio::time::timeout_at(deadline, async {
             self.check_enabled()?;
             // Keep the permit until the worker actually exits, including its
             // bounded cleanup after cancellation or the original request deadline.
@@ -1169,11 +1209,9 @@ impl WebTool {
                     // local extraction fails is marked `pdf` for the opt-in fallback.
                     return Err(error("WEB_NOT_TEXT", "unsupported content type").detail("pdf", false));
                 }
-                if response
-                    .content_length()
-                    .is_some_and(|n| n > self.limits.response_bytes as u64)
-                {
-                    return Err(error("WEB_TOO_LARGE", "response exceeds limit"));
+                let limit = if pdf { pdf_cap } else { self.limits.response_bytes };
+                if response.content_length().is_some_and(|n| n > limit as u64) {
+                    return Err(error("WEB_TOO_LARGE", "response exceeds limit").detail("pdf", pdf));
                 }
                 let etag = header(reqwest::header::ETAG);
                 let last_modified = header(reqwest::header::LAST_MODIFIED);
@@ -1183,22 +1221,25 @@ impl WebTool {
                     .await
                     .map_err(|_| error("WEB_FETCH_FAILED", "response read failed"))?
                 {
-                    if bytes.len() + chunk.len() > self.limits.response_bytes {
-                        return Err(error("WEB_TOO_LARGE", "response exceeds limit"));
+                    transferred.store(bytes.len() + chunk.len(), Ordering::SeqCst);
+                    if bytes.len() + chunk.len() > limit {
+                        return Err(error("WEB_TOO_LARGE", "response exceeds limit").detail("pdf", pdf));
                     }
                     bytes.extend_from_slice(&chunk);
                 }
-                let (body, kind, base) = (
-                    String::from_utf8_lossy(&bytes).into_owned(),
-                    content_type.clone(),
-                    target.clone(),
-                );
-                // A PDF keeps `web.response_bytes`, so batch byte budgets still hold;
-                // a failed local extraction stays `WEB_NOT_TEXT` marked `pdf` for the
-                // opt-in fallback. Its link annotations are never collected.
+                let byte_len = bytes.len();
+                // A PDF may use `web.pdf_response_bytes` (bounded by what a run has
+                // left); a failed local extraction stays `WEB_NOT_TEXT` marked `pdf`
+                // for the opt-in fallback. Its link annotations are never collected.
                 let (body, (title, text, links)) = if pdf {
-                    pdf_in_worker(bytes.clone(), &target, deadline, permit).await?
+                    pdf_in_worker(bytes, &target, deadline, permit).await?
                 } else {
+                    let (body, kind, base) = (
+                        String::from_utf8_lossy(&bytes).into_owned(),
+                        content_type.clone(),
+                        target.clone(),
+                    );
+                    drop(bytes);
                     extract_in_worker(body, kind, base, self.limits.html_parser_handles, deadline, permit).await?
                 };
                 raw_body = body;
@@ -1211,8 +1252,8 @@ impl WebTool {
                     links,
                     status: status.as_u16(),
                     content_type,
-                    bytes: bytes.len(),
-                    transfer_bytes: bytes.len(),
+                    bytes: byte_len,
+                    transfer_bytes: byte_len,
                     fetched_at: 0.0,
                     extraction_version: 1,
                     policy_revision: policy.revision.clone(),
@@ -1235,7 +1276,15 @@ impl WebTool {
             Ok((page, raw_body))
         })
         .await
-        .map_err(|_| error("WEB_TIMEOUT", "request deadline exceeded"))?
+        .unwrap_or_else(|_| Err(error("WEB_TIMEOUT", "request deadline exceeded")));
+        let moved = transferred.load(Ordering::SeqCst);
+        result.map_err(|e| {
+            if moved > self.limits.response_bytes && e.details.get("charged_bytes").is_none() {
+                e.detail("charged_bytes", moved as u64)
+            } else {
+                e
+            }
+        })
     }
 
     pub(super) fn store_last(&self, page: &Page, group: Option<&str>, owner: &str) -> Result<()> {
