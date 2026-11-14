@@ -466,6 +466,15 @@ files; the server accepts or rejects a batch together. Saved notes use
 reference IDs, not filenames. A local message supplies the retrieval query, and
 `/prompt` shows matching passages. Notes stay separate from facts and pins.
 
+Incomplete history-clear or account-deletion cleanup reports `notes_cleanup`
+and a `notes_corpus_cleanup_incomplete` audit event, without note names or text.
+Failed unlinks retain their rows and quota charges. If saving the index fails
+after unlink, stale rows also remain charged; retrieval skips missing blobs so
+surviving notes remain usable, while unreadable or altered blobs still refuse.
+Restore storage access, then clear history again or delete the listed notes.
+Deleted accounts' notes retry at server start or the next account deletion.
+This recovery uses indexed rows; it does not find older, unindexed orphan files.
+
 ### DOCX attachments
 
 The file picker also accepts `.docx`. Only UTF-8 main-document text is read:

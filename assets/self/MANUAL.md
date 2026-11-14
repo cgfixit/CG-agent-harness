@@ -10,7 +10,7 @@ This manual is static text bundled with the build and indexed at startup. It is 
 
 - Web research: Search listings, permitted fetches and crawls, `/web research` jobs with checked quotes. Starts: On, allowlist mode, one seeded Google rule.
 - Goal loops: `/goal` and `/loop` continue a long piece in a run that outlives the browser. Starts: 50 turns, 200,000 tokens, two failed turns; cloud refuses loops.
-- Memory: Shared pinned notes, uploaded notes you manage in the console, and account-private facts you select, recall or accept from proposals. Starts: On; applying a proposal needs review.
+- Memory: Shared pinned notes, uploaded notes with retryable cleanup, and account-private facts you select, recall or accept from proposals. Starts: On; applying a proposal needs review.
 - Local chat: Streaming sessions, transcript search and export, text and DOCX attachments, skills, style presets, `/prompt`, sandboxed HTML preview. Starts: Ollama on loopback; no persona or style until you add one.
 - Analytics, diagnostics: Session, token and run history, **Estimate draft** before a cloud call, `/diag` redacted log tails. Starts: On; local inference unpriced; `/diag` admin or `portal_auditor` only.
 - Cloud chat: Optional Grok or Claude; only the new message leaves. Starts: Needs a provider key.

@@ -245,7 +245,8 @@ impl NotesCorpus {
             }
         }
         manifest.notes = keep;
-        self.save_manifest(&manifest)?;
+        self.save_manifest(&manifest)
+            .map_err(|e| e.detail("removed", removed).detail("retained", retained))?;
         if retained > 0 {
             return Err(HarnessError::new("IO_ERROR", "could not remove every notes file")
                 .detail("removed", removed)
@@ -261,10 +262,12 @@ impl NotesCorpus {
         let mut out = Vec::new();
         for blob in manifest.notes.iter().filter(|n| n.owner == owner) {
             let rel = note_rel(blob)?;
-            let bytes = self
-                .jail
-                .read(&rel)
-                .map_err(|_| HarnessError::new("NOTES_NOT_FOUND", "note is not readable"))?;
+            let bytes = match self.jail.read(&rel) {
+                Ok(bytes) => bytes,
+                // Cleanup can unlink a blob before an interrupted or failed index save.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => return Err(HarnessError::new("NOTES_NOT_FOUND", "note is not readable")),
+            };
             if bytes.len() as u64 != blob.byte_len || sha256_bytes_hex(&bytes) != blob.sha256 {
                 return Err(HarnessError::new("NOTES_NOT_FOUND", "note is not readable"));
             }
@@ -715,6 +718,65 @@ mod tests {
         assert_eq!(retained.len(), 2);
         assert_eq!(retained[0].text, "keep one");
         assert_eq!(retained[1].text, "keep two");
+    }
+
+    #[test]
+    fn missing_note_does_not_hide_surviving_notes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = NotesCorpus::open(dir.path(), limits()).unwrap();
+        let notes = store
+            .store("alice", &[file("a.md", "removed"), file("b.md", "surviving")])
+            .unwrap();
+        store.store("bob", &[file("c.md", "other owner")]).unwrap();
+        std::fs::remove_file(dir.path().join(note_rel(&notes[0]).unwrap())).unwrap();
+        let texts = store.verified_texts("alice").unwrap();
+        assert_eq!(texts.len(), 1);
+        assert_eq!(texts[0].text, "surviving");
+        assert_eq!(store.verified_texts("bob").unwrap()[0].text, "other owner");
+        // Only absence is recoverable; altered bytes still fail verification.
+        std::fs::write(dir.path().join(note_rel(&notes[1]).unwrap()), "tampered").unwrap();
+        assert_eq!(store.verified_texts("alice").unwrap_err().code, "NOTES_NOT_FOUND");
+    }
+
+    #[test]
+    fn failed_cleanup_index_write_reports_progress_and_retries_after_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("notes");
+        let tight = NotesLimits {
+            max_files_per_owner: 2,
+            ..limits()
+        };
+        let store = NotesCorpus::open(&root, tight).unwrap();
+        let notes = store
+            .store("alice", &[file("a.md", "removed"), file("b.md", "retained")])
+            .unwrap();
+        store.store("bob", &[file("c.md", "other owner")]).unwrap();
+        let stuck = root.join(note_rel(&notes[1]).unwrap());
+        let saved = dir.path().join("retained");
+        std::fs::rename(&stuck, &saved).unwrap();
+        std::fs::create_dir(&stuck).unwrap();
+        FAIL_INDEX_BEFORE_RENAME.with(|c| c.set(true));
+        let err = store.unlink_owner("alice").unwrap_err();
+        assert_eq!(err.code, "IO_ERROR");
+        assert_eq!(err.details["removed"], 1);
+        assert_eq!(err.details["retained"], 1);
+        assert!(!root.join(note_rel(&notes[0]).unwrap()).exists());
+        assert_eq!(store.list_for_owner("alice").unwrap(), notes);
+        assert!(leftover_tmps(&root).is_empty());
+        std::fs::remove_dir(&stuck).unwrap();
+        std::fs::rename(&saved, &stuck).unwrap();
+        drop(store);
+        let store = NotesCorpus::open(&root, tight).unwrap();
+        assert_eq!(store.verified_texts("alice").unwrap()[0].text, "retained");
+        assert_eq!(store.verified_texts("bob").unwrap()[0].text, "other owner");
+        assert_eq!(
+            store.store("alice", &[file("d.md", "new")]).unwrap_err().code,
+            "NOTES_QUOTA"
+        );
+        assert_eq!(store.unlink_owner("alice").unwrap(), 2);
+        assert!(store.list_for_owner("alice").unwrap().is_empty());
+        store.store("alice", &[file("d.md", "new")]).unwrap();
+        assert_eq!(store.verified_texts("bob").unwrap()[0].text, "other owner");
     }
 
     #[test]
