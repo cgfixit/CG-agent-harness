@@ -464,6 +464,10 @@ agentic:
       - "Cargo.lock"
       - "deny.toml"
       - "rustfmt.toml"
+      - ".cargo/" # Cargo merges a clone's own config (target runner, rustflags) into the check
+      - ".rustfmt.toml"
+      - "clippy.toml"
+      - ".clippy.toml"
     # Default-on READ basename deny-list (model === READ === and operator
     # --read-file). Enforced after clone-jail canonicalization against the
     # final path segment, with name-equivalence folding so aliases/case still
