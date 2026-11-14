@@ -1,7 +1,7 @@
 //! A PDF can draw inline fragments in a later text object. Repair nearby
 //! fragments on the same baseline while keeping the page's stream line order.
 
-use super::number;
+use super::{number, MAX_STATE_DEPTH};
 use lopdf::{Dictionary, Document, Object};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
@@ -98,6 +98,12 @@ pub(super) struct InlineOrder {
     x: Option<f32>,
     scale: (f32, f32),
     leading: f32,
+    // Each transform gets a fresh identity. Restoring a saved graphics state
+    // can change coordinates without another cm.
+    frame: usize,
+    next_frame: usize,
+    saved_state: Vec<(usize, f32)>,
+    span_frame: Option<usize>,
     spans: usize,
     disabled: bool,
 }
@@ -110,7 +116,19 @@ impl InlineOrder {
         match operator {
             "cm" if self.spans != 0 => self.disabled = true,
             "cm" if get(1) != 0.0 || get(2) != 0.0 || get(0) <= 0.0 => self.disabled = true,
+            "cm" => {
+                self.next_frame += 1;
+                self.frame = self.next_frame;
+            }
+            "q" if self.saved_state.len() < MAX_STATE_DEPTH => self.saved_state.push((self.frame, self.leading)),
+            "q" => self.disabled = true,
+            "Q" => {
+                if let Some((frame, leading)) = self.saved_state.pop() {
+                    (self.frame, self.leading) = (frame, leading);
+                }
+            }
             "Tc" | "Tw" | "Ts" if get(0) != 0.0 => self.disabled = true,
+            "\"" if get(0) != 0.0 || get(1) != 0.0 => self.disabled = true,
             "Tz" if get(0) != 100.0 => self.disabled = true,
             "BT" => {
                 self.scale = (1.0, 1.0);
@@ -148,6 +166,10 @@ impl InlineOrder {
 
     pub(super) fn record(&mut self, font: Option<&Widths>, bytes: &[u8], size: f32, text: Range<usize>) {
         if self.disabled || text.is_empty() {
+            return;
+        }
+        if *self.span_frame.get_or_insert(self.frame) != self.frame {
+            self.disabled = true;
             return;
         }
         let (Some(x), Some((_, y)), Some(width)) = (self.x, self.line, font.and_then(|font| font.advance(bytes)))
@@ -228,6 +250,33 @@ impl InlineOrder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preserves_stream_order_when_positions_are_incomparable() {
+        let font = Widths {
+            values: HashMap::new(),
+            default: Some(500.0),
+            two_bytes: false,
+        };
+        let text = "First\nSecond".to_string();
+        for restored_transform in [true, false] {
+            let mut order = InlineOrder::default();
+            if restored_transform {
+                order.apply("q", &[]);
+                order.apply("cm", &[1.into(), 0.into(), 0.into(), 1.into(), 200.into(), 0.into()]);
+            }
+            order.apply("Tm", &[1.into(), 0.into(), 0.into(), 1.into(), 30.into(), 700.into()]);
+            order.record(Some(&font), b"First", 10.0, 0..5);
+            if restored_transform {
+                order.apply("Q", &[]);
+            } else {
+                order.apply("\"", &[0.into(), 3.into(), Object::string_literal("Second")]);
+            }
+            order.apply("Tm", &[1.into(), 0.into(), 0.into(), 1.into(), 0.into(), 700.into()]);
+            order.record(Some(&font), b"Second", 10.0, 6..12);
+            assert_eq!(order.finish(text.clone()), text);
+        }
+    }
 
     #[test]
     fn restores_inline_fragments_without_reordering_columns() {
