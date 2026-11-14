@@ -902,7 +902,10 @@ try {
  assert.equal(await evaluate('document.getElementById("hTokens").textContent'),(4321).toLocaleString(),'status polling cannot overwrite with aggregate');
  await send('/session use '+secondSession);
  assert.equal(await evaluate('document.getElementById("hTokens").textContent'),'3');
+ // Files picked (or refused) in one session never ride the next session's first message or loop.
+ assert.equal(await evaluate('(()=>{const dt=new DataTransfer();dt.items.add(new File(["x"],"pending.pdf",{type:"application/pdf"}));attachInput.files=dt.files;paintAttach();retryAttachmentIds={session:currentSession,ids:["kept"]};return document.getElementById("attachCount").textContent})()'),'1');
  await send('/session use '+firstSession.session_id);
+ assert.deepEqual(await evaluate('[attachInput.files.length,document.getElementById("attachCount").textContent,retryAttachmentIds]'),[0,'',null],'a session switch drops pending attachments');
  assert.equal(await evaluate('document.querySelectorAll("#stream .msg.user, #stream .msg.agent").length'),12,'switch renders the selected session, including its older messages');
  assert.equal(await evaluate('document.querySelectorAll("#stream [aria-live=off] .msg.user, #stream [aria-live=off] .msg.agent").length'),12,'restored history sits outside the polite live log');
  assert.equal(await evaluate('document.getElementById("stream").getAttribute("aria-live")'),'polite');
