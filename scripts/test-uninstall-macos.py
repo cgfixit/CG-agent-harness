@@ -93,7 +93,7 @@ elif name == "security":
     if action == "find-certificate":
         assert args[1:4] == ["-a", "-c", "CG Agent Harness local portal"] and args[4] == "-Z", args
         for h in state["certs"]:
-            print("SHA-256 hash: " + h * 2 + "\\nSHA-1 hash: " + h)
+            print("SHA-256 hash: " + h * 2 + "\\nSHA-1 hash: " + h)  # DevSkim: ignore DS126858 because this double mimics the SHA-1 item-id label security prints; nothing is hashed.
     elif action == "delete-certificate":
         assert args[1:3] == ["-t", "-Z"], args
         state["certs"].remove(args[3]); save()
