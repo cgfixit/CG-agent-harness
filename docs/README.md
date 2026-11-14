@@ -57,7 +57,8 @@ manual's order so old links resolve. Truth order is code, then
   persona, skills and styles, attachments, streaming, history compaction,
   prompt context, the slash-command reference and accessibility.
   Owns: `assets/static/harness.html`, `src/server/{slash,sessions,prompts,
-  compaction,attachments,style,self_manual,live_state,loop_runner,routes/core}.rs`.
+  compaction,attachments,style,self_manual,live_state,loop_runner,routes/core}.rs`,
+  `src/common/pdf_text.rs`.
   Tests: `tests/chat_and_sessions.rs`, `tests/self_manual.rs`,
   `tests/chat_stream.rs`, `tests/chat_attachments.rs`, `tests/persona_controls.rs`,
   `tests/loop_runner.rs`, the `scripts/test-*.mjs` contract tests.
