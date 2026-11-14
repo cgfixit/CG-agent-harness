@@ -9,5 +9,7 @@ Deterministic test inputs; no live-provider credentials required.
   `phase7/corpus.json` evaluation corpus for
   [`../structured_memory_phase7.rs`](../structured_memory_phase7.rs) and
   [examples/structured_memory_eval.rs](../../examples/structured_memory_eval.rs).
+  `d7/corpus.json` is the frozen #603 suggestion-qualification corpus, pinned by
+  [`../structured_memory_suggestions.rs`](../structured_memory_suggestions.rs).
 - [`web-research/`](web-research/): `corpus.json`, an offline virtual-site page
   and query corpus for [examples/web_research_benchmark.rs](../../examples/web_research_benchmark.rs).
