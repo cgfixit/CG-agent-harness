@@ -184,10 +184,10 @@ grants; edit the configuration and restart.
 
 All settings require restart. Before each attempt or replay, the worker rereads
 the private config and rechecks the account, startup destination revision,
-subscription, grant and credential: disk changes can revoke startup authority,
-not add it. Destination changes or owner disablement, deletion or demotion
-stop later attempts; an active request may finish. Malformed config refuses
-delivery. There is no listener, only outbound requests.
+subscription, grant and credential. It checks again after DNS before sending.
+Disk changes can only revoke startup authority. Destination changes or owner
+disablement, deletion or demotion stop unsent attempts; already dispatched
+requests may finish. Malformed config refuses delivery.
 
 Public receivers require HTTPS. Loopback, RFC1918 and IPv6 unique-local receivers
 need an exact URL in `notifications.private_url_allowlist` (eight entries) and

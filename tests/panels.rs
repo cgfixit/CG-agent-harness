@@ -1067,16 +1067,23 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
             "AUTH_PERMISSION_DENIED"
         );
     }
-    let resp = s
-        .client
-        .post(s.url("/api/auth/users/admin/password"))
-        .header("cookie", &op_session)
-        .header(CSRF_HEADER, &s.csrf)
-        .json(&json!({"password": "operator-takes-over"}))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status().as_u16(), 403);
+    for (cookie, username, expected_status, expected_code) in [
+        (&op_session, "admin", 403, "AUTH_PERMISSION_DENIED"),
+        (&op_session, "missing", 403, "AUTH_PERMISSION_DENIED"),
+        (&session, "missing", 404, "AUTH_USER_NOT_FOUND"),
+    ] {
+        let resp = s
+            .client
+            .post(s.url(&format!("/api/auth/users/{username}/password")))
+            .header("cookie", cookie)
+            .header(CSRF_HEADER, &s.csrf)
+            .json(&json!({"password": "reset-fixture-password"}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), expected_status);
+        assert_eq!(code(&resp.json::<serde_json::Value>().await.unwrap()), expected_code);
+    }
     let resp = s
         .client
         .post(s.url("/api/auth/users/op/role"))
@@ -1088,6 +1095,24 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
         .unwrap();
     assert_eq!(resp.status().as_u16(), 403);
     // Admin: last-admin guard, unknown user, role change, delete.
+    let resp = s
+        .req(reqwest::Method::POST, "/api/auth/users/op/password")
+        .header("cookie", &session)
+        .json(&json!({"password": "reset-fixture-password"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    assert_eq!(
+        s.client
+            .get(s.url("/api/auth/whoami"))
+            .header("cookie", &op_session)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
     let resp = s
         .client
         .post(s.url("/api/auth/users/admin/role"))
@@ -1134,7 +1159,7 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
     let resp = s
         .client
         .post(s.url("/api/auth/login"))
-        .json(&json!({"username":"op","password":"operator-password-1"}))
+        .json(&json!({"username":"op","password":"reset-fixture-password"}))
         .send()
         .await
         .unwrap();

@@ -83,7 +83,11 @@ fn invalid() -> HarnessError {
     HarnessError::config("invalid notifications configuration; use version 1 owned destinations, explicit subscriptions and finite limits; legacy webhook_url needs deliberate migration")
 }
 fn bounded(cfg: &AppConfig, key: &str, min: u64, max: u64) -> Result<u64> {
-    let defaults = AppConfig::from_str(AppConfig::embedded_default(), std::path::Path::new("defaults"))?;
+    static DEFAULTS: std::sync::OnceLock<Result<AppConfig>> = std::sync::OnceLock::new();
+    let defaults = DEFAULTS
+        .get_or_init(|| AppConfig::from_str(AppConfig::embedded_default(), std::path::Path::new("defaults")))
+        .as_ref()
+        .map_err(Clone::clone)?;
     cfg.get(key)
         .or_else(|| defaults.get(key))
         .and_then(|v| v.as_u64())
@@ -689,22 +693,9 @@ impl Inner {
             } else if !self.authorized(destination) {
                 Err("authority_revoked")
             } else {
-                tokio::time::timeout(
-                    self.settings.timeout,
-                    deliver(
-                        destination,
-                        self.settings.timeout,
-                        if destination.spec.use_bearer {
-                            destination.bearer.as_deref()
-                        } else {
-                            None
-                        },
-                        &payload,
-                        &batch_id,
-                    ),
-                )
-                .await
-                .unwrap_or(Err("timeout"))
+                tokio::time::timeout(self.settings.timeout, deliver(self, destination, &payload, &batch_id))
+                    .await
+                    .unwrap_or(Err("timeout"))
             };
             let retry = matches!(
                 result,
@@ -752,9 +743,8 @@ fn allowed_addresses(addresses: &[SocketAddr], private: bool) -> bool {
 }
 
 async fn deliver(
+    notifier: &Inner,
     destination: &Destination,
-    timeout: Duration,
-    token: Option<&str>,
     payload: &serde_json::Value,
     batch_id: &str,
 ) -> std::result::Result<(), &'static str> {
@@ -764,10 +754,31 @@ async fn deliver(
         .ok_or("invalid_url")?
         .trim_matches(['[', ']']);
     let port = destination.url.port_or_known_default().ok_or("invalid_url")?;
+    #[cfg(test)]
+    if let Ok((started, resume)) = TEST_DNS_WAIT.try_with(Clone::clone) {
+        started.notify_one();
+        resume.notified().await;
+    }
     let addresses = crate::common::dns::lookup_bounded(host, port)
         .await
         .map_err(|_| "dns_failed")?;
-    send_pinned(destination, timeout, token, payload, batch_id, &addresses).await
+    if !notifier.authorized(destination) {
+        return Err("authority_revoked");
+    }
+    send_pinned(
+        destination,
+        notifier.settings.timeout,
+        destination.bearer.as_deref(),
+        payload,
+        batch_id,
+        &addresses,
+    )
+    .await
+}
+
+#[cfg(test)]
+tokio::task_local! {
+    static TEST_DNS_WAIT: (Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>);
 }
 
 async fn send_pinned(
@@ -909,6 +920,111 @@ mod tests {
         assert!(!allowed_addresses(&[addr("8.8.8.8:443"), addr("127.0.0.1:80")], false)); // DevSkim: ignore DS162092 because this unit test pins loopback for the webhook destination grant.
         assert!(!allowed_addresses(&[addr("169.254.169.254:80")], true));
         assert!(!allowed_addresses(&[addr("[::ffff:127.0.0.1]:80")], true)); // DevSkim: ignore DS162092 because this unit test pins IPv4-mapped loopback for the webhook destination grant.
+    }
+    #[test]
+    fn notification_limit_defaults_only_when_missing() {
+        let timeout = |text: &str| {
+            let cfg = AppConfig::from_str(text, std::path::Path::new("fixture")).unwrap();
+            bounded(&cfg, "notifications.timeout_sec", 1, 30)
+        };
+        assert_eq!(timeout("{}").unwrap(), 5);
+        assert_eq!(timeout("notifications: {timeout_sec: 30}").unwrap(), 30);
+        for value in ["null", "'5'", "0", "31"] {
+            assert!(timeout(&format!("notifications: {{timeout_sec: {value}}}")).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn disabling_during_dns_revokes_delivery_before_dispatch() {
+        use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+        use tokio::sync::Notify;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this is an owned loopback webhook fixture.
+        let url = format!("http://{}/hook", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this receiver is an owned loopback fixture.
+        let hits = Arc::new(AtomicUsize::new(0));
+        let observed = hits.clone();
+        let receiver = axum::Router::new().route(
+            "/hook",
+            axum::routing::post(move || async move {
+                observed.fetch_add(1, SeqCst);
+            }),
+        );
+        let task = tokio::spawn(async move { axum::serve(listener, receiver).await.unwrap() });
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::at(dir.path().join("home"));
+        home.ensure_layout().unwrap();
+        let config = json!({
+            "auth": {"enabled": false},
+            "security": {"allow_plaintext_key_file": true},
+            "notifications": {
+                "enabled": true, "schema_version": 1, "poll_interval_sec": 60,
+                "destinations": [{"id":"fixture","owner":"local","enabled":true,"url":url,
+                                  "events":["finished"],"rate_per_minute":120}],
+                "private_url_allowlist": [url]
+            }
+        });
+        let path = home.config_path();
+        let write = |cfg: &Value| {
+            crate::common::atomic::write_atomic(&path, &serde_json::to_vec(cfg).unwrap(), Some(0o600)).unwrap();
+        };
+        for revoke in [false, true] {
+            write(&config);
+            let cfg = AppConfig::load(&path).unwrap();
+            let notifier = Notifier::start(&home, &cfg, None).unwrap().unwrap();
+            let now = crate::common::now_ts();
+            let job_id = if revoke { "b" } else { "a" }.repeat(32);
+            notifier.enqueue(Completion {
+                owner: "local".into(),
+                job_id: job_id.clone(),
+                status: "finished".into(),
+                created_at: now,
+                finished_at: now,
+            });
+            {
+                let mut outbox = notifier.0.outbox.lock().unwrap();
+                let mut next = outbox.data.clone();
+                next.next_send_at.clear();
+                next.deliveries
+                    .values_mut()
+                    .find(|d| d.completion.job_id == job_id)
+                    .unwrap()
+                    .next_attempt_at = now;
+                outbox.commit(next).unwrap();
+            }
+            let started = Arc::new(Notify::new());
+            let resume = Arc::new(Notify::new());
+            let change = async {
+                tokio::time::timeout(Duration::from_secs(3), started.notified())
+                    .await
+                    .unwrap();
+                if revoke {
+                    let mut updated = config.clone();
+                    updated["notifications"]["enabled"] = json!(false);
+                    write(&updated);
+                }
+                resume.notify_one();
+            };
+            tokio::join!(
+                TEST_DNS_WAIT.scope((started.clone(), resume.clone()), notifier.poll_once()),
+                change
+            );
+            let status = notifier.status("local");
+            let delivery = status["deliveries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|d| d["job_id"] == job_id)
+                .unwrap();
+            assert_eq!(hits.load(SeqCst), 1, "only the unchanged attempt may dispatch");
+            if revoke {
+                assert_eq!(delivery["state"], "revoked");
+                assert_eq!(delivery["last_code"], "authority_revoked");
+            } else {
+                assert_eq!(delivery["state"], "delivered");
+            }
+            notifier.stop();
+        }
+        task.abort();
     }
     #[tokio::test]
     async fn pinned_transport_does_not_reresolve_and_refuses_rebound_answers() {

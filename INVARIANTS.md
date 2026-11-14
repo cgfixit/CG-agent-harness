@@ -847,8 +847,9 @@ Only job IDs, terminal status, timestamps and deduplication IDs leave the proces
 Status/replay storage methods require the acting owner. Replay additionally needs
 explicit reason/confirmation and has finite count/retention limits. Every attempt
 and replay rechecks startup destination authority against current disk grants and
-current enabled operator/admin owner. Disk changes only revoke until restart;
-in-flight requests may finish. Per-destination credentials live in private
+the enabled operator/admin owner. Attempts recheck after DNS before sending.
+Disk changes only revoke until restart; already dispatched requests may finish.
+Per-destination credentials live in private
 `data/notifications/bearers.json` (64 KiB maximum), independently of
 `security.allow_plaintext_key_file`. The legacy environment bearer is limited to
 one owner. Both credential sources stay out of outbox rows, responses and audits.
