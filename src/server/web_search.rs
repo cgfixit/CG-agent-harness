@@ -170,10 +170,18 @@ pub struct Page {
     pub via: Option<String>,
 }
 
+fn extraction_version(content_type: &str) -> u32 {
+    if content_type == crate::common::pdf_text::MIME {
+        2
+    } else {
+        1
+    }
+}
+
 impl Page {
     pub fn validate(&self, policy: &Policy, group: Option<&str>) -> Result<()> {
         policy.authorize(&self.url, group)?;
-        if self.extraction_version != 1
+        if self.extraction_version != extraction_version(&self.content_type)
             || self.policy_revision.len() != 64
             || self.content_hash != crate::common::sha256_hex(&self.text)
             || !self.fetched_at.is_finite()
@@ -1263,11 +1271,11 @@ impl WebTool {
                     text,
                     links,
                     status: status.as_u16(),
+                    extraction_version: extraction_version(&content_type),
                     content_type,
                     bytes: byte_len,
                     transfer_bytes: byte_len,
                     fetched_at: 0.0,
-                    extraction_version: 1,
                     policy_revision: policy.revision.clone(),
                     etag,
                     last_modified,
