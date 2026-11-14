@@ -440,7 +440,7 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 79] = [
     ),
     (
         "browser-run",
-        "(API only)",
+        "/browse <url> <task>",
         "POST",
         "/api/browser/run",
         "admin browser task with the local model; origins from the request (browser.enabled)",

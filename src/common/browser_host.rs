@@ -18,6 +18,8 @@ use super::home::Home;
 
 /// Model turns for the fixture. The board needs about four tool calls.
 const MAX_TURNS: usize = 6;
+/// Refused or failed actions in a row before a task stops.
+const MAX_REFUSALS_IN_A_ROW: usize = 3;
 /// Longest operator task text a run accepts.
 pub const MAX_TASK_CHARS: usize = 2_000;
 
@@ -178,21 +180,32 @@ fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value 
     outcome
 }
 
-pub fn run_browse_demo(sidecar: &Path, headless: bool) -> Result<String, String> {
-    let (origin, port) = serve_html(FIXTURE_PAGE)?;
+/// Serve `page`, navigate to it, run `steps`, then require `done` on the last
+/// page text. A step may name its ref as `@Name` from the latest observation.
+fn run_fixture(
+    page: &str,
+    steps: &[Value],
+    done: impl Fn(&str) -> bool,
+    sidecar: &Path,
+    headless: bool,
+) -> Result<String, String> {
+    let (origin, port) = serve_html(page)?;
     let session = Session::general([&origin]).map_err(|err| format!("{err:?}"))?;
-    let url = format!("http://127.0.0.1:{port}/");
-    let actions = vec![
-        json!({"action":"navigate","url": url}),
-        json!({"action":"select_tab","tab":"Open"}),
-        json!({"action":"type","ref_id":"__filter__","text":"open"}),
-    ];
-    let log = drive(session, sidecar, &actions, headless)?;
-    let final_text = log.lines().next_back().unwrap_or("");
-    if !board_complete(final_text) {
+    let mut all = vec![json!({"action":"navigate","url": format!("http://127.0.0.1:{port}/")})];
+    all.extend_from_slice(steps);
+    let log = drive(session, sidecar, &all, headless)?;
+    if !done(log.lines().next_back().unwrap_or("")) {
         return Err(format!("fixture text was not visible:\n{log}"));
     }
     Ok(log)
+}
+
+pub fn run_browse_demo(sidecar: &Path, headless: bool) -> Result<String, String> {
+    let steps = [
+        json!({"action":"select_tab","tab":"Open"}),
+        json!({"action":"type","ref_id":"@Filter","text":"open"}),
+    ];
+    run_fixture(FIXTURE_PAGE, &steps, board_complete, sidecar, headless)
 }
 
 pub fn run_verify_demo(sidecar: &Path, headless: bool) -> Result<String, String> {
@@ -242,51 +255,50 @@ fn read_page(sidecar: &Path, port: u16, headless: bool) -> Result<String, String
     drive(session, sidecar, &[json!({"action":"navigate","url": url})], headless)
 }
 
-fn drive(mut session: Session, script: &Path, actions: &[Value], headless: bool) -> Result<String, String> {
+/// Run fixed steps. A step may carry `expect`: `handoff` (the policy must hand
+/// it to the operator) or `held` (the sidecar must hold a form submission).
+/// Any other refusal or sidecar error fails the run.
+fn drive(mut session: Session, script: &Path, steps: &[Value], headless: bool) -> Result<String, String> {
     let mut sidecar = Sidecar::start(script, &session, headless)?;
     let mut last_text = String::new();
+    let mut rows: Vec<Value> = Vec::new();
     let mut lines = Vec::new();
-    for action in actions {
-        let mut wire = action.clone();
-        if let Some(name) = wire.get("ref_id").and_then(Value::as_str).and_then(placeholder_name) {
-            let id = named_ref(&session, name).ok_or_else(|| format!("{name} ref was not minted"))?;
+    for spec in steps {
+        let mut wire = spec.clone();
+        let expect = wire.as_object_mut().and_then(|fields| fields.remove("expect"));
+        if let Some(name) = wire
+            .get("ref_id")
+            .and_then(Value::as_str)
+            .and_then(|r| r.strip_prefix('@'))
+        {
+            let id = rows
+                .iter()
+                .find(|row| row["name"] == name)
+                .and_then(|row| row["ref_id"].as_str())
+                .ok_or_else(|| format!("{name} was not in the last observation"))?
+                .to_string();
             wire["ref_id"] = json!(id);
         }
         let outcome = step(&mut session, &mut sidecar, &wire);
-        if let Some(error) = outcome.get("error") {
-            return Err(format!("sidecar error on {wire}: {error}"));
-        }
-        if let Some(decision) = outcome.get("decision") {
-            lines.push(format!("stopped on {wire}: {decision}"));
-            break;
+        lines.push(format!("{} -> {}", wire["action"], truncate(&outcome.to_string(), 300)));
+        match expect.as_ref().and_then(Value::as_str) {
+            Some("handoff") if outcome["decision"].as_str().is_some_and(|d| d.starts_with("Handoff")) => continue,
+            Some("held") if outcome.get("held_for_operator").is_some() => {}
+            Some(other) => return Err(format!("expected {other} on {wire}:\n{}", lines.join("\n"))),
+            None if outcome.get("error").is_some() || outcome.get("decision").is_some() => {
+                return Err(format!("refused or failed on {wire}:\n{}", lines.join("\n")))
+            }
+            None => {}
         }
         if let Some(text) = outcome.get("text").and_then(Value::as_str) {
             last_text = text.to_string();
         }
-        lines.push(format!("{} -> {}", wire["action"], truncate(&outcome.to_string(), 300)));
+        if let Some(seen) = outcome.get("elements").and_then(Value::as_array) {
+            rows = seen.clone();
+        }
     }
     lines.push(last_text);
     Ok(lines.join("\n"))
-}
-
-fn placeholder_name(token: &str) -> Option<&'static str> {
-    match token {
-        "__filter__" => Some("Filter"),
-        "__query__" => Some("Query"),
-        _ => None,
-    }
-}
-
-fn named_ref(session: &Session, name: &str) -> Option<String> {
-    for generation in 1..8 {
-        for index in 0..40 {
-            let id = format!("g{generation}-e{index}");
-            if session.fact(&id).is_some_and(|fact| fact.name == name) {
-                return Some(id);
-            }
-        }
-    }
-    None
 }
 
 fn sidecar_op(session: &Session, wire: &Value) -> Result<Value, String> {
@@ -392,6 +404,8 @@ pub fn run_task(
     let mut last_text = String::new();
     let mut last_url = Value::Null;
     let mut transcript = Vec::new();
+    let mut refused_in_a_row = 0;
+    let mut stopped = None;
     'turns: for turn in 0..max_turns {
         let response = ollama_chat(api, model, &messages, &tools)?;
         let message = response
@@ -439,13 +453,23 @@ pub fn run_task(
             if outcome.get("elements").is_some() {
                 retire_observations(&mut messages);
             }
+            let failed = ["decision", "error", "refused"]
+                .iter()
+                .any(|key| outcome.get(*key).is_some());
+            refused_in_a_row = if failed { refused_in_a_row + 1 } else { 0 };
             messages.push(json!({"role":"tool","tool_name": name,"content": outcome.to_string()}));
+            // A model that keeps retrying refused actions only spends the deadline.
+            if refused_in_a_row >= MAX_REFUSALS_IN_A_ROW {
+                stopped = Some("three refused or failed actions in a row");
+                break 'turns;
+            }
         }
     }
     drop(sidecar);
     Ok(json!({
         "finished": answer.is_some(),
         "answer": answer,
+        "stopped": stopped,
         "model": model,
         "origins": origins,
         "model_calls_with_tools": calls,
@@ -579,21 +603,23 @@ fn truncate(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
 
+/// Enter submits a GET search; a password field hands off; Enter in a POST
+/// form is held, as the submit button it stands in for would be.
 pub fn run_enter_demo(sidecar: &Path, headless: bool) -> Result<String, String> {
-    let (origin, port) = serve_html(SEARCH_PAGE)?;
-    let session = Session::general([&origin]).map_err(|err| format!("{err:?}"))?;
-    let url = format!("http://127.0.0.1:{port}/");
-    let actions = vec![
-        json!({"action":"navigate","url": url}),
-        json!({"action":"type","ref_id":"__query__","text":"github cgfixit"}),
-        json!({"action":"press_enter","ref_id":"__query__"}),
+    let steps = [
+        json!({"action":"type","ref_id":"@Query","text":"github cgfixit"}),
+        json!({"action":"press_enter","ref_id":"@Query"}),
+        json!({"action":"type","ref_id":"@Password","text":"hunter2","expect":"handoff"}),
+        json!({"action":"type","ref_id":"@Amount","text":"500"}),
+        json!({"action":"press_enter","ref_id":"@Amount","expect":"held"}),
     ];
-    let log = drive(session, sidecar, &actions, headless)?;
-    let final_text = log.lines().next_back().unwrap_or("");
-    if !final_text.contains("submitted github cgfixit") {
-        return Err(format!("enter did not submit the query:\n{log}"));
-    }
-    Ok(log)
+    run_fixture(
+        SEARCH_PAGE,
+        &steps,
+        |text| text.contains("submitted github cgfixit"),
+        sidecar,
+        headless,
+    )
 }
 
 pub fn browse_cli(args: &[OsString]) -> u8 {
@@ -684,6 +710,8 @@ const SEARCH_PAGE: &str = r#"
 <label>Query <input id="q" role="searchbox" aria-label="Query"></label>
 <p id="result">waiting</p>
 </form>
+<label>Password <input type="password" aria-label="Password"></label>
+<form method="post" action="/send"><label>Amount <input aria-label="Amount"></label></form>
 <script>
 document.getElementById('find').addEventListener('submit', (event) => {
   event.preventDefault();

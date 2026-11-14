@@ -1126,6 +1126,8 @@ const AGENT_CLI_TIMEOUT_MS = 130000;   /* 120s ops_runner._TIMEOUT_SEC + 10s mar
 const AGENT_STATUS_TIMEOUT_MS = 190000;
 /* Decision, push and publish: shim::REAL_REPO_RUN_WRITE_SEC (1200s) + 10s margin. */
 const AGENT_WRITE_TIMEOUT_MS = 1210000;
+/* Outlasts the largest browser.timeout_sec (1800 s); the server enforces the configured one. */
+const BROWSE_WAIT_MS = 1830000;
 /* Active human-gated /loop. Never starts a real-repo run. Cleared on
    /loop stop, /clear, session switch, budget exhaust, or GOAL_DONE. */
 let loopState = null;
@@ -2315,6 +2317,7 @@ const COMMANDS = [
   ['/agent stop [job-id]', 'request cancellation; omitted ID uses the retained job; descendants may survive'],
   ['/analytics', 'retained session, token and coding-run dashboard'],
   ['/api [set <KEY> <value>|clear <KEY>]', 'inspect or edit managed credentials; prefer API Keys password fields'],
+  ['/browse <url> [url ...] <task>', 'administrator: the local model browses only these origins; buttons, passwords and POST forms stay with you'],
   ['/clear', 'clear visible output, staged reviews and chat continuation; saved sessions remain'],
   ['/connectors', 'connector catalog'],
   ['/diag [status]', 'log inspection state: gate, allowlisted files, last read and staged excerpt; admin or portal_auditor; off until diagnostics.logs_enabled'],
@@ -2388,7 +2391,7 @@ const COMMANDS = [
 const HELP_TOPICS = {
   chat: {title:'Chat & models', roots:['model','style','prompt','tokens','loop','clear'], note:'Type normally to chat. Slash commands are operator actions; printing one in a model response does not run it.', examples:['/model','/style concise','/prompt','/loop stop']},
   session: {title:'Sessions & goals', roots:['session','goal'], note:'Saved sessions belong to your account. /clear resets the visible conversation, not saved session files. Staging a goal does not authorize execution.', examples:['/session new Research notes','/session list','/session info','/goal Compare backup approaches']},
-  web: {title:'Web research', roots:['web'], note:'Allowlist, block list, mode and on/off are shared-home settings; only an administrator changes them. The default allowlist mode reads only allowed URLs; block-list mode (header globe or /web mode denylist, confirmed) reads every public URL except blocked ones. Saved selections are account-private. Exact URLs do not include other pages. A path wildcard https://www.veeam.com/* includes that host’s paths; https://*.example.org/* covers subdomain paths, not the apex; without /* a pattern is one page. https:// may be omitted. /web search needs no URL rule with a SerpAPI key; keyless Google needs https://www.google.com/*. No www rewriting, private addresses or redirects. Search listings grant /web commands no permission; an administrator’s chat turn may read the exact URLs its own search listed, for that turn, unless web.search.result_reads.enabled is false; other roles keep to the URL rules. Research follows only permitted links within page, time and byte limits; coverage is not exhaustive. A host wildcard starts research from pages already fetched under it, /web fetch URL --crawl follows permitted links recursively, and robots.txt is checked automatically on permitted origins.', examples:['/web status','/web check https://www.veeam.com/','/web allow https://www.veeam.com/* https://example.org/* --group vendors','/web allow https://*.example.org/* --group docs --seed https://docs.example.org/','/web research --group vendors Compare the backup approaches','/web research --url https://www.veeam.com/ Summarize products and permitted internal links','/web fetch https://www.veeam.com/ --crawl','/web search --count 3 backup security']},
+  web: {title:'Web research', roots:['web','browse'], note:'Allowlist, block list, mode and on/off are shared-home settings; only an administrator changes them. The default allowlist mode reads only allowed URLs; block-list mode (header globe or /web mode denylist, confirmed) reads every public URL except blocked ones. Saved selections are account-private. Exact URLs do not include other pages. A path wildcard https://www.veeam.com/* includes that host’s paths; https://*.example.org/* covers subdomain paths, not the apex; without /* a pattern is one page. https:// may be omitted. /web search needs no URL rule with a SerpAPI key; keyless Google needs https://www.google.com/*. No www rewriting, private addresses or redirects. Search listings grant /web commands no permission; an administrator’s chat turn may read the exact URLs its own search listed, for that turn, unless web.search.result_reads.enabled is false; other roles keep to the URL rules. Research follows only permitted links within page, time and byte limits; coverage is not exhaustive. A host wildcard starts research from pages already fetched under it, /web fetch URL --crawl follows permitted links recursively, and robots.txt is checked automatically on permitted origins.', examples:['/web status','/web check https://www.veeam.com/','/web allow https://www.veeam.com/* https://example.org/* --group vendors','/web allow https://*.example.org/* --group docs --seed https://docs.example.org/','/web research --group vendors Compare the backup approaches','/web research --url https://www.veeam.com/ Summarize products and permitted internal links','/web fetch https://www.veeam.com/ --crawl','/web search --count 3 backup security']},
   memory: {title:'Memory & persona', roots:['memory','soul'], note:'Pinned notes, structured facts and persona have separate controls. Fuzzy memory commands only suggest. Writes and proposal decisions need exact intent; Apply/Reject require review and a reason.', examples:['/memory','/memory facts','/memory search backup preferences','/memory proposals','/soul status']},
   agent: {title:'Governed coding', roots:['agent','github','harness'], note:'Stage, review, then explicitly authorize each write. A suggested command is never approval. Commit, push and draft publication are separate gates.', examples:['/agent help','/agent checks','/agent jobs','/github']},
   tools: {title:'Tools & skills', roots:['tools','skills','skill','connectors','registry'], note:'Registration is not readiness or authority. Selected prompt skills are context, not executable tools.', examples:['/tools','/skills','/skill status','/registry']},
@@ -2508,6 +2511,7 @@ const COMMAND_MAN = {
   '/agent stop [job-id]': {detail:'Asks the server to cancel a job. Without an id, it uses the job this page last watched. Work the job already spawned may survive; inspect the run before further writes.'},
   '/analytics': {detail:'Opens the Analytics dialog: tokens and cost, sessions and coding runs, filterable and paged.'},
   '/api [set <KEY> <value>|clear <KEY>]': {detail:'Alone, shows the credential store and every key masked. set saves a value and clear removes it. Saved values load after a restart, except SERPAPI_API_KEY, which applies at once; an explicit environment variable always wins.', notes:['A secret typed here lands in chat history. The API Keys pane’s password fields do not.']},
+  '/browse <url> [url ...] <task>': {detail:'Runs one browser task with the local model (models.local_llm.model). The leading URLs are the only origins it may reach; the rest of the line is the task. Administrator only, refused unless browser.enabled is literal true, one task at a time, and stopped after browser.timeout_sec. Buttons, password fields and POST form submissions are handed back to you.', notes:['Page text is untrusted input to the model; the answer can be wrong.'], examples:['/browse https://docs.example.com find the install command']},
   '/clear': {detail:'Empties the visible transcript, drops staged reviews and stops chat continuation. Saved sessions are untouched.'},
   '/connectors': {detail:'Lists registered connectors with kind and auth. Registration is not readiness.'},
   '/diag [status]': {detail:'Shows whether log inspection is on, each allowlisted file with size and modification time, the limits, your last read and any staged excerpt. Needs an admin or portal_auditor account; DIAG_DISABLED means diagnostics.logs_enabled is not literal true.', notes:['Nothing here reads file content.'], examples:['/diag']},
@@ -4233,6 +4237,24 @@ async function runSlash(line, webCommand) {
                    ['completion tokens', String(s.tokens.completion_tokens)],
                    ['total', String(s.tokens.total)],
                    ['exchanges', String(s.tokens.exchanges)]]));
+        break;
+      }
+
+      case 'browse': {
+        /* Leading http(s) URLs are the only origins the task may reach; the
+           server re-validates them, refuses blocked ones and runs the task. */
+        const words = rest.slice();
+        const origins = [];
+        while (words.length && /^https?:\/\//i.test(words[0])) origins.push(words.shift());
+        const task = words.join(' ').trim();
+        if (!origins.length || !task) { sys('usage: /browse <url> [url ...] <task> — administrator only; browser.enabled must be literal true'); break; }
+        sys('Browsing ' + origins.join(', ') + ' with the local model; this can take a few minutes.');
+        const r = await api('/api/browser/run', 'POST', {task, origins}, BROWSE_WAIT_MS);
+        if (staleReview()) break;
+        const rep = r.report || {};
+        const meta = [r.finished ? 'finished' : 'not finished', rep.stopped, rep.final_url,
+          (rep.model_calls_with_tools || 0) + ' tool calls', 'page text is untrusted'].filter(Boolean).join(' · ');
+        sys(rep.answer || r.reason || 'The model gave no answer.', meta);
         break;
       }
 

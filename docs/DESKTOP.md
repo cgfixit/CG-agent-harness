@@ -265,8 +265,9 @@ under other service names and shared tools stay outside the purge.
 
 ## Browser sessions
 
-With literal `browser.enabled` (ships false), an administrator can POST
-`/api/browser/run` with a task and the origins it may reach. The server runs
+With literal `browser.enabled` (ships false), an administrator can type
+`/browse <url> <task>` or POST `/api/browser/run` with a task and the origins
+it may reach. The server runs
 `cgagentharness browser run` as a child with a small environment allowlist and
 kills its tree after `browser.timeout_sec`. The local model
 (`models.local_llm.model`) drives Playwright through `browser/sidecar.mjs`;

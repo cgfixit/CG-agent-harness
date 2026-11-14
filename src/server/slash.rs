@@ -29,6 +29,7 @@ const COMMANDS: &[&str] = &[
     "skills",
     "tools",
     "web",
+    "browse",
     "github",
     "agent",
     "harness",
@@ -655,7 +656,7 @@ fn is_mutation(cmd: &str, sub: Option<&str>) -> bool {
         ("soul", Some("on" | "off")) => true,
         ("memory", Some("on" | "off" | "forget" | "clear" | "save" | "remember" | "add")) => true,
         ("session", Some("new" | "rename" | "use" | "unpin")) => true,
-        ("goal" | "style" | "model" | "skill" | "loop" | "clear", _) => true,
+        ("goal" | "style" | "model" | "skill" | "loop" | "clear" | "browse", _) => true,
         (
             "memory",
             Some(

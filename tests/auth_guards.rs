@@ -55,6 +55,11 @@ fn guarded_routes() -> Vec<(Method, &'static str, serde_json::Value)> {
         ),
         (
             Method::POST,
+            "/api/browser/run",
+            json!({"task": "read the page", "origins": ["https://example.com"]}),
+        ),
+        (
+            Method::POST,
             "/api/agent/run",
             json!({"instruction": "x", "branch": "claude/x", "commit_message": "m", "reason": "r"}),
         ),
@@ -457,6 +462,9 @@ async fn only_explicit_auth_opt_out_allows_login_free_operations() {
                 }
                 if path == "/api/agent/run" {
                     assert_eq!(status, 409, "write gates must still refuse: {result}");
+                }
+                if path == "/api/browser/run" {
+                    assert_eq!(status, 409, "browser.enabled ships false: {result}");
                 }
                 if path == "/api/agent/jobs" && method == Method::POST {
                     assert_eq!(status, 202, "{result}");

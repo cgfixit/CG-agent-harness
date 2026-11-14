@@ -66,6 +66,26 @@ pub async fn run(
             "Browser sessions are off. Set browser.enabled: true in config.yaml and restart.",
         ));
     }
+    // The shared block list wins here as it does for web reads.
+    // shortcut: only origin-level rules are enforced; a path-level block rule needs the proxy to see it.
+    let policy = state.web_snapshot().policy().map_err(|_| {
+        ApiError::new(
+            StatusCode::CONFLICT,
+            "WEB_POLICY_UNAVAILABLE",
+            "The shared URL policy file is missing or unreadable, so browser tasks are refused.",
+        )
+    })?;
+    if req
+        .origins
+        .iter()
+        .any(|origin| crate::server::web_policy::canonical_url(origin).is_ok_and(|url| policy.blocks(&url)))
+    {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "BROWSER_ORIGIN_BLOCKED",
+            "An origin is on the shared web block list; /web status lists the rules.",
+        ));
+    }
     if BUSY.swap(true, Ordering::AcqRel) {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
@@ -103,7 +123,7 @@ pub async fn run(
         "task_sha256": crate::common::sha256_hex(&req.task),
         "exit": exit,
     }));
-    let (code, stdout, _) = result.map_err(|err| match err {
+    let (code, stdout, stderr) = result.map_err(|err| match err {
         ShimError::Timeout { .. } => ApiError::new(
             StatusCode::GATEWAY_TIMEOUT,
             "BROWSER_TIMEOUT",
@@ -115,8 +135,16 @@ pub async fn run(
             "The browser child could not run.",
         ),
     })?;
-    let report = serde_json::from_str::<Value>(stdout.trim()).unwrap_or(Value::Null);
-    Ok(Json(
-        json!({"finished": code == 0, "exit_code": code, "report": report}),
-    ))
+    let report = serde_json::from_str::<Value>(stdout.trim()).ok();
+    let mut body = json!({"finished": code == 0, "exit_code": code, "report": report});
+    if body["report"].is_null() {
+        // Only the child's own `cgagentharness:` lines; Node and page output stay out.
+        let reason = stderr
+            .lines()
+            .rev()
+            .find_map(|line| line.strip_prefix("cgagentharness: "))
+            .unwrap_or("the browser child printed no report");
+        body["reason"] = json!(reason.chars().take(300).collect::<String>());
+    }
+    Ok(Json(body))
 }

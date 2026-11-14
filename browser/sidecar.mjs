@@ -1,8 +1,10 @@
 // Narrow Playwright sidecar. The parent process decides every action.
 // This file does not accept JavaScript, a shell, or launch flags from stdin.
 
+import dns from "node:dns";
 import http from "node:http";
 import net from "node:net";
+import { urlToHttpOptions } from "node:url";
 import { createInterface } from "node:readline";
 import { chromium } from "playwright";
 
@@ -15,8 +17,29 @@ let page;
 let grants = new Set();
 // Form submissions the operator must make; reported with the next observation.
 const held = [];
-const consoleErrors = [];
-const failedRequests = [];
+
+// Same rule as the harness web reader (web_policy::is_public_ip): a granted
+// name must resolve to global unicast only. An IP-literal grant skips lookup.
+// Two lists: BlockList also matches an IPv4 address against IPv6 rules.
+const NON_PUBLIC_V4 = new net.BlockList();
+const NON_PUBLIC_V6 = new net.BlockList();
+for (const [addr, bits] of [["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8], ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24], ["192.0.2.0", 24], ["192.88.99.0", 24], ["192.168.0.0", 16], ["198.18.0.0", 15], ["198.51.100.0", 24], ["203.0.113.0", 24], ["224.0.0.0", 3]]) {
+  NON_PUBLIC_V4.addSubnet(addr, bits, "ipv4");
+}
+for (const [addr, bits] of [["::", 3], ["4000::", 2], ["8000::", 1], ["2001::", 23], ["2001:db8::", 32], ["2002::", 16], ["3fff::", 20]]) {
+  NON_PUBLIC_V6.addSubnet(addr, bits, "ipv6");
+}
+
+function publicLookup(hostname, options, callback) {
+  dns.lookup(hostname, { ...options, all: true }, (error, addresses) => {
+    if (error) return callback(error);
+    if (!addresses.length || addresses.some((a) => (a.family === 6 ? NON_PUBLIC_V6.check(a.address, "ipv6") : NON_PUBLIC_V4.check(a.address, "ipv4")))) {
+      return callback(Object.assign(new Error(`${hostname} resolved to a non-public address`), { code: "ENOTPUBLIC" }));
+    }
+    if (options?.all) return callback(null, addresses);
+    return callback(null, addresses[0].address, addresses[0].family);
+  });
+}
 
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -126,12 +149,12 @@ function startProxy() {
     }
     const upstream = http.request(
       {
-        hostname: target.hostname,
-        port: target.port || 80,
-        path: `${target.pathname}${target.search}`,
+        // urlToHttpOptions strips IPv6 brackets, which a raw hostname keeps.
+        ...urlToHttpOptions(target),
         method: req.method,
         // Keep cookies, CSRF and content-type so a logged-in console POST works.
         headers: { ...forwardable(req.headers), host: target.host },
+        lookup: publicLookup,
       },
       (up) => {
         quiet(up);
@@ -152,13 +175,19 @@ function startProxy() {
   });
   server.on("connect", (req, clientSocket) => {
     quiet(clientSocket);
-    const [host, portText] = String(req.url).split(":");
-    const port = Number(portText || 443);
-    if (!allowed(`https://${host}:${port}/`)) {
+    let target;
+    try {
+      target = new URL(`https://${req.url}/`);
+    } catch {
       clientSocket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
       return;
     }
-    const remote = net.connect(port, host, () => {
+    if (!allowed(target.href)) {
+      clientSocket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+      return;
+    }
+    const host = target.hostname.replace(/^\[|\]$/g, "");
+    const remote = net.connect({ host, port: Number(target.port || 443), lookup: publicLookup }, () => {
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       remote.pipe(clientSocket);
       clientSocket.pipe(remote);
@@ -202,7 +231,8 @@ async function start(message) {
     // policy hands to the operator, so a non-GET page load is held here.
     if (request.isNavigationRequest() && request.method() !== "GET") {
       if (held.length < 20) held.push(`${request.method()} ${url.slice(0, 200)}`);
-      route.abort("blockedbyclient");
+      // 204 ends the navigation without replacing the page; nothing reaches the site.
+      route.fulfill({ status: 204, body: "" });
       return;
     }
     route.continue();
@@ -211,16 +241,6 @@ async function start(message) {
     ws.close();
   });
   page = await context.newPage();
-  page.on("console", (msg) => {
-    if (msg.type() === "error" && consoleErrors.length < 20) {
-      consoleErrors.push(msg.text().slice(0, 300));
-    }
-  });
-  page.on("requestfailed", (req) => {
-    if (failedRequests.length < 20) {
-      failedRequests.push({ url: req.url().slice(0, 200), error: req.failure()?.errorText || "failed" });
-    }
-  });
   page.on("download", (download) => {
     download.cancel();
   });
@@ -273,12 +293,6 @@ async function handle(message) {
     case "wait":
       await page.waitForTimeout(message.timeout_ms);
       return observe();
-    case "diagnostics":
-      return { console_errors: consoleErrors, failed_requests: failedRequests };
-    case "close":
-      await browser?.close();
-      browser = undefined;
-      return { closed: true };
     default:
       throw new Error("malformed browser action");
   }
