@@ -382,8 +382,6 @@ pub fn build_argv(ctx: &ShimContext, req: &OpsRequest) -> Result<(Vec<String>, V
             } else if let Some(issue) = req.issue {
                 argv.push("--issue".into());
                 argv.push(issue.to_string());
-            } else {
-                argv.push("--repo".into());
             }
             if req.no_diff {
                 argv.push("--no-diff".into());
@@ -416,8 +414,6 @@ pub fn build_argv(ctx: &ShimContext, req: &OpsRequest) -> Result<(Vec<String>, V
             } else if let Some(issue) = req.issue {
                 argv.push("--issue".into());
                 argv.push(issue.to_string());
-            } else {
-                argv.push("--repo".into());
             }
             let checks = serde_json::to_string(&json!({"checks": req.checks.clone().unwrap_or_default()}))
                 .map_err(|e| ShimError::Io(e.to_string()))?;

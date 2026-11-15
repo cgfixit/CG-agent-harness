@@ -5,7 +5,7 @@ use std::path::Path as FsPath;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Path, Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -20,10 +20,6 @@ static EDIT_LOCK: Mutex<()> = Mutex::new(());
 const MAX_BYTES: usize = 256 * 1024;
 const MAX_RECORDS: usize = 32;
 const APPLY_MARKER: &str = "soul-pending-apply.json";
-type PrivateJson = ([(header::HeaderName, &'static str); 1], Json<Value>);
-fn private(value: Value) -> PrivateJson {
-    ([(header::CACHE_CONTROL, crate::server::headers::NO_STORE)], Json(value))
-}
 fn error(code: &str, message: &str) -> ApiError {
     ApiError::bad_request(code, message)
 }
@@ -212,7 +208,7 @@ pub struct DocumentQuery {
 pub async fn document(
     State(state): State<Arc<AppState>>,
     Query(query): Query<DocumentQuery>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     recover_apply(&state)?;
     let (content, rev) = if let Some(id) = query.version {
@@ -243,7 +239,7 @@ pub async fn document(
     } else {
         Vec::new()
     };
-    Ok(private(
+    Ok(Json(
         json!({"content":content,"revision":rev,"max_chars":max_chars(&state),"versions":versions,"scope":"chat persona only; fixed contracts and coding planner are separate"}),
     ))
 }
@@ -272,7 +268,7 @@ impl Validate for EditRequest {
 pub async fn edit(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<EditRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     if !req.confirm {
         return Err(error("SOUL_CONFIRM", "Explicit confirmation is required"));
     }
@@ -280,7 +276,7 @@ pub async fn edit(
     recover_apply(&state)?;
     let rev = save(&state, &req.content, &req.base_revision)?;
     state.audit.log(json!({"event":"soul_human_edit","revision":rev}));
-    Ok(private(json!({"revision":rev,"saved":true})))
+    Ok(Json(json!({"revision":rev,"saved":true})))
 }
 
 #[derive(Deserialize, Default)]
@@ -329,7 +325,7 @@ pub async fn preview(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<PreviewRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
     // portal_auditor previews the prompt its chat would get: no persona,
     // memory, attachments, skills or web context.
@@ -539,7 +535,7 @@ pub async fn preview(
                 "chars":body.chars().count(),"sha256":crate::common::sha256_hex(body)})
         })
         .collect();
-    Ok(private(
+    Ok(Json(
         json!({"prompt":prompt,"discipline_sections":[],"selected_skill_sections":sections,
         "soul":load_text(&state.home.root, FsPath::new("soul.md"), settings.soul_enabled && !portal_auditor, max_chars(&state)),
         // The effective load state, not just the persisted name: an overlay
@@ -586,7 +582,7 @@ pub async fn preview(
 pub async fn propose(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<EditRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     recover_apply(&state)?;
     validate_content(&state, &req.content)?;
@@ -605,7 +601,7 @@ pub async fn propose(
         serde_json::to_string_pretty(&proposal).unwrap().as_bytes(),
     )
     .map_err(|_| io_error())?;
-    Ok(private(proposal))
+    Ok(Json(proposal))
 }
 fn proposal(state: &AppState, id: &str) -> ApiResult<Value> {
     if !valid_id(id) {
@@ -616,10 +612,10 @@ fn proposal(state: &AppState, id: &str) -> ApiResult<Value> {
     )
     .map_err(|_| io_error())
 }
-pub async fn review(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> ApiResult<PrivateJson> {
+pub async fn review(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     recover_apply(&state)?;
-    Ok(private(proposal(&state, &id)?))
+    Ok(Json(proposal(&state, &id)?))
 }
 fn persist_proposal(state: &AppState, id: &str, record: &Value) -> ApiResult<()> {
     write(
@@ -650,7 +646,7 @@ pub async fn decide(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
     ValidJson(req): ValidJson<DecisionRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     if !req.confirm {
         return Err(error("SOUL_CONFIRM", "Explicit confirmation is required"));
     }
@@ -687,5 +683,5 @@ pub async fn decide(
     state
         .audit
         .log(json!({"event":"soul_proposal_decision","id":id,"status":record["status"]}));
-    Ok(private(record))
+    Ok(Json(record))
 }
