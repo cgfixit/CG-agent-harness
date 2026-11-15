@@ -526,7 +526,15 @@ async fn planner_settings_drift_refuses_sync_and_detached_runs() {
         .await
         .unwrap();
         assert_eq!(result["exit_code"], 3, "{key}: {result}");
-        assert!(!s.state.generation_gate.is_held());
+        // The job publishes its result before its task finishes the completion
+        // receipt and drops the run and chat gates; the next run must not race that.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while s.state.agent_run_gate.is_held() || s.state.generation_gate.is_held() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the finished job released its run and chat gates");
     }
     // An unchanged snapshot proceeds to the independent write gate.
     cgagentharness::common::config::AppConfig::write_private(
