@@ -1,6 +1,6 @@
 # Browser use and computer use
 
-Status as of 2026-11-14. The local model
+Status as of 2026-11-15. The local model
 (`models.local_llm.model`, `qwen3.8:27b-mlx-cg` on a 32K window) drives a real
 Chrome. Computer use (native apps) is a skeleton that nothing calls.
 
@@ -23,14 +23,18 @@ How a run works:
    names, absolute link targets. `src/common/browser.rs` mints refs that
    expire with every observation, so a stale ref cannot act.
 4. The model calls `navigate`, `observe`, `click`, `type`, `press_enter`,
-   `select_tab`, `follow_link` and `finish`. Older observations are dropped
-   from the prompt to fit 32K. Three refused actions in a row end the task.
+   `select` (a listed option of a select box), `select_tab`, `follow_link` and
+   `finish`. A link that opens a new tab replaces the page: one tab per task.
+   Older observations are dropped to fit 32K. Three refused actions in a row
+   end the task.
 
 Boundaries, enforced in code:
 
 - Origins come only from the request; pages and the model cannot add one.
   Origins on the shared web block list, or that cannot be checked, are refused.
-- The sidecar's loopback proxy is the egress check. A granted name must
+- The sidecar's loopback proxy is the egress check. The task's fresh profile
+  keeps WebRTC to proxied TCP, so a page cannot send UDP around it (Chrome
+  153 ignored the command-line switch). A granted name must
   resolve to public addresses (`localhost` is refused), and a loopback or
   private IP origin is refused; only a `test-support` build lets the fixtures
   use `127.0.0.1`.
@@ -39,12 +43,13 @@ Boundaries, enforced in code:
 - A task holds the shared model gate, so it never overlaps chat or research.
 - Clicks may run. Every request except GET and HEAD is held for the operator:
   a held page load answers 204 so the page stays, a held `fetch` fails.
-- Password and one-time-code fields hand off and are never typed.
+- Password and one-time-code fields hand off and are never typed. The console
+  lists each held request and hand-off after the answer.
 
-Verified by running, 2026-11-14: fixtures `browser`, `browser enter` (search
-submits; password hands off; a POST form and a button's script POST are both
-held) and `browser-verify`; Qwen listed the three games behind Start → Games on
-cgfixit.com by clicking; the installed desktop app answered `/browse`.
+Verified by running: fixtures `browser`, `browser enter` (a new tab replaces
+the page; search submits; a select takes an option; password hands off; a POST
+form and a script POST are held; WebRTC sends no UDP) and `browser-verify`;
+Qwen listed the games behind Start → Games on cgfixit.com (2026-11-14).
 
 ## Honest limits
 
@@ -54,9 +59,8 @@ cgfixit.com by clicking; the installed desktop app answered `/browse`.
 - The model sees the first 40 elements and 4,000 characters of text; long
   pages need it to navigate deeper. No screenshots yet, so canvas and
   image-only UIs are opaque.
-- `scroll`, `wait` and `select` exist in the policy but are not model tools.
-- A hand-off or hold ends the task. There is no takeover screen, no approve
-  button for a held request, and no resume.
+- `scroll` and `wait` exist in the policy but are not model tools.
+- A hand-off or hold ends the task: no approve button and no resume.
 - Holding every `fetch` POST can break sites that save state in the
   background, such as chat widgets or autosave.
 - Page text is untrusted input. Grants and holds bound what it can cause; an
@@ -70,13 +74,12 @@ cgfixit.com by clicking; the installed desktop app answered `/browse`.
 
 In rough order:
 
-1. Takeover: show held requests and hand-offs in the console, approve one,
-   resume the same session.
+1. Takeover: approve a listed held request or hand-off and resume the session.
 2. Subresource policy: let GET subresources load from public origins without
    cookies while navigation stays on granted origins.
 3. Vision: send the latest screenshot to the model (`qwen3.8` lists the
    `vision` capability) and retire older images like observations.
-4. Model tools for `scroll`, `wait` and `select`, and element paging past 40.
+4. Model tools for `scroll` and `wait`, and element paging past 40.
 5. Path-level block rules inside the proxy.
 6. Browser tools for `/goal` and `/loop`, behind their own gate and the same
    grants.

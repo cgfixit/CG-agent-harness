@@ -12,7 +12,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use super::browser::{
-    AssertionRecord, AssertionStatus, ElementDraft, ExpectationSource, InputKind, Session, VerifyReport,
+    AssertionRecord, AssertionStatus, Decision, ElementDraft, ExpectationSource, InputKind, Session, VerifyReport,
 };
 use super::home::Home;
 
@@ -20,6 +20,8 @@ use super::home::Home;
 const MAX_TURNS: usize = 6;
 /// Refused or failed actions in a row before a task stops.
 const MAX_REFUSALS_IN_A_ROW: usize = 3;
+/// Held requests and handoffs a task report lists for the operator.
+const MAX_FOR_OPERATOR: usize = 20;
 /// Longest operator task text a run accepts.
 pub const MAX_TASK_CHARS: usize = 2_000;
 
@@ -196,8 +198,17 @@ fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value 
                     .iter()
                     .map(|el| {
                         let mut row = json!({"ref_id": el.ref_id, "role": el.role, "name": el.name});
-                        if let Some(href) = session.fact(&el.ref_id).and_then(|fact| fact.href.as_deref()) {
+                        let fact = session.fact(&el.ref_id);
+                        if let Some(href) = fact.and_then(|fact| fact.href.as_deref()) {
                             row["href"] = json!(href);
+                        }
+                        // A select box's option labels are page text for `select`, not refs.
+                        if let Some(options) = fact
+                            .and_then(|fact| fact.snapshot_ref.as_deref())
+                            .and_then(|snapshot| elements.iter().find(|raw| raw["ref"] == snapshot))
+                            .and_then(|raw| raw.get("options"))
+                        {
+                            row["options"] = options.clone();
                         }
                         row
                     })
@@ -340,16 +351,14 @@ fn sidecar_op(session: &Session, wire: &Value) -> Result<Value, String> {
         "select_tab" => Ok(json!({"op":"select_tab","tab": wire["tab"]})),
         "wait" => Ok(json!({"op":"wait","timeout_ms": wire["timeout_ms"]})),
         "scroll" => Ok(json!({"op":"scroll","dy": wire["dy"]})),
-        "click" | "follow_link" | "type" | "press_enter" => {
+        "click" | "follow_link" | "type" | "press_enter" | "select" => {
             let id = wire.get("ref_id").and_then(Value::as_str).unwrap_or("");
             let target = session
                 .fact(id)
                 .and_then(|fact| fact.snapshot_ref.clone())
                 .ok_or_else(|| format!("stale or unknown ref {id}"))?;
-            Ok(json!({"op": action, "target": {"ref": target}, "text": wire.get("text")}))
+            Ok(json!({"op": action, "target": {"ref": target}, "text": wire.get("text"), "value": wire.get("value")}))
         }
-        // shortcut: select passes policy but has no sidecar op; add selectOption with a fixture that needs it.
-        "select" => Err("select is not wired to the sidecar".into()),
         _ => Err("malformed browser action".into()),
     }
 }
@@ -427,7 +436,7 @@ pub fn run_task(
     let mut sidecar = Sidecar::start(script, &session, headless, allow_private)?;
     let tools = browser_tools();
     let mut messages = vec![
-        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus and tabs. A refusal is not success. A Handoff, or held_for_operator, means only the operator can do that step: say so and stop. Call finish with your answer once the page shows it.", origins.join(", "))}),
+        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A refusal is not success. A Handoff, or held_for_operator, means only the operator can do that step: say so and stop. Call finish with your answer once the page shows it.", origins.join(", "))}),
         json!({"role":"user","content": task}),
     ];
     let mut calls = 0usize;
@@ -437,6 +446,8 @@ pub fn run_task(
     let mut transcript = Vec::new();
     let mut refused_in_a_row = 0;
     let mut stopped = None;
+    // What only the operator can do: held requests and handed-off elements.
+    let mut for_operator: Vec<Value> = Vec::new();
     'turns: for turn in 0..max_turns {
         // Permission checked at launch is stale after a wait (AGENTS.md).
         if let Some(reason) = policy_refusal_now(&session) {
@@ -477,10 +488,21 @@ pub fn run_task(
                 answer = Some(args["answer"].as_str().unwrap_or("").to_string());
                 break 'turns;
             }
-            let outcome = match model_wire(&name, &args) {
-                Some(wire) => step(&mut session, &mut sidecar, &wire),
+            let wire = model_wire(&name, &args);
+            // Decided before the step, which re-mints refs: a handoff names its element.
+            let handoff = wire.as_ref().and_then(|wire| match session.decide(wire) {
+                Decision::Handoff { reason } => Some(json!({
+                    "handoff": name,
+                    "element": wire["ref_id"].as_str().and_then(|id| session.fact(id)).map(|fact| fact.name.clone()),
+                    "reason": reason,
+                })),
+                _ => None,
+            });
+            let outcome = match &wire {
+                Some(wire) => step(&mut session, &mut sidecar, wire),
                 None => json!({"refused":"malformed browser action"}),
             };
+            note_for_operator(&mut for_operator, handoff, &outcome);
             if let Some(text) = outcome.get("text").and_then(Value::as_str) {
                 last_text = text.to_string();
                 last_url = outcome["url"].clone();
@@ -509,6 +531,7 @@ pub fn run_task(
         "model": model,
         "origins": origins,
         "model_calls_with_tools": calls,
+        "for_operator": for_operator,
         "final_url": last_url,
         "page_text": last_text,
         "transcript": transcript,
@@ -547,12 +570,24 @@ pub fn run_qwen_fixture(script: &Path, headless: bool, model: &str, api: &str) -
     Ok(body)
 }
 
+/// Requests held and elements handed off during a task, at most
+/// `MAX_FOR_OPERATOR` rows. The console lists them; nothing here sends them.
+fn note_for_operator(rows: &mut Vec<Value>, handoff: Option<Value>, outcome: &Value) {
+    let held = outcome["held_for_operator"].as_array().into_iter().flatten();
+    for row in held.map(|request| json!({"held": request})).chain(handoff) {
+        if rows.len() < MAX_FOR_OPERATOR && !rows.contains(&row) {
+            rows.push(row);
+        }
+    }
+}
+
 fn model_wire(name: &str, args: &Value) -> Option<Value> {
     Some(match name {
         "navigate" => json!({"action":"navigate","url": args["url"]}),
         "observe" => json!({"action":"observe"}),
         "select_tab" => json!({"action":"select_tab","tab": args["tab"]}),
         "type" => json!({"action":"type","ref_id": args["ref_id"],"text": args["text"]}),
+        "select" => json!({"action":"select","ref_id": args["ref_id"],"value": args["option"]}),
         "press_enter" | "click" | "follow_link" => json!({"action": name,"ref_id": args["ref_id"]}),
         _ => return None,
     })
@@ -575,7 +610,8 @@ fn browser_tools() -> Value {
         {"type":"function","function":{"name":"navigate","description":"Open an http(s) URL in this session.","parameters":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}}},
         {"type":"function","function":{"name":"observe","description":"Read the current page and mint fresh element refs.","parameters":{"type":"object","properties":{}}}},
         {"type":"function","function":{"name":"select_tab","description":"Select a tab by its visible name.","parameters":{"type":"object","properties":{"tab":{"type":"string"}},"required":["tab"]}}},
-        {"type":"function","function":{"name":"click","description":"Click a button, menu item, tab or link by its ref from the latest observation. Requests that would send data are held for the operator.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"}},"required":["ref_id"]}}},
+        {"type":"function","function":{"name":"click","description":"Click a button, menu item, option, tab or link by its ref from the latest observation. A link that opens a new tab replaces this page. Requests that would send data are held for the operator.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"}},"required":["ref_id"]}}},
+        {"type":"function","function":{"name":"select","description":"Choose one of the options a select box ref lists in the latest observation, by its label.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"},"option":{"type":"string"}},"required":["ref_id","option"]}}},
         {"type":"function","function":{"name":"type","description":"Type into a text box ref from the latest observation.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"},"text":{"type":"string"}},"required":["ref_id","text"]}}},
         {"type":"function","function":{"name":"press_enter","description":"Press Enter on a text box ref from the latest observation. The key is always Enter.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"}},"required":["ref_id"]}}},
         {"type":"function","function":{"name":"follow_link","description":"Follow a link ref from the latest observation.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"}},"required":["ref_id"]}}},
@@ -647,24 +683,36 @@ fn truncate(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
 
-/// Enter submits a GET search; a password field hands off; Enter in a POST
-/// form and a button whose script POSTs are both held.
+/// A target=_blank link replaces the page; Enter submits a GET search; a
+/// select box takes a listed option; a password field hands off; Enter in a
+/// POST form and a button whose script POSTs are both held; and the page's
+/// WebRTC sends nothing to a UDP port the session never granted.
 pub fn run_enter_demo(sidecar: &Path, headless: bool) -> Result<String, String> {
+    let stun = std::net::UdpSocket::bind("127.0.0.1:0").map_err(|err| err.to_string())?;
+    stun.set_nonblocking(true).map_err(|err| err.to_string())?;
+    let stun_port = stun.local_addr().map_err(|err| err.to_string())?.port();
     let steps = [
+        json!({"action":"follow_link","ref_id":"@Open in a new tab"}),
         json!({"action":"type","ref_id":"@Query","text":"github cgfixit"}),
         json!({"action":"press_enter","ref_id":"@Query"}),
+        json!({"action":"select","ref_id":"@Size","value":"Large"}),
         json!({"action":"type","ref_id":"@Password","text":"hunter2","expect":"handoff"}),
         json!({"action":"type","ref_id":"@Amount","text":"500"}),
         json!({"action":"press_enter","ref_id":"@Amount","expect":"held"}),
         json!({"action":"click","ref_id":"@Save","expect":"held"}),
     ];
-    run_fixture(
-        SEARCH_PAGE,
+    let log = run_fixture(
+        &SEARCH_PAGE.replace("STUN_PORT", &stun_port.to_string()),
         &steps,
-        |text| text.contains("submitted github cgfixit"),
+        |text| text.contains("second tab") && text.contains("submitted github cgfixit") && text.contains("picked l"),
         sidecar,
         headless,
-    )
+    )?;
+    // Both tabs ran the probe during the steps; one datagram means UDP got past the proxy.
+    if stun.recv_from(&mut [0u8; 512]).is_ok() {
+        return Err(format!("the page's WebRTC sent UDP around the proxy:\n{log}"));
+    }
+    Ok(log)
 }
 
 pub fn browse_cli(args: &[OsString]) -> u8 {
@@ -751,6 +799,8 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
 }
 
 const SEARCH_PAGE: &str = r#"
+<p id="tab">first tab</p>
+<a href="/?tab=2" target="_blank">Open in a new tab</a>
 <form id="find">
 <label>Query <input id="q" role="searchbox" aria-label="Query"></label>
 <p id="result">waiting</p>
@@ -758,7 +808,15 @@ const SEARCH_PAGE: &str = r#"
 <label>Password <input type="password" aria-label="Password"></label>
 <form method="post" action="/send"><label>Amount <input aria-label="Amount"></label></form>
 <button onclick="fetch('/save', {method: 'POST'})">Save</button>
+<label>Size <select aria-label="Size" onchange="document.getElementById('picked').textContent = 'picked ' + this.value"><option value="s">Small</option><option value="l">Large</option></select></label>
+<p id="picked">nothing picked</p>
 <script>
+if (location.search === '?tab=2') document.getElementById('tab').textContent = 'second tab';
+try {
+  const probe = new RTCPeerConnection({iceServers: [{urls: 'stun:127.0.0.1:STUN_PORT'}]});
+  probe.createDataChannel('probe');
+  probe.createOffer().then((offer) => probe.setLocalDescription(offer));
+} catch (err) {}
 document.getElementById('find').addEventListener('submit', (event) => {
   event.preventDefault();
   document.getElementById('result').textContent = 'submitted ' + document.getElementById('q').value;
@@ -805,5 +863,20 @@ mod tests {
         assert!(blocked_origin(&policy, &sneaky).is_some());
         let fine = Session::general(["https://fine.example/docs"]).unwrap();
         assert!(blocked_origin(&policy, &fine).is_none());
+    }
+
+    #[test]
+    fn operator_rows_list_holds_and_handoffs_once_within_the_cap() {
+        let mut rows = Vec::new();
+        let held = json!({"held_for_operator": ["POST https://shop.example/cart"]});
+        note_for_operator(&mut rows, None, &held);
+        note_for_operator(&mut rows, None, &held);
+        let handoff = json!({"handoff": "type", "element": "Password", "reason": "secret"});
+        note_for_operator(&mut rows, Some(handoff.clone()), &json!({"decision": "Handoff"}));
+        assert_eq!(rows, vec![json!({"held": "POST https://shop.example/cart"}), handoff]);
+        for n in 0..MAX_FOR_OPERATOR {
+            note_for_operator(&mut rows, None, &json!({"held_for_operator": [format!("POST /{n}")]}));
+        }
+        assert_eq!(rows.len(), MAX_FOR_OPERATOR);
     }
 }

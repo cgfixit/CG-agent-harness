@@ -2,18 +2,25 @@
 // This file does not accept JavaScript, a shell, or launch flags from stdin.
 
 import dns from "node:dns";
+import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import { urlToHttpOptions } from "node:url";
 import { createInterface } from "node:readline";
 import { chromium } from "playwright";
 
 const MAX_TEXT = 4000;
 const MAX_ELEMENTS = 40;
+const MAX_OPTIONS = 25;
+// All option labels in one observation, so long country lists stay out of the window.
+const MAX_OPTION_CHARS = 1500;
 
-let browser;
 let context;
 let page;
+// Fresh Chrome profile for this session only; removed when the sidecar exits.
+let profileDir;
 let grants = new Set();
 // Only test-support fixtures set this; production refuses non-public literals.
 let allowPrivate = false;
@@ -74,7 +81,7 @@ function allowed(raw) {
   }
 }
 
-const ACTIONABLE = new Set(["link", "button", "tab", "textbox", "searchbox", "combobox", "listbox", "checkbox", "radio", "switch", "menuitem", "spinbutton"]);
+const ACTIONABLE = new Set(["link", "button", "tab", "textbox", "searchbox", "combobox", "listbox", "option", "checkbox", "radio", "switch", "menuitem", "spinbutton"]);
 const TEXT_ROLES = new Set(["textbox", "searchbox", "combobox", "spinbutton"]);
 
 // Roles, names and refs come from Playwright's own aria snapshot, the same
@@ -91,6 +98,21 @@ async function inputKind(node) {
   }
 }
 
+// A native <select> lists its options without refs: they are chosen by label
+// with select, not clicked. Options with a ref (ARIA listboxes) are elements.
+function optionNames(node, budget, out = []) {
+  for (const child of node.children || []) {
+    if (out.length >= MAX_OPTIONS || budget.left <= 0) break;
+    if (typeof child !== "object" || child === null || child.ref) continue;
+    if (child.role === "option" && child.name) {
+      const label = String(child.name).replace(/\s+/g, " ").trim().slice(0, 80);
+      budget.left -= label.length;
+      out.push(label);
+    } else optionNames(child, budget, out);
+  }
+  return out;
+}
+
 function absolute(raw) {
   try {
     return new URL(raw, page.url()).href;
@@ -101,19 +123,23 @@ function absolute(raw) {
 
 async function observe() {
   const elements = [];
+  const optionBudget = { left: MAX_OPTION_CHARS };
   const walk = async (nodes) => {
     for (const node of nodes || []) {
       if (elements.length >= MAX_ELEMENTS) return;
       if (typeof node !== "object" || node === null) continue;
       const name = String(node.name || node.placeholder || "").replace(/\s+/g, " ").trim().slice(0, 120);
       if (node.ref && name && ACTIONABLE.has(node.role)) {
-        elements.push({
+        const element = {
           ref: node.ref,
           role: node.role,
           name,
           href: node.url ? absolute(node.url) : null,
           input: await inputKind(node),
-        });
+        };
+        const options = node.role === "combobox" || node.role === "listbox" ? optionNames(node, optionBudget) : [];
+        if (options.length) element.options = options;
+        elements.push(element);
       }
       await walk(node.children);
     }
@@ -215,17 +241,63 @@ function startProxy() {
   });
 }
 
+// A task killed at its deadline cannot remove its profile, which holds that
+// task's cookies and cache. Remove profiles whose sidecar process is gone.
+function sweepProfiles() {
+  let names = [];
+  try {
+    names = fs.readdirSync(os.tmpdir());
+  } catch {}
+  for (const name of names) {
+    const owner = /^cgah-browser-(\d+)-/.exec(name);
+    if (!owner) continue;
+    try {
+      process.kill(Number(owner[1]), 0);
+      continue;
+    } catch (error) {
+      if (error.code !== "ESRCH") continue;
+    }
+    try {
+      fs.rmSync(path.join(os.tmpdir(), name), { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+// WebRTC sends UDP straight from Chrome, so the proxy never sees it: a page's
+// RTCPeerConnection could reach any address and port. This preference keeps
+// WebRTC to proxied TCP, where CONNECT meets the grants. Chrome 153 ignored
+// the --force-webrtc-ip-handling-policy switch, so the profile carries it.
+function freshProfile() {
+  sweepProfiles();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `cgah-browser-${process.pid}-`));
+  fs.mkdirSync(path.join(dir, "Default"));
+  fs.writeFileSync(path.join(dir, "Default", "Preferences"), JSON.stringify({ webrtc: { ip_handling_policy: "disable_non_proxied_udp" } }));
+  return dir;
+}
+
+// One tab per session. A target=_blank link or a script's window.open opens
+// a page that becomes the current one, and the old one closes. Grants and
+// holds belong to the context, so the new page reaches nothing the old could not.
+function adopt(opened) {
+  if (opened === page) return;
+  const previous = page;
+  page = opened;
+  opened.on("download", (download) => {
+    download.cancel();
+  });
+  previous?.close().catch(() => {});
+}
+
 async function start(message) {
-  if (browser) throw new Error("session already started");
+  if (context) throw new Error("session already started");
   grants = new Set(message.grants || []);
   allowPrivate = message.allow_private === true;
   const proxyPort = await startProxy();
-  browser = await chromium.launch({
+  profileDir = freshProfile();
+  context = await chromium.launchPersistentContext(profileDir, {
     channel: "chrome",
     headless: message.headless !== false,
-    args: ["--disable-features=WebRtc,TranslateUI"],
-  });
-  context = await browser.newContext({
+    args: ["--disable-features=TranslateUI"],
     proxy: { server: `http://127.0.0.1:${proxyPort}`, bypass: "<-loopback>" },
     serviceWorkers: "block",
     acceptDownloads: false,
@@ -257,11 +329,25 @@ async function start(message) {
   await context.routeWebSocket("**/*", (ws) => {
     ws.close();
   });
-  page = await context.newPage();
-  page.on("download", (download) => {
-    download.cancel();
-  });
+  adopt(context.pages()[0] ?? (await context.newPage()));
+  context.on("page", adopt);
   return { started: true };
+}
+
+// Wait for the page to load, script menus to render and held requests to register.
+async function settle() {
+  await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+  await page.waitForLoadState("networkidle", { timeout: 2000 }).catch(() => {});
+}
+
+// True when activating the element opens a new tab, so the action waits for it.
+async function opensTab(locator) {
+  return locator
+    .evaluate((el) => {
+      const link = el.closest("a[href], area[href]");
+      return Boolean(link?.target) && !["_self", "_parent", "_top"].includes(link.target.toLowerCase());
+    }, null, { timeout: 2000 })
+    .catch(() => false);
 }
 
 async function locatorFor(target) {
@@ -283,10 +369,11 @@ async function handle(message) {
     case "click":
     case "follow_link": {
       const locator = await locatorFor(message.target);
+      const tab = (await opensTab(locator)) ? page.waitForEvent("popup", { timeout: 5000 }).catch(() => null) : null;
       await locator.click({ timeout: 5000 });
-      await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
-      // Let script-driven menus render and any held request register first.
-      await page.waitForLoadState("networkidle", { timeout: 2000 }).catch(() => {});
+      const opened = await tab;
+      if (opened) adopt(opened);
+      await settle();
       return observe();
     }
     case "type": {
@@ -297,7 +384,14 @@ async function handle(message) {
     case "press_enter": {
       const locator = await locatorFor(message.target);
       await locator.press("Enter", { timeout: 5000 });
-      await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+      await settle();
+      return observe();
+    }
+    case "select": {
+      // Native <select> only, by the visible option label the observation listed.
+      const locator = await locatorFor(message.target);
+      await locator.selectOption({ label: String(message.value ?? "") }, { timeout: 5000 });
+      await settle();
       return observe();
     }
     case "select_tab": {
@@ -330,5 +424,6 @@ for await (const line of lines) {
   }
 }
 // stdin closed: the parent is gone or done. Close Chrome rather than orphan it.
-await browser?.close().catch(() => {});
+await context?.close().catch(() => {});
+if (profileDir) fs.rmSync(profileDir, { recursive: true, force: true });
 process.exit(0);
