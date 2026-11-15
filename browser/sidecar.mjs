@@ -16,6 +16,8 @@ const MAX_ELEMENTS = 40;
 const MAX_OPTIONS = 25;
 // All option labels in one observation, so long country lists stay out of the window.
 const MAX_OPTION_CHARS = 1500;
+const MAX_FIND_CHARS = 80;
+const MAX_NOT_GRANTED = 20;
 
 let context;
 let page;
@@ -26,6 +28,10 @@ let grants = new Set();
 let allowPrivate = false;
 // Form submissions the operator must make; reported with the next observation.
 const held = [];
+// Origins a page asked for that this task was not granted; reported the same way.
+const notGranted = new Set();
+// Tabs a page opened whose verdict is pending; every action waits for it.
+const opening = new Set();
 
 // Same rule as the harness web reader (web_policy::is_public_ip): a granted
 // name must resolve to global unicast only. An IP-literal grant skips lookup.
@@ -81,8 +87,32 @@ function allowed(raw) {
   }
 }
 
+// Names an origin a page asked for and did not get, for the operator. Only
+// the origin: a path could carry page data.
+function refuse(raw) {
+  try {
+    if (notGranted.size < MAX_NOT_GRANTED) notGranted.add(originOf(raw));
+  } catch {}
+}
+
 const ACTIONABLE = new Set(["link", "button", "tab", "textbox", "searchbox", "combobox", "listbox", "option", "checkbox", "radio", "switch", "menuitem", "spinbutton"]);
 const TEXT_ROLES = new Set(["textbox", "searchbox", "combobox", "spinbutton"]);
+// Roles whose accessible name is their own text.
+const NAMED_BY_CONTENT = new Set(["link", "button", "tab", "option", "checkbox", "radio", "switch", "menuitem"]);
+
+// The snapshot leaves `name` off an element whose label has inline markup,
+// such as <a><code>zipfile</code> — ZIP archives</a>: the label is then the
+// text of its children.
+function contentOf(node) {
+  if (typeof node === "string") return node;
+  if (typeof node !== "object" || node === null) return "";
+  return [node.name, node.text, ...(node.children || []).map(contentOf)].filter(Boolean).join(" ");
+}
+
+function nameOf(node) {
+  const own = node.name || node.placeholder || (NAMED_BY_CONTENT.has(node.role) ? (node.children || []).map(contentOf).join(" ") : "");
+  return String(own).replace(/\s+/g, " ").trim().slice(0, 120);
+}
 
 // Roles, names and refs come from Playwright's own aria snapshot, the same
 // engine getByRef/getByRole resolve with, so what the model sees is clickable.
@@ -121,38 +151,65 @@ function absolute(raw) {
   }
 }
 
-async function observe() {
+// The text around each place `find` appears, in page order.
+function excerpts(body, find) {
+  const lower = body.toLowerCase();
+  const parts = [];
+  let end = 0;
+  for (let at = lower.indexOf(find); at >= 0; at = lower.indexOf(find, Math.max(end, at + 1))) {
+    const start = Math.max(end, at - 150);
+    end = Math.min(body.length, at + find.length + 250);
+    parts.push(body.slice(start, end));
+  }
+  return parts.join(" … ");
+}
+
+// One page of the document: MAX_ELEMENTS elements and MAX_TEXT characters.
+// `view.page` picks a later page; `view.find` keeps only the elements whose
+// name contains that text, and the page text around it.
+async function observe(view = {}) {
+  const find = typeof view.find === "string" ? view.find.trim().toLowerCase().slice(0, MAX_FIND_CHARS) : "";
+  const pageNo = Number.isInteger(view.page) && view.page > 0 ? view.page : 1;
   const elements = [];
+  let matched = 0;
   const optionBudget = { left: MAX_OPTION_CHARS };
   const walk = async (nodes) => {
     for (const node of nodes || []) {
-      if (elements.length >= MAX_ELEMENTS) return;
       if (typeof node !== "object" || node === null) continue;
-      const name = String(node.name || node.placeholder || "").replace(/\s+/g, " ").trim().slice(0, 120);
-      if (node.ref && name && ACTIONABLE.has(node.role)) {
-        const element = {
-          ref: node.ref,
-          role: node.role,
-          name,
-          href: node.url ? absolute(node.url) : null,
-          input: await inputKind(node),
-        };
-        const options = node.role === "combobox" || node.role === "listbox" ? optionNames(node, optionBudget) : [];
-        if (options.length) element.options = options;
-        elements.push(element);
+      const name = ACTIONABLE.has(node.role) ? nameOf(node) : "";
+      if (node.ref && name && name.toLowerCase().includes(find)) {
+        matched += 1;
+        if (matched > (pageNo - 1) * MAX_ELEMENTS && elements.length < MAX_ELEMENTS) {
+          const element = {
+            ref: node.ref,
+            role: node.role,
+            name,
+            href: node.url ? absolute(node.url) : null,
+            input: await inputKind(node),
+          };
+          const options = node.role === "combobox" || node.role === "listbox" ? optionNames(node, optionBudget) : [];
+          if (options.length) element.options = options;
+          elements.push(element);
+        }
       }
       await walk(node.children);
     }
   };
   await walk(await page.ariaSnapshotJSON({ mode: "ai", timeout: 5000 }));
-  const text = (await page.locator("body").innerText()).replace(/\s+/g, " ").trim().slice(0, MAX_TEXT);
-  return {
+  const body = (await page.locator("body").innerText({ timeout: 5000 })).replace(/\s+/g, " ").trim();
+  const shown = find ? excerpts(body, find) : body;
+  const result = {
     url: page.url(),
     title: await page.title(),
-    text,
+    text: shown.slice((pageNo - 1) * MAX_TEXT, pageNo * MAX_TEXT),
     elements,
+    page: pageNo,
+    pages: Math.max(1, Math.ceil(matched / MAX_ELEMENTS), Math.ceil(shown.length / MAX_TEXT)),
     held: held.splice(0),
+    not_granted: [...notGranted],
   };
+  notGranted.clear();
+  return result;
 }
 
 function quiet(stream) {
@@ -275,17 +332,29 @@ function freshProfile() {
   return dir;
 }
 
-// One tab per session. A target=_blank link or a script's window.open opens
-// a page that becomes the current one, and the old one closes. Grants and
-// holds belong to the context, so the new page reaches nothing the old could not.
-function adopt(opened) {
-  if (opened === page) return;
-  const previous = page;
-  page = opened;
+// One tab per session. A tab opened by a target=_blank link or a script's
+// window.open becomes the current one, and the old one closes, only once it
+// shows a granted page. Any other new tab (an ad, a sign-in on another site)
+// is closed and the task keeps its page. Grants and holds belong to the
+// context, so a new tab reaches nothing the old one could not.
+async function adopt(opened) {
   opened.on("download", (download) => {
     download.cancel();
   });
-  previous?.close().catch(() => {});
+  // The same budget as navigate; a tab still blank after it is not adopted.
+  await opened.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
+  if (opened.isClosed() || !allowed(opened.url())) {
+    await opened.close().catch(() => {});
+    return;
+  }
+  const previous = page;
+  page = opened;
+  await previous.close().catch(() => {});
+}
+
+function track(opened) {
+  const verdict = adopt(opened).finally(() => opening.delete(verdict));
+  opening.add(verdict);
 }
 
 async function start(message) {
@@ -331,15 +400,28 @@ async function start(message) {
   await context.routeWebSocket("**/*", (ws) => {
     ws.close();
   });
-  adopt(context.pages()[0] ?? (await context.newPage()));
-  context.on("page", adopt);
+  page = context.pages()[0] ?? (await context.newPage());
+  page.on("download", (download) => {
+    download.cancel();
+  });
+  context.on("page", track);
+  // Page requests only, so Chrome's own background traffic (also refused by
+  // the proxy) is not listed. A redirect to another site fails here too.
+  context.on("requestfailed", (request) => {
+    if (!allowed(request.url())) refuse(request.url());
+  });
   return { started: true };
 }
 
-// Wait for the page to load, script menus to render and held requests to register.
+// Wait for the page to load, script content to render, held requests to
+// register and any tab the page opened to be adopted or closed.
 async function settle() {
-  await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
-  await page.waitForLoadState("networkidle", { timeout: 2000 }).catch(() => {});
+  for (let pass = 0; pass < 2; pass += 1) {
+    await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+    await page.waitForLoadState("networkidle", { timeout: 2000 }).catch(() => {});
+    if (!opening.size) return;
+    await Promise.allSettled([...opening]);
+  }
 }
 
 // True when activating the element opens a new tab, so the action waits for it.
@@ -360,21 +442,23 @@ async function locatorFor(target) {
 }
 
 async function handle(message) {
+  if (opening.size) await Promise.allSettled([...opening]);
   switch (message.op) {
     case "start":
       return start(message);
     case "navigate":
       await page.goto(message.url, { waitUntil: "domcontentloaded", timeout: 10000 });
+      // A page that renders from a fetch is still a shell at domcontentloaded.
+      await settle();
       return observe();
     case "observe":
-      return observe();
+      return observe(message);
     case "click":
     case "follow_link": {
       const locator = await locatorFor(message.target);
       const tab = (await opensTab(locator)) ? page.waitForEvent("popup", { timeout: 5000 }).catch(() => null) : null;
       await locator.click({ timeout: 5000 });
-      const opened = await tab;
-      if (opened) adopt(opened);
+      await tab;
       await settle();
       return observe();
     }
