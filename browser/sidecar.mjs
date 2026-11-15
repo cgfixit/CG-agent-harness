@@ -296,6 +296,8 @@ async function start(message) {
   profileDir = freshProfile();
   context = await chromium.launchPersistentContext(profileDir, {
     channel: "chrome",
+    // Without this Playwright adds --no-sandbox, and hostile pages render unsandboxed.
+    chromiumSandbox: true,
     headless: message.headless !== false,
     args: ["--disable-features=TranslateUI"],
     proxy: { server: `http://127.0.0.1:${proxyPort}`, bypass: "<-loopback>" },
