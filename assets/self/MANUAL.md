@@ -12,7 +12,7 @@ This manual is static text bundled with the build and indexed at startup. It is 
 - Goal loops: `/goal` and `/loop` continue a long piece in a run that outlives the browser. Starts: 50 turns, 200,000 tokens, two failed turns; cloud refuses loops.
 - Memory: Pinned and uploaded notes, account-private facts. Starts: On; proposals need review.
 - Local chat: Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles, `/prompt`. Starts: Ollama on loopback.
-- Browser tasks: `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Password fields and every request that would send data are… Starts: On for administrators; needs Chrome and one `npm ci`.
+- Browser tasks: `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Password fields and every request but GET or HEAD are held… Starts: On for administrators; needs Chrome and one `npm ci`.
 - Analytics, diagnostics: Token and run history, **Estimate draft**, `/diag` redacted logs. Starts: On; `/diag` admin or auditor.
 - Cloud chat: Optional Grok or Claude; only the new message leaves. Starts: Needs a provider key.
 

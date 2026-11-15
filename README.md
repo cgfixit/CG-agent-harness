@@ -19,7 +19,7 @@ Fresh home, loopback fixture model. [60-second demo](docs/screenshots/demo/CG-Ag
 | **Goal loops** | `/goal` and `/loop` continue a long piece in a run that outlives the browser. | 50 turns, 200,000 tokens, two failed turns; cloud refuses loops. |
 | **Memory** | Pinned and [uploaded notes](docs/CONSOLE.md#text-file-attachments-and-prompt-preview), account-private facts. | On; proposals need review. |
 | **Local chat** | Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles, `/prompt`. | Ollama on loopback. |
-| **Browser tasks** | `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Password fields and every request that would send data are held for you ([guide](docs/Browser-Use.md)). | On for administrators; needs Chrome and one `npm ci`. |
+| **Browser tasks** | `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Password fields and every request but GET or HEAD are held for you ([guide](docs/Browser-Use.md)). | On for administrators; needs Chrome and one `npm ci`. |
 | **Analytics, diagnostics** | Token and run history, **Estimate draft**, `/diag` redacted logs. | On; `/diag` admin or auditor. |
 | **Cloud chat** | Optional Grok or Claude; only the new message leaves. | Needs a provider key. |
 | **Off by default** | Reviewed coding in isolated clones, MCP tools and memory gateway, Netconnect LAN observation, Firecrawl fallback reads. | Each needs configuration. |

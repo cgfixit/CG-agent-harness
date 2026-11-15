@@ -22,7 +22,7 @@ the server or the shim.
   but GET and HEAD is held for the operator, WebRTC sends no UDP past the sidecar proxy
   (session profile; `browser enter` fixture), an origin whose root URL (`{origin}/`)
   the web block list blocks is refused (rechecked each turn and before delivery;
-  path-level rules are not enforced inside a grant), and a granted name or IP literal
+  path-level rules are not enforced inside a grant, #899), and a granted name or IP literal
   must be public; only `test-support` fixtures may use loopback.
 - A SIGKILL'd child may leak a clone, but cannot corrupt server memory or bypass
   guards. The exit-code contract is 0 ok / 2 failed / 3 env_config / 4 write_refused.
