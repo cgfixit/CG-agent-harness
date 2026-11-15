@@ -508,6 +508,10 @@ fn sandbox_runs_checks_kills_on_timeout_and_scrubs_env() {
         }
         Err(e) => {
             assert_eq!(e.code, "HARD_SANDBOX_UNAVAILABLE");
+            // CI sets this where a sandbox exists, so a broken backend cannot pass as a skip.
+            if std::env::var_os("CGAH_REQUIRE_CHECK_SANDBOX").is_some() {
+                panic!("hard check sandbox required; cannot skip: {}", e.message);
+            }
             eprintln!("SKIP production sandbox: {}", e.message);
         }
     }

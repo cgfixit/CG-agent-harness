@@ -628,11 +628,7 @@ fn ollama_chat(api: &str, model: &str, messages: &[Value], tools: &Value) -> Res
         "stream": false,
         "think": false,
     });
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(180))
-        .build()
-        .map_err(|err| err.to_string())?;
-    let response = client
+    let response = ollama_client(Duration::from_secs(180))?
         .post(format!("{api}/api/chat"))
         .json(&payload)
         .send()
@@ -640,22 +636,43 @@ fn ollama_chat(api: &str, model: &str, messages: &[Value], tools: &Value) -> Res
     if !response.status().is_success() {
         return Err(format!("ollama chat status {}", response.status()));
     }
-    response
-        .json()
-        .map_err(|err| format!("ollama chat was not json: {err}"))
+    bounded_json(response)
 }
 
 fn ollama_get(api: &str, path: &str) -> Result<Value, String> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-        .map_err(|err| err.to_string())?;
-    client
+    let response = ollama_client(Duration::from_secs(5))?
         .get(format!("{api}{path}"))
         .send()
-        .map_err(|err| err.to_string())?
-        .json()
+        .map_err(|err| err.to_string())?;
+    bounded_json(response)
+}
+
+/// The same posture as the async local-model clients (`llm::ollama`): no proxy,
+/// no redirect, and a resolver that refuses any non-loopback answer. A page's
+/// text rides in `messages`, so a redirect must not re-post it elsewhere.
+fn ollama_client(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .no_proxy()
+        .dns_resolver(std::sync::Arc::new(crate::llm::backend::LoopbackOnlyDns))
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(timeout)
+        .build()
         .map_err(|err| err.to_string())
+}
+
+/// JSON from at most `MAX_RESPONSE_BYTES` of body.
+fn bounded_json(response: reqwest::blocking::Response) -> Result<Value, String> {
+    use std::io::Read;
+    let max = crate::llm::MAX_RESPONSE_BYTES;
+    let mut body = Vec::new();
+    response
+        .take(max as u64 + 1)
+        .read_to_end(&mut body)
+        .map_err(|err| format!("ollama response failed: {err}"))?;
+    if body.len() > max {
+        return Err("ollama response is too large".into());
+    }
+    serde_json::from_slice(&body).map_err(|err| format!("ollama response was not json: {err}"))
 }
 
 /// The operator's chat model and loopback Ollama origin, from the home config.
@@ -865,6 +882,54 @@ document.getElementById('filter').oninput = (e) => { filter = e.target.value; re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A loopback listener that answers every connection with `response` and
+    /// counts them. Returns its origin and the counter.
+    fn canned(response: Vec<u8>) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::io::Read;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because loopback test fixture
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let seen = hits.clone();
+        thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                seen.fetch_add(1, Ordering::SeqCst);
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
+                let _ = stream.read(&mut [0u8; 8192]);
+                let _ = stream.write_all(&response);
+            }
+        });
+        (origin, hits)
+    }
+
+    #[test]
+    fn ollama_requests_follow_no_redirect_and_read_a_bounded_body() {
+        use std::sync::atomic::Ordering;
+        let ok =
+            b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}";
+        let (elsewhere, leaked) = canned(ok.to_vec());
+        let moved = format!(
+            "HTTP/1.1 307 Temporary Redirect\r\nlocation: {elsewhere}/api/chat\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+        );
+        let (api, asked) = canned(moved.into_bytes());
+        // The page text in `messages` must not be re-posted to the redirect target.
+        let err = ollama_chat(&api, "m", &[json!({"role":"user","content":"page text"})], &json!([])).unwrap_err();
+        assert!(err.contains("307"), "{err}");
+        assert!(ollama_get(&api, "/api/ps").is_err());
+        assert_eq!(asked.load(Ordering::SeqCst), 2);
+        assert_eq!(leaked.load(Ordering::SeqCst), 0, "a redirect was followed");
+
+        let mut big = b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nconnection: close\r\n\r\n\"".to_vec();
+        big.resize(big.len() + crate::llm::MAX_RESPONSE_BYTES, b'a');
+        big.push(b'"');
+        let (api, _) = canned(big);
+        let err = ollama_chat(&api, "m", &[], &json!([])).unwrap_err();
+        assert!(err.contains("too large"), "{err}");
+        // A name goes through the loopback-only resolver; a literal does not.
+        assert!(ollama_get(&elsewhere, "/api/version").is_ok());
+        assert!(ollama_get(&elsewhere.replace("127.0.0.1", "localhost"), "/api/version").is_ok());
+    }
 
     #[test]
     fn block_list_checks_the_granted_origin_and_fails_closed() {
