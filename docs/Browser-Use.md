@@ -43,8 +43,8 @@ Boundaries, enforced in code:
 - A task holds the shared model gate, so it never overlaps chat or research.
 - Clicks may run. Every request except GET and HEAD is held for the operator:
   a held page load answers 204 so the page stays, a held `fetch` fails.
-- Password and one-time-code fields hand off and are never typed. The console
-  lists each held request and hand-off after the answer.
+- Password and one-time-code fields hand off and are never typed. A hand-off
+  or hold ends the task at once; the console lists each one.
 
 Verified by running: fixtures `browser`, `browser enter` (a new tab replaces
 the page; search submits; a select takes an option; password hands off; a POST

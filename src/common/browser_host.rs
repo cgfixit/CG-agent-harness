@@ -435,8 +435,36 @@ pub fn run_task(
     let mut session = Session::general(origins).map_err(|err| format!("{err:?}"))?;
     let mut sidecar = Sidecar::start(script, &session, headless, allow_private)?;
     let tools = browser_tools();
+    let mut chat = |messages: &[Value]| ollama_chat(api, model, messages, &tools);
+    let report = model_loop(
+        &mut session,
+        &mut sidecar,
+        &mut chat,
+        &policy_refusal_now,
+        task,
+        origins,
+        max_turns,
+    );
+    drop(sidecar);
+    let mut report = report?;
+    report["model"] = json!(model);
+    Ok(report)
+}
+
+/// The model turns of one task. `chat` answers one turn; `recheck` refuses a
+/// turn when the shared policy changed. A handoff or held request ends the
+/// task at once: the rest of that batch is dropped.
+fn model_loop(
+    session: &mut Session,
+    sidecar: &mut dyn Driver,
+    chat: &mut dyn FnMut(&[Value]) -> Result<Value, String>,
+    recheck: &dyn Fn(&Session) -> Option<String>,
+    task: &str,
+    origins: &[String],
+    max_turns: usize,
+) -> Result<Value, String> {
     let mut messages = vec![
-        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A refusal is not success. A Handoff, or held_for_operator, means only the operator can do that step: say so and stop. Call finish with your answer once the page shows it.", origins.join(", "))}),
+        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A refusal is not success. A Handoff, or held_for_operator, ends the task: only the operator can do that step. Call finish with your answer once the page shows it.", origins.join(", "))}),
         json!({"role":"user","content": task}),
     ];
     let mut calls = 0usize;
@@ -450,11 +478,11 @@ pub fn run_task(
     let mut for_operator: Vec<Value> = Vec::new();
     'turns: for turn in 0..max_turns {
         // Permission checked at launch is stale after a wait (AGENTS.md).
-        if let Some(reason) = policy_refusal_now(&session) {
+        if let Some(reason) = recheck(session) {
             stopped = Some(reason);
             break;
         }
-        let response = ollama_chat(api, model, &messages, &tools)?;
+        let response = chat(&messages)?;
         let message = response
             .get("message")
             .cloned()
@@ -499,15 +527,21 @@ pub fn run_task(
                 _ => None,
             });
             let outcome = match &wire {
-                Some(wire) => step(&mut session, &mut sidecar, wire),
+                Some(wire) => step(session, sidecar, wire),
                 None => json!({"refused":"malformed browser action"}),
             };
+            let needs_operator = handoff.is_some() || outcome.get("held_for_operator").is_some();
             note_for_operator(&mut for_operator, handoff, &outcome);
             if let Some(text) = outcome.get("text").and_then(Value::as_str) {
                 last_text = text.to_string();
                 last_url = outcome["url"].clone();
             }
             transcript.push(format!("{name} {}", truncate(&outcome.to_string(), 240)));
+            // The prompt asks the model to stop; the host makes sure it does.
+            if needs_operator {
+                stopped = Some("needs the operator: a step was handed off or a request was held".to_string());
+                break 'turns;
+            }
             if outcome.get("elements").is_some() {
                 retire_observations(&mut messages);
             }
@@ -523,12 +557,10 @@ pub fn run_task(
             }
         }
     }
-    drop(sidecar);
     Ok(json!({
         "finished": answer.is_some(),
         "answer": answer,
         "stopped": stopped,
-        "model": model,
         "origins": origins,
         "model_calls_with_tools": calls,
         "for_operator": for_operator,
@@ -958,5 +990,105 @@ mod tests {
             note_for_operator(&mut rows, None, &json!({"held_for_operator": [format!("POST /{n}")]}));
         }
         assert_eq!(rows.len(), MAX_FOR_OPERATOR);
+    }
+
+    /// A page with a password field, a button whose POST is held, and a plain
+    /// button. Records every op it is sent.
+    #[derive(Default)]
+    struct ScriptedPage {
+        ops: Vec<String>,
+    }
+
+    impl Driver for ScriptedPage {
+        fn call(&mut self, op: Value) -> Result<Value, String> {
+            let target = op.pointer("/target/ref").and_then(Value::as_str).unwrap_or("");
+            self.ops.push(
+                format!("{} {target}", op["op"].as_str().unwrap_or(""))
+                    .trim()
+                    .to_string(),
+            );
+            let held: Vec<&str> = if target == "save" {
+                vec!["POST https://example.com/save"]
+            } else {
+                vec![]
+            };
+            Ok(json!({"ok": true, "result": {
+                "url": "https://example.com/", "text": "page", "held": held,
+                "elements": [
+                    {"ref": "pw", "role": "textbox", "name": "Password", "input": "secret"},
+                    {"ref": "save", "role": "button", "name": "Save"},
+                    {"ref": "after", "role": "button", "name": "After"},
+                ],
+            }}))
+        }
+    }
+
+    /// Navigate, then send `batch` (tool name, element name) in one turn.
+    fn run_batch(batch: &[(&str, &str)]) -> (Value, Vec<String>) {
+        let origins = vec!["https://example.com".to_string()];
+        let mut session = Session::general(&origins).unwrap();
+        let mut page = ScriptedPage::default();
+        let mut turn = 0;
+        let mut chat = |messages: &[Value]| {
+            turn += 1;
+            let calls: Vec<Value> = match turn {
+                1 => vec![json!({"function": {"name": "navigate", "arguments": {"url": "https://example.com/"}}})],
+                2 => {
+                    let seen: Value = messages
+                        .iter()
+                        .rev()
+                        .find(|m| m["role"] == "tool")
+                        .and_then(|m| serde_json::from_str(m["content"].as_str()?).ok())
+                        .unwrap();
+                    let ref_of = |name: &str| {
+                        seen["elements"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .find(|el| el["name"] == name)
+                            .unwrap()["ref_id"]
+                            .clone()
+                    };
+                    batch
+                        .iter()
+                        .map(|(tool, target)| match *tool {
+                            "navigate" => json!({"function": {"name": "navigate", "arguments": {"url": target}}}),
+                            "type" => json!({"function": {"name": "type", "arguments": {"ref_id": ref_of(target), "text": "x"}}}),
+                            _ => json!({"function": {"name": tool, "arguments": {"ref_id": ref_of(target)}}}),
+                        })
+                        .collect()
+                }
+                _ => vec![],
+            };
+            Ok(json!({"message": {"role": "assistant", "content": "done", "tool_calls": calls}}))
+        };
+        let report = model_loop(&mut session, &mut page, &mut chat, &|_| None, "task", &origins, 6).unwrap();
+        (report, page.ops)
+    }
+
+    #[test]
+    fn a_handoff_ends_the_task_and_drops_the_rest_of_the_batch() {
+        let (report, ops) = run_batch(&[("type", "Password"), ("click", "After")]);
+        assert_eq!(ops, ["navigate"], "nothing after the handoff reached the page");
+        assert_eq!(report["finished"], false);
+        assert!(report["stopped"].as_str().unwrap().starts_with("needs the operator"));
+        assert_eq!(report["for_operator"][0]["element"], "Password");
+    }
+
+    #[test]
+    fn a_held_request_ends_the_task_and_drops_the_rest_of_the_batch() {
+        let (report, ops) = run_batch(&[("click", "Save"), ("navigate", "https://example.com/next")]);
+        assert_eq!(ops, ["navigate", "click save"], "the navigate after the hold never ran");
+        assert_eq!(report["finished"], false);
+        assert!(report["stopped"].as_str().unwrap().starts_with("needs the operator"));
+        assert_eq!(report["for_operator"][0]["held"], "POST https://example.com/save");
+    }
+
+    #[test]
+    fn a_batch_with_nothing_for_the_operator_runs_to_the_answer() {
+        let (report, ops) = run_batch(&[("click", "After"), ("navigate", "https://example.com/next")]);
+        assert_eq!(ops, ["navigate", "click after", "navigate"]);
+        assert_eq!(report["finished"], true);
+        assert!(report["stopped"].is_null());
     }
 }
