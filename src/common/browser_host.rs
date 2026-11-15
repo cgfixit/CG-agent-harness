@@ -795,11 +795,11 @@ mod tests {
 
     #[test]
     fn block_list_checks_the_granted_origin_and_fails_closed() {
-        let policy = crate::server::web_policy::Policy::parse(
-            br#"{"version":1,"rules":[],"blocked":[{"id":"abababababababababababababababab","pattern":"https://blocked.example/*","group":"blocked","seeds":[]}]}"#,
-            64,
-        )
-        .unwrap();
+        use crate::server::web_policy::{Policy, Rule, BLOCKED_GROUP};
+        let mut policy = Policy::parse(br#"{"version":1,"rules":[]}"#, 64).unwrap();
+        policy
+            .blocked
+            .push(Rule::new("https://blocked.example/*", BLOCKED_GROUP, &[]).unwrap());
         // An encoded path separator fails canonical_url but still grants the whole origin.
         let sneaky = Session::general(["https://blocked.example/%2F"]).unwrap();
         assert!(blocked_origin(&policy, &sneaky).is_some());
