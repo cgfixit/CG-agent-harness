@@ -107,11 +107,16 @@ clone_ok() {
   case "$h/" in "$root"/*) return 1 ;; esac
   [ "$(printf '%s' "$root" | tr -cd / | wc -c | tr -d ' ')" -ge 3 ]
 }
-# Local work a deleted clone would lose: uncommitted changes, or commits on no remote.
+# Local work a deleted clone would lose: uncommitted changes, or commits on no
+# remote (branches and a detached HEAD). A state Git cannot report counts as unsaved.
 clone_unsaved() {
-  [ -e "$root/.git" ] && have git || return 1
-  [ -n "$(git -C "$root" status --porcelain 2>/dev/null)" ] && return 0
-  [ -n "$(git -C "$root" log --branches --not --remotes --oneline 2>/dev/null | head -n1)" ]
+  local out
+  [ -e "$root/.git" ] || return 1
+  have git || return 0
+  out=$(git -C "$root" status --porcelain 2>/dev/null) || return 0
+  [ -n "$out" ] && return 0
+  out=$(git -C "$root" log --branches HEAD --not --remotes --oneline 2>/dev/null) || return 0
+  [ -n "$out" ]
 }
 
 # ------------------------------------------------------------------ choices
@@ -128,7 +133,7 @@ fi
 [ "$rustup_rm" = 0 ] || toolchain_rm=0
 if [ "$keep_clone" = 0 ] && ! clone_ok; then warn "$root does not look like a CG-agent-harness clone; keeping it"; keep_clone=1; fi
 if [ "$keep_clone" = 0 ] && clone_unsaved; then
-  warn "$root has uncommitted changes or commits no remote has"
+  warn "$root has uncommitted changes, commits no remote has, or a Git state that could not be read"
   if [ "$interactive" = 0 ] || ! yes_no 'Delete it anyway, losing that work?' n; then say 'keeping the clone'; keep_clone=1; fi
 fi
 
@@ -209,7 +214,8 @@ for f in "$HOME/.zprofile" "$HOME/.bash_profile" "$HOME/.profile"; do
   [ -f "$f" ] || continue
   grep -qxF "$marker" "$f" || continue
   cargo_gone=0 brew_gone=0
-  { [ "$rustup_rm" = 1 ] || [ ! -f "$HOME/.cargo/env" ]; } && cargo_gone=1
+  # The file, not the request: a failed rustup removal keeps its profile line.
+  { [ "$rustup_rm" = 1 ] && [ "$dry" = 1 ]; } || [ ! -f "$HOME/.cargo/env" ] && cargo_gone=1
   [ -x /opt/homebrew/bin/brew ] || brew_gone=1
   new=$(awk -v m="$marker" -v c="$cargo_gone" -v b="$brew_gone" '
     { line[NR] = $0 }
