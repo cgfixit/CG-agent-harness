@@ -2253,7 +2253,6 @@ fn runtime_markdown(manifest: &Path) -> Vec<String> {
 /// Exact checkout paths exempt from the new-file rule and the group word cap.
 /// Entries need owner approval. No wildcards and no environment switch.
 /// An agent must not add a path.
-// The 2026-10-10 bake-off report was the only entry; main deleted it (b91a000).
 const DOCS_BUDGET_OWNER_EXEMPT: &[(&str, &str)] = &[];
 
 #[test]

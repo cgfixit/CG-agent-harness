@@ -189,8 +189,6 @@ manual's order so old links resolve. Truth order is code, then
 
 ## Folders
 
-- `bakeoff/`: a dated, measured local-model bake-off report that picks no
-  winner; dated evidence otherwise belongs in PR bodies.
 - [`learning/`](learning/README.md): operator reading material. Agents never
   open it unless the operator asks.
 - [`screenshots/`](screenshots/README.md): captures indexed by series, plus
