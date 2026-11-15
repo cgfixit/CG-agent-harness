@@ -696,15 +696,24 @@ pub fn run_enter_demo(sidecar: &Path, headless: bool) -> Result<String, String> 
         json!({"action":"type","ref_id":"@Query","text":"github cgfixit"}),
         json!({"action":"press_enter","ref_id":"@Query"}),
         json!({"action":"select","ref_id":"@Size","value":"Large"}),
+        // Observations cut labels to 80 characters; the listed text must still select.
+        json!({"action":"select","ref_id":"@Shipping","value": LONG_OPTION.chars().take(80).collect::<String>()}),
         json!({"action":"type","ref_id":"@Password","text":"hunter2","expect":"handoff"}),
         json!({"action":"type","ref_id":"@Amount","text":"500"}),
         json!({"action":"press_enter","ref_id":"@Amount","expect":"held"}),
         json!({"action":"click","ref_id":"@Save","expect":"held"}),
     ];
     let log = run_fixture(
-        &SEARCH_PAGE.replace("STUN_PORT", &stun_port.to_string()),
+        &SEARCH_PAGE
+            .replace("STUN_PORT", &stun_port.to_string())
+            .replace("LONG_OPTION", LONG_OPTION),
         &steps,
-        |text| text.contains("second tab") && text.contains("submitted github cgfixit") && text.contains("picked l"),
+        |text| {
+            text.contains("second tab")
+                && text.contains("submitted github cgfixit")
+                && text.contains("picked l")
+                && text.contains("shipped f")
+        },
         sidecar,
         headless,
     )?;
@@ -798,6 +807,10 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
     }
 }
 
+/// An option label longer than the 80 characters an observation lists.
+const LONG_OPTION: &str =
+    "Freight delivery to the loading dock with a scheduled two hour window and a signature on receipt";
+
 const SEARCH_PAGE: &str = r#"
 <p id="tab">first tab</p>
 <a href="/?tab=2" target="_blank">Open in a new tab</a>
@@ -810,6 +823,8 @@ const SEARCH_PAGE: &str = r#"
 <button onclick="fetch('/save', {method: 'POST'})">Save</button>
 <label>Size <select aria-label="Size" onchange="document.getElementById('picked').textContent = 'picked ' + this.value"><option value="s">Small</option><option value="l">Large</option></select></label>
 <p id="picked">nothing picked</p>
+<label>Shipping <select aria-label="Shipping" onchange="document.getElementById('shipped').textContent = 'shipped ' + this.value"><option value="s">Standard</option><option value="f">LONG_OPTION</option></select></label>
+<p id="shipped">not shipped</p>
 <script>
 if (location.search === '?tab=2') document.getElementById('tab').textContent = 'second tab';
 try {

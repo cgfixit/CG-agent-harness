@@ -388,9 +388,22 @@ async function handle(message) {
       return observe();
     }
     case "select": {
-      // Native <select> only, by the visible option label the observation listed.
+      // Native <select> only. Observations list labels cut to 80 characters,
+      // so match the listed text, not only the full label: an exact label
+      // first, then the one option whose cut label equals it.
       const locator = await locatorFor(message.target);
-      await locator.selectOption({ label: String(message.value ?? "") }, { timeout: 5000 });
+      const index = await locator.evaluate(
+        (el, wanted) => {
+          const labels = [...(el.options || [])].map((option) => (option.label || option.text).replace(/\s+/g, " ").trim());
+          const one = (hits) => (hits.length === 1 ? hits[0] : -1);
+          const exact = one(labels.flatMap((label, i) => (label === wanted ? [i] : [])));
+          return exact >= 0 ? exact : one(labels.flatMap((label, i) => (label.slice(0, 80) === wanted ? [i] : [])));
+        },
+        String(message.value ?? ""),
+        { timeout: 2000 },
+      );
+      if (index < 0) throw new Error("no single listed option has that label");
+      await locator.selectOption({ index }, { timeout: 5000 });
       await settle();
       return observe();
     }
