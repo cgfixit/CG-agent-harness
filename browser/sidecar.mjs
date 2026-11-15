@@ -222,6 +222,8 @@ async function start(message) {
   const proxyPort = await startProxy();
   browser = await chromium.launch({
     channel: "chrome",
+    // Without this Playwright adds --no-sandbox, and hostile pages render unsandboxed.
+    chromiumSandbox: true,
     headless: message.headless !== false,
     args: ["--disable-features=WebRtc,TranslateUI"],
   });
