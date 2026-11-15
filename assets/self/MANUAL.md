@@ -17,7 +17,8 @@ This manual is static text bundled with the build and indexed at startup. It is 
 
 ## readme: capability overview (part 2)
 
-- Off by default: Reviewed coding in isolated clones, MCP tools and a read-only memory gateway, Netconnect LAN observation. Starts: Each needs explicit configuration.
+- Browser tasks: `/browse <site> <task>`: the local model drives Chrome on the sites you name; anything that would send data waits for you. Status and roadmap. Starts: Off; an administrator sets `browser.enabled`.
+- Off by default: Reviewed coding in isolated clones, MCP tools and a read-only memory gateway, Netconnect LAN observation, browser tasks. Starts: Each needs explicit configuration.
 
 ## agents: process and home map
 
@@ -143,6 +144,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/agent [help]`: Inspect coding commands; full workflow below
 - `/analytics`: Open read-only session, token and coding-run analytics
 - `/api`, `/api set <KEY> <value>`, `/api clear <KEY>`: Inspect, save or clear a managed credential; prefer the API Keys password fields; persistence
+- `/browse <site> [site ...] <task>`: Administrator browser task: the local model drives Chrome on the named sites only; status and roadmap
 - `/clear`: Clear visible output, staged coding/review state and chat continuation; saved chats, notes, persona and web context remain
 - `/connectors`: Connector catalog; does not activate connectors
 - `/diag [status]`, `/diag audit|spend|unslop|errors [flags]`, `/diag inject|forget`: Read allowlisted logs or stage one excerpt; aliases `/diagnostics`, `/logs`; diagnostics
@@ -150,20 +152,20 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/goal`, `/goal [--web off|fetch|all] [text]`, `/goal clear`: Inspect, set or clear the saved session goal and its web mode
 - `/goal stage <branch>`, `/goal task`: Explicitly stage coding from a goal or inspect its task linkage
 - `/harness`: List retained optimizer runs; does not start optimization
-- `/help [topic|search words|all]`: Searchable topic guide, full command catalog and insertable examples
 
 ## console: slash-command quick reference (part 2)
 
+- `/help [topic|search words|all]`: Searchable topic guide, full command catalog and insertable examples
 - `/loop [auto] [--web off|fetch|all] [n] [goal text]`, `/loop stop`: Goal-driven chat continuation; goal text sets the goal first; `auto` toggles and starts after 5 s; exact `stop` also cancels a streaming chat turn
 - `/memory`, `status`, `on`, `off`, `add <note>`, `forget <id>`, `clear`: Shared pinned notes; operator memory notes
 - `/memory capture|recall|retrieval|auto-retrieve|consolidation|auto-consolidate|auto-suggest-chat|auto-suggest-coding on|off`: Administrator-only structured-memory gate overrides; `on` or `off` is required. `/memory on` stays pinned notes
 - `/memory consolidate <episode-id> [episode-id ...]`: Selected-episode consolidation into pending proposals; does not apply facts
 - `/memory proposals`: Open the Memory panel; Apply/Reject requires review and a reason
 - `/memory remember <sentence> :: <reason>`: Confirm a semantic summary on the latest completed episode; no fact write
-- `/memory facts`, `/memory retrieve <query>`, `/memory search <query>`: List your active facts, start a turn with explicit retrieval, or list candidates without injection
 
 ## console: slash-command quick reference (part 3)
 
+- `/memory facts`, `/memory retrieve <query>`, `/memory search <query>`: List your active facts, start a turn with explicit retrieval, or list candidates without injection
 - `/memory save <text> :: <reason>`: Confirm an immediate private fact write
 - `/model [status]`, `profile`, `list`, `use <name>`: Inspect/profile/list/select a local chat model or explicit cloud provider; does not select the coding planner
 - `/net status`, `/net devices`, `/net diag`: Read-only scope and gates, passive neighbors, or the budgeted diagnostics probe. Aliases and refused tier words: netconnect
@@ -172,10 +174,10 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/session`, `list`, `info`, `new [title]`, `rename <title>`, `unpin`, `use <id>`: List, inspect, create, rename or reopen sessions; `unpin` clears attachment pins
 - `/skill`, `status`, `use <id...>`, `clear`: Inspect, replace or clear session prompt-skill selection
 - `/skill check:<profile>`: Select one fixed check for an already staged coding request
-- `/skills [all|help|<name>]`: Wired skills, the full catalog including optional prompt files, help, or skills matching a display name (not always the `/skill use` directory ID)
 
 ## console: slash-command quick reference (part 4)
 
+- `/skills [all|help|<name>]`: Wired skills, the full catalog including optional prompt files, help, or skills matching a display name (not always the `/skill use` directory ID)
 - `/soul`, `status`, `on`, `off`, `edit`, `history`, `propose`: Inspect, toggle or open persona editing/proposal flows
 - `/soul apply <id> <reason>`, `reject <id> <reason>`, `review <id>`: Review a retained proposal, then apply or reject its exact revision
 - `/status`: Runtime status and unlimited-loop warning; account access required
@@ -184,15 +186,18 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/tools [all|help|mcp|<name>]`: Registered tools, the full catalog including unwired entries, help, external MCP grants, or one named tool
 - `/users`: Administrator account panel; accounts
 - `/web [status|help]`, `/web on`, `/web off`: Inspect shared-home rules; administrators enable/disable web
-- `/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]`, `/web deny <id-or-pattern>`: Administrator grants are atomic; repeat `--seed` per concrete seed. Every seed must fit a requested rule
 
 ## console: slash-command quick reference (part 5)
 
+- `/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]`, `/web deny <id-or-pattern>`: Administrator grants are atomic; repeat `--seed` per concrete seed. Every seed must fit a requested rule
 - `/web mode allowlist|denylist`, `/web block <pattern-or-host> [...]`, `/web unblock <id-or-pattern>`: Administrator. The header globe (red X) switches modes after a confirmation dialog. `denylist` reads every public URL except blocked rules; a host…
 - `/web check <URL> [URL ...] [--group name]`: Exact permission diagnostic, with no network request or grant
 - `/web cancel`, `/web fetch <URL> [URL ...] [--group name] [--crawl]`, `/web forget`, `/web inject`: Cancel research; fetch permitted URLs (`--crawl` follows links); clear/select extracts
 - `/web job [id]`, `/web jobs`: Show the newest or one owned detached research job, or list them; jobs outlive the tab, not a restart (research)
 - `/web pages [--group name] <query>`, `/web research [--group name] [--url URL ...] <question>`: Permitted-page discovery or local-model research; repeat `--url` per starting point; no new authority
+
+## console: slash-command quick reference (part 6)
+
 - `/web search [--count 1..10] [--engine google|pages] [--group name] <query>`: Google listings by default; a group selects permitted-page search
 
 ## api: registered routes
@@ -474,14 +479,19 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - web.stale_seconds: 60–31536000; fetch age, not publication-date verification
   - web.search
   - web.firecrawl
-- notifications: Completion webhooks are explicit operator configuration and restart-only.
+- browser: Completion webhooks are explicit operator configuration and restart-only.
+  - browser.enabled
+  - browser.sidecar
+  - browser.max_turns: model turns per task, clamped to 1–40
+  - browser.timeout_sec: whole task; the child tree is killed after it, clamped to 30–1800
+- notifications
   - notifications.enabled
-  - notifications.schema_version
-  - notifications.destinations: max 8: explicit id, owner, enabled, url, events, use_bearer, rate_per_minute
 
 ## config: sections and keys (values omitted) (part 6)
 
-- notifications.webhook_url: legacy global URL must be migrated explicitly; never invent an owner
+- notifications.schema_version
+  - notifications.destinations: max 8: explicit id, owner, enabled, url, events, use_bearer, rate_per_minute
+  - notifications.webhook_url: legacy global URL must be migrated explicitly; never invent an owner
   - notifications.private_url_allowlist: exact URLs only; loopback/RFC1918/ULA require this grant
   - notifications.queue_capacity: 1–512 retained deliveries; pressure evicts terminal rows before refusing pending work
   - notifications.batch_size: 1–32 metadata events per POST
@@ -493,10 +503,10 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - notifications.jitter_percent: 0–50; nonnegative random delay
   - notifications.retention_sec: 60–2592000; pending and terminal delivery retention
   - notifications.max_replays: 0–10; explicit owner-confirmed replay cycles
-  - notifications.timeout_sec: 1–30, includes DNS and request
 
 ## config: sections and keys (values omitted) (part 7)
 
+- notifications.timeout_sec: 1–30, includes DNS and request
 - mcp: External MCP tools. Off until an operator declares servers. Never auto-discover. SSE loopback is an explicit toggle and ships off. MCP tools never appear on /loop. stdio command[0] must be an…
   - mcp.server
   - mcp.enabled
@@ -518,13 +528,13 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - auth.max_concurrent_operations
   - auth.session
 - logging
-  - logging.request_log
-  - logging.audit_file
-  - logging.spend_file
 
 ## config: sections and keys (values omitted) (part 8)
 
-- logging.max_file_bytes: clamped to 64 KiB–64 MiB; oversized events are dropped
+- logging.request_log
+  - logging.audit_file
+  - logging.spend_file
+  - logging.max_file_bytes: clamped to 64 KiB–64 MiB; oversized events are dropped
   - logging.audit_lease_wait_ms: clamped to 0–5000
   - logging.audit_lease_retry_ms: clamped to 1–1000
   - logging.audit_queue_lines: 0, or clamped to 64–65536
@@ -548,11 +558,11 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - agentic.allowed_read_ops
   - agentic.deepagent_github
 - unslop
-  - unslop.enabled: opt-in planner probe: counts fixed filler phrases, may nudge the next iteration; never rewrites or gates
-  - unslop.metrics_path
 
 ## config: sections and keys (values omitted) (part 9)
 
+- unslop.enabled: opt-in planner probe: counts fixed filler phrases, may nudge the next iteration; never rewrites or gates
+  - unslop.metrics_path
 - diagnostics: Read-only /diag log inspection. New homes ship logs_enabled as literal true (quoted "true" is off); only admin and portal_auditor accounts may read. An existing home config.yaml is not rewritten.…
   - diagnostics.logs_enabled
   - diagnostics.logs_max_lines: 1–1000 per read
@@ -565,14 +575,14 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - diagnostics.self_manual_max_chars: 512–16000 injected characters per turn
   - diagnostics.self_manual_min_score: finite, >= 0; Tantivy score floor, 0 keeps every hit
   - diagnostics.live_state
+
+## config: sections and keys (values omitted) (part 10)
+
 - memory: Account-private structured facts, governed proposals, and optional episodes. Distinct from harness.json.memory_enabled, which only includes pinned /memory notes in the chat prompt. Missing, quoted,…
   - memory.enabled
 - structured_memory
   - structured_memory.enabled
-
-## config: sections and keys (values omitted) (part 10)
-
-- structured_memory.episode_capture
+  - structured_memory.episode_capture
   - structured_memory.explicit_recall
   - structured_memory.retrieval
   - structured_memory.auto_retrieval
@@ -586,14 +596,14 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - structured_memory.suggestion_max_queue: clamped to 1–32; queued inputs; one additional generation may be running
   - structured_memory.suggestion_queue_ttl_secs: clamped to 1–3600; volatile inputs expire; restart drops them
   - structured_memory.suggestion_idle_ms: clamped to 10–30000
-  - structured_memory.status_poll_ms: clamped to 250–30000; visible Memory pane only
-  - structured_memory.max_facts_per_owner: clamped to 1–256
-  - structured_memory.max_fact_chars: clamped to 1–4000
-  - structured_memory.max_category_chars: clamped to 1–64
 
 ## config: sections and keys (values omitted) (part 11)
 
-- structured_memory.max_proposals_per_owner: clamped to 1–128
+- structured_memory.status_poll_ms: clamped to 250–30000; visible Memory pane only
+  - structured_memory.max_facts_per_owner: clamped to 1–256
+  - structured_memory.max_fact_chars: clamped to 1–4000
+  - structured_memory.max_category_chars: clamped to 1–64
+  - structured_memory.max_proposals_per_owner: clamped to 1–128
   - structured_memory.max_reason_chars: clamped to 1–1000
   - structured_memory.max_episodes_per_owner: clamped to 1–1024
   - structured_memory.max_episode_summary_chars: clamped to 32–4000
@@ -606,14 +616,14 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - structured_memory.max_retrieval_results: clamped to 1–16
   - structured_memory.max_retrieval_tokens: clamped to 1–16
   - structured_memory.max_retrieval_token_chars: clamped to 1–64
-  - structured_memory.max_search_time_ms: clamped to 10–5000
-  - structured_memory.pinned_prompt_chars: clamped to 1–3000
-  - structured_memory.selected_fact_prompt_chars: clamped to 1–3000
-  - structured_memory.max_consolidation_episodes: clamped to 1–16
 
 ## config: sections and keys (values omitted) (part 12)
 
-- structured_memory.max_consolidation_candidates: clamped to 1–16
+- structured_memory.max_search_time_ms: clamped to 10–5000
+  - structured_memory.pinned_prompt_chars: clamped to 1–3000
+  - structured_memory.selected_fact_prompt_chars: clamped to 1–3000
+  - structured_memory.max_consolidation_episodes: clamped to 1–16
+  - structured_memory.max_consolidation_candidates: clamped to 1–16
   - structured_memory.min_consolidation_confidence: clamped to 0–1
   - structured_memory.auto_consolidation_idle_ms: clamped to 20–60000
 - netconnect: LAN observation. Every gate ships false. A tier is effective only when `enabled` and that tier's flag are both the literal boolean true; quoted "true" is off. `allowed_cidrs` is empty, so every…
@@ -633,13 +643,13 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - netconnect.read_timeout_ms
   - netconnect.max_dials
   - netconnect.diagnostics_targets
-  - netconnect.throughput_endpoint
-  - netconnect.ha_endpoint
-  - netconnect.mqtt_endpoint
-  - netconnect.untrusted_string_max_chars
 
 ## config: sections and keys (values omitted) (part 13)
 
+- netconnect.throughput_endpoint
+  - netconnect.ha_endpoint
+  - netconnect.mqtt_endpoint
+  - netconnect.untrusted_string_max_chars
 - scheduling: Durable schedules: restart-only tuning, never execution/write authority. New interval and cron schedules require an owner-bound preview receipt.
   - scheduling.poll_interval_ms: 250–5000
   - scheduling.dispatch_grace_secs: 5–30; older occurrences are skipped

@@ -692,6 +692,11 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             (Method::POST, "/api/web/allow", json!({"url":"https://example.com"})),
             (
                 Method::POST,
+                "/api/browser/run",
+                json!({"task":"read the page","origins":["https://example.com"]}),
+            ),
+            (
+                Method::POST,
                 "/api/structured-memory/gates",
                 json!({"gate":"retrieval","enabled":true}),
             ),

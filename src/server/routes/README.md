@@ -8,6 +8,7 @@ Inventory: [docs/API_ROUTES.md](../../../docs/API_ROUTES.md).
 - [`mod.rs`](mod.rs): `REGISTERED_PATHS`, `build_router` guard layering, the SSE helper.
 - [`agent.rs`](agent.rs): `/api/github/status` and `/api/agent/*`: `prepare_run`, runs, jobs, schedules, decisions.
 - [`auth.rs`](auth.rs): `/api/auth/*` sessions, RBAC user admin, the `/api/audit` reader.
+- [`browser.rs`](browser.rs): admin-only `/api/browser/run` behind `browser.enabled`; runs the `browser run` child.
 - [`core.rs`](core.rs): `/api/status`, sessions, chat and cancel, model and soul toggles, spend, analytics, reload, uploads.
 - [`diag.rs`](diag.rs): `/api/diag/*`: gated admin/portal-auditor log inspection and one-turn local-chat staging.
 - [`goals.rs`](goals.rs): `/api/sessions/{id}/goal-stage`: goal-to-coding staging and completion state.

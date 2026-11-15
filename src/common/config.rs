@@ -146,6 +146,8 @@ pub const NUMERIC_LIMITS: &[Limit<u64>] = &[
     // Ceiling: no reply outlives the largest window the caps scale to.
     refuse("agentic.deepagent_github.planner_max_tokens", 3072, 1, 131_072),
     clamp("app.agent_job_poll_ms", 1500, 1000, 30_000),
+    clamp("browser.max_turns", 12, 1, 40),
+    clamp("browser.timeout_sec", 300, 30, 1800),
     clamp("chat.compact_keep_messages", 8, 2, 40),
     clamp("chat.compact_max_prefill_sec", 120, 30, 1800),
     clamp("chat.compact_tail_percent", 25, 10, 50),
@@ -664,7 +666,8 @@ mod tests {
         config.raw["models"]["local_llm"]["reasoning_effort"] = "high".into();
         let reasoning = config.planner_identity().unwrap();
         assert_ne!(reasoning, identity);
-        config.raw["agentic"]["deepagent_github"]["retrieval"]["enabled"] = true.into();
+        // Retrieval ships on (operator decision, 2026-11-14), so turning it off must change the identity.
+        config.raw["agentic"]["deepagent_github"]["retrieval"]["enabled"] = false.into();
         assert_ne!(config.planner_identity().unwrap(), reasoning);
     }
 

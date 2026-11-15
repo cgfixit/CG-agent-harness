@@ -84,7 +84,7 @@ server -> MCP runtime -> declared stdio children / SSE servers
   `deepagent_github.allow_git_write_tools` ship false. `confirm` is never
   defaulted on; `reason` is never optional on a write.
 - Repository retrieval is gated by `agentic.deepagent_github.retrieval.enabled`
-  (ships false), not the parent key.
+  (ships true), not the parent key.
 - The browser never supplies a command: fixed argv only; free text is one
   `--opt=value` element or a temp file.
 - The console asset stays verbatim: `__CYCLAW_CSRF_TOKEN__`,

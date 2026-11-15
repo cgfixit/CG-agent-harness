@@ -13,7 +13,10 @@ Contracts: [INVARIANTS.md](../../INVARIANTS.md); process rules:
 - [`auth_store.rs`](auth_store.rs): `AuthManager`: users, sessions, lockout, bootstrap admin, one-time `auth.json` migration.
 - [`authn.rs`](authn.rs): scrypt n=2^17 password records, lockout math, session and CSRF tokens.
 - [`bounded_log.rs`](bounded_log.rs): two-generation JSONL retention; `append_until` retries a busy lease to a deadline.
+- [`browser.rs`](browser.rs): browser session policy: origin grants, per-observation refs, allow/handoff/refuse.
+- [`browser_host.rs`](browser_host.rs): Playwright sidecar owner, the model task loop, `browser` CLI and fixtures.
 - [`child_env.rs`](child_env.rs): per-child-kind telemetry opt-outs (`DO_NOT_TRACK` and siblings), pinned by the otel skill.
+- [`computer.rs`](computer.rs): unwired native computer-use skeleton: kimi-cu op mapping for one granted window.
 - [`config.rs`](config.rs): private YAML loading and typed `AppConfig` views; `flag_is_true` requires literal `true`.
 - [`credential_file_writer.rs`](credential_file_writer.rs): Windows-only owner-ACL file writer, included by `credential_store.rs`.
 - [`credential_store.rs`](credential_store.rs): `CredentialStore` trait and the OS store; env wins; one-time `.env` migration.

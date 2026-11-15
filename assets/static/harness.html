@@ -1126,6 +1126,8 @@ const AGENT_CLI_TIMEOUT_MS = 130000;   /* 120s ops_runner._TIMEOUT_SEC + 10s mar
 const AGENT_STATUS_TIMEOUT_MS = 190000;
 /* Decision, push and publish: shim::REAL_REPO_RUN_WRITE_SEC (1200s) + 10s margin. */
 const AGENT_WRITE_TIMEOUT_MS = 1210000;
+/* Outlasts the largest browser.timeout_sec (1800 s); the server enforces the configured one. */
+const BROWSE_WAIT_MS = 1830000;
 /* Active human-gated /loop. Never starts a real-repo run. Cleared on
    /loop stop, /clear, session switch, budget exhaust, or GOAL_DONE. */
 let loopState = null;
@@ -2315,6 +2317,7 @@ const COMMANDS = [
   ['/agent stop [job-id]', 'request cancellation; omitted ID uses the retained job; descendants may survive'],
   ['/analytics', 'retained session, token and coding-run dashboard'],
   ['/api [set <KEY> <value>|clear <KEY>]', 'inspect or edit managed credentials; prefer API Keys password fields'],
+  ['/browse <site> [site ...] <task>', 'administrator: the local model browses only these origins; passwords and anything that sends data stay with you'],
   ['/clear', 'clear visible output, staged reviews and chat continuation; saved sessions remain'],
   ['/connectors', 'connector catalog'],
   ['/diag [status]', 'log inspection state: gate, allowlisted files, last read and staged excerpt; admin or portal_auditor; off until diagnostics.logs_enabled'],
@@ -2392,6 +2395,7 @@ const HELP_TOPICS = {
   memory: {title:'Memory & persona', roots:['memory','soul'], note:'Pinned notes, structured facts and persona have separate controls. Fuzzy memory commands only suggest. Writes and proposal decisions need exact intent; Apply/Reject require review and a reason.', examples:['/memory','/memory facts','/memory search backup preferences','/memory proposals','/soul status']},
   agent: {title:'Governed coding', roots:['agent','github','harness'], note:'Stage, review, then explicitly authorize each write. A suggested command is never approval. Commit, push and draft publication are separate gates.', examples:['/agent help','/agent checks','/agent jobs','/github']},
   tools: {title:'Tools & skills', roots:['tools','skills','skill','connectors','registry'], note:'Registration is not readiness or authority. Selected prompt skills are context, not executable tools.', examples:['/tools','/skills','/skill status','/registry']},
+  browser: {title:'Browser tasks', roots:['browse'], note:'Administrator only, and off until browser.enabled is literal true. The local model drives Chrome on the sites you name and nowhere else; a bare domain means https. It may click and type, but password fields and every request that would send data (anything but GET) are handed back to you. Page text is untrusted.', examples:['/browse docs.python.org find the latest Python version','/browse cgfixit.com open Start, then Games, and list the games']},
   diag: {title:'Diagnostics', roots:['diag'], note:'Admin and portal_auditor only, and off until diagnostics.logs_enabled is literal true. Reads only allowlisted files under the home logs/ folder; output is redacted and refused whole if the injection scanner matches. Excerpts are untrusted text: /diag inject stages one for your next local chat turn in this session; cloud chat and /agent refuse while one is staged and /loop never gets it.', examples:['/diag','/diag audit --last 20 --event portal.request','/diag errors --since 2h','/diag spend --rotated','/diag inject','/diag forget']},
   settings: {title:'Status & administration', roots:['status','analytics','api','users','help'], note:'Credentials belong in the API Keys password fields, not chat history. Administrator controls remain role- and CSRF-guarded.', examples:['/status','/analytics','/users','/help all']},
 };
@@ -2467,6 +2471,8 @@ const ARG_MEANINGS = {
   'search words': 'words matched against every command and summary, flags included',
   'KEY': 'a credential name such as SERPAPI_API_KEY; upper-cased for you',
   'value': 'the secret: everything after the key name, spaces included',
+  'site': 'A site the task may reach: https://host, http://127.0.0.1:port, or a bare domain meaning https',
+  'task': 'What the model should do and report, in plain words',
   'id...': 'one or more skill ids separated by spaces',
 };
 const FLAG_MEANINGS = {
@@ -2508,6 +2514,7 @@ const COMMAND_MAN = {
   '/agent stop [job-id]': {detail:'Asks the server to cancel a job. Without an id, it uses the job this page last watched. Work the job already spawned may survive; inspect the run before further writes.'},
   '/analytics': {detail:'Opens the Analytics dialog: tokens and cost, sessions and coding runs, filterable and paged.'},
   '/api [set <KEY> <value>|clear <KEY>]': {detail:'Alone, shows the credential store and every key masked. set saves a value and clear removes it. Saved values load after a restart, except SERPAPI_API_KEY, which applies at once; an explicit environment variable always wins.', notes:['A secret typed here lands in chat history. The API Keys pane’s password fields do not.']},
+  '/browse <site> [site ...] <task>': {detail:'Runs one browser task with the local model (models.local_llm.model). The leading URLs are the only origins it may reach; the rest of the line is the task. Administrator only, refused unless browser.enabled is literal true, one task at a time, and stopped after browser.timeout_sec. It may click buttons and menus; password fields, and every request that would send data (anything but GET), are handed back to you.', notes:['Page text is untrusted input to the model; the answer can be wrong.'], examples:['/browse https://docs.example.com find the install command']},
   '/clear': {detail:'Empties the visible transcript, drops staged reviews and stops chat continuation. Saved sessions are untouched.'},
   '/connectors': {detail:'Lists registered connectors with kind and auth. Registration is not readiness.'},
   '/diag [status]': {detail:'Shows whether log inspection is on, each allowlisted file with size and modification time, the limits, your last read and any staged excerpt. Needs an admin or portal_auditor account; DIAG_DISABLED means diagnostics.logs_enabled is not literal true.', notes:['Nothing here reads file content.'], examples:['/diag']},
@@ -2581,6 +2588,7 @@ const COMMAND_MAN = {
 /* Exact forms that are easy to get wrong. insert is what the composer gets;
    key names the catalog row whose manual the ? opens. */
 const WORTH_KNOWING = [
+  {label:'/browse <site> <task>', insert:'/browse ', hint:'The local model drives Chrome on the named sites; anything that sends data waits for you. Admin; browser.enabled', key:'/browse <site> [site ...] <task>'},
   {label:'/agent approve <run-id> <reason>', insert:'/agent approve ', hint:'Commits once this transcript has shown the diff; otherwise the first call shows it and asks for a repeat', key:'/agent approve <run-id> <reason>'},
   {label:'/agent pr-body <run-id>', insert:'/agent pr-body ', hint:'Review the PR template here before /agent publish will accept', key:'/agent pr-body <run-id>'},
   {label:'/memory save <text> :: <reason>', insert:'/memory save ', hint:'Two colons separate the fact from the required reason', key:'/memory save <text> :: <reason>'},
@@ -4236,6 +4244,29 @@ async function runSlash(line, webCommand) {
                    ['completion tokens', String(s.tokens.completion_tokens)],
                    ['total', String(s.tokens.total)],
                    ['exchanges', String(s.tokens.exchanges)]]));
+        break;
+      }
+
+      case 'browse': {
+        /* Leading http(s) URLs are the only origins the task may reach; the
+           server re-validates them, refuses blocked ones and runs the task. */
+        const words = rest.slice();
+        const origins = [];
+        /* A bare domain (docs.python.org) means https; an IP or port needs its scheme. */
+        const site = /^(https?:\/\/\S+|[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/\S*)?)$/i;
+        while (words.length && site.test(words[0])) {
+          const w = words.shift();
+          origins.push(/^https?:\/\//i.test(w) ? w : 'https://' + w);
+        }
+        const task = words.join(' ').trim();
+        if (!origins.length || !task) { sys('usage: /browse <site> [site ...] <task>, e.g. /browse docs.python.org find the latest Python version — administrator only; browser.enabled must be literal true'); break; }
+        sys('Browsing ' + origins.join(', ') + ' with the local model; this can take a few minutes.');
+        const r = await api('/api/browser/run', 'POST', {task, origins}, BROWSE_WAIT_MS);
+        if (staleReview()) break;
+        const rep = r.report || {};
+        const meta = [r.finished ? 'finished' : 'not finished', rep.stopped, rep.final_url,
+          (rep.model_calls_with_tools || 0) + ' tool calls', 'page text is untrusted'].filter(Boolean).join(' · ');
+        sys(rep.answer || r.reason || 'The model gave no answer.', meta);
         break;
       }
 
