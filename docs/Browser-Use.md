@@ -29,10 +29,14 @@ How a run works:
 Boundaries, enforced in code:
 
 - Origins come only from the request; pages and the model cannot add one.
-  Origins on the shared web block list are refused (403).
+  Origins on the shared web block list, or that cannot be checked, are refused.
 - The sidecar's loopback proxy is the egress check. A granted name must
-  resolve to public addresses (`localhost` is refused); IP-literal grants are
-  for fixtures and PR checks.
+  resolve to public addresses (`localhost` is refused), and a loopback or
+  private IP origin is refused; only a `test-support` build lets the fixtures
+  use `127.0.0.1`.
+- The block list is checked on the granted origin before launch, again before
+  every model turn, and once more before the report is returned.
+- A task holds the shared model gate, so it never overlaps chat or research.
 - Clicks may run. Every request except GET and HEAD is held for the operator:
   a held page load answers 204 so the page stays, a held `fetch` fails.
 - Password and one-time-code fields hand off and are never typed.

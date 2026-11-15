@@ -8,7 +8,7 @@ cd "$root"
 bin="$root/target/debug/cgagentharness"
 sidecar="$root/browser/sidecar.mjs"
 if [ ! -x "$bin" ]; then
-  echo "missing $bin. Build it with cargo build --bin cgagentharness" >&2
+  echo "missing $bin. Build it with cargo build --features test-support --bin cgagentharness (fixtures serve on 127.0.0.1)" >&2
   exit 3
 fi
 echo "enter"

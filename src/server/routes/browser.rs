@@ -4,9 +4,10 @@
 //! names the task and the origins it may reach; the page and the model cannot
 //! add one. The work runs in a fixed-argv `cgagentharness browser run` child
 //! with the browser environment allowlist, so the server spawns nothing itself
-//! and a timeout kills the child's whole tree.
+//! and a timeout kills the child's whole tree. Non-public IP-literal origins
+//! and origins on the shared block list are refused; the block list is read
+//! again before each model turn (in the child) and before delivery.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,21 +18,11 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::common::browser::Session;
-use crate::common::browser_host::{child_environment, MAX_TASK_CHARS};
+use crate::common::browser_host::{blocked_origin, child_environment, MAX_TASK_CHARS};
 use crate::server::errors::{ApiError, ApiResult};
 use crate::server::schemas::{ValidJson, Validate};
 use crate::server::state::AppState;
 use crate::shim::ShimError;
-
-/// One Chrome and one local model run at a time on this machine.
-static BUSY: AtomicBool = AtomicBool::new(false);
-
-struct Release;
-impl Drop for Release {
-    fn drop(&mut self) {
-        BUSY.store(false, Ordering::Release);
-    }
-}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -66,34 +57,33 @@ pub async fn run(
             "Browser sessions are off. Set browser.enabled: true in config.yaml and restart.",
         ));
     }
-    // The shared block list wins here as it does for web reads.
-    // shortcut: only origin-level rules are enforced; a path-level block rule needs the proxy to see it.
-    let policy = state.web_snapshot().policy().map_err(|_| {
-        ApiError::new(
-            StatusCode::CONFLICT,
-            "WEB_POLICY_UNAVAILABLE",
-            "The shared URL policy file is missing or unreadable, so browser tasks are refused.",
-        )
-    })?;
-    if req
-        .origins
-        .iter()
-        .any(|origin| crate::server::web_policy::canonical_url(origin).is_ok_and(|url| policy.blocks(&url)))
-    {
+    let session = Session::general(&req.origins)
+        .map_err(|_| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "BROWSER_BAD_ORIGIN", "origins"))?;
+    // A name is checked at connect time by the sidecar; an IP literal skips DNS,
+    // so loopback and private literals are refused here (fixtures are test-only).
+    if session.grant_strings().iter().any(|origin| non_public_literal(origin)) {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "BROWSER_PRIVATE_ADDRESS",
+            "Browser tasks reach public addresses only; a loopback or private IP origin is refused.",
+        ));
+    }
+    // shortcut: only origin-level block rules are enforced; a path-level rule needs the proxy to see it.
+    if blocked_origin(&current_policy(&state)?, &session).is_some() {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "BROWSER_ORIGIN_BLOCKED",
-            "An origin is on the shared web block list; /web status lists the rules.",
+            "An origin is on the shared web block list, or could not be checked; /web status lists the rules.",
         ));
     }
-    if BUSY.swap(true, Ordering::AcqRel) {
-        return Err(ApiError::new(
+    // One model operation at a time: browser tasks share the local backend.
+    let _gate = state.generation_gate.claim("browser").ok_or_else(|| {
+        ApiError::new(
             StatusCode::CONFLICT,
             "BROWSER_BUSY",
-            "A browser task is already running.",
-        ));
-    }
-    let _release = Release;
+            "a model operation is already running",
+        )
+    })?;
     let owner = super::auth::context_owner(user);
     let exe = std::env::current_exe()
         .map_err(|_| ApiError::new(StatusCode::BAD_GATEWAY, "BROWSER_FAILED", "harness binary not found"))?;
@@ -135,6 +125,15 @@ pub async fn run(
             "The browser child could not run.",
         ),
     })?;
+    // Permission checked at launch is stale after the run; deliver nothing if
+    // the block list now covers a granted origin.
+    if current_policy(&state).map_or(true, |policy| blocked_origin(&policy, &session).is_some()) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "WEB_POLICY_CHANGED",
+            "The URL policy changed during this browser task; nothing was delivered.",
+        ));
+    }
     let report = serde_json::from_str::<Value>(stdout.trim()).ok();
     let mut body = json!({"finished": code == 0, "exit_code": code, "report": report});
     if body["report"].is_null() {
@@ -147,4 +146,50 @@ pub async fn run(
         body["reason"] = json!(reason.chars().take(300).collect::<String>());
     }
     Ok(Json(body))
+}
+
+fn current_policy(state: &AppState) -> ApiResult<crate::server::web_policy::Policy> {
+    state.web_snapshot().policy().map_err(|_| {
+        ApiError::new(
+            StatusCode::CONFLICT,
+            "WEB_POLICY_UNAVAILABLE",
+            "The shared URL policy file is missing or unreadable, so browser tasks are refused.",
+        )
+    })
+}
+
+/// True for a loopback, private or other non-public IP-literal origin.
+fn non_public_literal(origin: &str) -> bool {
+    match url::Url::parse(origin)
+        .ok()
+        .and_then(|url| url.host().map(|host| host.to_owned()))
+    {
+        Some(url::Host::Ipv4(ip)) => !crate::server::web_policy::is_public_ip(ip.into()),
+        Some(url::Host::Ipv6(ip)) => !crate::server::web_policy::is_public_ip(ip.into()),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn literal_origins_must_be_public() {
+        for origin in [
+            "https://127.0.0.1:8080",
+            "https://10.0.0.5:443",
+            "https://[::1]:443",
+            "https://192.168.1.1:443",
+        ] {
+            assert!(non_public_literal(origin), "{origin}");
+        }
+        for origin in [
+            "https://example.com:443",
+            "https://8.8.8.8:443",
+            "https://localhost:443",
+        ] {
+            assert!(!non_public_literal(origin), "{origin}");
+        }
+    }
 }

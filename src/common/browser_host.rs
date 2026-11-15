@@ -46,6 +46,32 @@ pub fn child_environment() -> std::collections::BTreeMap<String, String> {
     .collect()
 }
 
+/// The first granted origin the shared web block list covers, or that cannot
+/// be checked at all. It checks the normalized origin Chrome is actually
+/// granted, not the operator's raw text, and fails closed on a parse error.
+pub fn blocked_origin(policy: &crate::server::web_policy::Policy, session: &Session) -> Option<String> {
+    session.grant_strings().into_iter().find(|origin| {
+        crate::server::web_policy::canonical_url(&format!("{origin}/")).map_or(true, |url| policy.blocks(&url))
+    })
+}
+
+/// The shared policy re-read now, because it can change during a task.
+/// Fails closed when it cannot be read.
+fn policy_refusal_now(session: &Session) -> Option<String> {
+    let home = Home::resolve(None);
+    let policy = home
+        .load_config()
+        .ok()
+        .and_then(|cfg| crate::server::web_search::WebTool::new(&home.tools_dir(), &cfg).ok())
+        .and_then(|web| web.policy().ok());
+    match policy {
+        Some(policy) => {
+            blocked_origin(&policy, session).map(|origin| format!("{origin} is on the shared web block list"))
+        }
+        None => Some("the shared web policy could not be read".into()),
+    }
+}
+
 /// One observe/act surface the model loop drives. It takes the wire ops that
 /// `sidecar_op` builds. The browser sidecar is the only driver today;
 /// `computer::kimi_cu_call` maps the same ops for the native one later.
@@ -63,7 +89,9 @@ struct Sidecar {
 }
 
 impl Sidecar {
-    fn start(script: &Path, session: &Session, headless: bool) -> Result<Self, String> {
+    /// `allow_private` lets IP-literal grants reach loopback and private
+    /// addresses; only test-support fixtures pass true.
+    fn start(script: &Path, session: &Session, headless: bool, allow_private: bool) -> Result<Self, String> {
         if !script
             .parent()
             .is_some_and(|dir| dir.join("node_modules/playwright").exists())
@@ -91,7 +119,9 @@ impl Sidecar {
             reader: BufReader::new(stdout),
             next_id: 0,
         };
-        let started = sidecar.call(json!({"op":"start","grants": session.grant_strings(),"headless": headless}))?;
+        let started = sidecar.call(
+            json!({"op":"start","grants": session.grant_strings(),"headless": headless,"allow_private": allow_private}),
+        )?;
         if started.get("ok") != Some(&Value::Bool(true)) {
             return Err(format!("sidecar refused start: {started}"));
         }
@@ -259,7 +289,8 @@ fn read_page(sidecar: &Path, port: u16, headless: bool) -> Result<String, String
 /// it to the operator) or `held` (the sidecar must hold a form submission).
 /// Any other refusal or sidecar error fails the run.
 fn drive(mut session: Session, script: &Path, steps: &[Value], headless: bool) -> Result<String, String> {
-    let mut sidecar = Sidecar::start(script, &session, headless)?;
+    // Fixtures serve on 127.0.0.1: a private grant needs a test-support build.
+    let mut sidecar = Sidecar::start(script, &session, headless, cfg!(feature = "test-support"))?;
     let mut last_text = String::new();
     let mut rows: Vec<Value> = Vec::new();
     let mut lines = Vec::new();
@@ -386,14 +417,14 @@ fn report_json(report: &VerifyReport, base: &str, head: &str) -> Value {
 pub fn run_task(
     script: &Path,
     headless: bool,
-    model: &str,
-    api: &str,
+    (model, api): (&str, &str),
     task: &str,
     origins: &[String],
     max_turns: usize,
+    allow_private: bool,
 ) -> Result<Value, String> {
     let mut session = Session::general(origins).map_err(|err| format!("{err:?}"))?;
-    let mut sidecar = Sidecar::start(script, &session, headless)?;
+    let mut sidecar = Sidecar::start(script, &session, headless, allow_private)?;
     let tools = browser_tools();
     let mut messages = vec![
         json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus and tabs. A refusal is not success. A Handoff, or held_for_operator, means only the operator can do that step: say so and stop. Call finish with your answer once the page shows it.", origins.join(", "))}),
@@ -407,6 +438,11 @@ pub fn run_task(
     let mut refused_in_a_row = 0;
     let mut stopped = None;
     'turns: for turn in 0..max_turns {
+        // Permission checked at launch is stale after a wait (AGENTS.md).
+        if let Some(reason) = policy_refusal_now(&session) {
+            stopped = Some(reason);
+            break;
+        }
         let response = ollama_chat(api, model, &messages, &tools)?;
         let message = response
             .get("message")
@@ -460,7 +496,7 @@ pub fn run_task(
             messages.push(json!({"role":"tool","tool_name": name,"content": outcome.to_string()}));
             // A model that keeps retrying refused actions only spends the deadline.
             if refused_in_a_row >= MAX_REFUSALS_IN_A_ROW {
-                stopped = Some("three refused or failed actions in a row");
+                stopped = Some("three refused or failed actions in a row".to_string());
                 break 'turns;
             }
         }
@@ -482,7 +518,15 @@ pub fn run_task(
 pub fn run_qwen_fixture(script: &Path, headless: bool, model: &str, api: &str) -> Result<String, String> {
     let (origin, port) = serve_html(FIXTURE_PAGE)?;
     let task = format!("A board is at http://127.0.0.1:{port}/. Select the Open tab and set the Filter box to the word open. The result paragraph has to show both the open tab and that filter. Finish with the paragraph you verified.");
-    let mut report = run_task(script, headless, model, api, &task, &[origin], MAX_TURNS)?;
+    let mut report = run_task(
+        script,
+        headless,
+        (model, api),
+        &task,
+        &[origin],
+        MAX_TURNS,
+        cfg!(feature = "test-support"),
+    )?;
     let ps = ollama_get(api, "/api/ps").unwrap_or_else(|err| json!({"error": err}));
     report["context_length"] = ps["models"]
         .as_array()
@@ -678,7 +722,7 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
                 Ok(pair) => pair,
                 Err(code) => return code,
             };
-            match run_task(&sidecar, headless, &model, &api, &task, &origins, max_turns) {
+            match run_task(&sidecar, headless, (&model, &api), &task, &origins, max_turns, false) {
                 Ok(report) => {
                     println!("{report}");
                     return if report["finished"] == true { 0 } else { 2 };
@@ -744,3 +788,22 @@ document.getElementById('all').onclick = () => { tab = 'all'; render(); };
 document.getElementById('filter').oninput = (e) => { filter = e.target.value; render(); };
 </script>
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn block_list_checks_the_granted_origin_and_fails_closed() {
+        let policy = crate::server::web_policy::Policy::parse(
+            br#"{"version":1,"rules":[],"blocked":[{"id":"abababababababababababababababab","pattern":"https://blocked.example/*","group":"blocked","seeds":[]}]}"#,
+            64,
+        )
+        .unwrap();
+        // An encoded path separator fails canonical_url but still grants the whole origin.
+        let sneaky = Session::general(["https://blocked.example/%2F"]).unwrap();
+        assert!(blocked_origin(&policy, &sneaky).is_some());
+        let fine = Session::general(["https://fine.example/docs"]).unwrap();
+        assert!(blocked_origin(&policy, &fine).is_none());
+    }
+}

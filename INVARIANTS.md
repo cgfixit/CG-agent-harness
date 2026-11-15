@@ -20,7 +20,8 @@ the server or the shim.
   is admin-only behind literal `browser.enabled`; origins come only from the request,
   the child gets `browser_host::child_environment` (no provider keys), every non-GET
   request is held for the operator, origins on the web block list are
-  refused, and a granted name must resolve to public addresses.
+  refused (rechecked each turn and before delivery), and a granted name or IP literal
+  must be public; only `test-support` fixtures may use loopback.
 - A SIGKILL'd child may leak a clone, but cannot corrupt server memory or bypass
   guards. The exit-code contract is 0 ok / 2 failed / 3 env_config / 4 write_refused.
 

@@ -15,6 +15,8 @@ let browser;
 let context;
 let page;
 let grants = new Set();
+// Only test-support fixtures set this; production refuses non-public literals.
+let allowPrivate = false;
 // Form submissions the operator must make; reported with the next observation.
 const held = [];
 
@@ -28,6 +30,13 @@ for (const [addr, bits] of [["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10],
 }
 for (const [addr, bits] of [["::", 3], ["4000::", 2], ["8000::", 1], ["2001::", 23], ["2001:db8::", 32], ["2002::", 16], ["3fff::", 20]]) {
   NON_PUBLIC_V6.addSubnet(addr, bits, "ipv6");
+}
+
+// An IP-literal grant skips DNS, so publicLookup never sees it; check it here.
+function literalRefused(host) {
+  const family = net.isIP(host);
+  if (!family || allowPrivate) return false;
+  return family === 6 ? NON_PUBLIC_V6.check(host, "ipv6") : NON_PUBLIC_V4.check(host, "ipv4");
 }
 
 function publicLookup(hostname, options, callback) {
@@ -142,7 +151,8 @@ function startProxy() {
       res.end();
       return;
     }
-    if (!allowed(target.href)) {
+    const options = urlToHttpOptions(target);
+    if (!allowed(target.href) || literalRefused(options.hostname)) {
       res.writeHead(403);
       res.end();
       return;
@@ -150,7 +160,7 @@ function startProxy() {
     const upstream = http.request(
       {
         // urlToHttpOptions strips IPv6 brackets, which a raw hostname keeps.
-        ...urlToHttpOptions(target),
+        ...options,
         method: req.method,
         // Keep cookies, CSRF and content-type so a logged-in console POST works.
         headers: { ...forwardable(req.headers), host: target.host },
@@ -187,6 +197,10 @@ function startProxy() {
       return;
     }
     const host = target.hostname.replace(/^\[|\]$/g, "");
+    if (literalRefused(host)) {
+      clientSocket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+      return;
+    }
     const remote = net.connect({ host, port: Number(target.port || 443), lookup: publicLookup }, () => {
       clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
       remote.pipe(clientSocket);
@@ -204,6 +218,7 @@ function startProxy() {
 async function start(message) {
   if (browser) throw new Error("session already started");
   grants = new Set(message.grants || []);
+  allowPrivate = message.allow_private === true;
   const proxyPort = await startProxy();
   browser = await chromium.launch({
     channel: "chrome",
