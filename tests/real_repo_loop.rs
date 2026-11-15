@@ -784,20 +784,28 @@ fn writer_gates_in_order_and_plan_integrity() {
         execute_write(&execution_ctx, &other, true, 5).unwrap_err().details["failed_gate"],
         "repo_match"
     );
-    let comment = plan_write(
-        &armed,
-        &audit,
-        "pr_comment",
-        "r",
-        true,
-        json!({"number": 1, "body": "b"}),
-    )
-    .unwrap();
+    // `pr_create` is the only write op: a comment op is refused at plan time,
+    // has no argv, and a hand-built plan naming one cannot execute.
     assert_eq!(
-        execute_write(&execution_ctx, &comment, true, 5).unwrap_err().details["failed_gate"],
-        "executable_op"
+        plan_write(
+            &armed,
+            &audit,
+            "pr_comment",
+            "r",
+            true,
+            json!({"number": 1, "body": "b"})
+        )
+        .unwrap_err()
+        .details["allowed"],
+        json!(["pr_create"])
     );
-    assert!(build_write_argv("pr_comment", "o/r", &json!({"number": "x"}), "gh").is_err());
+    assert!(build_write_argv("issue_comment", "o/r", &json!({"number": 1}), "gh").is_err());
+    let mut comment = plan.clone();
+    comment["op"] = json!("pr_comment");
+    assert!(execute_write(&execution_ctx, &comment, true, 5)
+        .unwrap_err()
+        .message
+        .contains("Unknown write op"));
     // `--base` is its own argv element: the value must be a plain branch name.
     for base in ["", "-x", "--repo", "a b", "x\ny"] {
         assert!(

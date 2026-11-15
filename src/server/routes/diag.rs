@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Query, State};
-use axum::http::{header, StatusCode};
+use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -17,12 +17,6 @@ use crate::server::diag_reader::{self, ReadFilter};
 use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::schemas::{ValidJson, Validate};
 use crate::server::state::AppState;
-
-type PrivateJson = ([(header::HeaderName, &'static str); 1], Json<Value>);
-
-fn private(value: Value) -> PrivateJson {
-    ([(header::CACHE_CONTROL, crate::server::headers::NO_STORE)], Json(value))
-}
 
 fn status_for(code: &str) -> StatusCode {
     match code {
@@ -74,7 +68,7 @@ fn authorize(state: &AppState, user: &Option<axum::Extension<UserSummary>>) -> A
 pub async fn status(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     let owner = authorize(&state, &user)?;
     let cfg = &state.diag.config;
     let logs = state.home.logs_dir();
@@ -87,7 +81,7 @@ pub async fn status(
         json!({"file": r.file, "lines_returned": r.lines_returned, "truncated": r.truncated,
                "malformed": r.malformed, "generated_at": r.generated_at, "sha256": r.sha256})
     });
-    Ok(private(json!({
+    Ok(Json(json!({
         "logs_enabled": true,
         "model_tool": false,
         "limits": {"max_lines": cfg.max_lines, "max_bytes": cfg.max_bytes, "inject_max_chars": cfg.inject_max_chars},
@@ -152,7 +146,7 @@ pub async fn read(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     Query(pairs): Query<Vec<(String, String)>>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     let owner = authorize(&state, &user)?;
     let (name, filter) = parse_read_query(&state, &pairs)?;
     // Lines from earlier requests may still be queued for the writer thread.
@@ -179,7 +173,7 @@ pub async fn read(
             }));
             let mut body = serde_json::to_value(&result).unwrap_or(Value::Null);
             body["source"] = json!("diag");
-            Ok(private(body))
+            Ok(Json(body))
         }
         Err(err) if matches!(err.code.as_str(), "DIAG_SCANNER_REFUSED" | "DIAG_BAD_FILE") => {
             Err(refuse(&state, &err.code, &err.message))
@@ -213,7 +207,7 @@ pub async fn inject(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     ValidJson(req): ValidJson<DiagInjectRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     let owner = authorize(&state, &user)?;
     state
         .store
@@ -224,7 +218,7 @@ pub async fn inject(
     state
         .audit
         .log(json!({"event": "diag_inject", "file": staged.file, "chars": staged.chars, "sha256": staged.sha256}));
-    Ok(private(
+    Ok(Json(
         json!({"staged": true, "session_id": staged.session_id, "file": staged.file,
         "chars": staged.chars, "sha256": staged.sha256,
         "note": "the next local chat turn of this session carries it once; cloud chat and /agent refuse until then"}),
@@ -234,7 +228,7 @@ pub async fn inject(
 pub async fn forget(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     let owner = authorize(&state, &user)?;
-    Ok(private(json!({"cleared": state.diag.forget(&owner)})))
+    Ok(Json(json!({"cleared": state.diag.forget(&owner)})))
 }

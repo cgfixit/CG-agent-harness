@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::extract::{FromRequest, State};
 use axum::http::Request;
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
@@ -13,7 +13,6 @@ use serde_json::{json, Value};
 use crate::common::errors::HarnessError;
 use crate::server::env_keys;
 use crate::server::errors::{ApiError, ApiResult};
-use crate::server::headers::NO_STORE;
 use crate::server::memory_notes::rag_flags;
 use crate::server::schemas::*;
 use crate::server::state::AppState;
@@ -673,10 +672,7 @@ pub async fn api_keys_status(State(state): State<Arc<AppState>>) -> ApiResult<Re
     let body = super::structured_memory::off_worker(move || key_status(&state))
         .await
         .map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?;
-    let mut resp = Json(body).into_response();
-    resp.headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_STORE));
-    Ok(resp)
+    Ok(Json(body).into_response())
 }
 
 pub async fn api_keys_set(

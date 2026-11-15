@@ -108,7 +108,7 @@ const VALUE_OPTS: [&str; 15] = [
     "run-id",
 ];
 const VALUE_OPTS_EXTRA: [&str; 4] = ["decision", "provider", "planner-timeout-sec", "planner-identity"];
-const FLAG_OPTS: [&str; 6] = ["repo", "no-diff", "confirm", "confirm-online", "push", "publish"];
+const FLAG_OPTS: [&str; 5] = ["no-diff", "confirm", "confirm-online", "push", "publish"];
 
 impl Opts {
     pub fn parse(args: &[String]) -> Result<Self, String> {
