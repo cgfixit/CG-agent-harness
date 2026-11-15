@@ -1,6 +1,6 @@
 //! `POST /api/browser/run`: one model-driven browser task for an administrator.
 //!
-//! Gated by literal `browser.enabled` (ships false, restart-only). The request
+//! Gated by literal `browser.enabled` (ships true, restart-only). The request
 //! names the task and the origins it may reach; the page and the model cannot
 //! add one. The work runs in a fixed-argv `cgagentharness browser run` child
 //! with the browser environment allowlist, so the server spawns nothing itself

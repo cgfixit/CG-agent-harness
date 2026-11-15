@@ -265,7 +265,7 @@ under other service names and shared tools stay outside the purge.
 
 ## Browser sessions
 
-With literal `browser.enabled` (ships false), an administrator can type
+With literal `browser.enabled` (ships true), an administrator can type
 `/browse <site> <task>` or POST `/api/browser/run` with a task and the origins
 it may reach. The server runs
 `cgagentharness browser run` as a child with a small environment allowlist and

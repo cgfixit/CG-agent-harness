@@ -389,7 +389,7 @@ any name, and hiding a basename does not remediate repository history.
 - Locked by: `src/agentic/real_repo_loop.rs` (`denied_read_basename`,
   `apply_model_read_request`) and `tests/real_repo_loop.rs`.
 
-Opt-in local repository retrieval reuses these clone reads and basename
+Local repository retrieval (ships on) reuses these clone reads and basename
 refusals. `agentic.deepagent_github.retrieval.enabled` must be literal true;
 cloud proposers cannot expand their declared read set through retrieval.
 A bounded Git inventory feeds a per-step Tantivy RAM index; ignored untracked

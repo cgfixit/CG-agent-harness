@@ -666,7 +666,8 @@ mod tests {
         config.raw["models"]["local_llm"]["reasoning_effort"] = "high".into();
         let reasoning = config.planner_identity().unwrap();
         assert_ne!(reasoning, identity);
-        config.raw["agentic"]["deepagent_github"]["retrieval"]["enabled"] = true.into();
+        // Retrieval ships on (operator decision, 2026-11-14), so turning it off must change the identity.
+        config.raw["agentic"]["deepagent_github"]["retrieval"]["enabled"] = false.into();
         assert_ne!(config.planner_identity().unwrap(), reasoning);
     }
 
