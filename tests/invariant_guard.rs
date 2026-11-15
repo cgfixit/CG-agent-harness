@@ -1849,7 +1849,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator decision (2026-11-12): cap set to 1776, about 100 words of room, so a new route row does not need a cap change.
     ("docs/API_ROUTES.md", Guide, 1776),
     // why: operator-requested (2026-11-14) browser- and computer-use status and roadmap; measured 869, about 100 words of room.
-    ("docs/Browser-Use.md", Guide, 970),
+    // why: operator-approved (2026-11-15) +200 after #895, #896 and #897 left it at 967 of 970.
+    ("docs/Browser-Use.md", Guide, 1170),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 605 words net of the post-#834 additions; measured 2943, rounded up to the next 10 so the cut stays cut.
