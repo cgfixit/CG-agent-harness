@@ -10,7 +10,6 @@ use axum::Json;
 use serde_json::{json, Value};
 
 use crate::server::errors::{session_status, ApiError, ApiResult};
-use crate::server::headers::NO_STORE;
 use crate::server::schemas::{SessionSearchRequest, ValidJson};
 use crate::server::session_export::{self, write_export, ExportAttachmentPin};
 use crate::server::session_search::search_sessions;
@@ -127,8 +126,6 @@ pub async fn export_session(
         header::CONTENT_TYPE,
         HeaderValue::from_static("text/markdown; charset=utf-8"),
     );
-    resp.headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_STORE));
     resp.headers_mut()
         .insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     Ok(resp)

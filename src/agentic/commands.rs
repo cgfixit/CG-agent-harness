@@ -647,7 +647,7 @@ fn settle_failed(runs_dir: &Path, record: &mut RealRepoRunRecord, error: &Harnes
 /// that merely looks complete.
 pub fn render_pending_diff(tools: &RepoWorkspace<'_>, changed_files: &[String]) -> String {
     let mut parts = Vec::new();
-    match tools.diff(false) {
+    match tools.diff() {
         Ok(d) if !d.is_empty() => parts.push(d),
         Ok(_) => {}
         Err(e) => return format!("[diff unavailable: {}]", e.message),

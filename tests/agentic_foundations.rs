@@ -300,7 +300,7 @@ fn workspace_reads_and_inspection_stay_inside_the_clone() {
     assert!(ws.read_file("escape/config.yaml").is_err());
     assert!(ws.read_file("src").is_err());
     assert!(ws.untracked_files().unwrap().contains(&"src/new.rs".to_string()));
-    assert!(ws.diff(false).unwrap().contains("changed"));
+    assert!(ws.diff().unwrap().contains("changed"));
     // Reads stay available with every write gate closed.
     let locked_home = dir.path().join("locked");
     std::fs::create_dir(&locked_home).unwrap();

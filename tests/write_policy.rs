@@ -140,7 +140,7 @@ fn each_mutation_reloads_policy_and_refusal_preserves_files_index_head_and_remot
         assert_eq!(git(&["rev-parse", "HEAD"], &dest), head);
         assert_eq!(std::fs::read(dest.join(".git/index")).unwrap(), index);
         assert!(git(&["branch", "--list", "codex/*"], &bare).is_empty());
-        assert!(ws.diff(false).unwrap().is_empty());
+        assert!(ws.diff().unwrap().is_empty());
         assert!(ws.untracked_files().unwrap().is_empty());
         assert_eq!(
             std::fs::read(dest.join(".git/index")).unwrap(),
@@ -483,7 +483,7 @@ fn denied_write_policy_still_allows_diff_without_executable_git_extensions() {
     std::fs::write(dest.join("target.txt"), "review me\n").unwrap();
     armed(dir.path(), &[("agentic.writes_enabled", "false")]);
     let ws = RepoWorkspace::attach(&ctx, &dest).unwrap();
-    assert!(ws.diff(false).unwrap().contains("review me"));
+    assert!(ws.diff().unwrap().contains("review me"));
     assert!(ws.untracked_files().unwrap().contains(&"tripwire.sh".into()));
     assert!(!dest.join("tripwire-marker").exists());
 }

@@ -161,7 +161,7 @@ fn approval_refuses_redirected_common_directory_without_mutating_another_reposit
     assert_eq!(std::fs::read(other.join(".git/index")).unwrap(), other_index);
     assert_eq!(git(&["rev-parse", "HEAD"], &other), head);
     assert_eq!(git(&["count-objects", "-v"], &other), objects);
-    assert!(ws.diff(false).is_err(), "inspection must refuse the same metadata");
+    assert!(ws.diff().is_err(), "inspection must refuse the same metadata");
 }
 
 #[cfg(unix)]
@@ -221,10 +221,7 @@ fn hooks_and_filters_do_not_execute_during_inspection_or_approval() {
     );
     std::fs::write(dest.join(".gitattributes"), "target.txt filter=fixture\n").unwrap();
     std::fs::write(dest.join("target.txt"), "approved next\n").unwrap();
-    assert!(
-        ws.diff(false).is_err(),
-        "unsafe local configuration must refuse inspection"
-    );
+    assert!(ws.diff().is_err(), "unsafe local configuration must refuse inspection");
     // Approval starts by reading HEAD and building the manifest; both refuse.
     let error = manifest::git_head(&dest)
         .and_then(|head| manifest::build_manifest(&dest, &["target.txt".into()], "fixture", &head))

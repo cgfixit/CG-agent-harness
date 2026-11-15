@@ -22,12 +22,6 @@ use crate::server::structured_memory::{
     RetrievalIntent, StructuredMemoryStore,
 };
 
-type PrivateJson = ([(header::HeaderName, &'static str); 1], Json<Value>);
-
-fn private(value: Value) -> PrivateJson {
-    ([(header::CACHE_CONTROL, crate::server::headers::NO_STORE)], Json(value))
-}
-
 fn error(code: &str, message: &str) -> ApiError {
     ApiError::bad_request(code, message)
 }
@@ -209,8 +203,8 @@ fn status_payload_inner(state: &AppState, owner_id: &str) -> ApiResult<Value> {
 pub async fn status(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
-) -> ApiResult<PrivateJson> {
-    off_worker(move || Ok(private(status_payload(&state, &owner(user))?))).await
+) -> ApiResult<Json<Value>> {
+    off_worker(move || Ok(Json(status_payload(&state, &owner(user))?))).await
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -224,7 +218,7 @@ pub async fn list_facts(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     Query(query): Query<FactListQuery>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         let owner = owner(user);
         let store = require_store(&state)?;
@@ -254,7 +248,7 @@ pub async fn list_facts(
         }
         .map_err(|e| store_err(&e))?;
         let payload: Vec<Value> = facts.into_iter().map(|f| f.to_json()).collect();
-        Ok(private(json!({
+        Ok(Json(json!({
             "owner_id": owner,
             "facts": payload,
             "count": payload.len(),
@@ -270,7 +264,7 @@ pub async fn selection(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     Path(session_id): Path<String>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
     let owner = owner(user);
     let session = state
@@ -287,7 +281,7 @@ pub async fn selection(
         &session.selected_facts,
         &gates,
     );
-    Ok(private(json!({
+    Ok(Json(json!({
         "session_id": session.session_id,
         "owner_id": owner,
         "explicit_recall": available,
@@ -306,7 +300,7 @@ pub async fn select(
     user: Option<axum::Extension<UserSummary>>,
     Path(session_id): Path<String>,
     ValidJson(req): ValidJson<StructuredFactSelectRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
     let owner = owner(user);
     let store = require_store(&state)?;
@@ -347,7 +341,7 @@ pub async fn select(
     );
     let gates = current_gates(&state);
     let recalled = assemble_selected_facts(Some(store), &state.cfg, &owner, &selected, &gates);
-    Ok(private(json!({
+    Ok(Json(json!({
         "session_id": session_id,
         "owner_id": owner,
         "explicit_recall": recall_available(&state.cfg, true, &gates),
@@ -364,7 +358,7 @@ pub async fn get_fact(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     Path(id): Path<String>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         let owner = owner(user);
         if !valid_public_id(&id) {
@@ -375,9 +369,7 @@ pub async fn get_fact(
             ));
         }
         let store = require_store(&state)?;
-        Ok(private(
-            store.get_fact(&owner, &id).map_err(|e| store_err(&e))?.to_json(),
-        ))
+        Ok(Json(store.get_fact(&owner, &id).map_err(|e| store_err(&e))?.to_json()))
     })
     .await
 }
@@ -386,7 +378,7 @@ pub async fn add_fact(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     ValidJson(req): ValidJson<StructuredFactAddRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         require_confirm(req.confirm)?;
         let owner = owner(user);
@@ -400,7 +392,7 @@ pub async fn add_fact(
             &owner,
             json!({"id": fact.id, "revision": fact.revision, "content_chars": fact.content.chars().count()}),
         );
-        Ok(private(fact.to_json()))
+        Ok(Json(fact.to_json()))
     })
     .await
 }
@@ -410,7 +402,7 @@ pub async fn deactivate_fact(
     user: Option<axum::Extension<UserSummary>>,
     Path(id): Path<String>,
     ValidJson(req): ValidJson<StructuredFactDeactivateRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         require_confirm(req.confirm)?;
         let owner = owner(user);
@@ -424,7 +416,7 @@ pub async fn deactivate_fact(
             &owner,
             json!({"id": fact.id, "revision": fact.revision, "content_chars": fact.content.chars().count()}),
         );
-        Ok(private(fact.to_json()))
+        Ok(Json(fact.to_json()))
     })
     .await
 }
@@ -439,7 +431,7 @@ pub async fn list_proposals(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     Query(query): Query<ProposalListQuery>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         let owner = owner(user);
         let store = require_store(&state)?;
@@ -455,7 +447,7 @@ pub async fn list_proposals(
         }
         .map_err(|e| store_err(&e))?;
         let proposals: Vec<Value> = proposals.into_iter().map(|p| p.to_json()).collect();
-        Ok(private(
+        Ok(Json(
             json!({"owner_id": owner, "proposals": proposals, "count": proposals.len()}),
         ))
     })
@@ -466,7 +458,7 @@ pub async fn propose(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     ValidJson(req): ValidJson<StructuredMemoryProposeRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         let owner = owner(user);
         let store = require_store(&state)?;
@@ -495,7 +487,7 @@ pub async fn propose(
                 "status": proposal.status
             }),
         );
-        Ok(private(proposal.to_json()))
+        Ok(Json(proposal.to_json()))
     })
     .await
 }
@@ -504,11 +496,11 @@ pub async fn review(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     Path(id): Path<String>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         let owner = owner(user);
         let store = require_store(&state)?;
-        Ok(private(
+        Ok(Json(
             store.get_proposal(&owner, &id).map_err(|e| store_err(&e))?.to_json(),
         ))
     })
@@ -520,7 +512,7 @@ pub async fn decide(
     user: Option<axum::Extension<UserSummary>>,
     Path(id): Path<String>,
     ValidJson(req): ValidJson<StructuredMemoryDecisionRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         require_confirm(req.confirm)?;
         let owner = owner(user);
@@ -534,7 +526,7 @@ pub async fn decide(
             &owner,
             json!({"id": proposal.id, "status": proposal.status, "action": proposal.action}),
         );
-        Ok(private(proposal.to_json()))
+        Ok(Json(proposal.to_json()))
     })
     .await
 }
@@ -610,7 +602,7 @@ pub async fn list_episodes(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     Query(query): Query<EpisodeListQuery>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         let owner = owner(user);
         let store = require_store(&state)?;
@@ -623,7 +615,7 @@ pub async fn list_episodes(
         }
         .map_err(|e| store_err(&e))?;
         let episodes: Vec<Value> = episodes.into_iter().map(|e| e.to_json()).collect();
-        Ok(private(json!({
+        Ok(Json(json!({
             "owner_id": owner,
             "episodes": episodes,
             "count": episodes.len(),
@@ -637,7 +629,7 @@ pub async fn search_facts(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     Query(query): Query<FactListQuery>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         let owner = owner(user);
         let store = require_store(&state)?;
@@ -664,7 +656,7 @@ pub async fn search_facts(
         let hits = match store.search_facts_fts(&owner, q, limit) {
             Ok(hits) => hits,
             Err(err) if err.code == "STRUCTURED_MEMORY_FTS" => {
-                return Ok(private(json!({
+                return Ok(Json(json!({
                     "owner_id": owner,
                     "hits": [],
                     "count": 0,
@@ -683,7 +675,7 @@ pub async fn search_facts(
             &owner,
             json!({"count": payload.len(), "query_chars": q.chars().count()}),
         );
-        Ok(private(json!({
+        Ok(Json(json!({
             "owner_id": owner,
             "hits": payload,
             "count": payload.len(),
@@ -701,7 +693,7 @@ pub async fn set_gates(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     ValidJson(req): ValidJson<crate::server::schemas::StructuredMemoryGateRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         let _store = require_store(&state)?;
         let owner = owner(user);
@@ -732,7 +724,7 @@ pub async fn set_gates(
             &owner,
             json!({"gate": req.gate, "enabled": req.enabled}),
         );
-        Ok(private(json!({
+        Ok(Json(json!({
             "owner_id": owner,
             "operator_gates": snapshot.as_json(),
             "episode_capture": capture_available(&state.cfg, true, &snapshot),
@@ -759,7 +751,7 @@ pub async fn get_episode(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     Path(id): Path<String>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         let owner = owner(user);
         if !valid_public_id(&id) {
@@ -770,7 +762,7 @@ pub async fn get_episode(
             ));
         }
         let store = require_store(&state)?;
-        Ok(private(
+        Ok(Json(
             store.get_episode(&owner, &id).map_err(|e| store_err(&e))?.to_json(),
         ))
     })
@@ -782,7 +774,7 @@ pub async fn summarize_episode(
     user: Option<axum::Extension<UserSummary>>,
     Path(id): Path<String>,
     ValidJson(req): ValidJson<StructuredEpisodeSummaryRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
     require_confirm(req.confirm)?;
     let owner = owner(user);
@@ -796,7 +788,7 @@ pub async fn summarize_episode(
         &owner,
         json!({"id": episode.id, "summary_chars": episode.semantic_summary.as_ref().map(|s| s.chars().count()).unwrap_or(0)}),
     );
-    Ok(private(episode.to_json()))
+    Ok(Json(episode.to_json()))
     })
     .await
 }
@@ -806,7 +798,7 @@ pub async fn delete_episode(
     user: Option<axum::Extension<UserSummary>>,
     Path(id): Path<String>,
     ValidJson(req): ValidJson<StructuredMemoryReasonRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         require_confirm(req.confirm)?;
         let owner = owner(user);
@@ -815,7 +807,7 @@ pub async fn delete_episode(
             .delete_episode(&owner, &id, &req.reason)
             .map_err(|e| store_err(&e))?;
         audit(&state, "structured_memory_episode_deleted", &owner, json!({"id": id}));
-        Ok(private(json!({"deleted": id, "owner_id": owner})))
+        Ok(Json(json!({"deleted": id, "owner_id": owner})))
     })
     .await
 }
@@ -824,7 +816,7 @@ pub async fn purge_expired(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     ValidJson(req): ValidJson<StructuredMemoryReasonRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         require_confirm(req.confirm)?;
         let owner = owner(user);
@@ -838,7 +830,7 @@ pub async fn purge_expired(
             &owner,
             json!({"deleted": deleted}),
         );
-        Ok(private(json!({"owner_id": owner, "deleted": deleted})))
+        Ok(Json(json!({"owner_id": owner, "deleted": deleted})))
     })
     .await
 }
@@ -847,7 +839,7 @@ pub async fn purge_owner(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     ValidJson(req): ValidJson<StructuredMemoryReasonRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         require_confirm(req.confirm)?;
         let owner = owner(user);
@@ -859,7 +851,7 @@ pub async fn purge_owner(
             &owner,
             json!({"counts": body["deleted"]}),
         );
-        Ok(private(body))
+        Ok(Json(body))
     })
     .await
 }
@@ -875,7 +867,6 @@ pub async fn export_owner(
         let html = export.html();
         Ok(axum::response::Response::builder()
             .status(StatusCode::OK)
-            .header(header::CACHE_CONTROL, crate::server::headers::NO_STORE)
             .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
             .header(header::X_CONTENT_TYPE_OPTIONS, "nosniff")
             .body(axum::body::Body::from(html))
@@ -900,7 +891,7 @@ fn require_consolidation(state: &AppState) -> ApiResult<&StructuredMemoryStore> 
 pub async fn list_consolidation(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         let owner = owner(user);
         let store = require_store(&state)?;
@@ -911,7 +902,7 @@ pub async fn list_consolidation(
             .into_iter()
             .map(|r| r.to_json())
             .collect();
-        Ok(private(json!({
+        Ok(Json(json!({
             "owner_id": owner,
             "runs": runs,
             "count": runs.len(),
@@ -926,7 +917,7 @@ pub async fn get_consolidation(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     Path(id): Path<String>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         let owner = owner(user);
         if !valid_public_id(&id) {
@@ -937,7 +928,7 @@ pub async fn get_consolidation(
             ));
         }
         let store = require_store(&state)?;
-        Ok(private(
+        Ok(Json(
             store
                 .get_consolidation_run(&owner, &id)
                 .map_err(|e| store_err(&e))?
@@ -951,7 +942,7 @@ pub async fn start_consolidation(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     ValidJson(req): ValidJson<StructuredConsolidationStartRequest>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     let owner = owner(user);
     let store = require_consolidation(&state)?;
     if req.episode_ids.len() > store.limits().max_consolidation_episodes {
@@ -998,14 +989,14 @@ pub async fn start_consolidation(
             "summarizer_version": run.summarizer_version,
         }),
     );
-    Ok(private(run.to_json()))
+    Ok(Json(run.to_json()))
 }
 
 pub async fn cancel_consolidation(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
     Path(id): Path<String>,
-) -> ApiResult<PrivateJson> {
+) -> ApiResult<Json<Value>> {
     off_worker(move || {
         let owner = owner(user);
         let store = require_store(&state)?;
@@ -1017,7 +1008,7 @@ pub async fn cancel_consolidation(
             &owner,
             json!({"id": run.id, "state": run.state, "error_class": run.error_class}),
         );
-        Ok(private(run.to_json()))
+        Ok(Json(run.to_json()))
     })
     .await
 }

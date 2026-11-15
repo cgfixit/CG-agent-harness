@@ -142,17 +142,16 @@ fn agent_run_shares_chat_backend(state: &AppState) -> bool {
 
 fn canonical_backend_key(raw: &str) -> Option<(String, String, Option<u16>, String)> {
     let u = url::Url::parse(raw).ok()?;
-    let scheme = u.scheme().to_lowercase();
     let mut host = u.host_str().unwrap_or("").to_lowercase();
     if crate::llm::backend::LOOPBACK_HOSTS.contains(&host.as_str()) {
         host = "127.0.0.1".into();
     }
-    let port = u.port().or(match scheme.as_str() {
-        "http" => Some(80),
-        "https" => Some(443),
-        _ => None,
-    });
-    Some((scheme, host, port, u.path().trim_end_matches('/').to_string()))
+    Some((
+        u.scheme().to_string(),
+        host,
+        u.port_or_known_default(),
+        u.path().trim_end_matches('/').to_string(),
+    ))
 }
 
 /// Everything `/api/agent/run` decides BEFORE a child exists: profile names ->

@@ -19,8 +19,7 @@ use super::gh_client::{checked_gh_binary, gh_env};
 pub const EXECUTION_ENABLED: bool = true;
 pub const WRITE_DISABLE_ENV: &str = "CGAGENTHARNESS_AGENTIC_WRITE_DISABLE";
 pub const DEFAULT_WRITE_TIMEOUT_SEC: u64 = 60;
-const WRITE_OPS: [&str; 3] = ["pr_comment", "issue_comment", "pr_create"];
-const EXECUTABLE_WRITE_OPS: [&str; 1] = ["pr_create"];
+const WRITE_OPS: [&str; 1] = ["pr_create"];
 
 pub fn disabled_by_env() -> bool {
     env_value_disables(&std::env::var(WRITE_DISABLE_ENV).unwrap_or_default())
@@ -33,15 +32,6 @@ pub fn env_value_disables(raw: &str) -> bool {
 
 pub fn execution_enabled() -> bool {
     EXECUTION_ENABLED && !disabled_by_env()
-}
-
-fn require_int_number(op: &str, params: &Value) -> Result<String> {
-    let n = params
-        .get("number")
-        .ok_or_else(|| HarnessError::agentic(format!("op '{op}' requires 'number' in params")).detail("op", op))?;
-    n.as_i64()
-        .map(|v| v.to_string())
-        .ok_or_else(|| HarnessError::agentic("'number' must be an integer").detail("op", op))
 }
 
 fn require_head_branch(op: &str, params: &Value) -> Result<String> {
@@ -103,28 +93,7 @@ fn body_flag_index(argv: &[String]) -> Option<usize> {
 
 /// The argv a write WOULD use (display and drift comparison).
 pub fn build_write_argv(op: &str, repo: &str, params: &Value, gh_bin: &str) -> Result<Vec<String>> {
-    let s = |v: Vec<String>| v;
     match op {
-        "pr_comment" => Ok(s(vec![
-            gh_bin.into(),
-            "pr".into(),
-            "comment".into(),
-            require_int_number(op, params)?,
-            "--repo".into(),
-            repo.into(),
-            "--body".into(),
-            str_param(params, "body", ""),
-        ])),
-        "issue_comment" => Ok(s(vec![
-            gh_bin.into(),
-            "issue".into(),
-            "comment".into(),
-            require_int_number(op, params)?,
-            "--repo".into(),
-            repo.into(),
-            "--body".into(),
-            str_param(params, "body", ""),
-        ])),
         "pr_create" => {
             let head = require_head_branch(op, params)?;
             let base = require_base_branch(op, params)?;
@@ -318,14 +287,6 @@ pub fn execute_write(ctx: &super::ctx::AgenticCtx, plan: &Value, confirm: bool, 
     let current = current_repository_policy(ctx, &op, &reason, confirm)?;
     let cfg = &current;
     require_gates(cfg, audit, &op, &reason, confirm)?;
-    if !EXECUTABLE_WRITE_OPS.contains(&op.as_str()) {
-        audit.log(json!({"event": "agentic_write_execution_blocked", "op": op, "gate": "executable_op"}));
-        return Err(HarnessError::write_refused(format!(
-            "write op '{op}' can be planned but not executed; executable ops are {EXECUTABLE_WRITE_OPS:?}"
-        ))
-        .detail("failed_gate", "executable_op")
-        .detail("op", op));
-    }
     if plan.get("repo").and_then(|r| r.as_str()) != Some(cfg.repo.as_str()) {
         return Err(
             HarnessError::write_refused("plan repo does not match the configured repo")

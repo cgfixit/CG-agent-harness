@@ -923,20 +923,16 @@ impl<'a> RepoWorkspace<'a> {
         Ok(())
     }
 
-    /// Worktree (or index) diff for review. `--text` keeps a `-diff` or
+    /// Worktree diff for review. `--text` keeps a `-diff` or
     /// `binary` attribute from collapsing a changed file to "Binary files
     /// differ": the review contract is the raw bytes approve will commit, and
     /// the planner only writes bounded UTF-8, so the text form is the content.
-    pub fn diff(&self, cached: bool) -> Result<String> {
+    pub fn diff(&self) -> Result<String> {
         let tool = "diff";
-        let args: &[&str] = if cached {
-            &["diff", "--no-ext-diff", "--no-textconv", "--text", "--cached"]
-        } else {
-            &["diff", "--no-ext-diff", "--no-textconv", "--text"]
-        };
-        let out = self.run_git(tool, args, DEFAULT_GIT_WRITE_TIMEOUT_SEC, &[])?;
+        let args = ["diff", "--no-ext-diff", "--no-textconv", "--text"];
+        let out = self.run_git(tool, &args, DEFAULT_GIT_WRITE_TIMEOUT_SEC, &[])?;
         self.audit
-            .log(json!({"event": "agentic_repo_workspace_git_op", "op": tool, "cached": cached, "bytes": out.len()}));
+            .log(json!({"event": "agentic_repo_workspace_git_op", "op": tool, "bytes": out.len()}));
         Ok(out)
     }
 
