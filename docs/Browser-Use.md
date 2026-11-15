@@ -8,7 +8,7 @@ Chrome. Computer use (native apps) is a skeleton that nothing calls.
 
 `/browse <site> [site ...] <task>` in the console, or `POST /api/browser/run`
 with `{task, origins}`. Administrator only, refused unless `browser.enabled` is
-literal `true` (ships `false`, restart-only), one task at a time, stopped after
+literal `true` (ships `true`, restart-only), one task at a time, stopped after
 `browser.timeout_sec` (default 300). A bare domain means `https://`.
 
 How a run works:
