@@ -15,8 +15,9 @@ never becomes a shell command or authorizes commits, pushes or publication.
 | Chat and sessions | Separate saved conversations with token counts. **Clear my session history** deletes yours after confirmation; derived structured-memory episodes remain unless you confirm that cascade too. |
 | Persona, memory and prompt context | `/prompt` previews the next turn; shared `soul.md`, session prompt skills and literal `/memory` notes feed it. Account-private structured memory has separate gates; models propose but never approve ([memory guide](MEMORY_GUIDE.md)). |
 | Chat model selection | A local tag, `local`, `grok/xai` or `claude/anthropic`. Cloud needs an enabled provider, active key and confirmation; only new text leaves, and `/loop` refuses cloud (`CLOUD_CHAT_LOOP`). [Profiles](MODELS.md). |
-| Chat web tools | Keyword search (public Google, SerpAPI or Tavily, per `web.search.provider` and the saved key) and permitted URL fetch, with the opt-in Firecrawl fallback for exact reads ([search providers](SECURE_RESEARCH.md#google-search)). |
-| Web research | `/web research` answers from permitted pages with checked quotes, usage and partial coverage. Fresh homes allow only Google search. |
+| Chat web tools | Search (public Google, SerpAPI or Tavily per `web.search.provider`) and permitted fetch, with opt-in Firecrawl rereads ([providers](SECURE_RESEARCH.md#google-search)). Admin turns may also read listed URLs and a listed arXiv abstract's PDF ([rules](SECURE_RESEARCH.md#chat-web-tools)). |
+| Web research | `/web research` answers from permitted pages with checked quotes, usage, partial coverage. Fresh homes allow only Google search. |
+| Browser tasks | `/browse <site> <task>`: the local model drives Chrome there only; passwords and data-sending requests wait for you ([setup](Browser-Use.md)). |
 | Accounts and API Keys | Administrator, Portal operator and Auditor permissions are enforced on API reads and writes; administrators manage masked credentials in API Keys ([accounts](SECURE_RESEARCH.md#accounts-and-roles)). |
 | Coding and review | Stage a task, confirm an isolated run with sandboxed checks, review the diff, then approve, push and publish separately ([coding pipeline](CODING_PIPELINE.md)). Reopening rediscovers retained jobs and runs; nothing resumes or republishes. |
 | Analytics and webhooks | `/analytics` shows read-only tokens, cost, sessions and coding runs with **Estimate draft**. Metadata-only completion webhooks stay off, and the **Job webhooks** button hidden, until configured ([spend and notifications](SPEND_AND_NOTIFICATIONS.md)). |
@@ -138,8 +139,7 @@ This loop does not edit files, run skills as programs, or run coding checks.
 `--web` on `/goal` or `/loop` sets the chat tools of every turn while the goal is
 set; without it the goal takes `web.goal_web_default` (ships `all`,
 restart-only). `fetch` excludes search, `off` excludes web context and tools.
-Listings grant admin-turn exact-URL reads (`web.search.result_reads.enabled`)
-only. Preflight shows the mode.
+Preflight shows the mode.
 A server restart does not resume a loop; goal-to-coding execution
 is the separate [goal staging](CODING_PIPELINE.md#94-stage-a-session-goal-as-a-coding-task) workflow.
 
@@ -351,7 +351,7 @@ parser is unavailable.
 | `/agent [help]` | Inspect coding commands; full workflow below |
 | `/analytics` | Open read-only session, token and coding-run [analytics](SPEND_AND_NOTIFICATIONS.md#analytics-sessions-tokens-and-coding-runs) |
 | `/api`, `/api set <KEY> <value>`, `/api clear <KEY>` | Inspect, save or clear a managed credential; prefer the API Keys password fields; [persistence](INSTALL.md#8-persistence-optional-keys-and-recovery) |
-| `/browse <site> [site ...] <task>` | Administrator browser task: the local model drives Chrome on the named sites only; [status and roadmap](Browser-Use.md) |
+| `/browse <site> [site ...] <task>` | Administrator browser task on the named sites only ([browser use](Browser-Use.md)) |
 | `/clear` | Clear visible output, staged coding/review state and chat continuation; saved chats, notes, persona and web context remain |
 | `/connectors` | Connector catalog; does not activate connectors |
 | `/diag [status]`, `/diag audit\|spend\|unslop\|errors [flags]`, `/diag inject\|forget` | Read allowlisted logs or stage one excerpt; aliases `/diagnostics`, `/logs`; [diagnostics](TROUBLESHOOTING.md#diagnostics) |

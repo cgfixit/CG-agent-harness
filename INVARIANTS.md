@@ -18,10 +18,11 @@ the server or the shim.
   `common/windows_job.rs`; shared runners preserve I6. The browser host is a
   session process, not an MCP call and not a coding-sandbox check. `/api/browser/run`
   is admin-only behind literal `browser.enabled`; origins come only from the request,
-  the child gets `browser_host::child_environment` (no provider keys), every non-GET
-  request is held for the operator, WebRTC sends no UDP past the sidecar proxy
-  (session profile; `browser enter` fixture), origins on the web block list are
-  refused (rechecked each turn and before delivery), and a granted name or IP literal
+  the child gets `browser_host::child_environment` (no provider keys), every request
+  but GET and HEAD is held for the operator, WebRTC sends no UDP past the sidecar proxy
+  (session profile; `browser enter` fixture), an origin whose root URL (`{origin}/`)
+  the web block list blocks is refused (rechecked each turn and before delivery;
+  path-level rules are not enforced inside a grant), and a granted name or IP literal
   must be public; only `test-support` fixtures may use loopback.
 - A SIGKILL'd child may leak a clone, but cannot corrupt server memory or bypass
   guards. The exit-code contract is 0 ok / 2 failed / 3 env_config / 4 write_refused.
@@ -44,6 +45,10 @@ Process edges; update this map when adding one.
   requests native confirmation to run the integrity-checked `start-web.sh` in
   Terminal, opening the owned origin. No renderer command, path or URL is accepted.
 - **Pipeline child:** hidden `cgagentharness agentic <action>`, a `shim::ACTIONS` entry.
+- **Browser child:** `/api/browser/run` runs hidden `cgagentharness browser run` through
+  `shim::run_argv_with_env` (task and each origin one `--opt=value` element), which starts
+  `node browser/sidecar.mjs`; that launches installed Chrome, sandbox on, on a temporary
+  profile. A timeout kills the tree. `browser-verify` is the separate PR-check session.
 - **MCP stdio children:** declared servers, spawned by `src/common/mcp.rs` in the
   sandbox wrapper. Strict Linux mode puts the hidden `cgagentharness mcp-stdio-worker`
   byte pump between them, in a transient `systemd-run` service.

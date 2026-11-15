@@ -258,7 +258,7 @@ web:
 
 # Completion webhooks are explicit operator configuration and restart-only.
 browser:
-  # Model-driven browsing through browser/sidecar.mjs (docs/DESKTOP.md#browser-sessions).
+  # Model-driven browsing through browser/sidecar.mjs (docs/Browser-Use.md).
   # Literal true lets administrators POST /api/browser/run. Restart-only.
   enabled: true
   # Playwright sidecar, relative to the server's working directory. Prepare it

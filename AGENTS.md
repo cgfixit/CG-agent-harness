@@ -21,6 +21,7 @@ browser/webview -> server guards -> chat / web / memory
 desktop shell -> verified backend sidecar -> same server
 server -> shim --child CLI--> agentic -> owned clone / sandbox
 server -> MCP runtime -> declared stdio children / SSE servers
+server -> browser child -> Playwright sidecar -> Chrome (granted origins only)
 ```
 
 - `cgagentharness serve` -> loopback HTTP/HTTPS console in `src/server`. Public
@@ -35,7 +36,9 @@ server -> MCP runtime -> declared stdio children / SSE servers
   200 with `ok=false`; shim failures map to 400/502/504 and the disabled-layer
   banner to 409. Other subcommands (`serve`, `account`, `web`, `tls`,
   `mcp-key`) exit `1` on error; hidden `desktop` and `mcp-stdio-worker` exit `3`;
-  hidden `pdf-text-worker` exits `0` text, `2` refused, `3` unusable environment.
+  hidden `pdf-text-worker` exits `0` text, `2` refused, `3` unusable environment;
+  hidden `browser` and `browser-verify` exit `0` passed, `2` failed, `3` bad
+  arguments or config.
 - Application state: `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`); coding writes
   stay in pipeline-created clones under `data/agentic/workspaces`.
 - Before changing a feature, read its guide below and owning `INVARIANTS.md`
@@ -44,7 +47,9 @@ server -> MCP runtime -> declared stdio children / SSE servers
 | Changing | Read first / trap |
 |----------|-------------------|
 | Accounts, TLS, ownership, auditor role | [Secure portal](docs/SECURE_RESEARCH.md#accounts-and-roles), [native trust](docs/DESKTOP.md#ownership-ports-and-security-boundaries) |
-| Chat search/fetch, providers, goal web routing | [Search permissions](docs/SECURE_RESEARCH.md#google-search), [router](docs/WEB_DECISION_ROUTER.md): `auto` prefers a saved Tavily key, then SerpAPI. Listings grant admin-turn exact-URL reads (`web.search.result_reads`). |
+| Chat search/fetch, providers, goal web routing | [Search permissions](docs/SECURE_RESEARCH.md#google-search), [router](docs/WEB_DECISION_ROUTER.md): `auto` prefers a saved Tavily key, then SerpAPI. Listings grant admin-turn exact-URL reads (`web.search.result_reads`); a listed arXiv abstract also grants its PDF (`arxiv_pdf`). |
+| PDF text | [PDF text](docs/CONSOLE.md#pdf-text): parsed only in the hidden `pdf-text-worker` child; only a textless, over-limit or malformed PDF may escalate to Firecrawl. |
+| Browser tasks (`/browse`) | [Browser use](docs/Browser-Use.md), [I6 process edges](INVARIANTS.md#i6--process-isolation-between-the-console-and-the-agentic-pipeline): origins come only from the request; requests but GET/HEAD are held; path-level block rules are not enforced yet. |
 | Exact fetch fallback | [Firecrawl](docs/SECURE_RESEARCH.md#fetch-discovery-and-research): opt-in, sends URLs off-machine; same-URL results only, never discovery/crawl/research. |
 | Web research/jobs | [Research](docs/SECURE_RESEARCH.md#fetch-discovery-and-research), [job contract](INVARIANTS.md#a-detached-run-cannot-outlive-its-gates): local model, separate discovery/synthesis deadlines; owner-bound jobs survive tabs, not restart. |
 | Provider keys | [Credential storage](docs/INSTALL.md#supported-managed-keys): inherited environment (even empty) wins; saved SerpAPI/Tavily/Firecrawl keys apply next search/read. |

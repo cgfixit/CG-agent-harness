@@ -64,7 +64,7 @@ filesystem, MCP, cloud or repository permission.
    malformed data and reflected credentials, so adding it wholesale would
    erase an important distinction.
 
-5. web.request_seconds is 8 in shipped config. At the baseline SerpAPI could
+5. web.request_seconds was 8 in shipped config (15 since 2026-11-10). At the baseline SerpAPI could
    take the whole deadline and leave none for public Google, whose pacing has
    a three-second floor; a timeout fixture reproduced it. Fixed by the
    deadline split below.
@@ -390,6 +390,14 @@ decisions stay deterministic.
   time allows, reserves the pacing wait still due plus one second for a final
   public Google hop (`web_provider::hop_budget`); a cooling later hop takes no
   share (`web_provider::timed_hops`).
+- Operator decisions, 2026-11-12 and 2026-11-14: an administrator's turn may read
+  the exact URLs its own listings returned (`web.search.result_reads`, at most
+  `max_urls`, audited `web_result_read`), and a listed `arxiv.org/abs/<id>` also
+  grants `arxiv.org/pdf/<id>` (`arxiv_pdf`). Other roles stay on the URL policy.
+- A PDF body (up to `web.pdf_response_bytes`) is read locally by the
+  `pdf-text-worker` child; passages are selected from it like any page. With
+  Firecrawl on, an oversized body or a PDF refused as textless, over a limit or
+  malformed may be re-read there; a busy, timed-out, failed or encrypted PDF read stays local.
 
 ### Runtime observations
 
