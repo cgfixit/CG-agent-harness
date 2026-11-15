@@ -860,7 +860,8 @@ async fn a_planner_on_the_tuned_model_budgets_runs_with_its_measured_timeout() {
     assert_eq!(status, 422, "{resp}");
     let details = &resp["detail"]["details"];
     // Budgeted with 180 s per planner call instead of the configured 720.
-    let budget = |planner, n| cgagentharness::shim::real_repo_run_budget_sec(planner, Some(n), 5);
+    // The server sizes the shape with its own shim context, which includes shipped retrieval.
+    let budget = |planner, n| cgagentharness::shim::real_repo_run_shape_budget_sec(&s.state.shim, planner, Some(n), 5);
     let fit = |planner| (1..=10).filter(|n| budget(planner, *n) <= 3600).max().unwrap_or(0);
     assert_eq!(details["estimated_sec"], budget(180, 10), "{resp}");
     assert_eq!(details["max_iterations_that_fit"], fit(180), "{resp}");
@@ -942,7 +943,7 @@ async fn planner_endpoint_defaults_and_aliases_keep_sync_and_job_budgets_consist
         let run = json!({"instruction": "fix the parser", "branch": "codex/parser-fix",
             "commit_message": "fix: parser", "reason": "endpoint regression", "max_iterations": 10,
             "checks": ["cargo-test", "cargo-clippy", "cargo-fmt", "pytest", "ruff"]});
-        let budget = cgagentharness::shim::real_repo_run_budget_sec(expected_timeout, Some(10), 5);
+        let budget = cgagentharness::shim::real_repo_run_shape_budget_sec(&s.state.shim, expected_timeout, Some(10), 5);
         for route in ["/api/agent/run", "/api/agent/jobs"] {
             let (status, response) = s.post_json(route, run.clone()).await;
             assert_eq!(status, 422, "{label} {route}: {response}");

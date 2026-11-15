@@ -494,7 +494,7 @@ async fn planner_settings_drift_refuses_sync_and_detached_runs() {
         ("planner_max_tokens", "8192"),
         ("provider", "openai_compatible"),
         // Sizes the shim's kill timer per iteration; the server budgets its startup value.
-        ("retrieval.enabled", "true"),
+        ("retrieval.enabled", "false"),
     ] {
         config_with(
             &s.home,
@@ -674,7 +674,8 @@ async fn run_validates_shape_before_any_subprocess() {
     assert_eq!(status, 422, "{resp}");
     assert_eq!(code(&resp), "AGENTIC_BUDGET_EXCEEDED");
     assert_eq!(resp["detail"]["details"]["cap_sec"], 3600);
-    assert_eq!(resp["detail"]["details"]["max_iterations_that_fit"], 2);
+    // Shipped retrieval adds 60 s per iteration: 2 x (720 + 5 x 120 + 60) + 900 = 3660 s > 3600.
+    assert_eq!(resp["detail"]["details"]["max_iterations_that_fit"], 1);
     // No audit tool_broker line was written for any of the refusals above.
     let audit = s.audit_log();
     assert!(!audit.contains("tool_broker_decision"));
@@ -690,7 +691,8 @@ async fn repository_retrieval_is_counted_in_the_run_budget() {
     body["checks"] = json!(["cargo-test", "cargo-clippy", "cargo-fmt", "pytest", "ruff"]);
     // Off: 2 x (720 + 5 x 120) + 900 = 3540 s fits the 3600 s cap, so the
     // request reaches the child, which answers with the disabled banner.
-    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let off = ServerOptions::default().with("agentic.deepagent_github.retrieval.enabled", "false");
+    let s = spawn_server(&model.base_url(), off).await;
     let (status, resp) = s.post_json("/api/agent/run", body.clone()).await;
     assert_eq!(status, 409, "{resp}");
     // On: two listings add 120 s.

@@ -14,8 +14,14 @@ the server or the shim.
 
 - Locked by: `tests/invariant_guard.rs` (source checks in both directions).
   Console-side process creation is restricted to `shim/mod.rs`, `common/process.rs`,
-  `common/mcp.rs`, `common/mcp_worker.rs` and `common/windows_job.rs`; shared
-  runners preserve I6.
+  `common/browser_host.rs`, `common/mcp.rs`, `common/mcp_worker.rs` and
+  `common/windows_job.rs`; shared runners preserve I6. The browser host is a
+  session process, not an MCP call and not a coding-sandbox check. `/api/browser/run`
+  is admin-only behind literal `browser.enabled`; origins come only from the request,
+  the child gets `browser_host::child_environment` (no provider keys), every non-GET
+  request is held for the operator, origins on the web block list are
+  refused (rechecked each turn and before delivery), and a granted name or IP literal
+  must be public; only `test-support` fixtures may use loopback.
 - A SIGKILL'd child may leak a clone, but cannot corrupt server memory or bypass
   guards. The exit-code contract is 0 ok / 2 failed / 3 env_config / 4 write_refused.
 
@@ -383,7 +389,7 @@ any name, and hiding a basename does not remediate repository history.
 - Locked by: `src/agentic/real_repo_loop.rs` (`denied_read_basename`,
   `apply_model_read_request`) and `tests/real_repo_loop.rs`.
 
-Opt-in local repository retrieval reuses these clone reads and basename
+Local repository retrieval (ships on) reuses these clone reads and basename
 refusals. `agentic.deepagent_github.retrieval.enabled` must be literal true;
 cloud proposers cannot expand their declared read set through retrieval.
 A bounded Git inventory feeds a per-step Tantivy RAM index; ignored untracked

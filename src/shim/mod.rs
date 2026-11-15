@@ -556,7 +556,7 @@ pub async fn run_argv(argv: &[String], cwd: &Path, timeout: Duration) -> Result<
 }
 
 #[cfg(unix)]
-async fn run_argv_with_env(
+pub(crate) async fn run_argv_with_env(
     argv: &[String],
     cwd: &Path,
     timeout: Duration,
@@ -617,7 +617,7 @@ fn signal_note(signal: i32) -> String {
 }
 
 #[cfg(not(unix))]
-async fn run_argv_with_env(
+pub(crate) async fn run_argv_with_env(
     argv: &[String],
     cwd: &Path,
     timeout: Duration,

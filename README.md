@@ -21,7 +21,8 @@ Fresh home, loopback fixture model. [60-second demo](docs/screenshots/demo/CG-Ag
 | **Local chat** | Streaming sessions, transcript search and export, text, DOCX and text-layer PDF attachments, skills, style presets, `/prompt`, sandboxed HTML preview. | Ollama on loopback; no persona or style until you add one. |
 | **Analytics, diagnostics** | Session, token and run history, **Estimate draft** before a cloud call, `/diag` redacted log tails. | On; local inference unpriced; `/diag` admin or `portal_auditor` only. |
 | **Cloud chat** | Optional Grok or Claude; only the new message leaves. | Needs a provider key. |
-| **Off by default** | Reviewed coding in isolated clones, MCP tools and a read-only memory gateway, Netconnect LAN observation. | Each needs explicit configuration. |
+| **Browser tasks** | `/browse <site> <task>`: the local model drives Chrome on the sites you name; anything that would send data waits for you. [Status and roadmap](docs/Browser-Use.md). | Off; an administrator sets `browser.enabled`. |
+| **Off by default** | Reviewed coding in isolated clones, MCP tools and a read-only memory gateway, Netconnect LAN observation, browser tasks. | Each needs explicit configuration. |
 
 Upgrades keep existing choices. The [console guide](docs/CONSOLE.md#what-you-can-do) is the user guide.
 
@@ -127,6 +128,7 @@ First launch seeds `config.yaml` from [the defaults](assets/config.default.yaml)
 | Coding, jobs, schedules, costs, webhooks | [Coding pipeline](docs/CODING_PIPELINE.md), [Spend and notifications](docs/SPEND_AND_NOTIFICATIONS.md) |
 | MCP tools and gateway, LAN observation | [MCP](docs/MCP.md), [Netconnect](docs/netconnect.md) |
 | Desktop app, Gatekeeper, reset | [Desktop](docs/DESKTOP.md) |
+| Browser tasks, computer-use roadmap | [Browser use](docs/Browser-Use.md) |
 | API, dependencies, releases | [Routes](docs/API_ROUTES.md), [Dependencies](docs/DEPENDENCIES.md), [Releasing](docs/RELEASING.md) |
 
 ## License

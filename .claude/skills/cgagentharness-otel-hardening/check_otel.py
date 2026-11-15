@@ -224,6 +224,16 @@ SITES: dict[str, dict[str, object]] = {
         "pairs": {"PATH": "/usr/bin:/bin"},
         "mentions": ("env_clear()",),
     },
+    # Playwright sidecar for /api/browser/run and the browser CLI: cleared env
+    # plus browser_host::child_environment (no provider keys); never downloads
+    # a browser. Chrome's egress is the sidecar's loopback proxy.
+    "browser-sidecar": {
+        "file": "src/common/browser_host.rs",
+        "signature": r"fn start\(",
+        "launches": ("node",),
+        "pairs": {"PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1"},
+        "mentions": ("env_clear()", "child_environment()"),
+    },
 }
 
 # Sites that launch an EXTERNAL binary which has a documented telemetry or
@@ -315,6 +325,7 @@ STALE_AFTER_DAYS = 120
 # `src/server` must stay at zero: INVARIANTS.md states it contains none.
 KNOWN_SPAWN_FILES: frozenset[str] = frozenset({
     "src/agentic/executor/sandbox.rs",
+    "src/common/browser_host.rs",
     "src/common/mcp.rs",
     "src/common/mcp_worker.rs",
     "src/common/process.rs",
@@ -327,7 +338,7 @@ KNOWN_SPAWN_FILES: frozenset[str] = frozenset({
 # INVENTORY row (directly or via alias). A new spawn site must add its binary.
 KNOWN_EXTERNAL_BINARIES: tuple[str, ...] = (
     "git", "gh", "bwrap", "unshare", "sandbox-exec", "systemd-run", "python3",
-    "/usr/bin/open", "cargo", "rustc", "rustdoc", "xcrun", "otool",
+    "/usr/bin/open", "cargo", "rustc", "rustdoc", "xcrun", "otool", "node",
 )
 
 # Spawn surfaces whose executable is chosen at run time. The marker proves the
@@ -555,6 +566,16 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "evidence": "desktop/src/main.rs external_link()",
     },
     {
+        "name": "playwright browser sidecar (node)", "category": 4, "controls": {},
+        "url": "docs/DESKTOP.md#browser-sessions",
+        "versions": "playwright 1.65.1 (browser/package-lock.json), installed Google Chrome channel",
+        "enforcement": "env_clear() + browser_host::child_environment allowlist; "
+                       "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1; loopback proxy refuses ungranted and non-public "
+                       "destinations; gate browser.enabled ships false",
+        "scope": "/api/browser/run and the hidden browser CLI", "reviewed": "2026-11-14",
+        "evidence": "src/common/browser_host.rs Sidecar::start; browser/sidecar.mjs startProxy()",
+    },
+    {
         "name": "tauri desktop shell", "category": 5, "controls": {},
         "url": "https://v2.tauri.app/",
         "versions": "tauri =2.12.0, tauri-plugin-dialog 2, tauri-build 2; objc2/WebKit bindings",
@@ -630,6 +651,7 @@ INVENTORY_ALIASES: dict[str, str] = {
     "rustc": "sandbox and toolchain binaries", "rustdoc": "sandbox and toolchain binaries",
     "xcrun": "sandbox and toolchain binaries", "otool": "sandbox and toolchain binaries",
     "/usr/bin/open": "os opener (/usr/bin/open)",
+    "node": "playwright browser sidecar (node)",
 }
 
 _REQUIRED_ROW_KEYS = ("name", "category", "controls", "url", "versions", "enforcement",

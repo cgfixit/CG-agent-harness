@@ -55,6 +55,11 @@ fn guarded_routes() -> Vec<(Method, &'static str, serde_json::Value)> {
         ),
         (
             Method::POST,
+            "/api/browser/run",
+            json!({"task": "read the page", "origins": ["https://example.com"]}),
+        ),
+        (
+            Method::POST,
             "/api/agent/run",
             json!({"instruction": "x", "branch": "claude/x", "commit_message": "m", "reason": "r"}),
         ),
@@ -431,7 +436,9 @@ async fn only_explicit_auth_opt_out_allows_login_free_operations() {
                 ..Default::default()
             }
             .with("auth.enabled", auth_enabled)
-            .with("api.rate_limit.max_requests", "200");
+            .with("api.rate_limit.max_requests", "200")
+            // browser.enabled ships true; keep it off so the route check below never starts Chrome.
+            .with("browser.enabled", "false");
             let s = spawn_server(&model.base_url(), opts).await;
             assert_eq!(s.open_get("/api/status").await.1["api_key_optional"], true);
             // No Bearer header and no session cookie. Each handler is reached;
@@ -457,6 +464,9 @@ async fn only_explicit_auth_opt_out_allows_login_free_operations() {
                 }
                 if path == "/api/agent/run" {
                     assert_eq!(status, 409, "write gates must still refuse: {result}");
+                }
+                if path == "/api/browser/run" {
+                    assert_eq!(status, 409, "browser.enabled: false refuses: {result}");
                 }
                 if path == "/api/agent/jobs" && method == Method::POST {
                     assert_eq!(status, 202, "{result}");

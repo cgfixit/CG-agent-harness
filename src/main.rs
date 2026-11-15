@@ -79,6 +79,18 @@ enum Command {
         #[arg(long)]
         port: Option<u16>,
     },
+    /// One general browser session. Hidden until the operator runs it.
+    #[command(hide = true, allow_hyphen_values = true)]
+    Browser {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<OsString>,
+    },
+    /// One PR browser verification session. Separate grants from `browser`.
+    #[command(hide = true, allow_hyphen_values = true)]
+    BrowserVerify {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<OsString>,
+    },
     /// Out-of-band agentic CLI. Spawned by the server as a child process.
     #[command(hide = true, disable_help_flag = true, allow_hyphen_values = true)]
     Agentic {
@@ -114,6 +126,8 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             }
         },
+        Command::Browser { args } => ExitCode::from(cgagentharness::common::browser_host::browse_cli(&args)),
+        Command::BrowserVerify { args } => ExitCode::from(cgagentharness::common::browser_host::verify_cli(&args)),
         Command::Agentic { args } => {
             let code = cgagentharness::agentic::cli::main(args);
             ExitCode::from(code)

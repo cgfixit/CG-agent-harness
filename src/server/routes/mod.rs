@@ -3,6 +3,7 @@
 
 pub mod agent;
 pub mod auth;
+pub mod browser;
 pub mod core;
 pub mod diag;
 pub mod goals;
@@ -28,7 +29,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 118] = [
+pub const REGISTERED_PATHS: [&str; 119] = [
     "/api/analytics/summary",
     "/api/config/reload",
     "/",
@@ -125,6 +126,7 @@ pub const REGISTERED_PATHS: [&str; 118] = [
     "/api/github/status",
     "/api/agent/checks",
     "/api/agent/run",
+    "/api/browser/run",
     "/api/agent/runs",
     "/api/agent/runs/{run_id}",
     "/api/agent/runs/{run_id}/decision",
@@ -356,6 +358,7 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/loop/events/{run_id}", get(loop_runner::events))
         .route("/api/github/status", get(agent::github_status))
         .route("/api/agent/run", post(agent::agent_run))
+        .route("/api/browser/run", post(browser::run))
         .route("/api/agent/runs", get(agent::agent_runs))
         .route("/api/agent/runs/{run_id}", get(agent::agent_run_status))
         .route("/api/agent/runs/{run_id}/decision", post(agent::agent_run_decision))
@@ -457,7 +460,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 118);
+        assert_eq!(REGISTERED_PATHS.len(), 119);
 
         let all = registered_paths();
         assert!(
