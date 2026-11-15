@@ -260,7 +260,7 @@ web:
 browser:
   # Model-driven browsing through browser/sidecar.mjs (docs/DESKTOP.md#browser-sessions).
   # Literal true lets administrators POST /api/browser/run. Restart-only.
-  enabled: false
+  enabled: true
   # Playwright sidecar, relative to the server's working directory. Prepare it
   # once with PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci in browser/.
   sidecar: "browser/sidecar.mjs"
@@ -505,7 +505,7 @@ agentic:
     max_write_budget_bytes: 100000
     # Local coding planner only; missing/quoted/non-boolean enabled stays off.
     retrieval: # implemented, opt-in local repository retrieval; separate from memory
-      enabled: false
+      enabled: true
       max_files: 256 # Candidate paths examined per step; 1–1024.
       max_index_bytes: 2000000 # UTF-8 content indexed per step; 1–16000000.
       top_k: 3 # At most 1–8 additional files, after operator/model selections.
