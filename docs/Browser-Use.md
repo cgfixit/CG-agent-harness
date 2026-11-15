@@ -24,51 +24,53 @@ How a run works:
    expire with every observation, so a stale ref cannot act.
 4. The model calls `navigate`, `observe`, `click`, `type`, `press_enter`,
    `select` (a listed option of a select box), `select_tab`, `follow_link` and
-   `finish`. A link that opens a new tab replaces the page: one tab per task.
-   Older observations are dropped to fit 32K. Three refused actions in a row
-   end the task.
+   `finish`. An observation is 40 elements and 4,000 characters, read after
+   the page's fetches settle; `observe` takes `page` for the next part and
+   `find` for what contains a word. Older observations are dropped to fit
+   32K. Three refused actions in a row end the task.
+5. One tab per task. A new tab replaces the page only if it shows a granted
+   page; any other is closed and the page stays.
 
 Boundaries, enforced in code:
 
 - Origins come only from the request; pages and the model cannot add one.
   Origins on the shared web block list, or that cannot be checked, are refused.
 - The sidecar's loopback proxy is the egress check. The task's fresh profile
-  keeps WebRTC to proxied TCP, so a page cannot send UDP around it (Chrome
-  153 ignored the command-line switch). A granted name must
-  resolve to public addresses (`localhost` is refused), and a loopback or
-  private IP origin is refused; only a `test-support` build lets the fixtures
-  use `127.0.0.1`.
+  keeps WebRTC to proxied TCP, so a page cannot send UDP around it. A granted
+  name must resolve to public addresses (`localhost` is refused), and a
+  loopback or private IP origin is refused; only a `test-support` build lets
+  the fixtures use `127.0.0.1`.
 - The block list is checked on the granted origin before launch, again before
   every model turn, and once more before the report is returned.
 - A task holds the shared model gate, so it never overlaps chat or research.
 - Clicks may run. Every request except GET and HEAD is held for the operator:
   a held page load answers 204 so the page stays, a held `fetch` fails.
 - Password and one-time-code fields hand off and are never typed. A hand-off
-  or hold ends the task at once; the console lists each one.
+  or hold ends the task at once. The console lists each one, then the origins
+  (never paths) a page asked for outside the grant.
 
-Verified by running: fixtures `browser`, `browser enter` (a new tab replaces
-the page; search submits; a select takes an option; password hands off; a POST
-form and a script POST are held; WebRTC sends no UDP) and `browser-verify`;
-Qwen listed the games behind Start → Games on cgfixit.com (2026-11-14).
+Verified by running: fixtures `browser`, `browser enter` (new tab, search,
+select, password hand-off, held POSTs, no WebRTC UDP), `browser reach` (late
+content, an ungranted tab closed and named, `page` and `find` on a long page)
+and `browser-verify`; Qwen listed the games behind Start → Games on
+cgfixit.com (2026-11-14).
 
 ## Honest limits
 
 - Grants are exact origins. Scripts and styles from a CDN origin are blocked,
   so many large sites render partly.
 - Path-level block-list rules are not enforced inside a granted origin.
-- The model sees the first 40 elements and 4,000 characters of text; long
-  pages need it to navigate deeper. No screenshots yet, so canvas and
-  image-only UIs are opaque.
-- `scroll` and `wait` exist in the policy but are not model tools.
-- A hand-off or hold ends the task: no approve button and no resume.
+- No screenshots yet, so canvas and image-only UIs are opaque. An `alert` or
+  `confirm` is dismissed unseen.
+- `scroll` and `wait` are not model tools, so content that loads only on
+  scroll stays unread.
+- No approve-and-resume after a hand-off or hold.
 - Holding every `fetch` POST can break sites that save state in the
   background, such as chat widgets or autosave.
 - Page text is untrusted input. Grants and holds bound what it can cause; an
   answer can still be wrong.
 - `/goal` and `/loop` do not have browser tools. A goal that says "/browse" runs
   web search and fetch instead.
-- The unit tests added for this feature have not run locally (operator rule);
-  CI runs them.
 
 ## Roadmap: broader browser use
 
@@ -79,8 +81,9 @@ In rough order:
    cookies while navigation stays on granted origins.
 3. Vision: send the latest screenshot to the model (`qwen3.8` lists the
    `vision` capability) and retire older images like observations.
-4. Model tools for `scroll` and `wait`, and element paging past 40.
-5. Path-level block rules inside the proxy.
+4. Model tools for `scroll` and `wait`.
+5. Path-level block rules, in the page-request route: the proxy sees only an
+   HTTPS host.
 6. Browser tools for `/goal` and `/loop`, behind their own gate and the same
    grants.
 
@@ -104,14 +107,12 @@ the model, so nothing leaves the machine. Kimi Computer Use is proprietary;
 its TCC grants (Accessibility, Screen Recording) belong to the operator.
 
 **Option B, hand the task to Kimi Code.** The harness passes the whole task
-to the Kimi Code agent (`kimi acp`) and receives its result. This is the
-quickest route to general computer use, but Kimi's model, not the harness
-policy, decides each step, and the task leaves the machine for Kimi's
-service. It would need its own opt-in and an explicit warning.
+to the Kimi Code agent (`kimi acp`). This is the quickest route, but Kimi's
+model, not the harness policy, decides each step, and the task leaves the
+machine. It would need its own opt-in and an explicit warning.
 
-**Option C, no Kimi.** A first-party macOS Accessibility driver, a small
-signed helper the harness owns, behind the same `Driver` seam. Most work,
-fewest outside dependencies.
+**Option C, no Kimi.** A first-party, signed macOS Accessibility helper behind
+the same `Driver` seam. Most work, fewest outside dependencies.
 
 The first pilot for any option stays attended: one packaged app, one window,
 fixture data, operator takeover, and one result checked outside the model.

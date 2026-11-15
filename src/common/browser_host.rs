@@ -184,6 +184,15 @@ fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value 
     {
         outcome["held_for_operator"] = held.clone();
     }
+    if let Some(origins) = result
+        .get("not_granted")
+        .filter(|origins| origins.as_array().is_some_and(|rows| !rows.is_empty()))
+    {
+        outcome["not_granted"] = origins.clone();
+    }
+    if let Some(note) = page_note(wire, &result) {
+        outcome["more"] = json!(note);
+    }
     if let Some(elements) = result.get("elements").and_then(Value::as_array) {
         let drafts = drafts_from(elements);
         let tabs = drafts
@@ -219,6 +228,26 @@ fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value 
         }
     }
     outcome
+}
+
+/// What the model should know about an observation that is one page of a
+/// longer one, or that came back empty.
+fn page_note(wire: &Value, result: &Value) -> Option<String> {
+    let (page, pages) = (result["page"].as_u64()?, result["pages"].as_u64()?);
+    let empty =
+        result["text"].as_str().is_none_or(str::is_empty) && result["elements"].as_array().is_none_or(Vec::is_empty);
+    if page < pages {
+        Some(format!(
+            "page {page} of {pages}: observe with page {} continues, and observe with find lists only what contains a word",
+            page + 1
+        ))
+    } else if page > pages {
+        Some(format!("there is no page {page}; the last one is {pages}"))
+    } else if empty && wire.get("find").is_some_and(Value::is_string) {
+        Some("nothing on this page contains that text".into())
+    } else {
+        None
+    }
 }
 
 /// Serve `page`, navigate to it, run `steps`, then require `done` on the last
@@ -297,8 +326,9 @@ fn read_page(sidecar: &Path, port: u16, headless: bool) -> Result<String, String
 }
 
 /// Run fixed steps. A step may carry `expect`: `handoff` (the policy must hand
-/// it to the operator) or `held` (the sidecar must hold a form submission).
-/// Any other refusal or sidecar error fails the run.
+/// it to the operator), `held` (the sidecar must hold a form submission) or
+/// `shows <text>` (the step's outcome must contain it). Any other refusal or
+/// sidecar error fails the run.
 fn drive(mut session: Session, script: &Path, steps: &[Value], headless: bool) -> Result<String, String> {
     // Fixtures serve on 127.0.0.1: a private grant needs a test-support build.
     let mut sidecar = Sidecar::start(script, &session, headless, cfg!(feature = "test-support"))?;
@@ -326,6 +356,10 @@ fn drive(mut session: Session, script: &Path, steps: &[Value], headless: bool) -
         match expect.as_ref().and_then(Value::as_str) {
             Some("handoff") if outcome["decision"].as_str().is_some_and(|d| d.starts_with("Handoff")) => continue,
             Some("held") if outcome.get("held_for_operator").is_some() => {}
+            Some(shows)
+                if shows
+                    .strip_prefix("shows ")
+                    .is_some_and(|want| outcome.to_string().contains(want)) => {}
             Some(other) => return Err(format!("expected {other} on {wire}:\n{}", lines.join("\n"))),
             None if outcome.get("error").is_some() || outcome.get("decision").is_some() => {
                 return Err(format!("refused or failed on {wire}:\n{}", lines.join("\n")))
@@ -347,7 +381,7 @@ fn sidecar_op(session: &Session, wire: &Value) -> Result<Value, String> {
     let action = wire.get("action").and_then(Value::as_str).unwrap_or("");
     match action {
         "navigate" => Ok(json!({"op":"navigate","url": wire["url"]})),
-        "observe" => Ok(json!({"op":"observe"})),
+        "observe" => Ok(json!({"op":"observe","page": wire.get("page"),"find": wire.get("find")})),
         "select_tab" => Ok(json!({"op":"select_tab","tab": wire["tab"]})),
         "wait" => Ok(json!({"op":"wait","timeout_ms": wire["timeout_ms"]})),
         "scroll" => Ok(json!({"op":"scroll","dy": wire["dy"]})),
@@ -440,7 +474,9 @@ pub fn run_task(
         &mut session,
         &mut sidecar,
         &mut chat,
-        &policy_refusal_now,
+        // A fixture session reaches only the loopback page this binary serves,
+        // which the public-URL block list cannot check and would always refuse.
+        &|session: &Session| (!allow_private).then(|| policy_refusal_now(session)).flatten(),
         task,
         origins,
         max_turns,
@@ -464,7 +500,7 @@ fn model_loop(
     max_turns: usize,
 ) -> Result<Value, String> {
     let mut messages = vec![
-        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A refusal is not success. A Handoff, or held_for_operator, ends the task: only the operator can do that step. Call finish with your answer once the page shows it.", origins.join(", "))}),
+        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A long page comes in pages: when an observation has more, observe with page or find reaches the rest. A refusal is not success. A Handoff, or held_for_operator, ends the task: only the operator can do that step. not_granted lists sites the page asked for that this task may not reach. Call finish with your answer once the page shows it.", origins.join(", "))}),
         json!({"role":"user","content": task}),
     ];
     let mut calls = 0usize;
@@ -476,6 +512,8 @@ fn model_loop(
     let mut stopped = None;
     // What only the operator can do: held requests and handed-off elements.
     let mut for_operator: Vec<Value> = Vec::new();
+    // Origins a page asked for that the request did not grant.
+    let mut not_granted = std::collections::BTreeSet::new();
     'turns: for turn in 0..max_turns {
         // Permission checked at launch is stale after a wait (AGENTS.md).
         if let Some(reason) = recheck(session) {
@@ -503,6 +541,8 @@ fn model_loop(
             answer = Some(content);
             break;
         }
+        // A finish later in this turn must not rest on results the model never read.
+        let mut failed_this_turn = false;
         for call in tool_calls {
             calls += 1;
             let name = call
@@ -511,10 +551,16 @@ fn model_loop(
                 .unwrap_or("")
                 .to_string();
             let args = coerce_args(call.pointer("/function/arguments").cloned().unwrap_or(json!({})));
+            let mut finish_refusal = None;
             if name == "finish" {
                 transcript.push(format!("finish {}", truncate(&args.to_string(), 160)));
-                answer = Some(args["answer"].as_str().unwrap_or("").to_string());
-                break 'turns;
+                match finish_verdict(&args, failed_this_turn) {
+                    Ok(text) => {
+                        answer = Some(text);
+                        break 'turns;
+                    }
+                    Err(reason) => finish_refusal = Some(reason),
+                }
             }
             let wire = model_wire(&name, &args);
             // Decided before the step, which re-mints refs: a handoff names its element.
@@ -526,12 +572,18 @@ fn model_loop(
                 })),
                 _ => None,
             });
-            let outcome = match &wire {
-                Some(wire) => step(session, sidecar, wire),
-                None => json!({"refused":"malformed browser action"}),
+            let outcome = match (&wire, finish_refusal) {
+                (_, Some(reason)) => json!({ "refused": reason }),
+                (Some(wire), None) => step(session, sidecar, wire),
+                (None, None) => json!({"refused":"malformed browser action"}),
             };
             let needs_operator = handoff.is_some() || outcome.get("held_for_operator").is_some();
             note_for_operator(&mut for_operator, handoff, &outcome);
+            for origin in outcome["not_granted"].as_array().into_iter().flatten() {
+                if let (Some(origin), true) = (origin.as_str(), not_granted.len() < MAX_FOR_OPERATOR) {
+                    not_granted.insert(origin.to_string());
+                }
+            }
             if let Some(text) = outcome.get("text").and_then(Value::as_str) {
                 last_text = text.to_string();
                 last_url = outcome["url"].clone();
@@ -545,9 +597,8 @@ fn model_loop(
             if outcome.get("elements").is_some() {
                 retire_observations(&mut messages);
             }
-            let failed = ["decision", "error", "refused"]
-                .iter()
-                .any(|key| outcome.get(*key).is_some());
+            let failed = action_failed(&outcome);
+            failed_this_turn |= failed;
             refused_in_a_row = if failed { refused_in_a_row + 1 } else { 0 };
             messages.push(json!({"role":"tool","tool_name": name,"content": outcome.to_string()}));
             // A model that keeps retrying refused actions only spends the deadline.
@@ -564,6 +615,7 @@ fn model_loop(
         "origins": origins,
         "model_calls_with_tools": calls,
         "for_operator": for_operator,
+        "not_granted": not_granted,
         "final_url": last_url,
         "page_text": last_text,
         "transcript": transcript,
@@ -602,6 +654,30 @@ pub fn run_qwen_fixture(script: &Path, headless: bool, model: &str, api: &str) -
     Ok(body)
 }
 
+/// Whether a tool outcome was refused or failed: a policy decision, an error
+/// or a refusal. A handoff is a decision too.
+fn action_failed(outcome: &Value) -> bool {
+    ["decision", "error", "refused"]
+        .iter()
+        .any(|key| outcome.get(*key).is_some())
+}
+
+/// The answer a `finish` call ends the task with, or why it is refused. A
+/// finish sent after a refused or failed call in the same turn is refused: the
+/// model sent it before it could read that result, so its answer cannot rest
+/// on the page. A finish first in its turn, or after only successful calls,
+/// ends the task when it carries a non-blank answer.
+fn finish_verdict(args: &Value, failed_earlier_this_turn: bool) -> Result<String, &'static str> {
+    if failed_earlier_this_turn {
+        return Err("an action in this turn was refused: read the results, then finish");
+    }
+    args["answer"]
+        .as_str()
+        .filter(|text| !text.trim().is_empty())
+        .map(str::to_string)
+        .ok_or("finish takes answer: your final answer as text")
+}
+
 /// Requests held and elements handed off during a task, at most
 /// `MAX_FOR_OPERATOR` rows. The console lists them; nothing here sends them.
 fn note_for_operator(rows: &mut Vec<Value>, handoff: Option<Value>, outcome: &Value) {
@@ -616,7 +692,21 @@ fn note_for_operator(rows: &mut Vec<Value>, handoff: Option<Value>, outcome: &Va
 fn model_wire(name: &str, args: &Value) -> Option<Value> {
     Some(match name {
         "navigate" => json!({"action":"navigate","url": args["url"]}),
-        "observe" => json!({"action":"observe"}),
+        "observe" => {
+            // Models send "" or null for an option they leave out, and numbers as text.
+            let mut wire = json!({"action":"observe"});
+            if let Some(find) = args["find"].as_str().filter(|text| !text.trim().is_empty()) {
+                wire["find"] = json!(find);
+            }
+            match &args["page"] {
+                Value::Null => {}
+                Value::String(text) => {
+                    wire["page"] = text.trim().parse::<u32>().map_or(json!(text), |page| json!(page))
+                }
+                other => wire["page"] = other.clone(),
+            }
+            wire
+        }
         "select_tab" => json!({"action":"select_tab","tab": args["tab"]}),
         "type" => json!({"action":"type","ref_id": args["ref_id"],"text": args["text"]}),
         "select" => json!({"action":"select","ref_id": args["ref_id"],"value": args["option"]}),
@@ -640,7 +730,7 @@ fn retire_observations(messages: &mut [Value]) {
 fn browser_tools() -> Value {
     json!([
         {"type":"function","function":{"name":"navigate","description":"Open an http(s) URL in this session.","parameters":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}}},
-        {"type":"function","function":{"name":"observe","description":"Read the current page and mint fresh element refs.","parameters":{"type":"object","properties":{}}}},
+        {"type":"function","function":{"name":"observe","description":"Read the current page and mint fresh element refs. One observation holds 40 elements and 4000 characters. On a longer page, pass page (2, 3, ...) for the next part, or find to list only the elements and text that contain a word.","parameters":{"type":"object","properties":{"page":{"type":"integer"},"find":{"type":"string"}}}}},
         {"type":"function","function":{"name":"select_tab","description":"Select a tab by its visible name.","parameters":{"type":"object","properties":{"tab":{"type":"string"}},"required":["tab"]}}},
         {"type":"function","function":{"name":"click","description":"Click a button, menu item, option, tab or link by its ref from the latest observation. A link that opens a new tab replaces this page. Requests that would send data are held for the operator.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"}},"required":["ref_id"]}}},
         {"type":"function","function":{"name":"select","description":"Choose one of the options a select box ref lists in the latest observation, by its label.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"},"option":{"type":"string"}},"required":["ref_id","option"]}}},
@@ -773,6 +863,38 @@ pub fn run_enter_demo(sidecar: &Path, headless: bool) -> Result<String, String> 
     Ok(log)
 }
 
+/// A page that renders after a fetch is read once it has; a tab the page opens
+/// on a site the task was not granted is closed, the page stays and the site
+/// is named; `observe` with `page` or `find` reaches past the first 40
+/// elements and 4,000 characters; and a link whose label has inline markup
+/// is listed.
+pub fn run_reach_demo(sidecar: &Path, headless: bool) -> Result<String, String> {
+    let entries: String = (1..=60)
+        .map(|n| {
+            format!(
+                "<a href=\"/?entry={n}\">Entry {n}</a><p>{}</p>",
+                "filler words here ".repeat(8)
+            )
+        })
+        .collect();
+    let (origin, port) = serve_html(&REACH_PAGE.replace("ENTRIES", &entries))?;
+    let session = Session::general([&origin]).map_err(|err| format!("{err:?}"))?;
+    let steps = [
+        json!({"action":"navigate","url": format!("http://127.0.0.1:{port}/"),"expect":"shows late content"}),
+        json!({"action":"click","ref_id":"@Share","expect":"shows http://127.0.0.1:1"}),
+        json!({"action":"observe","page":3,"expect":"shows RELEASE-MARKER"}),
+        // Inline markup in a label: the link is named by its text.
+        json!({"action":"observe","find":"changelog","expect":"shows Changelog of releases"}),
+        json!({"action":"follow_link","ref_id":"@Changelog of releases"}),
+    ];
+    let log = drive(session, sidecar, &steps, headless)?;
+    let last = log.lines().next_back().unwrap_or("");
+    if !(last.contains("changelog open") && last.contains("late content")) {
+        return Err(format!("fixture text was not visible:\n{log}"));
+    }
+    Ok(log)
+}
+
 pub fn browse_cli(args: &[OsString]) -> u8 {
     dispatch(args, true)
 }
@@ -797,7 +919,7 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
         match (key, value) {
             ("--headed", None) => headless = false,
             // Only general browsing runs model tasks; browser-verify keeps PR grants.
-            ("qwen" | "enter" | "run", None) if browse && mode.is_none() => mode = Some(key.to_string()),
+            ("qwen" | "enter" | "reach" | "run", None) if browse && mode.is_none() => mode = Some(key.to_string()),
             ("--model", Some(v)) if !v.is_empty() => model = Some(v.to_string()),
             ("--sidecar", Some(v)) if !v.is_empty() => sidecar = PathBuf::from(v),
             ("--task", Some(v)) if (1..=MAX_TASK_CHARS).contains(&v.chars().count()) => task = Some(v.to_string()),
@@ -840,6 +962,7 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
             Ok((model, api)) => run_qwen_fixture(&sidecar, headless, &model, &api),
             Err(code) => return code,
         },
+        (Some("reach"), _) => run_reach_demo(&sidecar, headless),
         (Some(_), _) => run_enter_demo(&sidecar, headless),
         (None, true) => run_browse_demo(&sidecar, headless),
         (None, false) => run_verify_demo(&sidecar, headless),
@@ -885,6 +1008,20 @@ document.getElementById('find').addEventListener('submit', (event) => {
   event.preventDefault();
   document.getElementById('result').textContent = 'submitted ' + document.getElementById('q').value;
 });
+</script>
+"#;
+
+/// Port 1 on loopback is an origin no fixture session is granted.
+const REACH_PAGE: &str = r#"
+<p id="late">loading</p>
+<p id="where">start</p>
+<button onclick="window.open('http://127.0.0.1:1/away')">Share</button>
+ENTRIES
+<p>RELEASE-MARKER 9.9.9</p>
+<a href="/?changelog"><code>Changelog</code> of releases</a>
+<script>
+fetch('/data').then(() => setTimeout(() => { document.getElementById('late').textContent = 'late content'; }, 300));
+if (location.search === '?changelog') document.getElementById('where').textContent = 'changelog open';
 </script>
 "#;
 
@@ -975,6 +1112,55 @@ mod tests {
         assert!(blocked_origin(&policy, &sneaky).is_some());
         let fine = Session::general(["https://fine.example/docs"]).unwrap();
         assert!(blocked_origin(&policy, &fine).is_none());
+    }
+
+    #[test]
+    fn observe_arguments_are_normalised_and_a_long_page_says_so() {
+        let wire = |args| model_wire("observe", &args).unwrap();
+        assert_eq!(wire(json!({"find": "", "page": null})), json!({"action":"observe"}));
+        assert_eq!(
+            wire(json!({"find": "Download", "page": "2"})),
+            json!({"action":"observe","find":"Download","page":2})
+        );
+        // Text that is not a number stays text, and the policy refuses it.
+        let session = Session::general(["https://example.com"]).unwrap();
+        assert!(session.decide(&wire(json!({"page": 2}))).is_allow());
+        assert!(!session.decide(&wire(json!({"page": "two"}))).is_allow());
+
+        let plain = json!({"action":"observe"});
+        let seen = |page, pages| json!({"page": page, "pages": pages, "text": "t", "elements": []});
+        assert!(page_note(&plain, &seen(1, 3)).unwrap().contains("page 1 of 3"));
+        assert!(page_note(&plain, &seen(4, 3)).unwrap().contains("no page 4"));
+        assert_eq!(page_note(&plain, &seen(3, 3)), None);
+        let miss = json!({"page": 1, "pages": 1, "text": "", "elements": []});
+        assert!(page_note(&json!({"action":"observe","find":"x"}), &miss).is_some());
+        assert_eq!(page_note(&plain, &miss), None);
+    }
+
+    #[test]
+    fn finish_is_refused_after_a_failed_call_in_the_same_turn() {
+        let done = json!({"answer": "zipfile — Work with ZIP archives"});
+        let observed = json!({"url": "https://docs.python.org/3/", "text": "Library index", "elements": []});
+        let malformed = json!({"refused": "malformed browser action"});
+        let stale = json!({"decision": "Refuse { reason: \"stale ref\" }"});
+        let verdict = |earlier: &[&Value]| finish_verdict(&done, earlier.iter().any(|outcome| action_failed(outcome)));
+        // First in its turn, or after only successful calls: accepted.
+        assert_eq!(verdict(&[]).as_deref(), Ok("zipfile — Work with ZIP archives"));
+        assert_eq!(
+            verdict(&[&observed, &observed]).as_deref(),
+            Ok("zipfile — Work with ZIP archives")
+        );
+        // After a refused or failed call, even one followed by a success: refused.
+        for earlier in [vec![&malformed], vec![&observed, &stale], vec![&stale, &observed]] {
+            let refused = verdict(&earlier).unwrap_err();
+            assert!(refused.contains("read the results, then finish"), "{refused}");
+        }
+        // A blank or missing answer stays refused either way.
+        for args in [json!({}), json!({"answer": "  "}), json!({"find": "zipfile"})] {
+            assert!(finish_verdict(&args, false)
+                .unwrap_err()
+                .starts_with("finish takes answer"));
+        }
     }
 
     #[test]

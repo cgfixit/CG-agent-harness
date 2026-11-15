@@ -14,6 +14,9 @@ use url::Url;
 const MAX_WAIT_MS: u32 = 5_000;
 const MAX_TYPE_CHARS: usize = 2_000;
 const MAX_GRANT_ORIGINS: usize = 32;
+/// An observation is one page of 40 elements and 4,000 characters.
+const MAX_OBSERVE_PAGE: u32 = 50;
+const MAX_FIND_CHARS: usize = 80;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -339,7 +342,18 @@ impl Session {
         };
         match action {
             WireAction::Navigate { url } => self.authorize_url(&url),
-            WireAction::Observe => Decision::Allow,
+            WireAction::Observe { page, find } => {
+                let find_ok = find.is_none_or(|text| (1..=MAX_FIND_CHARS).contains(&text.trim().chars().count()));
+                if page.is_none_or(|page| (1..=MAX_OBSERVE_PAGE).contains(&page)) && find_ok {
+                    Decision::Allow
+                } else {
+                    Decision::Refuse {
+                        reason: format!(
+                            "observe takes page 1-{MAX_OBSERVE_PAGE} and find of 1-{MAX_FIND_CHARS} characters"
+                        ),
+                    }
+                }
+            }
             WireAction::Wait { timeout_ms } => {
                 if timeout_ms == 0 || timeout_ms > MAX_WAIT_MS {
                     Decision::Refuse {
@@ -513,7 +527,7 @@ impl Session {
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 enum WireAction {
     Navigate { url: String },
-    Observe,
+    Observe { page: Option<u32>, find: Option<String> },
     FollowLink { ref_id: String },
     SelectTab { tab: String },
     Scroll { ref_id: Option<String>, dy: i32 },
@@ -749,6 +763,28 @@ mod tests {
         let (a, b) = (&obs.elements[0].ref_id, &obs.elements[1].ref_id);
         assert!(session.decide(&json!({"action":"follow_link","ref_id": a})).is_allow());
         assert!(!session.decide(&json!({"action":"follow_link","ref_id": b})).is_allow());
+    }
+
+    #[test]
+    fn observe_takes_only_a_bounded_page_and_find() {
+        let session = Session::general(["https://example.com"]).unwrap();
+        for ok in [
+            json!({"action":"observe"}),
+            json!({"action":"observe","page":1}),
+            json!({"action":"observe","page":50,"find":"Download"}),
+        ] {
+            assert!(session.decide(&ok).is_allow(), "{ok}");
+        }
+        for bad in [
+            json!({"action":"observe","page":0}),
+            json!({"action":"observe","page":51}),
+            json!({"action":"observe","page":-1}),
+            json!({"action":"observe","find":"  "}),
+            json!({"action":"observe","find":"x".repeat(81)}),
+            json!({"action":"observe","script":"alert(1)"}),
+        ] {
+            assert!(matches!(session.decide(&bad), Decision::Refuse { .. }), "{bad}");
+        }
     }
 
     #[test]
