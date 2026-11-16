@@ -265,24 +265,16 @@ under other service names and shared tools stay outside the purge.
 
 ## Browser sessions
 
-With literal `browser.enabled` (ships true), an administrator can type
-`/browse <site> <task>` or POST `/api/browser/run` with a task and the origins
-it may reach. The server runs
-`cgagentharness browser run` as a child with a small environment allowlist and
-kills its tree after `browser.timeout_sec`. The local model
-(`models.local_llm.model`) drives Playwright through `browser/sidecar.mjs`;
-prepare it once with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci` in `browser/`.
-The model may click and choose options, but password fields and every non-GET
-request stay with the operator; the console lists them after the answer.
-One task runs at a time.
+`/browse` (literal `browser.enabled`, ships true; administrators only) works in the
+app as in a browser console: [Browser use](Browser-Use.md) is the guide. In the
+app does not bundle `browser/`: set `browser.sidecar` to the absolute path of
+`browser/sidecar.mjs` in a repository checkout, run
+`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci` there once, and restart. The task
+drives installed Google Chrome, not the app's webview.
 
 ## Later: native computer use
 
 A browser grant does not authorize Accessibility, window capture or input.
-`src/common/computer.rs` maps the same wire ops to Kimi Computer Use
-(`kimi-cu mcp`) for one granted app and window and refuses its other tools;
-nothing calls it yet. The pilot is attended: one packaged app, fixture data,
-operator takeover, and one claim (certificate export, backend restart or
-shutdown) checked outside the model. TCC for Accessibility and Screen Recording
-stays on. Interactive Mac GUI acceptance stays the separate check in the
-release guide.
+`src/common/computer.rs` is an unused skeleton; options and the attended pilot
+are in [Browser use](Browser-Use.md#roadmap-computer-use). Interactive Mac GUI
+acceptance stays the separate check in the release guide.

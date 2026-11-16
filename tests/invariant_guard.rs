@@ -1840,7 +1840,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // 1,325 words, rounded up to the next 10 so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 107 words net of the post-#834 additions; measured 1223, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200; the 2026-11-11 trim left 7 words of room.
-    ("README.md", Root, 1430),
+    // why: the 2026-11-15 sync-and-trim pass cut README to 1138 words; rounded up to the next 10 so the cut stays cut.
+    ("README.md", Root, 1140),
     ("SECURITY.md", Root, 690),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
     // why: the sandboxed HTML preview route row; measured 1840 words.
@@ -1849,7 +1850,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator decision (2026-11-12): cap set to 1776, about 100 words of room, so a new route row does not need a cap change.
     ("docs/API_ROUTES.md", Guide, 1776),
     // why: operator-requested (2026-11-14) browser- and computer-use status and roadmap; measured 869, about 100 words of room.
-    ("docs/Browser-Use.md", Guide, 970),
+    // why: operator-approved (2026-11-15) +200 after #895, #896 and #897 left it at 967 of 970.
+    ("docs/Browser-Use.md", Guide, 1170),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 605 words net of the post-#834 additions; measured 2943, rounded up to the next 10 so the cut stays cut.
@@ -1879,7 +1881,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 353 words net of the post-#834 additions; measured 2064, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 2070, within a few words of the file.
-    ("docs/DESKTOP.md", Guide, 2270),
+    // why: the 2026-11-15 sync-and-trim pass moved the browser sections to docs/Browser-Use.md (2167 words); rounded up to the next 10.
+    ("docs/DESKTOP.md", Guide, 2170),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
     // why: hook behavior review trims duplicated reuse instructions; retain the smaller budget.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
@@ -2012,7 +2015,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // not a measured count, so Root also gets a slack override below.
 // why: the 2026-11-11 trim-and-refresh pass cut 7,470 Guide words (now 46,731); the Guide cap drops by the same amount, rounded up
 // to the next 100, so the gap to its words is unchanged and stays inside the 19,500 override.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 12_500), (Guide, 61_300), (Evidence, 700), (Agent, 21_910)];
+// why: operator-approved (2026-11-15) +200 Guide words with the docs/Browser-Use.md row raise (970 to 1170).
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 12_500), (Guide, 61_500), (Evidence, 700), (Agent, 21_910)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.

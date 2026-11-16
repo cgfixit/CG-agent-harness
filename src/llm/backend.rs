@@ -119,7 +119,8 @@ pub async fn resolve_local_backend(cfg: &AppConfig) -> Result<ResolvedLocalBacke
             provider: "ollama".into(),
             base_url: "http://127.0.0.1:11434/v1".into(),
             model: if primary_model.is_empty() {
-                "qwen3.8:27b-mlx".into()
+                // The shipped `models.local_llm.model`, not its parent tag (#772 O2).
+                "qwen3.8:27b-mlx-cg".into()
             } else {
                 primary_model
             },
@@ -265,7 +266,12 @@ mod tests {
         assert_eq!(sparse.reasoning_effort.as_deref(), Some("none"));
         // Nothing configured at all still resolves, so the app can start.
         let empty = resolved("{}").await;
-        assert!(!empty.model.is_empty());
+        let shipped = AppConfig::from_str(
+            include_str!("../../assets/config.default.yaml"),
+            std::path::Path::new("config.yaml"),
+        )
+        .unwrap();
+        assert_eq!(empty.model, shipped.str_or("models.local_llm.model", ""));
         assert!(empty.reasoning_effort.is_none());
         // A malformed effort is refused here as it is with a base_url set.
         let bad = AppConfig::from_str(

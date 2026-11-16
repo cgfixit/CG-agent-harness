@@ -8,17 +8,17 @@ This manual is static text bundled with the build and indexed at startup. It is 
 
 ## readme: capability overview
 
-- Web research: Search listings, permitted fetches and crawls, `/web research` jobs with checked quotes. Starts: On, allowlist mode, one seeded Google rule.
+- Web research: Search, permitted fetches and crawls, `/web research` jobs with checked quotes, local PDF text. An administrator's turn may read the URLs its own… Starts: On, allowlist mode, one seeded Google rule.
 - Goal loops: `/goal` and `/loop` continue a long piece in a run that outlives the browser. Starts: 50 turns, 200,000 tokens, two failed turns; cloud refuses loops.
-- Memory: Shared pinned notes, uploaded notes with retryable cleanup, and account-private facts you select, recall or accept from proposals. Starts: On; applying a proposal needs review.
-- Local chat: Streaming sessions, transcript search and export, text, DOCX and text-layer PDF attachments, skills, style presets, `/prompt`, sandboxed HTML preview. Starts: Ollama on loopback; no persona or style until you add one.
-- Analytics, diagnostics: Session, token and run history, **Estimate draft** before a cloud call, `/diag` redacted log tails. Starts: On; local inference unpriced; `/diag` admin or `portal_auditor` only.
+- Memory: Pinned and uploaded notes, account-private facts. Starts: On; proposals need review.
+- Local chat: Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles, `/prompt`. Starts: Ollama on loopback.
+- Browser tasks: `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Password fields and every request but GET or HEAD are held… Starts: On for administrators; needs Chrome and one `npm ci`.
+- Analytics, diagnostics: Token and run history, **Estimate draft**, `/diag` redacted logs. Starts: On; `/diag` admin or auditor.
 - Cloud chat: Optional Grok or Claude; only the new message leaves. Starts: Needs a provider key.
 
 ## readme: capability overview (part 2)
 
-- Browser tasks: `/browse <site> <task>`: the local model drives Chrome on the sites you name; anything that would send data waits for you. Status and roadmap. Starts: Off; an administrator sets `browser.enabled`.
-- Off by default: Reviewed coding in isolated clones, MCP tools and a read-only memory gateway, Netconnect LAN observation, browser tasks. Starts: Each needs explicit configuration.
+- Off by default: Reviewed coding in isolated clones, MCP tools and memory gateway, Netconnect LAN observation, Firecrawl fallback reads. Starts: Each needs configuration.
 
 ## agents: process and home map
 
@@ -34,12 +34,14 @@ This manual is static text bundled with the build and indexed at startup. It is 
  200 with `ok=false`; shim failures map to 400/502/504 and the disabled-layer
  banner to 409. Other subcommands (`serve`, `account`, `web`, `tls`,
  `mcp-key`) exit `1` on error; hidden `desktop` and `mcp-stdio-worker` exit `3`;
- hidden `pdf-text-worker` exits `0` text, `2` refused, `3` unusable environment.
+ hidden `pdf-text-worker` exits `0` text, `2` refused, `3` unusable environment;
+ hidden `browser` and `browser-verify` exit `0` passed, `2` failed, `3` bad
+ arguments or config.
 - Application state: `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`); coding writes
- stay in pipeline-created clones under `data/agentic/workspaces`.
 
 ## agents: process and home map (part 2)
 
+stay in pipeline-created clones under `data/agentic/workspaces`.
 - Before changing a feature, read its guide below and owning `INVARIANTS.md`
  section. Source index locates implementations.
 
@@ -144,7 +146,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/agent [help]`: Inspect coding commands; full workflow below
 - `/analytics`: Open read-only session, token and coding-run analytics
 - `/api`, `/api set <KEY> <value>`, `/api clear <KEY>`: Inspect, save or clear a managed credential; prefer the API Keys password fields; persistence
-- `/browse <site> [site ...] <task>`: Administrator browser task: the local model drives Chrome on the named sites only; status and roadmap
+- `/browse <site> [site ...] <task>`: Administrator browser task on the named sites only (browser use)
 - `/clear`: Clear visible output, staged coding/review state and chat continuation; saved chats, notes, persona and web context remain
 - `/connectors`: Connector catalog; does not activate connectors
 - `/diag [status]`, `/diag audit|spend|unslop|errors [flags]`, `/diag inject|forget`: Read allowlisted logs or stage one excerpt; aliases `/diagnostics`, `/logs`; diagnostics
@@ -312,10 +314,11 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/web/research/cancel`: Cancel the owner's running research, detached or not
 - POST, GET `/api/web/research/jobs`: Start a detached owner-bound research job (`/web job`) or list owned jobs; `GET…
 - POST `/api/web/inject`, `/api/web/forget`: Include your last selection in chat, or drop injected reads
-- GET `/api/mcp`: Declared MCP servers, namespaced tools and versioned stdio capability policies; no…
+- POST `/api/browser/run`: Administrator `/browse` task: `{task, origins}`; literal `browser.enabled`, one task at…
 
 ## api: registered routes (part 8)
 
+- GET `/api/mcp`: Declared MCP servers, namespaced tools and versioned stdio capability policies; no…
 - POST `/api/mcp/call`: Call one declared MCP tool; `confirm` is never defaulted
 - GET `/api/github/status`: GitHub credential and write-gate posture
 - GET `/api/agent/checks`: Check-profile names the browser may request
@@ -329,60 +332,62 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/agent/schedules/{schedule_id}/cancel`: Cancel a schedule
 - GET `/api/agent/runs`, `/api/agent/runs/{run_id}`: Retained run metadata; one run and its diff
 - POST `/api/agent/runs/{run_id}/decision`: Approve (`reason`, confirm) or reject
-- POST `/api/agent/runs/{run_id}/push`, `/api/agent/runs/{run_id}/publish`, `/api/agent/runs/{run_id}/discard`: Push the approved commit, open a draft PR, or discard the run
 
 ## api: registered routes (part 9)
 
+- POST `/api/agent/runs/{run_id}/push`, `/api/agent/runs/{run_id}/publish`, `/api/agent/runs/{run_id}/discard`: Push the approved commit, open a draft PR, or discard the run
 - GET `/api/notifications`: Owned destinations and retained delivery metadata; no URLs, credentials or job content
 - POST `/api/notifications/{delivery_id}/replay`: Confirmed owner replay within current grants/limits; never reruns a job
 
 ## troubleshooting: symptom to fix
 
+- `/browse` says playwright is not prepared → From `browser/`, run `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci`; the app needs an absolute `browser.sidecar` (browser use)
+- `/browse` refused: `BROWSER_ORIGIN_BLOCKED` or `BROWSER_PRIVATE_ADDRESS` → `/web status` lists the rules; browser tasks reach public addresses only
 - Spend reports partial, unreadable, too large or invalid UTF-8 → Preserve the ledger; inspect permissions and size. Missing evidence is not zero spend
 - A job finished but no webhook arrived → Check **Job webhooks**, `notification_delivery`/`notification_dropped` audit and `/agent job <id>`. Replay the delivery, never rerun the job
 - Webhook receiver reports duplicates → Deduplicate on stable `delivery_id`; batch membership can change. At most three attempts per delivery/replay
 - MCP reports `stdio MCP child closed` → Reproduce the child in a controlled environment. MCP diagnostics
 - Command or control missing → Check `/help`, `Resources/COMMIT`; install Latest or a successful main Bundle
-- Coding loop never fetches a file the planner asked for → Pre-stage ordinary files with `/agent read`. Sensitive basenames refuse operator and model reads (`sensitive_basename`); cloud refuses all model…
-- New sessions share old context → Inspect `/prompt`; `/session new` separates history only
-- Chat denies memory exists or claims it can run `gh` → Inspect `/memory`, `/tools` and `/prompt`; prose cannot run a commands
 
 ## troubleshooting: symptom to fix (part 2)
 
+- Coding loop never fetches a file the planner asked for → Pre-stage ordinary files with `/agent read`. Sensitive basenames refuse operator and model reads (`sensitive_basename`); cloud refuses all model…
+- New sessions share old context → Inspect `/prompt`; `/session new` separates history only
+- Chat denies memory exists or claims it can run `gh` → Inspect `/memory`, `/tools` and `/prompt`; prose cannot run a commands
 - Automatic suggestions do not appear → Read **Suggestion activity** and `/api/structured-memory` `automatic_suggestions`; check the `/memory capture` and `auto-suggest-*` gates.…
 - `/memory search`, `save` or `consolidate` reports the store closed or a gate off → Enable the store and restart; then `/memory retrieval on` or `/memory consolidation on`, plus `/memory auto-consolidate on` for auto. Explicit off…
 - Inventory says `tag_missing`, or fallback is selected unexpectedly → Compare inventory/config and persisted `/model`; restart to reevaluate fallback
+
+## troubleshooting: symptom to fix (part 3)
+
 - Soul says missing, or is saved but not in chat → `/soul edit` and `/soul on`; confirm Setup home, `/soul status` and `/prompt`; reload a stale editor before saving again
 - Persona/proposal save conflicts or history is full → Review content and history; archive records deliberately. Never blindly retry or delete the persona
 - Selected skill prevents chat → Restore `<home>/skills/<id>/SKILL.md` or `/skill clear`
 - `/loop` does not edit files, or warns its budgets are unlimited → Use goal staging; set a finite cap, then Reload limits
-
-## troubleshooting: symptom to fix (part 3)
-
 - Unattended `/loop` ends with `loop aborted` → Fix the cause the run states. A busy model is waited for, not counted; `/loop stop` ends the wait
 - Goal task is stale/interrupted/unavailable → Inspect `/goal task`, `/agent jobs` and `/agent runs`; never infer approval from `GOAL_DONE`
 - App asks for Rosetta or shows Intel-only kind → Verify the installed universal copy; see hardware
 - `401 Unauthorized` on harness requests → Sign in again; a fresh bootstrap account must replace its password. A harness key cannot grant access
+
+## troubleshooting: symptom to fix (part 4)
+
 - App reports a home ownership conflict → Quit that owner normally; do not delete its lock
 - App waits at startup → Check macOS prompts; quit, move the complete app to Applications and retry. Do not delete the home
 - Changing config appears to do nothing → Reload limits, or Cmd-Q/relaunch or restart `serve`. Window close only hides it
 - Offline preparation fails in the app → See Setup and offline Cargo verification; the app downloads nothing
 - Chat takes too long or times out → Check inventory, `/model` and Setup diagnostics; cancel with `/loop stop` rather than resubmitting
-
-## troubleshooting: symptom to fix (part 4)
-
 - Chat reports `502 HARNESS_LLM_ERROR` with `model server returned HTTP ...` → Check the endpoint, model and model-server logs; the harness drops the error body unread and never logs it
 - `Address already in use` when starting `serve` → `lsof -i :8790`; stop only a known owner or choose another `--port`. Each server needs its own home
 - `/agent` reports `gh: command not found` or "Agentic layer disabled" → `brew install gh && gh auth login`; follow coding config, then restart
+
+## troubleshooting: symptom to fix (part 5)
+
 - A write action is refused → See coding console steps and the kill switch; check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE`
 - Managed-key save or legacy migration fails → Keep plaintext opt-in off unless required and do not broaden file access; see credential privacy and recovery
 - `/diag` says `DIAG_DISABLED` → Set literal `true`, then restart
 - `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` → Use an admin or `portal_auditor` account
 - A read or `/diag inject` says `DIAG_SCANNER_REFUSED` → Narrow with `--event`, `--since` or `--last`; nothing from it is shown or staged
 - Chat says `DIAG_SURFACE_FORBIDDEN` → Send a local turn first, or `/diag forget`
-
-## troubleshooting: symptom to fix (part 5)
-
 - `/diag unslop` says `DIAG_NOT_FOUND` → `/diag` reads only `<home>/logs/unslop.jsonl`
 
 ## mcp: external client and private memory gateway

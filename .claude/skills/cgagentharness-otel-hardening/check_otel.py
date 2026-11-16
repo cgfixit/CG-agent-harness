@@ -270,8 +270,8 @@ EXPECTED_ARRAYS: dict[str, dict[str, object]] = {
         "anchor": r"pub const SECRET_ENV\b",
         "names": {
             "ANTHROPIC_API_KEY", "CGAGENTHARNESS_API_KEY", "CGAGENTHARNESS_WEBHOOK_TOKEN",
-            "CLAUDE_API_KEY", "DEEPAGENT_API_KEY", "GH_TOKEN", "GITHUB_TOKEN", "GROK_API_KEY",
-            "OPENAI_API_KEY", "SERPAPI_API_KEY", "XAI_API_KEY",
+            "CLAUDE_API_KEY", "DEEPAGENT_API_KEY", "FIRECRAWL_API_KEY", "GH_TOKEN", "GITHUB_TOKEN",
+            "GROK_API_KEY", "OPENAI_API_KEY", "SERPAPI_API_KEY", "TAVILY_API_KEY", "XAI_API_KEY",
         },
     },
     "mcp HIJACK_ENV": {
@@ -567,12 +567,12 @@ INVENTORY: tuple[dict[str, object], ...] = (
     },
     {
         "name": "playwright browser sidecar (node)", "category": 4, "controls": {},
-        "url": "docs/DESKTOP.md#browser-sessions",
+        "url": "docs/Browser-Use.md",
         "versions": "playwright 1.65.1 (browser/package-lock.json), installed Google Chrome channel",
         "enforcement": "env_clear() + browser_host::child_environment allowlist; "
                        "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1; loopback proxy refuses ungranted and non-public "
-                       "destinations; gate browser.enabled ships false",
-        "scope": "/api/browser/run and the hidden browser CLI", "reviewed": "2026-11-14",
+                       "destinations; Chrome sandbox on; gate browser.enabled ships true, admin only",
+        "scope": "/api/browser/run and the hidden browser CLI", "reviewed": "2026-11-15",
         "evidence": "src/common/browser_host.rs Sidecar::start; browser/sidecar.mjs startProxy()",
     },
     {
