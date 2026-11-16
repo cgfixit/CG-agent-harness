@@ -7,6 +7,7 @@ Shared test fixtures, `#[path]`-included by the integration tests.
   `real_bare_repo`, `install_fake_gh`, `run_agentic`, and
   `isolate_write_kill_switch`, which clears `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE`
   so write-gate tests fail on the gate under test, not the operator's environment.
+  `EnvGuard` sets or removes variables and restores the originals on drop, even on panic.
 
 `config_with` starts from the shipped YAML but overrides tuning and compaction
 for stable protocol fixtures. [`../shipped_config.rs`](../shipped_config.rs) checks
