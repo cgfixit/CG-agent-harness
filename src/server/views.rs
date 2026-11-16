@@ -95,9 +95,10 @@ fn connectors() -> Vec<Value> {
     ]
 }
 
-pub fn full_registry(home: &Home) -> Value {
+/// `registry` is [`Home::governed_registry_path`]: the file the agentic child uses.
+pub fn full_registry(home: &Home, registry: &Path) -> Value {
     let mut skills = list_repo_skills(&home.skills_dir());
-    skills.extend(list_governed_skills(&home.registry_path()));
+    skills.extend(list_governed_skills(registry));
     json!({"skills": skills, "tools": [], "connectors": connectors()})
 }
 
@@ -825,7 +826,7 @@ fn render_skills_diagram(rows: &[Value], wired: usize, total: usize) -> String {
     lines.join("\n")
 }
 
-pub fn list_wired_skills(home: &Home) -> Value {
+pub fn list_wired_skills(home: &Home, registry: &Path) -> Value {
     let repo_entries = list_repo_skills(&home.skills_dir());
     let mut rows: Vec<Value> = Vec::new();
     for entry in &repo_entries {
@@ -846,7 +847,7 @@ pub fn list_wired_skills(home: &Home) -> Value {
                          "source": "agent-check", "type": "fixed_check", "id": format!("check:{name}"), "invoked": false, "wired": true}),
         );
     }
-    for entry in list_governed_skills(&home.registry_path()) {
+    for entry in list_governed_skills(registry) {
         rows.push(json!({"name": entry["name"], "role": "governed", "path": entry["path"],
                          "description": clip_desc(entry["description"].as_str().unwrap_or("")),
                          "source": "agentic-registry", "invoked": false, "wired": false}));

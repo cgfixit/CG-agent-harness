@@ -758,6 +758,38 @@ async fn web_tool_is_allowlist_only_ssrf_safe_and_bounded() {
 
 // ---------------------------------------------------------------- views
 
+/// The console lists the registry file the agentic child reads and writes
+/// (`agentic.registry_path`), not only the seeded default.
+#[tokio::test]
+async fn registry_and_skills_views_follow_the_configured_registry_path() {
+    let model = start_mock_model().await;
+    let mut opts = ServerOptions::default();
+    opts.overrides.push((
+        "agentic.registry_path".into(),
+        "\"data/agentic/team_skills.json\"".into(),
+    ));
+    let s = spawn_server(&model.base_url(), opts).await;
+    std::fs::write(
+        s.home.join("data/agentic/team_skills.json"),
+        r#"{"version":1,"skills":{"team-skill":{"name":"team-skill","description":"from the configured file"}}}"#,
+    )
+    .unwrap();
+    // The seeded default still exists and is empty: reading it would list nothing.
+    assert!(s.home.join("data/agentic/skills_registry.json").is_file());
+    let (status, reg) = s.open_get("/api/registry").await;
+    assert_eq!(status, 200);
+    let governed = |rows: &serde_json::Value| {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["name"] == "team-skill" && r["source"] == "agentic-registry")
+    };
+    assert!(governed(&reg["skills"]), "{reg}");
+    let (status, skills) = s.open_get("/api/skills").await;
+    assert_eq!(status, 200);
+    assert!(governed(&skills["skills"]), "{skills}");
+}
+
 #[tokio::test]
 async fn tools_and_skills_views_report_wiring() {
     let model = start_mock_model().await;

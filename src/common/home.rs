@@ -23,7 +23,7 @@
 //!   tmp/               staged shim temp files
 //! ```
 
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -81,6 +81,53 @@ const EMBEDDED_SKILLS: [(&str, &str); 2] = [
         include_str!("../../assets/skills/karpathy-guidelines/SKILL.md"),
     ),
 ];
+
+/// Lexically normalize (`.`/`..` collapsed) without touching the filesystem.
+pub fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        match comp {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    out.push("..");
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// A configured data path must resolve INSIDE `<home>/data/`.
+pub fn resolve_data_path(raw: &str, field: &str, home_root: &Path) -> Result<PathBuf> {
+    if raw.trim().is_empty() {
+        return Err(HarnessError::agentic_config(format!("{field} is required"))
+            .detail("hint", "Use a path under the home data/ tree."));
+    }
+    let expanded = if let Some(rest) = raw.strip_prefix("~/") {
+        std::env::var("HOME")
+            .map(|h| PathBuf::from(h).join(rest))
+            .unwrap_or_else(|_| PathBuf::from(raw))
+    } else {
+        PathBuf::from(raw)
+    };
+    let joined = if expanded.is_absolute() {
+        expanded
+    } else {
+        home_root.join(expanded)
+    };
+    let resolved = lexical_normalize(&joined);
+    let data_root = lexical_normalize(&home_root.join("data"));
+    if !resolved.starts_with(&data_root) || resolved == data_root {
+        return Err(HarnessError::agentic_config(format!(
+            "{field} must resolve to a path inside the home's data/ tree"
+        ))
+        .detail("data_root", data_root.display().to_string())
+        .detail("received", raw));
+    }
+    Ok(resolved)
+}
 
 #[derive(Debug, Clone)]
 pub struct Home {
@@ -173,6 +220,14 @@ impl Home {
     }
     pub fn registry_path(&self) -> PathBuf {
         self.root.join("data").join("agentic").join("skills_registry.json")
+    }
+    /// The governed registry the agentic child reads and writes:
+    /// `agentic.registry_path` through the child's own resolver. A missing key
+    /// is the seeded file; so is a value the child refuses at load.
+    pub fn governed_registry_path(&self, cfg: &AppConfig) -> PathBuf {
+        cfg.str_opt("agentic.registry_path")
+            .and_then(|raw| resolve_data_path(&raw, "agentic.registry_path", &self.root).ok())
+            .unwrap_or_else(|| self.registry_path())
     }
     /// Fixed layout path read by the panels route; not a config tunable.
     pub fn optimizer_runs_dir(&self) -> PathBuf {
@@ -361,6 +416,25 @@ pub fn is_loopback_host(host: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn governed_registry_follows_the_configured_path_only_inside_data() {
+        let home = Home::at(PathBuf::from("/h"));
+        let cfg = |line: &str| AppConfig::from_str(&format!("agentic:\n{line}"), Path::new("config.yaml")).unwrap();
+        assert_eq!(
+            home.governed_registry_path(&cfg("  registry_path: data/agentic/team.json\n")),
+            PathBuf::from("/h/data/agentic/team.json")
+        );
+        // A missing key, and a value the agentic child refuses at load, read the seeded file.
+        for line in [
+            "  enabled: false\n",
+            "  registry_path: /etc/passwd\n",
+            "  registry_path: data/../escape.json\n",
+            "  registry_path: \"\"\n",
+        ] {
+            assert_eq!(home.governed_registry_path(&cfg(line)), home.registry_path(), "{line}");
+        }
+    }
 
     #[test]
     fn loopback_host_accepts_only_the_three_loopback_names() {

@@ -5,7 +5,6 @@
 //! an origin. The Playwright process is not started here.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::net::IpAddr;
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -564,10 +563,15 @@ fn parse_origin(raw: &str) -> Result<OriginKey, PolicyError> {
     if host.is_empty() {
         return Err(PolicyError::BadOrigin("url has no host".into()));
     }
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if ip.is_unspecified() || ip.is_multicast() {
-            return Err(PolicyError::BadOrigin("unspecified or multicast host".into()));
-        }
+    // The parsed host, not its text: an IPv6 `host_str` keeps its brackets and
+    // would never parse as an address.
+    let unroutable = match url.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_unspecified() || ip.is_multicast(),
+        Some(url::Host::Ipv6(ip)) => ip.is_unspecified() || ip.is_multicast(),
+        _ => false,
+    };
+    if unroutable {
+        return Err(PolicyError::BadOrigin("unspecified or multicast host".into()));
     }
     let port = url
         .port_or_known_default()
@@ -634,6 +638,25 @@ mod tests {
         assert!(session
             .decide(&json!({"action":"follow_link","ref_id": link.ref_id}))
             .is_allow());
+    }
+
+    #[test]
+    fn unspecified_and_multicast_literals_are_not_grantable_in_either_family() {
+        for raw in [
+            "https://0.0.0.0/",
+            "https://224.0.0.1/",
+            "https://[::]/",
+            "https://[::]:8080/",
+            "https://[ff02::1]/",
+        ] {
+            assert!(matches!(parse_origin(raw), Err(PolicyError::BadOrigin(_))), "{raw}");
+        }
+        // A routable literal still parses; the grant keeps the brackets Chrome sends.
+        assert_eq!(
+            parse_origin("https://[2606:4700::1111]/").unwrap().host,
+            "[2606:4700::1111]"
+        );
+        assert_eq!(parse_origin("https://8.8.8.8/").unwrap().host, "8.8.8.8");
     }
 
     #[test]

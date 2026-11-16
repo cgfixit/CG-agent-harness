@@ -296,7 +296,11 @@ fn workspace_reads_and_inspection_stay_inside_the_clone() {
     std::os::unix::fs::symlink(dir.path(), clone.join("escape")).unwrap();
     // Reads: containment + cap + not-a-file.
     assert_eq!(ws.read_file("target.txt").unwrap(), "changed\n");
-    assert!(ws.read_file("../config.yaml").is_err());
+    // The `..` target is the real config two levels above `ws/tmpx/repo`: a
+    // probe at a missing file would pass on "not found" with no jail at all.
+    let outside = "../../../config.yaml";
+    assert!(clone.join(outside).is_file(), "the escape probe must reach a real file");
+    assert!(ws.read_file(outside).is_err());
     assert!(ws.read_file("escape/config.yaml").is_err());
     assert!(ws.read_file("src").is_err());
     assert!(ws.untracked_files().unwrap().contains(&"src/new.rs".to_string()));
@@ -340,7 +344,14 @@ fn read_jail_refuses_symlink_escapes_without_following_the_leaf() {
     std::os::unix::fs::symlink(dir.path(), clone.join("out_dir")).unwrap();
     assert!(ws.read_file("out_dir/secret.txt").is_err());
     assert!(!ws.read_file("README.md").unwrap().is_empty());
-    for bad in ["../secret.txt", "/etc/passwd", "src/../README.md", "a/../../x"] {
+    for bad in [
+        "../../../secret.txt",
+        "/etc/passwd",
+        "src/../README.md",
+        "src/../../../../secret.txt",
+    ] {
+        // Each target exists, so only the jail can refuse it.
+        assert!(clone.join(bad).is_file(), "{bad} must reach a real file");
         assert!(ws.read_file(bad).is_err(), "{bad}");
     }
     assert!(!std::fs::read_to_string(&outside).unwrap().is_empty());
