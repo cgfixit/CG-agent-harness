@@ -407,14 +407,13 @@ impl Session {
                 }
             };
         }
+        // A link's target must be granted. A link with no target (a scripted
+        // `role="link"`) is a button: whatever its script loads still meets the
+        // page route, the network gate and the proxy, which hold the grants.
         if role == "link" {
-            let href = fact.href.as_deref();
-            return match href {
-                Some(href) => self.authorize_url(href),
-                None => Decision::Handoff {
-                    reason: "link has no resolvable href".into(),
-                },
-            };
+            if let Some(href) = fact.href.as_deref() {
+                return self.authorize_url(href);
+            }
         }
         // Buttons, menus and the like may run: the sidecar holds every non-GET
         // request, so a click can change the page but not write to a server.
@@ -638,6 +637,36 @@ mod tests {
         assert!(session
             .decide(&json!({"action":"follow_link","ref_id": link.ref_id}))
             .is_allow());
+    }
+
+    #[test]
+    fn a_link_without_a_target_is_clicked_like_a_button_and_a_target_must_be_granted() {
+        let mut session = Session::general(["https://example.com/"]).unwrap();
+        let link = |name: &str, href: Option<&str>| ElementDraft {
+            role: "link".into(),
+            name: name.into(),
+            href: href.map(str::to_string),
+            input: InputKind::None,
+            snapshot_ref: None,
+        };
+        let obs = session
+            .mint(
+                vec![],
+                vec![
+                    link("Scripted", None),
+                    link("Away", Some("https://other.example/")),
+                    link("Home", Some("https://example.com./start")),
+                ],
+            )
+            .unwrap();
+        let decide =
+            |action: &str, i: usize| session.decide(&json!({"action": action,"ref_id": obs.elements[i].ref_id}));
+        // Was a handoff, which ended the whole task.
+        assert!(decide("click", 0).is_allow());
+        assert!(decide("follow_link", 0).is_allow());
+        assert!(matches!(decide("follow_link", 1), Decision::Refuse { .. }));
+        // A trailing dot names the same grant here and in the sidecar's originOf.
+        assert!(decide("follow_link", 2).is_allow());
     }
 
     #[test]
