@@ -1887,7 +1887,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the 2026-11-11 trim-and-refresh pass cut 353 words net of the post-#834 additions; measured 2064, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 2070, within a few words of the file.
     // why: the 2026-11-15 sync-and-trim pass moved the browser sections to docs/Browser-Use.md (2167 words); rounded up to the next 10.
-    ("docs/DESKTOP.md", Guide, 2170),
+    ("docs/DESKTOP.md", Guide, 2160),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
     // why: hook behavior review trims duplicated reuse instructions; retain the smaller budget.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.

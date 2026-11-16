@@ -208,16 +208,16 @@ scripts/verify-desktop-bundle.sh 'dist/CG Agent Harness.app' universal
 (cd dist && shasum -a 256 -c SHA256SUMS)
 ```
 
-Use rustup's Cargo so each package's toolchain file applies. The packager
-combines both backends with `lipo`, signs that file, then builds both shell
-slices against its SHA-256; do not re-sign the sidecar afterward.
-`scripts/verify-desktop-bundle.sh` hashes the staged `Contents/MacOS/cgagentharness`
-after the final `.app` codesign and requires that SHA-256 to still appear in the
-shell binary (`CGAH_BACKEND_SHA256`). Packaging refuses a dirty tree unless
-`CGAH_ALLOW_DIRTY=1`, which marks the bundle as development. Outputs land in
-`dist/`; `Contents/Resources/COMMIT` identifies the source commit. Omitting
-`--universal` keeps an arm64 development build. Cross-building Intel is not
-native Intel acceptance, and byte-identical rebuilds are not claimed.
+Use rustup Cargo for both pinned toolchains. Packaging combines backend slices,
+signs them, then builds shell slices against that SHA-256; never re-sign the
+sidecar afterward. `scripts/verify-desktop-bundle.sh` requires the final
+sidecar hash to match the shell's embedded `CGAH_BACKEND_SHA256`.
+Dirty trees require `CGAH_ALLOW_DIRTY=1` and produce a marked development build.
+Outputs go to `dist/`; `Contents/Resources/COMMIT` records the source commit.
+Cargo outputs stay in this checkout's `target/` and `desktop/target/`, overriding
+inherited `CARGO_TARGET_DIR` to avoid packaging stale files. Without `--universal`,
+builds are arm64. Intel cross-builds do not establish native acceptance or
+byte-identical reproducibility.
 
 Desktop CI (bundle, release or dispatch) checks both architectures, system
 linkage, nested signatures, resources, CLI/worker dispatch, policy tests, the
