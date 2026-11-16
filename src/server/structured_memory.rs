@@ -34,6 +34,16 @@ use crate::common::private_sqlite::{self, present};
 pub const SCHEMA_VERSION: i64 = 4;
 pub const PUBLIC_ID_LEN: usize = 32;
 pub const SUMMARIZER_VERSION: &str = "consolidator-v2";
+/// Every completion-suggestion `summarizer_version` starts with this.
+pub const SUGGESTION_VERSION_PREFIX: &str = "completion-suggestions-";
+
+/// Completion-suggestion runs share the run table but never own an episode's
+/// `consolidation_state`: only consolidation runs move it (pending, done, none).
+/// Otherwise a finished suggestion hides the episode from later human-summary
+/// consolidation, and a failed one resets an already consolidated episode.
+fn tracks_episode_state(summarizer_version: &str) -> bool {
+    !summarizer_version.starts_with(SUGGESTION_VERSION_PREFIX)
+}
 const MARKER_BODY: &[u8] = b"sqlite3-v1\n";
 
 const FACTS_PROPOSALS_DDL: &str = "
@@ -637,6 +647,13 @@ fn sql(error: rusqlite::Error) -> HarnessError {
 }
 
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
+/// Finished (`done`) run receipts kept per owner; older ones are pruned when a
+/// run finishes. Failed, cancelled, idle and running receipts are never pruned:
+/// auto-consolidation reads failed/cancelled ones to skip their episodes.
+pub(crate) const DONE_RUN_RECEIPTS_KEPT: i64 = 200;
+/// Above this size the store logs a warning at open, well before
+/// `MAX_FILE_BYTES` would refuse to open it (which stops the whole server).
+const FILE_WARN_BYTES: u64 = MAX_FILE_BYTES / 4 * 3;
 
 fn connect(path: &Path) -> Result<Connection> {
     private_sqlite::connect(path, MAX_FILE_BYTES, "structured memory", invalid)
@@ -875,6 +892,15 @@ impl StructuredMemoryStore {
             .ok_or_else(|| invalid("missing structured memory directory"))?;
         std::fs::create_dir_all(parent)?;
         let conn = if present(&path)? {
+            if let Ok(meta) = std::fs::symlink_metadata(&path) {
+                if meta.len() > FILE_WARN_BYTES {
+                    tracing::warn!(
+                        bytes = meta.len(),
+                        limit = MAX_FILE_BYTES,
+                        "structured memory store is above 75% of its size limit; past it the server will not start"
+                    );
+                }
+            }
             let mut conn = connect(&path)?;
             migrate_schema(&mut conn)?;
             check_schema(&conn)?;
@@ -2020,7 +2046,9 @@ impl StructuredMemoryStore {
         Ok(count > 0)
     }
 
-    fn prune_owner_episodes(tx: &rusqlite::Transaction<'_>, owner: &str, limits: Limits) -> Result<()> {
+    /// Prunes `owner`'s oldest unreferenced episodes, never `keep`: the row the
+    /// caller is writing, which it reads back after pruning.
+    fn prune_owner_episodes(tx: &rusqlite::Transaction<'_>, owner: &str, limits: Limits, keep: &str) -> Result<()> {
         loop {
             let rows: i64 = tx
                 .query_row("SELECT COUNT(*) FROM episodes WHERE owner_id=?1", params![owner], |r| {
@@ -2046,8 +2074,9 @@ impl StructuredMemoryStore {
                          WHERE r.owner_id=e.owner_id AND r.episode_id=e.public_id AND p.status='pending'
                        )
                        AND (expires_ts<=?2 OR ?3=1)
+                       AND public_id<>?4
                      ORDER BY created_ts ASC, public_id ASC LIMIT 1",
-                    params![owner, now, if over { 1 } else { 0 }],
+                    params![owner, now, if over { 1 } else { 0 }, keep],
                     |r| r.get(0),
                 )
                 .optional()
@@ -2129,7 +2158,7 @@ impl StructuredMemoryStore {
                 ],
             )
             .map_err(sql)?;
-            Self::prune_owner_episodes(&tx, owner, self.limits)?;
+            Self::prune_owner_episodes(&tx, owner, self.limits, &id)?;
             let episode = tx
                 .query_row(
                     &format!("{} WHERE public_id=?1", Self::episode_select()),
@@ -2170,7 +2199,7 @@ impl StructuredMemoryStore {
             params![summary, byte_len, owner, id],
         )
         .map_err(sql)?;
-        Self::prune_owner_episodes(&tx, owner, self.limits)?;
+        Self::prune_owner_episodes(&tx, owner, self.limits, id)?;
         let episode = tx
             .query_row(
                 &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::episode_select()),
@@ -2574,7 +2603,9 @@ impl StructuredMemoryStore {
                 params![now, owner, run.id],
             )
             .map_err(sql)?;
-            Self::mark_episodes_state(&tx, owner, episode_ids, "pending")?;
+            if tracks_episode_state(summarizer_version) {
+                Self::mark_episodes_state(&tx, owner, episode_ids, "pending")?;
+            }
             let started = tx
                 .query_row(
                     &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::run_select()),
@@ -2602,7 +2633,9 @@ impl StructuredMemoryStore {
             params![id, owner, encoded, summarizer_version, now, key],
         )
         .map_err(sql)?;
-        Self::mark_episodes_state(&tx, owner, episode_ids, "pending")?;
+        if tracks_episode_state(summarizer_version) {
+            Self::mark_episodes_state(&tx, owner, episode_ids, "pending")?;
+        }
         let started = tx
             .query_row(
                 &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::run_select()),
@@ -2693,7 +2726,7 @@ impl StructuredMemoryStore {
             params![now, owner, id],
         )
         .map_err(sql)?;
-        if current.state == "running" {
+        if current.state == "running" && tracks_episode_state(&current.summarizer_version) {
             Self::mark_episodes_state(&tx, owner, &current.episode_ids, "none")?;
         }
         let run = tx
@@ -2746,7 +2779,7 @@ impl StructuredMemoryStore {
             params![state, error_class, now, owner, id, PREEMPTED_CLASS],
         )
         .map_err(sql)?;
-        if current.state == "running" {
+        if current.state == "running" && tracks_episode_state(&current.summarizer_version) {
             Self::mark_episodes_state(&tx, owner, &current.episode_ids, "none")?;
         }
         let run = tx
@@ -2828,7 +2861,18 @@ impl StructuredMemoryStore {
             ],
         )
         .map_err(sql)?;
-        Self::mark_episodes_state(&tx, owner, &current.episode_ids, "done")?;
+        if tracks_episode_state(&current.summarizer_version) {
+            Self::mark_episodes_state(&tx, owner, &current.episode_ids, "done")?;
+        }
+        // One receipt per suggestion-eligible turn would otherwise grow the store
+        // toward MAX_FILE_BYTES, past which the server refuses to start.
+        tx.execute(
+            "DELETE FROM consolidation_runs WHERE owner_id=?1 AND state='done' AND public_id NOT IN (
+               SELECT public_id FROM consolidation_runs WHERE owner_id=?1 AND state='done'
+               ORDER BY COALESCE(ended_ts, created_ts) DESC, public_id DESC LIMIT ?2)",
+            params![owner, DONE_RUN_RECEIPTS_KEPT],
+        )
+        .map_err(sql)?;
         let run = tx
             .query_row(
                 &format!("{} WHERE owner_id=?1 AND public_id=?2", Self::run_select()),
@@ -4266,6 +4310,170 @@ mod tests {
         assert!(!ids.contains(&second.id.as_str()));
         assert!(ids.contains(&third.id.as_str()));
         assert_eq!(listed.len(), 2);
+    }
+
+    fn staged(store: &StructuredMemoryStore, owner: &str, chars: usize) -> Episode {
+        store
+            .stage_episode(
+                owner,
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: chars,
+                    assistant_chars: chars,
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn suggestion_runs_leave_consolidation_state_alone() {
+        use crate::server::structured_memory_suggest::VERSION as SUGGEST;
+        assert!(
+            SUGGEST.starts_with(SUGGESTION_VERSION_PREFIX),
+            "suggestion runs must not track episode state"
+        );
+        // (a) A successful suggestion does not hide the episode from later
+        // human-summary consolidation.
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let e = staged(&store, "user_alice", 1);
+        store
+            .set_episode_summary("user_alice", &e.id, "Prefer metric units.", "operator summary")
+            .unwrap();
+        let ids = std::slice::from_ref(&e.id);
+        let queued = store.queue_suggestion_run("user_alice", ids, SUGGEST).unwrap();
+        let run = store.begin_suggestion_run("user_alice", ids, SUGGEST).unwrap();
+        assert_eq!(run.id, queued.id);
+        store
+            .finish_consolidation_run("user_alice", &run.id, "local-test-model", 0, 0, &[])
+            .unwrap();
+        assert_eq!(
+            store.get_episode("user_alice", &e.id).unwrap().consolidation_state,
+            "none"
+        );
+        assert_eq!(
+            store.next_auto_consolidation_batch().unwrap(),
+            Some(("user_alice".to_string(), vec![e.id.clone()]))
+        );
+        // (b) A failed suggestion does not reset an already consolidated
+        // episode, so auto-consolidation never re-picks it.
+        let dir = tempfile::tempdir().unwrap();
+        let store = super::tests::store(dir.path());
+        let e = staged(&store, "user_alice", 1);
+        store
+            .set_episode_summary("user_alice", &e.id, "Prefer metric units.", "operator summary")
+            .unwrap();
+        let ids = std::slice::from_ref(&e.id);
+        let manual = store
+            .begin_consolidation_run("user_alice", ids, SUMMARIZER_VERSION)
+            .unwrap();
+        store
+            .finish_consolidation_run("user_alice", &manual.id, "local-test-model", 0, 0, &[])
+            .unwrap();
+        assert_eq!(
+            store.get_episode("user_alice", &e.id).unwrap().consolidation_state,
+            "done"
+        );
+        store.queue_suggestion_run("user_alice", ids, SUGGEST).unwrap();
+        let run = store.begin_suggestion_run("user_alice", ids, SUGGEST).unwrap();
+        store.fail_consolidation_run("user_alice", &run.id, "bad_json").unwrap();
+        assert_eq!(
+            store.get_episode("user_alice", &e.id).unwrap().consolidation_state,
+            "done"
+        );
+        assert_eq!(store.next_auto_consolidation_batch().unwrap(), None);
+    }
+
+    #[test]
+    fn only_the_newest_done_run_receipts_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let e = staged(&store, "user_alice", 1);
+        let ids = std::slice::from_ref(&e.id);
+        // A distinct version per run gives each its own idempotency key.
+        for i in 0..(DONE_RUN_RECEIPTS_KEPT + 5) {
+            let run = store
+                .begin_consolidation_run("user_alice", ids, &format!("consolidator-test-{i}"))
+                .unwrap();
+            store
+                .finish_consolidation_run("user_alice", &run.id, "local-test-model", 0, 0, &[])
+                .unwrap();
+        }
+        let failed = store
+            .begin_consolidation_run("user_alice", ids, "consolidator-test-failed")
+            .unwrap();
+        store
+            .fail_consolidation_run("user_alice", &failed.id, "bad_json")
+            .unwrap();
+        // Count rows directly: the listing itself is capped.
+        let count = |sql: &str, version: &str| -> i64 {
+            store
+                .lock()
+                .query_row(sql, params!["user_alice", version], |r| r.get(0))
+                .unwrap()
+        };
+        let done =
+            "SELECT COUNT(*) FROM consolidation_runs WHERE owner_id=?1 AND state='done' AND summarizer_version LIKE ?2";
+        assert_eq!(
+            count(done, "%"),
+            DONE_RUN_RECEIPTS_KEPT,
+            "older done receipts are pruned"
+        );
+        assert_eq!(count(done, "consolidator-test-0"), 0, "the oldest is gone");
+        let newest = format!("consolidator-test-{}", DONE_RUN_RECEIPTS_KEPT + 4);
+        assert_eq!(count(done, &newest), 1, "the newest stays");
+        let failed_rows =
+            "SELECT COUNT(*) FROM consolidation_runs WHERE owner_id=?1 AND state='failed' AND summarizer_version=?2";
+        assert_eq!(
+            count(failed_rows, "consolidator-test-failed"),
+            1,
+            "failed receipts are kept"
+        );
+        let _ = failed;
+    }
+
+    #[test]
+    fn pruning_never_deletes_the_row_being_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = AppConfig::embedded_default().replace("max_episodes_per_owner: 128", "max_episodes_per_owner: 2");
+        let cfg = AppConfig::from_str(&text, &dir.path().join("config.yaml")).unwrap();
+        let store = StructuredMemoryStore::open(&dir.path().join("structured.sqlite3"), &cfg).unwrap();
+        let first = staged(&store, "user_alice", 1);
+        let second = staged(&store, "user_alice", 2);
+        for e in [&first, &second] {
+            store
+                .create_proposal(
+                    "user_alice",
+                    ProposalDraft {
+                        action: "add",
+                        content: Some("Keep tabs"),
+                        category: Some("pref"),
+                        target_fact_id: None,
+                        expected_revision: None,
+                        expected_digest: None,
+                        source_episode_ids: std::slice::from_ref(&e.id),
+                    },
+                )
+                .unwrap();
+        }
+        // Every older row is referenced by a pending proposal: the third episode
+        // is refused as over the cap, not deleted and reported as an I/O error.
+        let err = store
+            .stage_episode(
+                "user_alice",
+                EpisodeDraft {
+                    model_id: "local-test-model",
+                    outcome: "completed",
+                    user_chars: 3,
+                    assistant_chars: 3,
+                    sensitivity: "normal",
+                },
+            )
+            .unwrap_err();
+        assert_eq!(err.code, "STRUCTURED_MEMORY_CAP", "{}", err.message);
+        assert_eq!(store.list_episodes("user_alice").unwrap().len(), 2);
     }
 
     #[test]

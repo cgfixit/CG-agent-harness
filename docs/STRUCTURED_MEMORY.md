@@ -155,7 +155,10 @@ Accepted inputs receive durable metadata-only `idle` receipts, then become
 `running`. Expiry, disabled gates, source clear, cancellation and inference
 errors keep distinct reasons. Reopen marks queued/preempted receipts
 `failed/input_lost_on_restart` and interrupted generation `failed/interrupted`;
-inputs are never replayed, and pending proposals persist.
+inputs are never replayed, and pending proposals persist. Each owner keeps
+its newest 200 `done` run receipts; older ones are pruned as runs finish, while
+failed, cancelled, queued and running receipts stay. Above 48 MiB the store
+logs a warning at open: past its 64 MiB limit the server refuses to start.
 Completion replies and detached jobs retain episode/run IDs or refusal reasons.
 RAM status keeps latest attempts for `suggestion_max_queue` owners; durable
 runs remain separately available.
@@ -253,8 +256,9 @@ selected facts are dropped as `cloud_chat`.
   metadata alone. Auto-batching requires a nonblank semantic summary and an
   unexpired `none`/`pending` row; running owners and episodes from
   failed/cancelled current-version runs are skipped until a manual retry,
-  including after restart. Completion-suggestion failures do not block
-  human-summary consolidation.
+  including after restart. Completion-suggestion runs never change an
+  episode's consolidation state, so neither their success nor their failure
+  blocks or repeats human-summary consolidation.
 - **Suggestion quality.** `consolidator-v2` asks for durable preferences,
   identity, corrections or standing constraints supported by semantic summaries.
   Temporary plans, jokes, tool/status dumps, errands and unsupported guesses
