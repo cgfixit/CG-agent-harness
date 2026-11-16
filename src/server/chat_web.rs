@@ -1070,7 +1070,7 @@ async fn run_inner(
                         // Readable only because one of this turn's searches
                         // listed it: marked on the result and audited.
                         let by_grant = web.read_by_search_grant(&args.url);
-                        evidence::read(web, &args.url, &query, refresh, &state.audit, owner)
+                        evidence::read(web, &args.url, &query, refresh, refresh_reused, &state.audit, owner)
                             .await
                             .map(|(mut result, found)| {
                                 selected = found;
