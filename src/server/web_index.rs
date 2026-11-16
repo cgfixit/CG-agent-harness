@@ -710,27 +710,34 @@ impl WebTool {
             .try_acquire_owned()
             .map_err(|_| error("WEB_BUSY", "a web search is already running"))?;
         let coverage = self.discover(group).await?;
-        let (pages, cache_errors) = self.cached_pages(group)?;
-        let policy = self.policy()?;
+        // Reading, hashing and parsing the whole page cache (16 MiB at the default
+        // cap), the policy reloads and the fsync'd `store_last` all block: they run
+        // on the blocking pool, as `web_research::lookup` already does.
+        let tool = self.clone();
         let q = query.to_string();
         let selected = group.map(str::to_string);
-        let found = tokio::task::spawn_blocking(move || {
+        let owner = owner.to_string();
+        let (found, cache_errors) = tokio::task::spawn_blocking(move || -> Result<_> {
             let _guard = guard;
-            retrieve(&pages, &policy, &q, selected.as_deref(), count)
+            let group = selected.as_deref();
+            let (pages, cache_errors) = tool.cached_pages(group)?;
+            let policy = tool.policy()?;
+            let found = retrieve(&pages, &policy, &q, group, count)?;
+            tool.check_enabled()?;
+            let current = tool.policy()?;
+            let found: Vec<_> = found
+                .into_iter()
+                .filter(|p| current.authorize(&p.url, group).is_ok())
+                .collect();
+            if let Some(first) = found.first() {
+                tool.store_last(&tool.read_page(&tool.cache_path(&first.url), group)?, group, &owner)?;
+            } else {
+                tool.forget(enabled, &owner)?;
+            }
+            Ok((found, cache_errors))
         })
         .await
         .map_err(|_| error("WEB_INDEX_FAILED", "passage search failed"))??;
-        self.check_enabled()?;
-        let current = self.policy()?;
-        let found: Vec<_> = found
-            .into_iter()
-            .filter(|p| current.authorize(&p.url, group).is_ok())
-            .collect();
-        if let Some(first) = found.first() {
-            self.store_last(&self.read_page(&self.cache_path(&first.url), group)?, group, owner)?;
-        } else {
-            self.forget(enabled, owner)?;
-        }
         let hits: Vec<_> = found
             .iter()
             .map(|p| json!({"url":p.url,"snippets":[p.text],"passage_id":p.id}))

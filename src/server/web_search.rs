@@ -629,8 +629,21 @@ impl WebTool {
             return 0;
         };
         let mut held = grants.lock().unwrap_or_else(|p| p.into_inner());
-        let mut next = (**held).clone();
-        let before = next.len();
+        let before = held.len();
+        let next = self.planned_grants(listing, &held);
+        let added = next.len() - before;
+        *held = Arc::new(next);
+        added
+    }
+
+    /// The held set after granting `listing`'s rows in order, up to `max_urls`:
+    /// each listed URL, then its arXiv PDF twin while a slot remains.
+    fn planned_grants(
+        &self,
+        listing: &Value,
+        held: &std::collections::BTreeSet<String>,
+    ) -> std::collections::BTreeSet<String> {
+        let mut next = held.clone();
         for row in listing["results"].as_array().into_iter().flatten() {
             if next.len() >= self.result_reads.max_urls {
                 break;
@@ -646,9 +659,7 @@ impl WebTool {
                 }
             }
         }
-        let added = next.len() - before;
-        *held = Arc::new(next);
-        added
+        next
     }
 
     /// The arXiv PDF a listed abstract page also grants, when
@@ -661,17 +672,24 @@ impl WebTool {
     }
 
     /// Names, on each listed arXiv abstract row, the PDF that row also grants,
-    /// so the model knows the full text is readable. Set before sizing.
+    /// so the model knows the full text is readable. Set before sizing, and only
+    /// for a PDF the grant will really hold: once `max_urls` is reached a twin is
+    /// not granted, so it is not offered. Sizing only drops later rows, which
+    /// frees slots, so a labelled PDF stays granted.
     pub(super) fn mark_arxiv_pdfs(&self, listing: &mut Value) {
-        if self.search_grants.is_none() {
+        let Some(grants) = &self.search_grants else {
             return;
-        }
+        };
+        let planned = {
+            let held = grants.lock().unwrap_or_else(|p| p.into_inner());
+            self.planned_grants(listing, &held)
+        };
         for row in listing["results"].as_array_mut().into_iter().flatten() {
             let twin = row["url"]
                 .as_str()
                 .and_then(|raw| super::web_policy::canonical_url(raw).ok())
                 .and_then(|url| self.arxiv_pdf_twin(&url));
-            if let Some(twin) = twin {
+            if let Some(twin) = twin.filter(|twin| planned.contains(twin.as_str())) {
                 row["full_text_url"] = Value::String(twin.to_string());
             }
         }
@@ -2135,6 +2153,49 @@ mod tests {
         assert!(
             Limits::load(&AppConfig::from_str("web: {concurrency: 0}", Path::new("config.yaml")).unwrap()).is_err()
         );
+    }
+
+    #[test]
+    fn a_pdf_past_the_grant_cap_is_never_offered() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig::from_str(
+            "web: {max_rules: 8, search: {result_reads: {max_urls: 2, arxiv_pdf: true}}}",
+            Path::new("config.yaml"),
+        )
+        .unwrap();
+        let tool = WebTool::new(dir.path(), &cfg).unwrap();
+        tool.allow_rules(&["https://docs.example.org/*".to_string()], "docs", &[], true)
+            .unwrap();
+        let listing = json!({"results":[
+            {"url":"https://arxiv.org/abs/1706.03762v7"},
+            {"url":"https://arxiv.org/abs/hep-th/9901001"}
+        ]});
+        let offered = |turn: &WebTool| {
+            let mut marked = listing.clone();
+            turn.mark_arxiv_pdfs(&mut marked);
+            marked["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|row| row["full_text_url"].as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        };
+        // The first abstract and its PDF fill both slots: only that PDF is offered.
+        let turn = tool.for_search_grants(&[]).unwrap();
+        let labelled = offered(&turn);
+        assert_eq!(labelled, ["https://arxiv.org/pdf/1706.03762v7"]);
+        turn.grant_search_results(&listing);
+        for url in &labelled {
+            assert!(turn.read_by_search_grant(url), "an offered PDF is readable: {url}");
+        }
+        // A run that already holds max_urls offers no PDF at all.
+        let full = tool
+            .for_search_grants(&[
+                "https://docs.example.org/a".to_string(),
+                "https://docs.example.org/b".to_string(),
+            ])
+            .unwrap();
+        assert!(offered(&full).is_empty());
     }
 
     #[test]

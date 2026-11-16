@@ -255,7 +255,9 @@ impl WebTool {
                 "Firecrawl is paused after a quota refusal",
             ));
         }
-        let key = self.provider_key("FIRECRAWL_API_KEY", self.firecrawl_key_from_file)?;
+        let key = self
+            .provider_key_off_worker("FIRECRAWL_API_KEY", self.firecrawl_key_from_file)
+            .await?;
         let key = key.trim().to_string();
         if key.is_empty() {
             return Err(error(
@@ -299,7 +301,8 @@ impl WebTool {
             }
             // So may the key: one cleared or replaced since this read began is never sent.
             if self
-                .provider_key("FIRECRAWL_API_KEY", self.firecrawl_key_from_file)?
+                .provider_key_off_worker("FIRECRAWL_API_KEY", self.firecrawl_key_from_file)
+                .await?
                 .trim()
                 != key
             {
@@ -368,7 +371,8 @@ impl WebTool {
             ));
         }
         if self
-            .provider_key("FIRECRAWL_API_KEY", self.firecrawl_key_from_file)?
+            .provider_key_off_worker("FIRECRAWL_API_KEY", self.firecrawl_key_from_file)
+            .await?
             .trim()
             != key
         {
