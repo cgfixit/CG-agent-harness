@@ -68,16 +68,15 @@ async fn profiled_server(model: &str, budget: bool) -> TestServer {
 
 #[tokio::test]
 async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secret_disclosure() {
-    // This integration target owns its process environment; no operator credential is used.
-    for key in [
-        "GROK_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "XAI_API_KEY",
-        "CLAUDE_API_KEY",
-        "CGAH_TEST_CLOUD_BASE_URL",
-    ] {
-        std::env::remove_var(key);
-    }
+    // This target has one test, so it owns its process environment. No operator
+    // credential is used, and the guard restores every original value on exit or panic.
+    let _cleared = EnvGuard::set(&[
+        ("GROK_API_KEY", None),
+        ("ANTHROPIC_API_KEY", None),
+        ("XAI_API_KEY", None),
+        ("CLAUDE_API_KEY", None),
+        ("CGAH_TEST_CLOUD_BASE_URL", None),
+    ]);
     let local = start_mock_model().await;
     let missing = spawn_server(&local.base_url(), ServerOptions::default()).await;
     let settings = std::fs::read(missing.state.home.settings_path()).unwrap();
@@ -159,12 +158,15 @@ async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secr
             }),
         );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 - test-only loopback fixture.
-    std::env::set_var(
-        "CGAH_TEST_CLOUD_BASE_URL",
-        format!("http://{}", listener.local_addr().unwrap()), // DevSkim: ignore DS137138 - synthetic loopback fixture.
-    );
-    std::env::set_var("GROK_API_KEY", KEY);
-    std::env::set_var("ANTHROPIC_API_KEY", KEY);
+    let fixture_url = format!("http://{}", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 - synthetic loopback fixture.
+
+    // Locals drop in reverse order: this guard restores the cleared state, then
+    // `_cleared` restores the operator's originals.
+    let _fixture = EnvGuard::set(&[
+        ("CGAH_TEST_CLOUD_BASE_URL", Some(fixture_url.as_str())),
+        ("GROK_API_KEY", Some(KEY)),
+        ("ANTHROPIC_API_KEY", Some(KEY)),
+    ]);
     let fixture_task = tokio::spawn(async {
         axum::serve(listener, fixture).await.unwrap();
     });
