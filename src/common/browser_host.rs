@@ -469,8 +469,38 @@ pub fn run_task(
     let mut session = Session::general(origins).map_err(|err| format!("{err:?}"))?;
     let mut sidecar = Sidecar::start(script, &session, headless, allow_private)?;
     let tools = browser_tools();
+    let mut chat = |messages: &[Value]| ollama_chat(api, model, messages, &tools);
+    let report = model_loop(
+        &mut session,
+        &mut sidecar,
+        &mut chat,
+        // A fixture session reaches only the loopback page this binary serves,
+        // which the public-URL block list cannot check and would always refuse.
+        &|session: &Session| (!allow_private).then(|| policy_refusal_now(session)).flatten(),
+        task,
+        origins,
+        max_turns,
+    );
+    drop(sidecar);
+    let mut report = report?;
+    report["model"] = json!(model);
+    Ok(report)
+}
+
+/// The model turns of one task. `chat` answers one turn; `recheck` refuses a
+/// turn when the shared policy changed. A handoff or held request ends the
+/// task at once: the rest of that batch is dropped.
+fn model_loop(
+    session: &mut Session,
+    sidecar: &mut dyn Driver,
+    chat: &mut dyn FnMut(&[Value]) -> Result<Value, String>,
+    recheck: &dyn Fn(&Session) -> Option<String>,
+    task: &str,
+    origins: &[String],
+    max_turns: usize,
+) -> Result<Value, String> {
     let mut messages = vec![
-        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A long page comes in pages: when an observation has more, observe with page or find reaches the rest. A refusal is not success. A Handoff, or held_for_operator, means only the operator can do that step: say so and stop. not_granted lists sites the page asked for that this task may not reach. Call finish with your answer once the page shows it.", origins.join(", "))}),
+        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A long page comes in pages: when an observation has more, observe with page or find reaches the rest. A refusal is not success. A Handoff, or held_for_operator, ends the task: only the operator can do that step. not_granted lists sites the page asked for that this task may not reach. Call finish with your answer once the page shows it.", origins.join(", "))}),
         json!({"role":"user","content": task}),
     ];
     let mut calls = 0usize;
@@ -485,14 +515,12 @@ pub fn run_task(
     // Origins a page asked for that the request did not grant.
     let mut not_granted = std::collections::BTreeSet::new();
     'turns: for turn in 0..max_turns {
-        // Permission checked at launch is stale after a wait (AGENTS.md). A
-        // fixture session reaches only the loopback page this binary serves,
-        // which the public-URL block list cannot check and would always refuse.
-        if let Some(reason) = (!allow_private).then(|| policy_refusal_now(&session)).flatten() {
+        // Permission checked at launch is stale after a wait (AGENTS.md).
+        if let Some(reason) = recheck(session) {
             stopped = Some(reason);
             break;
         }
-        let response = ollama_chat(api, model, &messages, &tools)?;
+        let response = chat(&messages)?;
         let message = response
             .get("message")
             .cloned()
@@ -513,6 +541,8 @@ pub fn run_task(
             answer = Some(content);
             break;
         }
+        // A finish later in this turn must not rest on results the model never read.
+        let mut failed_this_turn = false;
         for call in tool_calls {
             calls += 1;
             let name = call
@@ -521,12 +551,15 @@ pub fn run_task(
                 .unwrap_or("")
                 .to_string();
             let args = coerce_args(call.pointer("/function/arguments").cloned().unwrap_or(json!({})));
+            let mut finish_refusal = None;
             if name == "finish" {
                 transcript.push(format!("finish {}", truncate(&args.to_string(), 160)));
-                // A finish without an answer is refused below, not reported as a finished task.
-                if let Some(text) = args["answer"].as_str().filter(|text| !text.trim().is_empty()) {
-                    answer = Some(text.to_string());
-                    break 'turns;
+                match finish_verdict(&args, failed_this_turn) {
+                    Ok(text) => {
+                        answer = Some(text);
+                        break 'turns;
+                    }
+                    Err(reason) => finish_refusal = Some(reason),
                 }
             }
             let wire = model_wire(&name, &args);
@@ -539,11 +572,12 @@ pub fn run_task(
                 })),
                 _ => None,
             });
-            let outcome = match &wire {
-                Some(wire) => step(&mut session, &mut sidecar, wire),
-                None if name == "finish" => json!({"refused":"finish takes answer: your final answer as text"}),
-                None => json!({"refused":"malformed browser action"}),
+            let outcome = match (&wire, finish_refusal) {
+                (_, Some(reason)) => json!({ "refused": reason }),
+                (Some(wire), None) => step(session, sidecar, wire),
+                (None, None) => json!({"refused":"malformed browser action"}),
             };
+            let needs_operator = handoff.is_some() || outcome.get("held_for_operator").is_some();
             note_for_operator(&mut for_operator, handoff, &outcome);
             for origin in outcome["not_granted"].as_array().into_iter().flatten() {
                 if let (Some(origin), true) = (origin.as_str(), not_granted.len() < MAX_FOR_OPERATOR) {
@@ -555,12 +589,16 @@ pub fn run_task(
                 last_url = outcome["url"].clone();
             }
             transcript.push(format!("{name} {}", truncate(&outcome.to_string(), 240)));
+            // The prompt asks the model to stop; the host makes sure it does.
+            if needs_operator {
+                stopped = Some("needs the operator: a step was handed off or a request was held".to_string());
+                break 'turns;
+            }
             if outcome.get("elements").is_some() {
                 retire_observations(&mut messages);
             }
-            let failed = ["decision", "error", "refused"]
-                .iter()
-                .any(|key| outcome.get(*key).is_some());
+            let failed = action_failed(&outcome);
+            failed_this_turn |= failed;
             refused_in_a_row = if failed { refused_in_a_row + 1 } else { 0 };
             messages.push(json!({"role":"tool","tool_name": name,"content": outcome.to_string()}));
             // A model that keeps retrying refused actions only spends the deadline.
@@ -570,12 +608,10 @@ pub fn run_task(
             }
         }
     }
-    drop(sidecar);
     Ok(json!({
         "finished": answer.is_some(),
         "answer": answer,
         "stopped": stopped,
-        "model": model,
         "origins": origins,
         "model_calls_with_tools": calls,
         "for_operator": for_operator,
@@ -616,6 +652,30 @@ pub fn run_qwen_fixture(script: &Path, headless: bool, model: &str, api: &str) -
         return Err(body);
     }
     Ok(body)
+}
+
+/// Whether a tool outcome was refused or failed: a policy decision, an error
+/// or a refusal. A handoff is a decision too.
+fn action_failed(outcome: &Value) -> bool {
+    ["decision", "error", "refused"]
+        .iter()
+        .any(|key| outcome.get(*key).is_some())
+}
+
+/// The answer a `finish` call ends the task with, or why it is refused. A
+/// finish sent after a refused or failed call in the same turn is refused: the
+/// model sent it before it could read that result, so its answer cannot rest
+/// on the page. A finish first in its turn, or after only successful calls,
+/// ends the task when it carries a non-blank answer.
+fn finish_verdict(args: &Value, failed_earlier_this_turn: bool) -> Result<String, &'static str> {
+    if failed_earlier_this_turn {
+        return Err("an action in this turn was refused: read the results, then finish");
+    }
+    args["answer"]
+        .as_str()
+        .filter(|text| !text.trim().is_empty())
+        .map(str::to_string)
+        .ok_or("finish takes answer: your final answer as text")
 }
 
 /// Requests held and elements handed off during a task, at most
@@ -1078,6 +1138,32 @@ mod tests {
     }
 
     #[test]
+    fn finish_is_refused_after_a_failed_call_in_the_same_turn() {
+        let done = json!({"answer": "zipfile — Work with ZIP archives"});
+        let observed = json!({"url": "https://docs.python.org/3/", "text": "Library index", "elements": []});
+        let malformed = json!({"refused": "malformed browser action"});
+        let stale = json!({"decision": "Refuse { reason: \"stale ref\" }"});
+        let verdict = |earlier: &[&Value]| finish_verdict(&done, earlier.iter().any(|outcome| action_failed(outcome)));
+        // First in its turn, or after only successful calls: accepted.
+        assert_eq!(verdict(&[]).as_deref(), Ok("zipfile — Work with ZIP archives"));
+        assert_eq!(
+            verdict(&[&observed, &observed]).as_deref(),
+            Ok("zipfile — Work with ZIP archives")
+        );
+        // After a refused or failed call, even one followed by a success: refused.
+        for earlier in [vec![&malformed], vec![&observed, &stale], vec![&stale, &observed]] {
+            let refused = verdict(&earlier).unwrap_err();
+            assert!(refused.contains("read the results, then finish"), "{refused}");
+        }
+        // A blank or missing answer stays refused either way.
+        for args in [json!({}), json!({"answer": "  "}), json!({"find": "zipfile"})] {
+            assert!(finish_verdict(&args, false)
+                .unwrap_err()
+                .starts_with("finish takes answer"));
+        }
+    }
+
+    #[test]
     fn operator_rows_list_holds_and_handoffs_once_within_the_cap() {
         let mut rows = Vec::new();
         let held = json!({"held_for_operator": ["POST https://shop.example/cart"]});
@@ -1090,5 +1176,105 @@ mod tests {
             note_for_operator(&mut rows, None, &json!({"held_for_operator": [format!("POST /{n}")]}));
         }
         assert_eq!(rows.len(), MAX_FOR_OPERATOR);
+    }
+
+    /// A page with a password field, a button whose POST is held, and a plain
+    /// button. Records every op it is sent.
+    #[derive(Default)]
+    struct ScriptedPage {
+        ops: Vec<String>,
+    }
+
+    impl Driver for ScriptedPage {
+        fn call(&mut self, op: Value) -> Result<Value, String> {
+            let target = op.pointer("/target/ref").and_then(Value::as_str).unwrap_or("");
+            self.ops.push(
+                format!("{} {target}", op["op"].as_str().unwrap_or(""))
+                    .trim()
+                    .to_string(),
+            );
+            let held: Vec<&str> = if target == "save" {
+                vec!["POST https://example.com/save"]
+            } else {
+                vec![]
+            };
+            Ok(json!({"ok": true, "result": {
+                "url": "https://example.com/", "text": "page", "held": held,
+                "elements": [
+                    {"ref": "pw", "role": "textbox", "name": "Password", "input": "secret"},
+                    {"ref": "save", "role": "button", "name": "Save"},
+                    {"ref": "after", "role": "button", "name": "After"},
+                ],
+            }}))
+        }
+    }
+
+    /// Navigate, then send `batch` (tool name, element name) in one turn.
+    fn run_batch(batch: &[(&str, &str)]) -> (Value, Vec<String>) {
+        let origins = vec!["https://example.com".to_string()];
+        let mut session = Session::general(&origins).unwrap();
+        let mut page = ScriptedPage::default();
+        let mut turn = 0;
+        let mut chat = |messages: &[Value]| {
+            turn += 1;
+            let calls: Vec<Value> = match turn {
+                1 => vec![json!({"function": {"name": "navigate", "arguments": {"url": "https://example.com/"}}})],
+                2 => {
+                    let seen: Value = messages
+                        .iter()
+                        .rev()
+                        .find(|m| m["role"] == "tool")
+                        .and_then(|m| serde_json::from_str(m["content"].as_str()?).ok())
+                        .unwrap();
+                    let ref_of = |name: &str| {
+                        seen["elements"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .find(|el| el["name"] == name)
+                            .unwrap()["ref_id"]
+                            .clone()
+                    };
+                    batch
+                        .iter()
+                        .map(|(tool, target)| match *tool {
+                            "navigate" => json!({"function": {"name": "navigate", "arguments": {"url": target}}}),
+                            "type" => json!({"function": {"name": "type", "arguments": {"ref_id": ref_of(target), "text": "x"}}}),
+                            _ => json!({"function": {"name": tool, "arguments": {"ref_id": ref_of(target)}}}),
+                        })
+                        .collect()
+                }
+                _ => vec![],
+            };
+            Ok(json!({"message": {"role": "assistant", "content": "done", "tool_calls": calls}}))
+        };
+        let report = model_loop(&mut session, &mut page, &mut chat, &|_| None, "task", &origins, 6).unwrap();
+        (report, page.ops)
+    }
+
+    #[test]
+    fn a_handoff_ends_the_task_and_drops_the_rest_of_the_batch() {
+        let (report, ops) = run_batch(&[("type", "Password"), ("click", "After")]);
+        assert_eq!(ops, ["navigate"], "nothing after the handoff reached the page");
+        assert_eq!(report["finished"], false);
+        assert!(report["stopped"].as_str().unwrap().starts_with("needs the operator"));
+        assert_eq!(report["for_operator"][0]["element"], "Password");
+    }
+
+    #[test]
+    fn a_held_request_ends_the_task_and_drops_the_rest_of_the_batch() {
+        let (report, ops) = run_batch(&[("click", "Save"), ("navigate", "https://example.com/next")]);
+        assert_eq!(ops, ["navigate", "click save"], "the navigate after the hold never ran");
+        assert_eq!(report["finished"], false);
+        assert!(report["stopped"].as_str().unwrap().starts_with("needs the operator"));
+        assert_eq!(report["for_operator"][0]["held"], "POST https://example.com/save");
+    }
+
+    #[test]
+    fn a_batch_with_nothing_for_the_operator_runs_to_the_answer() {
+        let (report, ops) = run_batch(&[("click", "After"), ("navigate", "https://example.com/next")]);
+        assert_eq!(ops, ["navigate", "click after", "navigate"]);
+        assert_eq!(report["finished"], true);
+        assert!(report["stopped"].is_null());
     }
 }
