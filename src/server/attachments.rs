@@ -278,13 +278,25 @@ impl AttachmentStore {
     }
 
     pub fn owned_blob(&self, owner: &str, id: &str) -> Option<AttachmentBlob> {
+        self.owned_blobs(owner, &[id.to_string()]).remove(id)
+    }
+
+    /// Snapshot metadata once per operation; content reads still verify bytes
+    /// and recheck the current manifest in `verified_texts`.
+    pub fn owned_blobs(&self, owner: &str, ids: &[String]) -> std::collections::BTreeMap<String, AttachmentBlob> {
+        if ids.is_empty() {
+            return Default::default();
+        }
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
-        let manifest = self.load_manifest().ok()?;
+        let Ok(manifest) = self.load_manifest() else {
+            return Default::default();
+        };
         manifest
             .blobs
-            .iter()
-            .find(|blob| blob.id == id && blob.owner == owner)
-            .cloned()
+            .into_iter()
+            .filter(|blob| blob.owner == owner && ids.contains(&blob.id))
+            .map(|blob| (blob.id.clone(), blob))
+            .collect()
     }
 
     /// Removes every blob owned by `owner`. A row leaves the manifest only
@@ -1210,6 +1222,12 @@ mod tests {
             .store("local", &[part("note.md", "alpha"), part("n2.md", "beta")])
             .unwrap();
         assert_eq!(blobs.len(), 2);
+        let ids: Vec<_> = blobs.iter().map(|blob| blob.id.clone()).collect();
+        let snapshot = store.owned_blobs("local", &ids);
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(store.owned_blobs("local", &ids[..1]).len(), 1);
+        assert!(store.owned_blobs("other", &ids).is_empty());
+        assert!(store.owned_blobs("local", &[]).is_empty());
         for blob in &blobs {
             assert!(Uuid::parse_str(&blob.id).is_ok());
             let path = blob_path(tmp.path(), blob).unwrap();
@@ -1229,15 +1247,18 @@ mod tests {
         assert!(fence.contains("alpha"));
         assert!(store.fence_for("other", &[blobs[0].id.clone()]).is_err());
         assert_eq!(
-            store.owned_blob("local", &blobs[0].id).as_ref().map(|b| b.id.as_str()),
+            store
+                .owned_blobs("local", &[blobs[0].id.clone()])
+                .get(&blobs[0].id)
+                .map(|b| b.id.as_str()),
             Some(blobs[0].id.as_str())
         );
-        assert!(store.owned_blob("other", &blobs[0].id).is_none());
+        assert!(store.owned_blobs("other", &[blobs[0].id.clone()]).is_empty());
         assert!(store
-            .owned_blob("local", "00000000-0000-0000-0000-000000000000")
-            .is_none());
+            .owned_blobs("local", &["00000000-0000-0000-0000-000000000000".into()])
+            .is_empty());
         assert_eq!(store.unlink_owner("local").unwrap(), 2);
-        assert!(store.owned_blob("local", &blobs[0].id).is_none());
+        assert!(store.owned_blobs("local", &[blobs[0].id.clone()]).is_empty());
         assert_eq!(store.blob_count(), 0);
         for blob in &blobs {
             assert!(!blob_path(tmp.path(), blob).unwrap().exists());

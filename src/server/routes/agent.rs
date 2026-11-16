@@ -299,10 +299,11 @@ fn refuse_bound_session_pins(state: &AppState, owner: &str, req: &AgentRunReques
         .for_owner(owner)
         .get(&binding.session_id)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    let live_blobs = state.attachments.owned_blobs(owner, &session.pinned_ids_for(owner));
     let live_pins: Vec<String> = session
         .pinned_ids_for(owner)
         .into_iter()
-        .filter(|id| state.attachments.owned_blob(owner, id).is_some())
+        .filter(|id| live_blobs.contains_key(id))
         .collect();
     crate::server::retrieval::refuse_forbidden_attachments(
         crate::server::retrieval::RetrievalSurface::Agent,

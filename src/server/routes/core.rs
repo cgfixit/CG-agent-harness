@@ -467,10 +467,11 @@ pub async fn get_session(
     out["goal_web_mode"] = json!(session.goal_web_mode);
     out["style"] = json!(session.style);
     out["web_sources"] = json!(session.web_sources);
+    let live_blobs = state.attachments.owned_blobs(&owner, &session.pinned_ids_for(&owner));
     out["live_attachment_pins"] = json!(session
         .pinned_ids_for(&owner)
         .iter()
-        .filter(|id| state.attachments.owned_blob(&owner, id).is_some())
+        .filter(|id| live_blobs.contains_key(*id))
         .count());
     Ok(Json(out))
 }
@@ -1112,10 +1113,11 @@ pub(crate) async fn chat_inner(
     let live_pins: Vec<String> = if portal_auditor {
         Vec::new()
     } else {
+        let live_blobs = state.attachments.owned_blobs(&owner, &session.pinned_ids_for(&owner));
         session
             .pinned_ids_for(&owner)
             .into_iter()
-            .filter(|id| state.attachments.owned_blob(&owner, id).is_some())
+            .filter(|id| live_blobs.contains_key(id))
             .collect()
     };
     crate::server::retrieval::refuse_forbidden_attachments(surface, &req.attachment_ids, &live_pins)
@@ -1768,7 +1770,10 @@ pub(crate) async fn chat_inner(
     );
     let (updated, web_turn) = recorded.map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     if !cloud_selected {
-        let live = |id: &str| state.attachments.owned_blob(&owner, id).is_some();
+        let mut pin_ids = updated.pinned_ids_for(&owner);
+        pin_ids.extend(req.attachment_ids.iter().cloned());
+        let live_blobs = state.attachments.owned_blobs(&owner, &pin_ids);
+        let live = |id: &str| live_blobs.contains_key(id);
         state
             .store
             .for_owner(&owner)
