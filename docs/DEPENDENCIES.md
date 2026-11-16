@@ -61,6 +61,14 @@ does not certify safe runtime use of a crate.
 - GHSA-qwgh-2vcv-g2f7 (`block-buffer`) affects only `>=0.11.0, <0.12.1`. Both
   locks carry 0.10.4 and 0.12.1, outside it, so no `deny.toml` ignore is
   needed; a `scrypt` 0.12 move stays an optional API migration, not a fix.
+- Desktop `glib` 0.18.5 (RUSTSEC-2024-0429, unsound `VariantStrIter`, fixed in
+  0.20) is an accepted residual that never ships. It resolves only for Linux,
+  through Tauri 2.12.4's GTK3 stack (`gtk` 0.18.2, WRY, tao, muda), and gtk3-rs
+  ends at 0.18. The app ships for macOS only, `cargo tree -i glib` is empty for
+  both Apple targets, and no repository code names `VariantStrIter`.
+  `desktop/deny.toml` evaluates only those targets, so it needs no `ignore` and
+  its green run is not Linux clearance. Owner: `cgfixit` (#782). Revisit when a
+  Linux desktop target is added or Tauri moves to gtk-rs 0.20 or later.
 - Duplicate versions are warnings. Advisories, unapproved licenses, wildcard
   requirements and unknown sources block.
 - Both `deny.toml` files ban push-telemetry and analytics SDK crates by exact
