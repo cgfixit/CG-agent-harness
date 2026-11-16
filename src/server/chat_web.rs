@@ -636,7 +636,9 @@ async fn run_inner(
                     known_completion_tokens: *known_completion_tokens,
                 };
                 check_evidence(state, web, owner, &sources)?;
-                match super::web_research::Answer::parse(&digest.body_text, &selected) {
+                let (parsed, drop_reasons) =
+                    super::web_research::Answer::parse_with_reasons(&digest.body_text, &selected);
+                match parsed {
                     Ok((answer, dropped)) => {
                         let findings = serde_json::to_value(answer)?;
                         run_evidence.packet = Some(findings.clone());
@@ -651,11 +653,11 @@ async fn run_inner(
                             peak_extra = peak_extra.max(appended_tokens(&messages[history.len()..]));
                         }
                         events
-                            .push(json!({"tool":"web_evidence","ok":true,"dropped_claims":dropped,"result":findings}));
+                            .push(json!({"tool":"web_evidence","ok":true,"dropped_claims":dropped,"drop_reasons":drop_reasons,"result":findings}));
                     }
                     Err(failure) => {
                         run_evidence.packet = None;
-                        events.push(json!({"tool":"web_evidence","ok":false,"code":failure.code,"message":"Evidence digest failed quote validation; use the original delivered passages and state limitations."}));
+                        events.push(json!({"tool":"web_evidence","ok":false,"code":failure.code,"drop_reasons":drop_reasons,"message":"Evidence digest failed quote validation; use the original delivered passages and state limitations."}));
                     }
                 }
             }
