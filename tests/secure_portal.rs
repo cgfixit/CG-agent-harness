@@ -867,6 +867,35 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
         .iter()
         .any(|v| v["actor"] == "admin" && v["route"] == "/api/auth/users/{username}/role"));
     assert!(!events.to_string().contains("password\":") && !events.to_string().contains("Scoped zebra"));
+    // The request line holds the route template; the account events name the target.
+    assert!(
+        !events.to_string().contains("account.role_set"),
+        "the audit route shows request lines only"
+    );
+    let log: Vec<Value> = server
+        .audit_log()
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    let changed = |event: &str| {
+        log.iter()
+            .filter(|v| v["event"] == event && v["actor"] == "admin" && v["target"] == "op")
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(changed("account.user_created").len(), 1);
+    assert_eq!(changed("account.user_created")[0]["role"], "operator");
+    let disabled: Vec<Value> = changed("account.disabled_set")
+        .iter()
+        .map(|v| v["disabled"].clone())
+        .collect();
+    assert_eq!(disabled, [json!(true), json!(false)]);
+    assert_eq!(changed("account.role_set").len(), 1);
+    assert_eq!(changed("account.role_set")[0]["role"], "audit");
+    // The three refused changes to the last admin left no account event.
+    assert!(!log
+        .iter()
+        .any(|v| v["target"] == "admin" && v["event"] != "account.password_changed"));
     let response = request(&server, &admin, Method::POST, "/api/auth/logout", json!({})).await;
     assert_eq!(response.status(), 200);
     assert!(response.headers()["set-cookie"].to_str().unwrap().contains("Secure"));

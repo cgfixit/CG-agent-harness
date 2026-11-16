@@ -1489,6 +1489,69 @@ async fn disabled_panel_route_does_not_load_injected_sources() {
     );
 }
 
+/// The request line holds only the route, so a change to the shared URL policy
+/// records who made it and how many rules it touched, never the rules.
+#[tokio::test]
+async fn shared_web_policy_changes_are_audited_by_count() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let ok = |reply: (u16, serde_json::Value)| assert_eq!(reply.0, 200, "{}", reply.1["error"]);
+    ok(s.post_json("/api/web", json!({"enabled": true})).await);
+    ok(s.post_json(
+        "/api/web/allow",
+        json!({"urls": ["https://docs.audit-fixture.example/*", "https://api.audit-fixture.example/*"]}),
+    )
+    .await);
+    ok(
+        s.post_json("/api/web/deny", json!({"url": "https://api.audit-fixture.example/*"}))
+            .await,
+    );
+    ok(s.post_json(
+        "/api/web/block",
+        json!({"urls": ["https://ads.audit-fixture.example/*"]}),
+    )
+    .await);
+    ok(s.post_json(
+        "/api/web/unblock",
+        json!({"url": "https://ads.audit-fixture.example/*"}),
+    )
+    .await);
+    // A refused change is not a change.
+    assert_ne!(
+        s.post_json(
+            "/api/web/unblock",
+            json!({"url": "https://never-blocked.audit-fixture.example/*"})
+        )
+        .await
+        .0,
+        200
+    );
+
+    let audit = s.audit_log();
+    let events: Vec<serde_json::Value> = audit
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|v| v["event"] == "web.enabled_set" || v["event"] == "web.policy_rules")
+        .collect();
+    let seen: Vec<(String, u64)> = events
+        .iter()
+        .filter(|v| v["event"] == "web.policy_rules")
+        .map(|v| (v["action"].as_str().unwrap().to_string(), v["rules"].as_u64().unwrap()))
+        .collect();
+    assert_eq!(
+        seen,
+        [("allow", 2), ("deny", 1), ("block", 1), ("unblock", 1)].map(|(action, rules)| (action.to_string(), rules))
+    );
+    assert!(events.iter().all(|v| v["owner"] == "local"));
+    assert!(events
+        .iter()
+        .any(|v| v["event"] == "web.enabled_set" && v["enabled"] == true));
+    assert!(
+        !audit.contains("audit-fixture.example"),
+        "rules stay in the policy file"
+    );
+}
+
 fn json_body(response: &str) -> serde_json::Value {
     let start = response.find('{').expect("json body");
     let end = response.rfind('}').expect("json end");
