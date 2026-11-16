@@ -598,36 +598,46 @@ pub async fn memory_add(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<MemoryNoteRequest>,
 ) -> ApiResult<Json<Value>> {
-    let added = state
-        .notes
-        .add(&req.text)
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
-    let mut payload = memory_payload(&state)?;
-    payload["added"] = added;
-    Ok(Json(payload))
+    // The note file write is fsync'd: keep it and the status read off the worker.
+    super::structured_memory::off_worker(move || {
+        let added = state
+            .notes
+            .add(&req.text)
+            .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
+        let mut payload = memory_payload(&state)?;
+        payload["added"] = added;
+        Ok(Json(payload))
+    })
+    .await
 }
 
 pub async fn memory_forget(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<MemoryForgetRequest>,
 ) -> ApiResult<Json<Value>> {
-    let forgotten = state
-        .notes
-        .forget(&req.id)
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
-    let mut payload = memory_payload(&state)?;
-    merge(&mut payload, forgotten);
-    Ok(Json(payload))
+    super::structured_memory::off_worker(move || {
+        let forgotten = state
+            .notes
+            .forget(&req.id)
+            .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
+        let mut payload = memory_payload(&state)?;
+        merge(&mut payload, forgotten);
+        Ok(Json(payload))
+    })
+    .await
 }
 
 pub async fn memory_clear(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
-    let cleared = state
-        .notes
-        .clear()
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
-    let mut payload = memory_payload(&state)?;
-    merge(&mut payload, cleared);
-    Ok(Json(payload))
+    super::structured_memory::off_worker(move || {
+        let cleared = state
+            .notes
+            .clear()
+            .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
+        let mut payload = memory_payload(&state)?;
+        merge(&mut payload, cleared);
+        Ok(Json(payload))
+    })
+    .await
 }
 
 fn merge(target: &mut Value, extra: Value) {
