@@ -32,10 +32,16 @@ pub async fn stage(
     ValidJson(req): ValidJson<StageRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
+    // The session read, the job lookup and the compare-and-set stage write run
+    // in one blocking-pool closure, so no await separates the check from the write.
+    super::structured_memory::off_worker(move || stage_blocking(&state, &owner, &id, &req)).await
+}
+
+fn stage_blocking(state: &AppState, owner: &str, id: &str, req: &StageRequest) -> ApiResult<Json<Value>> {
     let session = state
         .store
-        .for_owner(&owner)
-        .get(&id)
+        .for_owner(owner)
+        .get(id)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     if session.goal.trim().is_empty() {
         return Err(ApiError::bad_request(
@@ -44,7 +50,7 @@ pub async fn stage(
         ));
     }
     if let Some(job_id) = session.goal_stage.as_ref().and_then(|s| s["job_id"].as_str()) {
-        if state.jobs.get(&owner, job_id).is_some_and(|j| j["status"] == "running") {
+        if state.jobs.get(owner, job_id).is_some_and(|j| j["status"] == "running") {
             return Err(ApiError::new(
                 StatusCode::CONFLICT,
                 "GOAL_RUNNING",
@@ -58,8 +64,8 @@ pub async fn stage(
     let record = json!({"stage_id":stage_id,"goal":session.goal,"request":request,"job_id":null,"created_at":crate::common::now_ts()});
     state
         .store
-        .for_owner(&owner)
-        .stage_goal(&id, &session.goal, session.goal_stage.as_ref(), &record)
+        .for_owner(owner)
+        .stage_goal(id, &session.goal, session.goal_stage.as_ref(), &record)
         .map_err(|e| ApiError::from_err(StatusCode::CONFLICT, &e))?;
     Ok(Json(
         json!({"stage":record,"request":request,"executed":false,"next":"Review request/checks; /agent confirm <reason>. Approval, push and publication remain separate."}),

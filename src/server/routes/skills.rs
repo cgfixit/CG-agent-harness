@@ -84,16 +84,21 @@ pub async fn select(
     ValidJson(req): ValidJson<SelectionRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
-    let resolved = resolve(&state, &req.ids)?;
-    let ids: Vec<String> = resolved.iter().map(|(id, _)| id.clone()).collect();
-    state
-        .store
-        .for_owner(&owner)
-        .select_skills(&id, &ids)
-        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
-    Ok(Json(
-        json!({"selected":ids,"effect":"included in subsequent chat turns; no code executed"}),
-    ))
+    // Skill files and the session JSON are read and written on the blocking
+    // pool, in one closure so the resolution and the write stay together.
+    super::structured_memory::off_worker(move || {
+        let resolved = resolve(&state, &req.ids)?;
+        let ids: Vec<String> = resolved.iter().map(|(id, _)| id.clone()).collect();
+        state
+            .store
+            .for_owner(&owner)
+            .select_skills(&id, &ids)
+            .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+        Ok(Json(
+            json!({"selected":ids,"effect":"included in subsequent chat turns; no code executed"}),
+        ))
+    })
+    .await
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

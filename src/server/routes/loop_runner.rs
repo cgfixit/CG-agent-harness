@@ -79,6 +79,17 @@ pub async fn start(
     user: Option<axum::Extension<UserSummary>>,
     ValidJson(req): ValidJson<StartLoopRequest>,
 ) -> ApiResult<Json<Value>> {
+    // Every step reads or writes the session JSON or the run registry, so the
+    // whole start runs in one blocking-pool closure: no await separates the
+    // goal write from the run registration and its audit line, as when inline.
+    super::structured_memory::off_worker(move || start_blocking(state, user, req)).await
+}
+
+fn start_blocking(
+    state: Arc<AppState>,
+    user: Option<axum::Extension<UserSummary>>,
+    req: StartLoopRequest,
+) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
     let session = state
         .store
