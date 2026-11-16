@@ -20,8 +20,17 @@ use crate::server::views;
 
 const MAX_RUNS: usize = 50;
 
+/// The registry file the agentic child would use now. It loads config.yaml at
+/// each spawn, so read the file, not the startup snapshot.
+fn governed_registry(state: &AppState) -> std::path::PathBuf {
+    let live = crate::common::config::AppConfig::load(&state.home.config_path());
+    state
+        .home
+        .governed_registry_path(live.as_ref().unwrap_or(state.cfg.as_ref()))
+}
+
 pub async fn registry(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(views::full_registry(&state.home))
+    Json(views::full_registry(&state.home, &governed_registry(&state)))
 }
 
 pub async fn tools(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -86,7 +95,7 @@ pub async fn netconnect_diag(State(state): State<Arc<AppState>>) -> ApiResult<Js
 }
 
 pub async fn skills(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(views::list_wired_skills(&state.home))
+    Json(views::list_wired_skills(&state.home, &governed_registry(&state)))
 }
 
 // ---------------------------------------------------------------- web

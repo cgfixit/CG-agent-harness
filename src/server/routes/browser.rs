@@ -94,22 +94,29 @@ pub async fn run(
             "working directory unreadable",
         )
     })?;
+    // The task goes in a private temporary file (0600, removed when this
+    // handler returns), not in argv, which other local accounts can list.
+    let task_file = write_task_file(&req.task)?;
+    // Canonical origins only: a requested URL's path or query (a token, say)
+    // never reaches argv, the audit log or the report.
+    let grants = session.grant_strings();
     let mut argv = vec![
         exe.to_string_lossy().into_owned(),
         "browser".into(),
         "run".into(),
-        format!("--task={}", req.task),
+        format!("--task-file={}", task_file.path().display()),
         format!("--sidecar={}", cfg.str_or("browser.sidecar", "browser/sidecar.mjs")),
         format!("--max-turns={}", cfg.limit("browser.max_turns")),
     ];
-    argv.extend(req.origins.iter().map(|origin| format!("--origin={origin}")));
+    argv.extend(grants.iter().map(|origin| format!("--origin={origin}")));
     let timeout = Duration::from_secs(cfg.limit("browser.timeout_sec"));
     let result = crate::shim::run_argv_with_env(&argv, &cwd, timeout, child_environment()).await;
+    drop(task_file);
     let exit = result.as_ref().map(|(code, _, _)| *code).ok();
     state.audit.log(json!({
         "event": "browser.run",
         "owner": owner,
-        "origins": req.origins,
+        "origins": grants,
         "task_sha256": crate::common::sha256_hex(&req.task),
         "exit": exit,
     }));
@@ -146,6 +153,24 @@ pub async fn run(
         body["reason"] = json!(reason.chars().take(300).collect::<String>());
     }
     Ok(Json(body))
+}
+
+fn write_task_file(task: &str) -> ApiResult<tempfile::NamedTempFile> {
+    use std::io::Write;
+    let failed = |_| {
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            "BROWSER_FAILED",
+            "the task file could not be written",
+        )
+    };
+    let mut file = tempfile::Builder::new()
+        .prefix("cgah-browse-task-")
+        .tempfile()
+        .map_err(failed)?;
+    file.write_all(task.as_bytes()).map_err(failed)?;
+    file.flush().map_err(failed)?;
+    Ok(file)
 }
 
 fn current_policy(state: &AppState) -> ApiResult<crate::server::web_policy::Policy> {

@@ -4,7 +4,7 @@
 //! config ERROR, not a silent no-op.
 
 use std::collections::BTreeMap;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use regex::Regex;
@@ -104,51 +104,8 @@ fn no_shell_metachars(value: &str, field: &str) -> Result<()> {
     Ok(())
 }
 
-/// Lexically normalize (`.`/`..` collapsed) without touching the filesystem.
-pub fn lexical_normalize(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for comp in path.components() {
-        match comp {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !out.pop() {
-                    out.push("..");
-                }
-            }
-            other => out.push(other.as_os_str()),
-        }
-    }
-    out
-}
-
-/// A configured data path must resolve INSIDE `<home>/data/`.
-pub fn resolve_data_path(raw: &str, field: &str, home_root: &Path) -> Result<PathBuf> {
-    if raw.trim().is_empty() {
-        return Err(cfg_err(format!("{field} is required")).detail("hint", "Use a path under the home data/ tree."));
-    }
-    let expanded = if let Some(rest) = raw.strip_prefix("~/") {
-        std::env::var("HOME")
-            .map(|h| PathBuf::from(h).join(rest))
-            .unwrap_or_else(|_| PathBuf::from(raw))
-    } else {
-        PathBuf::from(raw)
-    };
-    let joined = if expanded.is_absolute() {
-        expanded
-    } else {
-        home_root.join(expanded)
-    };
-    let resolved = lexical_normalize(&joined);
-    let data_root = lexical_normalize(&home_root.join("data"));
-    if !resolved.starts_with(&data_root) || resolved == data_root {
-        return Err(
-            cfg_err(format!("{field} must resolve to a path inside the home's data/ tree"))
-                .detail("data_root", data_root.display().to_string())
-                .detail("received", raw),
-        );
-    }
-    Ok(resolved)
-}
+// One resolver for the child and the console that lists its registry.
+pub use crate::common::home::{lexical_normalize, resolve_data_path};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CloudProviderConfig {

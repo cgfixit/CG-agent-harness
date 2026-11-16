@@ -34,3 +34,12 @@ updates:
         group-by: dependency-name
         patterns:
           - "*"
+  - package-ecosystem: npm
+    # browser/package-lock.json: the /browse sidecar's exact Playwright pin.
+    # docs/Browser-Use.md names that version; move it in the same PR.
+    directory: /browser
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7

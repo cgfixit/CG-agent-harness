@@ -35,6 +35,13 @@ Boundaries, enforced in code:
 
 - Origins come only from the request; pages and the model cannot add one.
   Origins on the shared web block list, or that cannot be checked, are refused.
+  Only each URL's origin is kept: its path and query (a token, say) never reach
+  the child's argv, the audit line, the prompt or the report. The task text
+  reaches the child in a private temporary file, not argv, so a process
+  listing never shows it; the audit keeps only its SHA-256.
+- A page cannot flood the run: a link target over 8,192 characters is
+  dropped, the model sees each one cut to 300, the title to 300 and the URL to
+  8,192, and a sidecar reply line over 4 MiB stops the task.
 - The sidecar's loopback proxy is the egress check. The task's fresh profile
   keeps WebRTC to proxied TCP, so a page cannot send UDP around it. A granted
   name must resolve to public addresses (`localhost` is refused), and a

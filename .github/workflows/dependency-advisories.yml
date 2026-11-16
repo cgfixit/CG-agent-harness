@@ -1,8 +1,9 @@
 # Daily RustSec scan of all three manifests. A new advisory against a quiet main
 # otherwise surfaces only on the next push; the release cron reaches the deny
 # job only when a release is due. Same pinned action and arguments as the deny
-# jobs in ci.yml and desktop.yml, advisories only.
-name: Dependencies - Daily RustSec advisories
+# jobs in ci.yml and desktop.yml, advisories only. The browser sidecar's npm
+# lockfile is outside cargo deny, so `npm audit` reads it here.
+name: Dependencies - Daily RustSec and npm advisories
 
 on:
   schedule:
@@ -46,3 +47,19 @@ jobs:
           command-arguments: advisories
           manifest-path: ${{ matrix.manifest }}
           arguments: ${{ matrix.arguments }}
+
+  npm-advisories:
+    name: npm audit (browser sidecar)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The lockfile alone: nothing is installed and no package script runs.
+      # Any advisory against a locked package exits non-zero.
+      - name: npm audit of browser/package-lock.json
+        working-directory: browser
+        run: npm audit --package-lock-only

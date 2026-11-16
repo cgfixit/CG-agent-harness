@@ -26,7 +26,8 @@ pub fn arm(limit: usize) {
 }
 
 /// Live bytes counted since [`arm`]; 0 while unarmed.
-pub fn live_bytes() -> usize {
+#[cfg(test)]
+fn live_bytes() -> usize {
     LIVE.load(Ordering::Relaxed)
 }
 
