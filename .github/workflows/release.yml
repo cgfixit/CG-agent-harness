@@ -127,7 +127,7 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
       - run: cargo build --release --locked
-      - name: Stage artifact with checksum (shared with Bundle)
+      - name: Stage, checksum, extract-verify and smoke (shared with Bundle)
         shell: bash
         run: scripts/package-release.sh "${{ matrix.bin }}" "${{ matrix.artifact }}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
