@@ -46,9 +46,10 @@ pub const REAL_REPO_RUN_STATUS_SEC: u64 = 180;
 /// remote ends in the child's INDETERMINATE record rather than a shim kill.
 /// `real-repo-run-decide` shares it: approve copies the whole clone for the
 /// disposable-copy proof and then commits through eleven validated git calls
-/// plus two per accepted file (660 s + 120 s per file of bounds), and a kill
-/// after `update-ref` strands a committed branch behind a `pending_decision`
-/// record. Sized for an approve of up to four files; the console mirrors it as
+/// plus two per accepted file (660 s + 120 s per file of bounds). A kill after
+/// `update-ref` leaves a committed branch behind a `pending_decision` record;
+/// approving again completes that same commit (`prepare_approve_retry`). Sized
+/// for an approve of up to four files without a kill; the console mirrors it as
 /// `AGENT_WRITE_TIMEOUT_MS`. `tests/shim_and_agent_routes.rs` pins both sums.
 pub const REAL_REPO_RUN_WRITE_SEC: u64 = 1200;
 /// A ceiling on the ceiling: a synchronous HTTP request held open longer than

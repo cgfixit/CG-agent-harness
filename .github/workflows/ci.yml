@@ -288,6 +288,7 @@ jobs:
             rust:1.89-bookworm@sha256:948f9b08a66e7fe01b03a98ef1c7568292e07ec2e4fe90d88c07bb14563c84ff \
             sh -ec 'apt-get update && apt-get install -y --no-install-recommends bubblewrap python3 git pkg-config libdbus-1-dev
                     cargo test --test real_repo_loop an_indeterminate_approve_settles_the_run_record --locked -- --nocapture
+                    cargo test --test real_repo_loop a_killed_approve_settles_the_run_record_when_decided_again --locked -- --nocapture
                     cargo test --test linux_bwrap --test mcp_client --locked -- --nocapture
                     cargo test --test real_repo_loop real_repo_run_smoke_end_to_end --locked -- --nocapture
                     cargo test --test real_repo_loop a_failure_after_acceptance_settles_the_run_record --locked -- --nocapture

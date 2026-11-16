@@ -825,6 +825,9 @@ pub fn finalize_real_repo_change(
     ctx.audit
         .log(json!({"event": "agentic_real_repo_change_decided", "decision": f.decision, "branch": f.branch_name}));
     tools.require_write("approve", f.reason, f.confirm)?;
+    // A killed earlier approve of this run can leave its index lock and HEAD on
+    // the run's branch; undo only those so the checks below re-prove everything.
+    tools.prepare_approve_retry(f)?;
     let digest = f.acceptance_digest.unwrap_or("");
     let base = f.acceptance_base_head.unwrap_or("");
     super::executor::manifest::verify_manifest(tools.worktree(), f.changed_files, f.run_id, base, digest)?;
