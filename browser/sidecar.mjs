@@ -381,7 +381,12 @@ async function gate(cdp, event) {
     return cdp.send("Fetch.failRequest", { requestId, errorReason: event.responseErrorReason });
   }
   if (event.responseStatusCode !== undefined) {
-    // Response stage: documents only (see the Fetch.enable patterns).
+    // Response stage: documents only (see the Fetch.enable patterns). A redirect
+    // has no body to read and renders nothing; its target is a new request that
+    // pauses here again, so it meets the grant check and this policy then.
+    const status = event.responseStatusCode;
+    const redirect = status >= 300 && status < 400 && (event.responseHeaders || []).some(({ name }) => name.toLowerCase() === "location");
+    if (redirect) return cdp.send("Fetch.continueRequest", { requestId });
     const { body, base64Encoded } = await cdp.send("Fetch.getResponseBody", { requestId });
     const headers = (event.responseHeaders || []).filter(({ name }) => !STALE_BODY_HEADERS.has(name.toLowerCase()));
     return cdp.send("Fetch.fulfillRequest", {
