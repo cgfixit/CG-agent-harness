@@ -2866,11 +2866,12 @@ impl StructuredMemoryStore {
         }
         // One receipt per suggestion-eligible turn would otherwise grow the store
         // toward MAX_FILE_BYTES, past which the server refuses to start.
+        // Keep this completion even if the wall clock moved backward.
         tx.execute(
             "DELETE FROM consolidation_runs WHERE owner_id=?1 AND state='done' AND public_id NOT IN (
                SELECT public_id FROM consolidation_runs WHERE owner_id=?1 AND state='done'
-               ORDER BY COALESCE(ended_ts, created_ts) DESC, public_id DESC LIMIT ?2)",
-            params![owner, DONE_RUN_RECEIPTS_KEPT],
+               ORDER BY (public_id=?2) DESC, COALESCE(ended_ts, created_ts) DESC, id DESC LIMIT ?3)",
+            params![owner, id, DONE_RUN_RECEIPTS_KEPT],
         )
         .map_err(sql)?;
         let run = tx
@@ -4401,6 +4402,24 @@ mod tests {
                 .finish_consolidation_run("user_alice", &run.id, "local-test-model", 0, 0, &[])
                 .unwrap();
         }
+        store
+            .lock()
+            .execute(
+                "UPDATE consolidation_runs SET ended_ts=ended_ts+3600 WHERE owner_id=?1 AND state='done'",
+                params!["user_alice"],
+            )
+            .unwrap();
+        let after_clock_change = store
+            .begin_consolidation_run("user_alice", ids, "consolidator-after-clock-change")
+            .unwrap();
+        let completed = store
+            .finish_consolidation_run("user_alice", &after_clock_change.id, "local-test-model", 0, 0, &[])
+            .unwrap();
+        assert_eq!(completed.id, after_clock_change.id);
+        assert_eq!(
+            store.get_consolidation_run("user_alice", &completed.id).unwrap().state,
+            "done"
+        );
         let failed = store
             .begin_consolidation_run("user_alice", ids, "consolidator-test-failed")
             .unwrap();
