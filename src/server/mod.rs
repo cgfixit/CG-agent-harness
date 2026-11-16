@@ -317,7 +317,7 @@ pub async fn build_app_with_sources(
     } else {
         None
     };
-    let structured_gates = crate::server::structured_memory::OperatorGates::load(&home);
+    let structured_gates = crate::server::structured_memory::OperatorGates::load(&home)?;
     let attachments = crate::server::attachments::AttachmentStore::open(&home.attachments_dir())?;
     let notes_limits = crate::server::notes_corpus::NotesLimits::from_config(&cfg)?;
     let self_knowledge = crate::server::self_manual::SelfKnowledge::new(&cfg)?;

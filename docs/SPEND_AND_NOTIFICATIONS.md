@@ -173,7 +173,9 @@ pending rows (`authority_revoked`) and leaves every other destination alone.
 `CGAGENTHARNESS_WEBHOOK_TOKEN` remains only as a legacy bootstrap, and only
 when every enabled bearer destination belongs to one owner; a second owner's
 bearer destination is refused at startup unless `bearers.json` has its own
-secret. There is no signing-secret or payload-content adapter.
+secret. It is read only when an enabled bearer destination has no secret in
+`bearers.json`, so an unusable legacy value cannot revoke other destinations.
+There is no signing-secret or payload-content adapter.
 Credentials are absent from the outbox, status responses, event payloads and
 delivery audit records.
 

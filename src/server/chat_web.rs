@@ -47,24 +47,8 @@ const OUTSIDE_SOURCE_PHRASES: &[&str] = &[
     "web sources",
 ];
 
-const LOCAL_READ_TOOLS: &[&str] = &[
-    "notes_read",
-    "read_notes",
-    "notes_corpus",
-    "local_corpus",
-    "read_corpus",
-    "private_notes",
-    "lookup_note",
-];
-
 fn is_web_search_name(name: &str) -> bool {
     matches!(name, "web_search" | "search_web" | "websearch")
-}
-
-fn is_local_read_name(name: &str) -> bool {
-    LOCAL_READ_TOOLS
-        .iter()
-        .any(|tool| tool.eq_ignore_ascii_case(name.trim()))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,12 +68,6 @@ impl StickyRoute {
 
     fn observe_notes_in_prompt(&mut self, system: &str) {
         if system.contains("source=notes_corpus") {
-            self.local_answered = true;
-        }
-    }
-
-    fn observe_tool_result(&mut self, name: &str, ok: bool) {
-        if ok && is_local_read_name(name) {
             self.local_answered = true;
         }
     }
@@ -1161,7 +1139,6 @@ async fn run_inner(
                 }
             };
             if result.get("error").is_none() {
-                route.observe_tool_result(name, true);
                 // Provider listings (SerpAPI, Tavily) are not URL evidence.
                 if !matches!(result["provider"].as_str(), Some("google-serpapi" | "tavily")) {
                     if let Some(source) = result
@@ -1201,7 +1178,7 @@ mod tests {
     fn sticky_route_denies_web_search_after_a_local_read() {
         let mut route = StickyRoute::from_user_message("What does my note say about cedar?");
         assert!(route.allows_web_search());
-        route.observe_tool_result("notes_corpus", true);
+        route.observe_notes_in_prompt("source=notes_corpus\ncedar: 5");
         assert!(!route.allows_web_search());
         assert!(narrow_tools(&tools(), &route)
             .iter()
@@ -1209,13 +1186,7 @@ mod tests {
         assert!(narrow_tools(&tools(), &route)
             .iter()
             .any(|tool| tool["function"]["name"] == "web_fetch"));
-        route.observe_tool_result("web_search", true);
-        assert!(!route.allows_web_search(), "a web hit does not reopen search");
-        let mut failed = StickyRoute::from_user_message("What does my note say about cedar?");
-        failed.observe_tool_result("read_notes", false);
-        assert!(failed.allows_web_search());
         let mut asked = StickyRoute::from_user_message("Please search the web for cedar prices");
-        asked.observe_tool_result("private_notes", true);
         asked.observe_notes_in_prompt("source=notes_corpus\ncedar: 5");
         assert!(asked.allows_web_search());
         let mut sources = StickyRoute::from_user_message("Compare my notes with web sources.");
