@@ -69,74 +69,77 @@ pub async fn status(
             json!({"version":crate::VERSION,"auth_enabled":true,"api_key_optional":true,"status":"login required for operational details"}),
         );
     }
-    // portal_auditor learns which model it chats with, not paths, backend URL,
-    // persona or memory state.
-    if user
-        .as_ref()
-        .is_some_and(|u| u.role == crate::common::authn::PORTAL_AUDITOR_ROLE)
-    {
-        let model = state.current_model();
+    super::structured_memory::off_worker(move || {
+        // portal_auditor learns which model it chats with, not paths, backend URL,
+        // persona or memory state.
+        if user
+            .as_ref()
+            .is_some_and(|u| u.role == crate::common::authn::PORTAL_AUDITOR_ROLE)
+        {
+            let model = state.current_model();
+            let sessions = state.store.for_owner(&owner).list();
+            return Json(json!({
+                "version": crate::VERSION,
+                "auth_enabled": state.auth.is_some(),
+                "model": model,
+                "provider": state.provider_for(&model),
+                "chat_mode": "conversation",
+                "soul_enabled": false,
+                "memory_enabled": false,
+                "chat_tools_available": false,
+                "sessions": sessions.len(),
+            }));
+        }
         let sessions = state.store.for_owner(&owner).list();
-        return Json(json!({
+        let total_tokens: u64 = sessions.iter().filter_map(|s| s["tokens"]["total"].as_u64()).sum();
+        let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        // One settings snapshot, so model and saved-override notice agree.
+        // An automatic fallback is an effective backend, not a saved selection.
+        let model = if settings.selected_model.trim().is_empty() {
+            state.backend.model.clone()
+        } else {
+            settings.selected_model.clone()
+        };
+        let cloud = state.cloud_chat.is_cloud_selection(&model);
+        let model_status = model_status(&state, &owner, &model);
+        let loop_limits = state.runtime_limits().loop_limits;
+        Json(json!({
             "version": crate::VERSION,
-            "auth_enabled": state.auth.is_some(),
-            "model": model,
+            "model": model_status["model"],
+            "configured_model": state.cfg.str_or("models.local_llm.model", &state.backend.model),
+            "selection_overrides_config": !settings.selected_model.trim().is_empty()
+                && settings.selected_model != state.cfg.str_or("models.local_llm.model", &state.backend.model).trim(),
             "provider": state.provider_for(&model),
+            "model_status": model_status,
+            // Compatibility field: `security.api_key_optional` is never read (INVARIANTS.md).
+            "api_key_optional": true,
+            "base_url": if cloud { Value::Null } else { json!(state.backend.base_url) },
+            "soul_enabled": settings.soul_enabled,
+            "soul": soul_status(&state, settings.soul_enabled),
+            "memory_enabled": settings.memory_enabled,
+            "home": state.home.root.display().to_string(),
+            "repo_root": Value::Null,
             "chat_mode": "conversation",
-            "soul_enabled": false,
-            "memory_enabled": false,
-            "chat_tools_available": false,
+            "chat_tools_available": settings.web_enabled && !cloud && !state.chat_tools_unsupported(&model),
+            "loop": {
+                "unbounded": loop_limits.is_unbounded(),
+                "max_turns": loop_limits.max_turns,
+                "max_total_completion_tokens": loop_limits.max_total_completion_tokens,
+                "max_failures": loop_limits.max_failures,
+                "cooldown_ms": loop_limits.cooldown_ms,
+            },
+            "server_loop": true,
             "sessions": sessions.len(),
-        }));
-    }
-    let sessions = state.store.for_owner(&owner).list();
-    let total_tokens: u64 = sessions.iter().filter_map(|s| s["tokens"]["total"].as_u64()).sum();
-    let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
-    // One settings snapshot, so model and saved-override notice agree.
-    // An automatic fallback is an effective backend, not a saved selection.
-    let model = if settings.selected_model.trim().is_empty() {
-        state.backend.model.clone()
-    } else {
-        settings.selected_model.clone()
-    };
-    let cloud = state.cloud_chat.is_cloud_selection(&model);
-    let model_status = model_status(&state, &owner, &model);
-    let loop_limits = state.runtime_limits().loop_limits;
-    Json(json!({
-        "version": crate::VERSION,
-        "model": model_status["model"],
-        "configured_model": state.cfg.str_or("models.local_llm.model", &state.backend.model),
-        "selection_overrides_config": !settings.selected_model.trim().is_empty()
-            && settings.selected_model != state.cfg.str_or("models.local_llm.model", &state.backend.model).trim(),
-        "provider": state.provider_for(&model),
-        "model_status": model_status,
-        // Compatibility field: `security.api_key_optional` is never read (INVARIANTS.md).
-        "api_key_optional": true,
-        "base_url": if cloud { Value::Null } else { json!(state.backend.base_url) },
-        "soul_enabled": settings.soul_enabled,
-        "soul": soul_status(&state, settings.soul_enabled),
-        "memory_enabled": settings.memory_enabled,
-        "home": state.home.root.display().to_string(),
-        "repo_root": Value::Null,
-        "chat_mode": "conversation",
-        "chat_tools_available": settings.web_enabled && !cloud && !state.chat_tools_unsupported(&model),
-        "loop": {
-            "unbounded": loop_limits.is_unbounded(),
-            "max_turns": loop_limits.max_turns,
-            "max_total_completion_tokens": loop_limits.max_total_completion_tokens,
-            "max_failures": loop_limits.max_failures,
-            "cooldown_ms": loop_limits.cooldown_ms,
-        },
-        "server_loop": true,
-        "sessions": sessions.len(),
-        "total_tokens": total_tokens,
-        "layout": {
-            "sessions": state.home.sessions_dir().display().to_string(),
-            "skills": state.home.skills_dir().display().to_string(),
-            "tools": state.home.tools_dir().display().to_string(),
-            "memory": state.home.memory_dir().display().to_string(),
-        },
-    }))
+            "total_tokens": total_tokens,
+            "layout": {
+                "sessions": state.home.sessions_dir().display().to_string(),
+                "skills": state.home.skills_dir().display().to_string(),
+                "tools": state.home.tools_dir().display().to_string(),
+                "memory": state.home.memory_dir().display().to_string(),
+            },
+        }))
+    })
+    .await
 }
 
 pub async fn spend_summary(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
@@ -349,7 +352,7 @@ pub async fn upload_attachments(
 
 pub async fn list_sessions(State(state): State<Arc<AppState>>, user: Caller) -> Json<Value> {
     let owner = super::auth::context_owner(user.clone());
-    Json(json!({"sessions": state.store.for_owner(&owner).list()}))
+    super::structured_memory::off_worker(move || Json(json!({"sessions": state.store.for_owner(&owner).list()}))).await
 }
 
 pub async fn create_session(
@@ -450,11 +453,12 @@ pub async fn get_session(
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
-    let session = state
-        .store
-        .for_owner(&owner)
-        .get(&session_id)
-        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    let read_owner = owner.clone();
+    let read_state = Arc::clone(&state);
+    let session =
+        super::structured_memory::off_worker(move || read_state.store.for_owner(&read_owner).get(&session_id))
+            .await
+            .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     let messages: Vec<Value> = session
         .messages
         .iter()
