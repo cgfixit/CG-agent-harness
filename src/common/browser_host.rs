@@ -5,7 +5,8 @@ use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::Duration;
 
@@ -28,6 +29,10 @@ pub const MAX_TASK_CHARS: usize = 2_000;
 /// hrefs and the URL at 8,192 characters, text at 4,000), which stays far
 /// under this even with JSON escaping; only a broken sidecar reaches it.
 const MAX_REPLY_BYTES: u64 = 4 * 1024 * 1024;
+/// Longest wait for one sidecar reply. The slowest op (navigate: 10 s load,
+/// up to 14 s to settle, then an observation with 5 s steps) fits well inside,
+/// and three failures in a row still end before the default 300 s task deadline.
+const SIDECAR_CALL_TIMEOUT: Duration = Duration::from_secs(75);
 /// Characters of a link target an observation shows the model.
 const MAX_SHOWN_HREF_CHARS: usize = 300;
 
@@ -92,11 +97,58 @@ pub trait Driver {
 struct Sidecar {
     child: Child,
     stdin: Option<ChildStdin>,
-    reader: BufReader<ChildStdout>,
+    /// Reply lines from a reader thread, so a call can stop waiting.
+    replies: Receiver<Result<String, String>>,
     next_id: u64,
+    call_timeout: Duration,
 }
 
 impl Sidecar {
+    /// Takes the child's stdin and stdout. A thread reads one bounded line at
+    /// a time and stops at end of file, an error or an oversized line.
+    fn attach(mut child: Child, call_timeout: Duration) -> Result<Self, String> {
+        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("sidecar pipes missing".into());
+        };
+        let (send, replies) = mpsc::channel();
+        thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            loop {
+                let mut line = String::new();
+                // A page cannot make this process buffer without limit.
+                let reply = match (&mut reader).take(MAX_REPLY_BYTES + 1).read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(read) if read as u64 > MAX_REPLY_BYTES => {
+                        Err(format!("sidecar reply exceeded {MAX_REPLY_BYTES} bytes"))
+                    }
+                    Ok(_) => Ok(line),
+                    Err(err) => Err(err.to_string()),
+                };
+                let last = reply.is_err();
+                if send.send(reply).is_err() || last {
+                    break;
+                }
+            }
+        });
+        Ok(Self {
+            child,
+            stdin: Some(stdin),
+            replies,
+            next_id: 0,
+            call_timeout,
+        })
+    }
+
+    /// The sidecar is mid-line or unresponsive: stop it so every later call
+    /// fails at once instead of waiting.
+    fn stop(&mut self, why: String) -> String {
+        self.stdin = None;
+        let _ = self.child.kill();
+        format!("{why}; the session was stopped")
+    }
+
     /// `allow_private` lets IP-literal grants reach loopback and private
     /// addresses; only test-support fixtures pass true.
     fn start(script: &Path, session: &Session, headless: bool, allow_private: bool) -> Result<Self, String> {
@@ -106,7 +158,7 @@ impl Sidecar {
         {
             return Err("playwright is not prepared. From browser/, run PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci. A session does not install it.".into());
         }
-        let mut child = Command::new("node")
+        let child = Command::new("node")
             .arg(script)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -116,17 +168,7 @@ impl Sidecar {
             .env("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1")
             .spawn()
             .map_err(|err| format!("node sidecar failed to start: {err}"))?;
-        let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("sidecar pipes missing".into());
-        };
-        let mut sidecar = Self {
-            child,
-            stdin: Some(stdin),
-            reader: BufReader::new(stdout),
-            next_id: 0,
-        };
+        let mut sidecar = Self::attach(child, SIDECAR_CALL_TIMEOUT)?;
         let started = sidecar.call(
             json!({"op":"start","grants": session.grant_strings(),"headless": headless,"allow_private": allow_private}),
         )?;
@@ -144,24 +186,16 @@ impl Driver for Sidecar {
         let stdin = self.stdin.as_mut().ok_or("sidecar stdin closed")?;
         writeln!(stdin, "{message}").map_err(|err| err.to_string())?;
         stdin.flush().map_err(|err| err.to_string())?;
-        let mut line = String::new();
-        // One reply line, bounded: a page cannot make this process buffer
-        // without limit. Past the bound the pipe is mid-line, so the sidecar is
-        // stopped and every later call fails.
-        let read = (&mut self.reader)
-            .take(MAX_REPLY_BYTES + 1)
-            .read_line(&mut line)
-            .map_err(|err| err.to_string())?;
-        if read as u64 > MAX_REPLY_BYTES {
-            self.stdin = None;
-            let _ = self.child.kill();
-            return Err(format!(
-                "sidecar reply exceeded {MAX_REPLY_BYTES} bytes; the session was stopped"
-            ));
-        }
-        if line.is_empty() {
-            return Err("sidecar closed the pipe".into());
-        }
+        // A stuck renderer fails this call; the task's report still comes back.
+        let line = match self.replies.recv_timeout(self.call_timeout) {
+            Ok(Ok(line)) => line,
+            Ok(Err(why)) => return Err(self.stop(why)),
+            Err(RecvTimeoutError::Timeout) => {
+                let secs = self.call_timeout.as_secs();
+                return Err(self.stop(format!("sidecar did not answer within {secs} s")));
+            }
+            Err(RecvTimeoutError::Disconnected) => return Err("sidecar closed the pipe".into()),
+        };
         serde_json::from_str(&line)
             .map_err(|err| format!("sidecar reply was not json: {err}: {}", truncate(&line, 300)))
     }
@@ -561,7 +595,12 @@ fn model_loop(
         ));
         messages.push(message);
         if tool_calls.is_empty() {
-            answer = Some(content);
+            // An empty reply is not an answer, as finish_verdict already says.
+            if content.trim().is_empty() {
+                stopped = Some("the model replied with neither an action nor an answer".to_string());
+            } else {
+                answer = Some(content);
+            }
             break;
         }
         // A finish later in this turn must not rest on results the model never read.
@@ -1158,21 +1197,37 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn an_oversized_sidecar_reply_stops_the_session() {
-        let mut child = Command::new("sh")
+        let child = Command::new("sh")
             .args(["-c", "read _; head -c 5000000 /dev/zero | tr '\\0' x; echo"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
             .unwrap();
-        let (stdin, stdout) = (child.stdin.take(), child.stdout.take().unwrap());
-        let mut sidecar = Sidecar {
-            child,
-            stdin,
-            reader: BufReader::new(stdout),
-            next_id: 0,
-        };
+        let mut sidecar = Sidecar::attach(child, Duration::from_secs(30)).unwrap();
         let err = sidecar.call(json!({"op":"observe"})).unwrap_err();
         assert!(err.contains("exceeded"), "{err}");
+        assert_eq!(
+            sidecar.call(json!({"op":"observe"})).unwrap_err(),
+            "sidecar stdin closed"
+        );
+    }
+
+    /// A sidecar that never answers fails the call within its timeout instead
+    /// of holding the task until browser.timeout_sec, and is stopped.
+    #[cfg(unix)]
+    #[test]
+    fn a_silent_sidecar_fails_the_call_within_its_timeout() {
+        let child = Command::new("sh")
+            .args(["-c", "read _; sleep 30"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut sidecar = Sidecar::attach(child, Duration::from_millis(300)).unwrap();
+        let started = std::time::Instant::now();
+        let err = sidecar.call(json!({"op":"observe"})).unwrap_err();
+        assert!(err.contains("did not answer within"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(5));
         assert_eq!(
             sidecar.call(json!({"op":"observe"})).unwrap_err(),
             "sidecar stdin closed"
@@ -1410,6 +1465,29 @@ mod tests {
         assert_eq!(report["finished"], false);
         assert!(report["stopped"].as_str().unwrap().starts_with("needs the operator"));
         assert_eq!(report["for_operator"][0]["held"], "POST https://example.com/save");
+    }
+
+    #[test]
+    fn an_empty_reply_is_not_a_finished_task() {
+        let origins = vec!["https://example.com".to_string()];
+        let mut session = Session::general(&origins).unwrap();
+        let mut page = ScriptedPage::default();
+        for content in ["", "  \n "] {
+            let mut chat = |_: &[Value]| Ok(json!({"message": {"role": "assistant", "content": content}}));
+            let report = model_loop(&mut session, &mut page, &mut chat, &|_| None, "task", &origins, 6).unwrap();
+            assert_eq!(report["finished"], false, "{content:?}");
+            assert!(report["answer"].is_null());
+            assert!(report["stopped"]
+                .as_str()
+                .unwrap()
+                .contains("neither an action nor an answer"));
+        }
+        let mut chat = |_: &[Value]| Ok(json!({"message": {"role": "assistant", "content": "Python 3.14"}}));
+        let report = model_loop(&mut session, &mut page, &mut chat, &|_| None, "task", &origins, 6).unwrap();
+        assert_eq!(
+            (report["finished"].clone(), report["answer"].clone()),
+            (json!(true), json!("Python 3.14"))
+        );
     }
 
     #[test]
