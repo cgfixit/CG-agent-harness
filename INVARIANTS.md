@@ -19,7 +19,9 @@ the server or the shim.
   session process, not an MCP call and not a coding-sandbox check. `/api/browser/run`
   is admin-only behind literal `browser.enabled`; origins come only from the request,
   the child gets `browser_host::child_environment` (no provider keys), every request
-  but GET and HEAD is held for the operator, WebRTC sends no UDP past the sidecar proxy
+  but GET and HEAD is held for the operator (page route, and a browser-wide CDP `Fetch`
+  gate that also sees workers), every document carries `worker-src 'none'` so no
+  worker or its WebSocket runs, WebRTC sends no UDP past the sidecar proxy
   (session profile; `browser enter` fixture), an origin whose root URL (`{origin}/`)
   the web block list blocks is refused (rechecked each turn and before delivery;
   path-level rules are not enforced inside a grant, #899), and a granted name or IP literal
