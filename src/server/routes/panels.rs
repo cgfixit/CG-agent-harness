@@ -187,10 +187,23 @@ pub async fn web_toggle(
         .save(&state.home)
         .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     state
+        .audit
+        .log(json!({"event": "web.enabled_set", "owner": owner, "enabled": snapshot.web_enabled}));
+    state
         .web_snapshot()
         .status(snapshot.web_enabled, &owner)
         .map(Json)
         .map_err(|e| web_err(&e))
+}
+
+/// Who changed the shared URL policy, how, and by how many rules. Counts only:
+/// the patterns stay in the policy file.
+fn audit_web_rules(state: &AppState, owner: &str, action: &str, rules: usize, changed: bool) {
+    if changed {
+        state
+            .audit
+            .log(json!({"event": "web.policy_rules", "owner": owner, "action": action, "rules": rules}));
+    }
 }
 
 pub async fn web_allow(
@@ -201,7 +214,10 @@ pub async fn web_allow(
     let owner = super::auth::context_owner(user);
     let enabled = web_enabled(&state);
     let web = state.web_snapshot();
-    web.allow_rules(&req.patterns(), &req.group, &req.seeds, enabled)
+    let patterns = req.patterns();
+    let changed = web.allow_rules(&patterns, &req.group, &req.seeds, enabled);
+    audit_web_rules(&state, &owner, "allow", patterns.len(), changed.is_ok());
+    changed
         .and_then(|_| web.status(enabled, &owner))
         .map(Json)
         .map_err(|e| web_err(&e))
@@ -215,7 +231,9 @@ pub async fn web_deny(
     let owner = super::auth::context_owner(user);
     let enabled = web_enabled(&state);
     let web = state.web_snapshot();
-    web.deny(&req.url, enabled)
+    let changed = web.deny(&req.url, enabled);
+    audit_web_rules(&state, &owner, "deny", 1, changed.is_ok());
+    changed
         .and_then(|_| web.status(enabled, &owner))
         .map(Json)
         .map_err(|e| web_err(&e))
@@ -250,7 +268,9 @@ pub async fn web_block(
     let owner = super::auth::context_owner(user);
     let enabled = web_enabled(&state);
     let web = state.web_snapshot();
-    web.block_rules(&req.urls, enabled)
+    let changed = web.block_rules(&req.urls, enabled);
+    audit_web_rules(&state, &owner, "block", req.urls.len(), changed.is_ok());
+    changed
         .and_then(|_| web.status(enabled, &owner))
         .map(Json)
         .map_err(|e| web_err(&e))
@@ -264,7 +284,9 @@ pub async fn web_unblock(
     let owner = super::auth::context_owner(user);
     let enabled = web_enabled(&state);
     let web = state.web_snapshot();
-    web.unblock(&req.url, enabled)
+    let changed = web.unblock(&req.url, enabled);
+    audit_web_rules(&state, &owner, "unblock", 1, changed.is_ok());
+    changed
         .and_then(|_| web.status(enabled, &owner))
         .map(Json)
         .map_err(|e| web_err(&e))

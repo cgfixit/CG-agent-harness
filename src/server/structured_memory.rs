@@ -258,21 +258,33 @@ pub struct OperatorGates {
 }
 
 impl OperatorGates {
-    pub fn load(home: &crate::common::home::Home) -> Self {
+    /// A missing file is no override. A file this build cannot read whole is
+    /// refused by field name: dropping it would return an administrator's
+    /// explicit `off` to the config value, and the next save would erase it.
+    pub fn load(home: &crate::common::home::Home) -> Result<Self> {
         // Fail-closed: a traversal-shaped home must not be read as an overlay.
         let Some(path) = refuse_parent_components(home.memory_dir())
             .ok()
             .and_then(|_| refuse_parent_components(home.structured_memory_gates_path()).ok())
         else {
-            return Self::default();
+            return Ok(Self::default());
         };
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            return Self::default();
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(_) => return Err(invalid("memory/structured_gates.json is unreadable")),
         };
-        let Ok(value) = serde_json::from_str::<Value>(&text) else {
-            return Self::default();
+        let value: Value =
+            serde_json::from_str(&text).map_err(|_| invalid("memory/structured_gates.json is not valid JSON"))?;
+        let Some(saved) = value.as_object() else {
+            return Err(invalid("memory/structured_gates.json is not a JSON object"));
         };
-        let v2 = value.get("version").and_then(Value::as_u64) == Some(2);
+        // Files written before version 2 carry no version, or 1.
+        let v2 = match saved.get("version").map(Value::as_u64) {
+            None | Some(Some(1)) => false,
+            Some(Some(2)) => true,
+            Some(_) => return Err(invalid("memory/structured_gates.json has an unsupported version")),
+        };
         let mut gates = Self::default();
         for gate in [
             "episode_capture",
@@ -284,14 +296,16 @@ impl OperatorGates {
             "auto_suggest_chat",
             "auto_suggest_coding",
         ] {
-            if let Some(enabled) = value.get(gate).and_then(Value::as_bool) {
-                let _ = gates.set(gate, enabled);
-                if !v2 && !enabled {
-                    gates.overrides.remove(gate);
-                }
+            let Some(raw) = saved.get(gate) else { continue };
+            let enabled = raw
+                .as_bool()
+                .ok_or_else(|| invalid(format!("memory/structured_gates.json: {gate} must be true or false")))?;
+            gates.set(gate, enabled)?;
+            if !v2 && !enabled {
+                gates.overrides.remove(gate);
             }
         }
-        gates
+        Ok(gates)
     }
 
     pub fn save(&self, home: &crate::common::home::Home) -> Result<()> {
@@ -3448,7 +3462,7 @@ mod tests {
         // The name is not a parent component, so the store opens and gates save.
         StructuredMemoryStore::open(&path, &cfg(dir.path())).unwrap();
         let dotted = Home::at(home.clone());
-        OperatorGates::load(&dotted).save(&dotted).unwrap();
+        OperatorGates::load(&dotted).unwrap().save(&dotted).unwrap();
         assert!(dotted.structured_memory_gates_path().is_file());
         // A real parent component is still refused, by the store as well as the helper.
         assert!(refuse_parent_components(home.join("../escape.sqlite3")).is_err());
@@ -3735,12 +3749,12 @@ mod tests {
         assert!(gates.save(&home).is_err());
         assert!(!dir.path().join("nested").join("memory").exists());
         assert!(!dir.path().join("escaped").join("memory").exists());
-        let loaded = OperatorGates::load(&home);
+        let loaded = OperatorGates::load(&home).unwrap();
         assert_eq!(loaded, OperatorGates::default());
 
         let safe = Home::at(dir.path().join("home"));
         gates.save(&safe).unwrap();
-        let reloaded = OperatorGates::load(&safe);
+        let reloaded = OperatorGates::load(&safe).unwrap();
         assert!(reloaded.retrieval);
         assert!(!reloaded.auto_retrieval);
         assert!(!reloaded.episode_capture);
@@ -3763,7 +3777,7 @@ mod tests {
         assert_eq!(saved["version"], 2);
         assert_eq!(saved["retrieval"], false);
         assert_eq!(saved["auto_suggest_chat"], true);
-        let reloaded = OperatorGates::load(&home);
+        let reloaded = OperatorGates::load(&home).unwrap();
         assert!(!reloaded.resolve("retrieval", true));
         assert!(reloaded.resolve("auto_suggest_chat", false));
 
@@ -3773,9 +3787,54 @@ mod tests {
             Some(0o600),
         )
         .unwrap();
-        let legacy = OperatorGates::load(&home);
+        let legacy = OperatorGates::load(&home).unwrap();
         assert!(legacy.resolve("retrieval", true));
         assert!(legacy.resolve("explicit_recall", false));
+    }
+
+    #[test]
+    fn a_gates_file_this_build_cannot_read_is_refused_not_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::at(dir.path().join("home"));
+        assert_eq!(OperatorGates::load(&home).unwrap(), OperatorGates::default());
+        let mut gates = OperatorGates::default();
+        gates.set("auto_retrieval", false).unwrap();
+        gates.save(&home).unwrap();
+        assert!(!OperatorGates::load(&home).unwrap().resolve("auto_retrieval", true));
+
+        // Each of these used to load as "no override", which reopened a gate
+        // the administrator had switched off.
+        for (body, names) in [
+            (r#"{"version":2,"auto_retrieval":false,"#, "not valid JSON"),
+            (r#"[2, false]"#, "not a JSON object"),
+            (
+                r#"{"version":2,"auto_retrieval":"false"}"#,
+                "auto_retrieval must be true or false",
+            ),
+            (
+                r#"{"version":2,"auto_retrieval":0}"#,
+                "auto_retrieval must be true or false",
+            ),
+            (r#"{"version":"2","auto_retrieval":false}"#, "unsupported version"),
+            (r#"{"version":3,"auto_retrieval":false}"#, "unsupported version"),
+        ] {
+            write_atomic(&home.structured_memory_gates_path(), body.as_bytes(), Some(0o600)).unwrap();
+            let refused = OperatorGates::load(&home).unwrap_err();
+            assert!(refused.message.contains(names), "refusal should name: {names}");
+            assert!(
+                !refused.message.contains("false,"),
+                "a refusal names the field, never the file's text"
+            );
+        }
+
+        // Keys this build does not know change no gate it has.
+        write_atomic(
+            &home.structured_memory_gates_path(),
+            br#"{"version":2,"auto_retrieval":false,"later_gate":true}"#,
+            Some(0o600),
+        )
+        .unwrap();
+        assert!(!OperatorGates::load(&home).unwrap().resolve("auto_retrieval", true));
     }
 
     #[test]

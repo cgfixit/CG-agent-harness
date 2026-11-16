@@ -57,7 +57,9 @@ override, if set, or otherwise its config value is true. Overrides are
 administrator-only when accounts are enabled, persist in
 `<home>/memory/structured_gates.json` and take effect immediately: explicit
 `off` overrides config `true`, and explicit `on` enables a config-false gate.
-Overrides **cannot open the store**.
+Overrides **cannot open the store**. A missing overrides file means none; one
+that is not valid JSON, has an unknown `version` or a gate that is not
+`true`/`false` stops startup and names the field, so an `off` is never dropped.
 
 | Gate (`structured_memory.*`) | Administrator override | Requires | Off means |
 |---|---|---|---|
