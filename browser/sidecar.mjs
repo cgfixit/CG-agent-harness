@@ -357,6 +357,77 @@ function track(opened) {
   opening.add(verdict);
 }
 
+// Records a request that could write to a server, for the operator. It was not sent.
+function hold(method, url) {
+  if (held.length < 20) held.push(`${method} ${url.slice(0, 200)}`);
+}
+
+// Every document a task loads carries this policy beside the site's own, and
+// policies only narrow, so no page can start a dedicated or shared worker.
+// Workers are where the per-page guards stop: context.route never sees a
+// SharedWorker's requests, and routeWebSocket is a page script that a worker's
+// WebSocket never meets. Blob, data and about:blank documents inherit it.
+const WORKER_POLICY = { name: "Content-Security-Policy", value: "worker-src 'none'" };
+// The body comes back decoded, so these would describe bytes that are gone.
+const STALE_BODY_HEADERS = new Set(["content-encoding", "content-length", "transfer-encoding"]);
+
+// The browser-wide network gate under context.route. Chrome pauses here every
+// request any page or worker makes, so it holds what the page route never saw,
+// and it adds WORKER_POLICY to every document response. Anything that fails
+// in here fails the request: nothing passes ungated.
+async function gate(cdp, event) {
+  const { requestId, request } = event;
+  if (event.responseErrorReason !== undefined) {
+    return cdp.send("Fetch.failRequest", { requestId, errorReason: event.responseErrorReason });
+  }
+  if (event.responseStatusCode !== undefined) {
+    // Response stage: documents only (see the Fetch.enable patterns). A redirect
+    // has no body to read and renders nothing; its target is a new request that
+    // pauses here again, so it meets the grant check and this policy then.
+    const status = event.responseStatusCode;
+    const redirect = status >= 300 && status < 400 && (event.responseHeaders || []).some(({ name }) => name.toLowerCase() === "location");
+    if (redirect) return cdp.send("Fetch.continueRequest", { requestId });
+    const { body, base64Encoded } = await cdp.send("Fetch.getResponseBody", { requestId });
+    const headers = (event.responseHeaders || []).filter(({ name }) => !STALE_BODY_HEADERS.has(name.toLowerCase()));
+    return cdp.send("Fetch.fulfillRequest", {
+      requestId,
+      responseCode: event.responseStatusCode,
+      responsePhrase: event.responseStatusText || undefined,
+      responseHeaders: [...headers, WORKER_POLICY],
+      body: base64Encoded ? body : Buffer.from(body).toString("base64"),
+    });
+  }
+  const local = /^(data|blob|about):/.test(request.url);
+  // The proxy refuses an ungranted origin too; the page route names it.
+  if (!local && !allowed(request.url)) {
+    return cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" });
+  }
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    hold(request.method, request.url);
+    // A held page load answers 204 so the page stays, as the page route does.
+    if (event.resourceType === "Document") {
+      return cdp.send("Fetch.fulfillRequest", { requestId, responseCode: 204, body: "" });
+    }
+    return cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" });
+  }
+  return cdp.send("Fetch.continueRequest", { requestId });
+}
+
+async function startNetworkGate() {
+  const cdp = await context.browser().newBrowserCDPSession();
+  cdp.on("Fetch.requestPaused", (event) => {
+    gate(cdp, event).catch(() =>
+      cdp.send("Fetch.failRequest", { requestId: event.requestId, errorReason: "BlockedByClient" }).catch(() => {}),
+    );
+  });
+  await cdp.send("Fetch.enable", {
+    patterns: [
+      { urlPattern: "*", requestStage: "Request" },
+      { urlPattern: "*", requestStage: "Response", resourceType: "Document" },
+    ],
+  });
+}
+
 async function start(message) {
   if (context) throw new Error("session already started");
   grants = new Set(message.grants || []);
@@ -374,6 +445,8 @@ async function start(message) {
     acceptDownloads: false,
     ignoreHTTPSErrors: false,
   });
+  // Before any page loads: the first document must already carry WORKER_POLICY.
+  await startNetworkGate();
   await context.route("**/*", (route) => {
     const request = route.request();
     const url = request.url();
@@ -389,7 +462,7 @@ async function start(message) {
     // waits for the operator: every request but GET and HEAD is held here.
     const method = request.method();
     if (method !== "GET" && method !== "HEAD") {
-      if (held.length < 20) held.push(`${method} ${url.slice(0, 200)}`);
+      hold(method, url);
       // A held page load answers 204 so the page stays; a fetch/XHR fails.
       if (request.isNavigationRequest()) route.fulfill({ status: 204, body: "" });
       else route.abort("blockedbyclient");
