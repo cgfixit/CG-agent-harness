@@ -238,7 +238,7 @@ impl<'a> SkillRegistry<'a> {
     }
 
     fn scan(&self, text: &str) -> Vec<String> {
-        self.ctx.scanner.scan(text)
+        self.ctx.scanner.scan_normalized(text)
     }
 
     /// Preview a skill add/update. NEVER writes; flags are advisory.
