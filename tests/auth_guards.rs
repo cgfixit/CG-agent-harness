@@ -522,3 +522,84 @@ async fn obsolete_optional_flag_never_controls_account_permissions() {
         assert_eq!(s.open_get("/api/status").await.1["api_key_optional"], true, "{value}");
     }
 }
+
+/// Each admin account change re-reads the acting account when it runs. The
+/// guard's view (the request extension) can be stale after the body parse, the
+/// blocking-pool queue or the password-permit wait that sign-ins share.
+#[tokio::test]
+async fn account_changes_recheck_the_acting_admin_when_they_run() {
+    use axum::body::Body;
+    use axum::extract::{Path, State};
+    use axum::http::Request;
+    use cgagentharness::server::routes::auth;
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default().with("auth.enabled", "true")).await;
+    let mgr = s.state.auth.clone().unwrap();
+    let password = cgagentharness::common::random_hex(24);
+    mgr.create_user("boss", &password, "admin").unwrap();
+    mgr.create_user("target", &password, "operator").unwrap();
+    // Clear the first-sign-in flag so only the role decides.
+    mgr.set_password("boss", &password).unwrap();
+    let seen = mgr.get_user("boss").unwrap();
+    assert!(seen.role == "admin" && !seen.must_change_password && !seen.disabled);
+    let req =
+        |method: &str, body: Option<serde_json::Value>, actor: &cgagentharness::common::auth_store::UserSummary| {
+            let mut r = Request::builder()
+                .method(method)
+                .header("content-type", "application/json")
+                .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
+                .unwrap();
+            r.extensions_mut().insert(actor.clone());
+            r
+        };
+    let refused = |result: Result<axum::Json<serde_json::Value>, cgagentharness::server::errors::ApiError>| {
+        result.err().map(|error| error.code)
+    };
+    let state = || State(s.state.clone());
+    let target = || Path("target".to_string());
+    let denied = Some("AUTH_PERMISSION_DENIED".to_string());
+
+    // Control: the same calls with a current admin succeed.
+    let role = auth::set_role(state(), target(), req("POST", Some(json!({"role": "audit"})), &seen)).await;
+    assert_eq!(refused(role), None);
+    mgr.set_role("target", "operator").unwrap();
+
+    for stale_by in ["demoted", "disabled"] {
+        if stale_by == "demoted" {
+            mgr.set_role("boss", "operator").unwrap();
+        } else {
+            mgr.set_role("boss", "admin").unwrap();
+            mgr.disable_user("boss").unwrap();
+        }
+        let role = auth::set_role(state(), target(), req("POST", Some(json!({"role": "audit"})), &seen)).await;
+        assert_eq!(refused(role), denied, "{stale_by}: role");
+        let off = auth::set_disabled(state(), target(), req("POST", Some(json!({"disabled": true})), &seen)).await;
+        assert_eq!(refused(off), denied, "{stale_by}: disable");
+        let gone = auth::delete_user(state(), target(), req("DELETE", None, &seen)).await;
+        assert_eq!(refused(gone), denied, "{stale_by}: delete");
+        let reset = auth::set_password(
+            state(),
+            target(),
+            req(
+                "POST",
+                Some(json!({"password": cgagentharness::common::random_hex(24)})),
+                &seen,
+            ),
+        )
+        .await;
+        assert_eq!(refused(reset), denied, "{stale_by}: password");
+        let made = auth::create_user(
+            state(),
+            req(
+                "POST",
+                Some(json!({"username": "intruder", "password": password, "role": "admin"})),
+                &seen,
+            ),
+        )
+        .await;
+        assert_eq!(refused(made), denied, "{stale_by}: create");
+        let target_now = mgr.get_user("target").unwrap();
+        assert_eq!((target_now.role.as_str(), target_now.disabled), ("operator", false));
+        assert!(mgr.get_user("intruder").is_none());
+    }
+}

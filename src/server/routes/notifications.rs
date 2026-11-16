@@ -14,8 +14,11 @@ use std::sync::Arc;
 
 type Caller = Option<axum::Extension<crate::common::auth_store::UserSummary>>;
 
+/// Status and replay reread authority files and replay fsyncs the outbox, so
+/// both run on the blocking pool rather than an async worker.
 pub async fn status(State(state): State<Arc<AppState>>, user: Caller) -> Json<Value> {
-    Json(state.jobs.notification_status(&super::auth::context_owner(user)))
+    let owner = super::auth::context_owner(user);
+    super::structured_memory::off_worker(move || Json(state.jobs.notification_status(&owner))).await
 }
 pub async fn replay(
     State(state): State<Arc<AppState>>,
@@ -36,15 +39,19 @@ pub async fn replay(
         ));
     }
     let owner = super::auth::context_owner(user);
-    state.jobs.replay_notification(&owner, &id).map_err(|e| {
-        ApiError::from_err(
-            if e.code == "DELIVERY_NOT_FOUND" {
-                StatusCode::NOT_FOUND
-            } else {
-                StatusCode::CONFLICT
-            },
-            &e,
-        )
-    })?;
-    Ok(Json(json!({"delivery_id":id,"state":"pending","job_restarted":false})))
+    let reason_chars = body.reason.trim().chars().count();
+    super::structured_memory::off_worker(move || {
+        state.jobs.replay_notification(&owner, &id, reason_chars).map_err(|e| {
+            ApiError::from_err(
+                if e.code == "DELIVERY_NOT_FOUND" {
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::CONFLICT
+                },
+                &e,
+            )
+        })?;
+        Ok(Json(json!({"delivery_id":id,"state":"pending","job_restarted":false})))
+    })
+    .await
 }

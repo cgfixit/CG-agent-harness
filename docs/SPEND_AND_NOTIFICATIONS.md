@@ -258,4 +258,5 @@ The guarded APIs are `GET /api/notifications` and
 Foreign IDs return `DELIVERY_NOT_FOUND`; a machine memory key grants neither route.
 Replay returns `job_restarted: false`: it never creates or modifies a coding job.
 Audit events `notification_delivery`, `notification_replay`, `notification_dropped`,
-`notification_evicted` and `notification_store_failed` record bounded metadata.
+`notification_evicted` and `notification_store_failed` record bounded metadata;
+a replay line names its owner and the reason's length, never the reason.

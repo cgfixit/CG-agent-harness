@@ -233,7 +233,7 @@ async fn persisted_delivery_recovers_and_reconciles_the_job_enqueue_crash_gap() 
         .is_empty());
     assert_eq!(
         resumed
-            .replay("user_foreign", delivery.as_str().unwrap())
+            .replay("user_foreign", delivery.as_str().unwrap(), 6)
             .unwrap_err()
             .code,
         "DELIVERY_NOT_FOUND"
@@ -294,7 +294,7 @@ async fn destination_removal_revokes_pending_delivery_and_replay_without_restart
     assert_eq!(records.lock().unwrap().len(), 0);
     assert_eq!(notifier.status("local")["deliveries"][0]["state"], "revoked");
     assert_eq!(
-        notifier.replay("local", &delivery).unwrap_err().code,
+        notifier.replay("local", &delivery, 6).unwrap_err().code,
         "DELIVERY_REVOKED"
     );
     assert_eq!(store.get("local", &id).unwrap()["status"], "finished");
@@ -385,6 +385,21 @@ async fn guarded_replay_requires_review_and_never_restarts_the_job() {
     assert_eq!(rows[0]["events"], rows[1]["events"]);
     assert_eq!(s.state.jobs.list("local").len(), 1);
     assert_eq!(s.state.jobs.get("local", &id).unwrap()["status"], "finished");
+    // The route keeps the reason's length and owner, never its text. The
+    // notifier writes through its own audit writer, so wait for the line.
+    let replay = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(line) = s.audit_log().lines().find(|l| l.contains("\"notification_replay\"")) {
+                break serde_json::from_str::<Value>(line).unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(replay["owner_id"], "local");
+    assert_eq!(replay["reason_chars"], "fixture resend".chars().count());
+    assert!(!s.audit_log().contains("fixture resend"));
     task.abort();
 }
 
@@ -754,4 +769,52 @@ async fn bearer_file_with_an_acl_entry_is_refused_on_macos() {
         .unwrap_or_else(|e| panic!("0600 bearers.json without an ACL must load: {e:?}"))
         .expect("notifier enabled");
     notifier.stop();
+}
+
+#[tokio::test]
+async fn replay_audit_names_the_owner_and_reason_length_but_never_the_reason() {
+    let (url, records, task) = receiver(vec![200]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::at(dir.path().join("home"));
+    home.ensure_layout().unwrap();
+    let cfg = config(&home, &url);
+    let notifier = Notifier::start(&home, &cfg, None).unwrap().unwrap();
+    let store = JobStore::new().with_notifications(Some(notifier.clone()));
+    let id = "e".repeat(32);
+    store.insert_running("local", &id, "fixture", tokio::spawn(async {}));
+    store.finish(&id, Ok(json!({"ok":true})));
+    wait_records(&records, 1).await;
+    let delivery = notifier.status("local")["deliveries"][0]["delivery_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        while notifier.status("local")["deliveries"][0]["state"] != "delivered" {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let reason = "resend after receiver outage";
+    store
+        .replay_notification("local", &delivery, reason.chars().count())
+        .unwrap();
+    assert_eq!(notifier.status("local")["deliveries"][0]["state"], "pending");
+    let audit = home.root.join("logs/audit.jsonl");
+    let line = tokio::time::timeout(Duration::from_secs(8), async {
+        loop {
+            let text = std::fs::read_to_string(&audit).unwrap_or_default();
+            if let Some(line) = text.lines().find(|l| l.contains("\"notification_replay\"")) {
+                break serde_json::from_str::<Value>(line).unwrap();
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(line["owner_id"], "local");
+    assert_eq!(line["delivery_id"], delivery);
+    assert_eq!(line["reason_chars"], reason.chars().count());
+    notifier.stop();
+    task.abort();
 }
