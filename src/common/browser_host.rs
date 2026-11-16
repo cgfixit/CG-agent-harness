@@ -2,7 +2,7 @@
 //! session. The coding check sandbox is not involved, and this is not an MCP call.
 
 use std::ffi::OsString;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -24,6 +24,12 @@ const MAX_REFUSALS_IN_A_ROW: usize = 3;
 const MAX_FOR_OPERATOR: usize = 20;
 /// Longest operator task text a run accepts.
 pub const MAX_TASK_CHARS: usize = 2_000;
+/// Largest sidecar reply line. The sidecar caps every field (40 elements,
+/// hrefs and the URL at 8,192 characters, text at 4,000), which stays far
+/// under this even with JSON escaping; only a broken sidecar reaches it.
+const MAX_REPLY_BYTES: u64 = 4 * 1024 * 1024;
+/// Characters of a link target an observation shows the model.
+const MAX_SHOWN_HREF_CHARS: usize = 300;
 
 /// The only variables a browser child sees. Chrome renderers parse hostile
 /// pages and inherit this, so provider keys and tokens never enter it.
@@ -139,7 +145,20 @@ impl Driver for Sidecar {
         writeln!(stdin, "{message}").map_err(|err| err.to_string())?;
         stdin.flush().map_err(|err| err.to_string())?;
         let mut line = String::new();
-        self.reader.read_line(&mut line).map_err(|err| err.to_string())?;
+        // One reply line, bounded: a page cannot make this process buffer
+        // without limit. Past the bound the pipe is mid-line, so the sidecar is
+        // stopped and every later call fails.
+        let read = (&mut self.reader)
+            .take(MAX_REPLY_BYTES + 1)
+            .read_line(&mut line)
+            .map_err(|err| err.to_string())?;
+        if read as u64 > MAX_REPLY_BYTES {
+            self.stdin = None;
+            let _ = self.child.kill();
+            return Err(format!(
+                "sidecar reply exceeded {MAX_REPLY_BYTES} bytes; the session was stopped"
+            ));
+        }
         if line.is_empty() {
             return Err("sidecar closed the pipe".into());
         }
@@ -208,8 +227,9 @@ fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value 
                     .map(|el| {
                         let mut row = json!({"ref_id": el.ref_id, "role": el.role, "name": el.name});
                         let fact = session.fact(&el.ref_id);
+                        // The full target stays in the fact that follow_link uses.
                         if let Some(href) = fact.and_then(|fact| fact.href.as_deref()) {
-                            row["href"] = json!(href);
+                            row["href"] = json!(shown_href(href));
                         }
                         // A select box's option labels are page text for `select`, not refs.
                         if let Some(options) = fact
@@ -467,6 +487,9 @@ pub fn run_task(
     allow_private: bool,
 ) -> Result<Value, String> {
     let mut session = Session::general(origins).map_err(|err| format!("{err:?}"))?;
+    // Origins only: a requested URL's path or query (a token, say) never reaches
+    // the prompt or the report.
+    let grants = session.grant_strings();
     let mut sidecar = Sidecar::start(script, &session, headless, allow_private)?;
     let tools = browser_tools();
     let mut chat = |messages: &[Value]| ollama_chat(api, model, messages, &tools);
@@ -478,7 +501,7 @@ pub fn run_task(
         // which the public-URL block list cannot check and would always refuse.
         &|session: &Session| (!allow_private).then(|| policy_refusal_now(session)).flatten(),
         task,
-        origins,
+        &grants,
         max_turns,
     );
     drop(sidecar);
@@ -839,6 +862,16 @@ fn truncate(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
 }
 
+/// A link target as the model sees it. Tracking links run to kilobytes, and
+/// forty of them would fill the 32K window; a cut one ends in `…`.
+fn shown_href(href: &str) -> String {
+    if href.chars().count() <= MAX_SHOWN_HREF_CHARS {
+        href.to_string()
+    } else {
+        format!("{}…", truncate(href, MAX_SHOWN_HREF_CHARS))
+    }
+}
+
 /// A target=_blank link replaces the page; Enter submits a GET search; a
 /// select box takes a listed option; a password field hands off; Enter in a
 /// POST form and a button whose script POSTs are both held; and the page's
@@ -940,6 +973,16 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
             ("--model", Some(v)) if !v.is_empty() => model = Some(v.to_string()),
             ("--sidecar", Some(v)) if !v.is_empty() => sidecar = PathBuf::from(v),
             ("--task", Some(v)) if (1..=MAX_TASK_CHARS).contains(&v.chars().count()) => task = Some(v.to_string()),
+            // The server passes the task this way so it never shows in a process listing.
+            ("--task-file", Some(v)) if !v.is_empty() => {
+                match read_task_file(Path::new(v)) {
+                    Some(text) => task = Some(text),
+                    None => {
+                        eprintln!("cgagentharness: --task-file is unreadable, empty or longer than {MAX_TASK_CHARS} characters");
+                        return 3;
+                    }
+                }
+            }
             ("--origin", Some(v)) => origins.push(v.to_string()),
             ("--max-turns", Some(v)) if v.parse::<usize>().is_ok_and(|n| (1..=40).contains(&n)) => {
                 max_turns = v.parse().unwrap_or(max_turns)
@@ -994,6 +1037,18 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
             2
         }
     }
+}
+
+/// The task text in `path`: UTF-8, 1 to `MAX_TASK_CHARS` characters. Larger
+/// files are refused before they are read whole.
+fn read_task_file(path: &Path) -> Option<String> {
+    let mut text = String::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take((MAX_TASK_CHARS * 4 + 1) as u64)
+        .read_to_string(&mut text)
+        .ok()?;
+    (1..=MAX_TASK_CHARS).contains(&text.chars().count()).then_some(text)
 }
 
 /// An option label longer than the 80 characters an observation lists.
@@ -1068,6 +1123,61 @@ document.getElementById('filter').oninput = (e) => { filter = e.target.value; re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_link_targets_are_cut_for_the_model_only() {
+        let short = "https://docs.example/a?b=c";
+        assert_eq!(shown_href(short), short);
+        let long = format!("https://docs.example/?t={}", "x".repeat(4000));
+        let shown = shown_href(&long);
+        assert_eq!(shown.chars().count(), MAX_SHOWN_HREF_CHARS + 1);
+        assert!(shown.ends_with('…') && long.starts_with(shown.trim_end_matches('…')));
+    }
+
+    #[test]
+    fn a_task_file_must_be_utf8_and_within_the_task_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("task");
+        std::fs::write(&path, "list the games behind Start").unwrap();
+        assert_eq!(read_task_file(&path).as_deref(), Some("list the games behind Start"));
+        for bad in [
+            Vec::new(),
+            "x".repeat(MAX_TASK_CHARS + 1).into_bytes(),
+            vec![0xff, 0xfe],
+        ] {
+            std::fs::write(&path, bad).unwrap();
+            assert_eq!(read_task_file(&path), None);
+        }
+        std::fs::write(&path, "é".repeat(MAX_TASK_CHARS)).unwrap();
+        assert_eq!(read_task_file(&path).map(|t| t.chars().count()), Some(MAX_TASK_CHARS));
+        assert_eq!(read_task_file(&dir.path().join("missing")), None);
+    }
+
+    /// A reply line past `MAX_REPLY_BYTES` stops the sidecar instead of being
+    /// buffered, and the next call fails rather than reading the rest of it.
+    #[cfg(unix)]
+    #[test]
+    fn an_oversized_sidecar_reply_stops_the_session() {
+        let mut child = Command::new("sh")
+            .args(["-c", "read _; head -c 5000000 /dev/zero | tr '\\0' x; echo"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let (stdin, stdout) = (child.stdin.take(), child.stdout.take().unwrap());
+        let mut sidecar = Sidecar {
+            child,
+            stdin,
+            reader: BufReader::new(stdout),
+            next_id: 0,
+        };
+        let err = sidecar.call(json!({"op":"observe"})).unwrap_err();
+        assert!(err.contains("exceeded"), "{err}");
+        assert_eq!(
+            sidecar.call(json!({"op":"observe"})).unwrap_err(),
+            "sidecar stdin closed"
+        );
+    }
 
     /// A loopback listener that answers every connection with `response` and
     /// counts them. Returns its origin and the counter.

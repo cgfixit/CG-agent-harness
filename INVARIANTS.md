@@ -17,7 +17,8 @@ the server or the shim.
   `common/browser_host.rs`, `common/mcp.rs`, `common/mcp_worker.rs` and
   `common/windows_job.rs`; shared runners preserve I6. The browser host is a
   session process, not an MCP call and not a coding-sandbox check. `/api/browser/run`
-  is admin-only behind literal `browser.enabled`; origins come only from the request,
+  is admin-only behind literal `browser.enabled`; origins come only from the request
+  (argv, audit and report keep each URL's origin only; the task travels in a 0600 temp file),
   the child gets `browser_host::child_environment` (no provider keys), every request
   but GET and HEAD is held for the operator (page route, and a browser-wide CDP `Fetch`
   gate that also sees workers), every document carries `worker-src 'none'` so no
