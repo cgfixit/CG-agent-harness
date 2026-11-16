@@ -23,6 +23,11 @@ combined write policy ships closed: `agentic.enabled`,
 settings, such as `mode: write` and `writes_enabled: true`, do not ship false,
 so read the whole policy before enabling the master gates.
 
+The governed skill registry requires visible description/body text. Malformed
+`version` or `history` metadata refuses loading instead of resetting it;
+an exhausted version refuses writes. Missing legacy metadata keeps its defaults.
+Confirm, reason and refreshed write-policy gates still apply.
+
 ### 9.1 Install and authenticate the GitHub CLI
 
 Install the [GitHub CLI](INSTALL.md#26-optional-for-the-coding-pipeline-only-github-cli)
