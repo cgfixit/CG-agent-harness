@@ -279,7 +279,8 @@ selected facts are dropped as `cloud_chat`.
 
 ## Threat model (at rest)
 
-The database is an owner-private (0600, NOFOLLOW-checked) file under the home:
+The database is an owner-private (0600, NOFOLLOW-checked) file under the home
+on Unix; Windows is [best effort](../INVARIANTS.md#signals-weaker-than-their-name):
 **OS access control**, not encryption, so a process running as the owner can
 read it.
 

@@ -16,6 +16,11 @@ use serde_json::json;
 
 #[tokio::test]
 async fn api_keys_panel_writes_dotenv_and_never_returns_values() {
+    // An inherited value (even empty) wins over the file, so an exported key would
+    // turn the mask/source checks below into checks of the operator's shell.
+    // Blank it as CI does, so the assertions run on every machine. No other test
+    // in this target reads DEEPAGENT_API_KEY from the process environment.
+    let _env = EnvGuard::set(&[("DEEPAGENT_API_KEY", Some(""))]);
     let model = start_mock_model().await;
     // Explicit opt-in. The shipped default refuses a plaintext file.
     let s = spawn_server(
@@ -40,8 +45,8 @@ async fn api_keys_panel_writes_dotenv_and_never_returns_values() {
         "no-store, no-cache, must-revalidate, max-age=0"
     );
 
-    // The operator's shell may export real GROK/ANTHROPIC keys (env wins over
-    // file, by design), so the value/mask assertions use DEEPAGENT_API_KEY.
+    // The operator's shell may export real GROK/ANTHROPIC keys, so the value/mask
+    // assertions use the blanked DEEPAGENT_API_KEY.
     let (status, body) = s.post_json("/api/keys", json!({"keys": {"DEEPAGENT_API_KEY": "  dak-abcdefghijklmnopqrstuvwxyz1234  ", "CGAGENTHARNESS_API_KEY": "it's-a-key-1234567"}})).await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["restart_required"], true);
@@ -59,14 +64,9 @@ async fn api_keys_panel_writes_dotenv_and_never_returns_values() {
         .find(|k| k["name"] == "DEEPAGENT_API_KEY")
         .unwrap();
     assert_eq!(row["configured"], true);
-    if std::env::var("DEEPAGENT_API_KEY")
-        .map(|v| v.trim().is_empty())
-        .unwrap_or(true)
-    {
-        assert_eq!(row["masked"], "••••••••1234");
-        assert_eq!(row["source"], "file");
-        assert_eq!(row["pending_restart"], true);
-    }
+    assert_eq!(row["masked"], "••••••••1234");
+    assert_eq!(row["source"], "file");
+    assert_eq!(row["pending_restart"], true);
     let env = std::fs::read_to_string(s.home.join(".env")).unwrap();
     assert!(env.contains("export DEEPAGENT_API_KEY='dak-abcdefghijklmnopqrstuvwxyz1234'"));
     assert!(env.contains(r"export CGAGENTHARNESS_API_KEY='it'\''s-a-key-1234567'"));

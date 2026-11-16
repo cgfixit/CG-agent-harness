@@ -31,6 +31,45 @@ pub fn isolate_write_kill_switch() {
     std::env::remove_var(cgagentharness::agentic::writer::WRITE_DISABLE_ENV);
 }
 
+/// Sets or removes process environment variables and restores every original
+/// value on drop, including when the test panics. `Debug` is not derived and
+/// nothing here formats a value, so an operator's real key is never printed.
+///
+/// Integration-test binaries run their tests on parallel threads that share one
+/// environment. Use this only in a target whose other tests do not read the
+/// variables it changes.
+pub struct EnvGuard {
+    saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+}
+
+impl EnvGuard {
+    /// `Some(value)` sets the variable; `None` removes it.
+    pub fn set(vars: &[(&'static str, Option<&str>)]) -> Self {
+        let mut saved = Vec::with_capacity(vars.len());
+        for &(name, value) in vars {
+            if !saved.iter().any(|(seen, _)| *seen == name) {
+                saved.push((name, std::env::var_os(name)));
+            }
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+        Self { saved }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        for (name, original) in self.saved.drain(..).rev() {
+            match original {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+    }
+}
+
 /// The string at `dotted` in the shipped `assets/config.default.yaml`. A test
 /// that asserts a shipped default reads it here instead of copying it (#685).
 pub fn shipped_str(dotted: &str) -> String {
