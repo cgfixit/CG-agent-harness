@@ -904,6 +904,8 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         // #647 Phase 2: spending another search provider is opt-in; the free public
         // Google hop ships on (asserted below).
         "web.search.fallback_to_serpapi",
+        // #782 S2: the network-only Linux backend is an explicit operator opt-in.
+        "agentic.sandbox.allow_linux_netns_fallback",
     ] {
         assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
     }

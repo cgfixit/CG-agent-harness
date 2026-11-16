@@ -466,7 +466,7 @@ fn sandbox_runs_checks_kills_on_timeout_and_scrubs_env() {
         Check::with_timeout("slow", vec!["sh".into(), "-c".into(), "sleep 30".into()], 1).unwrap(),
     ];
     let started = std::time::Instant::now();
-    let report = run_verification(&work, &checks, &audit, Some(&ArgvListSandbox), None).unwrap();
+    let report = run_verification(&work, &checks, &audit, Some(&ArgvListSandbox), None, false).unwrap();
     assert!(started.elapsed() < std::time::Duration::from_secs(10));
     assert!(!report.ok);
     let failed: Vec<&str> = report
@@ -481,11 +481,11 @@ fn sandbox_runs_checks_kills_on_timeout_and_scrubs_env() {
     assert!(report.results[1].stderr.contains("boom"));
     assert!(report.results[2].timed_out);
     assert!(
-        run_verification(&work, &[], &audit, None, None).unwrap().ok,
+        run_verification(&work, &[], &audit, None, None, false).unwrap().ok,
         "empty checks are vacuously ok without a backend"
     );
     // The production backend on this host.
-    match production_sandbox() {
+    match production_sandbox(false) {
         Ok(sb) => {
             let env: BTreeMap<String, String> = [("PATH".to_string(), std::env::var("PATH").unwrap_or_default())]
                 .into_iter()
