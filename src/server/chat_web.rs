@@ -26,7 +26,7 @@ pub fn tools_for(mode: super::sessions::GoalWebMode) -> Vec<Value> {
 pub fn tools() -> Vec<Value> {
     vec![
         json!({"type":"function","function":{"name":"web_search","description":"Search the configured provider chain for ranked links, snippets and available metadata. Listings are not page reads. Resolve references using conversation context; write one focused query with the relevant entities and constraints. Start with five results. Search again only for a specific unresolved gap. A WEB_SEARCH_COOLDOWN or WEB_SEARCH_PACED reply means do not call web_search again this turn. Do not send credentials or private conversation text.","parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":200},"count":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":false}}}),
-        json!({"type":"function","function":{"name":"web_fetch","description":"Read an exact permitted public URL and return passages relevant to query. Give the active subquestion in query. Omit refresh to reuse fresh evidence already read for this goal; other reads default fresh. false allows currently permitted cache within web.stale_seconds. Use true for current facts or an explicit fresh read. Never grants permission or follows redirects.","parameters":{"type":"object","properties":{"url":{"type":"string","maxLength":2048},"query":{"type":"string","maxLength":200},"refresh":{"type":"boolean"}},"required":["url"],"additionalProperties":false}}}),
+        json!({"type":"function","function":{"name":"web_fetch","description":"Read an exact permitted public URL and return passages relevant to query. Give the active subquestion in query. Omit refresh to reuse fresh evidence already read for this goal; other reads default fresh. false allows currently permitted cache within web.stale_seconds. Use true for current facts or an explicit fresh read; a second true for the same URL in one turn reuses that turn's read. Never grants permission or follows redirects.","parameters":{"type":"object","properties":{"url":{"type":"string","maxLength":2048},"query":{"type":"string","maxLength":200},"refresh":{"type":"boolean"}},"required":["url"],"additionalProperties":false}}}),
     ]
 }
 
@@ -202,6 +202,20 @@ fn tool_args_record(name: &str, args: &str) -> Value {
             .map(|a| json!({"query":a.query.map(|q| crate::common::clip_chars(&q, 200)),"refresh":a.refresh}))
             .unwrap_or(Value::Null),
         _ => Value::Null,
+    }
+}
+
+/// Whether a `web_fetch` reads the origin, and whether an explicit `refresh: true`
+/// was turned into a cache read. Omitted `refresh` reuses a page this goal
+/// already delivered on a loop turn and reads fresh otherwise. An explicit
+/// `true` reads the origin once per URL per turn: a later `true` for a page this
+/// turn already refreshed reads the cache instead, which re-selects passages for
+/// the new `query`. A fresh read is seconds old, so a second one adds no evidence.
+fn effective_refresh(sent: Option<bool>, loop_turn: bool, delivered: bool, refreshed: bool) -> (bool, bool) {
+    match sent {
+        Some(true) if refreshed => (false, true),
+        Some(refresh) => (refresh, false),
+        None => (!loop_turn || !delivered, false),
     }
 }
 
@@ -500,6 +514,8 @@ async fn run_inner(
     let mut completion_tokens = 0u64;
     let mut initial_prompt_tokens = None;
     let definitions = tools_for(web_mode);
+    // Canonical URLs this turn already read from the origin with `refresh: true`.
+    let mut refreshed = std::collections::HashSet::<String>::new();
     let question = if loop_turn && !goal.trim().is_empty() {
         goal
     } else {
@@ -1039,12 +1055,17 @@ async fn run_inner(
                     }
                     "web_fetch" => {
                         let args = fetch_args(args)?;
-                        let refresh = args.refresh.unwrap_or_else(|| {
-                            !loop_turn
-                                || !super::web_policy::canonical_url(&args.url)
-                                    .ok()
-                                    .is_some_and(|url| passages.iter().any(|p| p.url == url.as_str()))
-                        });
+                        let canonical = super::web_policy::canonical_url(&args.url)
+                            .ok()
+                            .map(|url| url.to_string());
+                        let (refresh, refresh_reused) = effective_refresh(
+                            args.refresh,
+                            loop_turn,
+                            canonical
+                                .as_ref()
+                                .is_some_and(|url| passages.iter().any(|p| &p.url == url)),
+                            canonical.as_ref().is_some_and(|url| refreshed.contains(url)),
+                        );
                         let query = args.query.unwrap_or_else(|| crate::common::clip_chars(question, 200));
                         // Readable only because one of this turn's searches
                         // listed it: marked on the result and audited.
@@ -1053,6 +1074,12 @@ async fn run_inner(
                             .await
                             .map(|(mut result, found)| {
                                 selected = found;
+                                if refresh {
+                                    refreshed.extend(canonical);
+                                }
+                                if refresh_reused {
+                                    result["refresh_reused"] = json!(true);
+                                }
                                 if by_grant {
                                     result["granted_by"] = json!("search_result");
                                     state.audit.log(
@@ -1344,5 +1371,17 @@ mod tests {
             tool_args_record("web_search", r#"{"query":"q","count":"3"}"#),
             json!({"count":3})
         );
+        // (sent, loop_turn, delivered, refreshed) -> (reads origin, refresh reused)
+        for (args, expected) in [
+            ((Some(true), true, true, false), (true, false)),
+            ((Some(true), true, true, true), (false, true)),
+            ((Some(true), false, false, true), (false, true)),
+            ((Some(false), true, true, true), (false, false)),
+            ((None, true, true, true), (false, false)),
+            ((None, true, false, false), (true, false)),
+            ((None, false, true, false), (true, false)),
+        ] {
+            assert_eq!(effective_refresh(args.0, args.1, args.2, args.3), expected, "{args:?}");
+        }
     }
 }
