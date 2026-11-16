@@ -71,7 +71,7 @@ jobs:
             // Dependabot exemption; the header says why each fact is required.
             const pr = context.payload.pull_request;
             const DEPENDABOT_ID = 49699333;
-            const dependabotFiles = [/^\.github\/workflows\/[^/]+\.ya?ml$/, /^(desktop\/)?Cargo\.(toml|lock)$/];
+            const dependabotFiles = [/^\.github\/workflows\/[^/]+\.ya?ml$/, /^(desktop\/)?Cargo\.(toml|lock)$/, /^browser\/package(-lock)?\.json$/];
             let exempt = false;
             if (pr.user?.login === "dependabot[bot]" && pr.user?.id === DEPENDABOT_ID && pr.user?.type === "Bot" &&
                 typeof pr.head?.ref === "string" && pr.head.ref.startsWith("dependabot/") &&
