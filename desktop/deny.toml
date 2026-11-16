@@ -1,5 +1,9 @@
 # Same dependency policy as the backend, scoped to the shipped desktop architectures.
 [graph]
+# Linux-only crates (the GTK3 stack, including glib 0.18.5 / RUSTSEC-2024-0429)
+# are outside this graph: an unshipped residual recorded in
+# docs/DEPENDENCIES.md#retained-constraints. Resolve or waive it before adding
+# a Linux target here.
 targets = ["aarch64-apple-darwin", "x86_64-apple-darwin"]
 all-features = true
 

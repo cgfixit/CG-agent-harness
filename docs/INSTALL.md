@@ -304,7 +304,8 @@ bundle to Applications or a directory you own. The app owns its backend on a
 dynamically selected loopback port; it does not adopt a server already running
 on port 8790, and it installs no login service.
 
-The app is **ad-hoc signed and not notarized**: after verifying the source,
+The app is **ad-hoc signed and not notarized**
+([accepted residual](../INVARIANTS.md#signals-weaker-than-their-name)): after verifying the source,
 follow Apple's [per-app Open Anyway procedure](https://support.apple.com/en-us/102445)
 if Gatekeeper asks, and never disable Gatekeeper globally or strip quarantine as
 a blanket fix. A damaged-bundle warning calls for re-download and integrity
@@ -445,7 +446,9 @@ UTF-8 maximum): Unix owner, one link and no group/other permissions, no extended
 ACLs on macOS, and the [credential reader's](../INVARIANTS.md#provider-keys-live-in-the-os-credential-store)
 owner/DACL checks on Windows ([contract](../INVARIANTS.md#reload-changes-limits-not-authority)).
 Repair Unix permissions with `chmod 600` and remove extended ACLs; refusals never
-repair files.
+repair files. `auth.sqlite3` and `memory/structured.sqlite3` get the Unix
+owner, mode, link and directory checks only; Windows has no owner/DACL check for
+them ([residual](../INVARIANTS.md#signals-weaker-than-their-name)).
 
 Only local/fallback `api_key`, MCP `env` values and complete SSE `url` accept
 whole-value `env:NAME`, e.g. `api_key: env:LOCAL_MODEL_TOKEN`, resolved once at
