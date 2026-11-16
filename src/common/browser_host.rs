@@ -513,6 +513,8 @@ pub fn run_task(
             answer = Some(content);
             break;
         }
+        // A finish later in this turn must not rest on results the model never read.
+        let mut failed_this_turn = false;
         for call in tool_calls {
             calls += 1;
             let name = call
@@ -521,12 +523,15 @@ pub fn run_task(
                 .unwrap_or("")
                 .to_string();
             let args = coerce_args(call.pointer("/function/arguments").cloned().unwrap_or(json!({})));
+            let mut finish_refusal = None;
             if name == "finish" {
                 transcript.push(format!("finish {}", truncate(&args.to_string(), 160)));
-                // A finish without an answer is refused below, not reported as a finished task.
-                if let Some(text) = args["answer"].as_str().filter(|text| !text.trim().is_empty()) {
-                    answer = Some(text.to_string());
-                    break 'turns;
+                match finish_verdict(&args, failed_this_turn) {
+                    Ok(text) => {
+                        answer = Some(text);
+                        break 'turns;
+                    }
+                    Err(reason) => finish_refusal = Some(reason),
                 }
             }
             let wire = model_wire(&name, &args);
@@ -539,10 +544,10 @@ pub fn run_task(
                 })),
                 _ => None,
             });
-            let outcome = match &wire {
-                Some(wire) => step(&mut session, &mut sidecar, wire),
-                None if name == "finish" => json!({"refused":"finish takes answer: your final answer as text"}),
-                None => json!({"refused":"malformed browser action"}),
+            let outcome = match (&wire, finish_refusal) {
+                (_, Some(reason)) => json!({ "refused": reason }),
+                (Some(wire), None) => step(&mut session, &mut sidecar, wire),
+                (None, None) => json!({"refused":"malformed browser action"}),
             };
             note_for_operator(&mut for_operator, handoff, &outcome);
             for origin in outcome["not_granted"].as_array().into_iter().flatten() {
@@ -558,9 +563,8 @@ pub fn run_task(
             if outcome.get("elements").is_some() {
                 retire_observations(&mut messages);
             }
-            let failed = ["decision", "error", "refused"]
-                .iter()
-                .any(|key| outcome.get(*key).is_some());
+            let failed = action_failed(&outcome);
+            failed_this_turn |= failed;
             refused_in_a_row = if failed { refused_in_a_row + 1 } else { 0 };
             messages.push(json!({"role":"tool","tool_name": name,"content": outcome.to_string()}));
             // A model that keeps retrying refused actions only spends the deadline.
@@ -616,6 +620,30 @@ pub fn run_qwen_fixture(script: &Path, headless: bool, model: &str, api: &str) -
         return Err(body);
     }
     Ok(body)
+}
+
+/// Whether a tool outcome was refused or failed: a policy decision, an error
+/// or a refusal. A handoff is a decision too.
+fn action_failed(outcome: &Value) -> bool {
+    ["decision", "error", "refused"]
+        .iter()
+        .any(|key| outcome.get(*key).is_some())
+}
+
+/// The answer a `finish` call ends the task with, or why it is refused. A
+/// finish sent after a refused or failed call in the same turn is refused: the
+/// model sent it before it could read that result, so its answer cannot rest
+/// on the page. A finish first in its turn, or after only successful calls,
+/// ends the task when it carries a non-blank answer.
+fn finish_verdict(args: &Value, failed_earlier_this_turn: bool) -> Result<String, &'static str> {
+    if failed_earlier_this_turn {
+        return Err("an action in this turn was refused: read the results, then finish");
+    }
+    args["answer"]
+        .as_str()
+        .filter(|text| !text.trim().is_empty())
+        .map(str::to_string)
+        .ok_or("finish takes answer: your final answer as text")
 }
 
 /// Requests held and elements handed off during a task, at most
@@ -1075,6 +1103,32 @@ mod tests {
         let miss = json!({"page": 1, "pages": 1, "text": "", "elements": []});
         assert!(page_note(&json!({"action":"observe","find":"x"}), &miss).is_some());
         assert_eq!(page_note(&plain, &miss), None);
+    }
+
+    #[test]
+    fn finish_is_refused_after_a_failed_call_in_the_same_turn() {
+        let done = json!({"answer": "zipfile — Work with ZIP archives"});
+        let observed = json!({"url": "https://docs.python.org/3/", "text": "Library index", "elements": []});
+        let malformed = json!({"refused": "malformed browser action"});
+        let stale = json!({"decision": "Refuse { reason: \"stale ref\" }"});
+        let verdict = |earlier: &[&Value]| finish_verdict(&done, earlier.iter().any(|outcome| action_failed(outcome)));
+        // First in its turn, or after only successful calls: accepted.
+        assert_eq!(verdict(&[]).as_deref(), Ok("zipfile — Work with ZIP archives"));
+        assert_eq!(
+            verdict(&[&observed, &observed]).as_deref(),
+            Ok("zipfile — Work with ZIP archives")
+        );
+        // After a refused or failed call, even one followed by a success: refused.
+        for earlier in [vec![&malformed], vec![&observed, &stale], vec![&stale, &observed]] {
+            let refused = verdict(&earlier).unwrap_err();
+            assert!(refused.contains("read the results, then finish"), "{refused}");
+        }
+        // A blank or missing answer stays refused either way.
+        for args in [json!({}), json!({"answer": "  "}), json!({"find": "zipfile"})] {
+            assert!(finish_verdict(&args, false)
+                .unwrap_err()
+                .starts_with("finish takes answer"));
+        }
     }
 
     #[test]
