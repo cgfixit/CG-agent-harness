@@ -862,18 +862,26 @@ impl<'a> RepoWorkspace<'a> {
     /// approve then re-proves everything and adopts the branch only if it matches.
     pub fn prepare_approve_retry(&self, f: &super::real_repo_loop::FinalizeParams<'_>) -> Result<()> {
         self.require_write("approve", f.reason, f.confirm)?;
-        let lock = self.dest.join(".git/index.lock");
+        if !self.dir.symlink_metadata(".git")?.is_dir() {
+            return Err(HarnessError::write_refused(
+                "Git metadata must be an ordinary clone directory",
+            ));
+        }
+        // Confine recovery to the clone even if its metadata path is replaced.
+        let git_dir = self.dir.open_dir(".git")?;
+        let lock = "index.lock";
         let marker = approve_lock_marker(f.run_id);
-        match std::fs::symlink_metadata(&lock) {
+        match git_dir.symlink_metadata(lock) {
             Ok(meta) => {
                 let ours = meta.is_file()
                     && meta.len() == marker.len() as u64
-                    && std::fs::read(&lock).is_ok_and(|bytes| bytes == marker.as_bytes());
+                    && open_nofollow(&git_dir, lock, marker.len() as u64 + 1)
+                        .is_ok_and(|bytes| bytes == marker.as_bytes());
                 if !ours {
                     return Err(index_locked());
                 }
                 self.require_write("approve", f.reason, f.confirm)?;
-                std::fs::remove_file(&lock)?;
+                git_dir.remove_file(lock)?;
                 self.audit
                     .log(json!({"event":"agentic_repo_workspace_stale_index_lock_reclaimed", "run_id":f.run_id}));
             }
@@ -886,8 +894,9 @@ impl<'a> RepoWorkspace<'a> {
         let branch = format!("refs/heads/{}", f.branch_name);
         // A plain read, so an ordinary first approve spends no extra git call
         // from its write budget; only a retry with HEAD on the branch goes on.
-        let on_branch = std::fs::read_to_string(self.dest.join(".git/HEAD"))
-            .is_ok_and(|head| head.trim_end() == format!("ref: {branch}"));
+        let branch_head = format!("ref: {branch}\n");
+        let on_branch = open_nofollow(&git_dir, "HEAD", branch_head.len() as u64 + 1)
+            .is_ok_and(|head| head == branch_head.as_bytes());
         if !on_branch {
             return Ok(());
         }

@@ -166,6 +166,40 @@ fn approval_refuses_redirected_common_directory_without_mutating_another_reposit
 
 #[cfg(unix)]
 #[test]
+fn approval_retry_refuses_redirected_git_directory_before_reclaiming_a_lock() {
+    let temp = tempfile::tempdir().unwrap();
+    let (ctx, dest) = fixture(temp.path());
+    let ws = RepoWorkspace::attach(&ctx, &dest).unwrap();
+    let outside = temp.path().join("unrelated");
+    std::fs::create_dir(&outside).unwrap();
+    let marker = cgagentharness::agentic::workspace::approve_lock_marker("fixture");
+    let lock = outside.join("index.lock");
+    std::fs::write(&lock, &marker).unwrap();
+    std::fs::rename(dest.join(".git"), temp.path().join("original-git")).unwrap();
+    std::os::unix::fs::symlink(&outside, dest.join(".git")).unwrap();
+
+    let result = finalize_real_repo_change(
+        &ctx,
+        &ws,
+        &FinalizeParams {
+            reason: "reviewed fixture",
+            confirm: true,
+            branch_name: "codex/exact-tree",
+            commit_message: "test: exact tree",
+            changed_files: &["target.txt".into()],
+            decision: "approve",
+            protected_write_paths: &[],
+            run_id: "fixture",
+            acceptance_digest: None,
+            acceptance_base_head: None,
+        },
+    );
+    assert_eq!(result.unwrap_err().code, "AGENTIC_WRITE_REFUSED");
+    assert_eq!(std::fs::read_to_string(lock).unwrap(), marker);
+}
+
+#[cfg(unix)]
+#[test]
 fn hooks_and_filters_do_not_execute_during_inspection_or_approval() {
     use std::os::unix::fs::PermissionsExt;
     let temp = tempfile::tempdir().unwrap();
