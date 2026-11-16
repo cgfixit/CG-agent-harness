@@ -710,13 +710,18 @@ impl WebTool {
             .try_acquire_owned()
             .map_err(|_| error("WEB_BUSY", "a web search is already running"))?;
         let coverage = self.discover(group).await?;
-        let (pages, cache_errors) = self.cached_pages(group)?;
-        let policy = self.policy()?;
+        // Reading, hashing and parsing the cache (16 MiB at the default cap)
+        // can block. Keep the owner-visible selection in the request so a
+        // dropped request cannot publish a selection after the search returns.
+        let tool = self.clone();
         let q = query.to_string();
         let selected = group.map(str::to_string);
-        let found = tokio::task::spawn_blocking(move || {
+        let (found, cache_errors) = tokio::task::spawn_blocking(move || -> Result<_> {
             let _guard = guard;
-            retrieve(&pages, &policy, &q, selected.as_deref(), count)
+            let group = selected.as_deref();
+            let (pages, cache_errors) = tool.cached_pages(group)?;
+            let policy = tool.policy()?;
+            Ok((retrieve(&pages, &policy, &q, group, count)?, cache_errors))
         })
         .await
         .map_err(|_| error("WEB_INDEX_FAILED", "passage search failed"))??;

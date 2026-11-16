@@ -370,6 +370,36 @@ impl WebTool {
         self.provider_key("TAVILY_API_KEY", self.tavily_key_from_file)
     }
 
+    /// `search_key`, read on the blocking pool (see `provider_key_off_worker`).
+    pub(super) async fn search_key_off_worker(&self) -> Result<String> {
+        self.provider_key_off_worker("SERPAPI_API_KEY", self.search_key_from_file)
+            .await
+    }
+
+    /// `tavily_key`, read on the blocking pool (see `provider_key_off_worker`).
+    pub(super) async fn tavily_key_off_worker(&self) -> Result<String> {
+        self.provider_key_off_worker("TAVILY_API_KEY", self.tavily_key_from_file)
+            .await
+    }
+
+    /// `provider_key` for async callers. The OS credential store takes a global
+    /// lock and makes a blocking Keychain or Secret Service call, so a locked or
+    /// slow store must stall a blocking-pool thread, never a runtime worker (where
+    /// no timeout could fire until it returned).
+    pub(super) async fn provider_key_off_worker(&self, name: &'static str, loaded_from_file: bool) -> Result<String> {
+        let tool = self.clone();
+        let key = tokio::task::spawn_blocking(move || tool.provider_key(name, loaded_from_file))
+            .await
+            .map_err(|_| {
+                error(
+                    "WEB_SEARCH_KEY_UNAVAILABLE",
+                    "Cannot read the saved search key; check API Keys and credential-file permissions",
+                )
+            })??;
+        self.check_enabled()?;
+        Ok(key)
+    }
+
     pub(super) fn provider_key(&self, name: &str, loaded_from_file: bool) -> Result<String> {
         if self.plaintext_key_file {
             if !loaded_from_file {
@@ -452,13 +482,22 @@ impl WebTool {
             return Err(error("WEB_DISABLED", "web access is disabled"));
         }
         self.check_enabled()?;
+        let _gate = self
+            .search_gate
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| error("WEB_BUSY", "a web search is already running"))?;
         // The saved key is read only when a SerpAPI hop could run.
         let reads_key = match &self.search_provider {
             SearchProvider::GooglePublic => false,
             SearchProvider::Tavily => self.search_fallback.to_serpapi,
             SearchProvider::Auto | SearchProvider::Serpapi => true,
         };
-        let key = if reads_key { self.search_key()? } else { String::new() };
+        let key = if reads_key {
+            self.search_key_off_worker().await?
+        } else {
+            String::new()
+        };
         let keyed = !key.trim().is_empty();
         if self.search_provider == SearchProvider::Serpapi && !keyed {
             return Err(error(
@@ -470,7 +509,7 @@ impl WebTool {
         // fallback. `auto` reads the key too: when one is saved it is searched first.
         let tavily_key = match &self.search_provider {
             SearchProvider::Tavily => {
-                let tavily = self.tavily_key()?;
+                let tavily = self.tavily_key_off_worker().await?;
                 if tavily.trim().is_empty() {
                     return Err(error(
                         "WEB_SEARCH_KEY_MISSING",
@@ -479,7 +518,7 @@ impl WebTool {
                 }
                 tavily
             }
-            SearchProvider::Auto => self.tavily_key()?,
+            SearchProvider::Auto => self.tavily_key_off_worker().await?,
             SearchProvider::Serpapi | SearchProvider::GooglePublic => String::new(),
         };
         let tavily_keyed = !tavily_key.trim().is_empty();
@@ -487,11 +526,6 @@ impl WebTool {
         // One broker decision, one search gate and one deadline for the whole chain:
         // fallback never makes a search longer or more concurrent than one search.
         self.gate_tool("web_search", &[query.into()], enabled, audit)?;
-        let _gate = self
-            .search_gate
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| error("WEB_BUSY", "a web search is already running"))?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(self.limits.request_seconds);
         let mut fallback_from: Vec<&str> = Vec::new();
         for (index, hop) in hops.iter().copied().enumerate() {
@@ -533,46 +567,25 @@ impl WebTool {
                 _ => None,
             };
             let attempt = async {
-                match (hop, &self.search_provider) {
-                    (Hop::Tavily, _) => {
+                match hop {
+                    Hop::Tavily => {
                         self.tavily_listing(query, count, audit, self.tavily_endpoint(), tavily_key.trim())
                             .await
                     }
-                    (Hop::Serpapi, _) => {
+                    Hop::Serpapi | Hop::GooglePublic => {
+                        let public = hop == Hop::GooglePublic;
                         self.google_hop(
                             query,
                             count,
                             enabled,
                             audit,
                             endpoint.clone(),
-                            key.trim(),
+                            if public { "" } else { key.trim() },
                             expected_key,
+                            public && self.search_provider == SearchProvider::Auto && !tavily_keyed,
                             hop_deadline,
                         )
                         .await
-                    }
-                    (Hop::GooglePublic, _) => {
-                        let listing = self
-                            .google_hop(
-                                query,
-                                count,
-                                enabled,
-                                audit,
-                                endpoint.clone(),
-                                "",
-                                expected_key,
-                                hop_deadline,
-                            )
-                            .await?;
-                        // Keyless auto: a Tavily key saved mid-search discards the
-                        // public listing too, as a SerpAPI key does (`expected_key`).
-                        if self.search_provider == SearchProvider::Auto
-                            && !tavily_keyed
-                            && !self.tavily_key()?.trim().is_empty()
-                        {
-                            return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
-                        }
-                        Ok(listing)
                     }
                 }
             };
@@ -618,6 +631,7 @@ impl WebTool {
         endpoint: url::Url,
         key: &str,
         expected_key: Option<String>,
+        expect_no_tavily_key: bool,
         deadline: tokio::time::Instant,
     ) -> Result<Value> {
         // Provider listings require web/account authority, not page-content permission.
@@ -723,6 +737,16 @@ impl WebTool {
                 return Err(failure);
             }
         };
+        if let Some(expected) = expected_key {
+            if self.search_key_off_worker().await? != expected {
+                return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
+            }
+        }
+        // A new Tavily key also supersedes a keyless auto listing. Recheck
+        // the public URL policy after both credential reads have finished.
+        if expect_no_tavily_key && !self.tavily_key_off_worker().await?.trim().is_empty() {
+            return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
+        }
         if let Some(policy) = policy {
             let current = self.policy()?;
             current.authorize(target.as_str(), None)?;
@@ -731,11 +755,6 @@ impl WebTool {
                     "WEB_POLICY_CHANGED",
                     "search permission changed; results discarded",
                 ));
-            }
-        }
-        if let Some(expected) = expected_key {
-            if self.search_key()? != expected {
-                return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
             }
         }
         Ok(
@@ -757,7 +776,7 @@ impl WebTool {
             self.check_enabled()?;
             // The permit and DNS waits can outlast a key change: a key cleared
             // or replaced since this search read it is never sent.
-            if self.search_key()?.trim() != key.trim() {
+            if self.search_key_off_worker().await?.trim() != key.trim() {
                 return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
             }
             let response = client
@@ -946,6 +965,41 @@ mod tests {
         server.abort();
     }
 
+    #[test]
+    fn provider_key_wait_obeys_web_revocation() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let serp = chain::serpapi().await;
+            let mut chain = chain::Chain::new("{}", "fixture-serp-key", &serp, None).await;
+            let settings = std::sync::Arc::new(std::sync::Mutex::new(crate::common::home::HarnessSettings::default()));
+            chain.web.settings = Some(settings.clone());
+
+            // Keep the credential lookup queued until the operator disables web.
+            let (started, waiting) = tokio::sync::oneshot::channel();
+            let (release, hold) = std::sync::mpsc::channel();
+            let blocker = tokio::task::spawn_blocking(move || {
+                started.send(()).unwrap();
+                hold.recv().unwrap();
+            });
+            waiting.await.unwrap();
+            let key = chain.web.search_key_off_worker();
+            tokio::pin!(key);
+            tokio::select! {
+                biased;
+                _ = &mut key => panic!("credential lookup must wait for the worker"),
+                () = tokio::task::yield_now() => {}
+            }
+            settings.lock().unwrap().web_enabled = false;
+            release.send(()).unwrap();
+            assert_eq!(key.await.err().map(|error| error.code).as_deref(), Some("WEB_DISABLED"));
+            blocker.await.unwrap();
+        });
+    }
+
     #[tokio::test]
     async fn web_disable_stops_paced_public_and_queued_keyed_searches() {
         use std::sync::{Arc, Mutex};
@@ -985,10 +1039,25 @@ mod tests {
             };
             let read = web.google_search_at("fixture", 1, true, &audit, endpoint);
             tokio::pin!(read);
+            let audit_path = dir.path().join("audit.jsonl");
+            let brokered = async {
+                loop {
+                    audit.flush();
+                    match std::fs::read_to_string(&audit_path) {
+                        Ok(text) if text.contains("tool_broker_decision") => break,
+                        Ok(_) => {}
+                        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(err) => panic!("cannot read the fixture audit: {err}"),
+                    }
+                    tokio::task::yield_now().await;
+                }
+            };
+            // Wait past the credential reads, so this still covers the permit
+            // or pacing wait even when key lookup yields first.
             tokio::select! {
                 biased;
                 _ = &mut read => panic!("search must wait for pacing or a permit"),
-                _ = tokio::task::yield_now() => {}
+                ready = tokio::time::timeout(Duration::from_secs(3), brokered) => ready.unwrap()
             }
             settings.lock().unwrap().web_enabled = false;
             drop(held);
@@ -999,9 +1068,8 @@ mod tests {
                     .is_err(),
                 "disabled searches must never connect"
             );
-            assert!(!std::fs::read_to_string(dir.path().join("audit.jsonl"))
-                .unwrap()
-                .contains("web_search_sent"));
+            audit.flush();
+            assert!(!std::fs::read_to_string(audit_path).unwrap().contains("web_search_sent"));
         }
     }
 

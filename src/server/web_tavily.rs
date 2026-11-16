@@ -93,14 +93,14 @@ impl WebTool {
                 .await
                 .map_err(|_| error("WEB_CANCELLED", "search cancelled"))?;
             // Refuse an already changed key before starting DNS.
-            if self.tavily_key()?.trim() != key {
+            if self.tavily_key_off_worker().await?.trim() != key {
                 return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
             }
             self.check_enabled()?;
             let client = self.pinned_client(&endpoint).await?;
             self.check_enabled()?;
             // DNS may have outlasted a key change.
-            if self.tavily_key()?.trim() != key {
+            if self.tavily_key_off_worker().await?.trim() != key {
                 return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
             }
             let response = client
@@ -147,7 +147,7 @@ impl WebTool {
                 return Err(failure);
             }
         };
-        if self.tavily_key()?.trim() != key {
+        if self.tavily_key_off_worker().await?.trim() != key {
             return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
         }
         Ok(json!({"query":query,"provider":PROVIDER,"results":rows,"notice":SEARCH_NOTICE,"complete":false}))
