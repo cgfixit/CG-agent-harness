@@ -457,7 +457,11 @@ fn strand(dest: &Path, stage: u8, content: &str) -> String {
             None,
         );
         run(&["update-ref", "refs/heads/codex/exact-tree", &commit], None);
-        std::fs::remove_file(&index).unwrap();
+        if stage >= 4 {
+            std::fs::rename(&index, dest.join(".git/index")).unwrap();
+        } else {
+            std::fs::remove_file(&index).unwrap();
+        }
     }
     if stage >= 3 {
         git(&["symbolic-ref", "HEAD", "refs/heads/codex/exact-tree"], dest);
@@ -472,7 +476,7 @@ fn strand(dest: &Path, stage: u8, content: &str) -> String {
 
 #[test]
 fn a_killed_approve_is_completed_by_approving_again() {
-    for stage in 1..=3u8 {
+    for stage in 1..=4u8 {
         let temp = tempfile::tempdir().unwrap();
         let (ctx, dest) = fixture(temp.path());
         std::fs::write(dest.join("target.txt"), "approved\n").unwrap();
@@ -481,23 +485,30 @@ fn a_killed_approve_is_completed_by_approving_again() {
         let base = manifest::git_head(ws.worktree()).unwrap();
         let (_, digest) = manifest::build_manifest(ws.worktree(), &["target.txt".into()], "fixture", &base).unwrap();
         let stranded = strand(&dest, stage, "approved\n");
-        let approved = finalize_real_repo_change(
-            &ctx,
-            &ws,
-            &FinalizeParams {
-                reason: "reviewed fixture",
-                confirm: true,
-                branch_name: "codex/exact-tree",
-                commit_message: "test: exact tree",
-                changed_files: &["target.txt".into()],
-                decision: "approve",
-                protected_write_paths: &[],
-                run_id: "fixture",
-                acceptance_digest: Some(&digest),
-                acceptance_base_head: Some(&base),
-            },
-        )
-        .unwrap_or_else(|e| panic!("stage {stage}: {}", e.message));
+        let params = FinalizeParams {
+            reason: "reviewed fixture",
+            confirm: true,
+            branch_name: "codex/exact-tree",
+            commit_message: "test: exact tree",
+            changed_files: &["target.txt".into()],
+            decision: "approve",
+            protected_write_paths: &[],
+            run_id: "fixture",
+            acceptance_digest: Some(&digest),
+            acceptance_base_head: Some(&base),
+        };
+        if stage == 3 {
+            let lock = dest.join(".git/index.lock");
+            let owned = std::fs::read(&lock).unwrap();
+            std::fs::write(&lock, b"foreign index lock").unwrap();
+            let err = finalize_real_repo_change(&ctx, &ws, &params).unwrap_err();
+            assert!(err.message.contains("Git index is locked"));
+            assert_eq!(git(&["rev-parse", "HEAD"], &dest), stranded);
+            assert_eq!(std::fs::read(&lock).unwrap(), b"foreign index lock");
+            std::fs::write(lock, owned).unwrap();
+        }
+        let approved =
+            finalize_real_repo_change(&ctx, &ws, &params).unwrap_or_else(|e| panic!("stage {stage}: {}", e.message));
         let commit = approved["approved_commit"].as_str().unwrap();
         if stage >= 2 {
             assert_eq!(

@@ -693,30 +693,47 @@ impl<'a> RepoWorkspace<'a> {
         manifest::verify_manifest(&self.dest, f.changed_files, f.run_id, base, expected)?;
         let _index_lock = GitIndexLock::acquire(self.dest.join(".git/index.lock"), f.run_id)?;
         let original_index = std::fs::read(self.dest.join(".git/index"))?;
-        let staged = self.run_git(
-            "inspect_index",
-            &[
-                "diff",
-                "--cached",
-                "--ita-visible-in-index",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--name-only",
-                "--no-renames",
-                "-z",
-                base,
-                "--",
-            ],
-            DEFAULT_GIT_WRITE_TIMEOUT_SEC,
-            &[],
-        )?;
-        if !staged.is_empty() {
-            return Err(self.deny(
+        let branch = format!("refs/heads/{}", f.branch_name);
+        let index_matches = |reference: &str| -> Result<bool> {
+            Ok(self
+                .run_git(
+                    "inspect_index",
+                    &[
+                        "diff",
+                        "--cached",
+                        "--ita-visible-in-index",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--name-only",
+                        "--no-renames",
+                        "-z",
+                        reference,
+                        "--",
+                    ],
+                    DEFAULT_GIT_WRITE_TIMEOUT_SEC,
+                    &[],
+                )?
+                .is_empty())
+        };
+        let refuse_staged = || {
+            self.deny(
                 "approve",
                 "pre-existing staged changes require a new clean candidate; index preserved",
                 None,
-            ));
-        }
+            )
+        };
+        let installed_commit = if index_matches(base)? {
+            None
+        } else {
+            // A kill after installing the index can leave the run pending.
+            // Keep it eligible only if its tree matches the branch and the
+            // branch matches the acceptance rebuilt below.
+            let commit = self.ref_commit(&branch)?.ok_or_else(refuse_staged)?;
+            if !index_matches(&commit)? {
+                return Err(refuse_staged());
+            }
+            Some(commit)
+        };
         super::git::require_raw_paths(&self.dest, f.changed_files)?;
         let (accepted, captured_digest) = manifest::build_manifest(&self.dest, f.changed_files, f.run_id, base)?;
         if captured_digest != expected {
@@ -766,6 +783,11 @@ impl<'a> RepoWorkspace<'a> {
         let tree = write(&["write-tree"], None)?;
         manifest::verify_manifest(&self.dest, f.changed_files, f.run_id, base, expected)?;
         let id = identity::identity()?;
+        if let Some(installed) = installed_commit {
+            if !self.is_accepted_commit(&installed, base, tree.trim(), f.commit_message, id)? {
+                return Err(refuse_staged());
+            }
+        }
         let email = format!("user.email={}", id.commit_email);
         let name = format!("user.name={}", id.commit_name);
         let commit = write(
@@ -784,7 +806,6 @@ impl<'a> RepoWorkspace<'a> {
             None,
         )?;
         let commit = commit.trim().to_string();
-        let branch = format!("refs/heads/{}", f.branch_name);
         let zero = "0".repeat(commit.len());
         let commit = match write(&["update-ref", &branch, &commit, &zero], None) {
             Ok(_) => commit,
@@ -843,12 +864,21 @@ impl<'a> RepoWorkspace<'a> {
         self.require_write("approve", f.reason, f.confirm)?;
         let lock = self.dest.join(".git/index.lock");
         let marker = approve_lock_marker(f.run_id);
-        let ours = std::fs::symlink_metadata(&lock).is_ok_and(|m| m.is_file() && m.len() == marker.len() as u64)
-            && std::fs::read(&lock).is_ok_and(|bytes| bytes == marker.as_bytes());
-        if ours {
-            std::fs::remove_file(&lock)?;
-            self.audit
-                .log(json!({"event":"agentic_repo_workspace_stale_index_lock_reclaimed", "run_id":f.run_id}));
+        match std::fs::symlink_metadata(&lock) {
+            Ok(meta) => {
+                let ours = meta.is_file()
+                    && meta.len() == marker.len() as u64
+                    && std::fs::read(&lock).is_ok_and(|bytes| bytes == marker.as_bytes());
+                if !ours {
+                    return Err(index_locked());
+                }
+                self.require_write("approve", f.reason, f.confirm)?;
+                std::fs::remove_file(&lock)?;
+                self.audit
+                    .log(json!({"event":"agentic_repo_workspace_stale_index_lock_reclaimed", "run_id":f.run_id}));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
         }
         let Some(base) = f.acceptance_base_head else {
             return Ok(());
@@ -873,6 +903,7 @@ impl<'a> RepoWorkspace<'a> {
         if parents.split_whitespace().collect::<Vec<_>>() != [commit.as_str(), base] {
             return Ok(());
         }
+        self.require_write("approve", f.reason, f.confirm)?;
         super::git::checked(
             &self.dest,
             &["update-ref", "--no-deref", "HEAD", base],
@@ -1128,6 +1159,10 @@ pub fn approve_lock_marker(run_id: &str) -> String {
     format!("cgagentharness approve run {run_id}\n")
 }
 
+fn index_locked() -> HarnessError {
+    HarnessError::write_refused("Git index is locked; inspect the candidate before retrying")
+}
+
 /// Cooperates with Git index writers while finalization owns a private index.
 struct GitIndexLock {
     path: PathBuf,
@@ -1139,7 +1174,7 @@ impl GitIndexLock {
             .write(true)
             .create_new(true)
             .open(&path)
-            .map_err(|_| HarnessError::write_refused("Git index is locked; inspect the candidate before retrying"))?;
+            .map_err(|_| index_locked())?;
         let lock = Self { path };
         file.write_all(approve_lock_marker(run_id).as_bytes())?;
         Ok(lock)
