@@ -267,6 +267,8 @@ pub struct AgenticConfig {
     pub allowed_read_ops: Vec<String>,
     pub gh_timeout_sec: u64,
     pub gh_retries: u32,
+    /// `agentic.sandbox.allow_linux_netns_fallback` (literal `true` only; ships false).
+    pub allow_linux_netns_fallback: bool,
     pub deepagent: DeepAgentConfig,
 }
 
@@ -518,6 +520,7 @@ pub fn load_agentic_config(cfg: &AppConfig, home_root: &Path) -> Result<AgenticC
         allowed_read_ops,
         gh_timeout_sec,
         gh_retries,
+        allow_linux_netns_fallback: cfg.flag_is_true("agentic.sandbox.allow_linux_netns_fallback"),
         deepagent,
     })
 }

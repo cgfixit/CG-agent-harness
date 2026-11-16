@@ -45,7 +45,7 @@ fn macos_cargo_compiles_dependencies_build_script_tests_and_doctests_offline() {
     let audit = Audit::new(home.join("audit.jsonl"), &cfg);
     let prepared = home.join("data/agentic/cargo-prepared");
     let before_lock = std::fs::read(repo.join("Cargo.lock")).unwrap();
-    let missing = run_verification(&repo, &[cargo_test()], &audit, None, Some(&prepared)).unwrap_err();
+    let missing = run_verification(&repo, &[cargo_test()], &audit, None, Some(&prepared), false).unwrap_err();
     assert!(missing.message.contains("not prepared"));
     prepare(&repo, &home);
     let hash = cgagentharness::common::sha256_bytes_hex(&before_lock);
@@ -74,7 +74,7 @@ fn macos_cargo_compiles_dependencies_build_script_tests_and_doctests_offline() {
     .unwrap();
     let original_source = std::fs::read(repo.join("src/lib.rs")).unwrap();
     for _ in 0..2 {
-        let report = run_verification(&repo, &[cargo_test()], &audit, None, Some(&prepared)).unwrap();
+        let report = run_verification(&repo, &[cargo_test()], &audit, None, Some(&prepared), false).unwrap();
         assert!(report.ok, "real native Cargo failed: {report:?}");
         assert!(
             report.results[0].stdout.contains("1 passed"),
@@ -98,14 +98,16 @@ fn macos_cargo_compiles_dependencies_build_script_tests_and_doctests_offline() {
     assert!(!repo.join("renamed-git").exists());
     assert!(listener.accept().is_err());
     std::fs::remove_file(prepared.join(&hash).join("vendor/serde-1.0.229/Cargo.toml")).unwrap();
-    let unavailable = run_verification(&repo, &[cargo_test()], &audit, None, Some(&prepared)).unwrap_err();
+    let unavailable = run_verification(&repo, &[cargo_test()], &audit, None, Some(&prepared), false).unwrap_err();
     assert!(unavailable.message.contains("not prepared"), "{unavailable:?}");
     // Stale lock refuses before any execution or model retries.
     std::fs::write(repo.join("Cargo.lock"), "changed").unwrap();
-    assert!(run_verification(&repo, &[cargo_test()], &audit, None, Some(&prepared))
-        .unwrap_err()
-        .message
-        .contains("no snapshot"));
+    assert!(
+        run_verification(&repo, &[cargo_test()], &audit, None, Some(&prepared), false)
+            .unwrap_err()
+            .message
+            .contains("no snapshot")
+    );
 }
 
 #[test]
@@ -140,7 +142,7 @@ fn macos_minimal_cargo_uses_fresh_writable_scratch_and_missing_component_is_acti
         ],
     )
     .unwrap();
-    let report = run_verification(&repo, &[cargo_test(), scratch], &audit, None, Some(&prepared)).unwrap();
+    let report = run_verification(&repo, &[cargo_test(), scratch], &audit, None, Some(&prepared), false).unwrap();
     assert!(report.ok, "{report:?}");
     assert!(
         !Path::new(report.results[1].stdout.trim()).exists(),
@@ -151,8 +153,10 @@ fn macos_minimal_cargo_uses_fresh_writable_scratch_and_missing_component_is_acti
     let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(&metadata).unwrap()).unwrap();
     value["toolchain_root"] = serde_json::json!(dir.path().join("absent-toolchain"));
     std::fs::write(metadata, serde_json::to_vec(&value).unwrap()).unwrap();
-    assert!(run_verification(&repo, &[cargo_test()], &audit, None, Some(&prepared))
-        .unwrap_err()
-        .message
-        .contains("toolchain disappeared"));
+    assert!(
+        run_verification(&repo, &[cargo_test()], &audit, None, Some(&prepared), false)
+            .unwrap_err()
+            .message
+            .contains("toolchain disappeared")
+    );
 }

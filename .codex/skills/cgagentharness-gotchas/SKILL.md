@@ -24,13 +24,14 @@ scoped commands for ordinary changes as `AGENTS.md` requires. Its successful exi
 can include skipped cargo-deny or live checks: read the output before claiming
 coverage. Blank planner keys for synthetic tests; their presence proves nothing.
 
-## Browser launch versus product assertion
+## Console Chrome versus /browse Chrome
 
-Inspect the Chrome resolution in `.github/workflows/ci.yml` and
-`scripts/chat-browser-acceptance.mjs` at the failing SHA. Separate startup/attach
-failure from an assertion on the console. An old issue or one successful retry
-does not establish today's cause. Use the workflow's contract scripts and report
-unavailable browser execution as NOT RUN.
+For console CI, inspect Chrome resolution in `.github/workflows/ci.yml` and
+`scripts/chat-browser-acceptance.mjs`. For `/browse`, inspect the browser
+child, sidecar path, prepared Playwright, installed Chrome and local model.
+The packaged app needs an absolute `browser.sidecar` path. Distinguish launch,
+policy refusal, operator hand-off and model outcome. See the Browser use guide
+linked from `AGENTS.md`.
 
 ## Sidecar digest, signatures and native UI
 
@@ -43,9 +44,9 @@ success does not establish WKWebView focus, dialogs or native navigation.
 
 Locate the failure before changing policy: an outer sandbox can reject process
 or listener creation before application assertions run. Reproduce with an owned
-temporary `CGAGENTHARNESS_HOME` and unique port when authorized. Preserve
-fail-closed behavior if no backend is available; environment failure is not a
-reason to broaden confinement or skip an assertion.
+temporary `CGAGENTHARNESS_HOME` and unique port when authorized. On Linux, missing or unusable bubblewrap refuses by default. Record the
+selected backend: `linux-netns` is opt-in and isolates only the network.
+Keep required sandbox checks failing when confinement is unavailable.
 
 A response on the default port can belong to another checkout. Record the
 candidate PID, binary and owned listener; stop only processes started by this
@@ -79,16 +80,12 @@ unresolved threads and `.github/workflows/review-gate.yml`. The gate is advisory
 thread resolution alone fires no webhook, so re-run it after resolving the final
 thread when that workflow is authorized. A cancelled review is not a verdict.
 
-## Documentation reports and command aliases
+## Operator command differs from API or YAML
 
-Verify an audit's quoted anchor with `rg` before editing. Source values and
-callers outrank report line numbers. Lower the owning documentation cap after
-trimming; keep evidence in PR bodies.
-
-Memory slash aliases and HTTP gate names differ. Inspect `gateMap` in
-`assets/static/harness.html` and help in `src/server/views.rs` rather than deriving
-an alias from a config key: `/memory auto-retrieve` maps to `auto_retrieval` in
-`POST /api/structured-memory/gates`. Check the surface actually being documented.
+Trace the console dispatcher and help in `src/server/views.rs`. For example,
+`gateMap` in `assets/static/harness.html` maps `/memory auto-retrieve` to
+`auto_retrieval` at `POST /api/structured-memory/gates`. Verify exact paths,
+fields and aliases in the revision being documented.
 
 ## Release already in flight
 

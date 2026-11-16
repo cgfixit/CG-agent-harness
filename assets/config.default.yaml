@@ -449,6 +449,10 @@ agentic:
     - issue_view
     - issue_list
     - repo_view
+  sandbox:
+    # Linux verification without bubblewrap. false refuses (HARD_SANDBOX_UNAVAILABLE, exit 3);
+    # literal true accepts linux-netns: network isolation only, host filesystem visible.
+    allow_linux_netns_fallback: false
   deepagent_github:
     enabled: false
     provider: "ollama"
