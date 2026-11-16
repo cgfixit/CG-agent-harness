@@ -733,6 +733,13 @@ them in the system prompt. The audits `chat_session_compacted`, `chat_compaction
 - Linux `linux-netns` is network isolation only. Treat `linux-bwrap` as the
   filesystem-confined backend; do not claim Seatbelt parity when the fallback
   is selected.
+- `auth.sqlite3` and `memory/structured.sqlite3` get owner, owner-only mode,
+  single-link and directory checks on Unix only (`common::private_sqlite`).
+  Windows checks only for a bounded regular file and relies on profile ACLs:
+  an accepted best-effort residual (#782), not the credential reader's DACL contract.
+- The macOS app is ad-hoc signed and not notarized, and the installer's
+  checksum comes from the same release page: integrity, not publisher
+  identity. Accepted for single-operator use (#782); revisit before others install it.
 - The direct-loopback check sees only the socket peer and forwarding headers:
   a same-host proxy that strips them is indistinguishable from local use, so
   keep `auth.enabled: true` there. `security.api_key_optional` is a
