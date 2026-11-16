@@ -320,6 +320,19 @@ impl Answer {
     /// the second value, rather than discarding the valid claims beside it; an
     /// answer whose every claim failed is still refused.
     pub fn parse(text: &str, evidence: &[Passage]) -> Result<(Self, usize)> {
+        Self::parse_with_reasons(text, evidence).0
+    }
+
+    /// `parse`, plus one fixed reason code per dropped claim or limitation, in
+    /// order, whether or not the answer as a whole was refused. The codes name
+    /// the failed check only, never claim or quote text.
+    pub fn parse_with_reasons(text: &str, evidence: &[Passage]) -> (Result<(Self, usize)>, Vec<&'static str>) {
+        let mut reasons = Vec::new();
+        let result = Self::parse_into(text, evidence, &mut reasons);
+        (result, reasons)
+    }
+
+    fn parse_into(text: &str, evidence: &[Passage], reasons: &mut Vec<&'static str>) -> Result<(Self, usize)> {
         let mut answer: Self = serde_json::from_str(crate::llm::openai_chat::reply_json_text(text))
             .map_err(|_| error("WEB_ANSWER_INVALID", "answer schema refused"))?;
         let mut dropped = 0;
@@ -330,7 +343,14 @@ impl Answer {
             ("inferences", &mut answer.inferences),
         ] {
             let before = claims.len();
-            claims.retain_mut(|claim| Self::check_claim(kind, claim, evidence));
+            claims.retain_mut(|claim| match Self::check_claim(kind, claim, evidence) {
+                Ok(()) => true,
+                Err(reason) => {
+                    reasons.push(reason);
+                    false
+                }
+            });
+            reasons.extend(std::iter::repeat_n("over_claim_limit", claims.len().saturating_sub(6)));
             claims.truncate(6);
             dropped += before - claims.len();
             kept_any |= !claims.is_empty();
@@ -345,9 +365,17 @@ impl Answer {
             return Err(refused());
         }
         let before = answer.missing.len();
-        answer
-            .missing
-            .retain(|s| !s.trim().is_empty() && s.chars().count() <= 240);
+        answer.missing.retain(|s| {
+            let ok = !s.trim().is_empty() && s.chars().count() <= 240;
+            if !ok {
+                reasons.push("limitation_invalid");
+            }
+            ok
+        });
+        reasons.extend(std::iter::repeat_n(
+            "over_limitation_limit",
+            answer.missing.len().saturating_sub(8),
+        ));
         answer.missing.truncate(8);
         dropped += before - answer.missing.len();
         // An answer with no claim and no limitation, after filtering or as sent
@@ -362,29 +390,38 @@ impl Answer {
         Ok((answer, dropped))
     }
 
-    fn check_claim(kind: &str, claim: &mut Claim, evidence: &[Passage]) -> bool {
-        if claim.text.trim().is_empty()
-            || claim.text.chars().count() > 240
-            || claim.citations.len() > 3
-            || kind != "inferences" && claim.citations.is_empty()
-        {
-            return false;
+    fn check_claim(kind: &str, claim: &mut Claim, evidence: &[Passage]) -> std::result::Result<(), &'static str> {
+        if claim.text.trim().is_empty() {
+            return Err("empty_text");
+        }
+        if claim.text.chars().count() > 240 {
+            return Err("text_too_long");
+        }
+        if claim.citations.len() > 3 {
+            return Err("too_many_citations");
+        }
+        if kind != "inferences" && claim.citations.is_empty() {
+            return Err("no_citation");
         }
         let mut sources = BTreeSet::new();
         for citation in &mut claim.citations {
-            let Some(source) = cited(evidence, &citation.id) else {
-                return false;
-            };
-            if citation.quote.trim().is_empty()
-                || citation.quote.chars().count() > 160
-                || !source.text.contains(&citation.quote)
-            {
-                return false;
+            let source = cited(evidence, &citation.id).ok_or("unknown_id")?;
+            if citation.quote.trim().is_empty() {
+                return Err("empty_quote");
+            }
+            if citation.quote.chars().count() > 160 {
+                return Err("quote_too_long");
+            }
+            if !source.text.contains(&citation.quote) {
+                return Err("quote_not_verbatim");
             }
             citation.id = source.id.clone();
             sources.insert(&source.source_id);
         }
-        kind != "conflicts" || sources.len() >= 2
+        if kind == "conflicts" && sources.len() < 2 {
+            return Err("single_source_conflict");
+        }
+        Ok(())
     }
 }
 
@@ -1103,9 +1140,13 @@ mod tests {
         let (parsed, dropped) = Answer::parse(&mixed.to_string(), std::slice::from_ref(&p)).unwrap();
         assert_eq!((parsed.supported.len(), dropped), (1, 1));
         assert_eq!(parsed.supported[0].text, "Three retries.");
+        let (_, reasons) = Answer::parse_with_reasons(&mixed.to_string(), std::slice::from_ref(&p));
+        assert_eq!(reasons, ["quote_not_verbatim"]);
         // Filtering that leaves no claim and no limitation refuses the answer.
         let emptied = json!({"missing":["", "x".repeat(241)]});
-        assert!(Answer::parse(&emptied.to_string(), std::slice::from_ref(&p)).is_err());
+        let (refused, reasons) = Answer::parse_with_reasons(&emptied.to_string(), std::slice::from_ref(&p));
+        assert!(refused.is_err());
+        assert_eq!(reasons, ["limitation_invalid", "limitation_invalid"]);
         for empty in ["{}", r#"{"supported":[]}"#] {
             assert_eq!(
                 Answer::parse(empty, std::slice::from_ref(&p)).unwrap_err().code,
