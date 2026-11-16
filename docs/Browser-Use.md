@@ -1,6 +1,6 @@
 # Browser use and computer use
 
-Status as of 2026-11-15. The local model
+Status as of 2026-11-16. The local model
 (`models.local_llm.model`, `qwen3.8:27b-mlx-cg` on a 32K window) drives a real
 Chrome. Computer use (native apps) is a skeleton that nothing calls.
 
@@ -51,7 +51,12 @@ Boundaries, enforced in code:
   every model turn, and once more before the report is returned.
 - A task holds the shared model gate, so it never overlaps chat or research.
 - Clicks may run. Every request except GET and HEAD is held for the operator:
-  a held page load answers 204 so the page stays, a held `fetch` fails.
+  a held page load answers 204 so the page stays, a held `fetch` fails. Two
+  layers hold it: Playwright's page route, and a browser-wide CDP `Fetch` gate
+  that also sees requests the route misses, such as a SharedWorker's.
+- Pages cannot start workers. Every document gets `worker-src 'none'` beside
+  its own policy, because a worker's WebSocket reaches a granted origin unseen
+  by the page-level WebSocket block and the proxy's HTTPS tunnel alike.
 - Password and one-time-code fields hand off and are never typed. A hand-off
   or hold ends the task at once. The console lists each one, then the origins
   (never paths) a page asked for outside the grant.
@@ -60,7 +65,9 @@ Verified by running: fixtures `browser`, `browser enter` (new tab, search,
 select, password hand-off, held POSTs, no WebRTC UDP), `browser reach` (late
 content, an ungranted tab closed and named, `page` and `find` on a long page)
 and `browser-verify`; Qwen listed the games behind Start → Games on
-cgfixit.com (2026-11-14).
+cgfixit.com (2026-11-14). A worker probe (2026-11-16) sent SharedWorker POSTs
+and a worker `wss://` to a granted HTTPS origin before the network gate and
+worker policy, and nothing but GETs after.
 
 ## Honest limits
 
@@ -73,7 +80,8 @@ cgfixit.com (2026-11-14).
   scroll stays unread.
 - No approve-and-resume after a hand-off or hold.
 - Holding every `fetch` POST can break sites that save state in the
-  background, such as chat widgets or autosave.
+  background, such as chat widgets or autosave. Sites that need a web worker
+  (some editors, PDF viewers, search widgets) lose that part.
 - Page text is untrusted input. Grants and holds bound what it can cause; an
   answer can still be wrong.
 - `/goal` and `/loop` do not have browser tools. A goal that says "/browse" runs
