@@ -201,7 +201,7 @@ const CARGO_STATUS_VERBS: [&str; 12] = [
 /// crate names, so a candidate that calls a function named `checksum` fails as
 /// an ordinary check the planner can see instead of aborting the run.
 fn cargo_preparation_failure(stderr: &str) -> bool {
-    const PREPARATION: [&str; 8] = [
+    const PREPARATION: [&str; 7] = [
         "no matching package",
         "failed to load source",
         "failed to get",
@@ -209,7 +209,14 @@ fn cargo_preparation_failure(stderr: &str) -> bool {
         "could not execute process",
         "operation not permitted",
         "permission denied",
-        "lock file needs to be updated",
+        // No stale-lock phrase on purpose: shipped `protected_write_paths` keep
+        // every Cargo.toml, Cargo.lock and .cargo/ out of a candidate's reach,
+        // and `CargoInputs::load` already refuses a lock with no prepared
+        // snapshot. A stale lock here means an operator unprotected manifests
+        // and the candidate rewired local (path/workspace) dependencies: that
+        // is planner feedback, not an unprepared toolchain. A new registry
+        // crate still aborts above via "no matching package", because it needs
+        // operator-approved `--online` preparation (see the stale-lock test).
     ];
     let lines: Vec<&str> = stderr.lines().collect();
     let mut own = String::new();
@@ -298,6 +305,21 @@ error: could not compile `checksum-tool` (lib) due to 1 previous error\n";
             "    Compiling x v0.1.0 (/w)\nerror: couldn't create a temp dir: Permission denied (os error 13) at path \"/w/target\"\n",
         ] {
             assert!(cargo_preparation_failure(stderr), "{stderr}");
+        }
+    }
+
+    #[test]
+    fn a_candidate_made_stale_lock_is_an_ordinary_check_failure() {
+        // Real stderr when a manifest edit outdates the lock under the prepared
+        // `--frozen` argv: cargo 1.89 wording, then cargo 1.97 wording. Both put
+        // the path mid-sentence, so no fixed phrase spans them.
+        for flag in ["--frozen", "--locked"] {
+            for stderr in [
+                format!("error: cannot update the lock file /w/Cargo.lock because {flag} was passed to prevent this\n"),
+                format!("error: the lock file /w/Cargo.lock needs to be updated but {flag} was passed to prevent this\nIf you want to try to generate the lock file without accessing the network, remove the {flag} flag and use --offline instead.\n"),
+            ] {
+                assert!(!cargo_preparation_failure(&stderr), "{stderr}");
+            }
         }
     }
 }
