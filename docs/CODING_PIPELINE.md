@@ -359,7 +359,7 @@ hooks to build scripts.
 
 Seatbelt is not a memory or disk quota, and escaped descendants remain a
 [lifecycle limit](PROCESS_LIFECYCLE.md). Linux bubblewrap applies its own
-allowlisted read-only filesystem with writable scratch; the `linux-netns`
+allowlisted read-only filesystem with writable scratch; the opt-in `linux-netns`
 fallback and Windows Job Objects provide no filesystem policy, and native
 Windows acceptance is unverified.
 

@@ -99,7 +99,7 @@ The initial estimator is UTF-8 `bytes.div_ceil(4)`, not a tokenizer. Successful 
 
 ## invariant: Signals weaker than their name
 
-- `unslop.enabled` is a prose nudge, never a gate. - `agentic/context` injection findings are advisory on reads; only the model-feeding commands refuse on them (selected by CODE, not severity). - The Windows sandbox is a process-tree kill boundary, not a network namespace. - Linux `linux-netns` is network isolation only. Treat `linux-bwrap` as the filesystem-confined backend; do not claim Seatbelt parity when the fallback is selected. - `auth.sqlite3` and `memory/structured.sqlite3` get owner, owner-only mode,…
+- `unslop.enabled` is a prose nudge, never a gate. - `agentic/context` injection findings are advisory on reads; only the model-feeding commands refuse on them (selected by CODE, not severity). - The Windows sandbox is a process-tree kill boundary, not a network namespace. - Linux `linux-netns` (only with `agentic.sandbox.allow_linux_netns_fallback: true`) is network isolation only. Treat `linux-bwrap` as the filesystem-confined backend; do not claim Seatbelt parity when the fallback is selected. - `auth.sqlite3`…
 
 ## invariant: Native Ollama pull stays on loopback and never sends num_ctx
 
@@ -561,6 +561,7 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - agentic.gh_retries
   - agentic.registry_path: must stay under the home data/ tree
   - agentic.allowed_read_ops
+  - agentic.sandbox
   - agentic.deepagent_github
 - unslop
 

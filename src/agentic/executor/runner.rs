@@ -85,13 +85,14 @@ pub struct VerificationReport {
 }
 
 /// Run every check sequentially inside the sandbox. `sandbox` is for tests;
-/// production callers pass `None` and get `production_sandbox()`.
+/// production callers pass `None` and get `production_sandbox(allow_linux_netns_fallback)`.
 pub fn run_verification(
     worktree: &Path,
     checks: &[Check],
     audit: &Audit,
     sandbox: Option<&dyn HardSandbox>,
     prepared_root: Option<&Path>,
+    allow_linux_netns_fallback: bool,
 ) -> Result<VerificationReport> {
     if checks.is_empty() {
         return Ok(VerificationReport {
@@ -100,7 +101,7 @@ pub fn run_verification(
         });
     }
     let owned: Option<Box<dyn HardSandbox>> = if sandbox.is_none() {
-        Some(production_sandbox()?)
+        Some(production_sandbox(allow_linux_netns_fallback)?)
     } else {
         None
     };

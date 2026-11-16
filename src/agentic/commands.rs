@@ -94,6 +94,7 @@ fn cmd_status(ctx: &AgenticCtx) -> Result<u8> {
     );
     kv("registry_path", ctx.acfg.registry_path.display());
     kv("allowed_read_ops", ctx.acfg.allowed_read_ops.join(", "));
+    kv("allow_linux_netns_fallback", ctx.acfg.allow_linux_netns_fallback);
     if !ctx.acfg.enabled {
         return Ok(disabled_noop());
     }
@@ -155,7 +156,7 @@ fn cmd_test(ctx: &AgenticCtx) -> Result<u8> {
         Err(e) => check("gh version", false, &e.message),
     }
     check("git on PATH", crate::common::process::which("git").is_some(), "");
-    match super::executor::production_sandbox() {
+    match super::executor::production_sandbox(ctx.acfg.allow_linux_netns_fallback) {
         Ok(s) => check("hard sandbox", true, s.name()),
         Err(e) => check("hard sandbox", false, &e.message),
     }
