@@ -12,8 +12,9 @@ without repeating the whole checklist for a small change.
 1. Define the requested outcome, exclusions and evidence that would establish
    completion. Test the premise before designing a fix.
 2. Trace the actual entrypoint, configuration, state owner, callers and side
-   effects. Treat memory, issues, review findings and documentation as leads.
-   Separate product defects from environment, permission and provider failures.
+   effects. For research, distinguish listings, fetched passages and derived
+   claims. Recheck current authority before trusting carried evidence. Treat
+   memory and review findings as leads; isolate environment and provider failures.
 3. Establish the input-to-effect path for a security finding or an equivalent
    workload baseline for a performance claim. Reproduce on the current revision;
    challenge findings that the production path cannot reach.
@@ -29,7 +30,7 @@ without repeating the whole checklist for a small change.
 
 - Compilation or a health response does not establish behavior.
 - Fake providers establish protocol handling, not live availability or quality.
-- Browser checks do not establish packaged WKWebView behavior.
+- Console Chrome, model-driven `/browse` and packaged WKWebView need separate evidence.
 - Cross-compilation does not establish native execution on the other architecture.
 - A passed check does not establish a current-head review or that an absent,
   disabled or skipped workflow ran.
@@ -43,6 +44,5 @@ keep credentials and operator data out of evidence.
 Refresh base, open-PR overlap and exact heads before publication. Follow the
 repository PR template and validator; a local commit or pushed branch does not
 complete a request for a draft PR. Verify the published body and remote head.
-When asked to monitor CI, follow that head to terminal results and distinguish
-checks, reviews, unresolved threads and mergeability. A slow job is not a reason
-to cancel it. Keep drafts unmerged unless explicitly authorized otherwise.
+When monitoring is requested, follow that head to terminal checks and report
+review and mergeability separately. Keep drafts unmerged absent authorization.

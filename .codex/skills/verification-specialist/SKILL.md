@@ -32,10 +32,10 @@ HEAD/base and scope.
 | HTTP guards / CSRF / Host | `tests/auth_guards.rs`, `tests/security_headers.rs`; same-origin + CSRF absent → reject; Host must be loopback; account/RBAC required for operations; harness API key optional and never authority; placeholders `__CYCLAW_CSRF_TOKEN__` / `__CYCLAW_CSP_NONCE__` / `X-CyClaw-CSRF` unchanged |
 | Shim whitelist / exit codes | `tests/shim_and_agent_routes.rs`, `tests/invariant_guard.rs`; ACTIONS whitelist; hostile argv → 422; exit API `0/2/3/4` (`4` = write refused) |
 | Write refused paths | `tests/write_policy.rs`, `tests/git_approval.rs`, `tests/write_kill_switch.rs`; fresh disk policy, separate confirmation, reviewed tree/origin binding |
-| Clone / Seatbelt sandbox | `tests/agentic_foundations.rs` jail + `sandbox_*`; no backend ⇒ exit 3 remains correct |
+| Clone / check sandbox | `tests/agentic_foundations.rs`, `tests/macos_cargo.rs`, `tests/linux_bwrap.rs`; verify the selected backend, including default refusal without bubblewrap on Linux |
 | Config / shipped gates | `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`; `flag_is_true` (quoted `"true"` OFF) |
 | Live serve / smoke | Owned temp `CGAGENTHARNESS_HOME` + **unique port**; never assume default `:8790` is this binary (`scripts/smoke-ollama.sh` pattern) |
-| Ownership, memory, MCP, web, reload, jobs, notifications | Select tests from `cgagentharness-invariant-guard`; exercise foreign-owner, revoked-authority and disabled-feature paths for the changed contract |
+| Ownership, memory, MCP, web, reload, jobs | Select refusal cases from `cgagentharness-invariant-guard`. For PDF changes, distinguish local worker refusal from authorized Firecrawl fallback; for `/browse`, check origin refusal or stop on hand-off. |
 | Desktop package | Packaging/signing evidence ≠ HTTP console proof; WKWebView ≠ fetch/CSRF semantics; ad-hoc ≠ Developer ID |
 
 Targeted tests only, planner keys blank (CI runs the suite):
@@ -45,9 +45,7 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
   cargo test --locked --test <target> <filter> -- --nocapture
 ```
 
-Use the local verification policy in `AGENTS.md`. For documentation, validate
-command syntax, references and budget enforcement; an app build is not itself
-evidence for those claims.
+Follow `AGENTS.md` for local scope. Prose needs syntax, reference and budget checks.
 
 ## Workflow
 
@@ -64,7 +62,7 @@ evidence for those claims.
 ### Check: <name>
 **Command run:** <exact>
 **Output observed:** <verbatim>
-**Result: PASS|FAIL**
+**Result: PASS|FAIL|NOT RUN**
 ```
 
 Overall: exactly one of:
@@ -81,9 +79,8 @@ covers only the stated scope, not unrelated platforms or authority boundaries.
 
 ## Evidence limits
 
-A zero-test filter is NOT RUN. Match results to the exact source or packaged
-artifact. On documentation changes, test command syntax, references and the
-docs budget; do not claim a runtime security review from source inspection.
+A zero-test filter is NOT RUN. Match results to the source or artifact.
+Use separate evidence for console Chrome, `/browse` and native WKWebView.
 
 ## Boundary
 
