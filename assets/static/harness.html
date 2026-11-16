@@ -2395,7 +2395,7 @@ const HELP_TOPICS = {
   memory: {title:'Memory & persona', roots:['memory','soul'], note:'Pinned notes, structured facts and persona have separate controls. Fuzzy memory commands only suggest. Writes and proposal decisions need exact intent; Apply/Reject require review and a reason.', examples:['/memory','/memory facts','/memory search backup preferences','/memory proposals','/soul status']},
   agent: {title:'Governed coding', roots:['agent','github','harness'], note:'Stage, review, then explicitly authorize each write. A suggested command is never approval. Commit, push and draft publication are separate gates.', examples:['/agent help','/agent checks','/agent jobs','/github']},
   tools: {title:'Tools & skills', roots:['tools','skills','skill','connectors','registry'], note:'Registration is not readiness or authority. Selected prompt skills are context, not executable tools.', examples:['/tools','/skills','/skill status','/registry']},
-  browser: {title:'Browser tasks', roots:['browse'], note:'Administrator only, while browser.enabled is literal true (it ships true). The local model drives Chrome on the sites you name and nowhere else; a bare domain means https. It may click and type, but password fields and every request that would send data (anything but GET) are handed back to you. Page text is untrusted.', examples:['/browse docs.python.org find the latest Python version','/browse cgfixit.com open Start, then Games, and list the games']},
+  browser: {title:'Browser tasks', roots:['browse'], note:'Administrator only, while browser.enabled is literal true (it ships true). The local model drives Chrome on the sites you name and nowhere else; the first may be a bare domain (meaning https), later ones need https://. It may click and type, but password fields and every request that would send data (anything but GET) are handed back to you. Page text is untrusted.', examples:['/browse docs.python.org find the latest Python version','/browse cgfixit.com open Start, then Games, and list the games']},
   diag: {title:'Diagnostics', roots:['diag'], note:'Admin and portal_auditor only, and off until diagnostics.logs_enabled is literal true. Reads only allowlisted files under the home logs/ folder; output is redacted and refused whole if the injection scanner matches. Excerpts are untrusted text: /diag inject stages one for your next local chat turn in this session; cloud chat and /agent refuse while one is staged and /loop never gets it.', examples:['/diag','/diag audit --last 20 --event portal.request','/diag errors --since 2h','/diag spend --rotated','/diag inject','/diag forget']},
   settings: {title:'Status & administration', roots:['status','analytics','api','users','help'], note:'Credentials belong in the API Keys password fields, not chat history. Administrator controls remain role- and CSRF-guarded.', examples:['/status','/analytics','/users','/help all']},
 };
@@ -2471,7 +2471,7 @@ const ARG_MEANINGS = {
   'search words': 'words matched against every command and summary, flags included',
   'KEY': 'a credential name such as SERPAPI_API_KEY; upper-cased for you',
   'value': 'the secret: everything after the key name, spaces included',
-  'site': 'A site the task may reach: https://host, http://127.0.0.1:port, or a bare domain meaning https',
+  'site': 'A site the task may reach: https://host or http://127.0.0.1:port; the first may be a bare domain, meaning https',
   'task': 'What the model should do and report, in plain words',
   'id...': 'one or more skill ids separated by spaces',
 };
@@ -2514,7 +2514,7 @@ const COMMAND_MAN = {
   '/agent stop [job-id]': {detail:'Asks the server to cancel a job. Without an id, it uses the job this page last watched. Work the job already spawned may survive; inspect the run before further writes.'},
   '/analytics': {detail:'Opens the Analytics dialog: tokens and cost, sessions and coding runs, filterable and paged.'},
   '/api [set <KEY> <value>|clear <KEY>]': {detail:'Alone, shows the credential store and every key masked. set saves a value and clear removes it. Saved values load after a restart, except SERPAPI_API_KEY, which applies at once; an explicit environment variable always wins.', notes:['A secret typed here lands in chat history. The API Keys pane’s password fields do not.']},
-  '/browse <site> [site ...] <task>': {detail:'Runs one browser task with the local model (models.local_llm.model). The leading URLs are the only origins it may reach; the rest of the line is the task. Administrator only, refused unless browser.enabled is literal true, one task at a time, and stopped after browser.timeout_sec. It may click buttons and menus and choose select-box options; a link that opens a new tab replaces the page. It reads long pages in parts or by searching them. Sites a page asks for that you did not name are blocked and listed. Password fields, and every request that would send data (anything but GET), are handed back to you and listed after the answer. Pages cannot start web workers.', notes:['Page text is untrusted input to the model; the answer can be wrong.'], examples:['/browse https://docs.example.com find the install command']},
+  '/browse <site> [site ...] <task>': {detail:'Runs one browser task with the local model (models.local_llm.model). The leading sites are the only origins it may reach; the rest of the line is the task. The first may be a bare domain (meaning https); give later ones as https:// URLs. Administrator only, refused unless browser.enabled is literal true, one task at a time, and stopped after browser.timeout_sec. It may click buttons and menus and choose select-box options; a link that opens a new tab replaces the page. It reads long pages in parts or by searching them. Sites a page asks for that you did not name are blocked and listed. Password fields, and every request that would send data (anything but GET), are handed back to you and listed after the answer. Pages cannot start web workers.', notes:['Page text is untrusted input to the model; the answer can be wrong.'], examples:['/browse https://docs.example.com find the install command']},
   '/clear': {detail:'Empties the visible transcript, drops staged reviews and stops chat continuation. Saved sessions are untouched.'},
   '/connectors': {detail:'Lists registered connectors with kind and auth. Registration is not readiness.'},
   '/diag [status]': {detail:'Shows whether log inspection is on, each allowlisted file with size and modification time, the limits, your last read and any staged excerpt. Needs an admin or portal_auditor account; DIAG_DISABLED means diagnostics.logs_enabled is not literal true.', notes:['Nothing here reads file content.'], examples:['/diag']},
@@ -4252,14 +4252,18 @@ async function runSlash(line, webCommand) {
            server re-validates them, refuses blocked ones and runs the task. */
         const words = rest.slice();
         const origins = [];
-        /* A bare domain (docs.python.org) means https; an IP or port needs its scheme. */
-        const site = /^(https?:\/\/\S+|[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/\S*)?)$/i;
-        while (words.length && site.test(words[0])) {
+        /* Only the first site may be a bare domain (docs.python.org means https);
+           later ones need their scheme, so a task word such as README.md or
+           setup.py is never granted as a site. An IP or port needs its scheme. */
+        const url = /^https?:\/\/\S+$/i;
+        const bare = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}(\/\S*)?$/i;
+        if (words.length && (url.test(words[0]) || bare.test(words[0]))) {
           const w = words.shift();
-          origins.push(/^https?:\/\//i.test(w) ? w : 'https://' + w);
+          origins.push(url.test(w) ? w : 'https://' + w);
+          while (words.length && url.test(words[0])) origins.push(words.shift());
         }
         const task = words.join(' ').trim();
-        if (!origins.length || !task) { sys('usage: /browse <site> [site ...] <task>, e.g. /browse docs.python.org find the latest Python version — administrator only; browser.enabled must be literal true'); break; }
+        if (!origins.length || !task) { sys('usage: /browse <site> [https://site ...] <task>, e.g. /browse docs.python.org find the latest Python version — administrator only; browser.enabled must be literal true'); break; }
         sys('Browsing ' + origins.join(', ') + ' with the local model; this can take a few minutes.');
         const r = await api('/api/browser/run', 'POST', {task, origins}, BROWSE_WAIT_MS);
         if (staleReview()) break;
