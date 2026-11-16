@@ -15,4 +15,5 @@ procedure; [.claude/skills](../../.claude/skills/README.md) has a separate inven
 - [Fable protocol](fable-protocol/SKILL.md): evidence-first investigation.
 - [Verification specialist](verification-specialist/SKILL.md): independent patch assessment.
 
-Loading a skill does not grant publication or merge authority.
+Keep user-installed mirrors in sync with these files. Resolve Harness paths
+from the target checkout. Skill loading grants no additional authority.
