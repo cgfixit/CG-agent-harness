@@ -1039,10 +1039,25 @@ mod tests {
             };
             let read = web.google_search_at("fixture", 1, true, &audit, endpoint);
             tokio::pin!(read);
+            let audit_path = dir.path().join("audit.jsonl");
+            let brokered = async {
+                loop {
+                    audit.flush();
+                    match std::fs::read_to_string(&audit_path) {
+                        Ok(text) if text.contains("tool_broker_decision") => break,
+                        Ok(_) => {}
+                        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(err) => panic!("cannot read the fixture audit: {err}"),
+                    }
+                    tokio::task::yield_now().await;
+                }
+            };
+            // Wait past the credential reads, so this still covers the permit
+            // or pacing wait even when key lookup yields first.
             tokio::select! {
                 biased;
                 _ = &mut read => panic!("search must wait for pacing or a permit"),
-                _ = tokio::task::yield_now() => {}
+                ready = tokio::time::timeout(Duration::from_secs(3), brokered) => ready.unwrap()
             }
             settings.lock().unwrap().web_enabled = false;
             drop(held);
@@ -1053,9 +1068,8 @@ mod tests {
                     .is_err(),
                 "disabled searches must never connect"
             );
-            assert!(!std::fs::read_to_string(dir.path().join("audit.jsonl"))
-                .unwrap()
-                .contains("web_search_sent"));
+            audit.flush();
+            assert!(!std::fs::read_to_string(audit_path).unwrap().contains("web_search_sent"));
         }
     }
 
