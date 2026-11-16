@@ -74,6 +74,8 @@ pub struct TurnSummary {
     pub truncated: u64,
     /// Reads of a target an earlier turn of this session already tried.
     pub repeats: u64,
+    /// Reads of a target this same turn already tried (a re-read loop).
+    pub same_turn_repeats: u64,
     pub rereads_after_compaction: u64,
     pub cited: u64,
     /// Distinct codes the turn's tool events carried, refusals and
@@ -98,6 +100,7 @@ impl TurnSummary {
             "failed": self.failed,
             "truncated": self.truncated,
             "repeats": self.repeats,
+            "same_turn_repeats": self.same_turn_repeats,
             "rereads_after_compaction": self.rereads_after_compaction,
             "cited": self.cited,
             "codes": self.codes,
@@ -156,7 +159,9 @@ pub fn record_turn(
             }
         };
         let source = &mut sources[index];
-        if source.turns.last().is_some_and(|last| *last < turn) {
+        if source.turns.last() == Some(&turn) {
+            summary.same_turn_repeats += 1;
+        } else if source.turns.last().is_some_and(|last| *last < turn) {
             summary.repeats += 1;
             if epoch > source.epoch {
                 source.reread_after_compaction += 1;
@@ -344,6 +349,7 @@ mod tests {
                 failed: 1,
                 truncated: 1,
                 repeats: 0,
+                same_turn_repeats: 0,
                 rereads_after_compaction: 0,
                 cited: 2,
                 codes: vec!["WEB_HOST_DENIED".into(), "WEB_TOOLS_WITHHELD".into()],
@@ -390,15 +396,23 @@ mod tests {
     fn a_later_turn_is_a_repeat_and_after_a_compaction_a_reread() {
         let mut sources = Vec::new();
         let read = [fetch("https://docs.example/a", "abc", 3)];
-        // Twice in one turn: one source, one turn, no repeat.
+        // Twice in one turn: one source, one turn, no cross-turn repeat, one same-turn repeat.
         let first = record_turn(&mut sources, &[read[0].clone(), read[0].clone()], "", 1, 0, 1.0).unwrap();
-        assert_eq!((first.calls, first.repeats), (2, 0));
+        assert_eq!((first.calls, first.repeats, first.same_turn_repeats), (2, 0, 1));
+        assert_eq!(first.audit_fields(1, true, 0)["same_turn_repeats"], 1);
         assert_eq!(
             (sources.len(), sources[0].reads, sources[0].turns.clone()),
             (1, 2, vec![1])
         );
         let second = record_turn(&mut sources, &read, "", 2, 0, 2.0).unwrap();
-        assert_eq!((second.repeats, second.rereads_after_compaction), (1, 0));
+        assert_eq!(
+            (
+                second.repeats,
+                second.same_turn_repeats,
+                second.rereads_after_compaction
+            ),
+            (1, 0, 0)
+        );
         let third = record_turn(&mut sources, &read, "", 3, 1, 3.0).unwrap();
         assert_eq!((third.repeats, third.rereads_after_compaction), (1, 1));
         assert_eq!((sources[0].reread_after_compaction, sources[0].epoch), (1, 1));
