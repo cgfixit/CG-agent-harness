@@ -2490,7 +2490,10 @@ async fn check_goal_evidence_reuse(reread: bool, refresh: Option<bool>, valid_di
                     let result: Value = serde_json::from_str(content).unwrap();
                     let tool_count = messages.iter().filter(|m| m["role"] == "tool").count();
                     let later_turn = messages.iter().any(|m| m["content"].as_str().unwrap_or("").contains("Untrusted active-goal findings"));
-                    assert_eq!(result["cache_reused"], reread && (tool_count > 1 || later_turn) && refresh != Some(true));
+                    // An explicit refresh reads the origin once per turn: the first
+                    // read of each turn is fresh, a same-turn repeat reuses it.
+                    assert_eq!(result["cache_reused"], reread && (tool_count > 1 || later_turn) && !(refresh == Some(true) && tool_count == 1));
+                    assert_eq!(result["refresh_reused"].as_bool().unwrap_or(false), refresh == Some(true) && tool_count > 1);
                     if reread && tool_count == 1 && !later_turn { return fetch(); }
                 }
                 if content.contains("Untrusted evidence digest") {
@@ -2558,7 +2561,8 @@ async fn check_goal_evidence_reuse(reread: bool, refresh: Option<bool>, valid_di
     );
     assert_eq!(
         reads.load(Ordering::SeqCst),
-        if reread && refresh == Some(true) { 3 } else { 1 }
+        // Explicit refresh: the first read of turn 1 and of turn 2.
+        if reread && refresh == Some(true) { 2 } else { 1 }
     );
     assert_eq!(
         digests.load(Ordering::SeqCst),
@@ -3349,4 +3353,82 @@ async fn a_loop_run_keeps_its_search_result_grants_between_turns() {
     assert!(handed.load(Ordering::SeqCst), "the model was handed the page text");
     task.abort();
     model_task.abort();
+}
+
+/// A repeated `refresh: true` for a page this turn already read fresh never
+/// reaches the origin again: with a one-page cache, reading A, B, then A again
+/// finds A evicted, and the third call fails `WEB_REFRESH_REUSED` instead of
+/// downloading A a second time.
+#[tokio::test]
+async fn a_suppressed_refresh_is_cache_only_after_eviction() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let r = reads.clone();
+    let fixture = Router::new()
+        .route(
+            "/docs/{page}",
+            get(move |axum::extract::Path(page): axum::extract::Path<String>| {
+                if page == "a" {
+                    r.fetch_add(1, Ordering::SeqCst);
+                }
+                async move { ([("content-type", "text/plain")], format!("PAGE_{page} evidence")) }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(|Json(body): Json<Value>| async move {
+                let tools: Vec<Value> = body["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|m| m["role"] == "tool")
+                    .map(|m| serde_json::from_str(m["content"].as_str().unwrap()).unwrap())
+                    .collect();
+                let fetch = |page: &str, refresh: bool| {
+                    let mut args = json!({"url":format!("http://docs.example/docs/{page}")}); // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+                    if refresh {
+                        args["refresh"] = json!(true);
+                    }
+                    Json(tool_call_reply(
+                        "web_fetch",
+                        &args.to_string(),
+                        &format!("read_{}", tools.len()),
+                    ))
+                };
+                match tools.len() {
+                    0 => fetch("a", true),
+                    1 => fetch("b", false),
+                    2 => fetch("a", true),
+                    _ => {
+                        assert_eq!(tools[2]["error"], "WEB_REFRESH_REUSED", "{}", tools[2]);
+                        Json(common::ok_reply("Answered from the passages already read.", 20, 5))
+                    }
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let s = common::spawn_server(
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this is the loopback-only mock model.
+        common::ServerOptions {
+            web_resolve: Some(("docs.example".into(), address)),
+            ..common::ServerOptions::default().with("web.cache_pages", "1")
+        },
+    )
+    .await;
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"})) // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+            .await
+            .0,
+        200
+    );
+    let (status, reply) = s.post_json("/api/chat", json!({"message":"compare a and b"})).await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["reply"], "Answered from the passages already read.", "{reply}");
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        1,
+        "page a is read from the origin once per turn"
+    );
+    task.abort();
 }

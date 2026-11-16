@@ -96,6 +96,7 @@ pub(super) async fn read(
     url: &str,
     query: &str,
     refresh: bool,
+    cache_only: bool,
     audit: &Audit,
     owner: &str,
 ) -> Result<(Value, Vec<Passage>)> {
@@ -119,6 +120,11 @@ pub(super) async fn read(
             web.store_last(&page, None, owner)?;
             page
         }
+        // A suppressed same-turn refresh never reaches the origin, even after eviction.
+        None if cache_only => return Err(error(
+            "WEB_REFRESH_REUSED",
+            "this page was already read fresh this turn and is no longer cached; use the passages already delivered",
+        )),
         None => web.fetch_page(&url, true, audit, owner).await?,
     };
     let policy = web.policy()?;
@@ -207,15 +213,17 @@ mod tests {
         web.allow_rule(&url, "manuals", &[], true).unwrap();
         web.allow_rule("https://example.com/", "other", &[], true).unwrap();
         let audit = Audit::new(dir.path().join("audit.jsonl"), &cfg);
-        let (first, selected) = read(&web, &url, "RECOVERY_ANCHOR", true, &audit, "owner")
+        let (first, selected) = read(&web, &url, "RECOVERY_ANCHOR", true, false, &audit, "owner")
             .await
             .unwrap();
         assert!(first["text"].as_str().unwrap().contains("two independent replicas"));
         assert!(selected[0].start > 24_000, "the anchor must be beyond the old prefix");
         let other = format!("http://passages.invalid:{}/other", address.port()); // DevSkim: ignore DS137138 because this synthetic host resolves only to the loopback fixture.
         web.allow_rule(&other, "other", &[], true).unwrap();
-        read(&web, &other, "OTHER_PAGE", true, &audit, "owner").await.unwrap();
-        let (cached, _) = read(&web, &url, "RECOVERY_ANCHOR", false, &audit, "owner")
+        read(&web, &other, "OTHER_PAGE", true, false, &audit, "owner")
+            .await
+            .unwrap();
+        let (cached, _) = read(&web, &url, "RECOVERY_ANCHOR", false, false, &audit, "owner")
             .await
             .unwrap();
         assert_eq!(cached["cache_reused"], true);
@@ -225,7 +233,7 @@ mod tests {
             .contains("Background material about unrelated widgets"));
         assert!(!web.context_text(true, "owner").contains("OTHER_PAGE"));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
-        read(&web, &url, "RECOVERY_ANCHOR", true, &audit, "owner")
+        read(&web, &url, "RECOVERY_ANCHOR", true, false, &audit, "owner")
             .await
             .unwrap();
         assert_eq!(hits.load(Ordering::SeqCst), 2);
