@@ -691,32 +691,49 @@ impl<'a> RepoWorkspace<'a> {
         let base = f.acceptance_base_head.unwrap_or("");
         let expected = f.acceptance_digest.unwrap_or("");
         manifest::verify_manifest(&self.dest, f.changed_files, f.run_id, base, expected)?;
-        let _index_lock = GitIndexLock::acquire(self.dest.join(".git/index.lock"))?;
+        let _index_lock = GitIndexLock::acquire(self.dest.join(".git/index.lock"), f.run_id)?;
         let original_index = std::fs::read(self.dest.join(".git/index"))?;
-        let staged = self.run_git(
-            "inspect_index",
-            &[
-                "diff",
-                "--cached",
-                "--ita-visible-in-index",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--name-only",
-                "--no-renames",
-                "-z",
-                base,
-                "--",
-            ],
-            DEFAULT_GIT_WRITE_TIMEOUT_SEC,
-            &[],
-        )?;
-        if !staged.is_empty() {
-            return Err(self.deny(
+        let branch = format!("refs/heads/{}", f.branch_name);
+        let index_matches = |reference: &str| -> Result<bool> {
+            Ok(self
+                .run_git(
+                    "inspect_index",
+                    &[
+                        "diff",
+                        "--cached",
+                        "--ita-visible-in-index",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--name-only",
+                        "--no-renames",
+                        "-z",
+                        reference,
+                        "--",
+                    ],
+                    DEFAULT_GIT_WRITE_TIMEOUT_SEC,
+                    &[],
+                )?
+                .is_empty())
+        };
+        let refuse_staged = || {
+            self.deny(
                 "approve",
                 "pre-existing staged changes require a new clean candidate; index preserved",
                 None,
-            ));
-        }
+            )
+        };
+        let installed_commit = if index_matches(base)? {
+            None
+        } else {
+            // A kill after installing the index can leave the run pending.
+            // Keep it eligible only if its tree matches the branch and the
+            // branch matches the acceptance rebuilt below.
+            let commit = self.ref_commit(&branch)?.ok_or_else(refuse_staged)?;
+            if !index_matches(&commit)? {
+                return Err(refuse_staged());
+            }
+            Some(commit)
+        };
         super::git::require_raw_paths(&self.dest, f.changed_files)?;
         let (accepted, captured_digest) = manifest::build_manifest(&self.dest, f.changed_files, f.run_id, base)?;
         if captured_digest != expected {
@@ -766,6 +783,11 @@ impl<'a> RepoWorkspace<'a> {
         let tree = write(&["write-tree"], None)?;
         manifest::verify_manifest(&self.dest, f.changed_files, f.run_id, base, expected)?;
         let id = identity::identity()?;
+        if let Some(installed) = installed_commit {
+            if !self.is_accepted_commit(&installed, base, tree.trim(), f.commit_message, id)? {
+                return Err(refuse_staged());
+            }
+        }
         let email = format!("user.email={}", id.commit_email);
         let name = format!("user.name={}", id.commit_name);
         let commit = write(
@@ -784,9 +806,28 @@ impl<'a> RepoWorkspace<'a> {
             None,
         )?;
         let commit = commit.trim().to_string();
-        let branch = format!("refs/heads/{}", f.branch_name);
         let zero = "0".repeat(commit.len());
-        write(&["update-ref", &branch, &commit, &zero], None)?;
+        let commit = match write(&["update-ref", &branch, &commit, &zero], None) {
+            Ok(_) => commit,
+            // A refused write gate is never a reason to look for a branch to adopt.
+            Err(refused) if refused.code == "AGENTIC_WRITE_REFUSED" => return Err(refused),
+            // The branch may already hold this exact commit from a killed approve.
+            // Adopt it only on a full match; the fresh commit object stays unreferenced.
+            Err(created) => match self.ref_commit(&branch)? {
+                Some(existing) if self.is_accepted_commit(&existing, base, tree.trim(), f.commit_message, id)? => {
+                    self.audit.log(json!({"event":"agentic_repo_workspace_stranded_commit_adopted", "commit":existing, "branch":branch}));
+                    existing
+                }
+                Some(_) => {
+                    return Err(self.deny(
+                        "approve",
+                        "existing branch does not match the accepted change; inspect it before retrying",
+                        None,
+                    ))
+                }
+                None => return Err(created),
+            },
+        };
         // The new branch is now durable. Failures from here are explicitly
         // indeterminate and must be inspected rather than automatically retried.
         let finish = (|| -> Result<()> {
@@ -811,6 +852,111 @@ impl<'a> RepoWorkspace<'a> {
         self.audit
             .log(json!({"event":"agentic_repo_workspace_reviewed_commit", "commit":commit, "tree":tree.trim()}));
         Ok(commit)
+    }
+
+    /// Before an approve, undo what a killed earlier approve of the same run left:
+    /// its own index lock (identified by `approve_lock_marker`; callers hold the
+    /// run's lease, so that approve is no longer running), and HEAD moved onto
+    /// the run's branch whose only parent is the accepted base. HEAD goes back to
+    /// the base, detached; the work tree and index are not touched. The normal
+    /// approve then re-proves everything and adopts the branch only if it matches.
+    pub fn prepare_approve_retry(&self, f: &super::real_repo_loop::FinalizeParams<'_>) -> Result<()> {
+        self.require_write("approve", f.reason, f.confirm)?;
+        if !self.dir.symlink_metadata(".git")?.is_dir() {
+            return Err(HarnessError::write_refused(
+                "Git metadata must be an ordinary clone directory",
+            ));
+        }
+        // Confine recovery to the clone even if its metadata path is replaced.
+        let git_dir = self.dir.open_dir(".git")?;
+        let lock = "index.lock";
+        let marker = approve_lock_marker(f.run_id);
+        match git_dir.symlink_metadata(lock) {
+            Ok(meta) => {
+                let ours = meta.is_file()
+                    && meta.len() == marker.len() as u64
+                    && open_nofollow(&git_dir, lock, marker.len() as u64 + 1)
+                        .is_ok_and(|bytes| bytes == marker.as_bytes());
+                if !ours {
+                    return Err(index_locked());
+                }
+                self.require_write("approve", f.reason, f.confirm)?;
+                git_dir.remove_file(lock)?;
+                self.audit
+                    .log(json!({"event":"agentic_repo_workspace_stale_index_lock_reclaimed", "run_id":f.run_id}));
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
+        }
+        let Some(base) = f.acceptance_base_head else {
+            return Ok(());
+        };
+        let branch = format!("refs/heads/{}", f.branch_name);
+        // A plain read, so an ordinary first approve spends no extra git call
+        // from its write budget; only a retry with HEAD on the branch goes on.
+        let branch_head = format!("ref: {branch}\n");
+        let on_branch = open_nofollow(&git_dir, "HEAD", branch_head.len() as u64 + 1)
+            .is_ok_and(|head| head == branch_head.as_bytes());
+        if !on_branch {
+            return Ok(());
+        }
+        let Some(commit) = self.ref_commit(&branch)? else {
+            return Ok(());
+        };
+        let parents = self.run_git(
+            "approve_retry",
+            &["rev-list", "--parents", "-n", "1", &commit],
+            DEFAULT_GIT_WRITE_TIMEOUT_SEC,
+            &[],
+        )?;
+        if parents.split_whitespace().collect::<Vec<_>>() != [commit.as_str(), base] {
+            return Ok(());
+        }
+        self.require_write("approve", f.reason, f.confirm)?;
+        super::git::checked(
+            &self.dest,
+            &["update-ref", "--no-deref", "HEAD", base],
+            Duration::from_secs(DEFAULT_GIT_WRITE_TIMEOUT_SEC),
+            &[],
+            None,
+        )?;
+        self.audit.log(json!({"event":"agentic_repo_workspace_stranded_head_rewound", "branch":branch, "commit":commit, "base":base}));
+        Ok(())
+    }
+
+    /// The commit a local ref points at, or `None` when the ref does not exist.
+    pub fn ref_commit(&self, reference: &str) -> Result<Option<String>> {
+        let target = format!("{reference}^{{commit}}");
+        let out = super::git::run(
+            &self.dest,
+            &["rev-parse", "--verify", "--quiet", &target],
+            Duration::from_secs(DEFAULT_GIT_WRITE_TIMEOUT_SEC),
+            &[],
+            None,
+        )?;
+        Ok((out.status == Some(0))
+            .then(|| out.stdout.trim().to_string())
+            .filter(|c| !c.is_empty()))
+    }
+
+    /// True only for the commit `commit_accepted` builds: one parent (the base),
+    /// the accepted tree, the reviewed message and the agent identity.
+    fn is_accepted_commit(
+        &self,
+        commit: &str,
+        base: &str,
+        tree: &str,
+        message: &str,
+        id: &identity::Identity,
+    ) -> Result<bool> {
+        let read = |args: &[&str]| self.run_git("approve_adopt", args, DEFAULT_GIT_WRITE_TIMEOUT_SEC, &[]);
+        let parents = read(&["rev-list", "--parents", "-n", "1", commit])?;
+        let shape = read(&["log", "-1", "--format=%T%x00%an%x00%ae%x00%cn%x00%ce", commit])?;
+        let body = read(&["log", "-1", "--format=%B", commit])?;
+        let expected = format!("{tree}\0{n}\0{e}\0{n}\0{e}", n = id.commit_name, e = id.commit_email);
+        Ok(parents.split_whitespace().collect::<Vec<_>>() == [commit, base]
+            && shape.trim_end() == expected
+            && body.trim() == message.trim())
     }
 
     pub fn origin_url(&self) -> Result<String> {
@@ -1014,18 +1160,33 @@ fn rollback_quarantine_error() -> HarnessError {
         .detail("quarantine", true)
 }
 
+/// Contents an approve writes into `.git/index.lock` while it owns the index.
+/// Git never writes this, so a lock holding it for a run was left by that
+/// run's own approve. Only a later approve holding the same run's lease (an
+/// OS lock that dies with its holder) may reclaim it.
+pub fn approve_lock_marker(run_id: &str) -> String {
+    format!("cgagentharness approve run {run_id}\n")
+}
+
+fn index_locked() -> HarnessError {
+    HarnessError::write_refused("Git index is locked; inspect the candidate before retrying")
+}
+
 /// Cooperates with Git index writers while finalization owns a private index.
 struct GitIndexLock {
     path: PathBuf,
 }
 impl GitIndexLock {
-    fn acquire(path: PathBuf) -> Result<Self> {
-        std::fs::OpenOptions::new()
+    fn acquire(path: PathBuf, run_id: &str) -> Result<Self> {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&path)
-            .map_err(|_| HarnessError::write_refused("Git index is locked; inspect the candidate before retrying"))?;
-        Ok(Self { path })
+            .map_err(|_| index_locked())?;
+        let lock = Self { path };
+        file.write_all(approve_lock_marker(run_id).as_bytes())?;
+        Ok(lock)
     }
 }
 impl Drop for GitIndexLock {

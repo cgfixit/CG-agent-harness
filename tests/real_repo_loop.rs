@@ -1769,3 +1769,201 @@ async fn an_indeterminate_approve_settles_the_run_record() {
     let (code, _, err) = ra(&["real-repo-run-discard", &format!("--run-id={run_id}")]);
     assert_eq!(code, 0, "{err}");
 }
+
+/// An approve killed by the shim after `update-ref` (the branch is committed,
+/// the approve's index lock is left behind, the record is still pending) is
+/// completed by approving again (same commit, record approved); rejecting it
+/// instead names the discarded commit in the audit before the clone goes.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_killed_approve_settles_the_run_record_when_decided_again() {
+    for then in ["approve", "reject"] {
+        let dir = tempfile::tempdir().unwrap();
+        let bare = real_bare_repo_on(dir.path(), "trunk");
+        let bin = install_fake_gh(dir.path(), &bare);
+        let path = path_with(&bin);
+        let model = start_mock_model().await;
+        model.set_reply(ok_reply(
+            "Rationale.\n=== FILE target.txt ===\ngoodbye\n=== END FILE ===\n",
+            1,
+            1,
+        ));
+        let base_url = format!("\"{}\"", model.base_url());
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        config_with(
+            &home,
+            &[
+                ("agentic.enabled", "true"),
+                ("agentic.deepagent_github.enabled", "true"),
+                ("agentic.deepagent_github.allow_git_write_tools", "true"),
+                ("agentic.deepagent_github.base_url", &base_url),
+                ("agentic.deepagent_github.model", "\"mock-model\""),
+                ("agentic.deepagent_github.planner_timeout_sec", "30"),
+            ],
+        );
+        let config = home.join("config.yaml");
+        let checks = home.join("checks.json");
+        std::fs::write(
+            &checks,
+            json!({"checks": [{"name": "says-goodbye", "argv": ["grep", "-q", "goodbye", "target.txt"]}]}).to_string(),
+        )
+        .unwrap();
+        let env: Vec<(&str, &str)> = vec![("PATH", &path), ("GROK_API_KEY", ""), ("ANTHROPIC_API_KEY", "")];
+        if let Err(e) = cgagentharness::agentic::executor::production_sandbox(false) {
+            if std::env::var_os("CGAH_REQUIRE_CHECK_SANDBOX").is_some() {
+                panic!("hard check sandbox required; cannot skip: {}", e.message);
+            }
+            eprintln!("SKIP a_killed_approve: no hard sandbox on this host (fail-closed by design)");
+            return;
+        }
+        let (code, out, err) = tokio::task::block_in_place(|| {
+            run_agentic(
+                &config,
+                &[
+                    "real-repo-run",
+                    "--instruction=x",
+                    "--read-file=target.txt",
+                    "--checks-file",
+                    checks.to_str().unwrap(),
+                    "--branch=claude/killed",
+                    "--commit-message=m",
+                    "--reason=r",
+                    "--confirm",
+                    "--max-iterations=1",
+                ],
+                &env,
+                &home,
+            )
+        });
+        assert_eq!(code, 0, "stdout={out} stderr={err}");
+        let record: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(record["status"], "pending_decision", "{record}");
+        let run_id = record["run_id"].as_str().unwrap().to_string();
+        let dest = std::path::PathBuf::from(record["dest"].as_str().unwrap());
+        let base = git(&["rev-parse", "HEAD"], &dest);
+        let decide = [
+            "real-repo-run-decide".to_string(),
+            format!("--run-id={run_id}"),
+            "--decision".into(),
+            "approve".into(),
+            "--reason=reviewed".into(),
+            "--confirm".into(),
+        ];
+
+        // A `git` that stalls only on approve's `symbolic-ref HEAD refs/heads/claude/killed`,
+        // the step after the branch becomes durable, and then fails without running it.
+        let real_git = String::from_utf8(
+            std::process::Command::new("sh")
+                .args(["-c", "command -v git"])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string();
+        let slow = dir.path().join("slow-git");
+        std::fs::create_dir_all(&slow).unwrap();
+        let wrapper = slow.join("git");
+        std::fs::write(
+            &wrapper,
+            format!("#!/bin/sh\ncase \" $* \" in *\" symbolic-ref HEAD refs/heads/claude/killed \"*) sleep 120; exit 1;; esac\nexec {real_git} \"$@\"\n"),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let slow_path = format!("{}:{path}", slow.display());
+        let mut child = std::process::Command::new(BIN)
+            .arg("agentic")
+            .arg("--config")
+            .arg(&config)
+            .args(&decide)
+            .current_dir(&home)
+            .env("PATH", &slow_path)
+            .env("GROK_API_KEY", "")
+            .env("ANTHROPIC_API_KEY", "")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
+        while git(
+            &["for-each-ref", "--format=%(objectname)", "refs/heads/claude/killed"],
+            &dest,
+        )
+        .is_empty()
+        {
+            assert!(std::time::Instant::now() < deadline, "approve never reached update-ref");
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "approve exited before the branch became durable"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // What the shim's timeout does: SIGKILL, so no Drop and no record update.
+        child.kill().unwrap();
+        child.wait().unwrap();
+        let stranded = git(&["rev-parse", "refs/heads/claude/killed"], &dest);
+        let saved = |home: &Path| -> Value {
+            serde_json::from_slice(
+                &std::fs::read(home.join("data/agentic/workspaces/runs").join(format!("{run_id}.json"))).unwrap(),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            saved(&home)["status"],
+            "pending_decision",
+            "the kill leaves the record pending"
+        );
+        assert!(
+            dest.join(".git/index.lock").exists(),
+            "the kill leaves the approve's index lock"
+        );
+        assert_eq!(git(&["rev-parse", "HEAD"], &dest), base, "HEAD not moved yet");
+
+        if then == "reject" {
+            // Rejecting discards the clone and the committed branch, but names the commit first.
+            let reject: Vec<String> = decide
+                .iter()
+                .map(|a| {
+                    if a == "approve" {
+                        "reject".to_string()
+                    } else {
+                        a.clone()
+                    }
+                })
+                .filter(|a| a != "--confirm")
+                .collect();
+            let args: Vec<&str> = reject.iter().map(String::as_str).collect();
+            let (code, out, err) = tokio::task::block_in_place(|| run_agentic(&config, &args, &env, &home));
+            assert_eq!(code, 0, "stdout={out} stderr={err}");
+            assert_eq!(saved(&home)["status"], "rejected");
+            assert!(!dest.exists(), "reject removes the clone");
+            let audit = std::fs::read_to_string(home.join("logs/audit.jsonl")).unwrap();
+            assert!(
+                audit
+                    .lines()
+                    .any(|l| l.contains("agentic_real_repo_rejected_branch_discarded") && l.contains(&stranded)),
+                "the discarded commit is named in the audit"
+            );
+            continue;
+        }
+        // Approve again, with the ordinary git: the stranded commit is completed.
+        let args: Vec<&str> = decide.iter().map(String::as_str).collect();
+        let (code, out, err) = tokio::task::block_in_place(|| run_agentic(&config, &args, &env, &home));
+        assert_eq!(code, 0, "stdout={out} stderr={err}");
+        let approved = saved(&home);
+        assert_eq!(approved["status"], "approved", "{approved}");
+        assert_eq!(
+            approved["approved_commit"],
+            stranded.as_str(),
+            "the stranded commit is adopted"
+        );
+        assert_eq!(git(&["symbolic-ref", "HEAD"], &dest), "refs/heads/claude/killed");
+        assert_eq!(git(&["diff", "--cached", "--name-only", "HEAD"], &dest), "");
+        assert!(!dest.join(".git/index.lock").exists());
+    }
+}

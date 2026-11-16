@@ -476,9 +476,12 @@ would commit: tracked edits as a `--text` diff (a `-diff` or `binary` attribute
 cannot collapse them), every other changed path by full content whatever
 `.gitignore` says, and the diff as unavailable when a path cannot be read; the
 console withholds approve on that text. Approval rechecks live files and a disposable copy,
-then builds an exact tree in a private Git index. A pre-staged change or existing
-index lock refuses approval. The ordinary index lock remains held until the new
-index is installed. No unrelated staged content is incorporated or erased.
+then builds an exact tree in a private Git index. An existing index lock refuses
+approval unless the run's own lock was left by a killed approve and reclaimed
+under that run's lease. A retry adopts a branch only when its parent, tree,
+message and identity match the acceptance. An already installed index must
+match that same tree. The lock is held until the new index is installed.
+Unrelated staged content refuses approval and is never incorporated or erased.
 
 The shared agentic Git boundary disables ambient Git configuration, executable
 extensions, replacement objects and automatic maintenance. Unsupported local

@@ -166,6 +166,40 @@ fn approval_refuses_redirected_common_directory_without_mutating_another_reposit
 
 #[cfg(unix)]
 #[test]
+fn approval_retry_refuses_redirected_git_directory_before_reclaiming_a_lock() {
+    let temp = tempfile::tempdir().unwrap();
+    let (ctx, dest) = fixture(temp.path());
+    let ws = RepoWorkspace::attach(&ctx, &dest).unwrap();
+    let outside = temp.path().join("unrelated");
+    std::fs::create_dir(&outside).unwrap();
+    let marker = cgagentharness::agentic::workspace::approve_lock_marker("fixture");
+    let lock = outside.join("index.lock");
+    std::fs::write(&lock, &marker).unwrap();
+    std::fs::rename(dest.join(".git"), temp.path().join("original-git")).unwrap();
+    std::os::unix::fs::symlink(&outside, dest.join(".git")).unwrap();
+
+    let result = finalize_real_repo_change(
+        &ctx,
+        &ws,
+        &FinalizeParams {
+            reason: "reviewed fixture",
+            confirm: true,
+            branch_name: "codex/exact-tree",
+            commit_message: "test: exact tree",
+            changed_files: &["target.txt".into()],
+            decision: "approve",
+            protected_write_paths: &[],
+            run_id: "fixture",
+            acceptance_digest: None,
+            acceptance_base_head: None,
+        },
+    );
+    assert_eq!(result.unwrap_err().code, "AGENTIC_WRITE_REFUSED");
+    assert_eq!(std::fs::read_to_string(lock).unwrap(), marker);
+}
+
+#[cfg(unix)]
+#[test]
 fn hooks_and_filters_do_not_execute_during_inspection_or_approval() {
     use std::os::unix::fs::PermissionsExt;
     let temp = tempfile::tempdir().unwrap();
@@ -402,4 +436,159 @@ fn a_commit_whose_checkout_cannot_complete_is_named_and_audited() {
             .any(|l| l.contains("agentic_repo_workspace_commit_indeterminate") && l.contains(branch_tip.trim())),
         "the only durable trace of the commit must be audited"
     );
+}
+
+/// Recreate what an approve killed by the shim's time limit leaves behind,
+/// stage by stage: its index lock (`stage >= 1`), the durable branch at the
+/// commit approve builds (`stage >= 2`), and HEAD moved onto it (`stage >= 3`).
+fn strand(dest: &Path, stage: u8, content: &str) -> String {
+    let base = git(&["rev-parse", "HEAD"], dest);
+    let index = dest.join(".git/strand-index");
+    let run = |args: &[&str], stdin: Option<&str>| -> String {
+        use std::io::Write;
+        let mut child = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dest)
+            .env("GIT_INDEX_FILE", &index)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        if let Some(text) = stdin {
+            child.stdin.take().unwrap().write_all(text.as_bytes()).unwrap();
+        }
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_string()
+    };
+    let mut commit = String::new();
+    if stage >= 2 {
+        run(&["read-tree", &base], None);
+        let blob = run(&["hash-object", "-w", "--stdin"], Some(content));
+        run(
+            &["update-index", "--add", "--cacheinfo", "100644", &blob, "target.txt"],
+            None,
+        );
+        let tree = run(&["write-tree"], None);
+        let id = cgagentharness::common::identity::identity().unwrap();
+        let (email, name) = (
+            format!("user.email={}", id.commit_email),
+            format!("user.name={}", id.commit_name),
+        );
+        commit = run(
+            &[
+                "-c",
+                &email,
+                "-c",
+                &name,
+                "commit-tree",
+                &tree,
+                "-p",
+                &base,
+                "-m",
+                "test: exact tree",
+            ],
+            None,
+        );
+        run(&["update-ref", "refs/heads/codex/exact-tree", &commit], None);
+        if stage >= 4 {
+            std::fs::rename(&index, dest.join(".git/index")).unwrap();
+        } else {
+            std::fs::remove_file(&index).unwrap();
+        }
+    }
+    if stage >= 3 {
+        git(&["symbolic-ref", "HEAD", "refs/heads/codex/exact-tree"], dest);
+    }
+    std::fs::write(
+        dest.join(".git/index.lock"),
+        cgagentharness::agentic::workspace::approve_lock_marker("fixture"),
+    )
+    .unwrap();
+    commit
+}
+
+#[test]
+fn a_killed_approve_is_completed_by_approving_again() {
+    for stage in 1..=4u8 {
+        let temp = tempfile::tempdir().unwrap();
+        let (ctx, dest) = fixture(temp.path());
+        std::fs::write(dest.join("target.txt"), "approved\n").unwrap();
+        let ws = RepoWorkspace::attach(&ctx, &dest).unwrap();
+        // The run record holds the base and digest captured at acceptance.
+        let base = manifest::git_head(ws.worktree()).unwrap();
+        let (_, digest) = manifest::build_manifest(ws.worktree(), &["target.txt".into()], "fixture", &base).unwrap();
+        let stranded = strand(&dest, stage, "approved\n");
+        let params = FinalizeParams {
+            reason: "reviewed fixture",
+            confirm: true,
+            branch_name: "codex/exact-tree",
+            commit_message: "test: exact tree",
+            changed_files: &["target.txt".into()],
+            decision: "approve",
+            protected_write_paths: &[],
+            run_id: "fixture",
+            acceptance_digest: Some(&digest),
+            acceptance_base_head: Some(&base),
+        };
+        if stage == 3 {
+            let lock = dest.join(".git/index.lock");
+            let owned = std::fs::read(&lock).unwrap();
+            std::fs::write(&lock, b"foreign index lock").unwrap();
+            let err = finalize_real_repo_change(&ctx, &ws, &params).unwrap_err();
+            assert!(err.message.contains("Git index is locked"));
+            assert_eq!(git(&["rev-parse", "HEAD"], &dest), stranded);
+            assert_eq!(std::fs::read(&lock).unwrap(), b"foreign index lock");
+            std::fs::write(lock, owned).unwrap();
+        }
+        let approved =
+            finalize_real_repo_change(&ctx, &ws, &params).unwrap_or_else(|e| panic!("stage {stage}: {}", e.message));
+        let commit = approved["approved_commit"].as_str().unwrap();
+        if stage >= 2 {
+            assert_eq!(
+                commit, stranded,
+                "stage {stage}: the stranded commit is adopted, not duplicated"
+            );
+        }
+        assert_eq!(
+            git(&["symbolic-ref", "HEAD"], &dest),
+            "refs/heads/codex/exact-tree",
+            "stage {stage}"
+        );
+        assert_eq!(git(&["rev-parse", "HEAD"], &dest), commit, "stage {stage}");
+        assert_eq!(git(&["rev-parse", "HEAD^"], &dest), base, "stage {stage}");
+        assert_eq!(
+            git(&["diff", "--cached", "--name-only", "HEAD"], &dest),
+            "",
+            "stage {stage}: index matches HEAD"
+        );
+        assert!(
+            !dest.join(".git/index.lock").exists(),
+            "stage {stage}: our stale lock is reclaimed"
+        );
+        ctx.audit.flush();
+        let audit = std::fs::read_to_string(ctx.audit.path()).unwrap();
+        assert!(
+            audit.contains("agentic_repo_workspace_stale_index_lock_reclaimed"),
+            "stage {stage}"
+        );
+    }
+}
+
+#[test]
+fn a_stranded_branch_that_differs_from_the_acceptance_is_refused() {
+    let temp = tempfile::tempdir().unwrap();
+    let (ctx, dest) = fixture(temp.path());
+    std::fs::write(dest.join("target.txt"), "approved\n").unwrap();
+    let ws = RepoWorkspace::attach(&ctx, &dest).unwrap();
+    let base = git(&["rev-parse", "HEAD"], &dest);
+    let foreign = strand(&dest, 2, "tampered\n");
+    let err = approve(&ctx, &ws, &["target.txt".into()]).unwrap_err();
+    assert!(err.message.contains("does not match"), "{}", err.message);
+    assert_eq!(
+        git(&["rev-parse", "refs/heads/codex/exact-tree"], &dest),
+        foreign,
+        "branch untouched"
+    );
+    assert_eq!(git(&["rev-parse", "HEAD"], &dest), base, "HEAD untouched");
 }

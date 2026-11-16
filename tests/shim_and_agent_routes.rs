@@ -178,11 +178,13 @@ fn decide_status_and_setup_budgets_exceed_child_bounds() {
     // inspect_index, check-attr, read-tree, write-tree, verify_manifest,
     // commit-tree, update-ref and symbolic-ref, plus hash-object and
     // update-index per accepted file. Copying the clone for the proof is
-    // untimed on top. A kill after update-ref strands a committed branch
-    // behind a `pending_decision` record. `BUDGETED_APPROVE_FILES` is how many
-    // accepted files the write budget covers at the bound (a one-file approve
-    // is 780 s); a larger candidate is still approved whenever git answers in
-    // ordinary time, the kill guarantee just stops at this size.
+    // untimed on top. A kill after update-ref leaves a committed branch behind
+    // a `pending_decision` record, which approving again completes
+    // (`a_killed_approve_settles_the_run_record_when_decided_again`).
+    // `BUDGETED_APPROVE_FILES` is how many accepted files the write budget
+    // covers at the bound without a kill (a one-file approve is 780 s); a larger
+    // candidate is approved whenever git answers in ordinary time, and one that
+    // is killed is recovered by approving again.
     const BUDGETED_APPROVE_FILES: u64 = 4;
     let approve_bounds = |files: u64| 11 * git_op + files * 2 * git_op;
     let mut short = Vec::new();

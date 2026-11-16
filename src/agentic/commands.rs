@@ -889,6 +889,11 @@ fn cmd_real_repo_run_decide(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
         },
     );
     if decision == "reject" {
+        // A killed approve may have committed the run's branch already; the clone
+        // and that commit go with the reject, so name the commit first.
+        if let Ok(Some(commit)) = tools.ref_commit(&format!("refs/heads/{branch}")) {
+            ctx.audit.log(json!({"event": "agentic_real_repo_rejected_branch_discarded", "run_id": record.run_id, "branch": branch, "commit": commit}));
+        }
         tools.close();
     }
     let outcome = match outcome {
