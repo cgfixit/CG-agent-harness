@@ -1709,7 +1709,7 @@ async fn an_indeterminate_approve_settles_the_run_record() {
     )
     .unwrap();
     let env: Vec<(&str, &str)> = vec![("PATH", &path), ("GROK_API_KEY", ""), ("ANTHROPIC_API_KEY", "")];
-    if let Err(e) = cgagentharness::agentic::executor::production_sandbox() {
+    if let Err(e) = cgagentharness::agentic::executor::production_sandbox(false) {
         if std::env::var_os("CGAH_REQUIRE_CHECK_SANDBOX").is_some() {
             panic!("hard check sandbox required; cannot skip: {}", e.message);
         }
