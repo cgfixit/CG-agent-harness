@@ -11,6 +11,10 @@ all-features = true
 version = 2
 # Same as the backend: report unsound advisories on transitive crates too.
 unsound = "all"
+# Empty on purpose. glib 0.18.5 (RUSTSEC-2024-0429) and proc-macro-error 1.0.4
+# (RUSTSEC-2024-0370, via glib-macros) come only from Tauri's Linux GTK3 backend,
+# outside `targets`. If either enters a macOS graph, this check fails. Do not
+# ignore them here; see docs/DEPENDENCIES.md#retained-constraints.
 ignore = []
 
 [licenses]
