@@ -1742,6 +1742,20 @@ async fn clear_session_history_requires_intent_and_cannot_be_resurrected() {
     assert_eq!(s.post_json("/api/sessions/clear", intent.clone()).await.0, 200);
     assert!(s.state.store.for_owner("local").list().is_empty());
     assert!(!sessions.join(format!("{id}.json")).exists());
+    // The six refused bodies above cleared nothing and logged nothing. The
+    // clear is recorded by count; its reason is required but never kept.
+    let audit = s.audit_log();
+    let cleared: Vec<serde_json::Value> = audit
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|v| v["event"] == "sessions_cleared")
+        .collect();
+    assert_eq!(cleared.len(), 1);
+    assert_eq!(cleared[0]["owner_id"], "local");
+    assert_eq!(cleared[0]["deleted_sessions"], 1);
+    assert_eq!(cleared[0]["delete_derived_episodes"], false);
+    assert_eq!(cleared[0]["reason_chars"], 29);
+    assert!(!audit.contains("disposable test history"));
     // Unknown ownership cannot authorize destructive cleanup of corrupt or staged data.
     assert!(sessions.join("ffffffffffff.json").exists());
     assert!(sessions.join(".staged.fixture.tmp").exists());

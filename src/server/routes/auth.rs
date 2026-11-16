@@ -235,17 +235,29 @@ pub async fn whoami(State(state): State<Arc<AppState>>, req: Request<Body>) -> A
     Ok(Json(account_identity(&account)))
 }
 
+/// The request line holds only the route template, so an account change names
+/// who made it and whom it changed, as stored (lowercased). Never a password.
+fn audit_account(state: &AppState, event: &str, actor: &str, target: &str, detail: Value) {
+    let mut line = json!({"event": event, "actor": actor, "target": target});
+    if let (Some(line), Some(detail)) = (line.as_object_mut(), detail.as_object()) {
+        line.extend(detail.clone());
+    }
+    state.audit.log(line);
+}
+
 pub async fn change_password(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Response> {
     let account = actor(&state, &req)?;
     let secure = crate::server::guards::request_scheme(&req) == "https";
     let ValidJson(body) = ValidJson::<AuthChangePasswordRequest>::from_request(req, &()).await?;
     let st = state.clone();
+    let username = account.username.clone();
     let result = run_password_operation(state.auth_operation_permits.clone(), move || {
         manager(&st)?
             .change_password(&account.username, &body.current_password, &body.password)
             .map_err(|e| map_auth_error(&e))
     })
     .await?;
+    audit_account(&state, "account.password_changed", &username, &username, json!({}));
     let mut response = Json(json!({"ok":true,"must_change_password":false})).into_response();
     set_cookie(&mut response, &result.session_id, secure);
     Ok(response)
@@ -256,7 +268,8 @@ pub async fn set_disabled(
     Path(username): Path<String>,
     req: Request<Body>,
 ) -> ApiResult<Json<Value>> {
-    require_user_admin(&actor(&state, &req)?)?;
+    let account = actor(&state, &req)?;
+    require_user_admin(&account)?;
     let ValidJson(body) = ValidJson::<AuthDisabledRequest>::from_request(req, &()).await?;
     let mgr = manager(&state)?;
     let owner_id = mgr.get_user(&username).map(|user| user.user_id);
@@ -269,6 +282,15 @@ pub async fn set_disabled(
         mgr.enable_user(&username)
     })
     .map_err(|e| map_auth_error(&e))?;
+    if let Some(user) = mgr.get_user(&username) {
+        audit_account(
+            &state,
+            "account.disabled_set",
+            &account.username,
+            &user.username,
+            json!({"disabled": body.disabled}),
+        );
+    }
     if body.disabled {
         if let Some(owner) = owner_id {
             retire_disabled_owner(&state, &owner)?;
@@ -384,6 +406,13 @@ pub async fn create_user(State(state): State<Arc<AppState>>, req: Request<Body>)
     let user = manager(&state)?
         .get_user(&created)
         .ok_or_else(|| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "created user missing"))?;
+    audit_account(
+        &state,
+        "account.user_created",
+        &account.username,
+        &user.username,
+        json!({"role": user.role}),
+    );
     Ok(Json(user_payload(&user)))
 }
 
@@ -394,9 +423,10 @@ pub async fn set_password(
 ) -> ApiResult<Json<Value>> {
     let account = actor(&state, &req)?;
     require_user_admin(&account)?;
-    manager(&state)?
+    let target = manager(&state)?
         .get_user(&username)
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "AUTH_USER_NOT_FOUND", "unknown user"))?;
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "AUTH_USER_NOT_FOUND", "unknown user"))?
+        .username;
     let ValidJson(body) = ValidJson::<AuthSetPasswordRequest>::from_request(req, &()).await?;
     let st = state.clone();
     run_password_operation(state.auth_operation_permits.clone(), move || {
@@ -406,6 +436,7 @@ pub async fn set_password(
         })
     })
     .await?;
+    audit_account(&state, "account.password_reset", &account.username, &target, json!({}));
     Ok(Json(json!({"ok": true})))
 }
 
@@ -424,6 +455,15 @@ pub async fn set_role(
     manager
         .set_role(&username, &body.role)
         .map_err(|e| map_auth_error(&e))?;
+    if let Some(user) = manager.get_user(&username) {
+        audit_account(
+            &state,
+            "account.role_set",
+            &account.username,
+            &user.username,
+            json!({"role": user.role}),
+        );
+    }
     Ok(Json(json!({"ok": true})))
 }
 
@@ -437,11 +477,21 @@ pub async fn delete_user(
     let manager = manager(&state)?;
     // Blobs go only once the account is actually gone: a refused deletion
     // (last enabled admin, persistence failure) must not lose user data.
-    let owner = manager.get_user(&username).map(|summary| summary.user_id);
+    let doomed = manager.get_user(&username);
+    let owner = doomed.as_ref().map(|summary| summary.user_id.clone());
     if let Some(owner) = &owner {
         state.diag.forget_owner(owner);
     }
     manager.delete_user(&username).map_err(|e| map_auth_error(&e))?;
+    if let Some(user) = &doomed {
+        audit_account(
+            &state,
+            "account.user_deleted",
+            &account.username,
+            &user.username,
+            json!({}),
+        );
+    }
     // Cleanup is reported, never swallowed: a blob or uploaded note whose
     // unlink failed keeps its manifest row (still charged to the quota) and
     // is retried by the dead-owner sweeps at the next deletion or server start.
