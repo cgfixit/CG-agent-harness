@@ -799,10 +799,14 @@ impl<'a> RepoWorkspace<'a> {
             Ok(())
         })();
         finish.map_err(|_| {
-            HarnessError::agentic(
-                "commit created but checkout completion is indeterminate; inspect the run before retrying",
-            )
+            // The branch is the only trace of this commit: name it in the audit and
+            // the error so the run record can keep it (success audits it below).
+            self.audit.log(json!({"event":"agentic_repo_workspace_commit_indeterminate", "commit":commit, "tree":tree.trim(), "branch":branch}));
+            HarnessError::agentic(format!(
+                "commit {commit} created on {branch} but checkout completion is indeterminate; inspect the run before retrying"
+            ))
             .detail("indeterminate", true)
+            .detail("commit", commit.clone())
         })?;
         self.audit
             .log(json!({"event":"agentic_repo_workspace_reviewed_commit", "commit":commit, "tree":tree.trim()}));

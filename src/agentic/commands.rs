@@ -893,6 +893,12 @@ fn cmd_real_repo_run_decide(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     let outcome = match outcome {
         Ok(o) => o,
         Err(e) => {
+            // A durable branch with an unfinished checkout must not stay pending:
+            // approve cannot succeed again and reject would delete the clone and
+            // the branch. Failed keeps the clone, names the commit, and allows discard.
+            if decision == "approve" && e.details.get("indeterminate").and_then(Value::as_bool) == Some(true) {
+                settle_failed(&runs_dir, &mut record, &e);
+            }
             err(&e.message);
             return Ok(exit_code_for(&e));
         }
