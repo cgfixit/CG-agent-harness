@@ -14,7 +14,7 @@ the toolchain files take effect; CI and release builds resolve `--locked`.
 | `axum-server` 0.8, `rustls` 0.23 | Shared standalone/sidecar HTTPS; explicit ring provider, ordinary certificate verification |
 | `rcgen` 0.14, `x509-parser` 0.18 | Local P-256 certificate generation and validity/key/name checks; no OpenSSL subprocess |
 | `scraper` 0.27, `html5ever` 0.39, `robotstxt` 0.3 | HTML extraction and permitted robots handling; no browser execution |
-| `tantivy` 0.27 | Embedded BM25 passage retrieval; bounded derived index, no daemon or embeddings |
+| `tantivy` 0.27 | Embedded BM25 passage retrieval; bounded in-RAM index (`mmap` feature off), no daemon or embeddings |
 | `rmcp = "=3.9.0"` | Inbound MCP memory server (streamable HTTP); exact pin, bumped deliberately (RUSTSEC-2026-0462 fix, 2026-11-09) |
 | `zip` 9.2.2, `quick-xml` 0.42 | DOCX attachment reader: in-memory ZIP, deflate only; namespace-aware XML; limits in [CONSOLE.md](CONSOLE.md#docx-attachments) |
 | `lopdf` 0.47 (default features off) | Text-only PDF reader for attachments, notes and web reads, run in the `pdf-text-worker` child; bounded decompression; [limits](CONSOLE.md#pdf-text) |
@@ -58,27 +58,25 @@ does not certify safe runtime use of a crate.
   YAML replacements weekly and on Cargo Dependabot PRs. Remove the waiver when
   `unsafe-libyaml` leaves the backend lockfile; an unused-ignore warning does
   not detect an available replacement. Next review by 2027-02-15.
-- Desktop's lock carries Tauri's Linux GTK3 backend: `glib` 0.18.5
-  (RUSTSEC-2024-0429, unsound `VariantStrIter`) and `proc-macro-error` 1.0.4
-  (RUSTSEC-2024-0370, via `glib-macros`). `gtk` 0.19 moves to fixed `glib`
-  0.22, but `webkit2gtk` 2.0.2 and current Tauri, Wry, Tao and Muda
-  require 0.18, so no lockfile change removes them. The app ships only for macOS;
-  `cargo tree -i glib` prints nothing for either Apple target. On Linux,
-  only `Variant::array_iter_str` builds the iterator; no locked crate calls
-  it (checked 2026-11-15). Keep `desktop/deny.toml` ignores empty so a GTK edge
-  on macOS fails CI. Revisit when Tauri moves off `gtk` 0.18
-  ([tauri#12563](https://github.com/tauri-apps/tauri/issues/12563)) or by 2027-02-15.
+- Desktop's lock carries Tauri 2.12.4's Linux GTK3 backend (`gtk` 0.18.2, WRY,
+  tao, muda): `glib` 0.18.5 (RUSTSEC-2024-0429, unsound `VariantStrIter`, fixed
+  in 0.20) and `proc-macro-error` 1.0.4 (RUSTSEC-2024-0370, via `glib-macros`).
+  gtk3-rs ends at 0.18 and `webkit2gtk` 2.0.2 requires it (`gtk` 0.19 moves to
+  fixed `glib` 0.22), so no lockfile change removes them. This accepted residual
+  never ships: the app is macOS-only and `cargo tree -i glib` is empty for both
+  Apple targets. On Linux only `Variant::array_iter_str` builds the iterator and
+  no locked crate calls it (checked 2026-11-15). `desktop/deny.toml` evaluates
+  only the Apple targets: keep its ignores empty so a GTK edge on macOS fails
+  CI; its green run is not Linux clearance. Owner: `cgfixit` (#782). Revisit
+  when a Linux desktop target is added, when Tauri moves off `gtk` 0.18
+  ([tauri#12563](https://github.com/tauri-apps/tauri/issues/12563)), or by 2027-02-15.
 - GHSA-qwgh-2vcv-g2f7 (`block-buffer`) affects only `>=0.11.0, <0.12.1`. Both
   locks carry 0.10.4 and 0.12.1, outside it, so no `deny.toml` ignore is
   needed; a `scrypt` 0.12 move stays an optional API migration, not a fix.
-- Desktop `glib` 0.18.5 (RUSTSEC-2024-0429, unsound `VariantStrIter`, fixed in
-  0.20) is an accepted residual that never ships. It resolves only for Linux,
-  through Tauri 2.12.4's GTK3 stack (`gtk` 0.18.2, WRY, tao, muda), and gtk3-rs
-  ends at 0.18. The app ships for macOS only, `cargo tree -i glib` is empty for
-  both Apple targets, and no repository code names `VariantStrIter`.
-  `desktop/deny.toml` evaluates only those targets, so it needs no `ignore` and
-  its green run is not Linux clearance. Owner: `cgfixit` (#782). Revisit when a
-  Linux desktop target is added or Tauri moves to gtk-rs 0.20 or later.
+- `browser/package-lock.json` (npm) pins the `/browse` sidecar's Playwright.
+  `cargo deny` does not read it: Dependabot watches it weekly and the daily
+  advisory workflow runs `npm audit --package-lock-only`, which installs
+  nothing. [Browser-Use.md](Browser-Use.md) names the version; move both together.
 - Duplicate versions are warnings. Advisories, unapproved licenses, wildcard
   requirements and unknown sources block.
 - Both `deny.toml` files ban push-telemetry and analytics SDK crates by exact
