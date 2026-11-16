@@ -18,7 +18,7 @@ local release candidate, run `scripts/package-desktop.sh` with
 `CGAH_RELEASE_VERSION=vMAJOR.MINOR.PATCH`.
 
 Bundle and release both stage CLI artifacts through `scripts/package-release.sh`
-(release build, named artifact, sha256, extract-verify). Backend CI must pass
+(build, checksum, extract, smoke-test the extracted CLI). Backend CI must pass
 before CLI packaging and the universal macOS desktop build. Release packaging
 (not Bundle) neither restores nor saves shared build caches. Once both packaging jobs and the
 downloaded checksums pass, the workflow rechecks the version, creates a draft

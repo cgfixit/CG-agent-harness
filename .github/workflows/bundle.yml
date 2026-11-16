@@ -72,40 +72,9 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
       - name: Release build
         run: cargo build --release --locked
-      - name: Stage, checksum, extract-verify
+      - name: Stage, checksum, extract-verify and smoke
         shell: bash
         run: scripts/package-release.sh "${{ matrix.bin }}" "${{ matrix.artifact }}"
-      - name: Smoke the staged binary (loopback-only bind guard, exit-code contract)
-        shell: bash
-        run: |
-          set -euo pipefail
-          BIN="dist/${{ matrix.artifact }}"
-          "$BIN" --help | grep -q serve
-          # A bare `if "$BIN" serve --host 0.0.0.0` asserts "this must exit
-          # non-zero", so a regression that actually starts serving never
-          # returns: the step idles until timeout-minutes and briefly exposes a
-          # real listener on 0.0.0.0. Watch it instead. BSD userland has no
-          # coreutils `timeout`, so this is a plain background watchdog.
-          serve_err=$(mktemp)
-          "$BIN" serve --host 0.0.0.0 --port 8790 2>"$serve_err" & probe=$!
-          ( sleep 20; kill -9 "$probe" 2>/dev/null ) & watchdog=$!
-          code=0; wait "$probe" || code=$?
-          kill "$watchdog" 2>/dev/null || true
-          case "$code" in
-            0)   echo "non-loopback bind must be refused, but serve exited 0"; exit 1 ;;
-            137) echo "non-loopback bind must be refused, but serve kept listening"; exit 1 ;;
-          esac
-          # Any other non-zero exit (a panic, or a home/settings failure before
-          # the host check) is not the refusal: require the refusal itself.
-          if [ "$code" -ne 1 ] || ! grep -q 'binds loopback only' "$serve_err"; then
-            echo "expected the loopback refusal (exit 1), got exit $code:"; cat "$serve_err"; exit 1
-          fi
-          # Ported from ci.yml's deleted release-build job: a missing config is
-          # exit 3 (env/config), not a generic failure.
-          set +e
-          "$BIN" agentic --config /nonexistent/config.yaml status; config_code=$?
-          set -e
-          [ "$config_code" -eq 3 ] || { echo "expected exit 3 for a missing config, got $config_code"; exit 1; }
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.artifact }}

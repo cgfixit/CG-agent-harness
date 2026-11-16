@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Stage a release binary, optionally ad-hoc codesign it on macOS, archive it,
-# write SHA-256 checksums, and verify after a re-read + extract.
+# write SHA-256 checksums, and verify and smoke-test the extracted binary.
 #
 # This is a loopback CLI/server binary — never a .app bundle. A single-file
 # tar.gz plus checksums is the whole packaging contract. Used by both
@@ -31,7 +31,7 @@ fi
 mkdir -p "$DIST"
 STAGED="$DIST/$STEM"
 cp "$BIN" "$STAGED"
-chmod +x "$STAGED" 2>/dev/null || true
+chmod +x "$STAGED"
 
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
 if [[ "$os" == darwin* ]] && command -v codesign >/dev/null 2>&1; then
@@ -102,5 +102,7 @@ fi
 if [[ "$os" == darwin* ]] && command -v codesign >/dev/null 2>&1; then
   codesign --verify --verbose "$EXTRACTED"
 fi
+
+python3 "$(dirname "$0")/smoke-packaged-cli.py" "$EXTRACTED"
 
 printf 'package-release: staged %s (+ .sha256) and %s (+ .sha256)\n' "$STEM" "$ARCHIVE_NAME"
