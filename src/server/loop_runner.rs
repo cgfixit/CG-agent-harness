@@ -450,6 +450,16 @@ fn persist(dir: &std::path::Path, run: &LoopRun) {
     }
 }
 
+/// A stop requested while a turn ran is recorded once that turn ends, even when
+/// its reply would otherwise end the run as `Done` (`GOAL_DONE`, a stall): the
+/// operator stopped it, the model did not finish it (#772). Failures keep their reason.
+fn stop_over_done(terminal: Option<(LoopRunState, String)>, cancelled: bool) -> Option<(LoopRunState, String)> {
+    match terminal {
+        Some((LoopRunState::Done, _)) if cancelled => Some((LoopRunState::Stopped, "stopped by operator".into())),
+        other => other,
+    }
+}
+
 async fn run_turns(
     state: Arc<crate::server::state::AppState>,
     run_id: String,
@@ -629,6 +639,7 @@ async fn run_turns(
                 }
             }
         }
+        let terminal = stop_over_done(terminal, cancel.is_cancelled());
         let Some((final_state, reason)) = terminal else {
             // Cool down between turns so /loop stop can land and the model
             // server breathes; a stop lands immediately.
@@ -743,6 +754,26 @@ mod tests {
         assert!(manager.web_evidence("alice", "run", "goal").queries.is_empty());
         assert!(manager.web_evidence("alice", "run", "goal").granted.is_empty());
         manager.save_web_evidence("alice", "run", "goal", evidence);
+    }
+
+    #[test]
+    fn a_stop_during_a_turn_outranks_a_done_reply_but_not_a_failure() {
+        let done = Some((
+            LoopRunState::Done,
+            "model reported GOAL_DONE (unverified) — loop stopped".to_string(),
+        ));
+        assert_eq!(
+            stop_over_done(done.clone(), true),
+            Some((LoopRunState::Stopped, "stopped by operator".to_string()))
+        );
+        assert_eq!(stop_over_done(done.clone(), false), done);
+        let failed = Some((
+            LoopRunState::Failed,
+            "loop aborted — 2 consecutive chat failures".to_string(),
+        ));
+        assert_eq!(stop_over_done(failed.clone(), true), failed);
+        // A non-terminal turn is left to the cooldown or the next pass, which see the stop.
+        assert_eq!(stop_over_done(None, true), None);
     }
 
     #[test]
