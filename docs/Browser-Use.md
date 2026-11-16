@@ -45,8 +45,8 @@ Boundaries, enforced in code:
 - A task holds the shared model gate, so it never overlaps chat or research.
 - Clicks may run. Every request except GET and HEAD is held for the operator:
   a held page load answers 204 so the page stays, a held `fetch` fails.
-- Password and one-time-code fields hand off and are never typed. The console
-  lists each held request and hand-off after the answer, then the origins
+- Password and one-time-code fields hand off and are never typed. A hand-off
+  or hold ends the task at once. The console lists each one, then the origins
   (never paths) a page asked for outside the grant.
 
 Verified by running: fixtures `browser`, `browser enter` (new tab, search,
@@ -64,7 +64,7 @@ cgfixit.com (2026-11-14).
   `confirm` is dismissed unseen.
 - `scroll` and `wait` are not model tools, so content that loads only on
   scroll stays unread.
-- A hand-off or hold ends the task: no approve button and no resume.
+- No approve-and-resume after a hand-off or hold.
 - Holding every `fetch` POST can break sites that save state in the
   background, such as chat widgets or autosave.
 - Page text is untrusted input. Grants and holds bound what it can cause; an
