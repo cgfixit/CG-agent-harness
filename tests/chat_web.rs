@@ -2490,7 +2490,10 @@ async fn check_goal_evidence_reuse(reread: bool, refresh: Option<bool>, valid_di
                     let result: Value = serde_json::from_str(content).unwrap();
                     let tool_count = messages.iter().filter(|m| m["role"] == "tool").count();
                     let later_turn = messages.iter().any(|m| m["content"].as_str().unwrap_or("").contains("Untrusted active-goal findings"));
-                    assert_eq!(result["cache_reused"], reread && (tool_count > 1 || later_turn) && refresh != Some(true));
+                    // An explicit refresh reads the origin once per turn: the first
+                    // read of each turn is fresh, a same-turn repeat reuses it.
+                    assert_eq!(result["cache_reused"], reread && (tool_count > 1 || later_turn) && !(refresh == Some(true) && tool_count == 1));
+                    assert_eq!(result["refresh_reused"].as_bool().unwrap_or(false), refresh == Some(true) && tool_count > 1);
                     if reread && tool_count == 1 && !later_turn { return fetch(); }
                 }
                 if content.contains("Untrusted evidence digest") {
@@ -2558,7 +2561,8 @@ async fn check_goal_evidence_reuse(reread: bool, refresh: Option<bool>, valid_di
     );
     assert_eq!(
         reads.load(Ordering::SeqCst),
-        if reread && refresh == Some(true) { 3 } else { 1 }
+        // Explicit refresh: the first read of turn 1 and of turn 2.
+        if reread && refresh == Some(true) { 2 } else { 1 }
     );
     assert_eq!(
         digests.load(Ordering::SeqCst),
