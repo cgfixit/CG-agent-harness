@@ -57,7 +57,17 @@ does not certify safe runtime use of a crate.
   `serde_yaml_ng`. Owner: `cgfixit`, who reviews maintained, MSRV-compatible
   YAML replacements weekly and on Cargo Dependabot PRs. Remove the waiver when
   `unsafe-libyaml` leaves the backend lockfile; an unused-ignore warning does
-  not detect an available replacement.
+  not detect an available replacement. Next review by 2027-02-15.
+- Desktop's lock carries Tauri's Linux GTK3 backend: `glib` 0.18.5
+  (RUSTSEC-2024-0429, unsound `VariantStrIter`) and `proc-macro-error` 1.0.4
+  (RUSTSEC-2024-0370, via `glib-macros`). `gtk` 0.19 moves to fixed `glib`
+  0.22, but `webkit2gtk` 2.0.2 and the latest Tauri, Wry, Tao and Muda still
+  require 0.18, so no lockfile change removes them. The app ships only for macOS,
+  and `cargo tree -i glib` prints nothing for either Apple target. On Linux,
+  only `Variant::array_iter_str` builds the iterator, and no locked crate calls
+  it (checked 2026-11-15). Keep `desktop/deny.toml` ignores empty so a GTK edge
+  on macOS fails CI. Revisit when Tauri moves off `gtk` 0.18
+  ([tauri#12563](https://github.com/tauri-apps/tauri/issues/12563)) or by 2027-02-15.
 - GHSA-qwgh-2vcv-g2f7 (`block-buffer`) affects only `>=0.11.0, <0.12.1`. Both
   locks carry 0.10.4 and 0.12.1, outside it, so no `deny.toml` ignore is
   needed; a `scrypt` 0.12 move stays an optional API migration, not a fix.

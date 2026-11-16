@@ -11,6 +11,8 @@ ignore = [
     # pulled only through serde_yaml_ng for config.yaml parsing of operator-owned files.
     # Owner/removal condition: docs/DEPENDENCIES.md#retained-constraints (weekly watch).
     # unused-ignored-advisory only flags an unmatched ignore, not an available replacement.
+    # Re-reviewed 2026-11-15: serde_norway keeps a transpiled libyaml, and serde-saphyr types untyped
+    # scalars differently (`on` becomes true, `0755` a number). Next review by 2027-02-15.
     { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml unmaintained via serde_yaml_ng; no safe upgrade; parses operator-owned config only; replace YAML crate later" },
 ]
 
