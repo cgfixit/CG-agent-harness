@@ -95,7 +95,7 @@ pub fn sanitize_handoff(
             "outbound prompt exceeds max_handoff_chars ({max_chars})"
         )));
     }
-    let hits = scanner.scan(prompt);
+    let hits = scanner.scan_normalized(prompt);
     if !hits.is_empty() {
         return Err(HarnessError::injection("outbound prompt matches a banned pattern")
             .detail("pattern_count", hits.len() as u64));

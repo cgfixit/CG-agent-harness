@@ -379,3 +379,27 @@ fn replacement_refs_cannot_substitute_the_accepted_base_tree() {
     assert_eq!(git(&["rev-parse", "HEAD"], &dest), base);
     assert_eq!(std::fs::read(dest.join(".git/index")).unwrap(), original_index);
 }
+
+#[test]
+fn a_commit_whose_checkout_cannot_complete_is_named_and_audited() {
+    let temp = tempfile::tempdir().unwrap();
+    let (ctx, dest) = fixture(temp.path());
+    std::fs::write(dest.join("target.txt"), "approved\n").unwrap();
+    let ws = RepoWorkspace::attach(&ctx, &dest).unwrap();
+    // update-ref takes the branch's own lock; only `symbolic-ref HEAD` needs HEAD.lock,
+    // so the branch becomes durable and the checkout step fails after it.
+    std::fs::write(dest.join(".git/HEAD.lock"), "other operation").unwrap();
+    let err = approve(&ctx, &ws, &["target.txt".into()]).unwrap_err();
+    assert_eq!(err.details["indeterminate"], true, "{}", err.message);
+    let branch_tip = git(&["rev-parse", "refs/heads/codex/exact-tree"], &dest);
+    assert_eq!(err.details["commit"], branch_tip.trim(), "{}", err.message);
+    assert!(err.message.contains(branch_tip.trim()), "{}", err.message);
+    ctx.audit.flush();
+    let audit = std::fs::read_to_string(ctx.audit.path()).unwrap();
+    assert!(
+        audit
+            .lines()
+            .any(|l| l.contains("agentic_repo_workspace_commit_indeterminate") && l.contains(branch_tip.trim())),
+        "the only durable trace of the commit must be audited"
+    );
+}

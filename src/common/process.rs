@@ -110,16 +110,22 @@ pub fn run(spec: RunSpec<'_>) -> Result<Output, ProcessError> {
     assert!(!spec.argv.is_empty(), "argv must not be empty");
     let mut cmd = build_command(&spec);
     let mut child = cmd.spawn().map_err(ProcessError::Spawn)?;
-    if let (Some(data), Some(mut stdin)) = (spec.stdin, child.stdin.take()) {
-        use std::io::Write;
-        let _ = stdin.write_all(data);
-        drop(stdin);
-    }
+    // The clock starts at spawn and the readers start before stdin is fed: a
+    // child that never reads stdin, or fills stdout first, must still time out
+    // instead of blocking this thread in `write_all`.
+    let started = Instant::now();
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let out_thread = std::thread::spawn(move || read_all(stdout));
     let err_thread = std::thread::spawn(move || read_all(stderr));
-    let started = Instant::now();
+    if let (Some(data), Some(mut stdin)) = (spec.stdin, child.stdin.take()) {
+        let data = data.to_vec();
+        // Detached: the write ends when the child reads, exits or is killed.
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let _ = stdin.write_all(&data);
+        });
+    }
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
@@ -369,5 +375,33 @@ mod tests {
         // SAFETY: getsid(0) only queries the calling process.
         let ours = unsafe { libc::getsid(0) } as i64;
         assert_ne!(session, ours, "child must not share the harness session");
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::{run, ProcessError, RunSpec};
+    use std::time::{Duration, Instant};
+
+    /// Twin of `tests/process_lifecycle.rs::stdin_backpressure_is_inside_the_deadline`
+    /// (Unix-only). A single process that never reads stdin: piping more than the
+    /// pipe buffer must not block the caller past the deadline.
+    #[test]
+    fn stdin_backpressure_is_inside_the_deadline() {
+        let python = std::env::var("CGAH_WINDOWS_PYTHON").unwrap_or_else(|_| "python".into());
+        let argv = vec![python, "-c".into(), "import time; time.sleep(120)".into()];
+        let bytes = vec![b'x'; 2 * 1024 * 1024];
+        let start = Instant::now();
+        let result = run(RunSpec {
+            argv: &argv,
+            cwd: None,
+            env: None,
+            timeout: Duration::from_millis(500),
+            stdin: Some(&bytes),
+        });
+        assert!(matches!(result, Err(ProcessError::Timeout { .. })), "{result:?}");
+        // Causal, not tight: before the fix this returned only when the child
+        // exited on its own (120 s), so any return well short of that is the deadline.
+        assert!(start.elapsed() < Duration::from_secs(60), "{:?}", start.elapsed());
     }
 }

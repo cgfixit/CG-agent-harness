@@ -81,7 +81,7 @@ pub fn inspect_code_shape(candidate_text: &str, enabled: bool) -> Vec<Governance
 
 /// Flag prompt-injection-shaped candidate content (one finding on the first hit).
 pub fn inspect_candidate_text(scanner: &Scanner, candidate_text: &str) -> Vec<GovernanceFinding> {
-    if scanner.scan(candidate_text).is_empty() {
+    if scanner.scan_normalized(candidate_text).is_empty() {
         Vec::new()
     } else {
         vec![GovernanceFinding {
