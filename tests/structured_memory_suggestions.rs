@@ -1391,7 +1391,9 @@ async fn shipped_defaults_capture_suggest_consolidate_and_retrieve_reviewed_fact
         .1;
     assert!(preview["structured_facts"]["injected"].as_array().unwrap().is_empty());
     assert!(
-        !cgagentharness::server::structured_memory::OperatorGates::load(&s.state.home).resolve("auto_retrieval", true)
+        !cgagentharness::server::structured_memory::OperatorGates::load(&s.state.home)
+            .unwrap()
+            .resolve("auto_retrieval", true)
     );
 }
 

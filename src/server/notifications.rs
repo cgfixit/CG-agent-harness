@@ -214,11 +214,19 @@ fn bearer_tokens(home: &Home) -> Result<std::collections::BTreeMap<String, Strin
 /// owner's bearer destinations. A second owner must bring its own secret.
 fn assign_bearers(home: &Home, destinations: &mut [Destination], allow_plaintext: bool) -> Result<()> {
     let file = bearer_tokens(home)?;
-    let legacy = read_token(home, allow_plaintext)?;
     let mut owners = BTreeSet::new();
+    let mut unassigned = false;
     for destination in destinations.iter().filter(|d| d.spec.enabled && d.spec.use_bearer) {
         owners.insert(destination.spec.owner.clone());
+        unassigned |= !file.contains_key(&destination.spec.id);
     }
+    // Read only when a destination would send it: a legacy token nothing uses
+    // must not decide the authority of destinations that send no bearer.
+    let legacy = if unassigned && owners.len() == 1 {
+        read_token(home, allow_plaintext)?
+    } else {
+        None
+    };
     for destination in destinations.iter_mut().filter(|d| d.spec.enabled && d.spec.use_bearer) {
         let secret = if let Some(secret) = file.get(&destination.spec.id) {
             secret.clone()
@@ -934,6 +942,37 @@ mod tests {
         }
     }
 
+    #[test]
+    fn an_unused_legacy_token_does_not_decide_other_destinations() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::at(dir.path().join("home"));
+        home.ensure_layout().unwrap();
+        let destination = |id: &str, use_bearer: bool| {
+            json!({"id":id,"owner":"local","enabled":true,"url":"https://hooks.example.com/done",
+                   "events":["finished"],"rate_per_minute":60,"use_bearer":use_bearer})
+        };
+        let load = |destinations: Value| {
+            let config = json!({
+                "auth": {"enabled": false},
+                "security": {"allow_plaintext_key_file": true},
+                "notifications": {"enabled": true, "schema_version": 1, "destinations": destinations,
+                                  "private_url_allowlist": []}
+            });
+            AppConfig::write_private(&home.config_path(), &serde_json::to_string(&config).unwrap()).unwrap();
+            Settings::load(&home, &AppConfig::load(&home.config_path()).unwrap())
+        };
+        // A legacy token no bearer could be sent with: it holds a space.
+        AppConfig::write_private(&home.env_path(), "CGAGENTHARNESS_WEBHOOK_TOKEN=two words\n").unwrap();
+
+        assert!(
+            load(json!([destination("plain", false)])).is_ok(),
+            "a destination that sends no bearer does not depend on the legacy token"
+        );
+        assert!(
+            load(json!([destination("plain", false), destination("signed", true)])).is_err(),
+            "a bearer destination with no secret of its own still needs a usable legacy token"
+        );
+    }
     #[tokio::test]
     async fn disabling_during_dns_revokes_delivery_before_dispatch() {
         use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
