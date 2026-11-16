@@ -418,6 +418,15 @@ pub async fn clear_sessions(
             })
         }
     };
+    // The reason is required and is not kept: its length shows one was given.
+    state.audit.log(json!({
+        "event": "sessions_cleared",
+        "owner_id": owner,
+        "deleted_sessions": deleted,
+        "delete_derived_episodes": req.delete_derived_episodes,
+        "derived_episodes_deleted": derived_deleted,
+        "reason_chars": req.reason.trim().chars().count(),
+    }));
     Ok(Json(json!({
         "deleted_sessions": deleted,
         "attachment_cleanup": attachment_cleanup,
