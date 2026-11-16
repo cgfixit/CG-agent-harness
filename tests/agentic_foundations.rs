@@ -732,6 +732,27 @@ fn registry_propose_apply_gates_and_lock() {
     release_registry_lock(&lock_dir);
 }
 
+#[test]
+fn registry_exhausted_version_refuses_without_writing_or_leaking_the_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = enabled_ctx(dir.path(), &[]);
+    let path = ctx.acfg.registry_path.clone();
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let before = serde_json::json!({"version": i64::MAX, "skills": {}, "history": []}).to_string();
+    std::fs::write(&path, &before).unwrap();
+    let mut registry = SkillRegistry::open(&ctx).unwrap();
+    let spec = SkillSpec {
+        name: "tidy".into(),
+        description: "valid".into(),
+        body: "Use short paragraphs.".into(),
+    };
+    for _ in 0..2 {
+        let error = registry.apply_skill(&spec, "fixture", true).unwrap_err();
+        assert!(error.message.contains("version") && error.message.contains("exhausted"));
+        assert_eq!(std::fs::read(&path).unwrap(), before.as_bytes());
+    }
+}
+
 // ---------------------------------------------------------------- gh client
 
 #[test]

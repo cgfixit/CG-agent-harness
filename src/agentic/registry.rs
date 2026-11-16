@@ -42,7 +42,7 @@ impl SkillSpec {
             ("description", &self.description),
             ("body", &self.body),
         ] {
-            if v.trim().is_empty() {
+            if crate::common::is_visibly_blank(v) {
                 return Err(rerr(format!("skill spec field '{k}' must be a non-empty string")).detail("field", k));
             }
         }
@@ -218,6 +218,12 @@ impl<'a> SkillRegistry<'a> {
             return Err(rerr("Skills registry is malformed ('skills' must be an object)")
                 .detail("path", path.display().to_string()));
         }
+        if data.get("version").is_some_and(|v| v.as_i64().is_none_or(|n| n < 0)) {
+            return Err(rerr("Skills registry field 'version' must be a non-negative integer"));
+        }
+        if data.get("history").is_some_and(|v| !v.is_array()) {
+            return Err(rerr("Skills registry field 'history' must be an array"));
+        }
         Ok(data)
     }
 
@@ -307,7 +313,12 @@ impl<'a> SkillRegistry<'a> {
         let outcome = (|| {
             // Rebase on the LATEST committed state, not the in-memory snapshot.
             let mut data = Self::load(&self.path)?;
-            let new_version = data.get("version").and_then(|v| v.as_i64()).unwrap_or(0) + 1;
+            let new_version = data
+                .get("version")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                .checked_add(1)
+                .ok_or_else(|| rerr("Skills registry field 'version' is exhausted"))?;
             data["skills"][&spec.name] = json!({
                 "name": spec.name, "description": spec.description, "body": spec.body,
                 "sha256": new_sha, "reason": reason, "updated": ts,
@@ -338,6 +349,36 @@ impl<'a> SkillRegistry<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn skill_fields_require_visible_content() {
+        let mut spec = SkillSpec {
+            name: "valid".into(),
+            description: "description".into(),
+            body: "body".into(),
+        };
+        spec.body = "\u{200B}\u{FEFF}".into();
+        assert_eq!(spec.validate().unwrap_err().details["field"], "body");
+        spec.body = "body".into();
+        spec.description = " \u{2060}\t".into();
+        assert_eq!(spec.validate().unwrap_err().details["field"], "description");
+    }
+
+    #[test]
+    fn load_refuses_malformed_registry_metadata_but_accepts_legacy_absence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("registry.json");
+        for version in [json!(-1), json!("1"), Value::Null, json!(1.5), json!(u64::MAX)] {
+            std::fs::write(&path, json!({"skills": {}, "version": version}).to_string()).unwrap();
+            assert!(SkillRegistry::load(&path).unwrap_err().message.contains("version"));
+        }
+        for history in [json!({}), json!("history"), Value::Null] {
+            std::fs::write(&path, json!({"skills": {}, "history": history}).to_string()).unwrap();
+            assert!(SkillRegistry::load(&path).unwrap_err().message.contains("history"));
+        }
+        std::fs::write(&path, json!({"skills": {}}).to_string()).unwrap();
+        assert!(SkillRegistry::load(&path).is_ok());
+    }
 
     #[test]
     fn load_refuses_a_skills_value_that_is_not_an_object() {
