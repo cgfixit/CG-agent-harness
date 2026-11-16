@@ -905,7 +905,9 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         // Google hop ships on (asserted below).
         "web.search.fallback_to_serpapi",
     ] {
-        assert!(!cfg.flag_is_true(gate), "{gate} must ship false");
+        // A missing key also reads as off, so `!flag_is_true` alone would stay green
+        // after a gate is renamed or dropped. Require the literal shipped `false`.
+        assert_eq!(cfg.bool_opt(gate), Some(false), "{gate} must ship as literal false");
     }
     // why: operator decision (2026-11-14): local repository retrieval ships on. It reads only
     // the pipeline-owned clone through the same basename refusals, and cloud proposers still

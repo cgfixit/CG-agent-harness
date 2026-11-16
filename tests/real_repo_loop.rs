@@ -1636,6 +1636,8 @@ async fn a_failure_after_acceptance_settles_the_run_record() {
     assert_eq!(records.len(), 1, "stdout={out} stderr={err}");
     let record = &records[0];
     assert_ne!(record["status"], "running", "stdout={out} stderr={err}");
+    // Exactly one of the two documented outcomes, so a run that never reaches
+    // acceptance (unreachable model, refused write, no check run) cannot pass.
     if err.contains("manifest path missing") {
         assert_eq!(record["status"], "failed", "{record}");
         assert_eq!(record["error"], "manifest path missing from worktree", "{record}");
@@ -1643,5 +1645,11 @@ async fn a_failure_after_acceptance_settles_the_run_record() {
             Path::new(record["dest"].as_str().unwrap()).is_dir(),
             "an unbound accepted candidate stays for inspection and discard"
         );
+    } else {
+        // A read-only backend refuses the removal, so the check fails and the
+        // single iteration exhausts on verification.
+        assert_eq!(record["status"], "exhausted", "stderr={err} {record}");
+        assert_eq!(record["reject_code"], "verify_failed_loop", "stderr={err} {record}");
+        assert_eq!(record["iterations"], 1, "{record}");
     }
 }
