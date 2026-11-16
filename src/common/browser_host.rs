@@ -354,7 +354,7 @@ fn drive(mut session: Session, script: &Path, steps: &[Value], headless: bool) -
         let outcome = step(&mut session, &mut sidecar, &wire);
         lines.push(format!("{} -> {}", wire["action"], truncate(&outcome.to_string(), 300)));
         match expect.as_ref().and_then(Value::as_str) {
-            Some("handoff") if outcome["decision"].as_str().is_some_and(|d| d.starts_with("Handoff")) => continue,
+            Some("handoff") if handed_off(&outcome) => continue,
             Some("held") if outcome.get("held_for_operator").is_some() => {}
             Some(shows)
                 if shows
@@ -542,6 +542,7 @@ fn model_loop(
             break;
         }
         // A finish later in this turn must not rest on results the model never read.
+        // A handoff does not count: saying the operator must act is a correct finish.
         let mut failed_this_turn = false;
         for call in tool_calls {
             calls += 1;
@@ -598,7 +599,7 @@ fn model_loop(
                 retire_observations(&mut messages);
             }
             let failed = action_failed(&outcome);
-            failed_this_turn |= failed;
+            failed_this_turn |= blocks_finish(&outcome);
             refused_in_a_row = if failed { refused_in_a_row + 1 } else { 0 };
             messages.push(json!({"role":"tool","tool_name": name,"content": outcome.to_string()}));
             // A model that keeps retrying refused actions only spends the deadline.
@@ -662,11 +663,27 @@ fn action_failed(outcome: &Value) -> bool {
         .any(|key| outcome.get(*key).is_some())
 }
 
+/// Whether a tool outcome is a handoff: only the operator can do that step.
+/// It still counts as failed toward `MAX_REFUSALS_IN_A_ROW`.
+fn handed_off(outcome: &Value) -> bool {
+    outcome["decision"]
+        .as_str()
+        .is_some_and(|decision| decision.starts_with("Handoff"))
+}
+
+/// Whether an outcome makes a later `finish` in the same turn premature: a
+/// refusal or failure the model has not read yet. A handoff does not, because
+/// the system prompt tells the model to say so and stop.
+fn blocks_finish(outcome: &Value) -> bool {
+    action_failed(outcome) && !handed_off(outcome)
+}
+
 /// The answer a `finish` call ends the task with, or why it is refused. A
 /// finish sent after a refused or failed call in the same turn is refused: the
 /// model sent it before it could read that result, so its answer cannot rest
-/// on the page. A finish first in its turn, or after only successful calls,
-/// ends the task when it carries a non-blank answer.
+/// on the page. `blocks_finish` sets that flag and exempts handoffs. A finish
+/// first in its turn, or after only successful calls or handoffs, ends the task
+/// when it carries a non-blank answer.
 fn finish_verdict(args: &Value, failed_earlier_this_turn: bool) -> Result<String, &'static str> {
     if failed_earlier_this_turn {
         return Err("an action in this turn was refused: read the results, then finish");
@@ -1143,15 +1160,30 @@ mod tests {
         let observed = json!({"url": "https://docs.python.org/3/", "text": "Library index", "elements": []});
         let malformed = json!({"refused": "malformed browser action"});
         let stale = json!({"decision": "Refuse { reason: \"stale ref\" }"});
-        let verdict = |earlier: &[&Value]| finish_verdict(&done, earlier.iter().any(|outcome| action_failed(outcome)));
+        let handoff = json!({"decision": "Handoff { reason: \"secret field\" }"});
+        let verdict = |earlier: &[&Value]| {
+            let blocks = earlier.iter().any(|outcome| blocks_finish(outcome));
+            finish_verdict(&done, blocks)
+        };
         // First in its turn, or after only successful calls: accepted.
         assert_eq!(verdict(&[]).as_deref(), Ok("zipfile — Work with ZIP archives"));
         assert_eq!(
             verdict(&[&observed, &observed]).as_deref(),
             Ok("zipfile — Work with ZIP archives")
         );
-        // After a refused or failed call, even one followed by a success: refused.
-        for earlier in [vec![&malformed], vec![&observed, &stale], vec![&stale, &observed]] {
+        // After a handoff: accepted, though the handoff still counts as failed in a row.
+        assert!(action_failed(&handoff) && handed_off(&handoff) && !handed_off(&stale));
+        assert_eq!(
+            verdict(&[&observed, &handoff]).as_deref(),
+            Ok("zipfile — Work with ZIP archives")
+        );
+        // After a refused or failed call, even one followed by a success or a handoff: refused.
+        for earlier in [
+            vec![&malformed],
+            vec![&observed, &stale],
+            vec![&stale, &observed],
+            vec![&handoff, &malformed],
+        ] {
             let refused = verdict(&earlier).unwrap_err();
             assert!(refused.contains("read the results, then finish"), "{refused}");
         }
