@@ -19,19 +19,15 @@ not establish those boundaries.
 | Fresh policy / separate intent | `tests/write_policy.rs`, `tests/write_kill_switch.rs` |
 | Git approval / digest, mode, origin, exact commit, index lock, disabled extensions | `tests/git_approval.rs` |
 | Exact edits / preflight / failed rollback quarantine | `tests/exact_edits.rs`, unit tests in `src/agentic/workspace.rs` |
-| Retrieval / sensitive reads / cloud refusal | `tests/real_repo_loop.rs` repository-retrieval and denied-basename cases |
+| Shipped-on local retrieval / sensitive reads / cloud refusal | `tests/real_repo_loop.rs`; trace `src/agentic/repo_retrieval.rs` |
 | Clone / read jail | `agentic_foundations::apply_proposal_refuses_jail_escapes_and_oversize_content`, `read_jail_refuses_symlink_escapes_without_following_the_leaf` |
 | Hostile argv / confirm never manufactured | `tests/shim_and_agent_routes.rs` hostile-argv matrix, `a_request_can_never_carry_an_argv`, publish-missing-confirm → child exit 4 |
+| Protected Rust check inputs | `invariant_guard::shipped_defaults_protect_rust_check_configuration` covers YAML and Rust fail-safe defaults |
 | Kill switch AND-only / shipped gates | `invariant_guard::writer_kill_switch_is_and_not_or`, `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` |
 
-Completion requires executed refusal cases and regression assertions for
-newly closed bypasses, without weakening existing checks.
+## Exercise refusal paths
 
-## The loop
-
-### Step 1 — Select the affected refusal paths
-
-Inspect assertions and callers in the table before choosing filters. For example:
+Inspect assertions and callers before choosing filters. For example:
 
 ```sh
 GROK_API_KEY='' ANTHROPIC_API_KEY='' DEEPAGENT_API_KEY='' \
@@ -42,7 +38,7 @@ Verify the output names the intended test. Run the other affected refusal cases;
 a request for a full write-policy audit requires every applicable table row.
 Follow `AGENTS.md` for local scope rather than running unrelated targets.
 
-### Step 2 — Classify results into buckets
+## Classify results
 
 | Bucket | Meaning | Action |
 |---|---|---|
@@ -51,10 +47,7 @@ Follow `AGENTS.md` for local scope rather than running unrelated targets.
 | **fixed_findings** | Prior gap now refuses with evidence | Bank a durable regression test; keep the assert. |
 | **false_greens** | Suite green because confirm was defaulted, kill switch OR-ed, Seatbelt skipped, or shared listener used | Treat as FAIL of the verification method — reproduce with owned temp `CGAGENTHARNESS_HOME` + unique port. |
 
-### Step 3 — Pick one new_bypass / known_gap; name the family
-
-Work one finding at a time. Map to a family so the fix lands in the right
-module:
+## Locate the owning boundary
 
 - **Gate order** — `agentic.enabled` / mode / `writes_enabled` / reason /
   confirm / `allow_git_write_tools` (`src/agentic/writer.rs`)
@@ -68,7 +61,7 @@ module:
 - **Policy revocation** — recheck disk at each mutation; confirm for run,
   approval, push and publication are separate intents
 
-### Step 4 — Close with a minimal gate + regression test
+## Verify authorized fixes
 
 - Prefer the smallest refuse path that restores the invariant (one gate check,
   one argv validation, one jail predicate).
@@ -79,12 +72,6 @@ module:
 - **Never** default `confirm`, make `reason` optional, OR the kill switch, or
   delete/skip an assert to green.
 
-### Step 5 — Report
-
-Report observed versus inferred results, affected findings, commands/exit codes,
-tested SHA and remaining gaps. State which exit-4 paths were actually exercised.
-
-## Guardrails
-
-- Retain rollback recovery backups after quarantine; do not claim crash atomicity.
-- Pair with `cgagentharness-invariant-guard` before merging core-path diffs.
+Retain recovery backups after quarantine. Report exercised refusals (including
+exit 4), commands, exits, SHA and gaps. Pair with `cgagentharness-invariant-guard`
+for core-path assessment.
