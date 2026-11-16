@@ -417,7 +417,8 @@ Approval refuses staged changes and index locks. Under the normal index lock it
 builds a private index from the accepted base, inserts only the accepted raw
 blobs and modes and writes that tree, so replacement objects and grafts cannot
 reinterpret the base. Acceptance digests include mode. A failure after a
-durable branch commit is indeterminate and needs inspection.
+durable branch commit is indeterminate: the run settles as failed, naming the
+commit in its error and audit, and keeps the clone for inspection and discard.
 
 Content-transforming attributes (`filter`, `text`, `eol`,
 `working-tree-encoding`, `ident`) are refused for selected changes, which
