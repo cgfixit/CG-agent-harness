@@ -1,6 +1,7 @@
 // Narrow Playwright sidecar. The parent process decides every action.
 // This file does not accept JavaScript, a shell, or launch flags from stdin.
 
+import crypto from "node:crypto";
 import dns from "node:dns";
 import fs from "node:fs";
 import http from "node:http";
@@ -23,6 +24,13 @@ const MAX_NOT_GRANTED = 20;
 const MAX_HREF = 8192;
 const MAX_URL = 8192;
 const MAX_TITLE = 300;
+// Bounds a page operation that has no timeout option of its own.
+const OP_TIMEOUT_MS = 5000;
+// Only this session's Chrome knows it: Playwright answers the proxy's 407 with
+// it, and any other local process is refused before the grant is consulted.
+const PROXY_USER = "cgah";
+const PROXY_SECRET = crypto.randomBytes(24).toString("hex");
+const PROXY_AUTH = `Basic ${Buffer.from(`${PROXY_USER}:${PROXY_SECRET}`).toString("base64")}`;
 
 let context;
 let page;
@@ -81,7 +89,9 @@ function originOf(raw) {
     throw new Error(`scheme ${url.protocol} is not browseable`);
   }
   const port = url.port || (url.protocol === "https:" ? "443" : "80");
-  return `${url.protocol}//${url.hostname.toLowerCase()}:${port}`;
+  // browser.rs parse_origin drops one trailing dot too, so both sides name
+  // example.com. and example.com as the same grant.
+  return `${url.protocol}//${url.hostname.toLowerCase().replace(/\.$/, "")}:${port}`;
 }
 
 function allowed(raw) {
@@ -206,7 +216,7 @@ async function observe(view = {}) {
   const shown = find ? excerpts(body, find) : body;
   const result = {
     url: page.url().slice(0, MAX_URL),
-    title: (await page.title()).slice(0, MAX_TITLE),
+    title: (await bounded(page.title(), "title")).slice(0, MAX_TITLE),
     text: shown.slice((pageNo - 1) * MAX_TEXT, pageNo * MAX_TEXT),
     elements,
     page: pageNo,
@@ -222,6 +232,21 @@ function quiet(stream) {
   stream.on("error", () => {});
 }
 
+// A stuck renderer must fail one call, not hold the task until its deadline.
+function bounded(promise, what) {
+  let timer;
+  const expired = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out`)), OP_TIMEOUT_MS);
+  });
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer));
+}
+
+function authorized(req) {
+  const given = Buffer.from(String(req.headers["proxy-authorization"] || ""));
+  const want = Buffer.from(PROXY_AUTH);
+  return given.length === want.length && crypto.timingSafeEqual(given, want);
+}
+
 const HOP_BY_HOP = new Set(["connection", "keep-alive", "proxy-connection", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade"]);
 
 function forwardable(headers) {
@@ -232,10 +257,22 @@ function startProxy() {
   const server = http.createServer((req, res) => {
     quiet(req);
     quiet(res);
+    if (!authorized(req)) {
+      res.writeHead(407, { "proxy-authenticate": 'Basic realm="cgah"' });
+      res.end();
+      return;
+    }
     let target;
     try {
       target = new URL(req.url);
     } catch {
+      res.writeHead(403);
+      res.end();
+      return;
+    }
+    // Plain http only: https arrives as CONNECT. An absolute-form https:// URL
+    // here used to throw inside http.request and kill the sidecar.
+    if (target.protocol !== "http:") {
       res.writeHead(403);
       res.end();
       return;
@@ -246,21 +283,29 @@ function startProxy() {
       res.end();
       return;
     }
-    const upstream = http.request(
-      {
-        // urlToHttpOptions strips IPv6 brackets, which a raw hostname keeps.
-        ...options,
-        method: req.method,
-        // Keep cookies, CSRF and content-type so a logged-in console POST works.
-        headers: { ...forwardable(req.headers), host: target.host },
-        lookup: publicLookup,
-      },
-      (up) => {
-        quiet(up);
-        if (!res.headersSent) res.writeHead(up.statusCode || 502, up.headers);
-        up.pipe(res);
-      },
-    );
+    let upstream;
+    try {
+      upstream = http.request(
+        {
+          // urlToHttpOptions strips IPv6 brackets, which a raw hostname keeps.
+          ...options,
+          method: req.method,
+          // Keep cookies, CSRF and content-type so a logged-in console POST works.
+          // forwardable drops Proxy-Authorization, so the session secret stays here.
+          headers: { ...forwardable(req.headers), host: target.host },
+          lookup: publicLookup,
+        },
+        (up) => {
+          quiet(up);
+          if (!res.headersSent) res.writeHead(up.statusCode || 502, up.headers);
+          up.pipe(res);
+        },
+      );
+    } catch {
+      res.writeHead(502);
+      res.end();
+      return;
+    }
     quiet(upstream);
     upstream.on("error", () => {
       if (!res.headersSent) res.writeHead(502);
@@ -274,6 +319,10 @@ function startProxy() {
   });
   server.on("connect", (req, clientSocket) => {
     quiet(clientSocket);
+    if (!authorized(req)) {
+      clientSocket.end('HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="cgah"\r\n\r\n');
+      return;
+    }
     let target;
     try {
       target = new URL(`https://${req.url}/`);
@@ -446,7 +495,7 @@ async function start(message) {
     chromiumSandbox: true,
     headless: message.headless !== false,
     args: ["--disable-features=TranslateUI"],
-    proxy: { server: `http://127.0.0.1:${proxyPort}`, bypass: "<-loopback>" },
+    proxy: { server: `http://127.0.0.1:${proxyPort}`, bypass: "<-loopback>", username: PROXY_USER, password: PROXY_SECRET },
     serviceWorkers: "block",
     acceptDownloads: false,
     ignoreHTTPSErrors: false,
@@ -574,12 +623,12 @@ async function handle(message) {
     }
     case "select_tab": {
       const locator = page.getByRole("tab", { name: message.tab, exact: true });
-      if ((await locator.count()) !== 1) throw new Error("unknown tab");
+      if ((await bounded(locator.count(), "tab lookup")) !== 1) throw new Error("unknown tab");
       await locator.click({ timeout: 5000 });
       return observe();
     }
     case "scroll":
-      await page.mouse.wheel(0, message.dy || 0);
+      await bounded(page.mouse.wheel(0, message.dy || 0), "scroll");
       return observe();
     case "wait":
       await page.waitForTimeout(message.timeout_ms);
