@@ -413,9 +413,10 @@ pub async fn preview(
         &pinned_ids,
     )
     .map_err(|e| crate::server::attachments::upload_error(&e))?;
+    let live_blobs = state.attachments.owned_blobs(&owner, &pinned_ids);
     let live_pins: Vec<String> = pinned_ids
         .iter()
-        .filter(|id| state.attachments.owned_blob(&owner, id).is_some())
+        .filter(|id| live_blobs.contains_key(*id))
         .cloned()
         .collect();
     let ids = crate::server::retrieval::attachment_ids_for_prompt(&live_pins, &req.attachment_ids);

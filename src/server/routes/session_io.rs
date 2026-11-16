@@ -76,14 +76,15 @@ fn export_pins_for_owner(
     owner: &str,
     attachments: &crate::server::attachments::AttachmentStore,
 ) -> Vec<ExportAttachmentPin> {
+    let live_blobs = attachments.owned_blobs(owner, &session.pinned_ids_for(owner));
     session
         .attachment_pins
         .iter()
         .filter(|pin| pin.owner == owner)
-        .map(|pin| match attachments.owned_blob(owner, &pin.id) {
+        .map(|pin| match live_blobs.get(&pin.id) {
             Some(blob) => ExportAttachmentPin {
                 id: pin.id.clone(),
-                magic_mime: blob.magic_mime,
+                magic_mime: blob.magic_mime.clone(),
                 sha256_prefix: blob.sha256.chars().take(12).collect(),
                 omitted: false,
             },

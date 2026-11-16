@@ -17,11 +17,16 @@ pub async fn list_notes(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
-    let notes = state
-        .notes_corpus
-        .list_for_owner(&owner)
-        .map_err(|e| notes_corpus::ingest_error(&e))?;
     let limits = state.notes_corpus.limits();
+    let notes = tokio::task::spawn_blocking(move || state.notes_corpus.list_for_owner(&owner))
+        .await
+        .map_err(|_| {
+            notes_corpus::ingest_error(&crate::common::errors::HarnessError::new(
+                "IO_ERROR",
+                "notes list worker failed",
+            ))
+        })?
+        .map_err(|e| notes_corpus::ingest_error(&e))?;
     let mut response = notes_corpus::list_json(&notes);
     response["limits"] = json!({
         "max_files_per_request": limits.max_files_per_request,
@@ -125,9 +130,15 @@ pub async fn delete_note(
     Path(NoteId { id }): Path<NoteId>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
-    state
-        .notes_corpus
-        .unlink_id(&owner, &id)
+    let task_id = id.clone();
+    tokio::task::spawn_blocking(move || state.notes_corpus.unlink_id(&owner, &task_id))
+        .await
+        .map_err(|_| {
+            notes_corpus::ingest_error(&crate::common::errors::HarnessError::new(
+                "IO_ERROR",
+                "notes delete worker failed",
+            ))
+        })?
         .map_err(|e| notes_corpus::ingest_error(&e))?;
     Ok(Json(json!({"ok": true, "id": id})))
 }
