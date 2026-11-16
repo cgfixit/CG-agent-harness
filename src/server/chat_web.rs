@@ -190,6 +190,21 @@ fn tool_argv(name: &str, args: &str) -> Vec<String> {
     }
 }
 
+/// The steering arguments of a call, beside its `target`, for the turn's events:
+/// `query`/`refresh` for a fetch and `count` for a search. A missing optional
+/// argument is `null`; page text never appears here.
+fn tool_args_record(name: &str, args: &str) -> Value {
+    match name {
+        "web_search" => serde_json::from_str::<SearchArgs>(args)
+            .map(|a| json!({"count":a.count}))
+            .unwrap_or(Value::Null),
+        "web_fetch" => serde_json::from_str::<FetchArgs>(args)
+            .map(|a| json!({"query":a.query.map(|q| crate::common::clip_chars(&q, 200)),"refresh":a.refresh}))
+            .unwrap_or(Value::Null),
+        _ => Value::Null,
+    }
+}
+
 /// Estimated tokens of a model call: UTF-8 bytes / 4 of what is sent, calibrated.
 fn prompt_estimate(bytes: usize, token_ratio: f64) -> u64 {
     super::compaction::calibrated_tokens((bytes as u64).div_ceil(4), token_ratio)
@@ -958,6 +973,7 @@ async fn run_inner(
             let argv = tool_argv(name, args);
             // The URL or query as asked, for the session's web ledger (`web_ledger`).
             let target = argv.first().cloned().unwrap_or_default();
+            let call_args = tool_args_record(name, args);
             let mut selected = Vec::new();
             assert_allowed(name, &argv, &chat_callable_names(web_mode), &state.audit)
                 .map_err(|e| error("WEB_TOOL_DENIED", &e.message))?;
@@ -1109,7 +1125,7 @@ async fn run_inner(
                 }
                 Err(failure) => {
                     events.push(
-                        json!({"tool":name,"ok":false,"target":target,"code":failure.code,"message":failure.message}),
+                        json!({"tool":name,"ok":false,"target":target,"args":call_args,"code":failure.code,"message":failure.message}),
                     );
                     json!({"error":failure.code,"message":failure.message,
                         "notice":"This read did not run or did not fit. Answer from the other results, or say what could not be read."})
@@ -1128,7 +1144,7 @@ async fn run_inner(
                     }
                 }
                 check_evidence(state, web, owner, &sources)?;
-                events.push(json!({"tool":name,"ok":true,"target":target,"result":result}));
+                events.push(json!({"tool":name,"ok":true,"target":target,"args":call_args,"result":result}));
             }
             messages.push(tool_message(id, &result)?);
         }
@@ -1311,5 +1327,20 @@ mod tests {
         for value in ["null", "1", "\"false\""] {
             assert!(fetch_args(&format!(r#"{{"url":"https://a.test/","refresh":{value}}}"#)).is_err());
         }
+        assert_eq!(
+            tool_args_record(
+                "web_fetch",
+                r#"{"url":"https://a.test/","query":"robots","refresh":true}"#
+            ),
+            json!({"query":"robots","refresh":true})
+        );
+        assert_eq!(
+            tool_args_record("web_fetch", r#"{"url":"https://a.test/"}"#),
+            json!({"query":null,"refresh":null})
+        );
+        assert_eq!(
+            tool_args_record("web_search", r#"{"query":"q","count":"3"}"#),
+            json!({"count":3})
+        );
     }
 }
