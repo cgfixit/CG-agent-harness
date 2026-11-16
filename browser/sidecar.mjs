@@ -18,6 +18,11 @@ const MAX_OPTIONS = 25;
 const MAX_OPTION_CHARS = 1500;
 const MAX_FIND_CHARS = 80;
 const MAX_NOT_GRANTED = 20;
+// Page-controlled strings in a reply. A longer href is dropped, not cut, so a
+// cut link is never followed; the parent also bounds the whole reply line.
+const MAX_HREF = 8192;
+const MAX_URL = 8192;
+const MAX_TITLE = 300;
 
 let context;
 let page;
@@ -145,7 +150,8 @@ function optionNames(node, budget, out = []) {
 
 function absolute(raw) {
   try {
-    return new URL(raw, page.url()).href;
+    const href = new URL(raw, page.url()).href;
+    return href.length <= MAX_HREF ? href : null;
   } catch {
     return null;
   }
@@ -199,8 +205,8 @@ async function observe(view = {}) {
   const body = (await page.locator("body").innerText({ timeout: 5000 })).replace(/\s+/g, " ").trim();
   const shown = find ? excerpts(body, find) : body;
   const result = {
-    url: page.url(),
-    title: await page.title(),
+    url: page.url().slice(0, MAX_URL),
+    title: (await page.title()).slice(0, MAX_TITLE),
     text: shown.slice((pageNo - 1) * MAX_TEXT, pageNo * MAX_TEXT),
     elements,
     page: pageNo,
