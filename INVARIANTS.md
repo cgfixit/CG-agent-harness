@@ -448,19 +448,21 @@ current process group implementation does not contain every escaped descendant.
 Linux prefers bubblewrap with an allowlisted read-only filesystem, writable
 scratch, tmpfs `/tmp`, and `--unshare-net`. Binding the host root (`--ro-bind / /`)
 is forbidden because it exposes SSH keys and any plaintext key file. When
-`bwrap` is missing or its probe fails, Linux falls back to
-`unshare --net` only (`name()` is `linux-netns`): network isolation without
-filesystem confinement. Filesystem Unix sockets remain reachable, including
+`bwrap` is missing or its probe fails, verification refuses with
+`HARD_SANDBOX_UNAVAILABLE` (exit 3) naming `agentic.sandbox.allow_linux_netns_fallback`,
+which ships false (#782). Only literal `true` selects `unshare --net`
+(`name()` is `linux-netns`): network isolation without filesystem confinement. Filesystem Unix sockets remain reachable, including
 user-service-manager, D-Bus/Secret Service and SSH-agent sockets; network namespaces
-do not remove that local-service authority. That fallback is explicit in the backend name, an
-info-level `linux hard sandbox backend selected` line, the self-test line, and
+do not remove that local-service authority. That opt-in is explicit in the backend name, a
+stderr warning naming the key (the shim's `stderr` field), agentic `status`, the self-test line, and
 the audit `sandbox` field. `/api/status` does not report the backend. Both backends missing is
 `HARD_SANDBOX_UNAVAILABLE` (exit 3). SIGKILL of the runner with a live grandchild is unverified. See `docs/CODING_PIPELINE.md#offline-cargo-verification` for preparation, required native tests,
 CI confinement evidence and remaining process/resource limitations.
 
 - Locked by: `tests/macos_cargo.rs` (no sandbox capability skip),
   `tests/linux_bwrap.rs`,
-  `src/agentic/executor/sandbox.rs::prefer_linux_sandbox_falls_back_then_fails_closed`.
+  `src/agentic/executor/sandbox.rs::prefer_linux_sandbox_falls_back_only_when_opted_in_then_fails_closed`,
+  `tests/invariant_guard.rs` (ships false).
 
 ## Approval is bound to what was reviewed
 
@@ -730,7 +732,7 @@ them in the system prompt. The audits `chat_session_compacted`, `chat_compaction
 - `agentic/context` injection findings are advisory on reads; only the
   model-feeding commands refuse on them (selected by CODE, not severity).
 - The Windows sandbox is a process-tree kill boundary, not a network namespace.
-- Linux `linux-netns` is network isolation only. Treat `linux-bwrap` as the
+- Linux `linux-netns` (only with `agentic.sandbox.allow_linux_netns_fallback: true`) is network isolation only. Treat `linux-bwrap` as the
   filesystem-confined backend; do not claim Seatbelt parity when the fallback
   is selected.
 - The direct-loopback check sees only the socket peer and forwarding headers:

@@ -701,6 +701,7 @@ pub fn run_real_repo_loop(
                 &ctx.audit,
                 p.sandbox,
                 Some(&ctx.home_root.join("data/agentic/cargo-prepared")),
+                ctx.acfg.allow_linux_netns_fallback,
             )?)
         } else {
             None
