@@ -300,6 +300,54 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
     content.abort();
 }
 
+/// Spawn `serve` on a free loopback port and wait for `/api/status`. The port
+/// is found by binding and releasing it, so another process can take it before
+/// the child binds; `serve` then exits ("may already be running"). That exit is
+/// retried on a fresh port, a bounded number of times.
+#[cfg(unix)]
+async fn spawn_serve(home: &std::path::Path) -> (tokio::process::Child, u16, reqwest::Client) {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .unwrap();
+    for _ in 0..5 {
+        let port = std::net::TcpListener::bind("127.0.0.1:0") // DevSkim: ignore DS162092 because this is an owned loopback fixture.
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut child = tokio::process::Command::new(BIN)
+            .args(["serve", "--port", &port.to_string()])
+            .env("CGAGENTHARNESS_HOME", home)
+            .env("GROK_API_KEY", "")
+            .env("ANTHROPIC_API_KEY", "")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let url = format!("http://127.0.0.1:{port}/api/status"); // DevSkim: ignore DS162092 DS137138 because this is the owned loopback-only HTTP fixture.
+        let ready = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                if client.get(&url).send().await.is_ok() {
+                    return true;
+                }
+                if child.try_wait().unwrap().is_some() {
+                    return false;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("fixture server did not answer within 10 s");
+        if ready {
+            return (child, port, client);
+        }
+    }
+    panic!("fixture server exited during startup on 5 ports");
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn sighup_reloads_the_owned_server_and_invalid_reload_keeps_it_running() {
@@ -316,41 +364,8 @@ async fn sighup_reloads_the_owned_server_and_invalid_reload_keeps_it_running() {
             ("api.rate_limit.max_requests", "1000"),
         ],
     );
-    let port = std::net::TcpListener::bind("127.0.0.1:0") // DevSkim: ignore DS162092 because this is an owned loopback fixture.
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let mut child = tokio::process::Command::new(BIN)
-        .args(["serve", "--port", &port.to_string()])
-        .env("CGAGENTHARNESS_HOME", dir.path())
-        .env("GROK_API_KEY", "")
-        .env("ANTHROPIC_API_KEY", "")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .timeout(std::time::Duration::from_secs(2))
-        .build()
-        .unwrap();
+    let (mut child, port, client) = spawn_serve(dir.path()).await;
     let url = format!("http://127.0.0.1:{port}/api/status"); // DevSkim: ignore DS162092 DS137138 because this is the owned loopback-only HTTP fixture.
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
-        loop {
-            if client.get(&url).send().await.is_ok() {
-                break;
-            }
-            assert!(
-                child.try_wait().unwrap().is_none(),
-                "fixture server exited during startup"
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        }
-    })
-    .await
-    .unwrap();
     let mut next = cfg.raw.clone();
     next["api"]["rate_limit"]["max_requests"] = serde_yaml_ng::Value::from(1);
     let audit_path = dir.path().join("logs/audit.jsonl");
@@ -403,39 +418,9 @@ async fn ctrl_c_and_sigterm_stop_serve_after_its_queued_audit_lines_land() {
                 ("logging.audit_lease_wait_ms", "5000"),
             ],
         );
-        let port = std::net::TcpListener::bind("127.0.0.1:0") // DevSkim: ignore DS162092 because this is an owned loopback fixture.
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
-        let mut child = tokio::process::Command::new(BIN)
-            .args(["serve", "--port", &port.to_string()])
-            .env("CGAGENTHARNESS_HOME", dir.path())
-            .env("GROK_API_KEY", "")
-            .env("ANTHROPIC_API_KEY", "")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .unwrap();
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .timeout(std::time::Duration::from_secs(2))
-            .build()
-            .unwrap();
+        let (mut child, port, client) = spawn_serve(dir.path()).await;
         let base = format!("http://127.0.0.1:{port}"); // DevSkim: ignore DS162092 DS137138 because this is the owned loopback-only HTTP fixture.
-        tokio::time::timeout(std::time::Duration::from_secs(10), async {
-            while client.get(format!("{base}/api/status")).send().await.is_err() {
-                assert!(
-                    child.try_wait().unwrap().is_none(),
-                    "fixture server exited during startup"
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-            }
-        })
-        .await
-        .unwrap();
-        // The request's audit line stays queued while this test holds the lease.
+                                                       // The request's audit line stays queued while this test holds the lease.
         let lease = hold_audit_lease(dir.path()).await;
         let checks = client.get(format!("{base}/api/agent/checks")).send().await.unwrap();
         assert_eq!(checks.status(), 200);
