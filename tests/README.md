@@ -58,9 +58,9 @@ Docs-only classification can skip compile jobs. CI expectations: [docs/INSTALL.m
 
 ## Coding pipeline and processes
 
-- [`shim_and_agent_routes.rs`](shim_and_agent_routes.rs): shim argv builder, `/api/agent/run` and `/api/agent/jobs` against the real child, the 409 banner.
+- [`shim_and_agent_routes.rs`](shim_and_agent_routes.rs): shim argv builder, `/api/agent/run` and `/api/agent/jobs` against the real child, the 409 banner; its self-test cannot report a missing hard sandbox under `CGAH_REQUIRE_CHECK_SANDBOX`.
 - [`agent_schedules.rs`](agent_schedules.rs), [`goal_workflow.rs`](goal_workflow.rs): unreviewed schedules fail closed, at-most-once firing; goal staging never executes.
-- [`agentic_foundations.rs`](agentic_foundations.rs): agentic config, run store, clone jail, sandbox, manifest, registry lock, `gh` argv.
+- [`agentic_foundations.rs`](agentic_foundations.rs): agentic config, run store, clone jail, sandbox, manifest, registry lock, `gh` argv. With `CGAH_REQUIRE_CHECK_SANDBOX` an unavailable production sandbox fails instead of skipping; CI sets it on macOS for the full run and in the bubblewrap job. It is the required-sandbox gate #782 3B asked for (proposed as `CGAH_REQUIRE_MACOS_SANDBOX`).
 - [`write_policy.rs`](write_policy.rs), [`write_kill_switch.rs`](write_kill_switch.rs), [`git_approval.rs`](git_approval.rs): real git write gates reload per mutation; `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` still disables; approval integrity.
 - [`exact_edits.rs`](exact_edits.rs), [`real_repo_loop.rs`](real_repo_loop.rs), [`exhausted_run.rs`](exhausted_run.rs): exact-edit proposals (Unix), the loop end to end (`CGAH_REQUIRE_CHECK_SANDBOX`), exhausted-run records.
 - [`linux_bwrap.rs`](linux_bwrap.rs), [`macos_cargo.rs`](macos_cargo.rs): bubblewrap acceptance (`CGAH_REQUIRE_LINUX_BWRAP`); the macOS Seatbelt cargo build never skips.
