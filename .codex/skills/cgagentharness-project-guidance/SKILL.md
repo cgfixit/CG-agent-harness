@@ -8,8 +8,8 @@ description: Locate current Harness operating rules, implementation sources and 
 Start with root `AGENTS.md`: it owns the architecture map, truth order, core-path
 list, reading restrictions, local verification policy and PR requirements.
 Use `INVARIANTS.md` for the affected contract, then trace its implementation,
-configuration and callers. Paths below are relative to the repository root.
-These files guide coding agents; they are not the harness runtime `/api/skills`.
+configuration and callers. Resolve paths from the Harness checkout, including when loaded from user skills.
+These are Codex instructions; the app exposes its own `/api/skills`.
 
 ## Select the task's sources
 
@@ -21,15 +21,16 @@ These files guide coding agents; they are not the harness runtime `/api/skills`.
 | Process containment | `src/agentic/executor/sandbox.rs`, `src/common/process.rs`, `src/common/mcp.rs` |
 | Defaults and reload | `assets/config.default.yaml`, `src/common/config.rs`, `src/server/config_reload.rs` |
 | Routes and slash commands | `src/server/routes/mod.rs`, `src/server/slash.rs`, `src/server/views.rs`, `assets/static/harness.html` |
-| Search, fetch, detached research | `src/server/web_google.rs`, `src/server/web_tavily.rs`, `src/server/web_firecrawl.rs`, `src/server/web_research.rs`; `tests/web_research.rs` |
+| Research: search, fetch, goal evidence | `src/server/web_search.rs`, `src/server/web_research.rs`, `src/server/chat_web/evidence.rs` |
+| Browser tasks | `src/server/routes/browser.rs`, `src/common/browser_host.rs`, `browser/sidecar.mjs`; separate from goal/loop tools |
+| PDF attachments, notes, web | `src/common/pdf_text.rs`; trace the caller before changing extraction or fallback |
 | Model budgets and compaction | `src/llm`, `src/server/compaction.rs`, `tests/chat_and_sessions.rs` |
 | Ownership, memory, MCP, schedules, notifications, netconnect | Contract-to-test map in `cgagentharness-invariant-guard`; select affected rows |
 | Install and packaging | Root README's installation links, `scripts/package-desktop.sh`, `.github/workflows/desktop.yml` |
 
 ## Select a skill
 
-The [skills index](../README.md) lists every repository Codex skill. Load the
-one that answers the current question, rather than the entire collection:
+See `.codex/skills/README.md` in the checkout. Select the skill for the task:
 
 - Use `fable-protocol` when the premise or evidence needs investigation.
 - Use `cgagentharness-invariant-guard` for contract review,
@@ -43,8 +44,6 @@ one that answers the current question, rather than the entire collection:
 
 ## Keep guidance current
 
-Check paths, symbols and command filters against the current checkout. Keep
-shared operating rules in `AGENTS.md`, security contracts in `INVARIANTS.md`,
-and task-specific mechanics in their skill. Update the owning section and
-lower its `DOCS_BUDGET` cap when trimming it; preserve useful refusal coverage.
-Loading a skill does not expand the user's publication or mutation authority.
+Check paths, symbols and filters against the checkout. Keep rules in
+`AGENTS.md`, contracts in `INVARIANTS.md` and mechanics in their skills.
+Follow the Markdown budget. Skill selection grants no additional authority.

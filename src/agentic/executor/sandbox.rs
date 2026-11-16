@@ -276,29 +276,40 @@ impl HardSandbox for LinuxBubblewrapSandbox {
     }
 }
 
-fn prefer_linux_sandbox() -> Result<Box<dyn HardSandbox>> {
-    match LinuxBubblewrapSandbox::new() {
-        Ok(sb) => prefer_linux_sandbox_from(Ok(sb), Err(HarnessError::sandbox_unavailable("unused"))),
-        Err(bwrap_err) => prefer_linux_sandbox_from(Err(bwrap_err), LinuxNetnsSandbox::new()),
-    }
+fn prefer_linux_sandbox(allow_netns_fallback: bool) -> Result<Box<dyn HardSandbox>> {
+    let bwrap = LinuxBubblewrapSandbox::new();
+    // Probe `unshare` only when the fallback may actually be selected.
+    let netns = if bwrap.is_err() && allow_netns_fallback {
+        LinuxNetnsSandbox::new()
+    } else {
+        Err(HarnessError::sandbox_unavailable("unused"))
+    };
+    prefer_linux_sandbox_from(bwrap, netns, allow_netns_fallback)
 }
 
 fn prefer_linux_sandbox_from(
     bwrap: Result<LinuxBubblewrapSandbox>,
     netns: Result<LinuxNetnsSandbox>,
+    allow_netns_fallback: bool,
 ) -> Result<Box<dyn HardSandbox>> {
     match bwrap {
         Ok(sb) => {
             tracing::info!(sandbox = "linux-bwrap", "linux hard sandbox backend selected");
             Ok(Box::new(sb))
         }
+        Err(bwrap_err) if !allow_netns_fallback => Err(HarnessError::sandbox_unavailable(format!(
+            "linux-bwrap unavailable: {}; the network-only linux-netns fallback is off \
+             (agentic.sandbox.allow_linux_netns_fallback)",
+            bwrap_err.message.trim_end()
+        ))),
         Err(bwrap_err) => match netns {
             Ok(sb) => {
-                tracing::warn!(
-                    bwrap = bwrap_err.message.as_str(),
-                    "linux-bwrap unavailable; falling back to linux-netns (network isolation only, host filesystem visible)"
+                // The agentic child has no tracing subscriber; the shim returns its stderr.
+                eprintln!(
+                    "warning: linux-bwrap unavailable ({}); agentic.sandbox.allow_linux_netns_fallback \
+                     selected linux-netns: network isolation only, host filesystem visible",
+                    bwrap_err.message.trim_end()
                 );
-                tracing::info!(sandbox = "linux-netns", "linux hard sandbox backend selected");
                 Ok(Box::new(sb))
             }
             Err(netns_err) => Err(HarnessError::sandbox_unavailable(format!(
@@ -471,7 +482,9 @@ impl HardSandbox for WindowsJobObjectSandbox {
 }
 
 /// The host backend, or `HARD_SANDBOX_UNAVAILABLE`. Never `ArgvListSandbox`.
-pub fn production_sandbox() -> Result<Box<dyn HardSandbox>> {
+/// Linux without bubblewrap refuses unless `allow_linux_netns_fallback`
+/// (`agentic.sandbox.allow_linux_netns_fallback`, ships false) opts into `linux-netns`.
+pub fn production_sandbox(allow_linux_netns_fallback: bool) -> Result<Box<dyn HardSandbox>> {
     if cfg!(windows) {
         return Ok(Box::new(WindowsJobObjectSandbox));
     }
@@ -479,7 +492,7 @@ pub fn production_sandbox() -> Result<Box<dyn HardSandbox>> {
         return Ok(Box::new(DarwinSeatbeltSandbox::new()?));
     }
     if cfg!(target_os = "linux") {
-        return prefer_linux_sandbox();
+        return prefer_linux_sandbox(allow_linux_netns_fallback);
     }
     Err(HarnessError::sandbox_unavailable(format!(
         "no hard-sandbox backend for platform {}; agentic verification fails closed",
@@ -556,27 +569,54 @@ mod tests {
     }
 
     #[test]
-    fn prefer_linux_sandbox_falls_back_then_fails_closed() {
-        let bwrap = LinuxBubblewrapSandbox {
+    fn prefer_linux_sandbox_falls_back_only_when_opted_in_then_fails_closed() {
+        let bwrap = || LinuxBubblewrapSandbox {
             bwrap: PathBuf::from("/bin/true"),
         };
-        let netns = LinuxNetnsSandbox {
+        let netns = || LinuxNetnsSandbox {
             unshare: PathBuf::from("/bin/true"),
             user_ns: false,
         };
-        match prefer_linux_sandbox_from(Ok(bwrap), Err(HarnessError::sandbox_unavailable("netns unused"))) {
-            Ok(sb) => assert_eq!(sb.name(), "linux-bwrap"),
-            Err(e) => panic!("bwrap should win: {e}"),
+        for allow in [false, true] {
+            match prefer_linux_sandbox_from(
+                Ok(bwrap()),
+                Err(HarnessError::sandbox_unavailable("netns unused")),
+                allow,
+            ) {
+                Ok(sb) => assert_eq!(sb.name(), "linux-bwrap"),
+                Err(e) => panic!("bwrap should win: {e}"),
+            }
         }
 
-        match prefer_linux_sandbox_from(Err(HarnessError::sandbox_unavailable("bwrap missing")), Ok(netns)) {
+        // Default: a usable netns backend is still refused without the opt-in.
+        let refused = match prefer_linux_sandbox_from(
+            Err(HarnessError::sandbox_unavailable("bwrap missing")),
+            Ok(netns()),
+            false,
+        ) {
+            Ok(sb) => panic!("netns must need the opt-in, got {}", sb.name()),
+            Err(e) => e,
+        };
+        assert_eq!(refused.code, "HARD_SANDBOX_UNAVAILABLE");
+        assert!(refused.message.contains("agentic.sandbox.allow_linux_netns_fallback"));
+        assert_eq!(
+            crate::agentic::cli::exit_code_for(&refused),
+            crate::agentic::cli::EXIT_ENV
+        );
+
+        match prefer_linux_sandbox_from(
+            Err(HarnessError::sandbox_unavailable("bwrap missing")),
+            Ok(netns()),
+            true,
+        ) {
             Ok(sb) => assert_eq!(sb.name(), "linux-netns"),
-            Err(e) => panic!("netns should be the fallback: {e}"),
+            Err(e) => panic!("netns should be the opted-in fallback: {e}"),
         }
 
         let both = match prefer_linux_sandbox_from(
             Err(HarnessError::sandbox_unavailable("bwrap missing")),
             Err(HarnessError::sandbox_unavailable("unshare missing")),
+            true,
         ) {
             Ok(_) => panic!("both missing must fail closed"),
             Err(e) => e,

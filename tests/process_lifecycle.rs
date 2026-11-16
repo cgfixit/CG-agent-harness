@@ -133,7 +133,8 @@ fn native_nested_process_fixture() {
     };
     let root = std::path::Path::new(&marker).parent().unwrap();
     std::fs::write(root.join("wrapper-pid"), std::process::id().to_string()).unwrap();
-    let sandbox = cgagentharness::agentic::executor::sandbox::production_sandbox().expect("native sandbox required");
+    let sandbox =
+        cgagentharness::agentic::executor::sandbox::production_sandbox(false).expect("native sandbox required");
     let env = std::collections::BTreeMap::from([
         ("PATH".into(), "/usr/bin:/bin".into()),
         ("HOME".into(), root.display().to_string()),
