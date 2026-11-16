@@ -613,7 +613,9 @@ pub fn parse_multipart_limited(body: &[u8], boundary: &str, max_files: usize) ->
     Ok(files)
 }
 
-pub fn classify_file(file: &IncomingFile) -> Result<ClassifiedText> {
+/// Test-only: uploads classify every file against one shared deadline.
+#[cfg(test)]
+fn classify_file(file: &IncomingFile) -> Result<ClassifiedText> {
     classify_file_until(file, std::time::Instant::now() + EXTRACTION_BUDGET)
 }
 
