@@ -32,9 +32,12 @@ fn legacy_owner(state: &AppState, user: Caller) -> ApiResult<String> {
 
 pub async fn legacy_sessions(State(state): State<Arc<AppState>>, user: Caller) -> ApiResult<Json<Value>> {
     legacy_owner(&state, user)?;
-    Ok(Json(
-        json!({"sessions":state.store.legacy_summaries(),"ownership":"unassigned legacy shared data; never exposed to ordinary session reads"}),
-    ))
+    super::structured_memory::off_worker(move || {
+        Ok(Json(
+            json!({"sessions":state.store.legacy_summaries(),"ownership":"unassigned legacy shared data; never exposed to ordinary session reads"}),
+        ))
+    })
+    .await
 }
 
 #[derive(serde::Deserialize)]
@@ -105,30 +108,33 @@ pub async fn export_session(
     let owner = super::auth::context_owner(user.clone());
     let id = crate::server::sessions::canonical_session_id(&session_id)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
-    let session = state
-        .store
-        .for_owner(&owner)
-        .get(&id)
-        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
-    if session.session_id != id {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            "HARNESS_SESSION_ERROR",
-            "session id mismatch",
-        ));
-    }
-    let pins = export_pins_for_owner(&session, &owner, &state.attachments);
-    let body = session_export::render(&session, pins);
-    write_export(&state.home, &session, &body).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-    let mut resp = Response::new(Body::from(body));
-    *resp.status_mut() = StatusCode::OK;
-    resp.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/markdown; charset=utf-8"),
-    );
-    resp.headers_mut()
-        .insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
-    Ok(resp)
+    super::structured_memory::off_worker(move || {
+        let session = state
+            .store
+            .for_owner(&owner)
+            .get(&id)
+            .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+        if session.session_id != id {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "HARNESS_SESSION_ERROR",
+                "session id mismatch",
+            ));
+        }
+        let pins = export_pins_for_owner(&session, &owner, &state.attachments);
+        let body = session_export::render(&session, pins);
+        write_export(&state.home, &session, &body).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+        let mut resp = Response::new(Body::from(body));
+        *resp.status_mut() = StatusCode::OK;
+        resp.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/markdown; charset=utf-8"),
+        );
+        resp.headers_mut()
+            .insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+        Ok(resp)
+    })
+    .await
 }
 
 pub async fn search_session_transcripts(
