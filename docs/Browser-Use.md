@@ -6,10 +6,11 @@ Chrome. Computer use (native apps) is a skeleton that nothing calls.
 
 ## What works today
 
-`/browse <site> [site ...] <task>` in the console, or `POST /api/browser/run`
-with `{task, origins}`. Administrator only, refused unless `browser.enabled` is
+`/browse <site> [https://site ...] <task>` in the console, or
+`POST /api/browser/run` with `{task, origins}`. Administrator only, refused unless `browser.enabled` is
 literal `true` (ships `true`, restart-only), one task at a time, stopped after
-`browser.timeout_sec` (default 300). A bare domain means `https://`.
+`browser.timeout_sec` (default 300). Only the first site may be a bare domain
+(meaning `https://`), so a task word like `README.md` is never a grant.
 
 How a run works:
 
@@ -27,7 +28,8 @@ How a run works:
    `finish`. An observation is 40 elements and 4,000 characters, read after
    the page's fetches settle; `observe` takes `page` for the next part and
    `find` for what contains a word. Older observations are dropped to fit
-   32K. Three refused actions in a row end the task.
+   32K. Three refused or failed actions in a row, or a reply with no action
+   and no answer, end the task. A sidecar call has 75 s to answer.
 5. One tab per task. A new tab replaces the page only if it shows a granted
    page; any other is closed and the page stays.
 
@@ -35,14 +37,14 @@ Boundaries, enforced in code:
 
 - Origins come only from the request; pages and the model cannot add one.
   Origins on the shared web block list, or that cannot be checked, are refused.
-  Only each URL's origin is kept: its path and query (a token, say) never reach
-  the child's argv, the audit line, the prompt or the report. The task text
-  reaches the child in a private temporary file, not argv, so a process
-  listing never shows it; the audit keeps only its SHA-256.
+  Only each URL's origin is kept: its path and query never reach argv, the
+  audit line, the prompt or the report. The task text reaches the child in a
+  private temporary file, never argv; the audit keeps only its SHA-256.
 - A page cannot flood the run: a link target over 8,192 characters is
   dropped, the model sees each one cut to 300, the title to 300 and the URL to
   8,192, and a sidecar reply line over 4 MiB stops the task.
-- The sidecar's loopback proxy is the egress check. The task's fresh profile
+- The sidecar's loopback proxy is the egress check, and it answers only this
+  task's Chrome (a per-session credential). The task's fresh profile
   keeps WebRTC to proxied TCP, so a page cannot send UDP around it. A granted
   name must resolve to public addresses (`localhost` is refused), and a
   loopback or private IP origin is refused; only a `test-support` build lets
@@ -50,24 +52,22 @@ Boundaries, enforced in code:
 - The block list is checked on the granted origin before launch, again before
   every model turn, and once more before the report is returned.
 - A task holds the shared model gate, so it never overlaps chat or research.
-- Clicks may run. Every request except GET and HEAD is held for the operator:
-  a held page load answers 204 so the page stays, a held `fetch` fails. Two
+- Clicks may run, including a link with no target. Every request except GET
+  and HEAD is held for the operator: a held page load answers 204 so the page
+  stays, a held `fetch` fails. Two
   layers hold it: Playwright's page route, and a browser-wide CDP `Fetch` gate
   that also sees requests the route misses, such as a SharedWorker's.
-- Pages cannot start workers. Every document gets `worker-src 'none'` beside
-  its own policy, because a worker's WebSocket reaches a granted origin unseen
-  by the page-level WebSocket block and the proxy's HTTPS tunnel alike.
+- Pages cannot start workers: every document gets `worker-src 'none'`, since
+  a worker's WebSocket passes both the page-level block and the proxy tunnel.
 - Password and one-time-code fields hand off and are never typed. A hand-off
   or hold ends the task at once. The console lists each one, then the origins
   (never paths) a page asked for outside the grant.
 
 Verified by running: fixtures `browser`, `browser enter` (new tab, search,
 select, password hand-off, held POSTs, no WebRTC UDP), `browser reach` (late
-content, an ungranted tab closed and named, `page` and `find` on a long page)
-and `browser-verify`; Qwen listed the games behind Start → Games on
-cgfixit.com (2026-11-14). A worker probe (2026-11-16) sent SharedWorker POSTs
-and a worker `wss://` to a granted HTTPS origin before the network gate and
-worker policy, and nothing but GETs after.
+content, an ungranted tab closed and named, `page` and `find`) and
+`browser-verify`; Qwen listed the games behind Start → Games on cgfixit.com
+(2026-11-14). Worker and redirect probes: #921.
 
 ## Honest limits
 

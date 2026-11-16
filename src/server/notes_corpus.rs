@@ -296,7 +296,7 @@ impl NotesCorpus {
             let pdf = blob.magic_mime == pdf_text::MIME;
             let text = classify_note(&bytes, &self.limits, pdf, deadline)?;
             drop(bytes);
-            let injection_hits = scanner.scan(&text).len();
+            let injection_hits = scanner.scan_normalized(&text).len();
             let (text, sentinels_removed) = neutralize_sentinels(&text);
             out.push(VerifiedAttachment {
                 blob: crate::server::attachments::AttachmentBlob {
