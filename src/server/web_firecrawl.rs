@@ -289,17 +289,7 @@ impl WebTool {
             self.check_enabled()?;
             let client = self.pinned_client(&endpoint).await?;
             self.check_enabled()?;
-            // Permission may change while this waits for a permit or DNS: recheck it
-            // immediately before the URL leaves the machine, as the pinned fetch does.
-            let current = self.policy()?;
-            current.authorize_read(target.as_str(), group)?;
-            if current.revision != policy.revision {
-                return Err(error(
-                    "WEB_POLICY_CHANGED",
-                    "policy changed before the fallback read; nothing was sent",
-                ));
-            }
-            // So may the key: one cleared or replaced since this read began is never sent.
+            // A key cleared or replaced since this read began is never sent.
             if self
                 .provider_key_off_worker("FIRECRAWL_API_KEY", self.firecrawl_key_from_file)
                 .await?
@@ -309,6 +299,16 @@ impl WebTool {
                 return Err(error(
                     "WEB_FALLBACK_KEY_CHANGED",
                     "Firecrawl key changed before the fallback read; nothing was sent",
+                ));
+            }
+            // Permission may change while this awaits the permit, DNS or key store: recheck it
+            // immediately before the URL leaves the machine, as the pinned fetch does.
+            let current = self.policy()?;
+            current.authorize_read(target.as_str(), group)?;
+            if current.revision != policy.revision {
+                return Err(error(
+                    "WEB_POLICY_CHANGED",
+                    "policy changed before the fallback read; nothing was sent",
                 ));
             }
             charged.store(self.limits.response_bytes, Ordering::SeqCst);
@@ -361,15 +361,6 @@ impl WebTool {
                 return Err(failure);
             }
         };
-        self.check_enabled()?;
-        let current = self.policy()?;
-        current.authorize_read(target.as_str(), group)?;
-        if current.revision != policy.revision {
-            return Err(error(
-                "WEB_POLICY_CHANGED",
-                "policy changed during request; result discarded",
-            ));
-        }
         if self
             .provider_key_off_worker("FIRECRAWL_API_KEY", self.firecrawl_key_from_file)
             .await?
@@ -379,6 +370,15 @@ impl WebTool {
             return Err(error(
                 "WEB_FALLBACK_KEY_CHANGED",
                 "Firecrawl key changed; retry the read",
+            ));
+        }
+        self.check_enabled()?;
+        let current = self.policy()?;
+        current.authorize_read(target.as_str(), group)?;
+        if current.revision != policy.revision {
+            return Err(error(
+                "WEB_POLICY_CHANGED",
+                "policy changed during request; result discarded",
             ));
         }
         Ok(Page {
