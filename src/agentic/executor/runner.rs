@@ -152,23 +152,11 @@ pub fn run_verification(
         if outcome.timed_out && check.argv.first().is_some_and(|v| v == "cargo") {
             return Err(HarnessError::config(format!("verification check '{}' timed out after {}s; inspect resource usage or adjust its budget before retrying", check.name, check.timeout_sec)));
         }
-        if outcome.exit_code != 0 && check.argv.first().is_some_and(|v| v == "cargo") {
-            let message = outcome.stderr.to_lowercase();
-            if [
-                "no matching package",
-                "failed to load source",
-                "failed to get",
-                "checksum",
-                "could not execute process",
-                "operation not permitted",
-                "permission denied",
-                "lock file needs to be updated",
-            ]
-            .iter()
-            .any(|s| message.contains(s))
-            {
-                return Err(super::prepared::missing("check could not use locked sources, toolchain, or permitted output paths; review preparation and sandbox-compatible test paths"));
-            }
+        if outcome.exit_code != 0
+            && check.argv.first().is_some_and(|v| v == "cargo")
+            && cargo_preparation_failure(&outcome.stderr)
+        {
+            return Err(super::prepared::missing("check could not use locked sources, toolchain, or permitted output paths; review preparation and sandbox-compatible test paths"));
         }
         let ok = outcome.exit_code == 0 && !outcome.timed_out;
         audit.log(json!({
@@ -190,9 +178,69 @@ pub fn run_verification(
     })
 }
 
+/// Cargo status verbs (right-aligned on stderr); their lines name crates and paths only.
+const CARGO_STATUS_VERBS: [&str; 12] = [
+    "Adding",
+    "Blocking",
+    "Building",
+    "Checking",
+    "Compiling",
+    "Dirty",
+    "Doc-tests",
+    "Documenting",
+    "Finished",
+    "Fresh",
+    "Locking",
+    "Running",
+];
+
+/// True when a failed Cargo check's stderr says preparation, not the candidate,
+/// is at fault. Only Cargo's and the toolchain's own lines are matched: a rustc
+/// diagnostic with a source location (header, `-->` line and snippet up to the
+/// blank line), status lines and `could not compile` quote repository code or
+/// crate names, so a candidate that calls a function named `checksum` fails as
+/// an ordinary check the planner can see instead of aborting the run.
+fn cargo_preparation_failure(stderr: &str) -> bool {
+    const PREPARATION: [&str; 8] = [
+        "no matching package",
+        "failed to load source",
+        "failed to get",
+        "checksum",
+        "could not execute process",
+        "operation not permitted",
+        "permission denied",
+        "lock file needs to be updated",
+    ];
+    let lines: Vec<&str> = stderr.lines().collect();
+    let mut own = String::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        if lines
+            .get(i + 1)
+            .is_some_and(|next| next.trim_start().starts_with("-->"))
+        {
+            while i < lines.len() && !lines[i].trim().is_empty() {
+                i += 1;
+            }
+            continue;
+        }
+        let status = line
+            .trim_start()
+            .split_once(' ')
+            .is_some_and(|(verb, _)| line.starts_with(' ') && CARGO_STATUS_VERBS.contains(&verb));
+        if !status && !line.starts_with("error: could not compile `") {
+            own.push_str(&line.to_lowercase());
+            own.push('\n');
+        }
+        i += 1;
+    }
+    PREPARATION.iter().any(|s| own.contains(s))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{scrubbed_env, ALLOWED_ENV_VARS};
+    use super::{cargo_preparation_failure, scrubbed_env, ALLOWED_ENV_VARS};
     use crate::common::child_env::{telemetry_opt_outs, Child};
 
     #[test]
@@ -224,5 +272,32 @@ mod tests {
             "the verifier set is not the gh set"
         );
         assert!(!env.contains_key("HTTPS_PROXY"));
+    }
+
+    #[test]
+    fn candidate_code_naming_a_preparation_word_is_an_ordinary_check_failure() {
+        // Real cargo 1.89 stderr for a crate named `checksum-tool` calling `checksum()`.
+        let compile_error = "    Checking checksum-tool v0.1.0 (/w/checksum-tool)\n\
+error[E0425]: cannot find function `checksum` in this scope\n \
+--> src/lib.rs:1:14\n  |\n1 | pub fn f() { checksum() }\n  |              ^^^^^^^^ not found in this scope\n\n\
+For more information about this error, try `rustc --explain E0425`.\n\
+error: could not compile `checksum-tool` (lib) due to 1 previous error\n";
+        assert!(!cargo_preparation_failure(compile_error));
+        let macro_error = "error: cannot find macro `permission_denied` in this scope\n --> src/lib.rs:2:5\n  |\n2 |     permission_denied!();\n  |     ^^^^^^^^^^^^^^^^^\n\n";
+        assert!(!cargo_preparation_failure(macro_error));
+    }
+
+    #[test]
+    fn cargo_and_toolchain_preparation_errors_still_abort() {
+        for stderr in [
+            "error: failed to get `serde` as a dependency of package `x v0.1.0 (/w)`\n\nCaused by:\n  failed to load source for dependency `serde`\n",
+            "error: no matching package named `serde` found\n",
+            "error: checksum for `itoa v1.0.0` changed between lock files\n",
+            "error: could not execute process `rustc -vV` (never executed)\n\nCaused by:\n  Permission denied (os error 13)\n",
+            "error: linking with `cc` failed: exit status: 1\n  |\n  = note: ld: cannot open output file: Operation not permitted\n",
+            "    Compiling x v0.1.0 (/w)\nerror: couldn't create a temp dir: Permission denied (os error 13) at path \"/w/target\"\n",
+        ] {
+            assert!(cargo_preparation_failure(stderr), "{stderr}");
+        }
     }
 }
