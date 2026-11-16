@@ -74,7 +74,7 @@ jobs:
              paths=$(git diff --no-renames --name-only "$base" HEAD) &&
              [ -n "$paths" ] &&
              ! printf '%s\n' "$paths" |
-               grep -Eq '^(desktop/|src/common/local_tls\.rs$|scripts/start-web\.sh$|\.github/workflows/desktop-check\.yml$)'; then
+               grep -Eq '^(desktop/|src/common/local_tls\.rs$|scripts/(start-web|package-desktop)\.sh$|\.github/workflows/desktop-check\.yml$)'; then
             desktop=false
           fi
           echo "desktop=$desktop" >> "$GITHUB_OUTPUT"

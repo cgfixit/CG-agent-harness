@@ -28,6 +28,9 @@ export RUSTUP_AUTO_INSTALL=0
 # target artifacts. Stripping those build dependencies can make rustc unable to
 # load their metadata; shipped backend and desktop binaries remain stripped.
 export CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=none
+# build.rs hashes the backend at this path; an inherited target directory must
+# not make us package a stale file left by an earlier build.
+export CARGO_TARGET_DIR="$PWD/target"
 if [[ "$architecture" == universal ]]; then
   for target in aarch64-apple-darwin x86_64-apple-darwin; do
     cargo build --release --locked --target "$target"
@@ -44,12 +47,12 @@ fi
 codesign --force --sign - --options runtime target/release/cgagentharness
 if [[ "$architecture" == universal ]]; then
   for target in aarch64-apple-darwin x86_64-apple-darwin; do
-    (cd desktop && cargo build --release --locked --target "$target")
+    (cd desktop && CARGO_TARGET_DIR="$PWD/target" cargo build --release --locked --target "$target")
   done
   mkdir -p desktop/target/release
   lipo -create desktop/target/aarch64-apple-darwin/release/cg-agent-harness-desktop desktop/target/x86_64-apple-darwin/release/cg-agent-harness-desktop -output desktop/target/release/cg-agent-harness-desktop
 else
-  (cd desktop && cargo build --release --locked --target aarch64-apple-darwin)
+  (cd desktop && CARGO_TARGET_DIR="$PWD/target" cargo build --release --locked --target aarch64-apple-darwin)
   mkdir -p desktop/target/release
   cp desktop/target/aarch64-apple-darwin/release/cg-agent-harness-desktop desktop/target/release/cg-agent-harness-desktop
 fi

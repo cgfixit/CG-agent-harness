@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 
@@ -194,6 +195,7 @@ class Sidecar:
         # wins over the fixture home's saved one.
         env = {k: v for k, v in os.environ.items() if k not in (
             "CGAGENTHARNESS_WEBHOOK_TOKEN", "SERPAPI_API_KEY", "GH_TOKEN",
+            "TAVILY_API_KEY", "FIRECRAWL_API_KEY",
             "CGAGENTHARNESS_API_KEY", "GROK_API_KEY", "ANTHROPIC_API_KEY", "DEEPAGENT_API_KEY")}
         env["CGAGENTHARNESS_HOME"] = str(home)
         self.home = Path(home)
@@ -275,6 +277,47 @@ class Sidecar:
         for stream in (self.process.stdin, self.process.stdout, self.process.stderr):
             stream.close()
 
+class DesktopPackaging(unittest.TestCase):
+    def test_packager_uses_its_own_target_directories(self):
+        with tempfile.TemporaryDirectory(prefix='cgah package fixture ') as temporary:
+            root = Path(temporary)
+            (root / 'scripts').mkdir()
+            (root / 'desktop').mkdir()
+            source = Path(__file__).resolve().parent / 'package-desktop.sh'
+            script = root / 'scripts/package-desktop.sh'
+            script.write_bytes(source.read_bytes())
+            commands = root / 'bin'
+            commands.mkdir()
+            stubs = {
+                'uname': '#!/bin/sh\ncase "$1" in -s) echo Darwin;; -m) echo arm64;; esac\n',
+                'git': '#!/bin/sh\nexit 0\n',
+                'codesign': '#!/bin/sh\nexit 0\n',
+                'cargo': f'#!{sys.executable}\n' + '''import json, os
+from pathlib import Path
+root = Path(os.environ['PACKAGE_FIXTURE_ROOT'])
+with (root / 'builds.jsonl').open('a') as out:
+    out.write(json.dumps({'cwd': os.getcwd(), 'target': os.environ.get('CARGO_TARGET_DIR')}) + '\\n')
+if Path.cwd().name == 'desktop':
+    raise SystemExit(73)
+binary = Path(os.environ['CARGO_TARGET_DIR']) / 'aarch64-apple-darwin/release/cgagentharness'
+binary.parent.mkdir(parents=True, exist_ok=True)
+binary.write_bytes(b'synthetic backend')
+''',
+            }
+            for name, content in stubs.items():
+                path = commands / name
+                path.write_text(content)
+                path.chmod(0o700)
+            inherited = root / 'unrelated-target'
+            result = subprocess.run(['bash', str(script)], cwd=root, capture_output=True,
+                env={'PATH': f'{commands}{os.pathsep}{os.defpath}', 'CGAH_RELEASE_VERSION': '0.1.0',
+                     'CARGO_TARGET_DIR': str(inherited), 'PACKAGE_FIXTURE_ROOT': str(root)})
+            self.assertEqual(result.returncode, 73, 'fixture must reach the desktop build')
+            builds = [json.loads(line) for line in (root / 'builds.jsonl').read_text().splitlines()]
+            self.assertEqual([row['target'] for row in builds], [str(root / 'target'), str(root / 'desktop/target')])
+            self.assertFalse(inherited.exists(), 'packaging must not modify the inherited target directory')
+
+
 class DesktopBoundary(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix="cgah desktop fixture ")
@@ -292,6 +335,15 @@ class DesktopBoundary(unittest.TestCase):
         child = Sidecar(self.home, **kwargs)
         self.children.append(child)
         return child
+
+    def test_web_provider_keys_in_the_parent_do_not_reach_the_fixture(self):
+        with patch.dict(os.environ, {'TAVILY_API_KEY': 'fixture-tavily', 'FIRECRAWL_API_KEY': 'fixture-firecrawl'}):
+            child = self.start()
+            status, body, _ = child.request('/api/keys', child.authorize())
+            self.assertEqual(status, 200)
+            rows = {row['name']: row for row in json.loads(body)['keys']}
+            for name in ('TAVILY_API_KEY', 'FIRECRAWL_API_KEY'):
+                self.assertFalse(rows[name]['active_configured'], 'fixture must not inherit a provider credential')
 
     def enable_plaintext_key_file(self):
         """Fixture opt-in. The shipped default stays the OS credential store."""
