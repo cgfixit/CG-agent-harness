@@ -372,8 +372,9 @@ if [ "$need_brew" = 1 ] && ! have brew && [ "$(uname -m)" != arm64 ]; then
 fi
 if [ "$need_brew" = 1 ] && ! have brew; then
   say 'installing Homebrew (official installer; it asks for your password)'
+  # Downloads fail instead of hanging: 30 s to connect, then under 1 KiB/s for 60 s aborts.
   installer=$(mktemp)
-  run curl --fail --location --silent --show-error -o "$installer" https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh
+  run curl --fail --location --silent --show-error --connect-timeout 30 --speed-limit 1024 --speed-time 60 -o "$installer" https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh
   run /bin/bash "$installer"
   rm -f "$installer"
   for brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do
@@ -392,7 +393,7 @@ if ! have rustup; then
   say "installing rustup (official installer; it adds $cargo_bin to your shell profile)"
   installer=$(mktemp)
   # rustup's documented flags: HTTPS only, TLS 1.2 or newer. A floor, not a pin.
-  run curl --proto '=https' --tlsv1.2 --fail --silent --show-error -o "$installer" https://sh.rustup.rs # DevSkim: ignore DS440001,DS440016 because --tlsv1.2 sets a minimum TLS version.
+  run curl --proto '=https' --tlsv1.2 --fail --silent --show-error --connect-timeout 30 --speed-limit 1024 --speed-time 60 -o "$installer" https://sh.rustup.rs # DevSkim: ignore DS440001,DS440016 because --tlsv1.2 sets a minimum TLS version.
   run sh "$installer" -y --profile minimal --default-toolchain none
   rm -f "$installer"
 fi
@@ -475,8 +476,8 @@ if [ "$app" = 1 ]; then
     work=$(mktemp -d)
     trap 'rm -rf "$work"' EXIT
     say "downloading the latest release app into $work"
-    run curl --fail --location --silent --show-error -o "$work/app.zip" "$release/CG-Agent-Harness-macos-universal.zip"
-    run curl --fail --location --silent --show-error -o "$work/SHA256SUMS" "$release/SHA256SUMS"
+    run curl --fail --location --silent --show-error --connect-timeout 30 --speed-limit 1024 --speed-time 60 -o "$work/app.zip" "$release/CG-Agent-Harness-macos-universal.zip"
+    run curl --fail --location --silent --show-error --connect-timeout 30 --speed-limit 1024 --speed-time 60 -o "$work/SHA256SUMS" "$release/SHA256SUMS"
     if [ "$dry" = 0 ]; then
       # Integrity, not authorship: the checksum comes from the same release page.
       want=$(awk '$2 == "CG-Agent-Harness-macos-universal.zip" || $2 == "*CG-Agent-Harness-macos-universal.zip" {print $1; exit}' "$work/SHA256SUMS")
