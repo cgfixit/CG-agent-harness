@@ -18,12 +18,14 @@ index snapshot, so unstaged edits neither hide nor cause a finding.
                  failed #766, #778 and main)
   CG006 warning  added weak-hash name without a same-line DevSkim DS126858
                  suppression (alerted after push twice on #885)
-  CG008 error    deleted Markdown file still has a DOCS_BUDGET row or is a
-                 self-manual input (#881 broke main and six branches)
-        warning  ... or another tracked file still names it
+  CG008 error    deleted Markdown file still in DOCS_BUDGET_OWNER_EXEMPT
+                 (invariant_guard fails; #881 broke main and the branches
+                 that merged it until #888) or in the self-manual INPUTS
+        warning  ... still has a DOCS_BUDGET row (dead, not a CI failure),
+                 or another tracked file still names it
 
 tests/invariant_guard.rs stays the authority for CG002-CG004 and CG008's
-budget row; this is the fast copy. CG006 is a warning: its pattern comes
+exempt entries; this is the fast copy. CG006 is a warning: its pattern comes
 from the alerts above, not from DevSkim's rule files. Hex-digest literals
 (DS173237) are not linted: 24 unsuppressed runs on main drew no open alert,
 so a pattern built from the alerts would flag lines DevSkim does not. Errors exit 1, warnings exit 0, a bad invocation exits 2.
@@ -59,6 +61,8 @@ SUPPRESSION = re.compile(r"DevSkim:\s+ignore\s([a-zA-Z\d,:]+)", re.IGNORECASE)
 # and adds a trailing comma, so whitespace here includes newlines.
 ROW = re.compile(r'\(\s*"([^"]+)",\s*(?:Root|Guide|Evidence|Agent),\s*([0-9_]+),?\s*\)')
 STRING = re.compile(r'"[^"]*"')
+EXEMPT_TABLE = re.compile(r"^const DOCS_BUDGET_OWNER_EXEMPT:[^=]*=\s*&\[(.*?)\];", re.M | re.S)
+EXEMPT_ENTRY = re.compile(r'\(\s*"([^"]+)"\s*,')
 FOLDER_README_WORDS = re.compile(r"^const FOLDER_README_WORDS: usize = ([0-9_]+);", re.M)
 ELAPSED_BOUND = re.compile(r"elapsed\(\)\s*<=?\s*(?:[A-Za-z_:]*::)?Duration::from_(millis|secs)\(\s*([0-9_]+)\s*\)")
 TIMING_FLOOR_MS = 5000
@@ -232,17 +236,33 @@ def self_manual_inputs(text):
     return {literal[1:-1] for literal in STRING.findall(inputs.group(1))} if inputs else set()
 
 
+def owner_exempt_paths(text):
+    """Paths in DOCS_BUDGET_OWNER_EXEMPT, skipping commented-out lines."""
+    table = EXEMPT_TABLE.search(text)
+    if not table:
+        return set()
+    body = "\n".join(line for line in table.group(1).splitlines() if not line.lstrip().startswith("//"))
+    return set(EXEMPT_ENTRY.findall(body))
+
+
 def check_deleted_docs(report, deleted, guard_text, builder_text, references):
     """`references(needle)` lists tracked files whose content contains `needle`."""
     rows = budget_rows(guard_text)
+    exempt = owner_exempt_paths(guard_text)
     inputs = self_manual_inputs(builder_text)
     for path in sorted(deleted):
         if not path.lower().endswith(MARKDOWN):
             continue
+        if path in exempt:
+            report.add(
+                "error", "CG008", GUARD, 0,
+                f"`{path}` was deleted; remove it from DOCS_BUDGET_OWNER_EXEMPT (invariant_guard fails on an "
+                "exempt path that is not in the checkout).",
+            )
         if path in rows:
             report.add(
-                "error", "CG008", GUARD, rows[path][1] + 1,
-                f"`{path}` was deleted; remove its DOCS_BUDGET row (invariant_guard fails on a missing file).",
+                "warning", "CG008", GUARD, rows[path][1] + 1,
+                f"`{path}` was deleted; remove its DOCS_BUDGET row and lower no other cap (AGENTS.md Docs policy).",
             )
         if path in inputs:
             report.add("error", "CG008", BUILDER, 0, f"`{path}` was deleted; remove it from INPUTS and regenerate {MANUAL}.")

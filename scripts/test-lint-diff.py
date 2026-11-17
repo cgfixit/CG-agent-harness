@@ -120,6 +120,16 @@ class RuleTests(unittest.TestCase):
         ]:
             self.assertEqual(module.weak_hashes(line, **syntax), [], line)
 
+    def test_owner_exempt_paths_are_read_from_the_guard(self):
+        guard = 'const DOCS_BUDGET_OWNER_EXEMPT: &[(&str, &str)] = &[\n    ("docs/a.md", "why"),\n    // ("docs/b.md", "old"),\n];\n'
+        self.assertEqual(module.owner_exempt_paths(guard), {"docs/a.md"})
+        self.assertEqual(module.owner_exempt_paths("const DOCS_BUDGET_OWNER_EXEMPT: &[(&str, &str)] = &[];\n"), set())
+
+    def test_the_real_exempt_table_is_found(self):
+        guard = os.path.join(os.path.dirname(SCRIPT), os.pardir, "tests", "invariant_guard.rs")
+        with open(guard, encoding="utf-8") as handle:
+            self.assertIsNotNone(module.EXEMPT_TABLE.search(handle.read()))
+
     def test_self_manual_inputs_are_read_from_the_builder(self):
         self.assertEqual(module.self_manual_inputs(BUILDER), {"AGENTS.md"})
         self.assertEqual(module.self_manual_inputs("no inputs here"), set())
@@ -267,22 +277,26 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("scripts/new.sh:1: warning CG006", out)
 
-    def test_a_deleted_doc_must_leave_the_budget_and_its_links(self):
+    def test_a_deleted_doc_must_leave_the_exempt_list_budget_and_links(self):
+        # The #881 shape: an owner-exempt path deleted while its entry stays.
+        exempt = 'const DOCS_BUDGET_OWNER_EXEMPT: &[(&str, &str)] = &[\n    ("docs/OLD.md", "report"),\n];\n'
         self.write("docs/OLD.md", "old words\n")
         self.write("docs/README.md", "See [old](OLD.md).\n")
-        self.write("tests/invariant_guard.rs", GUARD.format(agents=5, extra='    ("docs/OLD.md", Guide, 10),\n'))
+        self.write("tests/invariant_guard.rs", GUARD.format(agents=5, extra='    ("docs/OLD.md", Guide, 10),\n') + exempt)
         self.commit("add a doc")
         self.git("update-ref", "refs/remotes/origin/main", "HEAD")
         os.remove(os.path.join(self.root, "docs/OLD.md"))
         code, out = self.lint()
         self.assertEqual(code, 1, out)
-        self.assertIn("tests/invariant_guard.rs:4: error CG008: `docs/OLD.md` was deleted", out)
+        self.assertIn("tests/invariant_guard.rs: error CG008: `docs/OLD.md` was deleted; remove it from DOCS_BUDGET_OWNER_EXEMPT", out)
+        self.assertIn("tests/invariant_guard.rs:4: warning CG008: `docs/OLD.md` was deleted; remove its DOCS_BUDGET row", out)
         self.assertIn("docs/README.md: warning CG008: still names `OLD.md`", out)
-        # Dropping the row clears the error; the stale link stays a warning until relinked.
-        self.write("tests/invariant_guard.rs", GUARD.format(agents=5, extra=""))
+        # Dropping the exempt entry clears the error; the dead row and the link stay warnings.
+        self.write("tests/invariant_guard.rs", GUARD.format(agents=5, extra='    ("docs/OLD.md", Guide, 10),\n'))
         code, out = self.lint()
         self.assertEqual(code, 0, out)
-        self.assertIn("warning CG008", out)
+        self.assertEqual(out.count("warning CG008"), 2, out)
+        self.write("tests/invariant_guard.rs", GUARD.format(agents=5, extra=""))
         self.write("docs/README.md", "Nothing old.\n")
         code, out = self.lint()
         self.assertNotIn("CG008", out)

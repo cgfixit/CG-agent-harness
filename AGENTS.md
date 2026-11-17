@@ -168,7 +168,7 @@ A folder `README.md` without its own budget row has `FOLDER_README_WORDS`
 
 Deleting a doc requires removing its budget row and references in docs, skills,
 indexes and packaging scripts; search its basename with `rg` first
-(`lint-diff.py` CG008 checks the row and names).
+(`lint-diff.py` CG008 checks exempt entries, rows and names).
 
 Sync, then trim. For multi-module PRs or a sync older than weeks, use `doc-sync`
 (operator-typed in Claude) and `dep-sync`, or perform their work manually:
