@@ -479,7 +479,14 @@ async fn disabling_one_account_cancels_only_that_owners_schedules() {
 #[tokio::test]
 async fn an_account_disabled_during_a_turn_keeps_the_exchange_but_not_the_reply() {
     let model = start_mock_model().await;
-    let s = spawn_server(&model.base_url(), ServerOptions::default().with("auth.enabled", "true")).await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("structured_memory.enabled", "true")
+            .with("structured_memory.episode_capture", "true"),
+    )
+    .await;
     let (alice_id, alice) = account(&s, "alice", "operator").await;
     let created = json_request(&s, &alice, Method::POST, "/api/sessions", json!({"title":"t"})).await;
     let sid = created["session_id"].as_str().unwrap().to_string();
