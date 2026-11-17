@@ -16,9 +16,17 @@ index snapshot, so unstaged edits neither hide nor cause a finding.
         warning  ... with one: the raise still needs operator approval
   CG005 warning  added wall-clock assertion bounded under 5 s (runner jitter
                  failed #766, #778 and main)
+  CG006 warning  added weak-hash name without a same-line DevSkim DS126858
+                 suppression (alerted after push twice on #885)
+  CG008 error    deleted Markdown file still has a DOCS_BUDGET row or is a
+                 self-manual input (#881 broke main and six branches)
+        warning  ... or another tracked file still names it
 
-tests/invariant_guard.rs stays the authority for CG002-CG004; this is the
-fast copy. Errors exit 1, warnings exit 0, a bad invocation exits 2.
+tests/invariant_guard.rs stays the authority for CG002-CG004 and CG008's
+budget row; this is the fast copy. CG006 is a warning: its pattern comes
+from the alerts above, not from DevSkim's rule files. Hex-digest literals
+(DS173237) are not linted: 24 unsuppressed runs on main drew no open alert,
+so a pattern built from the alerts would flag lines DevSkim does not. Errors exit 1, warnings exit 0, a bad invocation exits 2.
 
 Usage: python3 scripts/lint-diff.py [--base REF | --staged]
 """
@@ -33,6 +41,7 @@ GUARD = "tests/invariant_guard.rs"
 MANUAL = "assets/self/MANUAL.md"
 BUILDER = "scripts/build-self-manual.py"
 DEVSKIM_RULE = "DS137138"
+WEAK_HASH_RULE = "DS126858"
 # DevSkim DS137138: this pattern in code scope, unless the match itself starts
 # with a loopback host (rules/default/security/attack_surface/outbound_network.json).
 INSECURE_URL = re.compile(r'http://[^/^\s^"]+')  # DevSkim: ignore DS137138 because this is that rule's own pattern.
@@ -40,6 +49,10 @@ LOOPBACK_URL = re.compile(r"http://(localhost|127.0.0.1)")  # DevSkim: ignore DS
 # DevSkim scans every language it knows; these are the two it has alerted on here.
 # extension -> (line comment marker, string quote characters)
 LANGUAGES = {".rs": ("//", '"'), ".py": ("#", "\"'")}
+# CG006 also covers shell (the #885 alerts were in uninstall-macos.sh) and
+# JavaScript; CG001 keeps its two languages.
+DIGEST_LANGUAGES = {**LANGUAGES, ".sh": ("#", "\"'"), ".mjs": ("//", "\"'`"), ".js": ("//", "\"'`")}
+WEAK_HASH = re.compile(r"\b(?:sha-?1|md5)\b", re.IGNORECASE)  # DevSkim: ignore DS126858 because this is that rule's own pattern.
 # DevSkim's own suppression pattern (Suppression.cs). It reads only the first one on a line.
 SUPPRESSION = re.compile(r"DevSkim:\s+ignore\s([a-zA-Z\d,:]+)", re.IGNORECASE)
 # One table entry. rustfmt breaks a row wider than max_width over several lines
@@ -104,11 +117,18 @@ def code_part(line, marker="//", quotes='"'):
     return line
 
 
-def suppressed(line):
+def suppressed(line, rule=DEVSKIM_RULE):
     """DevSkim honours the first suppression on the line, wherever it sits
     (inside a string too), and ignores any later one."""
     first = SUPPRESSION.search(line)
-    return bool(first) and bool({DEVSKIM_RULE.lower(), "all"} & set(first.group(1).lower().split(",")))
+    return bool(first) and bool({rule.lower(), "all"} & set(first.group(1).lower().split(",")))
+
+
+def weak_hashes(line, marker="//", quotes='"'):
+    """Weak-hash names CG006 reports on one line: code and strings, not comments."""
+    if suppressed(line, WEAK_HASH_RULE):
+        return []
+    return [m.group(0) for m in WEAK_HASH.finditer(code_part(line, marker, quotes))]
 
 
 def insecure_urls(line, marker="//", quotes='"'):
@@ -189,6 +209,51 @@ def check_devskim(report, added):
                     f"`{url}` needs `{marker} DevSkim: ignore {DEVSKIM_RULE} because <reason>` at the end of this "
                     "same line (a comment on the line above does not count here), or an https:// URL.",
                 )
+
+
+def check_weak_hashes(report, added):
+    for path, lines in sorted(added.items()):
+        syntax = DIGEST_LANGUAGES.get(os.path.splitext(path)[1])
+        if not syntax:
+            continue
+        marker, quotes = syntax
+        for number, text in sorted(lines.items()):
+            for found in weak_hashes(text, marker, quotes):
+                report.add(
+                    "warning", "CG006", path, number,
+                    f"`{found}` is what DevSkim {WEAK_HASH_RULE} alerts on after push. If it names a protocol "
+                    f"label or item ID, not integrity hashing, end this same line with "
+                    f"`{marker} DevSkim: ignore {WEAK_HASH_RULE} because <reason>`; otherwise use SHA-256.",
+                )
+
+
+def self_manual_inputs(text):
+    inputs = re.search(r"^INPUTS = \[(.*?)^\]", text, re.M | re.S)
+    return {literal[1:-1] for literal in STRING.findall(inputs.group(1))} if inputs else set()
+
+
+def check_deleted_docs(report, deleted, guard_text, builder_text, references):
+    """`references(needle)` lists tracked files whose content contains `needle`."""
+    rows = budget_rows(guard_text)
+    inputs = self_manual_inputs(builder_text)
+    for path in sorted(deleted):
+        if not path.lower().endswith(MARKDOWN):
+            continue
+        if path in rows:
+            report.add(
+                "error", "CG008", GUARD, rows[path][1] + 1,
+                f"`{path}` was deleted; remove its DOCS_BUDGET row (invariant_guard fails on a missing file).",
+            )
+        if path in inputs:
+            report.add("error", "CG008", BUILDER, 0, f"`{path}` was deleted; remove it from INPUTS and regenerate {MANUAL}.")
+        # A folder index is named by its folder; any other doc by its file name,
+        # which relative links keep.
+        needle = os.path.dirname(path) + "/" if os.path.basename(path).lower() == "readme.md" else os.path.basename(path)
+        if needle in ("/", ""):
+            continue
+        for holder in references(needle):
+            if holder not in (GUARD, BUILDER, MANUAL) and holder not in deleted:
+                report.add("warning", "CG008", holder, 0, f"still names `{needle}` from deleted `{path}`; relink or remove it.")
 
 
 def check_self_manual(report, root):
@@ -312,12 +377,13 @@ def main():
         diff_args = [base]
 
     added = added_lines(diff_args)
+    deleted = set(git("diff", "--name-only", "--no-renames", "--diff-filter=D", *diff_args).split("\n")) - {""}
     changed = set(git("diff", "--name-only", "--no-renames", "--diff-filter=AM", *diff_args).split("\n")) - {""}
     if not args.staged:
         # `git diff` cannot see a file that was never added; it is still part of the branch.
         for path in git("ls-files", "--others", "--exclude-standard").splitlines():
             changed.add(path)
-            if language(path):
+            if os.path.splitext(path)[1] in DIGEST_LANGUAGES:
                 with open(os.path.join(root, path), encoding="utf-8", errors="replace") as handle:
                     added[path] = dict(enumerate(handle.read().splitlines(), 1))
 
@@ -331,6 +397,14 @@ def main():
         check_docs_budget(report, content, changed, guard_text)
         check_cap_raises(report, base, guard_text, added.get(GUARD, {}))
         check_timing(report, added)
+        check_weak_hashes(report, added)
+        grep_scope = ["--cached"] if args.staged else []
+
+        def references(needle):
+            found = git("grep", "-l", "-F", *grep_scope, "-e", needle, check=False)
+            return [line for line in found.splitlines() if line]
+
+        check_deleted_docs(report, deleted, guard_text, read_text(content, BUILDER), references)
     print(f"lint-diff: {report.errors} error(s), {report.warnings} warning(s) against {base[:12]}")
     return 1 if report.errors else 0
 

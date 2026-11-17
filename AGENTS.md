@@ -108,6 +108,9 @@ server -> browser child -> Playwright sidecar -> Chrome (granted origins only)
   permission checked earlier is stale.
 - Assert and panic messages never print secret-bearing values (audit lines,
   results, base URLs); CodeQL flags them.
+- DevSkim alerts after push. A weak-hash name used as a label, not for
+  integrity, ends its line with `DevSkim: ignore DS126858 because …`;
+  `lint-diff.py` CG006 warns first.
 - Console replies check `sessionRevision` before rendering; an older
   selection's reply is dropped.
 - Reuse `common::dns::lookup_bounded` and `web_search::pinned_client_builder`
@@ -164,7 +167,8 @@ A folder `README.md` without its own budget row has `FOLDER_README_WORDS`
 (150) words: contents, consumers and links to full docs.
 
 Deleting a doc requires removing its budget row and references in docs, skills,
-indexes and packaging scripts; search its basename with `rg` first.
+indexes and packaging scripts; search its basename with `rg` first
+(`lint-diff.py` CG008 checks the row and names).
 
 Sync, then trim. For multi-module PRs or a sync older than weeks, use `doc-sync`
 (operator-typed in Claude) and `dep-sync`, or perform their work manually:

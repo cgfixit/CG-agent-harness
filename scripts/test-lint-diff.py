@@ -104,6 +104,26 @@ class RuleTests(unittest.TestCase):
         self.assertGreater(len(rows), 50)
         self.assertIn(".claude/skills/cgagentharness-write-policy-redteam/SKILL.md", rows)
 
+    def test_weak_hash_names_follow_the_alerts(self):
+        # Built at run time so this file's own lines carry no hash name.
+        weak, md = "SHA" + "-1", "md" + "5"
+        hashed = "# DevSkim: ignore DS" + "126858 because label"
+        shell = {"marker": "#", "quotes": "\"'"}
+        self.assertEqual(module.weak_hashes(f"awk '/^{weak} hash:/ {{print $3}}'", **shell), [weak])
+        self.assertEqual(module.weak_hashes(f'h = hashlib.{md}(b"x")', **shell), [md])
+        self.assertEqual(module.weak_hashes(f"let h = {weak.replace('-', '')}::new();"), [weak.replace("-", "")])
+        for line, syntax in [
+            (f"awk '/^{weak} hash:/' {hashed}", shell),
+            ("use sha2::Sha256;", {}),
+            (f"let x = 1; // {weak} only in a comment", {}),
+            (f'h = "{md}sum-free text"', shell),
+        ]:
+            self.assertEqual(module.weak_hashes(line, **syntax), [], line)
+
+    def test_self_manual_inputs_are_read_from_the_builder(self):
+        self.assertEqual(module.self_manual_inputs(BUILDER), {"AGENTS.md"})
+        self.assertEqual(module.self_manual_inputs("no inputs here"), set())
+
     def test_timing_bound_pattern(self):
         hit = module.ELAPSED_BOUND.search("assert!(start.elapsed() < std::time::Duration::from_millis(500));")
         self.assertEqual((hit.group(1), hit.group(2)), ("millis", "500"))
@@ -240,6 +260,42 @@ class RepositoryTests(unittest.TestCase):
         code, out = self.lint("--staged")
         self.assertEqual(code, 1, out)
         self.assertIn("assets/self/MANUAL.md: error CG002", out)
+
+    def test_a_weak_hash_name_in_a_shell_script_is_a_warning(self):
+        self.write("scripts/new.sh", "printf '%s\\n' \"" + "SHA" + "-1 label\"\n")
+        code, out = self.lint()
+        self.assertEqual(code, 0, out)
+        self.assertIn("scripts/new.sh:1: warning CG006", out)
+
+    def test_a_deleted_doc_must_leave_the_budget_and_its_links(self):
+        self.write("docs/OLD.md", "old words\n")
+        self.write("docs/README.md", "See [old](OLD.md).\n")
+        self.write("tests/invariant_guard.rs", GUARD.format(agents=5, extra='    ("docs/OLD.md", Guide, 10),\n'))
+        self.commit("add a doc")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        os.remove(os.path.join(self.root, "docs/OLD.md"))
+        code, out = self.lint()
+        self.assertEqual(code, 1, out)
+        self.assertIn("tests/invariant_guard.rs:4: error CG008: `docs/OLD.md` was deleted", out)
+        self.assertIn("docs/README.md: warning CG008: still names `OLD.md`", out)
+        # Dropping the row clears the error; the stale link stays a warning until relinked.
+        self.write("tests/invariant_guard.rs", GUARD.format(agents=5, extra=""))
+        code, out = self.lint()
+        self.assertEqual(code, 0, out)
+        self.assertIn("warning CG008", out)
+        self.write("docs/README.md", "Nothing old.\n")
+        code, out = self.lint()
+        self.assertNotIn("CG008", out)
+
+    def test_a_deleted_self_manual_input_is_an_error(self):
+        self.write("docs/IN.md", "in\n")
+        self.write("scripts/build-self-manual.py", BUILDER.replace('"AGENTS.md",\n]', '"AGENTS.md",\n    "docs/IN.md",\n]'))
+        self.commit("add an input")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.git("rm", "-q", "docs/IN.md")
+        code, out = self.lint("--staged")
+        self.assertEqual(code, 1, out)
+        self.assertIn("scripts/build-self-manual.py: error CG008: `docs/IN.md` was deleted", out)
 
     def test_a_missing_base_is_a_usage_error(self):
         self.assertEqual(self.lint("--base", "origin/absent")[0], 2)
