@@ -8,16 +8,13 @@ This manual is static text bundled with the build and indexed at startup. It is 
 
 ## readme: capability overview
 
-- Web research: Search, permitted fetches and crawls, `/web research` jobs with checked quotes, local PDF text. An administrator's turn may read the URLs its own… Starts: On, allowlist mode, one seeded Google rule.
-- Goal loops: `/goal` and `/loop` continue a long piece in a run that outlives the browser. Starts: 50 turns, 200,000 tokens, two failed turns; cloud refuses loops.
+- Web research: Search, permitted fetches and crawls, `/web research` jobs with checked quotes, local PDF text. Starts: On, allowlist mode, one seeded Google rule.
+- Goal loops: `/goal` and `/loop` continue a long piece in a run that outlives the tab. Starts: 50 turns, 200,000 tokens, two failed turns; cloud refuses loops.
 - Memory: Pinned and uploaded notes, account-private facts. Starts: On; proposals need review.
-- Local chat: Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles, `/prompt`. Starts: Ollama on loopback.
-- Browser tasks: `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Password fields and every request but GET or HEAD are held… Starts: On for administrators; needs Chrome and one `npm ci`.
+- Local chat: Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles. Starts: Ollama on loopback.
+- Browser tasks: `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Password fields and every request but GET or HEAD are held,… Starts: On for administrators; setup.
 - Analytics, diagnostics: Token and run history, **Estimate draft**, `/diag` redacted logs. Starts: On; `/diag` admin or auditor.
 - Cloud chat: Optional Grok or Claude; only the new message leaves. Starts: Needs a provider key.
-
-## readme: capability overview (part 2)
-
 - Off by default: Reviewed coding in isolated clones, MCP tools and memory gateway, Netconnect LAN observation, Firecrawl fallback reads. Starts: Each needs configuration.
 
 ## agents: process and home map
@@ -375,13 +372,14 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - App waits at startup → Check macOS prompts; quit, move the complete app to Applications and retry. Do not delete the home
 - Changing config appears to do nothing → Reload limits, or Cmd-Q/relaunch or restart `serve`. Window close only hides it
 - Offline preparation fails in the app → See Setup and offline Cargo verification; the app downloads nothing
+- A coding check refuses with `HARD_SANDBOX_UNAVAILABLE` on Linux → Install bubblewrap. `agentic.sandbox.allow_linux_netns_fallback: true` accepts network isolation with the host filesystem visible (boundary)
 - Chat takes too long or times out → Check inventory, `/model` and Setup diagnostics; cancel with `/loop stop` rather than resubmitting
 - Chat reports `502 HARNESS_LLM_ERROR` with `model server returned HTTP ...` → Check the endpoint, model and model-server logs; the harness drops the error body unread and never logs it
 - `Address already in use` when starting `serve` → `lsof -i :8790`; stop only a known owner or choose another `--port`. Each server needs its own home
-- `/agent` reports `gh: command not found` or "Agentic layer disabled" → `brew install gh && gh auth login`; follow coding config, then restart
 
 ## troubleshooting: symptom to fix (part 5)
 
+- `/agent` reports `gh: command not found` or "Agentic layer disabled" → `brew install gh && gh auth login`; follow coding config, then restart
 - A write action is refused → See coding console steps and the kill switch; check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE`
 - Managed-key save or legacy migration fails → Keep plaintext opt-in off unless required and do not broaden file access; see credential privacy and recovery
 - `/diag` says `DIAG_DISABLED` → Set literal `true`, then restart

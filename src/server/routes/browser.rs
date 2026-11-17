@@ -6,7 +6,10 @@
 //! with the browser environment allowlist, so the server spawns nothing itself
 //! and a timeout kills the child's whole tree. Non-public IP-literal origins
 //! and origins on the shared block list are refused; the block list is read
-//! again before each model turn (in the child) and before delivery.
+//! again before each model turn (in the child) and before delivery. The child
+//! is told chat's local model selection, so `/model use` applies to it, and a
+//! deadline inside `browser.timeout_sec`, so it reports before it is stopped.
+//! A tuned model is loaded and its window read before the child starts.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,7 +21,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::common::browser::Session;
-use crate::common::browser_host::{blocked_origin, child_environment, MAX_TASK_CHARS};
+use crate::common::browser_host::{blocked_origin, child_environment, MAX_TASK_CHARS, TASK_PROMPT_TOKENS};
 use crate::server::errors::{ApiError, ApiResult};
 use crate::server::schemas::{ValidJson, Validate};
 use crate::server::state::AppState;
@@ -84,6 +87,24 @@ pub async fn run(
             "a model operation is already running",
         )
     })?;
+    // Under the gate: a tuned model that is not loaded (keep_alive ran out) is
+    // loaded here, outside the task's time, and a window too small for a task's
+    // prompt is refused; Ollama would cut the prompt without saying so.
+    let model = task_model(&state.backend.source, state.local_memory_model());
+    if let Some(model) = &model {
+        if state
+            .ensure_window_allows(model, TASK_PROMPT_TOKENS, 0, false)
+            .await
+            .is_err()
+        {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "BROWSER_WINDOW",
+                "Ollama does not report the selected model loaded with a window that fits a browser task; \
+                 nothing was started. /model profile shows the window.",
+            ));
+        }
+    }
     let owner = super::auth::context_owner(user);
     let exe = std::env::current_exe()
         .map_err(|_| ApiError::new(StatusCode::BAD_GATEWAY, "BROWSER_FAILED", "harness binary not found"))?;
@@ -108,8 +129,11 @@ pub async fn run(
         format!("--sidecar={}", cfg.str_or("browser.sidecar", "browser/sidecar.mjs")),
         format!("--max-turns={}", cfg.limit("browser.max_turns")),
     ];
+    let timeout_sec = cfg.limit("browser.timeout_sec");
+    argv.push(format!("--deadline-sec={}", child_deadline_sec(timeout_sec)));
+    argv.extend(model.iter().map(|model| format!("--model={model}")));
     argv.extend(grants.iter().map(|origin| format!("--origin={origin}")));
-    let timeout = Duration::from_secs(cfg.limit("browser.timeout_sec"));
+    let timeout = Duration::from_secs(timeout_sec);
     let result = crate::shim::run_argv_with_env(&argv, &cwd, timeout, child_environment()).await;
     drop(task_file);
     let exit = result.as_ref().map(|(code, _, _)| *code).ok();
@@ -117,6 +141,7 @@ pub async fn run(
         "event": "browser.run",
         "owner": owner,
         "origins": grants,
+        "model": model,
         "task_sha256": crate::common::sha256_hex(&req.task),
         "exit": exit,
     }));
@@ -154,6 +179,23 @@ pub async fn run(
     }
     Ok(Json(body))
 }
+
+/// The model tag the child is told to use: chat's `/model use` selection when
+/// it is local, else the configured local model. `None` leaves the child on
+/// `models.local_llm.model`. The child talks only to the configured primary
+/// endpoint, so a server on its fallback backend holds no tag valid there.
+fn task_model(backend_source: &str, model: String) -> Option<String> {
+    (backend_source == "primary" && !model.trim().is_empty()).then_some(model)
+}
+
+/// Seconds the child gets of `browser.timeout_sec`: the rest is for closing
+/// Chrome and printing the report before the runner stops the process tree.
+fn child_deadline_sec(timeout_sec: u64) -> u64 {
+    timeout_sec.saturating_sub(TEARDOWN_SEC).clamp(1, 1800)
+}
+
+/// The sidecar gets 5 s to exit after its pipe closes.
+const TEARDOWN_SEC: u64 = 20;
 
 fn write_task_file(task: &str) -> ApiResult<tempfile::NamedTempFile> {
     use std::io::Write;
@@ -198,6 +240,24 @@ fn non_public_literal(origin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_primary_backend_names_the_task_model() {
+        assert_eq!(
+            task_model("primary", "gemma4:26b".into()).as_deref(),
+            Some("gemma4:26b")
+        );
+        assert_eq!(task_model("fallback", "lmstudio-tag".into()), None);
+        assert_eq!(task_model("primary", " ".into()), None);
+    }
+
+    #[test]
+    fn the_child_deadline_stays_inside_the_task_timeout() {
+        assert_eq!(child_deadline_sec(300), 280);
+        assert_eq!(child_deadline_sec(30), 10);
+        assert_eq!(child_deadline_sec(1800), 1780);
+        assert_eq!(child_deadline_sec(5), 1);
+    }
 
     #[test]
     fn literal_origins_must_be_public() {

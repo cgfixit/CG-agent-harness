@@ -118,15 +118,15 @@ point-in-time advisory/license/source check, not proof of vulnerability absence.
 Workflow action pins live in `.github/workflows/` and move with those files,
 not with the lockfiles.
 
-## Last synchronization (2026-11-11)
+## Last synchronization (2026-11-17)
 
-Cooldown refresh, lockfiles only. Backend: `uuid` 1.26.1 to 1.29.0 (the
-desktop lock's version, admitted by Rust 1.89), `cc` 1.11.0, `crc32fast` 1.5.4
-and the lock-only `openssl` 0.10.82 with `openssl-sys` 0.9.118. Desktop:
-`crc32fast` 1.5.4 and lock-only `jiff` 0.2.39 with `jiff-core` 0.1.2. Every
-other compatible candidate was younger than the cooldown, `brotli-decompressor`
-6.3 included. `zip` 9.3.0 and desktop `cc` 1.11.0 stay with Dependabot: each
-also re-resolved unrelated `windows-sys` or `getrandom` edges under Cargo
-1.89/1.90. `tauri` 2.12.5 waits on its pin and `axum-server` 0.9 is a new major
-line. Dated results describe that pass only; rerun the checks above before
-trusting them.
+Cooldown refresh, lockfiles only. Both locks: `crc32fast` 1.5.5, `flate2`
+1.1.11, `itoa` 1.0.19, `mime` 0.3.18, `smallvec` 1.16.5 and `winnow` 1.0.5.
+Desktop also: `brotli-decompressor` 6.3.1 and lock-only `toml_writer` 1.2.0.
+Each moved alone; no other package or edge changed. `cc` 1.11.1, `uuid`
+1.29.2, `syn` 3.0.10, `zip` 9.3.0 and the `toml_edit` family stay with
+Dependabot: each re-resolved unrelated `syn`, `getrandom` or `windows-sys`
+edges under Cargo 1.89/1.90. Every other compatible candidate was younger
+than the cooldown. The Tauri family waits on the `tauri` pin and `rmcp` 3.10
+on its own. Dated results describe that pass only; rerun the checks above
+before trusting them.
