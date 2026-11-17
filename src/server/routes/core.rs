@@ -1647,24 +1647,46 @@ pub(crate) async fn chat_inner(
         .await
         .map_err(local_failure)?
     } else {
-        (
-            state
-                .chat
-                .chat_stream(
-                    &system_prompt,
-                    &history,
-                    Some(&model),
-                    max_tokens,
-                    temperature,
-                    output.map(|sender| crate::llm::openai_stream::Output {
-                        sender,
-                        validate: &|| Ok(()),
-                    }),
-                )
-                .await
-                .map_err(local_failure)?,
-            Vec::new(),
-        )
+        let result = state
+            .chat
+            .chat_stream(
+                &system_prompt,
+                &history,
+                Some(&model),
+                max_tokens,
+                temperature,
+                output.map(|sender| crate::llm::openai_stream::Output {
+                    sender,
+                    validate: &|| Ok(()),
+                }),
+            )
+            .await;
+        // A plain reply is accepted only on `stop`, so success is that label.
+        let call = crate::server::chat_web::ModelCall {
+            path: "plain",
+            model: &model,
+            loop_turn: req.loop_turn,
+            round: 0,
+            tools_offered: 0,
+            finish_reason: "stop",
+            tool_calls: 0,
+            completion_tokens: None,
+            error: None,
+        };
+        match &result {
+            Ok(reply) => crate::server::chat_web::ModelCall {
+                completion_tokens: reply.reported_completion_tokens,
+                ..call
+            },
+            Err(err) => crate::server::chat_web::ModelCall {
+                finish_reason: crate::server::chat_web::error_finish_label(err),
+                completion_tokens: err.details["completion_tokens"].as_u64(),
+                error: Some(&err.code),
+                ..call
+            },
+        }
+        .audit(&state);
+        (result.map_err(local_failure)?, Vec::new())
     };
     drop(release);
 
