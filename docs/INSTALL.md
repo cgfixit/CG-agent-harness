@@ -23,7 +23,8 @@ works and installs only what is missing, in order: Command Line Tools; Homebrew
 (only for Ollama or `gh`); rustup with the pinned Rust; Ollama; optional `gh`.
 It then builds the standalone backend, downloads the latest release app, checks
 it against that release's `SHA256SUMS` and `codesign`, and copies it to
-`/Applications` (`~/Applications` when that is not writable). It never touches
+`/Applications` (`~/Applications` when that is not writable). A download that
+cannot connect in 30 s, or stalls for 60 s, aborts. It never touches
 the harness home (`~/.CGagentHarness`) and pulls a model only with `--model`.
 
 | Option | Effect |

@@ -40,8 +40,7 @@ chat neither loads nor edits legacy coding skills.
 Enter slash commands in chat; `/help` lists them. Begin with `/status`,
 `/model`, `/skills all`, and `/tools`; registration is not
 [readiness](#77-tools-and-connectors-available-versus-catalog-only). For an
-isolated test, start `/session new`, `/skill clear`, then inspect `/prompt`: a
-new session still uses enabled shared notes and persona.
+isolated test, start `/session new`, `/skill clear`, then inspect `/prompt`.
 
 ### 7.1 Sessions and bounded chat continuation
 
@@ -135,7 +134,6 @@ counting a failure. `/loop stop` ends the wait; after two hours the run ends
 own claim is retried, uncounted, up to three times in a row. Ordinary chat
 never queues: a busy model refuses it with `CHAT_BUSY`.
 
-This loop does not edit files, run skills as programs, or run coding checks.
 `--web` on `/goal` or `/loop` sets the chat tools of every turn while the goal is
 set; without it the goal takes `web.goal_web_default` (ships `all`,
 restart-only). `fetch` excludes search, `off` excludes web context and tools.
@@ -306,7 +304,8 @@ no invocation history; registered or legacy `wired` does not prove readiness.
 `/tools mcp` shows external MCP declarations, read/write grants, network policy,
 and process-group or unrestricted Windows Job Object exceptions, without
 executing a tool ([MCP capabilities](MCP.md#outbound-client-capabilities)).
-`/connectors` and `/registry` are inventories only.
+`/connectors` and `/registry` are inventories only; registry and skill listings
+read the file `agentic.registry_path` names.
 
 | Capability | Boundary |
 |---|---|
@@ -529,7 +528,8 @@ cancelled partial text is removed and not persisted. Streams require a completio
 reason and `[DONE]`; malformed or truncated output fails.
 
 `/loop stop` (`POST /api/chat/cancel`) cancels the account's chat or
-browser-driven loop turn; `POST /api/loop/stop` halts a server-side run.
+browser-driven loop turn; `POST /api/loop/stop` halts a server-side run, recorded
+`stopped` even when that turn's reply would have ended it `done`.
 Closing the stream aborts its task, releases claims, and drops model and web
 requests, without promising immediate GPU release.
 

@@ -1845,7 +1845,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the 2026-11-11 trim-and-refresh pass cut 107 words net of the post-#834 additions; measured 1223, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200; the 2026-11-11 trim left 7 words of room.
     // why: the 2026-11-15 sync-and-trim pass cut README to 1138 words; rounded up to the next 10 so the cut stays cut.
-    ("README.md", Root, 1140),
+    // why: the 2026-11-17 doc sync cut 116 duplicated words (1022); rounded up to the next 10 so the cut stays cut.
+    ("README.md", Root, 1030),
     ("SECURITY.md", Root, 690),
     // why: operator-approved +100 (2026-10-13) for the goal web-mode default row; file was at 1728.
     // why: the sandboxed HTML preview route row; measured 1840 words.

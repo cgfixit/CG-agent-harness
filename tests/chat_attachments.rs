@@ -723,3 +723,91 @@ async fn unpin_preserves_blobs_and_refuses_inflight_repin() {
         .unwrap()
         .contains("UNPIN_TEST_NEEDLE"));
 }
+
+/// A chat turn's exchange and pins are one session write on the blocking pool,
+/// and the generation gate travels with it. When the request is dropped while
+/// that write waits, the gate must stay held until the write lands, so
+/// `/session unpin` cannot clear the pins in between and be undone by them.
+#[tokio::test]
+async fn a_dropped_chat_request_keeps_the_gate_until_its_write_lands() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (_, stored) = post_files(&s, &[("brief.txt", b"DROPPED_TURN_NEEDLE")]).await;
+    let id = stored["attachments"][0]["id"].as_str().unwrap().to_string();
+    // An existing session: creating one would take the store lock held below.
+    let (status, session) = s.post_json("/api/sessions", json!({})).await;
+    assert_eq!(status, 201, "{session}");
+    let sid = session["session_id"].as_str().unwrap().to_string();
+    let unpin = format!("/api/sessions/{sid}/attachment-pins");
+
+    // Park every session write. A thread owns the guard, so no await holds it.
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let holder = {
+        let state = s.state.clone();
+        std::thread::spawn(move || {
+            let _writes = state.store.hold_writes();
+            held_tx.send(()).unwrap();
+            // A failed test drops the sender; release then too.
+            let _ = release_rx.recv();
+        })
+    };
+    held_rx.recv().unwrap();
+
+    let chat = tokio::spawn(cgagentharness::server::routes::core::chat(
+        axum::extract::State(s.state.clone()),
+        axum::extract::ConnectInfo(s.addr),
+        None,
+        axum::http::HeaderMap::new(),
+        cgagentharness::server::schemas::ValidJson(
+            serde_json::from_value(json!({"message":"read it","session_id":sid,"attachment_ids":[id]})).unwrap(),
+        ),
+    ));
+    // The turn's spend row is queued in the same poll that hands the exchange
+    // write to the blocking pool (no await between them), so once it is on disk
+    // the write is spawned and parked on the held lock.
+    let ledger = s.home.join("logs/spend.jsonl");
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            s.state.audit.flush_async().await;
+            if std::fs::read_to_string(&ledger).is_ok_and(|text| !text.trim().is_empty()) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the turn reached its session write");
+    chat.abort();
+    assert!(chat.await.expect_err("handler was dropped").is_cancelled());
+
+    // The request is gone but its write has not landed: the gate is still held,
+    // so an unpin is refused instead of racing the pins about to be written.
+    assert!(s.state.generation_gate.is_held(), "the write still owns the gate");
+    let (status, busy) = {
+        let resp = s.req(reqwest::Method::DELETE, &unpin).send().await.unwrap();
+        (resp.status().as_u16(), resp.json::<serde_json::Value>().await.unwrap())
+    };
+    assert_eq!(status, 409, "{busy}");
+    assert_eq!(code(&busy), "CHAT_BUSY");
+    let parked = s.state.store.for_owner("local").get(&sid).unwrap();
+    assert!(parked.messages.is_empty(), "the write is still parked");
+    assert!(parked.attachment_pins.is_empty());
+
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while s.state.generation_gate.is_held() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the gate is released once the write lands");
+    // The gate came free only after the exchange and its pin were on disk.
+    let landed = s.state.store.for_owner("local").get(&sid).unwrap();
+    assert_eq!(landed.messages.len(), 2);
+    assert_eq!(landed.pinned_ids_for("local"), vec![id.clone()]);
+    let resp = s.req(reqwest::Method::DELETE, &unpin).send().await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.json::<serde_json::Value>().await.unwrap()["removed"], 1);
+}
