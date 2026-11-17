@@ -75,7 +75,17 @@ pub(crate) fn retrieve(
     let index = Index::create_in_ram(schema.build());
     let failed = |_| HarnessError::agentic("repository retrieval failed; planner was not called");
     let mut writer = index.writer_with_num_threads(1, 32_000_000).map_err(failed)?;
-    let paths = tools.retrieval_paths()?;
+    // An inventory too large to capture is a repository too large to rank in
+    // one step, not a failed run: retrieve nothing and record the limit, so
+    // explicit reads still supply context. Any other Git failure stays fatal.
+    let paths = match tools.retrieval_paths() {
+        Ok(paths) => paths,
+        Err(error) if error.details.get("output_limit").and_then(serde_json::Value::as_bool) == Some(true) => {
+            trace.limited = true;
+            return Ok(trace);
+        }
+        Err(error) => return Err(error),
+    };
     trace.limited = paths.len() > cfg.max_files;
     let mut evidence = Vec::new();
     for path in paths.into_iter().take(cfg.max_files) {
