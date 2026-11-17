@@ -27,10 +27,10 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 
 ## Verification and CI
 
-- [`verify-local.sh`](verify-local.sh): broad opt-in lint/test/build/live-smoke runner; missing cargo-deny or Node skips those checks, and `SKIP_LIVE=1` skips smoke.
+- [`verify-local.sh`](verify-local.sh): broad opt-in lint/test/build/live-smoke runner; skips cargo-deny or Node checks when missing; `SKIP_LIVE=1` skips smoke.
 - [`lint-diff.py`](lint-diff.py): fast lint of a branch's changes (`--staged` for the index): unannotated `http://` Rust or Python literals, stale self-manual, docs caps and unexplained cap raises fail; short wall-clock test bounds warn. Runs in `diff-lint.yml` (with [`test-lint-diff.py`](test-lint-diff.py)) and at commit.
 - [`lint-workflows.sh`](lint-workflows.sh): `workflow-lint.yml`'s actionlint and zizmor at the same pins, from PATH or a rootless fallback; zizmor's online audits stay CI-only.
-- [`check-pr-template.sh`](check-pr-template.sh): local PR-body gate mirroring `pr-template-check.yml`, including its Cursor and trailing Claude Code footer strips but not its Dependabot exemption.
+- [`check-pr-template.sh`](check-pr-template.sh): local PR-body gate mirroring `pr-template-check.yml`, footer strips included, Dependabot exemption excluded.
 - [`ci-docs-only.sh`](ci-docs-only.sh): classifies changed paths so qualifying PRs skip selected compile/test jobs; other events run everything.
 - [`browser-acceptance.mjs`](browser-acceptance.mjs): native Chrome acceptance against a disposable fixture (manual, after `browser-fixture.py --http`).
 - [`chat-browser-acceptance.mjs`](chat-browser-acceptance.mjs): real-browser slash-command tests against a mock API.
@@ -39,7 +39,7 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 - [`test-auth-deadlines.mjs`](test-auth-deadlines.mjs): console fetch helpers against headers-first replies.
 - [`test-delivery-review.mjs`](test-delivery-review.mjs): delivery UI handlers across logout and late replay.
 - [`test-desktop-setup.mjs`](test-desktop-setup.mjs): Setup status, action errors, stale replies and setup-code guidance.
-- [`test-first-run-password.mjs`](test-first-run-password.mjs): first-run setup code plus new password via restricted login and CSRF-protected replacement; cross-tab, expired-session, wrong-code and other-account cases.
+- [`test-first-run-password.mjs`](test-first-run-password.mjs): first-run setup code and CSRF-protected password replacement across tabs, expiry, wrong codes and other accounts.
 - [`test-header-buttons.mjs`](test-header-buttons.mjs): automation buttons hide until account state loads.
 - [`test-loop-continuation.mjs`](test-loop-continuation.mjs): `/loop` turn prompt, `GOAL_DONE` marker, stall checks.
 - [`test-nl-search-routing.mjs`](test-nl-search-routing.mjs): natural-language search predicate against server phrasings.
@@ -61,14 +61,15 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 - [`release-plan.py`](release-plan.py): read-only release planner via `gh api`; fails closed; run by hand, previews `main` ([RELEASING.md](../docs/RELEASING.md)).
 - [`prepare-cargo.py`](prepare-cargo.py): offline-by-default Cargo source and toolchain preparation; bundled into the `.app`.
 - [`build-self-manual.py`](build-self-manual.py): regenerates `assets/self/MANUAL.md` from declared source inputs; `tests/self_manual.rs` checks freshness.
-- [`desktop-icon.swift`](desktop-icon.swift): regenerates the app icon set by hand; no automated caller.
+- [`desktop-icon.swift`](desktop-icon.swift): regenerates the app icon set; manual only.
 
 ## Hooks, fixtures and probes
 
 - [`ensure-githooks.sh`](ensure-githooks.sh): idempotent setup preserving existing hook managers; called by SessionStart, Copilot and `init.sh` ([GITHOOKS.md](../docs/GITHOOKS.md)).
-- [`install-githooks.sh`](install-githooks.sh): older once-per-clone installer with a gitleaks hint; nothing automated runs it.
+- [`install-githooks.sh`](install-githooks.sh): older once-per-clone installer; nothing automated runs it.
 - [`browser-fixture.py`](browser-fixture.py): serves a disposable arithmetic repo fixture; no real GitHub writes.
 - [`mcp-fixture.py`](mcp-fixture.py): disposable stdio and SSE MCP server for the MCP and process-lifecycle tests.
-- [`mcp-windows-fixture.py`](mcp-windows-fixture.py): Windows Job Object fixture used by `tests/mcp_windows.rs` only.
+- [`mcp-windows-fixture.py`](mcp-windows-fixture.py): Windows Job Object fixture for `tests/mcp_windows.rs`.
 - [`grok-acp-probe.py`](grok-acp-probe.py): credential-free probe of a fake Grok ACP launch contract; Grok ACP is not shipped.
+- [`probe-tool-repeat.py`](probe-tool-repeat.py): loopback relay replaying a tool-offering chat turn with and without tools; prints finish reasons and counts, never text.
 - [`netconnect-syscall-proof.sh`](netconnect-syscall-proof.sh): strace under `unshare -rn` proving `status` and `devices` send no packets.

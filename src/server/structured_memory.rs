@@ -1117,6 +1117,27 @@ impl StructuredMemoryStore {
         Ok((facts as usize, pending as usize))
     }
 
+    /// Content of the owner's pending and rejected proposals, newest first and
+    /// bounded, so automatic suggestions can skip text already waiting for a
+    /// decision or already turned down.
+    pub fn pending_and_rejected_contents(&self, owner: &str) -> Result<Vec<String>> {
+        Self::require_owner(owner)?;
+        let conn = self.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT content FROM proposals
+                 WHERE owner_id=?1 AND status IN ('pending','rejected') AND content IS NOT NULL
+                 ORDER BY created_ts DESC, public_id ASC LIMIT 512",
+            )
+            .map_err(sql)?;
+        let rows = stmt
+            .query_map(params![owner], |r| r.get::<_, String>(0))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        Ok(rows)
+    }
+
     pub fn list_facts(&self, owner: &str) -> Result<Vec<Fact>> {
         Self::require_owner(owner)?;
         let conn = self.lock();
