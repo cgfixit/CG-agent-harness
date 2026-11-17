@@ -1,5 +1,5 @@
 //! Nonblocking pipes under one deadline. Darwin ancestry cleanup is best-effort.
-use super::{build_command, Output, ProcessError, RunSpec, MAX_CAPTURE_BYTES};
+use super::{build_command, Output, ProcessError, RunSpec, MAX_CAPTURE_BYTES, OUTPUT_LIMIT};
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::process::Child;
@@ -23,7 +23,7 @@ fn read_chunk<R: Read>(pipe: &mut Option<R>, bytes: &mut Vec<u8>, total: &mut us
         Ok(n) => {
             if *total + n > MAX_CAPTURE_BYTES {
                 return Err(ProcessError::Capture(format!(
-                    "output exceeded {MAX_CAPTURE_BYTES} bytes; incomplete output refused"
+                    "{OUTPUT_LIMIT} {MAX_CAPTURE_BYTES} bytes; incomplete output refused"
                 )));
             }
             *total += n;

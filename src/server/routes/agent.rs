@@ -395,7 +395,10 @@ pub(crate) fn start_job(
             _chat_gate,
         } = prepared;
         let outcome = agentic_call(&task_state, ops).await.map(|Json(v)| v);
-        task_state.jobs.finish(&task_job, outcome);
+        // Saving the outcome (fsync) and enqueueing its notification block. A
+        // cancel that wins the job lock first still makes this finish a no-op.
+        let (finish_state, finish_job) = (task_state.clone(), task_job.clone());
+        super::structured_memory::off_worker(move || finish_state.jobs.finish(&finish_job, outcome)).await;
         // The receipt stages an episode in the memory store: off the async worker.
         // `finish` released this task's handle, so no cancel can abort it here.
         let (receipt_state, receipt_job, receipt_owner) = (task_state.clone(), task_job.clone(), task_owner.clone());
@@ -652,9 +655,10 @@ pub async fn agent_job_cancel(
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
     let id = validated_job_id(&job_id)?;
-    let v = state
-        .jobs
-        .cancel(&owner, &id)
+    // Saving the cancellation (fsync) and enqueueing its notification block.
+    let (cancel_state, cancel_id) = (state.clone(), id.clone());
+    let v = super::structured_memory::off_worker(move || cancel_state.jobs.cancel(&owner, &cancel_id))
+        .await
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "JOB_NOT_FOUND", "no such job"))?;
     state.audit.log(json!({"event": "agent_job_cancelled", "job_id": id}));
     Ok(Json(v))
