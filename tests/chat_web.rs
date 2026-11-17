@@ -3432,3 +3432,85 @@ async fn a_suppressed_refresh_is_cache_only_after_eviction() {
     );
     task.abort();
 }
+
+/// Issue #941: a short local turn that offered tools streamed repeated text to
+/// the output limit and left nothing that said why. Each local model call now
+/// records whether tools were offered and how it ended, without reply text.
+#[tokio::test]
+async fn each_local_model_call_records_tool_offer_and_finish_reason_without_text() {
+    let (address, _reads, _task) = listing_fixture().await;
+    let model = common::start_mock_model().await;
+    let s = listing_server(&model, address, None).await;
+    let audit = || std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    let calls = |audit: &str| -> Vec<Value> {
+        audit
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|line| line["event"] == "chat_model_call")
+            .collect()
+    };
+
+    model.set_reply(json!({
+        "model": "mock-model",
+        "choices": [{"finish_reason": "length",
+            "message": {"role": "assistant", "content": "Juniper. Juniper. Juniper. Juniper."}}],
+        "usage": {"prompt_tokens": 40, "completion_tokens": 96},
+    }));
+    let (status, body) = s
+        .post_json(
+            "/api/chat",
+            json!({"message": "Reply with exactly this single word: Juniper."}),
+        )
+        .await;
+    assert_ne!(status, 200, "a truncated reply is never accepted: {body}");
+    let offered = model.last_request().unwrap()["tools"].as_array().map_or(0, Vec::len);
+    assert!(offered > 0, "the fixture must offer web tools");
+    let (_, sessions) = s.get_json("/api/sessions").await;
+    assert!(!sessions.to_string().contains("Juniper. Juniper."), "{sessions}");
+    let text = audit();
+    assert!(
+        !text.contains("Juniper"),
+        "audit lines never carry reply or prompt text"
+    );
+    let web = calls(&text);
+    assert_eq!(web.len(), 1, "{web:?}");
+    assert_eq!(
+        (&web[0]["path"], &web[0]["round"], &web[0]["tools_offered"]),
+        (&json!("web"), &json!(0), &json!(offered))
+    );
+    assert_eq!(
+        (
+            &web[0]["finish_reason"],
+            &web[0]["tool_calls"],
+            &web[0]["completion_tokens"]
+        ),
+        (&json!("length"), &json!(0), &json!(96))
+    );
+    // The call itself completed; its `length` finish is what the turn refuses.
+    assert_eq!(web[0]["error"], Value::Null, "{web:?}");
+    // The requested tag, which is what a repeat on a specific model needs.
+    assert_eq!(web[0]["model"], s.state.chat.model.as_str());
+
+    // Web off: a plain call offers nothing and records its normal stop.
+    s.state.settings.lock().unwrap().web_enabled = false;
+    model.set_reply(common::ok_reply("Juniper", 30, 2));
+    let (status, body) = s
+        .post_json(
+            "/api/chat",
+            json!({"message": "Reply with exactly this single word: Juniper."}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(model.last_request().unwrap().get("tools").is_none());
+    let text = audit();
+    let all = calls(&text);
+    assert_eq!(all.len(), 2, "{all:?}");
+    assert_eq!(
+        (&all[1]["path"], &all[1]["tools_offered"], &all[1]["finish_reason"]),
+        (&json!("plain"), &json!(0), &json!("stop"))
+    );
+    assert_eq!(
+        (&all[1]["completion_tokens"], &all[1]["error"]),
+        (&json!(2), &Value::Null)
+    );
+}
