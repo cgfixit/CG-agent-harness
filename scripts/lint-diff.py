@@ -21,10 +21,11 @@ tests/invariant_guard.rs stays the authority for CG002-CG004; this is the
 fast copy. Errors exit 1, warnings exit 0, a bad invocation exits 2.
 
   CG009 error    Markdown says a full config key ships a value that
-                 assets/config.default.yaml does not (#887/#890 browser.enabled,
-                 #785, #66, the config-guard skill fixed by #960); checked on
-                 added Markdown lines, and on every Markdown file for each key
-                 whose shipped value the diff changes
+                 assets/config.default.yaml does not (browser.enabled after
+                 #887, fixed in 49db7bf; #785; #66; the config-guard skill
+                 that #960 fixes); checked on added Markdown lines, and on
+                 every Markdown file for each key whose shipped value the
+                 diff changes
         warning  ... the same, for a key named by a unique suffix
                  (`result_reads.arxiv_pdf`); a claim the config cannot
                  confirm (unknown key, mapping, null, other type) is skipped
