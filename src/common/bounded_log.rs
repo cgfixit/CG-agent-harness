@@ -186,19 +186,35 @@ mod tests {
         );
         // A record whose submission deadline already passed while it queued
         // behind other writers gets one attempt, not a fresh window; the plain
-        // `append` is the same nonblocking path.
+        // `append` is the same nonblocking path. The 30 s retry makes any sleep
+        // or fresh window take at least that, so the 5 s bound is far from
+        // both the expected time and a loaded runner's noise.
         let start = Instant::now();
         assert_eq!(
-            append_until(&path, "{\"n\":3}", 1024, start, retry).unwrap_err().kind(),
-            ErrorKind::WouldBlock
-        );
-        assert_eq!(
-            append(&path, "{\"n\":4}", 1024).unwrap_err().kind(),
+            append_until(&path, "{\"n\":3}", 1024, start, Duration::from_secs(30))
+                .unwrap_err()
+                .kind(),
             ErrorKind::WouldBlock
         );
         assert!(
-            start.elapsed() < Duration::from_millis(20),
+            start.elapsed() < Duration::from_secs(5),
             "expired deadline must not sleep"
+        );
+        // A real wait slows every try; scheduler noise rarely hits all three.
+        let fastest = (0..3)
+            .map(|_| {
+                let start = Instant::now();
+                assert_eq!(
+                    append(&path, "{\"n\":4}", 1024).unwrap_err().kind(),
+                    ErrorKind::WouldBlock
+                );
+                start.elapsed()
+            })
+            .min()
+            .unwrap();
+        assert!(
+            fastest < Duration::from_millis(20),
+            "nonblocking append must not wait: {fastest:?}"
         );
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(!text.contains("\"n\":2") && !text.contains("\"n\":3") && !text.contains("\"n\":4"));
