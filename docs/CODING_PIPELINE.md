@@ -170,6 +170,8 @@ export CGAGENTHARNESS_AGENTIC_WRITE_DISABLE=1
 `1`, `true`, `yes` and `on` block writes regardless of YAML; the switch cannot
 enable them. It is read at process start, so restart with it set, or revoke
 `agentic.writes_enabled` to block later mutation boundaries in an active child.
+A run that meets revoked or broken policy at its next iteration or proposal
+apply ends there (exit 4, or 3 for config) and sends no further planner request.
 Neither cancels a running Git command or check.
 
 ## Bounded edits
