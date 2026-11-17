@@ -142,6 +142,29 @@ fn argv_builder_uses_single_element_form_for_dash_leading_values() {
     for call in status_calls {
         assert!(call.contains("AGENT_STATUS_TIMEOUT_MS"), "{call}");
     }
+    // The run list crosses the shim at its default budget, and a goal-stage read
+    // with a pending run renders run status: neither may abort at the 15 s default.
+    let cli_ms = (shim::DEFAULT_TIMEOUT_SEC + 10) * 1000;
+    assert!(
+        console.contains(&format!("const AGENT_CLI_TIMEOUT_MS = {cli_ms};")),
+        "the console must wait out the default shim budget"
+    );
+    let list_calls: Vec<&str> = console
+        .lines()
+        .filter(|line| line.contains("api('/api/agent/runs')") || line.contains("api('/api/agent/runs',"))
+        .collect();
+    assert!(!list_calls.is_empty(), "the console lists runs");
+    for call in list_calls {
+        assert!(call.contains("AGENT_CLI_TIMEOUT_MS"), "{call}");
+    }
+    let stage_reads: Vec<&str> = console
+        .lines()
+        .filter(|line| line.contains("'/goal-stage'") && !line.contains("'POST'"))
+        .collect();
+    assert!(!stage_reads.is_empty(), "the console reads a goal stage");
+    for call in stage_reads {
+        assert!(call.contains("AGENT_STATUS_TIMEOUT_MS"), "{call}");
+    }
     assert_eq!(temps.len(), 2, "checks file + plan file");
     let checks_idx = argv.iter().position(|a| a == "--checks-file").unwrap();
     let manifest: serde_json::Value =
@@ -705,6 +728,30 @@ async fn repository_retrieval_is_counted_in_the_run_budget() {
     assert_eq!(code(&resp), "AGENTIC_BUDGET_EXCEEDED");
     assert_eq!(resp["detail"]["details"]["estimated_sec"], 3660);
     assert_eq!(resp["detail"]["details"]["max_iterations_that_fit"], 1);
+}
+
+/// The decision reason crosses into the child as one argv element. An
+/// oversized value is the request's fault (422 naming `reason`), never a
+/// spawn failure blamed on the shim (Linux refuses one argument over 128 KiB).
+#[tokio::test]
+async fn oversized_decision_reason_is_a_validation_error() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let url = format!("/api/agent/runs/{HEX32}/decision");
+    for body in [
+        json!({"decision": "reject", "reason": "x".repeat(200_000)}),
+        json!({"decision": "approve", "reason": format!("ok{}", " ".repeat(200_000)), "confirm": true}),
+        json!({"decision": "reject", "reason": "x".repeat(1001)}),
+    ] {
+        let (status, resp) = s.post_json(&url, body).await;
+        assert_eq!(status, 422, "{resp}");
+        assert_eq!(resp["detail"]["details"]["fields"], json!(["reason"]), "{resp}");
+    }
+    // At the bound, a reject still reaches the child; the shipped layer is off.
+    let (status, resp) = s
+        .post_json(&url, json!({"decision": "reject", "reason": "x".repeat(1000)}))
+        .await;
+    assert_eq!(status, 409, "{resp}");
 }
 
 #[tokio::test]

@@ -735,6 +735,9 @@ impl<'a> RepoWorkspace<'a> {
             Some(commit)
         };
         super::git::require_raw_paths(&self.dest, f.changed_files)?;
+        if !cfg!(unix) {
+            super::git::require_plain_base_entries(&self.dest, base, f.changed_files)?;
+        }
         let (accepted, captured_digest) = manifest::build_manifest(&self.dest, f.changed_files, f.run_id, base)?;
         if captured_digest != expected {
             return Err(self.deny("approve", "accepted snapshot changed", None));
