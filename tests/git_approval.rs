@@ -367,11 +367,13 @@ fn transformed_paths_and_existing_index_lock_refuse_without_committing() {
     );
 }
 
-/// Off Unix every file reads as 100644, so approving over an executable base
-/// entry would drop its mode where the review diff cannot show it. Refuse.
-#[cfg(not(unix))]
+/// Approving over an executable base entry: Unix reads the mode from the work
+/// tree and commits it. Off Unix every file reads as 100644, so the commit would
+/// drop the mode where the review diff cannot show it; approve refuses instead.
+/// Compiled everywhere: pull-request CI has no Windows test leg, so a
+/// `cfg(not(unix))` test would not even build before merge.
 #[test]
-fn approve_refuses_a_base_mode_this_host_cannot_preserve() {
+fn approve_over_an_executable_base_keeps_the_mode_or_refuses() {
     let temp = tempfile::tempdir().unwrap();
     let (ctx, dest) = fixture(temp.path());
     git(&["update-index", "--chmod=+x", "target.txt"], &dest);
@@ -389,10 +391,21 @@ fn approve_refuses_a_base_mode_this_host_cannot_preserve() {
     );
     let base = git(&["rev-parse", "HEAD"], &dest);
     std::fs::write(dest.join("target.txt"), "approved\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dest.join("target.txt"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     let ws = RepoWorkspace::attach(&ctx, &dest).unwrap();
-    let error = approve(&ctx, &ws, &["target.txt".into()]).unwrap_err();
-    assert!(error.message.contains("cannot preserve its mode"), "{}", error.message);
-    assert_eq!(git(&["rev-parse", "HEAD"], &dest), base);
+    let approved = approve(&ctx, &ws, &["target.txt".into()]);
+    if cfg!(unix) {
+        approved.unwrap();
+        assert!(git(&["ls-tree", "HEAD", "target.txt"], &dest).starts_with("100755 blob "));
+    } else {
+        let error = approved.unwrap_err();
+        assert!(error.message.contains("cannot preserve its mode"), "{}", error.message);
+        assert_eq!(git(&["rev-parse", "HEAD"], &dest), base);
+    }
 }
 
 #[cfg(unix)]
