@@ -652,6 +652,16 @@ fn chat_cleared(state: &AppState, job: &Job) -> bool {
     job.source == Source::Chat && state.memory_suggestions.queue().running_chat_cancelled
 }
 
+/// Comparison key for "the same memory": case, spacing and trailing sentence
+/// punctuation do not make a suggestion new.
+fn same_text_key(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_end_matches(['.', '!', ';'])
+        .to_lowercase()
+}
+
 /// Parse the model's reply and store its proposals. Blocking.
 fn finish(state: &AppState, job: &Job, run_id: &str, reply_text: &str, reply_model: &str) -> Result<()> {
     let store = state.structured_memory.as_ref().expect("availability checked");
@@ -676,14 +686,41 @@ fn finish(state: &AppState, job: &Job, run_id: &str, reply_text: &str, reply_mod
                 .as_ref()
                 .is_some_and(|s| state.audit.redact(s) == *s && !s.contains("[REDACTED_"))
     });
+    let facts = store.list_facts(&job.owner)?;
     let (mut bound, _) = bind_candidates(
         &parsed,
         &ids,
-        &store.list_facts(&job.owner)?,
+        &facts,
         store.limits().max_fact_chars,
         store.limits().max_category_chars,
         store.limits().min_consolidation_confidence,
     );
+    // A suggestion that repeats a stored fact, a proposal still waiting for a
+    // decision, or one already rejected is not stored again: repeats otherwise
+    // fill the pending cap and stop new suggestions.
+    let mut known: std::collections::HashSet<String> = facts
+        .iter()
+        .map(|fact| same_text_key(&fact.content))
+        .chain(
+            store
+                .pending_and_rejected_contents(&job.owner)?
+                .iter()
+                .map(|c| same_text_key(c)),
+        )
+        .collect();
+    let before = bound.len();
+    bound.retain(|candidate| {
+        candidate
+            .content
+            .as_deref()
+            .is_some_and(|text| known.insert(same_text_key(text)))
+    });
+    if bound.len() < before {
+        state
+            .audit
+            .log(json!({"event":"memory_suggestion_repeats_skipped","owner_id":job.owner,
+            "run_id":run_id,"source":job.source.name(),"count":before - bound.len()}));
+    }
     // Only a valid candidate consumes the single-summary allowance.
     let mut has_summary = false;
     bound.retain(|candidate| {
@@ -812,6 +849,14 @@ mod tests {
 
     fn list(yaml: &str) -> serde_yaml_ng::Value {
         serde_yaml_ng::from_str(yaml).unwrap()
+    }
+
+    #[test]
+    fn same_text_key_ignores_case_spacing_and_trailing_punctuation() {
+        let key = super::same_text_key("The user prefers concise answers.");
+        assert_eq!(super::same_text_key("  the user   prefers concise ANSWERS "), key);
+        assert_eq!(super::same_text_key("The user prefers concise answers!"), key);
+        assert_ne!(super::same_text_key("The user prefers detailed answers."), key);
     }
 
     #[test]

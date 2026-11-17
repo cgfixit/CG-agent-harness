@@ -413,6 +413,81 @@ async fn a_full_proposal_list_refuses_before_the_model_is_asked() {
 }
 
 #[tokio::test]
+async fn repeats_of_a_fact_or_a_pending_or_rejected_proposal_are_not_proposed_again() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), options("insights")).await;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    store
+        .add_fact("local", "The operator uses metric units.", "pref", "fixture fact")
+        .unwrap();
+    let run = |content: &[&str]| {
+        let id = stage(store, "local");
+        let candidates: Vec<Value> = content
+            .iter()
+            .map(|text| {
+                json!({"action":"add", "category":"insight", "content":text,
+                "confidence":0.9, "sensitivity":"normal", "source_refs":[id]})
+            })
+            .collect();
+        model.set_reply(ok_reply(&json!({"candidates":candidates}).to_string(), 10, 20));
+        suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "Noted.", "Acknowledged.");
+    };
+    let pending_text = |store: &StructuredMemoryStore| -> Vec<String> {
+        store
+            .list_pending_proposals("local")
+            .unwrap()
+            .into_iter()
+            .filter_map(|p| p.content)
+            .collect()
+    };
+
+    run(&["The operator prefers concise answers."]);
+    settled(&s, "local").await;
+    assert_eq!(pending_text(store), ["The operator prefers concise answers."]);
+
+    // Same text with different case, spacing and punctuation, the stored fact
+    // restated, and one new memory: only the new one is proposed.
+    run(&[
+        "the operator prefers  concise answers",
+        "The operator uses metric units!",
+        "The operator works in Rust.",
+    ]);
+    settled(&s, "local").await;
+    let mut pending = pending_text(store);
+    pending.sort();
+    assert_eq!(
+        pending,
+        ["The operator prefers concise answers.", "The operator works in Rust."]
+    );
+    let latest = &store.list_consolidation_runs("local").unwrap()[0];
+    assert_eq!(latest.state, "done");
+    assert_eq!(
+        (latest.candidate_count, latest.rejected_count, latest.proposal_count),
+        (3, 2, 1)
+    );
+    s.state.audit.flush();
+    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    assert!(audit.contains(r#""event":"memory_suggestion_repeats_skipped""#));
+    assert!(audit
+        .lines()
+        .any(|l| l.contains("memory_suggestion_repeats_skipped") && l.contains(r#""count":2"#)));
+
+    // A rejected proposal is not suggested again either.
+    let concise = store
+        .list_pending_proposals("local")
+        .unwrap()
+        .into_iter()
+        .find(|p| p.content.as_deref() == Some("The operator prefers concise answers."))
+        .unwrap();
+    store
+        .decide_proposal("local", &concise.id, &concise.revision, false, "not wanted")
+        .unwrap();
+    run(&["The operator prefers concise answers."]);
+    settled(&s, "local").await;
+    assert_eq!(pending_text(store), ["The operator works in Rust."]);
+}
+
+#[tokio::test]
 async fn default_quoted_invalid_and_capture_off_gates_do_not_enqueue_or_create_a_store() {
     let model = model().await;
     for (opts, reason) in [
@@ -1232,7 +1307,12 @@ async fn synchronous_and_detached_coding_share_pending_only_completion_hook() {
     assert_eq!(completed["status"], "finished", "{completed}");
     assert_eq!(completed["result"]["memory_suggestion"]["queued"], true, "{completed}");
     let store = s.state.structured_memory.as_ref().unwrap();
-    assert_eq!(store.list_pending_proposals("local").unwrap().len(), 2);
+    // Both runs reached the model; the detached run's identical insight is a
+    // repeat of the pending one, so it is not proposed twice.
+    let runs = store.list_consolidation_runs("local").unwrap();
+    assert_eq!(runs.len(), 2);
+    assert!(runs.iter().all(|run| run.state == "done"));
+    assert_eq!(store.list_pending_proposals("local").unwrap().len(), 1);
     assert!(store.list_facts("local").unwrap().is_empty());
     for episode in store.list_episodes("local").unwrap() {
         assert!(episode.privacy_summary.starts_with("Completed coding run"));
@@ -1273,7 +1353,7 @@ async fn synchronous_and_detached_coding_share_pending_only_completion_hook() {
         "{skipped}"
     );
     assert_eq!(store.episode_count("local").unwrap(), before);
-    assert_eq!(store.list_pending_proposals("local").unwrap().len(), 2);
+    assert_eq!(store.list_pending_proposals("local").unwrap().len(), 1);
 }
 
 #[tokio::test]
