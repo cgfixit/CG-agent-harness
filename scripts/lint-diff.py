@@ -20,6 +20,15 @@ index snapshot, so unstaged edits neither hide nor cause a finding.
 tests/invariant_guard.rs stays the authority for CG002-CG004; this is the
 fast copy. Errors exit 1, warnings exit 0, a bad invocation exits 2.
 
+  CG009 error    Markdown says a full config key ships a value that
+                 assets/config.default.yaml does not (#887/#890 browser.enabled,
+                 #785, #66, the config-guard skill fixed by #960); checked on
+                 added Markdown lines, and on every Markdown file for each key
+                 whose shipped value the diff changes
+        warning  ... the same, for a key named by a unique suffix
+                 (`result_reads.arxiv_pdf`); a claim the config cannot
+                 confirm (unknown key, mapping, null, other type) is skipped
+
 Usage: python3 scripts/lint-diff.py [--base REF | --staged]
 """
 import argparse
@@ -292,6 +301,148 @@ def check_timing(report, added):
                 )
 
 
+CONFIG = "assets/config.default.yaml"
+YAML_KEY = re.compile(r"^(?P<indent> *)(?P<key>[A-Za-z0-9_]+):(?:\s+(?P<value>.*?))?\s*$")
+# A claim is a backticked key, then in the same clause `ships VALUE`, or
+# `remains/stays VALUE` followed by "shipped"/"by default". Value-first
+# phrasings ("ships closed: `agentic.enabled`") are not read.
+CLAIM_KEY = r"`(?P<key>[a-z_][a-z0-9_]*(?:\.[a-z0-9_]+)*)`[^`.;:]{0,40}?"
+CLAIM_VALUE = r"(?P<value>true|false|on|off|open|closed|enabled|disabled|`[^`\n]+`|-?\d+(?:\.\d+)?)(?!\w|\.\d)"
+SHIPS_CLAIM = re.compile(CLAIM_KEY + r"\bships?\b(?:\s+as)?(?:\s+the)?(?:\s+literal)?(?:\s+boolean)?\s+" + CLAIM_VALUE)
+STAYS_CLAIM = re.compile(
+    CLAIM_KEY + r"\b(?:remains?|stays?)\s+" + CLAIM_VALUE + r"(?=[^.]{0,20}\b(?:shipped|by\s+default))"
+)
+TRUE_WORDS = ("true", "on", "open", "enabled")
+FALSE_WORDS = ("false", "off", "closed", "disabled")
+
+
+def yaml_scalar(text):
+    if text in ("true", "false"):
+        return text == "true"
+    if text in ("null", "~"):
+        return None
+    if re.fullmatch(r"-?\d+", text):
+        return int(text)
+    if re.fullmatch(r"-?\d+\.\d+", text):
+        return float(text)
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        return text[1:-1]
+    return text
+
+
+def yaml_value(raw):
+    """A key's value without its trailing comment; quotes protect a `#`."""
+    closing = None
+    for i, ch in enumerate(raw):
+        if closing:
+            if ch == closing:
+                closing = None
+        elif ch in "\"'":
+            closing = ch
+        elif ch == "#" and (i == 0 or raw[i - 1] in " \t"):
+            return raw[:i].strip()
+    return raw.strip()
+
+
+def shipped_values(text):
+    """{dotted.path: scalar} for every block-style scalar in the shipped YAML.
+    Lists, flow collections and block strings are skipped, never guessed."""
+    values, stack = {}, []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith(("#", "-")):
+            continue
+        entry = YAML_KEY.match(line)
+        if not entry:
+            continue
+        indent = len(entry.group("indent"))
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        value = yaml_value(entry.group("value") or "")
+        path = ".".join([key for _, key in stack] + [entry.group("key")])
+        if not value:
+            stack.append((indent, entry.group("key")))
+        elif not value.startswith(("[", "{", "|", ">", "&", "*", "!")):
+            values[path] = yaml_scalar(value)
+    return values
+
+
+def claimed(value):
+    if value.startswith("`"):
+        inner = value[1:-1]
+        return yaml_scalar(inner) if inner in ("true", "false") or re.fullmatch(r"-?\d+(?:\.\d+)?", inner) else inner
+    if value in TRUE_WORDS:
+        return True
+    if value in FALSE_WORDS:
+        return False
+    return yaml_scalar(value)
+
+
+def agrees(said, shipped):
+    """True or False when the two are comparable, else None (skipped)."""
+    if isinstance(said, bool) or isinstance(shipped, bool):
+        return said is shipped if isinstance(said, bool) and isinstance(shipped, bool) else None
+    if isinstance(said, (int, float)) and isinstance(shipped, (int, float)):
+        return float(said) == float(shipped)
+    if isinstance(said, str) and isinstance(shipped, str):
+        return said == shipped
+    return None
+
+
+def resolve_key(key, values):
+    """(path, exact): the key itself, or the one shipped path it ends."""
+    if key in values:
+        return key, True
+    ends = [path for path in values if path.endswith("." + key)]
+    return (ends[0], False) if len(ends) == 1 else (None, False)
+
+
+def shipped_claims(text):
+    """(line, key, value) for each claim. Paragraphs are joined first, so a
+    claim wrapped across lines is read; the line is the value's."""
+    lines, index = text.splitlines(), 0
+    while index < len(lines):
+        if not lines[index].strip():
+            index += 1
+            continue
+        end, starts, offset = index, [], 0
+        while end < len(lines) and lines[end].strip():
+            starts.append(offset)
+            offset += len(lines[end]) + 1
+            end += 1
+        paragraph = " ".join(lines[index:end])
+        for pattern in (SHIPS_CLAIM, STAYS_CLAIM):
+            for claim in pattern.finditer(paragraph):
+                at = claim.start("value")
+                line = index + max(i for i, start in enumerate(starts) if start <= at) + 1
+                yield line, claim.group("key"), claim.group("value")
+        index = end
+
+
+def check_shipped_claims(report, values, documents, keys=None, lines_of=None, skip=frozenset()):
+    """`documents` maps path -> text. Only claims on `lines_of[path]` (added
+    lines) are checked when it is given, only claims about `keys` (the paths
+    whose shipped value changed) when that is given, and never claims about
+    `skip` (checked by the other pass)."""
+    for path, text in sorted(documents.items()):
+        if path == MANUAL:
+            continue
+        for line, key, value in shipped_claims(text):
+            if lines_of is not None and line not in lines_of.get(path, ()):
+                continue
+            target, exact = resolve_key(key, values)
+            if target is None or target in skip or (keys is not None and target not in keys):
+                continue
+            if agrees(claimed(value), values[target]) is False:
+                shipped = values[target]
+                shown = str(shipped).lower() if isinstance(shipped, bool) else shipped
+                report.add(
+                    "error" if exact else "warning", "CG009", path, line,
+                    f"says `{key}` ships {value}, but {CONFIG} ships `{target}: {shown}`. "
+                    "Fix the prose (or the config) in this change.",
+                )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     scope = parser.add_mutually_exclusive_group()
@@ -330,6 +481,29 @@ def main():
         check_self_manual(report, content)
         check_docs_budget(report, content, changed, guard_text)
         check_cap_raises(report, base, guard_text, added.get(GUARD, {}))
+        # CG009: shipped values against the prose that states them.
+        values = shipped_values(read_text(content, CONFIG) if not args.staged else git("show", f":{CONFIG}", check=False))
+        markdown = {path for path in changed if path.lower().endswith(MARKDOWN)}
+        added_markdown = {
+            path: (set(added[path]) if path in added else set(range(1, read_text(root, path).count("\n") + 2)))
+            for path in markdown
+        }
+        before = shipped_values(git("show", f"{base}:{CONFIG}", check=False))
+        moved = {path for path, value in values.items() if path in before and before[path] != value}
+        check_shipped_claims(
+            report, values, {path: read_text(content, path) for path in markdown}, lines_of=added_markdown, skip=moved
+        )
+        if moved:
+            # Every tracked Markdown file, changed ones included: an untouched
+            # line still states the old value.
+            listed = git("ls-files", *(["--cached"] if args.staged else []), "--", *(f"*{ext}" for ext in MARKDOWN))
+            documents = {
+                path: (read_text(content, path) if path in markdown else
+                       git("show", f":{path}", check=False) if args.staged else read_text(root, path))
+                for path in listed.splitlines()
+                if path
+            }
+            check_shipped_claims(report, values, documents, keys=moved)
         check_timing(report, added)
     print(f"lint-diff: {report.errors} error(s), {report.warnings} warning(s) against {base[:12]}")
     return 1 if report.errors else 0
