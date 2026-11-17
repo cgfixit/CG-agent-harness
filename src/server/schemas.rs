@@ -999,7 +999,10 @@ pub struct AgentDecisionRequest {
 
 impl Validate for AgentDecisionRequest {
     fn validate(&self) -> Vec<String> {
-        if self.decision.as_str() == "approve" && !len_ok(self.reason.trim(), 1, MAX_REASON_LEN) {
+        // The untrimmed reason reaches the child as one argv element for either
+        // decision: bound it as push and publish do. Approve also needs text.
+        let approve_blank = matches!(self.decision, Decision::Approve) && self.reason.trim().is_empty();
+        if approve_blank || !len_ok(&self.reason, 0, MAX_REASON_LEN) {
             return vec!["reason".into()];
         }
         vec![]

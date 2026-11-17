@@ -9,6 +9,10 @@ import tempfile
 
 def main(binary):
     binary = Path(binary).resolve(strict=True)
+    # Only the test-support feature compiles this fixture hook (src/llm/cloud_chat.rs);
+    # tests/invariant_guard.rs keeps the two in step.
+    if b"CGAH_TEST_CLOUD_BASE_URL" in binary.read_bytes():
+        raise SystemExit("packaged CLI: built with test-support fixture hooks")
     with tempfile.TemporaryDirectory(prefix="cgah-package-smoke-") as scratch:
         env = dict(os.environ, CGAGENTHARNESS_HOME=scratch)
 
@@ -29,7 +33,7 @@ def main(binary):
         require(["serve", "--host", "192.0.2.1"], 1, b"binds loopback only")
         require(["agentic", "--config", "missing.yaml", "status"], 3, b"cannot read config file: file is missing")
 
-    print("packaged CLI: help, loopback refusal and missing config verified")
+    print("packaged CLI: no test-support hooks; help, loopback refusal and missing config verified")
 
 
 if __name__ == "__main__":

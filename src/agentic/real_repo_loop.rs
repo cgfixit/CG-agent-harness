@@ -494,6 +494,16 @@ fn require_run_gates(tools: &RepoWorkspace<'_>, reason: &str, confirm: bool) -> 
     tools.require_write("run", reason, confirm)
 }
 
+/// Refusals from reloading `config.yaml` at the apply boundary, as opposed to
+/// a proposal the planner can correct. They end the invocation with their own
+/// exit code (4 refused, 3 config) instead of becoming planner feedback.
+fn is_policy_refusal(error: &HarnessError) -> bool {
+    matches!(
+        error.code.as_str(),
+        "AGENTIC_WRITE_REFUSED" | "AGENTIC_CONFIG_INVALID" | "CONFIG_ERROR"
+    )
+}
+
 pub struct LoopParams<'a> {
     pub instruction: &'a str,
     pub checks: &'a [Check],
@@ -574,6 +584,11 @@ pub fn run_real_repo_loop(
     let mut read_paths: Vec<String> = p.read_paths.to_vec();
     let mut iterations: Vec<RealRepoLoopIteration> = Vec::new();
     for step in 1..=p.max_iterations {
+        // A later iteration follows a model call and checks: reload policy
+        // before it reads, retrieves or sends anything again.
+        if step > 1 {
+            require_run_gates(tools, p.reason, p.confirm)?;
+        }
         let quoted_context = p
             .context
             .filter(|c| !c.is_empty())
@@ -680,7 +695,7 @@ pub fn run_real_repo_loop(
             match tools.apply_proposal(&proposal, p.protected_write_paths, p.reason, p.confirm) {
                 Ok(paths) => written = paths,
                 Err(error) => {
-                    if is_proposal_rollback_quarantine(&error) {
+                    if is_proposal_rollback_quarantine(&error) || is_policy_refusal(&error) {
                         return Err(error);
                     }
                     write_failed = true;
