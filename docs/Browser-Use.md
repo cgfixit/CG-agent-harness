@@ -1,7 +1,7 @@
 # Browser use and computer use
 
-Status as of 2026-11-16. The local model
-(`models.local_llm.model`, `qwen3.8:27b-mlx-cg` on a 32K window) drives a real
+Status as of 2026-11-17. The local model (the `/model use` selection, else
+`models.local_llm.model`; `qwen3.8:27b-mlx-cg` on a 32K window) drives a real
 Chrome. Computer use (native apps) is a skeleton that nothing calls.
 
 ## What works today
@@ -29,7 +29,9 @@ How a run works:
    the page's fetches settle; `observe` takes `page` for the next part and
    `find` for what contains a word. Older observations are dropped to fit
    32K. Three refused or failed actions in a row, or a reply with no action
-   and no answer, end the task. A sidecar call has 75 s to answer.
+   and no answer, end the task. A sidecar call has 75 s; a model call has the
+   task's remaining time. The child stops 20 s before `browser.timeout_sec`
+   and reports its steps.
 5. One tab per task. A new tab replaces the page only if it shows a granted
    page; any other is closed and the page stays.
 
@@ -51,7 +53,8 @@ Boundaries, enforced in code:
   the fixtures use `127.0.0.1`.
 - The block list is checked on the granted origin before launch, again before
   every model turn, and once more before the report is returned.
-- A task holds the shared model gate, so it never overlaps chat or research.
+- A task holds the shared model gate (no chat or research overlap). A tuned
+  model is loaded first; a window under 13K is refused (`BROWSER_WINDOW`).
 - Clicks may run, including a link with no target. Every request except GET
   and HEAD is held for the operator: a held page load answers 204 so the page
   stays, a held `fetch` fails. Two
@@ -73,25 +76,21 @@ content, an ungranted tab closed and named, `page` and `find`) and
 
 - Grants are exact origins. Scripts and styles from a CDN origin are blocked,
   so many large sites render partly.
-- Path-level block-list rules are not enforced inside a granted origin.
-- No screenshots yet, so canvas and image-only UIs are opaque. An `alert` or
-  `confirm` is dismissed unseen.
-- `scroll` and `wait` are not model tools, so content that loads only on
-  scroll stays unread.
+- Path-level block rules are not enforced inside a granted origin.
+- No screenshots, so canvas and image-only UIs are opaque. `alert` and
+  `confirm` are dismissed unseen.
+- `scroll` and `wait` are not model tools: load-on-scroll content stays unread.
 - No approve-and-resume after a hand-off or hold.
-- Holding every `fetch` POST can break sites that save state in the
-  background, such as chat widgets or autosave. Sites that need a web worker
-  (some editors, PDF viewers, search widgets) lose that part.
-- Page text is untrusted input. Grants and holds bound what it can cause; an
+- Holding `fetch` POSTs can break background saves (chat widgets,
+  autosave). Sites that need a web worker (some editors, PDF viewers) lose it.
+- Page text is untrusted. Grants and holds bound what it can cause; an
   answer can still be wrong.
-- `/goal` and `/loop` do not have browser tools. A goal that says "/browse" runs
-  web search and fetch instead.
+- `/goal` and `/loop` have no browser tools: a goal that says "/browse" runs
+  web search and fetch.
 
 ## Roadmap: broader browser use
 
-In rough order:
-
-1. Takeover: approve a listed held request or hand-off and resume the session.
+1. Takeover: approve a listed held request or hand-off and resume.
 2. Subresource policy: let GET subresources load from public origins without
    cookies while navigation stays on granted origins.
 3. Vision: send the latest screenshot to the model (`qwen3.8` lists the
