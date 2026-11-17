@@ -269,7 +269,8 @@ and `web_fetch` (an exact permitted URL); listings grant admin-turn exact-URL
 reads (`web.search.result_reads.enabled`, on unless literal `false`, even in a
 home whose config predates the key). A listed `https://arxiv.org/abs/<id>` also
 grants exactly `https://arxiv.org/pdf/<id>`, its `full_text_url`, within
-`max_urls` (`result_reads.arxiv_pdf`, literal `true` only). No repository, shell, policy,
+`max_urls` (`result_reads.arxiv_pdf`, literal `true` only); a PDF past that cap
+is not offered. No repository, shell, policy,
 account, key or mutation tool is exposed. Batches validate before sequential
 reads; `web.chat_tool_calls` bounds all rounds (1–30, default 30).
 
@@ -290,7 +291,8 @@ unknown. Cancellation aborts the whole turn.
 per page. Only whole delivered passages get receipt IDs and offsets. Omitted `refresh`
 reuses fresh evidence already read for this goal; other reads default fresh.
 `refresh:false` allows permitted cache within `web.stale_seconds`; `true` forces
-a fresh read, including current facts.
+a fresh read, including current facts, once per page per turn: a repeat
+re-selects passages from that read (`refresh_reused`).
 
 Before choosing further tools, new useful passages receive a bounded digest
 (≤1,024 output tokens) whose quotes and source IDs are validated; that proves
@@ -302,7 +304,8 @@ or restart.
 
 `POST /api/chat` returns `web_tools`, reply and aggregate usage; the console
 shows listings, selected passages, cache reuse, extraction path and digest
-outcomes separately. Session `web_sources` is a bounded metadata ledger,
+outcomes separately. Each entry records its call's `query` and `refresh`, or
+`count`; a digest entry lists one `drop_reasons` code per dropped claim. Session `web_sources` is a bounded metadata ledger,
 never a second page store. `web.carry_forward_sources` ships off; when
 enabled it supplies permitted earlier URLs/queries, not page text.
 Design and measurements: [router](WEB_DECISION_ROUTER.md); one-page version:
