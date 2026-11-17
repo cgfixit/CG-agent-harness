@@ -140,6 +140,91 @@ class RuleTests(unittest.TestCase):
         self.assertIsNone(module.ELAPSED_BOUND.search("let waited = start.elapsed();"))
 
 
+    def test_shipped_values_read_block_scalars_only(self):
+        text = "\n".join([
+            "# top comment",
+            "web:",
+            "  enabled: true # flag_is_true",
+            "  name: 'a # not a comment'",
+            "  limit: 30",
+            "  ratio: 0.5",
+            "  endpoint: null",
+            "  hosts: []",
+            "  search:",
+            "    fallback: false",
+            "  patterns:",
+            "    - 'x'",
+            "browser:",
+            "  enabled: false",
+            "",
+        ])
+        self.assertEqual(module.shipped_values(text), {
+            "web.enabled": True, "web.name": "a # not a comment", "web.limit": 30, "web.ratio": 0.5,
+            "web.endpoint": None, "web.search.fallback": False, "browser.enabled": False,
+        })
+
+    @unittest.skipUnless(importlib.util.find_spec("yaml"), "PyYAML is not installed")
+    def test_shipped_values_agree_with_a_yaml_parser_on_the_real_config(self):
+        import yaml
+
+        config = os.path.join(os.path.dirname(SCRIPT), os.pardir, "assets", "config.default.yaml")
+        with open(config, encoding="utf-8") as handle:
+            text = handle.read()
+
+        def flat(node, prefix=""):
+            for key, value in node.items():
+                path = f"{prefix}.{key}" if prefix else str(key)
+                if isinstance(value, dict):
+                    yield from flat(value, path)
+                elif not isinstance(value, list):
+                    yield path, value
+
+        self.assertEqual(module.shipped_values(text), dict(flat(yaml.safe_load(text))))
+
+    def test_shipped_claims_read_the_phrasings_the_docs_use(self):
+        text = "\n".join([
+            "`browser.enabled`, ships true; administrators only.",
+            "",
+            "Reads use `web.firecrawl.enabled` (ships off; opt in).",
+            "",
+            "`diagnostics.logs_enabled` ships as the literal boolean true for admins.",
+            "",
+            "`web.goal_web_default` (ships `all`) picks the mode.",
+            "",
+            "`agentic.gh_timeout_sec` (ships 30) bounds each call.",
+            "",
+            "Check `notifications.enabled` and `agentic.deepagent_github.retrieval.enabled`",
+            "remain false in shipped YAML.",
+            "",
+            "Writes ship closed: `agentic.enabled` stays shut.",
+            "",
+            "`netconnect.enabled` and every tier flag ship false.",
+            "",
+        ])
+        self.assertEqual(list(module.shipped_claims(text)), [
+            (1, "browser.enabled", "true"),
+            (3, "web.firecrawl.enabled", "off"),
+            (5, "diagnostics.logs_enabled", "true"),
+            (7, "web.goal_web_default", "`all`"),
+            (9, "agentic.gh_timeout_sec", "30"),
+            # Wrapped across lines; only the key nearest the verb is claimed.
+            (12, "agentic.deepagent_github.retrieval.enabled", "false"),
+            (16, "netconnect.enabled", "false"),
+        ])
+
+    def test_claims_compare_only_what_the_config_confirms(self):
+        values = {"web.search.result_reads.arxiv_pdf": True, "a.enabled": True, "b.enabled": False,
+                  "web.carry_forward_sources": 0, "web.mode": "all", "x.endpoint": None}
+        self.assertEqual(module.resolve_key("result_reads.arxiv_pdf", values), ("web.search.result_reads.arxiv_pdf", False))
+        self.assertEqual(module.resolve_key("enabled", values), (None, False))
+        self.assertEqual(module.resolve_key("a.enabled", values), ("a.enabled", True))
+        self.assertIs(module.agrees(module.claimed("off"), False), True)
+        self.assertIs(module.agrees(module.claimed("closed"), True), False)
+        self.assertIs(module.agrees(module.claimed("`all`"), "all"), True)
+        self.assertIs(module.agrees(module.claimed("30"), 30), True)
+        self.assertIsNone(module.agrees(module.claimed("off"), 0))
+        self.assertIsNone(module.agrees(module.claimed("true"), None))
+
 class RepositoryTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -313,6 +398,65 @@ class RepositoryTests(unittest.TestCase):
 
     def test_a_missing_base_is_a_usage_error(self):
         self.assertEqual(self.lint("--base", "origin/absent")[0], 2)
+
+    def config(self, browser="false", retrieval="true"):
+        self.write("assets/config.default.yaml", "\n".join([
+            "browser:",
+            f"  enabled: {browser}",
+            "agentic:",
+            "  deepagent_github:",
+            "    retrieval:",
+            f"      enabled: {retrieval}",
+            "",
+        ]))
+
+    def test_a_flipped_shipped_value_flags_prose_that_still_states_the_old_one(self):
+        # The c8ae0f0 shape: the config flips; docs elsewhere keep the old value.
+        self.config()
+        self.write("docs/DESKTOP.md", "The browser (`browser.enabled`, ships false; admins only).\n")
+        self.write("docs/OTHER.md", "Retrieval (`agentic.deepagent_github.retrieval.enabled` ships true).\n")
+        self.commit("config and docs")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.config(browser="true")
+        code, out = self.lint()
+        self.assertEqual(code, 1, out)
+        self.assertIn("docs/DESKTOP.md:1: error CG009: says `browser.enabled` ships false", out)
+        self.assertNotIn("OTHER.md", out)
+        self.write("docs/DESKTOP.md", "The browser (`browser.enabled`, ships true; admins only).\n")
+        self.assertEqual(self.lint()[0], 0)
+
+    def test_an_added_line_must_state_the_shipped_value(self):
+        self.config()
+        self.commit("config")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        # The #960 shape: a skill says retrieval ships false; it ships true.
+        self.write(".claude/skills/guard/SKILL.md", "Check `agentic.deepagent_github.retrieval.enabled`\nremains false in shipped YAML.\n")
+        self.write("docs/SUFFIX.md", "Use `retrieval.enabled` (ships off).\n")
+        code, out = self.lint()
+        self.assertEqual(code, 1, out)
+        self.assertIn(".claude/skills/guard/SKILL.md:2: error CG009", out)
+        self.assertIn("docs/SUFFIX.md:1: warning CG009: says `retrieval.enabled` ships off", out)
+
+    def test_an_untouched_wrong_line_is_not_this_diffs_finding(self):
+        self.config()
+        self.write("docs/OLD.md", "Line one.\n\n`browser.enabled` ships true.\n")
+        self.commit("old prose")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.write("docs/OLD.md", "Line one, edited.\n\n`browser.enabled` ships true.\n")
+        code, out = self.lint()
+        self.assertNotIn("CG009", out)
+
+    def test_staged_scope_reads_the_staged_config_and_docs(self):
+        self.config()
+        self.write("docs/DESKTOP.md", "`browser.enabled` ships false.\n")
+        self.commit("base")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.config(browser="true")
+        self.git("add", "-A")
+        self.config()
+        code, out = self.lint("--staged")
+        self.assertEqual(code, 1, out)
+        self.assertIn("docs/DESKTOP.md:1: error CG009", out)
 
 
 if __name__ == "__main__":

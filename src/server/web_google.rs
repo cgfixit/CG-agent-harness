@@ -1105,9 +1105,12 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_connection_to_public_google_is_a_provider_failure_not_a_refusal() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only an ephemeral loopback port.
-        let address = listener.local_addr().unwrap();
-        drop(listener); // nothing listens: connection refused, no status ever arrives
+        // Bound but never listening: connections are refused, and the port
+        // stays reserved for the whole test. Dropping a listener instead let
+        // a parallel test's fake Google take the port and answer "blocked".
+        let reserved = tokio::net::TcpSocket::new_v4().unwrap();
+        reserved.bind("127.0.0.1:0".parse().unwrap()).unwrap(); // DevSkim: ignore DS162092 because the fixture binds only an ephemeral loopback port.
+        let address = reserved.local_addr().unwrap();
         let (web, audit, dir) = public_tool(address);
         for query in ["veeam first", "veeam second"] {
             let err = public_search(&web, &audit, query).await.unwrap_err();
@@ -1115,6 +1118,7 @@ mod tests {
         }
         assert_eq!(cooldown_lines(&dir), 0, "a blip must not start a pause");
         assert!(web.search_cooldown.holding("google-public", Instant::now()).is_none());
+        drop(reserved);
     }
 
     #[tokio::test]

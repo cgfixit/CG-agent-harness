@@ -805,13 +805,18 @@ mod tests {
             role: "user".into(),
             content: "hi".into(),
         }];
-        // Without the held deadline the configured 1s timeout cuts the 1.5s reply.
-        let started = std::time::Instant::now();
-        assert!(client.chat("s", &user, Some("slow"), 8, 0.0).await.is_err());
+        // Without the held deadline the configured 1s timeout cuts the 1.5s
+        // reply. A deadline error proves the cut: had the cleared override
+        // still applied, the reply would have arrived. The outer deadline and
+        // reqwest's own timeout share that 1s, so either may fire first; any
+        // other error fails. No wall-clock bound, so a loaded runner cannot
+        // fail it.
+        let cut = client.chat("s", &user, Some("slow"), 8, 0.0).await.unwrap_err();
         assert!(
-            started.elapsed() < Duration::from_millis(1400),
-            "{:?}",
-            started.elapsed()
+            cut.details["error"] == "ReadTimeout" || cut.message == "model request deadline exceeded",
+            "not a deadline cut: {} {}",
+            cut.message,
+            cut.details
         );
         let ok = client
             .chat_with_deadline("s", &user, "slow", 8, 0.0, held)

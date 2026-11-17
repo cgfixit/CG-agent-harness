@@ -403,8 +403,17 @@ mod tests {
         let pairs: Vec<_> = (1..=10).map(|last| (addr(last), 22)).collect();
         let report = dialer.probe_all(&pairs).await;
         assert_eq!(report.truncated, Some(Truncation::Deadline));
-        assert!(report.dials < 10);
-        assert!(report.elapsed < Duration::from_millis(1_000), "{:?}", report.elapsed);
+        // A dial never returns before its 80 ms delay, so two dials already
+        // pass the 150 ms deadline and a third can never start, however
+        // loaded the runner. A second dial started at 80 ms or later gets
+        // 70 ms or less, clipped to the deadline, so it times out.
+        assert!((1..=2).contains(&report.dials), "{} dials", report.dials);
+        if let Some(second) = report.probes.get(1) {
+            assert_eq!(second.result, ProbeResult::Timeout);
+        }
+        // An unbounded run of these ten dials takes 800 ms, so this bound
+        // catches only a hang; the counts above prove the deadline.
+        assert!(report.elapsed < Duration::from_secs(5), "{:?}", report.elapsed);
     }
 
     #[tokio::test]

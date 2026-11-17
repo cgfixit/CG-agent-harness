@@ -29,12 +29,23 @@ mod tests {
             Ok(lock) => lock,
             Err(err) => panic!("first lock should succeed: {err}"),
         };
-        let started = std::time::Instant::now();
-        let err = match HomeLock::acquire(dir.path()) {
-            Err(err) => err,
-            Ok(_) => panic!("second lock must fail closed"),
-        };
-        assert!(started.elapsed() < std::time::Duration::from_millis(500));
+        // A real wait slows every try; scheduler noise rarely hits all three.
+        let mut fastest = std::time::Duration::MAX;
+        let mut refused = None;
+        for _ in 0..3 {
+            let started = std::time::Instant::now();
+            let err = match HomeLock::acquire(dir.path()) {
+                Err(err) => err,
+                Ok(_) => panic!("second lock must fail closed"),
+            };
+            fastest = fastest.min(started.elapsed());
+            refused = Some(err);
+        }
+        assert!(
+            fastest < std::time::Duration::from_millis(500),
+            "busy home lock waited: {fastest:?}"
+        );
+        let err = refused.expect("three refusals");
         let text = err.to_string();
         assert!(text.contains("another process holds this home"), "{text}");
         assert!(text.contains("the server or a certificate renew"), "{text}");
