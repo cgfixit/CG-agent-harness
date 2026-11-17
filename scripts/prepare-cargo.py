@@ -79,11 +79,18 @@ def main():
         # TemporaryDirectory to remove on every Python 3 version.
         stage = Path(temporary) / "snapshot"
         stage.mkdir(mode=0o700)
-        cmd = [str(sysroot / "bin" / executable("cargo")), "vendor", "--locked", "--versioned-dirs"]
+        cmd = [str(sysroot / "bin" / executable("cargo")), "vendor", "--locked", "--versioned-dirs",
+               "--manifest-path", str(repo / "Cargo.toml")]
         if not args.online:
             cmd.append("--offline")
         cmd.append(str(stage / "vendor"))
-        config = subprocess.check_output(cmd, cwd=repo, env=env, text=True)
+        # Cargo asks rustc for its version while resolving (edition 2024, or an
+        # MSRV fallback). Run it from tool_cwd, so no candidate .cargo/config
+        # or rust-toolchain file is read, and pin the selected compiler with no
+        # wrapper: the candidate cannot choose what that query executes.
+        vendor_env = dict(env, RUSTC=str(sysroot / "bin" / executable("rustc")),
+                          RUSTC_WRAPPER="", RUSTC_WORKSPACE_WRAPPER="")
+        config = subprocess.check_output(cmd, cwd=tool_cwd, env=vendor_env, text=True)
         if (repo / "Cargo.lock").read_bytes() != lock:
             raise SystemExit("lockfile changed during preparation; refusing snapshot")
         vendored = stage / "vendor"

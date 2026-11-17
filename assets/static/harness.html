@@ -3918,7 +3918,7 @@ async function runSlash(line, webCommand) {
             if (revision === sessionRevision) sendBtn.disabled = false;
           }
         } else if (sub === 'runs') {
-          const result = agentRecord(await api('/api/agent/runs'));
+          const result = agentRecord(await api('/api/agent/runs', 'GET', undefined, AGENT_CLI_TIMEOUT_MS));
           if (!result) break;
           sys(table(result.runs.map(r => [r.run_id, r.status, r.error || '']), ['run', 'status', 'recovery']));
           if (result.truncated) sys('Showing a bounded set of retained runs. Older records remain on disk.');
@@ -4032,7 +4032,7 @@ async function runSlash(line, webCommand) {
         }
         if (arg === 'task') {
           if (!currentSession) { sys('No active session.'); break; }
-          const r = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal-stage');
+          const r = await api('/api/sessions/' + encodeURIComponent(currentSession) + '/goal-stage', 'GET', undefined, AGENT_STATUS_TIMEOUT_MS);
           if (staleReview()) break;
           sys(JSON.stringify(r,null,2));
           if (r.status === 'staged' && r.stage) { pendingAgentRun = r.stage.request; showPendingAgentRun(); sys('Recovered staged request; review and explicitly confirm to run.'); }

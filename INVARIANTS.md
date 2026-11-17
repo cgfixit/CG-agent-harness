@@ -487,8 +487,10 @@ Unrelated staged content refuses approval and is never incorporated or erased.
 The shared agentic Git boundary disables ambient Git configuration, executable
 extensions, replacement objects and automatic maintenance. Unsupported local
 configuration, graft/attribute/alternate metadata and content-transforming
-attributes refuse the operation. Inspection uses the same boundary. No server
-or shim imports this agentic helper.
+attributes (including the legacy `crlf`) refuse the operation. Off Unix, where
+file modes cannot be read, approving a path that is executable or a symbolic
+link in the base refuses rather than committing it as `100644`. Inspection uses
+the same boundary. No server or shim imports this agentic helper.
 
 Runs retain their origin from candidate creation and the exact approved commit.
 Push checks those pins, refuses a local branch head that differs from the approved

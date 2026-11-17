@@ -434,6 +434,8 @@ fn capture_ceiling_accepts_the_exact_bound_and_refuses_one_more_byte() {
     assert_eq!(ok.stdout.len(), process::MAX_CAPTURE_BYTES);
     assert!(ok.stderr.is_empty(), "{}", ok.stderr);
     let over = run(process::MAX_CAPTURE_BYTES + 1).expect_err("one extra byte must be refused");
+    // Read-only callers (the retrieval inventory) key their limit on this.
+    assert!(over.is_output_limit(), "{over}");
     match over {
         ProcessError::Capture(msg) => {
             assert!(msg.contains("output exceeded"), "{msg}");
