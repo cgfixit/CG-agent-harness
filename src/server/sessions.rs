@@ -550,6 +550,15 @@ impl SessionStore {
         self.summaries.lock().unwrap_or_else(|p| p.into_inner()).remove(&path);
         Ok(())
     }
+
+    /// Test hook: holds the store-wide lock, so every session mutation waits
+    /// until the guard drops. Reads (`get`, `list`) do not take it. Lets a test
+    /// park a writer, such as a chat turn's exchange write, at a known point.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn hold_writes(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.lock.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     pub fn for_owner(&self, owner: &str) -> OwnedSessionStore<'_> {
         OwnedSessionStore {
             store: self,
