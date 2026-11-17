@@ -415,7 +415,7 @@ async fn a_full_proposal_list_refuses_before_the_model_is_asked() {
 #[tokio::test]
 async fn repeats_of_a_fact_or_a_pending_or_rejected_proposal_are_not_proposed_again() {
     let model = start_mock_model().await;
-    let s = spawn_server(&model.base_url(), options("insights")).await;
+    let s = spawn_server(&model.base_url(), options("both")).await;
     let store = s.state.structured_memory.as_ref().unwrap();
     store
         .add_fact("local", "The operator uses metric units.", "pref", "fixture fact")
@@ -472,6 +472,28 @@ async fn repeats_of_a_fact_or_a_pending_or_rejected_proposal_are_not_proposed_ag
         .lines()
         .any(|l| l.contains("memory_suggestion_repeats_skipped") && l.contains(r#""count":2"#)));
 
+    // The same text as a summary and as an insight in one output is one memory.
+    {
+        let id = stage(store, "local");
+        let both: Vec<Value> = ["session_summary", "insight"]
+            .iter()
+            .map(|category| {
+                json!({"action":"add", "category":category, "content":"The operator deploys on Fridays.",
+                "confidence":0.9, "sensitivity":"normal", "source_refs":[id]})
+            })
+            .collect();
+        model.set_reply(ok_reply(&json!({"candidates":both}).to_string(), 10, 20));
+        suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "Noted.", "Acknowledged.");
+    }
+    settled(&s, "local").await;
+    assert_eq!(
+        pending_text(store)
+            .iter()
+            .filter(|text| text.as_str() == "The operator deploys on Fridays.")
+            .count(),
+        1
+    );
+
     // A rejected proposal is not suggested again either.
     let concise = store
         .list_pending_proposals("local")
@@ -484,7 +506,12 @@ async fn repeats_of_a_fact_or_a_pending_or_rejected_proposal_are_not_proposed_ag
         .unwrap();
     run(&["The operator prefers concise answers."]);
     settled(&s, "local").await;
-    assert_eq!(pending_text(store), ["The operator works in Rust."]);
+    let mut pending = pending_text(store);
+    pending.sort();
+    assert_eq!(
+        pending,
+        ["The operator deploys on Fridays.", "The operator works in Rust."]
+    );
 }
 
 #[tokio::test]

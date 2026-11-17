@@ -131,10 +131,10 @@ goal; the marker is unverified model advice, not evidence of completion.
 Strict parsing, source membership, sensitivity, confidence and fact bindings
 govern idempotent `session_summary` or `insight` proposals. Identical normalized
 candidates count as rejected duplicates within an output; different source
-bindings stay distinct. Across outputs, text matching an active fact or a pending
-or rejected proposal, ignoring case, spacing and trailing punctuation, also counts
-as rejected and is audited as `memory_suggestion_repeats_skipped`, so repeats
-cannot fill the pending cap. Generation uses temperature 0 and 1024 output tokens,
+bindings stay distinct. A suggestion whose text matches an active fact, a pending
+or rejected proposal, or an earlier candidate in the same output, ignoring case,
+spacing, trailing punctuation and category, also counts as rejected and is audited
+as `memory_suggestion_repeats_skipped`, so repeats cannot fill the pending cap. Generation uses temperature 0 and 1024 output tokens,
 without tools, web, recalled facts or cloud egress, and requests
 `response_format: {"type":"json_object"}` locally, as consolidation does.
 Backend refusals and malformed replies remain visible failures; schema and
