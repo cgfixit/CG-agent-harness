@@ -39,6 +39,17 @@ pub enum ProcessError {
     Capture(String),
 }
 
+/// How a `Capture` refusal of output past `MAX_CAPTURE_BYTES` begins.
+const OUTPUT_LIMIT: &str = "output exceeded";
+
+impl ProcessError {
+    /// The child's output passed `MAX_CAPTURE_BYTES` and was refused whole, as
+    /// opposed to a timeout or a spawn, pipe or reap failure.
+    pub fn is_output_limit(&self) -> bool {
+        matches!(self, Self::Capture(message) if message.starts_with(OUTPUT_LIMIT))
+    }
+}
+
 pub struct RunSpec<'a> {
     pub argv: &'a [String],
     pub cwd: Option<&'a Path>,
@@ -403,5 +414,25 @@ mod windows_tests {
         // Causal, not tight: before the fix this returned only when the child
         // exited on its own (120 s), so any return well short of that is the deadline.
         assert!(start.elapsed() < Duration::from_secs(60), "{:?}", start.elapsed());
+    }
+}
+
+#[cfg(test)]
+mod output_limit_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_capture_ceiling_is_an_output_limit() {
+        let over = ProcessError::Capture(format!(
+            "{OUTPUT_LIMIT} {MAX_CAPTURE_BYTES} bytes; incomplete output refused"
+        ));
+        assert!(over.is_output_limit());
+        for other in [
+            ProcessError::Capture("pipe read failed: broken pipe".into()),
+            ProcessError::Capture("command cancelled".into()),
+            ProcessError::Timeout { timeout_sec: 1.0 },
+        ] {
+            assert!(!other.is_output_limit(), "{other}");
+        }
     }
 }
