@@ -358,7 +358,13 @@ pub async fn agent_job_create(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<AgentRunRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
-    start_job(state, req, super::auth::context_owner(user), None)
+    let owner = super::auth::context_owner(user);
+    // `start_job` reads the session, claims the run gates, persists the job
+    // store and claims the goal stage. All of it runs, unchanged and in order,
+    // in one blocking-pool closure: splitting it would put an await between
+    // job registration and the stage claim, where a dropped request could
+    // strand a registered job whose task never starts.
+    super::structured_memory::off_worker(move || start_job(state, req, owner, None)).await
 }
 
 pub(crate) fn start_job(

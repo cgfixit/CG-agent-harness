@@ -66,12 +66,17 @@ pub async fn adopt_session(
     ValidJson(request): ValidJson<AdoptRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = legacy_owner(&state, user)?;
-    let session = state
-        .store
-        .adopt_legacy(&id, &owner)
-        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
-    state.audit.log(json!({"event":"session_legacy_adopted","owner_id":owner,"session_id":id,"reason_chars":request.reason.trim().chars().count()}));
-    Ok(Json(json!({"session":session.summary(),"goal_approval_cleared":true})))
+    // The adoption write and its audit line share one blocking-pool closure: a
+    // dropped request cannot leave an adopted session without its audit record.
+    super::structured_memory::off_worker(move || {
+        let session = state
+            .store
+            .adopt_legacy(&id, &owner)
+            .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+        state.audit.log(json!({"event":"session_legacy_adopted","owner_id":owner,"session_id":id,"reason_chars":request.reason.trim().chars().count()}));
+        Ok(Json(json!({"session":session.summary(),"goal_approval_cleared":true})))
+    })
+    .await
 }
 
 fn export_pins_for_owner(

@@ -121,21 +121,27 @@ pub async fn select(
     ValidJson(req): ValidJson<StyleRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
+    // Overlay files, the soul budget and the session JSON are all read and
+    // written on the blocking pool, in one closure with the response payload.
+    super::structured_memory::off_worker(move || select_blocking(&state, &owner, &req)).await
+}
+
+fn select_blocking(state: &AppState, owner: &str, req: &StyleRequest) -> ApiResult<Json<Value>> {
     let name = req.name.trim();
     if name.eq_ignore_ascii_case("off") {
         state
             .store
-            .for_owner(&owner)
+            .for_owner(owner)
             .set_style(&req.session_id, None)
             .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
         return Ok(Json(payload(
-            &state,
+            state,
             Some(&req.session_id),
             None,
             "cleared; subsequent local chat turns omit the style section",
         )));
     }
-    let load = load_style_within(&state.home.root, name, style_budget(&state));
+    let load = load_style_within(&state.home.root, name, style_budget(state));
     if !load.loaded {
         // A catalogued overlay that fails to load is a file problem the
         // operator can act on, not an unknown name: say which file and why
@@ -177,11 +183,11 @@ pub async fn select(
     }
     state
         .store
-        .for_owner(&owner)
+        .for_owner(owner)
         .set_style(&req.session_id, Some(load.name.as_str()))
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     Ok(Json(payload(
-        &state,
+        state,
         Some(&req.session_id),
         Some(load.name.as_str()),
         "included in subsequent local chat turns and /prompt; cloud chat still sends only the new user message",
