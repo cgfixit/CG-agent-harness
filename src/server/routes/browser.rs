@@ -6,7 +6,8 @@
 //! with the browser environment allowlist, so the server spawns nothing itself
 //! and a timeout kills the child's whole tree. Non-public IP-literal origins
 //! and origins on the shared block list are refused; the block list is read
-//! again before each model turn (in the child) and before delivery.
+//! again before each model turn (in the child) and before delivery. The child
+//! is told chat's local model selection, so `/model use` applies to it.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -108,6 +109,8 @@ pub async fn run(
         format!("--sidecar={}", cfg.str_or("browser.sidecar", "browser/sidecar.mjs")),
         format!("--max-turns={}", cfg.limit("browser.max_turns")),
     ];
+    let model = task_model(&state.backend.source, state.local_memory_model());
+    argv.extend(model.iter().map(|model| format!("--model={model}")));
     argv.extend(grants.iter().map(|origin| format!("--origin={origin}")));
     let timeout = Duration::from_secs(cfg.limit("browser.timeout_sec"));
     let result = crate::shim::run_argv_with_env(&argv, &cwd, timeout, child_environment()).await;
@@ -117,6 +120,7 @@ pub async fn run(
         "event": "browser.run",
         "owner": owner,
         "origins": grants,
+        "model": model,
         "task_sha256": crate::common::sha256_hex(&req.task),
         "exit": exit,
     }));
@@ -153,6 +157,14 @@ pub async fn run(
         body["reason"] = json!(reason.chars().take(300).collect::<String>());
     }
     Ok(Json(body))
+}
+
+/// The model tag the child is told to use: chat's `/model use` selection when
+/// it is local, else the configured local model. `None` leaves the child on
+/// `models.local_llm.model`. The child talks only to the configured primary
+/// endpoint, so a server on its fallback backend holds no tag valid there.
+fn task_model(backend_source: &str, model: String) -> Option<String> {
+    (backend_source == "primary" && !model.trim().is_empty()).then_some(model)
 }
 
 fn write_task_file(task: &str) -> ApiResult<tempfile::NamedTempFile> {
@@ -198,6 +210,16 @@ fn non_public_literal(origin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_primary_backend_names_the_task_model() {
+        assert_eq!(
+            task_model("primary", "gemma4:26b".into()).as_deref(),
+            Some("gemma4:26b")
+        );
+        assert_eq!(task_model("fallback", "lmstudio-tag".into()), None);
+        assert_eq!(task_model("primary", " ".into()), None);
+    }
 
     #[test]
     fn literal_origins_must_be_public() {
