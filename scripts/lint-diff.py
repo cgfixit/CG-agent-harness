@@ -23,13 +23,6 @@ index snapshot, so unstaged edits neither hide nor cause a finding.
                  that merged it until #888) or in the self-manual INPUTS
         warning  ... still has a DOCS_BUDGET row (dead, not a CI failure),
                  or another tracked file still names it
-
-tests/invariant_guard.rs stays the authority for CG002-CG004 and CG008's
-exempt entries; this is the fast copy. CG006 is a warning: its pattern comes
-from the alerts above, not from DevSkim's rule files. Hex-digest literals
-(DS173237) are not linted: 24 unsuppressed runs on main drew no open alert,
-so a pattern built from the alerts would flag lines DevSkim does not. Errors exit 1, warnings exit 0, a bad invocation exits 2.
-
   CG009 error    Markdown says a full config key ships a value that
                  assets/config.default.yaml does not (browser.enabled after
                  #887, fixed in 49db7bf; #785; #66; the config-guard skill
@@ -39,6 +32,13 @@ so a pattern built from the alerts would flag lines DevSkim does not. Errors exi
         warning  ... the same, for a key named by a unique suffix
                  (`result_reads.arxiv_pdf`); a claim the config cannot
                  confirm (unknown key, mapping, null, other type) is skipped
+
+tests/invariant_guard.rs stays the authority for CG002-CG004 and CG008's
+exempt entries; this is the fast copy. CG006 is a warning: its pattern comes
+from the alerts above, not from DevSkim's rule files. Hex-digest literals
+(DS173237) are not linted: 24 unsuppressed runs on main drew no open alert,
+so a pattern built from the alerts would flag lines DevSkim does not.
+Errors exit 1, warnings exit 0, a bad invocation exits 2.
 
 Usage: python3 scripts/lint-diff.py [--base REF | --staged]
 """
