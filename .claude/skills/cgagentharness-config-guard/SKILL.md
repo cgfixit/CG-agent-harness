@@ -43,8 +43,9 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
   cargo test --test common_layer -- quoted_true_is_off security_switches_require_boolean_values --nocapture
 ```
 
-Check `notifications.enabled` and `agentic.deepagent_github.retrieval.enabled`
-remain false in shipped YAML. When the change is load-bearing for writes/jails,
+Check `notifications.enabled` remains false and
+`agentic.deepagent_github.retrieval.enabled` remains true in shipped YAML
+(retrieval is read-only and separate from the write gates; see `AGENTS.md`). When the change is load-bearing for writes/jails,
 also run `real_repo_loop` writer tests and `agentic_foundations`. Diff-read
 `assets/config.default.yaml` for accidental quoted booleans or opened gates.
 
