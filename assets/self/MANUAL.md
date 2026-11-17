@@ -376,16 +376,20 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - A coding check refuses with `HARD_SANDBOX_UNAVAILABLE` on Linux → Install bubblewrap. `agentic.sandbox.allow_linux_netns_fallback: true` accepts network isolation with the host filesystem visible (boundary)
 - Chat takes too long or times out → Check inventory, `/model` and Setup diagnostics; cancel with `/loop stop` rather than resubmitting
 - Chat reports `502 HARNESS_LLM_ERROR` with `model server returned HTTP ...` → Check the endpoint, model and model-server logs; the harness drops the error body unread and never logs it
-- `Address already in use` when starting `serve` → `lsof -i :8790`; stop only a known owner or choose another `--port`. Each server needs its own home
 
 ## troubleshooting: symptom to fix (part 5)
 
+- A short chat prompt fails with `HARNESS_LLM_ERROR` `model output was truncated` → Compare `tools_offered`, `finish_reason` and `completion_tokens` on `chat_model_call` lines in `logs/audit.jsonl` (no text). `probe-tool-repeat.py`…
+- `Address already in use` when starting `serve` → `lsof -i :8790`; stop only a known owner or choose another `--port`. Each server needs its own home
 - `/agent` reports `gh: command not found` or "Agentic layer disabled" → `brew install gh && gh auth login`; follow coding config, then restart
 - A write action is refused → See coding console steps and the kill switch; check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE`
 - Managed-key save or legacy migration fails → Keep plaintext opt-in off unless required and do not broaden file access; see credential privacy and recovery
 - `/diag` says `DIAG_DISABLED` → Set literal `true`, then restart
 - `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` → Use an admin or `portal_auditor` account
 - A read or `/diag inject` says `DIAG_SCANNER_REFUSED` → Narrow with `--event`, `--since` or `--last`; nothing from it is shown or staged
+
+## troubleshooting: symptom to fix (part 6)
+
 - Chat says `DIAG_SURFACE_FORBIDDEN` → Send a local turn first, or `/diag forget`
 - `/diag unslop` says `DIAG_NOT_FOUND` → `/diag` reads only `<home>/logs/unslop.jsonl`
 

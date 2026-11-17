@@ -628,7 +628,7 @@ structured_memory:
   suggestion_supported: [{ model: "qwen3.8:27b-mlx-cg", modes: [summaries, insights, both] }]
   suggestion_max_input_chars: 8000 # clamped to 256–32000; total across input/output, split equally
   suggestion_max_queue: 8 # clamped to 1–32; queued inputs; one additional generation may be running
-  suggestion_queue_ttl_secs: 300 # clamped to 1–3600; volatile inputs expire; restart drops them
+  suggestion_queue_ttl_secs: 1800 # clamped to 1–3600; volatile inputs expire; restart drops them
   suggestion_idle_ms: 2000 # clamped to 10–30000
   status_poll_ms: 30000 # clamped to 250–30000; visible Memory pane only
   max_facts_per_owner: 64 # clamped to 1–256
