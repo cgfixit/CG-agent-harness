@@ -14,6 +14,13 @@ ignore = [
     # Re-reviewed 2026-11-15: serde_norway keeps a transpiled libyaml, and serde-saphyr types untyped
     # scalars differently (`on` becomes true, `0755` a number). Next review by 2027-02-15.
     { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml unmaintained via serde_yaml_ng; no safe upgrade; parses operator-owned config only; replace YAML crate later" },
+    # Added 2026-11-17 (operator-approved). RUSTSEC-2026-0543 and RUSTSEC-2026-0555
+    # (unmaintained, no safe upgrade): chrono and chrono-tz evaluate schedule times in
+    # src/server/schedule_time.rs, and chrono also comes through cron, rmcp and schemars.
+    # Owner/removal condition: docs/DEPENDENCIES.md#retained-constraints (weekly watch).
+    # Next review by 2027-02-17.
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained; no safe upgrade; schedule times directly and via cron, rmcp and schemars; migrate to a maintained time crate later" },
+    { id = "RUSTSEC-2026-0555", reason = "chrono-tz unmaintained; no safe upgrade; schedule time zones; migrate together with chrono" },
 ]
 
 [licenses]
