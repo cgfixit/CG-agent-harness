@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -33,6 +33,14 @@ const MAX_REPLY_BYTES: u64 = 4 * 1024 * 1024;
 /// up to 14 s to settle, then an observation with 5 s steps) fits well inside,
 /// and three failures in a row still end before the default 300 s task deadline.
 const SIDECAR_CALL_TIMEOUT: Duration = Duration::from_secs(75);
+/// One model call when no task deadline was given (a direct CLI run).
+const MODEL_CALL_TIMEOUT: Duration = Duration::from_secs(180);
+/// Why a task with a deadline stopped once the deadline passed.
+const OUT_OF_TIME: &str = "the task's time budget ran out";
+/// Prompt tokens a task needs room for, by the bytes/4 estimate: the tool list,
+/// the system text, a `MAX_TASK_CHARS` task, 12 turns of calls and one live
+/// observation at the sidecar's caps (older ones are retired). An estimate.
+pub const TASK_PROMPT_TOKENS: u64 = 12_000;
 /// Characters of a link target an observation shows the model.
 const MAX_SHOWN_HREF_CHARS: usize = 300;
 
@@ -510,11 +518,13 @@ fn report_json(report: &VerifyReport, base: &str, head: &str) -> Value {
 
 /// Run one operator task with the local model. Grants come only from
 /// `origins`. The report is `finished` once the model calls `finish` or replies
-/// without a tool call; a spent turn budget is not success.
+/// without a tool call; a spent turn budget is not success. With a `deadline`,
+/// a model call gets the time left, not a fixed limit, and no turn starts
+/// after it, so the report is printed before the server stops the process.
 pub fn run_task(
     script: &Path,
     headless: bool,
-    (model, api): (&str, &str),
+    (model, api, deadline): (&str, &str, Option<Instant>),
     task: &str,
     origins: &[String],
     max_turns: usize,
@@ -526,14 +536,19 @@ pub fn run_task(
     let grants = session.grant_strings();
     let mut sidecar = Sidecar::start(script, &session, headless, allow_private)?;
     let tools = browser_tools();
-    let mut chat = |messages: &[Value]| ollama_chat(api, model, messages, &tools);
+    let mut chat = |messages: &[Value]| {
+        ollama_chat(api, model, messages, &tools, call_timeout(deadline))
+            .map_err(|err| out_of_time(deadline).unwrap_or(err))
+    };
     let report = model_loop(
         &mut session,
         &mut sidecar,
         &mut chat,
         // A fixture session reaches only the loopback page this binary serves,
         // which the public-URL block list cannot check and would always refuse.
-        &|session: &Session| (!allow_private).then(|| policy_refusal_now(session)).flatten(),
+        &|session: &Session| {
+            out_of_time(deadline).or_else(|| (!allow_private).then(|| policy_refusal_now(session)).flatten())
+        },
         task,
         &grants,
         max_turns,
@@ -577,7 +592,15 @@ fn model_loop(
             stopped = Some(reason);
             break;
         }
-        let response = chat(&messages)?;
+        let response = match chat(&messages) {
+            Ok(response) => response,
+            // Nothing to report before the first reply. Later, the steps taken are kept.
+            Err(err) if turn == 0 => return Err(err),
+            Err(err) => {
+                stopped = Some(err);
+                break;
+            }
+        };
         let message = response
             .get("message")
             .cloned()
@@ -691,7 +714,7 @@ pub fn run_qwen_fixture(script: &Path, headless: bool, model: &str, api: &str) -
     let mut report = run_task(
         script,
         headless,
-        (model, api),
+        (model, api, None),
         &task,
         &[origin],
         MAX_TURNS,
@@ -820,8 +843,25 @@ fn browser_tools() -> Value {
     ])
 }
 
-fn ollama_chat(api: &str, model: &str, messages: &[Value], tools: &Value) -> Result<Value, String> {
+/// The time one model call gets: what is left of the task, or the fixed limit.
+fn call_timeout(deadline: Option<Instant>) -> Duration {
+    deadline.map_or(MODEL_CALL_TIMEOUT, |deadline| {
+        deadline
+            .saturating_duration_since(Instant::now())
+            .max(Duration::from_secs(1))
+    })
+}
+
+fn out_of_time(deadline: Option<Instant>) -> Option<String> {
+    deadline
+        .is_some_and(|deadline| Instant::now() >= deadline)
+        .then(|| OUT_OF_TIME.to_string())
+}
+
+fn ollama_chat(api: &str, model: &str, messages: &[Value], tools: &Value, timeout: Duration) -> Result<Value, String> {
     // No options block: context length is server-side, so num_ctx is never sent.
+    // think stays off whatever reasoning_effort says: a reasoning pass on each
+    // of up to 40 turns does not fit a task deadline on a local model.
     let payload = json!({
         "model": model,
         "messages": messages,
@@ -829,7 +869,7 @@ fn ollama_chat(api: &str, model: &str, messages: &[Value], tools: &Value) -> Res
         "stream": false,
         "think": false,
     });
-    let response = ollama_client(Duration::from_secs(180))?
+    let response = ollama_client(timeout)?
         .post(format!("{api}/api/chat"))
         .json(&payload)
         .send()
@@ -1002,6 +1042,8 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
     let mut task = None;
     let mut origins = Vec::new();
     let mut max_turns = 12usize;
+    let started = Instant::now();
+    let mut deadline = None;
     for raw in args {
         let arg = raw.to_string_lossy();
         let (key, value) = arg.split_once('=').map_or((arg.as_ref(), None), |(k, v)| (k, Some(v)));
@@ -1026,6 +1068,10 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
             ("--max-turns", Some(v)) if v.parse::<usize>().is_ok_and(|n| (1..=40).contains(&n)) => {
                 max_turns = v.parse().unwrap_or(max_turns)
             }
+            // The server's task limit, counted from this process's start.
+            ("--deadline-sec", Some(v)) if v.parse::<u64>().is_ok_and(|n| (1..=1800).contains(&n)) => {
+                deadline = v.parse().ok().map(|n| started + Duration::from_secs(n))
+            }
             _ => {
                 eprintln!("cgagentharness: unexpected or out-of-range browser argument {key}");
                 return 3;
@@ -1049,7 +1095,15 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
                 Ok(pair) => pair,
                 Err(code) => return code,
             };
-            match run_task(&sidecar, headless, (&model, &api), &task, &origins, max_turns, false) {
+            match run_task(
+                &sidecar,
+                headless,
+                (&model, &api, deadline),
+                &task,
+                &origins,
+                max_turns,
+                false,
+            ) {
                 Ok(report) => {
                     println!("{report}");
                     return if report["finished"] == true { 0 } else { 2 };
@@ -1265,7 +1319,14 @@ mod tests {
         );
         let (api, asked) = canned(moved.into_bytes());
         // The page text in `messages` must not be re-posted to the redirect target.
-        let err = ollama_chat(&api, "m", &[json!({"role":"user","content":"page text"})], &json!([])).unwrap_err();
+        let err = ollama_chat(
+            &api,
+            "m",
+            &[json!({"role":"user","content":"page text"})],
+            &json!([]),
+            MODEL_CALL_TIMEOUT,
+        )
+        .unwrap_err();
         assert!(err.contains("307"), "{err}");
         assert!(ollama_get(&api, "/api/ps").is_err());
         assert_eq!(asked.load(Ordering::SeqCst), 2);
@@ -1275,7 +1336,7 @@ mod tests {
         big.resize(big.len() + crate::llm::MAX_RESPONSE_BYTES, b'a');
         big.push(b'"');
         let (api, _) = canned(big);
-        let err = ollama_chat(&api, "m", &[], &json!([])).unwrap_err();
+        let err = ollama_chat(&api, "m", &[], &json!([]), MODEL_CALL_TIMEOUT).unwrap_err();
         assert!(err.contains("too large"), "{err}");
         // A name goes through the loopback-only resolver; a literal does not.
         assert!(ollama_get(&elsewhere, "/api/version").is_ok());
@@ -1465,6 +1526,43 @@ mod tests {
         assert_eq!(report["finished"], false);
         assert!(report["stopped"].as_str().unwrap().starts_with("needs the operator"));
         assert_eq!(report["for_operator"][0]["held"], "POST https://example.com/save");
+    }
+
+    /// A model call that fails after the first turn stops the task with the
+    /// steps already taken; a failed first call is still an error.
+    #[test]
+    fn a_late_model_failure_keeps_the_report() {
+        let origins = vec!["https://example.com".to_string()];
+        let mut session = Session::general(&origins).unwrap();
+        let mut page = ScriptedPage::default();
+        let mut turn = 0;
+        let mut chat = |_: &[Value]| {
+            turn += 1;
+            if turn > 1 {
+                return Err(OUT_OF_TIME.to_string());
+            }
+            Ok(json!({"message": {"role": "assistant", "content": "", "tool_calls": [
+                {"function": {"name": "navigate", "arguments": {"url": "https://example.com/"}}}
+            ]}}))
+        };
+        let report = model_loop(&mut session, &mut page, &mut chat, &|_| None, "task", &origins, 6).unwrap();
+        assert_eq!(report["finished"], false);
+        assert_eq!(report["stopped"], OUT_OF_TIME);
+        assert_eq!(report["model_calls_with_tools"], 1);
+        let mut failing = |_: &[Value]| Err("ollama chat status 404".to_string());
+        assert!(model_loop(&mut session, &mut page, &mut failing, &|_| None, "task", &origins, 6).is_err());
+    }
+
+    #[test]
+    fn a_deadline_bounds_each_model_call() {
+        assert_eq!(call_timeout(None), MODEL_CALL_TIMEOUT);
+        let left = call_timeout(Some(Instant::now() + Duration::from_secs(90)));
+        assert!(left > Duration::from_secs(80) && left <= Duration::from_secs(90));
+        let past = Instant::now().checked_sub(Duration::from_secs(1));
+        assert!(past.is_some());
+        assert_eq!(call_timeout(past), Duration::from_secs(1));
+        assert_eq!(out_of_time(past).as_deref(), Some(OUT_OF_TIME));
+        assert_eq!(out_of_time(None), None);
     }
 
     #[test]
