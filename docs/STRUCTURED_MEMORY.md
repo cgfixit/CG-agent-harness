@@ -131,7 +131,10 @@ goal; the marker is unverified model advice, not evidence of completion.
 Strict parsing, source membership, sensitivity, confidence and fact bindings
 govern idempotent `session_summary` or `insight` proposals. Identical normalized
 candidates count as rejected duplicates within an output; different source
-bindings stay distinct. Generation uses temperature 0 and 1024 output tokens,
+bindings stay distinct. A suggestion whose text matches an active fact, a pending
+or rejected proposal, or an earlier candidate in the same output, ignoring case,
+spacing, trailing punctuation and category, also counts as rejected and is audited
+as `memory_suggestion_repeats_skipped`, so repeats cannot fill the pending cap. Generation uses temperature 0 and 1024 output tokens,
 without tools, web, recalled facts or cloud egress, and requests
 `response_format: {"type":"json_object"}` locally, as consolidation does.
 Backend refusals and malformed replies remain visible failures; schema and
@@ -145,11 +148,13 @@ The shipped YAML lists each bound with its clamp. `suggestion_max_input_chars`
 (8000) is the total across input and output, split equally and clipped on
 character boundaries. `suggestion_max_queue` (8) counts waiting jobs globally,
 plus at most one active generation; waiting input expires after
-`suggestion_queue_ttl_secs` (300), while active inference uses the chat-client
+`suggestion_queue_ttl_secs` (1800, long enough to outlast a stretch of chat turns that keep preempting it), while active inference uses the chat-client
 timeout. `status_poll_ms` (30000) is halved while generating.
 `min_consolidation_confidence` and `max_consolidation_candidates` are shared
 with consolidation, and `max_proposals_per_owner` (50; 32 if absent) is the
-pending-proposal capacity.
+pending-proposal capacity. A suggestion is refused before generation when the
+list is full; a run with more proposals than free slots stores the first that fit
+and audits `memory_suggestion_cap_trimmed`.
 
 Accepted inputs receive durable metadata-only `idle` receipts, then become
 `running`. Expiry, disabled gates, source clear, cancellation and inference

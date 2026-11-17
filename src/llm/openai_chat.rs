@@ -250,6 +250,22 @@ pub fn reply_json_text(text: &str) -> &str {
     }
 }
 
+/// The first choice's finish reason as a fixed label, never the server's own
+/// text, so a record of how a call ended cannot carry reply content.
+pub fn finish_reason_label(response: &Value) -> &'static str {
+    match response["choices"][0].get("finish_reason") {
+        None | Some(Value::Null) => "missing",
+        Some(Value::String(reason)) => match reason.as_str() {
+            "stop" => "stop",
+            "length" => "length",
+            "tool_calls" => "tool_calls",
+            "content_filter" => "content_filter",
+            _ => "other",
+        },
+        Some(_) => "other",
+    }
+}
+
 /// Extract body text + usage or fail with a typed error (never echoes the body).
 pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatResult> {
     let obj = parsed.as_object().ok_or_else(|| {
@@ -276,6 +292,7 @@ pub fn parse_chat_response(parsed: &Value, fallback_model: &str) -> Result<ChatR
             "prompt_tokens": prompt_reported.then_some(prompt_tokens),
             "completion_tokens": completion_reported.then_some(completion_tokens),
             "usage_reported": usage_reported,
+            "finish_reason": finish_reason_label(parsed),
         }))
     };
     let body_text = first
@@ -968,5 +985,17 @@ mod tests {
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
         server.abort();
         server_both.abort();
+    }
+
+    #[test]
+    fn finish_reason_label_is_fixed_text_only() {
+        let reason = |value: Value| finish_reason_label(&json!({"choices":[{"finish_reason":value}]}));
+        assert_eq!(reason(json!("stop")), "stop");
+        assert_eq!(reason(json!("length")), "length");
+        assert_eq!(reason(json!("tool_calls")), "tool_calls");
+        assert_eq!(reason(json!(null)), "missing");
+        assert_eq!(reason(json!("Juniper. Juniper.")), "other");
+        assert_eq!(reason(json!(7)), "other");
+        assert_eq!(finish_reason_label(&json!({})), "missing");
     }
 }
