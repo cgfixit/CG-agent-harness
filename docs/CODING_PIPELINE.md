@@ -240,8 +240,9 @@ Seatbelt Cargo failure and its exact correction.
 
 ## Optional repository retrieval
 
-To supply relevant files without hand-selecting every path, merge this into the
-home's `agentic.deepagent_github` mapping and restart:
+Retrieval supplies relevant files without hand-selecting every path. It ships
+**on** with these limits; to tune or disable it, merge into the home's
+`agentic.deepagent_github` mapping and restart:
 
 ```yaml
 agentic:
@@ -255,7 +256,7 @@ agentic:
       token_budget: 2048
 ```
 
-It ships **off**; an absent, quoted or non-boolean `enabled` stays off.
+An absent, quoted or non-boolean `enabled` turns it off.
 Retrieval is local-planner-only and grants no execution authority: the staged
 request, `/agent confirm <reason>`, sandboxed checks, diff review and separate
 approvals all remain. Cloud planners never receive retrieved files, and
@@ -266,7 +267,8 @@ most `max_files` in lexical order and builds a Tantivy RAM index over bounded
 UTF-8 source. It retrieves at most `top_k` files, re-reads each one and
 includes it only if its full SHA-256 still matches. Lexical search does not
 guarantee coverage: use explicit windows for large repositories, synonyms or
-long lines.
+long lines. A path listing over the 4 MiB capture limit retrieves nothing for
+that step and records `limited`; the run continues on explicit reads.
 
 | Setting | Accepted range | Bound |
 |---|---:|---|
@@ -326,7 +328,9 @@ The operator prepares dependencies; untrusted checks never fetch them. Tool
 discovery runs from the filesystem root, outside the candidate. Select an
 installed compiler through `PATH` and, for rustup, `RUSTUP_TOOLCHAIN`: candidate
 toolchain files cannot select executables, and preparation never installs a
-toolchain or model.
+toolchain or model. `cargo vendor` also runs from there with `--manifest-path`,
+`RUSTC` pinned to that toolchain and no wrapper, so a candidate `.cargo/config`
+does not apply to preparation; put any registry settings in `CARGO_HOME`.
 
 Prepare once per lockfile and application home, as in
 [Run it from the console](#93-run-it-from-the-console). Both modes need an
