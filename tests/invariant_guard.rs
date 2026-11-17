@@ -97,34 +97,38 @@ fn use_idents(path: &str, text: &str) -> Vec<String> {
 /// under any spelling: direct, grouped, nested, glob-suffixed or renamed.
 fn assert_no_use_crosses(dir: &Path, forbidden: &[&str]) {
     for (path, text) in read_tree_raw(dir) {
-        let idents = use_idents(&path, &text);
-        let syntax = boundary_syntax(&path, &text);
-        for name in forbidden {
-            assert!(
-                !idents.iter().chain(syntax.module_refs.iter()).any(|i| i == name),
-                "{path} imports {name:?} across the I6 boundary \
-                 (a renamed or grouped `use` still crosses it)"
-            );
-        }
+        assert_file_does_not_cross(&path, &text, forbidden);
+    }
+}
+
+fn assert_file_does_not_cross(path: &str, text: &str, forbidden: &[&str]) {
+    let idents = use_idents(path, text);
+    let syntax = boundary_syntax(path, text);
+    for name in forbidden {
         assert!(
-            !syntax.includes_code,
-            "{path}: include! bypasses the source boundary scan"
+            !idents.iter().chain(syntax.module_refs.iter()).any(|i| i == name),
+            "{path} imports {name:?} across the I6 boundary \
+             (a renamed or grouped `use` still crosses it)"
         );
-        let relative = Path::new(&path)
-            .strip_prefix(root())
-            .unwrap()
-            .to_string_lossy()
-            .replace('\\', "/");
-        for target in syntax.module_paths {
-            assert!(
-                matches!(
-                    (relative.as_str(), target.as_str()),
-                    ("common/auth_store.rs", "auth_sqlite.rs")
-                        | ("common/credential_store.rs", "credential_file_writer.rs")
-                ),
-                "{path}: unregistered module path {target:?} bypasses the source boundary scan"
-            );
-        }
+    }
+    assert!(
+        !syntax.includes_code,
+        "{path}: include! bypasses the source boundary scan"
+    );
+    let relative = Path::new(path)
+        .strip_prefix(root())
+        .unwrap()
+        .to_string_lossy()
+        .replace('\\', "/");
+    for target in syntax.module_paths {
+        assert!(
+            matches!(
+                (relative.as_str(), target.as_str()),
+                ("common/auth_store.rs", "auth_sqlite.rs")
+                    | ("common/credential_store.rs", "credential_file_writer.rs")
+            ),
+            "{path}: unregistered module path {target:?} bypasses the source boundary scan"
+        );
     }
 }
 
@@ -272,9 +276,14 @@ fn root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
 }
 
+/// Top-level modules on the console side of the I6 boundary. Every entry under
+/// `src/` is one of these, `agentic/`, or a crate-root file with its own check
+/// (`every_top_level_source_is_on_a_scanned_side`), so none escapes the scans.
+const SERVER_SIDE: [&str; 5] = ["server", "shim", "llm", "common", "netconnect"];
+
 #[test]
 fn server_side_never_references_agentic() {
-    for sub in ["server", "shim", "llm", "common", "netconnect"] {
+    for sub in SERVER_SIDE {
         for (path, text) in read_tree(&root().join(sub)) {
             for needle in ["crate::agentic", "agentic::", "super::agentic", "use crate::agentic"] {
                 assert!(
@@ -500,7 +509,7 @@ fn only_registered_process_owners_construct_commands() {
         "common/mcp_worker.rs",
         "common/windows_job.rs",
     ];
-    for sub in ["server", "shim", "llm", "common", "netconnect"] {
+    for sub in SERVER_SIDE {
         for (path, text) in read_tree_raw(&root().join(sub)) {
             let relative = Path::new(&path)
                 .strip_prefix(root())
@@ -627,6 +636,73 @@ fn agentic_side_never_references_server_or_shim() {
     assert_no_use_crosses(&root().join("agentic"), &["server", "shim"]);
 }
 
+/// The directory scans see only the modules they name. A new top-level module,
+/// or a binary under `src/bin/`, would sit outside every one of them.
+#[test]
+fn every_top_level_source_is_on_a_scanned_side() {
+    for entry in std::fs::read_dir(root()).unwrap() {
+        let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+        let classified = SERVER_SIDE.contains(&name.as_str())
+            || matches!(name.as_str(), "agentic" | "lib.rs" | "main.rs" | "README.md");
+        assert!(
+            classified,
+            "src/{name} is outside every I6 scan; add it to SERVER_SIDE or the agentic side"
+        );
+    }
+}
+
+/// `pub use agentic as pipeline;` in the crate root would let a server file call
+/// `crate::pipeline::cli::main` with no `agentic` identifier in it, and
+/// `pub use server as console;` would do the same in reverse. The root only
+/// declares modules.
+#[test]
+fn crate_root_declares_modules_without_bridging_them() {
+    let path = root().join("lib.rs");
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_file_does_not_cross(&path.display().to_string(), &text, &["agentic", "server", "shim"]);
+}
+
+#[derive(Default)]
+struct PipelineCalls(usize);
+
+impl<'ast> syn::visit::Visit<'ast> for PipelineCalls {
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(callee) = &*call.func {
+            let segments: Vec<String> = callee
+                .path
+                .segments
+                .iter()
+                .map(|s| s.ident.unraw().to_string())
+                .collect();
+            self.0 += usize::from(segments == ["cgagentharness", "agentic", "cli", "main"]);
+        }
+        syn::visit::visit_expr_call(self, call);
+    }
+}
+
+/// The binary is the CLI whitelist edge: it names the pipeline exactly once, as
+/// the direct call behind the hidden `agentic` subcommand. A second mention (an
+/// alias, or `agentic::cli::main` handed to `serve` as a value) would run the
+/// pipeline in the console's process.
+#[test]
+fn binary_reaches_the_pipeline_only_through_its_hidden_subcommand() {
+    let path = root().join("main.rs");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let mut calls = PipelineCalls::default();
+    syn::visit::visit_file(&mut calls, &syn::parse_file(&text).unwrap());
+    let syntax = boundary_syntax(&path.display().to_string(), &text);
+    let mentions = syntax.paths.iter().filter(|ident| *ident == "agentic").count();
+    assert_eq!(
+        (calls.0, mentions),
+        (1, 1),
+        "src/main.rs must name the pipeline once, as the hidden subcommand's direct call"
+    );
+    assert!(
+        !syntax.includes_code && syntax.module_paths.is_empty(),
+        "src/main.rs must not include or remap modules"
+    );
+}
+
 /// A `common::config` limit row copies a default or ceiling that another
 /// module (or the agentic child, which reads the same keys) also names. The
 /// row is what `AppConfig::load` enforces, so the copies must not drift.
@@ -727,6 +803,22 @@ fn duplicated_constants_still_agree() {
         )),
         "console MAX_GOAL_CHARS drifted from server::prompts::MAX_GOAL_CHARS"
     );
+    // The desktop shell is a separate crate on its own toolchain: a handshake
+    // version bumped on one side alone makes every packaged app refuse its own
+    // bundled backend, and no CI job runs the shell against the sidecar.
+    let protocol = |file: &str, pattern: &str| {
+        let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(file)).unwrap();
+        let found = regex::Regex::new(pattern)
+            .unwrap()
+            .captures(&text)
+            .map(|c| c[1].to_string());
+        found.unwrap_or_else(|| panic!("{file} names no handshake PROTOCOL"))
+    };
+    assert_eq!(
+        protocol("desktop/src/backend.rs", r"pub const PROTOCOL: u64 = (\d+);"),
+        protocol("src/server/desktop.rs", r"pub const PROTOCOL: u32 = (\d+);"),
+        "desktop/src/backend.rs PROTOCOL drifted from src/server/desktop.rs"
+    );
     // The shim whitelist is exactly the CLI's dispatch table (no deepagent-plan, no __sleep),
     // in both directions: an arm missing from ACTIONS would be unreachable through the shim.
     let commands = std::fs::read_to_string(root().join("agentic").join("commands.rs")).unwrap();
@@ -750,6 +842,67 @@ fn duplicated_constants_still_agree() {
     assert!(cgagentharness::shim::ACTIONS.contains(&"real-repo-runs"));
     assert!(!cgagentharness::shim::ACTIONS.contains(&"deepagent-plan"));
     assert!(!cgagentharness::shim::ACTIONS.contains(&"__sleep"));
+}
+
+/// Fixture bypasses compile only with `test-support` (AGENTS.md Traps), and
+/// resolver 2 keeps the self dev-dependency's features out of release builds.
+/// Nothing else may enable it, no release build line may select features, and
+/// the packaged-CLI smoke keys on a hook name that only the feature compiles.
+#[test]
+fn release_builds_leave_out_test_support() {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let manifest = std::fs::read_to_string(repo.join("Cargo.toml")).unwrap();
+    let mut section = "";
+    let mut enabling = Vec::new();
+    for line in manifest.lines().map(str::trim).filter(|line| !line.starts_with('#')) {
+        if line.starts_with('[') {
+            section = line;
+        } else if line.contains("test-support") && line != "test-support = []" {
+            enabling.push(section);
+        }
+    }
+    assert_eq!(
+        enabling,
+        ["[dev-dependencies]"],
+        "only the self dev-dependency may enable test-support"
+    );
+    let mut scripts: Vec<_> = std::fs::read_dir(repo.join(".github/workflows"))
+        .unwrap()
+        .chain(std::fs::read_dir(repo.join("scripts")).unwrap())
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| matches!(path.extension().and_then(|e| e.to_str()), Some("yml" | "sh")))
+        .collect();
+    scripts.sort();
+    let mut release_builds = 0;
+    for path in scripts {
+        let text = std::fs::read_to_string(&path).unwrap().replace("\\\n", " ");
+        for line in text
+            .lines()
+            .filter(|l| l.contains("cargo build") && l.contains("--release"))
+        {
+            release_builds += 1;
+            assert!(
+                !["--features", "--all-features", " -F "]
+                    .iter()
+                    .any(|flag| line.contains(flag)),
+                "{}: a release build selects features: {}",
+                path.display(),
+                line.trim()
+            );
+        }
+    }
+    assert!(release_builds > 0, "the scan found no release build line");
+    let marker = "CGAH_TEST_CLOUD_BASE_URL";
+    let hook = std::fs::read_to_string(root().join("llm/cloud_chat.rs")).unwrap();
+    assert!(
+        hook.contains("#[cfg(feature = \"test-support\")]") && hook.contains(marker),
+        "the smoke's marker must stay a test-support-only hook"
+    );
+    let smoke = std::fs::read_to_string(repo.join("scripts/smoke-packaged-cli.py")).unwrap();
+    assert!(
+        smoke.contains(marker),
+        "the packaged-CLI smoke must refuse a test-support build"
+    );
 }
 
 /// `deny.toml` and `desktop/deny.toml` each carry a `[bans].deny` list of

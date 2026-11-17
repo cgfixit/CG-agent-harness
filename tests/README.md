@@ -8,7 +8,7 @@ Docs-only classification can skip compile jobs. CI expectations: [docs/INSTALL.m
 
 ## Structure and contracts
 
-- [`invariant_guard.rs`](invariant_guard.rs): I6 source boundary, shim whitelist, duplicated constants, shipped defaults, typed numeric config reads, console asset, `DOCS_BUDGET`; includes the focused Markdown-budget check.
+- [`invariant_guard.rs`](invariant_guard.rs): I6 source boundary (including the crate root, the binary's one pipeline call and unclassified top-level modules), shim whitelist, duplicated constants (with the desktop handshake version), shipped defaults, release builds without `test-support`, typed numeric config reads, console asset, `DOCS_BUDGET`; includes the focused Markdown-budget check.
 - [`shipped_config.rs`](shipped_config.rs): validates actual seeded model, web, workspace and tuning settings without protocol-fixture overrides.
 - [`contract_locks.rs`](contract_locks.rs): binary exit codes, confirm and reason flags, kill switch, shim redaction, raw listener authority.
 - [`common_layer.rs`](common_layer.rs): `src/common` primitives (not this folder's `common/`): atomic write, rate limit, auth records, redaction, `flag_is_true`.
