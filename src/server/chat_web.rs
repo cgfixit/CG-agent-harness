@@ -96,6 +96,45 @@ fn response_has_calls(response: &Value) -> bool {
     }
 }
 
+/// One local chat model call, recorded as a `chat_model_call` audit line:
+/// whether tools were offered and how the call ended (#941). Counts and fixed
+/// labels only; never prompt, reply or tool-argument text.
+pub(crate) struct ModelCall<'a> {
+    pub path: &'static str,
+    pub model: &'a str,
+    pub loop_turn: bool,
+    pub round: usize,
+    pub tools_offered: usize,
+    pub finish_reason: &'static str,
+    pub tool_calls: usize,
+    pub completion_tokens: Option<u64>,
+    pub error: Option<&'a str>,
+}
+
+impl ModelCall<'_> {
+    pub(crate) fn audit(&self, state: &AppState) {
+        state
+            .audit
+            .log(json!({"event":"chat_model_call","path":self.path,"model":self.model,
+            "loop_turn":self.loop_turn,"round":self.round,"tools_offered":self.tools_offered,
+            "finish_reason":self.finish_reason,"tool_calls":self.tool_calls,
+            "completion_tokens":self.completion_tokens,"error":self.error}));
+    }
+}
+
+/// The fixed finish label an incomplete-reply error carries, else `error`.
+pub(crate) fn error_finish_label(err: &crate::common::errors::HarnessError) -> &'static str {
+    match err.details["finish_reason"].as_str() {
+        Some("stop") => "stop",
+        Some("length") => "length",
+        Some("tool_calls") => "tool_calls",
+        Some("content_filter") => "content_filter",
+        Some("missing") => "missing",
+        Some("other") => "other",
+        _ => "error",
+    }
+}
+
 const WEB_SEARCH_CLOSED: &str =
     "web search stays closed after a local notes or corpus read unless the message asks for outside sources";
 
@@ -752,7 +791,42 @@ async fn run_inner(
                         validate: &validate,
                     }),
             )
-            .await?;
+            .await;
+        let call = ModelCall {
+            path: "web",
+            model,
+            loop_turn,
+            round: turn,
+            tools_offered: available.len(),
+            finish_reason: "error",
+            tool_calls: 0,
+            completion_tokens: None,
+            error: None,
+        };
+        let response = match response {
+            Ok(response) => {
+                ModelCall {
+                    finish_reason: crate::llm::openai_chat::finish_reason_label(&response),
+                    tool_calls: response["choices"][0]["message"]["tool_calls"]
+                        .as_array()
+                        .map_or(usize::from(response_has_calls(&response)), Vec::len),
+                    completion_tokens: response["usage"]["completion_tokens"].as_u64(),
+                    ..call
+                }
+                .audit(state);
+                response
+            }
+            Err(err) => {
+                ModelCall {
+                    finish_reason: error_finish_label(&err),
+                    completion_tokens: err.details["completion_tokens"].as_u64(),
+                    error: Some(&err.code),
+                    ..call
+                }
+                .audit(state);
+                return Err(err);
+            }
+        };
         let totals = usage.get_or_insert_with(|| crate::llm::spend::UsageTokens {
             input_tokens: Some(0),
             output_tokens: Some(0),
