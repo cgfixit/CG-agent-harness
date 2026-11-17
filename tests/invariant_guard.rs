@@ -1881,7 +1881,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the 2026-11-11 trim-and-refresh pass cut 96 words net (now 963); the cap drops by the same amount, rounded up to the next 10, keeping its earlier headroom.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 980, within a few words of the file.
     // why: the 2026-11-16 sweep merged the two duplicate glib residual notes and added the npm lockfile note; 1157 words, rounded up to the next 10 so the cut stays cut.
-    ("docs/DEPENDENCIES.md", Guide, 1160),
+    // why: operator-approved (2026-11-17) raise from 1160 to the measured 1220 for the chrono/chrono-tz waiver watch (RUSTSEC-2026-0543/0555).
+    ("docs/DEPENDENCIES.md", Guide, 1220),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
