@@ -1,7 +1,7 @@
 # Browser use and computer use
 
-Status as of 2026-11-16. The local model
-(`models.local_llm.model`, `qwen3.8:27b-mlx-cg` on a 32K window) drives a real
+Status as of 2026-11-17. The local model (the `/model use` selection, else
+`models.local_llm.model`; `qwen3.8:27b-mlx-cg` on a 32K window) drives a real
 Chrome. Computer use (native apps) is a skeleton that nothing calls.
 
 ## What works today
