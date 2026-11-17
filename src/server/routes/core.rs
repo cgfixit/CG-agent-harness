@@ -1807,9 +1807,14 @@ pub(crate) async fn chat_inner(
     // a turn cancelled while the write waits still holds the gate until the
     // write lands: `/session unpin` cannot run between them and be undone. The
     // audit lines describing the write are logged with it for the same reason.
+    //
+    // The account is read again under the store lock, after every wait this
+    // turn made: one disabled or deleted meanwhile still gets its exchange
+    // stored, but no new pins, no reply and no memory staging.
     let write = {
         let state = state.clone();
         let owner = owner.clone();
+        let account = user.as_ref().map(|u| u.0.clone());
         let session_id = session.session_id.clone();
         // A server-run loop turn stores its short label, not the framing sent.
         let user_text = req.stored_message.clone().unwrap_or_else(|| req.message.clone());
@@ -1826,6 +1831,12 @@ pub(crate) async fn chat_inner(
         });
         move || {
             let gate = gate;
+            let owner_live = || match (state.auth.as_ref(), account.as_ref()) {
+                (Some(manager), Some(account)) => manager
+                    .get_user(&account.username)
+                    .is_some_and(|current| current.user_id == account.user_id && !current.disabled),
+                _ => true,
+            };
             let live_blobs = pin_request
                 .as_ref()
                 .map(|(_, known)| state.attachments.owned_blobs(&owner, known))
@@ -1862,8 +1873,9 @@ pub(crate) async fn chat_inner(
                     calibration,
                     &web_events,
                     pins,
+                    &owner_live,
                 )
-                .map(|(updated, web_turn)| {
+                .map(|(updated, web_turn, owner_live)| {
                     if let Some(reason) = compaction_skipped {
                         state.audit.log(json!({"event": "chat_compaction_skipped", "session_id": session_id, "reason": reason}));
                     }
@@ -1883,14 +1895,28 @@ pub(crate) async fn chat_inner(
                         }
                         state.audit.log(event);
                     }
-                    updated
+                    if !owner_live {
+                        state.audit.log(json!({
+                            "event": "chat_reply_withheld",
+                            "session_id": session_id,
+                            "reason": "account_revoked",
+                        }));
+                    }
+                    (updated, owner_live)
                 });
             (gate, written)
         }
     };
     let (gate, written) = super::structured_memory::off_worker(write).await;
     let _gate = gate;
-    let updated = written.map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    let (updated, owner_live) = written.map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    if !owner_live {
+        return Err(ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "AUTH_REQUIRED",
+            "the account was disabled or deleted during this turn; the exchange was saved but the reply is withheld",
+        ));
+    }
     let sensitivity = {
         let scanner = crate::common::injection::Scanner::core();
         if scanner.count_matches(&req.message) > 0 || scanner.count_matches(&reply.body_text) > 0 {
