@@ -382,6 +382,11 @@ fn repository_retrieval_excludes_unsafe_files_and_obeys_selection_and_budgets() 
     let proposer = ScriptedProposer::new(&[]);
     let result = run_real_repo_loop(&ctx, &ws, &proposer, &p).unwrap();
     let trace = result.iterations[0].retrieval.as_ref().unwrap();
+    // Ranking alone cannot prove exclusion: src/parser.rs outranks every
+    // decoy at top_k 1. Count what was indexed instead: the seed's target.txt,
+    // README.md and src/lib.txt plus the new .gitignore and src/parser.rs;
+    // every decoy above must be skipped before indexing.
+    assert_eq!(trace.indexed_files, 5, "{trace:?}");
     assert_eq!(trace.files.len(), 1);
     assert_eq!(trace.files[0].path, "src/parser.rs");
     assert!(trace.files[0].token_reservation <= 600);
@@ -400,6 +405,34 @@ fn repository_retrieval_excludes_unsafe_files_and_obeys_selection_and_budgets() 
         !manual.prompts.borrow()[0].contains("fn parser_index()"),
         "retrieval cannot replace operator selection"
     );
+}
+
+/// A path inventory larger than the capture ceiling limits retrieval for that
+/// step instead of failing the run before the planner is ever called.
+#[cfg(unix)]
+#[test]
+fn retrieval_listing_over_the_capture_ceiling_is_limited_not_fatal() {
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = loop_ctx(dir.path());
+    let clone = clone_into_workspace(&ctx, dir.path());
+    // Long names keep every absolute path under macOS's 1024-byte PATH_MAX
+    // while the NUL-separated listing passes the 4 MiB ceiling.
+    let deep = clone.join("d".repeat(240)).join("e".repeat(240));
+    std::fs::create_dir_all(&deep).unwrap();
+    let listed = 240 + 1 + 240 + 1 + 200 + 1;
+    for i in 0..cgagentharness::common::process::MAX_CAPTURE_BYTES / listed + 64 {
+        std::fs::File::create(deep.join(format!("{i:0>200}"))).unwrap();
+    }
+    let ws = RepoWorkspace::attach(&ctx, &clone).unwrap();
+    let checks = vec![Check::new("true", vec!["true".into()]).unwrap()];
+    let proposer = ScriptedProposer::new(&[]);
+    let mut p = params(&checks, &[], &[]);
+    p.max_iterations = 1;
+    let result = run_real_repo_loop(&ctx, &ws, &proposer, &p).unwrap();
+    let trace = result.iterations[0].retrieval.as_ref().unwrap();
+    assert!(trace.limited, "{trace:?}");
+    assert_eq!(trace.indexed_files, 0);
+    assert_eq!(proposer.prompts.borrow().len(), 1, "the planner still runs");
 }
 
 #[cfg(unix)]

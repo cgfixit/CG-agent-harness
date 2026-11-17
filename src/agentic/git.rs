@@ -94,9 +94,16 @@ fn raw(
         timeout,
         stdin,
     })
-    .map_err(|_| {
-        HarnessError::agentic("Git operation did not complete reliably; inspect state before retrying")
-            .detail("indeterminate", true)
+    .map_err(|error| {
+        let refused = HarnessError::agentic("Git operation did not complete reliably; inspect state before retrying")
+            .detail("indeterminate", true);
+        // Callers that only read (the retrieval inventory) may treat output
+        // too large to capture as a limit rather than a failed run.
+        if error.is_output_limit() {
+            refused.detail("output_limit", true)
+        } else {
+            refused
+        }
     })
 }
 
