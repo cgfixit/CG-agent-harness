@@ -611,6 +611,104 @@ fn loop_refuses_local_model_read_of_env_and_keeps_secret_out_of_the_next_prompt(
     }
 }
 
+/// Rewrites a `config.yaml` body.
+#[cfg(unix)]
+type PolicyEdit<'a> = &'a dyn Fn(&str) -> String;
+
+/// A planner double that edits the run's own `config.yaml` during its first
+/// call, the way an operator revoking policy mid-run would.
+#[cfg(unix)]
+struct PolicyEditingProposer<'a> {
+    config: &'a Path,
+    edit: PolicyEdit<'a>,
+    reply: String,
+    prompts: RefCell<Vec<String>>,
+}
+
+#[cfg(unix)]
+impl ProposerClient for PolicyEditingProposer<'_> {
+    fn invoke(&self, _system: &str, user: &str, _max_tokens: u64, _temperature: Option<f64>) -> Result<String> {
+        self.prompts.borrow_mut().push(user.to_string());
+        if self.prompts.borrow().len() == 1 {
+            let policy = std::fs::read_to_string(self.config).unwrap();
+            std::fs::write(self.config, (self.edit)(&policy)).unwrap();
+        }
+        Ok(self.reply.clone())
+    }
+    fn provider(&self) -> &str {
+        "scripted"
+    }
+}
+
+/// A policy refusal at the apply boundary is not planner feedback: the run
+/// ends with the refusal's own exit code, and no later iteration calls the
+/// planner (INVARIANTS.md "Every write to a repository is gated").
+#[cfg(unix)]
+#[test]
+fn loop_stops_when_policy_changes_mid_run() {
+    use cgagentharness::agentic::cli::exit_code_for;
+    let revoke = |policy: &str| policy.replace("writes_enabled: true", "writes_enabled: false");
+    let corrupt = |_: &str| "agentic: [unterminated\n".to_string();
+    let unchanged = |policy: &str| policy.to_string();
+    let edits: [(PolicyEdit, u8, Option<&str>); 2] = [(&revoke, 4, Some("writes_enabled")), (&corrupt, 3, None)];
+    for (edit, exit, gate) in edits {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = loop_ctx(dir.path());
+        let clone = clone_into_workspace(&ctx, dir.path());
+        let ws = RepoWorkspace::attach(&ctx, &clone).unwrap();
+        let checks = vec![Check::new("true", vec!["true".into()]).unwrap()];
+        let proposer = PolicyEditingProposer {
+            config: &ctx.config_path,
+            edit,
+            reply: block("new.txt", "hello"),
+            prompts: RefCell::default(),
+        };
+        let error = run_real_repo_loop(&ctx, &ws, &proposer, &params(&checks, &[], &[])).unwrap_err();
+        assert_eq!(exit_code_for(&error), exit, "{}: {}", error.code, error.message);
+        if let Some(gate) = gate {
+            assert_eq!(error.details["failed_gate"], gate);
+        }
+        assert_eq!(
+            proposer.prompts.borrow().len(),
+            1,
+            "no planner call after the policy changed"
+        );
+        assert!(!clone.join("new.txt").exists(), "nothing applied under revoked policy");
+    }
+    // Revoked while the checks run: the edit landed under the old policy, but
+    // the next iteration must re-check before it sends anything to the planner.
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = loop_ctx(dir.path());
+    let clone = clone_into_workspace(&ctx, dir.path());
+    let ws = RepoWorkspace::attach(&ctx, &clone).unwrap();
+    let revoke_then_fail = "import pathlib, sys\np = pathlib.Path(sys.argv[1])\n\
+        p.write_text(p.read_text().replace('writes_enabled: true', 'writes_enabled: false'))\nsys.exit(1)";
+    let checks = vec![Check::new(
+        "revoke",
+        vec![
+            "python3".into(),
+            "-c".into(),
+            revoke_then_fail.into(),
+            ctx.config_path.display().to_string(),
+        ],
+    )
+    .unwrap()];
+    let proposer = PolicyEditingProposer {
+        config: &ctx.config_path,
+        edit: &unchanged,
+        reply: block("new.txt", "hello"),
+        prompts: RefCell::default(),
+    };
+    let error = run_real_repo_loop(&ctx, &ws, &proposer, &params(&checks, &[], &[])).unwrap_err();
+    assert_eq!(exit_code_for(&error), 4, "{}: {}", error.code, error.message);
+    assert_eq!(error.details["failed_gate"], "writes_enabled");
+    assert_eq!(
+        proposer.prompts.borrow().len(),
+        1,
+        "the revoked run never reaches the planner again"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn loop_refuses_blind_overwrites_critical_content_and_budget() {

@@ -342,6 +342,10 @@ fn transformed_paths_and_existing_index_lock_refuse_without_committing() {
         "eol=crlf",
         "working-tree-encoding=UTF-16",
         "ident",
+        // Legacy spellings Git still converts by (gitattributes(5)): `crlf`
+        // acts as `text`, `crlf=input` as `eol=lf`.
+        "crlf",
+        "crlf=input",
     ] {
         std::fs::write(dest.join(".gitattributes"), format!("target.txt {attr}\n")).unwrap();
         assert!(approve(&ctx, &ws, &["target.txt".into()])
@@ -361,6 +365,34 @@ fn transformed_paths_and_existing_index_lock_refuse_without_committing() {
         std::fs::read_to_string(dest.join(".git/index.lock")).unwrap(),
         "other operation"
     );
+}
+
+/// Off Unix every file reads as 100644, so approving over an executable base
+/// entry would drop its mode where the review diff cannot show it. Refuse.
+#[cfg(not(unix))]
+#[test]
+fn approve_refuses_a_base_mode_this_host_cannot_preserve() {
+    let temp = tempfile::tempdir().unwrap();
+    let (ctx, dest) = fixture(temp.path());
+    git(&["update-index", "--chmod=+x", "target.txt"], &dest);
+    git(
+        &[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "Executable base",
+        ],
+        &dest,
+    );
+    let base = git(&["rev-parse", "HEAD"], &dest);
+    std::fs::write(dest.join("target.txt"), "approved\n").unwrap();
+    let ws = RepoWorkspace::attach(&ctx, &dest).unwrap();
+    let error = approve(&ctx, &ws, &["target.txt".into()]).unwrap_err();
+    assert!(error.message.contains("cannot preserve its mode"), "{}", error.message);
+    assert_eq!(git(&["rev-parse", "HEAD"], &dest), base);
 }
 
 #[cfg(unix)]
