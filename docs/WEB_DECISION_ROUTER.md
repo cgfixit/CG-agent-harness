@@ -353,7 +353,7 @@ decisions stay deterministic.
   ranking several pages keep two per page. Receipt IDs/offsets go only to
   passages delivered whole. Omitted `refresh` reuses fresh evidence already
   read for the active goal; other reads default fresh. Explicit `true`
-  refreshes; `false` permits current-policy cache reuse.
+  refreshes, once per page per turn; `false` permits current-policy cache reuse.
 - Server-managed runs hold nine URL/hash references, three passage IDs each,
   sixteen prior queries and one validated packet. Restoring after compaction
   rechecks permissions, age and hashes and supplies citation-to-URL mappings.
