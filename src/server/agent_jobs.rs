@@ -140,10 +140,11 @@ impl JobStore {
                         owner,
                         action: row["action"].as_str().unwrap_or("real-repo-run").to_string(),
                         created_at: row["created_at"].as_f64().unwrap_or(0.0),
-                        finished_at: if status == INTERRUPTED {
-                            Some(crate::common::now_ts())
-                        } else {
-                            row["finished_at"].as_f64()
+                        // Stamp only a job this start found running; one an earlier
+                        // start already marked interrupted keeps its detection time.
+                        finished_at: match (row["status"].as_str(), row["finished_at"].as_f64()) {
+                            (Some(RUNNING), _) | (Some(INTERRUPTED), None) => Some(crate::common::now_ts()),
+                            (_, recorded) => recorded,
                         },
                         status,
                         result: row.get("result").cloned(),
@@ -166,24 +167,39 @@ impl JobStore {
         self.notifications = notifications;
         // Reconcile retained terminal evidence after a crash between job commit
         // and outbox enqueue. Stable IDs suppress already retained deliveries.
-        for job in self.inner.lock().unwrap_or_else(|p| p.into_inner()).values() {
-            self.notify(job);
+        let retained: Vec<_> = self
+            .inner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .values()
+            .filter_map(|job| self.completion(job))
+            .collect();
+        for completion in retained {
+            self.notify(completion);
         }
         self
     }
 
-    fn notify(&self, job: &Job) {
-        if let (Some(notifier), Some(finished_at), Some(owner)) = (&self.notifications, job.finished_at, &job.owner) {
-            if ![FINISHED, FAILED, CANCELLED].contains(&job.status) {
-                return;
-            }
-            notifier.enqueue(super::notifications::Completion {
+    /// A terminal, owned job's completion event when notifications are on. It is
+    /// built under the job lock and handed to `notify` after the lock is
+    /// released: the outbox rereads policy and fsyncs, and polls must not wait.
+    fn completion(&self, job: &Job) -> Option<super::notifications::Completion> {
+        self.notifications.as_ref()?;
+        let (finished_at, owner) = (job.finished_at?, job.owner.as_ref()?);
+        [FINISHED, FAILED, CANCELLED]
+            .contains(&job.status)
+            .then(|| super::notifications::Completion {
                 owner: owner.clone(),
                 job_id: job.job_id.clone(),
                 status: job.status.into(),
                 created_at: job.created_at,
                 finished_at,
-            });
+            })
+    }
+
+    fn notify(&self, completion: super::notifications::Completion) {
+        if let Some(notifier) = &self.notifications {
+            notifier.enqueue(completion);
         }
     }
 
@@ -278,11 +294,19 @@ impl JobStore {
         Ok(())
     }
 
+    /// Blocking: persists the job file (fsync) and may enqueue a notification.
     pub fn finish(&self, job_id: &str, outcome: Result<Value, ApiError>) {
+        let completion = self.settle(job_id, outcome);
+        if let Some(completion) = completion {
+            self.notify(completion);
+        }
+    }
+
+    fn settle(&self, job_id: &str, outcome: Result<Value, ApiError>) -> Option<super::notifications::Completion> {
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(j) = g.get_mut(job_id) {
             if j.status != RUNNING {
-                return; // cancelled while the task was finishing: cancellation wins
+                return None; // cancelled while the task was finishing: cancellation wins
             }
             j.finished_at = Some(crate::common::now_ts());
             j.handle = None;
@@ -312,9 +336,7 @@ impl JobStore {
                 ));
             }
         }
-        if let Some(job) = g.get(job_id) {
-            self.notify(job);
-        }
+        g.get(job_id).and_then(|job| self.completion(job))
     }
 
     /// Annotate only an outcome that finish already persisted. Cancellation or
@@ -362,25 +384,30 @@ impl JobStore {
     }
 
     /// Abort a running job. Returns the job's new state, or None if unknown.
+    /// Blocking: persists the job file (fsync) and may enqueue a notification.
     pub fn cancel(&self, owner: &str, job_id: &str) -> Option<Value> {
-        let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        let j = g.get_mut(job_id).filter(|j| j.owner.as_deref() == Some(owner))?;
-        let changed = j.status == RUNNING;
-        if changed {
-            if let Some(h) = j.handle.take() {
-                h.abort();
+        let (value, completion) = {
+            let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+            let j = g.get_mut(job_id).filter(|j| j.owner.as_deref() == Some(owner))?;
+            let changed = j.status == RUNNING;
+            if changed {
+                if let Some(h) = j.handle.take() {
+                    h.abort();
+                }
+                j.status = CANCELLED;
+                j.finished_at = Some(crate::common::now_ts());
             }
-            j.status = CANCELLED;
-            j.finished_at = Some(crate::common::now_ts());
-        }
-        let value = j.to_json();
-        if self.persist(&g).is_err() {
-            tracing::error!("job cancellation could not be persisted; restart will report interrupted work");
-        }
-        if changed {
-            if let Some(job) = g.get(job_id) {
-                self.notify(job);
+            let value = j.to_json();
+            if self.persist(&g).is_err() {
+                tracing::error!("job cancellation could not be persisted; restart will report interrupted work");
             }
+            let completion = changed
+                .then(|| g.get(job_id).and_then(|job| self.completion(job)))
+                .flatten();
+            (value, completion)
+        };
+        if let Some(completion) = completion {
+            self.notify(completion);
         }
         Some(value)
     }
@@ -455,6 +482,14 @@ mod tests {
         );
         recovered.finish(&running, Ok(json!({"ok":true})));
         assert_eq!(recovered.get("local", &running).unwrap()["status"], INTERRUPTED);
+        // A later restart keeps when the interruption was first recorded.
+        let detected = recovered.get("local", &running).unwrap()["finished_at"].clone();
+        assert!(detected.as_f64().is_some());
+        drop(recovered);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let again = JobStore::open(&path).unwrap();
+        assert_eq!(again.get("local", &running).unwrap()["finished_at"], detected);
+        drop(again);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
