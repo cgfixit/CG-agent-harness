@@ -58,6 +58,13 @@ does not certify safe runtime use of a crate.
   YAML replacements weekly and on Cargo Dependabot PRs. Remove the waiver when
   `unsafe-libyaml` leaves the backend lockfile; an unused-ignore warning does
   not detect an available replacement. Next review by 2027-02-15.
+- Backend `RUSTSEC-2026-0543` and `RUSTSEC-2026-0555` (2026-11-17) waive
+  unmaintained `chrono` and `chrono-tz`; no safe upgrade exists. Both evaluate
+  schedule times in `src/server/schedule_time.rs`, and `chrono` also comes
+  through `cron`, `rmcp` and `schemars`. Owner: `cgfixit`. Remove each waiver
+  when its crate leaves the backend lockfile, which takes a maintained time
+  crate (`jiff` or `time`), a `cron` replacement and `rmcp`/`schemars` releases
+  without `chrono`. Next review by 2027-02-17.
 - Desktop's lock carries Tauri 2.12.4's Linux GTK3 backend (`gtk` 0.18.2, WRY,
   tao, muda): `glib` 0.18.5 (RUSTSEC-2024-0429, unsound `VariantStrIter`, fixed
   in 0.20) and `proc-macro-error` 1.0.4 (RUSTSEC-2024-0370, via `glib-macros`).
