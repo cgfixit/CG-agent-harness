@@ -30,7 +30,8 @@ jobs:
       # security-events: write on the job that checks out the pull request.
       # Findings still fail this job. No secrets context is passed.
       # The default `version: latest` is the zizmor release hash-locked in
-      # this action SHA (1.31.1 at v0.8.0), so it moves only with this pin.
+      # this action SHA, so it moves only with this pin; read the action's
+      # pinned release notes for the version, not a copy here that drifts.
       - uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
         with:
           advanced-security: "false"

@@ -163,10 +163,14 @@ class ModelFixture:
                 content = 'fixture reply'
                 if memory and request.get('response_format') == {'type': 'json_object'}:
                     evidence = json.loads(request['messages'][-1]['content'])
+                    # Distinct texts: the same text under two categories is one memory.
                     content = json.dumps({'candidates': [{
-                        'action': 'add', 'category': category, 'content': 'The fixture user prefers metric units.',
+                        'action': 'add', 'category': category, 'content': text,
                         'sensitivity': 'normal', 'confidence': .9, 'source_refs': [evidence['episode_id']]
-                    } for category in ('session_summary', 'insight')]})
+                    } for category, text in (
+                        ('session_summary', 'The fixture user asked about units.'),
+                        ('insight', 'The fixture user prefers metric units.'),
+                    )]})
                 body = json.dumps({
                     "model": request["model"],
                     "choices": [{"finish_reason": "stop", "message": {
@@ -768,7 +772,7 @@ class DesktopBoundary(unittest.TestCase):
         self.assertEqual(len(call('/api/structured-memory/facts')['facts']), 1)
         rejected = proposals[1]
         call('/api/structured-memory/proposals/' + rejected['id'], {
-            'revision': rejected['revision'], 'apply': False, 'confirm': True, 'reason': 'Duplicate summary reviewed'
+            'revision': rejected['revision'], 'apply': False, 'confirm': True, 'reason': 'Summary not needed'
         })
         self.assertEqual(call('/api/structured-memory/proposals?status=pending')['proposals'], [])
         child.close()

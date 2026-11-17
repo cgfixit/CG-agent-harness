@@ -512,6 +512,9 @@ pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result
             drift.join(", ")
         );
     }
+    if let Some(notice) = crate::server::structured_memory_suggest::startup_notice(&cfg) {
+        tracing::warn!("{notice}");
+    }
     // None of these is reloadable, so a restart is the only time one changes.
     for clamped in cfg.clamped_limits() {
         tracing::warn!("config.yaml: {clamped}");

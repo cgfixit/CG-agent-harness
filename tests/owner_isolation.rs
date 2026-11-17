@@ -475,3 +475,79 @@ async fn disabling_one_account_cancels_only_that_owners_schedules() {
         "active"
     );
 }
+
+#[tokio::test]
+async fn an_account_disabled_during_a_turn_keeps_the_exchange_but_not_the_reply() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("structured_memory.enabled", "true")
+            .with("structured_memory.episode_capture", "true"),
+    )
+    .await;
+    let (alice_id, alice) = account(&s, "alice", "operator").await;
+    let created = json_request(&s, &alice, Method::POST, "/api/sessions", json!({"title":"t"})).await;
+    let sid = created["session_id"].as_str().unwrap().to_string();
+    // Web off: a web turn re-reads the account before its answer itself.
+    s.state.settings.lock().unwrap().web_enabled = false;
+    let user = s.state.auth.as_ref().unwrap().get_user("alice").unwrap();
+
+    // Park session writes so the account can change after the model answered
+    // and before the exchange is written.
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let holder = {
+        let state = s.state.clone();
+        std::thread::spawn(move || {
+            let _writes = state.store.hold_writes();
+            held_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+        })
+    };
+    held_rx.recv().unwrap();
+    let chat = tokio::spawn(cgagentharness::server::routes::core::chat(
+        axum::extract::State(s.state.clone()),
+        axum::extract::ConnectInfo(s.addr),
+        Some(axum::Extension(user)),
+        axum::http::HeaderMap::new(),
+        cgagentharness::server::schemas::ValidJson(
+            serde_json::from_value(json!({"message":"remember metric units","session_id":sid})).unwrap(),
+        ),
+    ));
+    // The spend row is queued in the same poll that hands the write to the
+    // blocking pool, so once it is on disk the write is parked on the lock.
+    let ledger = s.home.join("logs/spend.jsonl");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            s.state.audit.flush_async().await;
+            if std::fs::read_to_string(&ledger).is_ok_and(|text| !text.trim().is_empty()) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the turn reached its session write");
+    s.state.auth.as_ref().unwrap().disable_user("alice").unwrap();
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+
+    let response = chat.await.unwrap();
+    assert_eq!(response.status().as_u16(), 401);
+    let body: Value =
+        serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap()).unwrap();
+    assert_eq!(body["detail"]["code"], "AUTH_REQUIRED", "{body}");
+    assert!(!body.to_string().contains("pong"), "the reply is withheld: {body}");
+    // Stored all the same, in the owner's session.
+    let stored = s.state.store.for_owner(&alice_id).get(&sid).unwrap();
+    let texts: Vec<_> = stored.messages.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(texts, ["remember metric units", "pong"]);
+    // No memory is staged for an account that no longer holds authority.
+    let memory = s.state.structured_memory.as_ref().unwrap();
+    assert!(memory.list_episodes(&alice_id).unwrap().is_empty());
+    s.state.audit.flush_async().await;
+    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    assert!(audit.contains("\"chat_reply_withheld\""));
+}

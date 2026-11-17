@@ -199,7 +199,7 @@ pub const NUMERIC_LIMITS: &[Limit<u64>] = &[
     clamp("structured_memory.suggestion_idle_ms", 2000, 10, 30_000),
     clamp("structured_memory.suggestion_max_input_chars", 8000, 256, 32_000),
     clamp("structured_memory.suggestion_max_queue", 8, 1, 32),
-    clamp("structured_memory.suggestion_queue_ttl_secs", 300, 1, 3600),
+    clamp("structured_memory.suggestion_queue_ttl_secs", 1800, 1, 3600),
 ];
 
 /// Floating-point limits, read through [`AppConfig::limit_f64`]; every key
