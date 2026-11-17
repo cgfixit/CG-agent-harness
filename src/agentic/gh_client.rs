@@ -274,6 +274,58 @@ mod tests {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    /// Linux refuses to exec a file that any process still holds open for
+    /// writing (ETXTBSY). A sibling test that forks between this test's
+    /// fixture write and its close briefly inherits that descriptor, so the
+    /// first exec can fail before the script runs. Only that refusal is
+    /// retried: the script has not started, so the fixture is unchanged.
+    fn check_gh_binary_retrying_busy_exec(binary: &Path, identity: ExecutableIdentity) -> HarnessError {
+        for _ in 0..50 {
+            let error = check_gh_binary(
+                binary.to_path_buf(),
+                identity.clone(),
+                DEFAULT_MIN_GH,
+                Duration::from_secs(2),
+                Duration::from_millis(1),
+            )
+            .unwrap_err();
+            if !is_busy_exec(&error) {
+                return error;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("fake gh stayed busy for writing");
+    }
+
+    fn is_busy_exec(error: &HarnessError) -> bool {
+        let busy = std::io::Error::from_raw_os_error(libc::ETXTBSY).to_string();
+        error.message.starts_with("Could not execute GitHub CLI (gh)") && error.message.contains(&busy)
+    }
+
+    #[test]
+    fn busy_exec_is_recognized_only_for_a_refused_spawn() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = dir.path().join("gh");
+        write_executable(&binary, "#!/bin/sh\necho 'gh version 2.60.0'\n");
+        assert!(!is_busy_exec(&changed_gh(&binary)));
+        // Only Linux refuses to exec a file open for writing.
+        if !cfg!(target_os = "linux") {
+            return;
+        }
+        let identity = executable_identity(&binary).unwrap();
+        // An open write descriptor is exactly what a racing fork inherits.
+        let _writer = std::fs::OpenOptions::new().append(true).open(&binary).unwrap();
+        let error = check_gh_binary(
+            binary.clone(),
+            identity,
+            DEFAULT_MIN_GH,
+            Duration::from_secs(2),
+            Duration::from_millis(1),
+        )
+        .unwrap_err();
+        assert!(is_busy_exec(&error), "unexpected error: {}", error.message);
+    }
+
     #[test]
     fn version_retry_refuses_a_replaced_executable() {
         let dir = tempfile::tempdir().unwrap();
@@ -297,15 +349,12 @@ mod tests {
             ),
         );
         let identity = executable_identity(&binary).unwrap();
-        let error = check_gh_binary(
-            binary,
-            identity,
-            DEFAULT_MIN_GH,
-            Duration::from_secs(2),
-            Duration::from_millis(1),
-        )
-        .unwrap_err();
-        assert!(marker.exists(), "fake gh version check did not start");
+        let error = check_gh_binary_retrying_busy_exec(&binary, identity);
+        assert!(
+            marker.exists(),
+            "fake gh version check did not start: {}",
+            error.message
+        );
         assert!(
             error.message.contains("changed after version validation"),
             "unexpected error: {}",
