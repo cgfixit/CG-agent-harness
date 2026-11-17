@@ -141,7 +141,7 @@ The `cgagentharness web` CLI drives these routes.
 
 | Method | Path | Purpose |
 |---|---|---|
-| POST | `/api/browser/run` | Administrator `/browse` task: `{task, origins}`; literal `browser.enabled`, one task at a time, runs the hidden `browser run` child ([browser use](Browser-Use.md)) |
+| POST | `/api/browser/run` | Administrator `/browse` task: `{task, origins}`; literal `browser.enabled` and `auth.enabled`, one task at a time, runs the hidden `browser run` child ([browser use](Browser-Use.md)) |
 
 ## MCP
 

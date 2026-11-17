@@ -100,6 +100,7 @@ const server=createServer(async(req,res)=>{
   if(apiSet){reply({kind:'dispatch',dispatch:true,canonical:'/api set '+apiSet[1],command:'api',sub:'set',rest:apiSet[1]});return;}
   reply({kind:'dispatch',dispatch:true,canonical:body.line});return;
  }
+ if(path==='/api/browser/run'){reply({finished:true,report:{answer:'BROWSE_FIXTURE_ANSWER',stopped:'answered'}});return;}
  if(path==='/api/auth/whoami'){if(whoamiDrop){req.socket.destroy();return;}reply(authFixture&&signedIn?{username:authUsername,role:authRole,user_id:userIds[authUsername],must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
  if(path==='/api/auth/setup-status'){reply({enabled:true,default_password:false,setup_code:authFixture&&adminPassword===FIXTURE_SETUP_CODE});return;}
  if(path==='/api/auth/login'){
@@ -571,6 +572,27 @@ try {
  assert.equal(await evaluate('(()=>{input.value="";const data=new DataTransfer();data.setData("text/plain","\\n/memory clear\\n");input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));return input.value;})()'),'/memory clear','edge line breaks are trimmed, not refused');
  assert.equal(await evaluate('(()=>{input.value="";const data=new DataTransfer();data.setData("text/plain","/agent cancel");return input.dispatchEvent(new ClipboardEvent("paste",{clipboardData:data,cancelable:true}));})()'),true,'exact single-line paste remains available');
  slashMode='dispatch';await send('/agent cancel');
+
+ // #945: a file-like bare first site is shown, not granted, until the same line is sent again.
+ {
+  const browseRuns=()=>requests.filter(r=>r[1]==='/api/browser/run');
+  const before=browseRuns().length;
+  await send('/browse setup.py explain this file');
+  await until('document.getElementById("stream").innerText.includes("looks like a file name")');
+  assert.equal(browseRuns().length,before,'a file-like first site is not sent before confirmation');
+  assert.ok(await evaluate('document.getElementById("stream").innerText.includes("https://setup.py")'),'the grant is shown');
+  await send('/browse setup.py explain a different task');
+  assert.equal(browseRuns().length,before,'a different line re-arms instead of running');
+  await send('/browse setup.py explain a different task');
+  await until('document.getElementById("stream").innerText.includes("BROWSE_FIXTURE_ANSWER")');
+  assert.deepEqual(browseRuns().at(-1)[2],{task:'explain a different task',origins:['https://setup.py']});
+  await send('/browse docs.python.org find the latest Python version');
+  for(let i=0;i<100&&browseRuns().length<before+2;i++)await pause(50);
+  assert.deepEqual(browseRuns().at(-1)[2].origins,['https://docs.python.org'],'an ordinary bare site runs at once');
+  await send('/browse https://setup.py read it');
+  for(let i=0;i<100&&browseRuns().length<before+3;i++)await pause(50);
+  assert.deepEqual(browseRuns().at(-1)[2],{task:'read it',origins:['https://setup.py']},'an explicit https:// site needs no confirmation');
+ }
 
  mode='stream';const streamed=send('stream fixture');
  await until('document.getElementById("stream").innerText.includes("STREAM_PARTIAL hé")');
@@ -1183,7 +1205,7 @@ try {
  assert.equal(await evaluate('document.getElementById("passwordDialog").open'),false);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','direct first-run password setup without implicit login; protected replacement and lock/reopen','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','unset persona diagnostics','first session','goal set/show/clear','manual continuation','unbounded /status and /loop notices clear when finite; warning never blocks','goal text in /loop','auto start after a 5 s countdown and its cancellation','auto cooldown stop','generation cancellation','session switch','Sessions-pane transcript search (text-only, stale-safe) and clicked-row Markdown export','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout resets the transcript, Memory pane and active session like a successful logout, even when the follow-up probe fails','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
+ console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','direct first-run password setup without implicit login; protected replacement and lock/reopen','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','unset persona diagnostics','first session','goal set/show/clear','manual continuation','unbounded /status and /loop notices clear when finite; warning never blocks','goal text in /loop','auto start after a 5 s countdown and its cancellation','auto cooldown stop','generation cancellation','session switch','Sessions-pane transcript search (text-only, stale-safe) and clicked-row Markdown export','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','/browse file-like first site shown and run only on the repeated line','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout resets the transcript, Memory pane and active session like a successful logout, even when the follow-up probe fails','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
  }
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});

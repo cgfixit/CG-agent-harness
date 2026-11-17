@@ -9,8 +9,12 @@ Chrome. Computer use (native apps) is a skeleton that nothing calls.
 `/browse <site> [https://site ...] <task>` in the console, or
 `POST /api/browser/run` with `{task, origins}`. Administrator only, refused unless `browser.enabled` is
 literal `true` (ships `true`, restart-only), one task at a time, stopped after
-`browser.timeout_sec` (default 300). Only the first site may be a bare domain
-(meaning `https://`), so a task word like `README.md` is never a grant.
+`browser.timeout_sec` (default 300). Without accounts (`auth.enabled` not literal
+`true`) the admin check cannot run, so it refuses with `BROWSER_AUTH_REQUIRED`.
+Only the first site may be a bare domain (meaning `https://`), so a task word like
+`README.md` is never a grant. A bare first word ending in a file extension
+(`setup.py`; `.py`, `.md`, `.sh` and `.rs` are also country domains) is shown with
+its grant and runs only when the same line is sent again; `https://` skips that.
 
 How a run works:
 
@@ -70,7 +74,10 @@ Verified by running: fixtures `browser`, `browser enter` (new tab, search,
 select, password hand-off, held POSTs, no WebRTC UDP), `browser reach` (late
 content, an ungranted tab closed and named, `page` and `find`) and
 `browser-verify`; Qwen listed the games behind Start → Games on cgfixit.com
-(2026-11-14). Worker and redirect probes: #921.
+(2026-11-14). `browser guards` checks the sidecar guards by what its loopback
+server received: no worker starts, a same-origin redirect lands, a 1.14 MB page
+with a 20 KB link gives a capped reply, and the proxy answers 407 without the
+session credential. CI's `browser-guards` job runs every fixture here, sandbox on (#945).
 
 ## Honest limits
 

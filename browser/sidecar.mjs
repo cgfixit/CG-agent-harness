@@ -538,7 +538,9 @@ async function start(message) {
   context.on("requestfailed", (request) => {
     if (!allowed(request.url())) refuse(request.url());
   });
-  return { started: true };
+  // The port is loopback-only and useless without this session's credential;
+  // the host's guard fixture probes it unauthenticated (#945).
+  return { started: true, proxy_port: proxyPort };
 }
 
 // Wait for the page to load, script content to render, held requests to

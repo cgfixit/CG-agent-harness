@@ -603,3 +603,45 @@ async fn account_changes_recheck_the_acting_admin_when_they_run() {
         assert!(mgr.get_user("intruder").is_none());
     }
 }
+
+/// #945: with accounts off the admin check in guards.rs does not run, so the
+/// browser route refuses on its own before anything is spawned.
+#[tokio::test]
+async fn browser_tasks_refuse_without_accounts_even_when_enabled() {
+    let model = start_mock_model().await;
+    // The test defaults turn accounts off; browser.enabled keeps its shipped true.
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("browser.enabled", "true"),
+    )
+    .await;
+    let (status, body) = s
+        .post_json(
+            "/api/browser/run",
+            json!({"task": "read the page", "origins": ["https://example.com"]}),
+        )
+        .await;
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(body["detail"]["code"], "BROWSER_AUTH_REQUIRED", "{body}");
+    assert!(
+        model.requests.lock().unwrap().is_empty(),
+        "no model call before the refusal"
+    );
+    // browser.enabled: false still refuses first, with its own code.
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("browser.enabled", "false"),
+    )
+    .await;
+    let (status, body) = s
+        .post_json(
+            "/api/browser/run",
+            json!({"task": "read the page", "origins": ["https://example.com"]}),
+        )
+        .await;
+    assert_eq!(
+        (status, &body["detail"]["code"]),
+        (409, &json!("BROWSER_DISABLED")),
+        "{body}"
+    );
+}
