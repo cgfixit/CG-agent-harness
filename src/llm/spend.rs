@@ -971,12 +971,17 @@ mod tests {
         let absolute = AppConfig::from_str(&abs_yaml, Path::new("config.yaml")).unwrap();
         assert_eq!(spend_path(home, &absolute), default);
         // Root- and drive-relative values are not absolute on Windows, but
-        // joining them would leave the home (the audit_file rule refuses them).
-        #[cfg(windows)]
+        // joining them would leave the home (the audit_file rule refuses them);
+        // elsewhere they are ordinary names. Either way the ledger stays home.
+        // No cfg gate: pull-request CI has no Windows test leg to build one.
         for configured in [r"\escape\spend.jsonl", "C:escape.jsonl"] {
             let yaml = format!("logging:\n  spend_file: {}", serde_json::to_string(configured).unwrap());
             let cfg = AppConfig::from_str(&yaml, Path::new("config.yaml")).unwrap();
-            assert_eq!(spend_path(home, &cfg), default, "{configured}");
+            let resolved = spend_path(home, &cfg);
+            assert!(resolved.starts_with(home), "{configured}");
+            if cfg!(windows) {
+                assert_eq!(resolved, default, "{configured}");
+            }
         }
     }
 
