@@ -145,7 +145,7 @@ The shipped YAML lists each bound with its clamp. `suggestion_max_input_chars`
 (8000) is the total across input and output, split equally and clipped on
 character boundaries. `suggestion_max_queue` (8) counts waiting jobs globally,
 plus at most one active generation; waiting input expires after
-`suggestion_queue_ttl_secs` (300), while active inference uses the chat-client
+`suggestion_queue_ttl_secs` (1800, long enough to outlast a stretch of chat turns that keep preempting it), while active inference uses the chat-client
 timeout. `status_poll_ms` (30000) is halved while generating.
 `min_consolidation_confidence` and `max_consolidation_candidates` are shared
 with consolidation, and `max_proposals_per_owner` (50; 32 if absent) is the

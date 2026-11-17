@@ -361,6 +361,58 @@ async fn duplicate_insights_fit_one_proposal_slot_and_count_as_rejected() {
 }
 
 #[tokio::test]
+async fn a_full_proposal_list_refuses_before_the_model_is_asked() {
+    let model = model().await;
+    let s = spawn_server(
+        &model.base,
+        options("both").with("structured_memory.max_proposals_per_owner", "1"),
+    )
+    .await;
+    let (status, body) = s
+        .post_json(
+            "/api/structured-memory/proposals",
+            json!({"action":"add","content":"Waiting for review.","category":"note"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let id = stage(store, "local");
+    let attempt = suggest::enqueue(
+        &s.state,
+        "local",
+        Source::Chat,
+        Some(&id),
+        "I prefer metric units.",
+        "Noted.",
+    );
+    assert_eq!(attempt["queued"], false, "{attempt}");
+    assert_eq!(attempt["reason"], "STRUCTURED_MEMORY_CAP");
+    // Nothing queued, no receipt, and the local model was never asked.
+    assert_eq!(suggest::status(&s.state, "local")["queued"], 0);
+    assert!(store.list_consolidation_runs("local").unwrap().is_empty());
+    assert!(model.requests.lock().unwrap().is_empty());
+    // Once the pending proposal is reviewed, suggestions run again.
+    let pending = store.list_pending_proposals("local").unwrap();
+    let (status, body) = s
+        .post_json(
+            &format!("/api/structured-memory/proposals/{}", pending[0].id),
+            json!({"revision":pending[0].revision,"reason":"reviewed","confirm":true,"apply":false}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let attempt = suggest::enqueue(
+        &s.state,
+        "local",
+        Source::Chat,
+        Some(&id),
+        "I prefer metric units.",
+        "Noted.",
+    );
+    assert_eq!(attempt["queued"], true, "{attempt}");
+    requested(&model, 1).await;
+}
+
+#[tokio::test]
 async fn default_quoted_invalid_and_capture_off_gates_do_not_enqueue_or_create_a_store() {
     let model = model().await;
     for (opts, reason) in [

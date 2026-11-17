@@ -173,6 +173,45 @@ pub(crate) fn model_mode_supported(
     Some(supported)
 }
 
+/// A startup warning when the shipped-on suggestion sources cannot run for the
+/// configured local model: a `config.yaml` from before D7 has no
+/// `suggestion_supported` list, which supports nothing, and the console only
+/// says so after a turn. `None` when suggestions are off or would run.
+pub fn startup_notice(cfg: &crate::common::config::AppConfig) -> Option<String> {
+    let on = cfg.flag_is_true("structured_memory.auto_suggest_chat")
+        || cfg.flag_is_true("structured_memory.auto_suggest_coding");
+    if !on || !cfg.flag_is_true("structured_memory.enabled") || !cfg.flag_is_true("structured_memory.episode_capture") {
+        return None;
+    }
+    let mode = match cfg.get("structured_memory.suggestion_mode") {
+        None => "both",
+        Some(value) => value.as_str().unwrap_or(""),
+    };
+    let model = cfg
+        .get("models.local_llm.model")
+        .and_then(serde_yaml_ng::Value::as_str)
+        .unwrap_or("");
+    let provider = cfg
+        .get("models.local_llm.provider")
+        .and_then(serde_yaml_ng::Value::as_str)
+        .unwrap_or("");
+    let list = cfg.get("structured_memory.suggestion_supported");
+    match model_mode_supported(list, model, mode, provider) {
+        Some(true) => None,
+        None => Some(
+            "structured_memory.suggestion_supported is malformed, so automatic memory suggestions refuse every model"
+                .into(),
+        ),
+        Some(false) if list.is_none() => Some(
+            "config.yaml has no structured_memory.suggestion_supported list, so automatic memory suggestions refuse every model. Copy the list from the shipped default."
+                .into(),
+        ),
+        Some(false) => Some(format!(
+            "automatic memory suggestions are on, but models.local_llm.model {model:?} in mode {mode:?} is not in structured_memory.suggestion_supported, so its turns suggest nothing"
+        )),
+    }
+}
+
 fn support_reason(state: &AppState, model: &str) -> Option<&'static str> {
     match model_mode_supported(
         state.cfg.get("structured_memory.suggestion_supported"),
@@ -342,6 +381,24 @@ pub fn enqueue_for_model(
         );
     }
     let store = state.structured_memory.as_ref().expect("availability checked");
+    // A full proposal list would fail the run only after a whole local
+    // generation: refuse now, so the turn says why and the model stays free.
+    if store
+        .counts(owner)
+        .is_ok_and(|(_, pending)| pending >= store.limits().max_proposals_per_owner)
+    {
+        state
+            .audit
+            .log(json!({"event":"memory_suggestion_skipped","owner_id":owner,"reason":"STRUCTURED_MEMORY_CAP"}));
+        return attempt(
+            state,
+            &mut queue,
+            owner,
+            source,
+            episode,
+            json!({"queued":false,"reason":"STRUCTURED_MEMORY_CAP"}),
+        );
+    }
     let staged = match (source, episode) {
         (Source::Chat, Some(id)) => store.get_episode(owner, id),
         (Source::Coding, _) => store.stage_coding_episode(
@@ -729,7 +786,29 @@ async fn generate(state: &Arc<AppState>, job: &Arc<Job>, cancel: &CancellationTo
 
 #[cfg(test)]
 mod tests {
-    use super::model_mode_supported;
+    use super::{model_mode_supported, startup_notice};
+
+    fn cfg(yaml: &str) -> crate::common::config::AppConfig {
+        crate::common::config::AppConfig::from_str(yaml, std::path::Path::new("config.yaml")).unwrap()
+    }
+
+    #[test]
+    fn startup_notice_names_why_suggestions_cannot_run() {
+        let base = "models:\n  local_llm:\n    provider: ollama\n    model: qwen3:8b\nstructured_memory:\n  enabled: true\n  episode_capture: true\n  auto_suggest_chat: true\n";
+        let listed = format!("{base}  suggestion_supported: [{{model: qwen3:8b, modes: [both]}}]\n");
+        assert_eq!(startup_notice(&cfg(&listed)), None);
+        // A home seeded before D7 has no list.
+        assert!(startup_notice(&cfg(base))
+            .unwrap()
+            .contains("no structured_memory.suggestion_supported"));
+        let other = format!("{base}  suggestion_supported: [{{model: gemma3, modes: [both]}}]\n");
+        assert!(startup_notice(&cfg(&other)).unwrap().contains("\"qwen3:8b\""));
+        let bad = format!("{base}  suggestion_supported: qwen3\n");
+        assert!(startup_notice(&cfg(&bad)).unwrap().contains("malformed"));
+        // Nothing to warn about while the sources are off.
+        let off = base.replace("auto_suggest_chat: true", "auto_suggest_chat: false");
+        assert_eq!(startup_notice(&cfg(&off)), None);
+    }
 
     fn list(yaml: &str) -> serde_yaml_ng::Value {
         serde_yaml_ng::from_str(yaml).unwrap()
