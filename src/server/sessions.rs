@@ -731,8 +731,9 @@ impl OwnedSessionStore<'_> {
             None,
             &[],
             None,
+            &|| true,
         )
-        .map(|(session, _)| session)
+        .map(|(session, ..)| session)
     }
 
     #[cfg(test)]
@@ -759,13 +760,19 @@ impl OwnedSessionStore<'_> {
             None,
             &[],
             None,
+            &|| true,
         )
-        .map(|(session, _)| session)
+        .map(|(session, ..)| session)
     }
 
     /// Also folds the turn's `web_tools` events into the session's web ledger
     /// and returns that turn's counts when it made a web read. `pins`, when
     /// given, is merged in the same write, so a turn never lands without them.
+    ///
+    /// `owner_live` re-reads the requesting account under the store lock and is
+    /// returned. The exchange is stored either way; a revoked owner's pins are
+    /// left as they are, so a turn that outlived an account deletion cannot
+    /// re-add pins the deletion already dropped (it takes this lock too).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn record_exchange_inner(
         &self,
@@ -779,8 +786,10 @@ impl OwnedSessionStore<'_> {
         calibration: Option<crate::server::compaction::TokenCalibration>,
         web_events: &[Value],
         pins: Option<PinMerge<'_>>,
-    ) -> Result<(Session, Option<crate::server::web_ledger::TurnSummary>)> {
+        owner_live: &dyn Fn() -> bool,
+    ) -> Result<(Session, Option<crate::server::web_ledger::TurnSummary>, bool)> {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let live = owner_live();
         let mut session = self.get(session_id)?;
         if let Some((keep_recent, summary)) = compact {
             session.messages = crate::server::compaction::compact_messages(&session.messages, keep_recent, &summary);
@@ -823,11 +832,11 @@ impl OwnedSessionStore<'_> {
             session.compactions,
             now,
         );
-        if let Some(pins) = pins {
+        if let Some(pins) = pins.filter(|_| live) {
             merge_pins(&mut session, pins.owner, pins.ids, pins.live);
         }
         self.write(&session)?;
-        Ok((session, web_turn))
+        Ok((session, web_turn, live))
     }
 
     /// `title=None` leaves the title alone; `goal=Some("")` clears the goal.
@@ -1498,7 +1507,7 @@ mod attachment_pin_tests {
             ids: &ids,
             live: &live,
         };
-        let (saved, _) = store
+        let (saved, _, owner_live) = store
             .record_exchange_inner(
                 &session.session_id,
                 "question",
@@ -1510,8 +1519,10 @@ mod attachment_pin_tests {
                 None,
                 &[],
                 Some(pins),
+                &|| true,
             )
             .unwrap();
+        assert!(owner_live);
         assert_eq!(saved.messages.len(), 2);
         assert_eq!(
             saved.pinned_ids_for("local"),
@@ -1521,6 +1532,49 @@ mod attachment_pin_tests {
         let loaded = store.get(&session.session_id).unwrap();
         assert_eq!(loaded.messages.len(), 2);
         assert_eq!(loaded.pinned_ids_for("local"), saved.pinned_ids_for("local"));
+    }
+
+    #[test]
+    fn a_revoked_owner_s_exchange_is_stored_without_touching_its_pins() {
+        let dir = tempfile::tempdir().unwrap();
+        let store_root = SessionStore::new(dir.path()).unwrap();
+        let store = store_root.for_owner("local");
+        let session = store.create("fixture", "pins").unwrap();
+        store
+            .merge_attachment_pins(&session.session_id, "local", &["old".into()], live_all)
+            .unwrap();
+        let live = |_: &[String]| -> std::collections::BTreeSet<String> { panic!("pins are not merged") };
+        let ids = vec!["new".to_string()];
+        let pins = PinMerge {
+            owner: "local",
+            ids: &ids,
+            live: &live,
+        };
+        let asked = std::cell::Cell::new(0);
+        let (saved, _, owner_live) = store
+            .record_exchange_inner(
+                &session.session_id,
+                "question",
+                "answer",
+                "m",
+                &TokenTally::default(),
+                &[],
+                None,
+                None,
+                &[],
+                Some(pins),
+                &|| {
+                    asked.set(asked.get() + 1);
+                    false
+                },
+            )
+            .unwrap();
+        assert!(!owner_live);
+        assert_eq!(asked.get(), 1, "the account is read once, under the lock");
+        let loaded = store.get(&session.session_id).unwrap();
+        assert_eq!(loaded.messages.len(), 2, "the exchange is still stored");
+        assert_eq!(loaded.pinned_ids_for("local"), vec!["old".to_string()]);
+        assert_eq!(saved.pinned_ids_for("local"), loaded.pinned_ids_for("local"));
     }
 
     #[test]
