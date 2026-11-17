@@ -94,9 +94,16 @@ fn raw(
         timeout,
         stdin,
     })
-    .map_err(|_| {
-        HarnessError::agentic("Git operation did not complete reliably; inspect state before retrying")
-            .detail("indeterminate", true)
+    .map_err(|error| {
+        let refused = HarnessError::agentic("Git operation did not complete reliably; inspect state before retrying")
+            .detail("indeterminate", true);
+        // Callers that only read (the retrieval inventory) may treat output
+        // too large to capture as a limit rather than a failed run.
+        if error.is_output_limit() {
+            refused.detail("output_limit", true)
+        } else {
+            refused
+        }
     })
 }
 
@@ -218,6 +225,8 @@ pub fn checked(
 
 /// Attributes that can transform bytes are outside the raw-content review
 /// contract. Refuse them rather than silently committing the wrong representation.
+/// `crlf` is the legacy spelling Git still honors as `text` (`crlf=input` as
+/// `eol=lf`); `check-attr` reports it separately, so it is named here too.
 pub fn require_raw_paths(worktree: &Path, paths: &[String]) -> Result<()> {
     let mut args = vec![
         "check-attr",
@@ -225,6 +234,7 @@ pub fn require_raw_paths(worktree: &Path, paths: &[String]) -> Result<()> {
         "filter",
         "text",
         "eol",
+        "crlf",
         "working-tree-encoding",
         "ident",
         "--",
@@ -246,6 +256,34 @@ pub fn require_raw_paths(worktree: &Path, paths: &[String]) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// Off Unix, `manifest::file_mode` reads every file as 100644, so committing over
+/// an executable or symbolic-link base entry would change its mode where the
+/// mode-blind review diff cannot show it. Refuse such paths there instead.
+pub fn require_plain_base_entries(worktree: &Path, base: &str, paths: &[String]) -> Result<()> {
+    let mut args = vec!["ls-tree", "-z", base, "--"];
+    args.extend(paths.iter().map(String::as_str));
+    let listing = checked(worktree, &args, Duration::from_secs(DEFAULT_OP_TIMEOUT_SEC), &[], None)?;
+    if !base_entries_are_plain(&listing)? {
+        return Err(HarnessError::write_refused(
+            "selected path is executable or a symbolic link in the base; this host cannot preserve its mode",
+        ));
+    }
+    Ok(())
+}
+
+/// `ls-tree -z` records are `<mode> SP <type> SP <object> TAB <path>`; a path
+/// absent from the base (a new file) has no record.
+fn base_entries_are_plain(listing: &str) -> Result<bool> {
+    let mut plain = true;
+    for record in listing.split_terminator('\0') {
+        let (mode, _) = record
+            .split_once(' ')
+            .ok_or_else(|| HarnessError::agentic("invalid Git tree listing"))?;
+        plain &= mode == "100644";
+    }
+    Ok(plain)
 }
 
 /// gh's authenticated clone still invokes Git. Drop ambient Git control variables
@@ -290,6 +328,70 @@ mod tests {
                 refused.display()
             );
         }
+    }
+
+    #[test]
+    fn base_entries_are_plain_only_for_ordinary_files() {
+        let record = |mode: &str| format!("{mode} blob 0123abcd\tpath\0");
+        assert!(
+            super::base_entries_are_plain("").unwrap(),
+            "a new path has no base entry"
+        );
+        assert!(super::base_entries_are_plain(&record("100644")).unwrap());
+        for mode in ["100755", "120000", "160000", "040000"] {
+            let listing = record("100644") + &record(mode);
+            assert!(!super::base_entries_are_plain(&listing).unwrap(), "{mode}");
+        }
+        assert!(super::base_entries_are_plain("garbage\0").is_err());
+    }
+
+    /// Real `ls-tree` over literal pathspecs: an executable or a link in the
+    /// base refuses; an ordinary file, a new path, and a glob-like name whose
+    /// pattern would match an executable neighbor do not.
+    #[test]
+    fn plain_base_entries_refuse_executables_and_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| -> String {
+            let out = super::raw(dir.path(), args, std::time::Duration::from_secs(30), &[], None).unwrap();
+            assert_eq!(out.status, Some(0), "git {args:?}: {}", out.stderr);
+            out.stdout.trim().to_string()
+        };
+        git(&["init", "-q", "."]);
+        std::fs::create_dir(dir.path().join("bin")).unwrap();
+        for (name, body) in [
+            ("bin/run.sh", "x\n"),
+            ("plain.txt", "y\n"),
+            ("g[x].txt", "z\n"),
+            ("gx.txt", "w\n"),
+        ] {
+            std::fs::write(dir.path().join(name), body).unwrap();
+        }
+        git(&["add", "--", "bin/run.sh", "plain.txt", "g[x].txt", "gx.txt"]);
+        git(&["update-index", "--chmod=+x", "--", "bin/run.sh", "gx.txt"]);
+        // A symbolic-link entry, whatever this host's core.symlinks says.
+        let target = git(&["hash-object", "-w", "--stdin"]);
+        git(&["update-index", "--add", "--cacheinfo", &format!("120000,{target},link")]);
+        git(&[
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "base",
+        ]);
+        let check = |paths: &[&str]| {
+            let paths: Vec<String> = paths.iter().map(|p| p.to_string()).collect();
+            super::require_plain_base_entries(dir.path(), "HEAD", &paths)
+        };
+        for refused in ["bin/run.sh", "link"] {
+            assert_eq!(
+                check(&[refused]).unwrap_err().code,
+                "AGENTIC_WRITE_REFUSED",
+                "{refused}"
+            );
+        }
+        check(&["plain.txt", "g[x].txt", "new.txt"]).unwrap();
     }
 
     /// Real `git credential fill`: without the pinned arguments Git asks the
