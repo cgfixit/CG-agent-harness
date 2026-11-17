@@ -361,6 +361,214 @@ async fn duplicate_insights_fit_one_proposal_slot_and_count_as_rejected() {
 }
 
 #[tokio::test]
+async fn a_full_proposal_list_refuses_before_the_model_is_asked() {
+    let model = model().await;
+    let s = spawn_server(
+        &model.base,
+        options("both").with("structured_memory.max_proposals_per_owner", "1"),
+    )
+    .await;
+    let (status, body) = s
+        .post_json(
+            "/api/structured-memory/proposals",
+            json!({"action":"add","content":"Waiting for review.","category":"note"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let id = stage(store, "local");
+    let attempt = suggest::enqueue(
+        &s.state,
+        "local",
+        Source::Chat,
+        Some(&id),
+        "I prefer metric units.",
+        "Noted.",
+    );
+    assert_eq!(attempt["queued"], false, "{attempt}");
+    assert_eq!(attempt["reason"], "STRUCTURED_MEMORY_CAP");
+    // Nothing queued, no receipt, and the local model was never asked.
+    assert_eq!(suggest::status(&s.state, "local")["queued"], 0);
+    assert!(store.list_consolidation_runs("local").unwrap().is_empty());
+    assert!(model.requests.lock().unwrap().is_empty());
+    // Once the pending proposal is reviewed, suggestions run again.
+    let pending = store.list_pending_proposals("local").unwrap();
+    let (status, body) = s
+        .post_json(
+            &format!("/api/structured-memory/proposals/{}", pending[0].id),
+            json!({"revision":pending[0].revision,"reason":"reviewed","confirm":true,"apply":false}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let attempt = suggest::enqueue(
+        &s.state,
+        "local",
+        Source::Chat,
+        Some(&id),
+        "I prefer metric units.",
+        "Noted.",
+    );
+    assert_eq!(attempt["queued"], true, "{attempt}");
+    requested(&model, 1).await;
+}
+
+#[tokio::test]
+async fn a_run_with_more_proposals_than_room_stores_what_fits() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        options("insights").with("structured_memory.max_proposals_per_owner", "2"),
+    )
+    .await;
+    let (status, body) = s
+        .post_json(
+            "/api/structured-memory/proposals",
+            json!({"action":"add","content":"Waiting for review.","category":"note"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let id = stage(store, "local");
+    let candidates: Vec<Value> = ["The operator prefers metric units.", "The operator works in Rust."]
+        .iter()
+        .map(|text| {
+            json!({"action":"add", "category":"insight", "content":text,
+            "confidence":0.9, "sensitivity":"normal", "source_refs":[id]})
+        })
+        .collect();
+    model.set_reply(ok_reply(&json!({"candidates":candidates}).to_string(), 10, 20));
+    let attempt = suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "Noted.", "Acknowledged.");
+    assert_eq!(attempt["queued"], true, "{attempt}");
+    settled(&s, "local").await;
+
+    // One slot was free: the first proposal is stored, the second counts as
+    // rejected, and the run finishes instead of failing at the cap.
+    let run = &store.list_consolidation_runs("local").unwrap()[0];
+    assert_eq!(run.state, "done", "{:?}", run.error_class);
+    assert_eq!((run.candidate_count, run.rejected_count, run.proposal_count), (2, 1, 1));
+    let mut pending: Vec<String> = store
+        .list_pending_proposals("local")
+        .unwrap()
+        .into_iter()
+        .filter_map(|p| p.content)
+        .collect();
+    pending.sort();
+    assert_eq!(pending, ["The operator prefers metric units.", "Waiting for review."]);
+    s.state.audit.flush();
+    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    assert!(
+        audit
+            .lines()
+            .any(|l| l.contains(r#""event":"memory_suggestion_cap_trimmed""#)
+                && l.contains(r#""kept":1"#)
+                && l.contains(r#""dropped":1"#)),
+        "the trim is audited"
+    );
+}
+
+#[tokio::test]
+async fn repeats_of_a_fact_or_a_pending_or_rejected_proposal_are_not_proposed_again() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), options("both")).await;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    store
+        .add_fact("local", "The operator uses metric units.", "pref", "fixture fact")
+        .unwrap();
+    let run = |content: &[&str]| {
+        let id = stage(store, "local");
+        let candidates: Vec<Value> = content
+            .iter()
+            .map(|text| {
+                json!({"action":"add", "category":"insight", "content":text,
+                "confidence":0.9, "sensitivity":"normal", "source_refs":[id]})
+            })
+            .collect();
+        model.set_reply(ok_reply(&json!({"candidates":candidates}).to_string(), 10, 20));
+        suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "Noted.", "Acknowledged.");
+    };
+    let pending_text = |store: &StructuredMemoryStore| -> Vec<String> {
+        store
+            .list_pending_proposals("local")
+            .unwrap()
+            .into_iter()
+            .filter_map(|p| p.content)
+            .collect()
+    };
+
+    run(&["The operator prefers concise answers."]);
+    settled(&s, "local").await;
+    assert_eq!(pending_text(store), ["The operator prefers concise answers."]);
+
+    // Same text with different case, spacing and punctuation, the stored fact
+    // restated, and one new memory: only the new one is proposed.
+    run(&[
+        "the operator prefers  concise answers",
+        "The operator uses metric units!",
+        "The operator works in Rust.",
+    ]);
+    settled(&s, "local").await;
+    let mut pending = pending_text(store);
+    pending.sort();
+    assert_eq!(
+        pending,
+        ["The operator prefers concise answers.", "The operator works in Rust."]
+    );
+    let latest = &store.list_consolidation_runs("local").unwrap()[0];
+    assert_eq!(latest.state, "done");
+    assert_eq!(
+        (latest.candidate_count, latest.rejected_count, latest.proposal_count),
+        (3, 2, 1)
+    );
+    s.state.audit.flush();
+    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    assert!(audit.contains(r#""event":"memory_suggestion_repeats_skipped""#));
+    assert!(audit
+        .lines()
+        .any(|l| l.contains("memory_suggestion_repeats_skipped") && l.contains(r#""count":2"#)));
+
+    // The same text as a summary and as an insight in one output is one memory.
+    {
+        let id = stage(store, "local");
+        let both: Vec<Value> = ["session_summary", "insight"]
+            .iter()
+            .map(|category| {
+                json!({"action":"add", "category":category, "content":"The operator deploys on Fridays.",
+                "confidence":0.9, "sensitivity":"normal", "source_refs":[id]})
+            })
+            .collect();
+        model.set_reply(ok_reply(&json!({"candidates":both}).to_string(), 10, 20));
+        suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "Noted.", "Acknowledged.");
+    }
+    settled(&s, "local").await;
+    assert_eq!(
+        pending_text(store)
+            .iter()
+            .filter(|text| text.as_str() == "The operator deploys on Fridays.")
+            .count(),
+        1
+    );
+
+    // A rejected proposal is not suggested again either.
+    let concise = store
+        .list_pending_proposals("local")
+        .unwrap()
+        .into_iter()
+        .find(|p| p.content.as_deref() == Some("The operator prefers concise answers."))
+        .unwrap();
+    store
+        .decide_proposal("local", &concise.id, &concise.revision, false, "not wanted")
+        .unwrap();
+    run(&["The operator prefers concise answers."]);
+    settled(&s, "local").await;
+    let mut pending = pending_text(store);
+    pending.sort();
+    assert_eq!(
+        pending,
+        ["The operator deploys on Fridays.", "The operator works in Rust."]
+    );
+}
+
+#[tokio::test]
 async fn default_quoted_invalid_and_capture_off_gates_do_not_enqueue_or_create_a_store() {
     let model = model().await;
     for (opts, reason) in [
@@ -1180,7 +1388,12 @@ async fn synchronous_and_detached_coding_share_pending_only_completion_hook() {
     assert_eq!(completed["status"], "finished", "{completed}");
     assert_eq!(completed["result"]["memory_suggestion"]["queued"], true, "{completed}");
     let store = s.state.structured_memory.as_ref().unwrap();
-    assert_eq!(store.list_pending_proposals("local").unwrap().len(), 2);
+    // Both runs reached the model; the detached run's identical insight is a
+    // repeat of the pending one, so it is not proposed twice.
+    let runs = store.list_consolidation_runs("local").unwrap();
+    assert_eq!(runs.len(), 2);
+    assert!(runs.iter().all(|run| run.state == "done"));
+    assert_eq!(store.list_pending_proposals("local").unwrap().len(), 1);
     assert!(store.list_facts("local").unwrap().is_empty());
     for episode in store.list_episodes("local").unwrap() {
         assert!(episode.privacy_summary.starts_with("Completed coding run"));
@@ -1221,7 +1434,7 @@ async fn synchronous_and_detached_coding_share_pending_only_completion_hook() {
         "{skipped}"
     );
     assert_eq!(store.episode_count("local").unwrap(), before);
-    assert_eq!(store.list_pending_proposals("local").unwrap().len(), 2);
+    assert_eq!(store.list_pending_proposals("local").unwrap().len(), 1);
 }
 
 #[tokio::test]
