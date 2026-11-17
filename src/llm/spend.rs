@@ -6,7 +6,7 @@
 
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -390,6 +390,15 @@ pub fn spend_path(home: &Path, cfg: &AppConfig) -> PathBuf {
     }
     if Path::new(&raw).is_absolute() {
         tracing::warn!("logging.spend_file refused an absolute path; using default");
+        return home.join(DEFAULT_SPEND_FILE);
+    }
+    // Windows `\x` and `C:x` are not absolute, yet `join` lets their root or
+    // prefix replace the home; only plain names may remain, as for audit_file.
+    if Path::new(&raw)
+        .components()
+        .any(|part| !matches!(part, Component::Normal(_) | Component::CurDir))
+    {
+        tracing::warn!("logging.spend_file must stay home-relative; using default");
         return home.join(DEFAULT_SPEND_FILE);
     }
     home.join(PathBuf::from(raw))
@@ -961,6 +970,19 @@ mod tests {
         let abs_yaml = format!("logging:\n  spend_file: {}", serde_json::to_string(abs_value).unwrap());
         let absolute = AppConfig::from_str(&abs_yaml, Path::new("config.yaml")).unwrap();
         assert_eq!(spend_path(home, &absolute), default);
+        // Root- and drive-relative values are not absolute on Windows, but
+        // joining them would leave the home (the audit_file rule refuses them);
+        // elsewhere they are ordinary names. Either way the ledger stays home.
+        // No cfg gate: pull-request CI has no Windows test leg to build one.
+        for configured in [r"\escape\spend.jsonl", "C:escape.jsonl"] {
+            let yaml = format!("logging:\n  spend_file: {}", serde_json::to_string(configured).unwrap());
+            let cfg = AppConfig::from_str(&yaml, Path::new("config.yaml")).unwrap();
+            let resolved = spend_path(home, &cfg);
+            assert!(resolved.starts_with(home), "{configured}");
+            if cfg!(windows) {
+                assert_eq!(resolved, default, "{configured}");
+            }
+        }
     }
 
     #[test]
