@@ -197,13 +197,13 @@ impl JobStore {
             .map(|n| n.status(owner))
             .unwrap_or_else(|| json!({"enabled":false,"destinations":[],"deliveries":[]}))
     }
-    pub fn replay_notification(&self, owner: &str, id: &str) -> crate::common::errors::Result<()> {
+    pub fn replay_notification(&self, owner: &str, id: &str, reason_chars: usize) -> crate::common::errors::Result<()> {
         self.notifications
             .as_ref()
             .ok_or_else(|| {
                 crate::common::errors::HarnessError::new("NOTIFICATIONS_DISABLED", "notification delivery is disabled")
             })?
-            .replay(owner, id)
+            .replay(owner, id, reason_chars)
     }
 
     fn persist(&self, jobs: &BTreeMap<String, Job>) -> crate::common::errors::Result<()> {

@@ -361,11 +361,14 @@ pub async fn create_session(
     ValidJson(req): ValidJson<SessionCreateRequest>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let owner = super::auth::context_owner(user.clone());
-    let session = state
-        .store
-        .for_owner(&owner)
-        .create(&state.current_model(), &req.title)
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    let session = super::structured_memory::off_worker(move || {
+        state
+            .store
+            .for_owner(&owner)
+            .create(&state.current_model(), &req.title)
+            .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))
+    })
+    .await?;
     Ok((StatusCode::CREATED, Json(session.summary())))
 }
 
@@ -486,28 +489,33 @@ pub async fn clear_attachment_pins(
     Path(session_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
-    state
-        .store
-        .for_owner(&owner)
-        .get(&session_id)
-        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
-    // A completing turn must not re-pin attachments after this response.
-    let _gate = state.generation_gate.claim("attachment_unpin").ok_or_else(|| {
-        ApiError::new(
-            StatusCode::CONFLICT,
-            "CHAT_BUSY",
-            "stop the active turn before /session unpin",
-        )
-    })?;
-    let removed = state
-        .store
-        .for_owner(&owner)
-        .clear_attachment_pins(&session_id)
-        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
-    state
-        .audit
-        .log(json!({"event": "chat_attachment_pins_cleared", "session_id": session_id, "removed": removed}));
-    Ok(Json(json!({"removed": removed, "blobs_retained": true})))
+    // The session reads and the write run on the blocking pool, holding the
+    // gate there, so a dropped request cannot free it before the clear lands.
+    super::structured_memory::off_worker(move || {
+        state
+            .store
+            .for_owner(&owner)
+            .get(&session_id)
+            .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+        // A completing turn must not re-pin attachments after this response.
+        let _gate = state.generation_gate.claim("attachment_unpin").ok_or_else(|| {
+            ApiError::new(
+                StatusCode::CONFLICT,
+                "CHAT_BUSY",
+                "stop the active turn before /session unpin",
+            )
+        })?;
+        let removed = state
+            .store
+            .for_owner(&owner)
+            .clear_attachment_pins(&session_id)
+            .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+        state
+            .audit
+            .log(json!({"event": "chat_attachment_pins_cleared", "session_id": session_id, "removed": removed}));
+        Ok(Json(json!({"removed": removed, "blobs_retained": true})))
+    })
+    .await
 }
 
 /// Saves one submitted composer line for ArrowUp recall in this session,
@@ -531,11 +539,14 @@ pub async fn record_prompt(
         ));
     }
     let owner = super::auth::context_owner(user);
-    state
-        .store
-        .for_owner(&owner)
-        .record_prompt(&session_id, req.text.trim())
-        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    super::structured_memory::off_worker(move || {
+        state
+            .store
+            .for_owner(&owner)
+            .record_prompt(&session_id, req.text.trim())
+            .map_err(|e| ApiError::from_err(session_status(&e), &e))
+    })
+    .await?;
     Ok(Json(json!({"recorded": true})))
 }
 
@@ -546,11 +557,14 @@ pub async fn rename_session(
     ValidJson(req): ValidJson<RenameRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
-    let session = state
-        .store
-        .for_owner(&owner)
-        .rename(&session_id, Some(&req.title), None)
-        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    let session = super::structured_memory::off_worker(move || {
+        state
+            .store
+            .for_owner(&owner)
+            .rename(&session_id, Some(&req.title), None)
+            .map_err(|e| ApiError::from_err(session_status(&e), &e))
+    })
+    .await?;
     Ok(Json(session.summary()))
 }
 
@@ -562,11 +576,14 @@ pub async fn session_goal(
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
     let web_mode = req.web_mode.unwrap_or(state.runtime_limits().web.goal_web_default);
-    let session = state
-        .store
-        .for_owner(&owner)
-        .set_goal(&session_id, &req.goal, web_mode)
-        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    let session = super::structured_memory::off_worker(move || {
+        state
+            .store
+            .for_owner(&owner)
+            .set_goal(&session_id, &req.goal, web_mode)
+            .map_err(|e| ApiError::from_err(session_status(&e), &e))
+    })
+    .await?;
     let mut out = session.summary();
     out["goal"] = json!(session.goal);
     out["goal_web_mode"] = json!(session.goal_web_mode);
@@ -899,17 +916,23 @@ pub(crate) async fn chat_inner(
             "loop turns require an existing session",
         ));
     }
-    let session = match req.session_id.as_deref().filter(|s| !s.is_empty()) {
-        Some(id) => state
-            .store
-            .for_owner(&owner)
-            .get(id)
-            .map_err(|e| ApiError::from_err(session_status(&e), &e))?,
-        None => state
-            .store
-            .for_owner(&owner)
-            .create(&state.current_model(), "")
-            .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?,
+    // Reading or creating the session file stays off the async worker.
+    let session = {
+        let (state, owner) = (state.clone(), owner.clone());
+        let id = req.session_id.clone().filter(|s| !s.is_empty());
+        super::structured_memory::off_worker(move || match id {
+            Some(id) => state
+                .store
+                .for_owner(&owner)
+                .get(&id)
+                .map_err(|e| ApiError::from_err(session_status(&e), &e)),
+            None => state
+                .store
+                .for_owner(&owner)
+                .create(&state.current_model(), "")
+                .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e)),
+        })
+        .await?
     };
     // Validate the same snapshot used below for system context, not a separate load.
     if expected_loop_goal.is_some_and(|goal| goal != session.goal) {
@@ -1048,7 +1071,7 @@ pub(crate) async fn chat_inner(
             },
         ) => claimed,
     };
-    let _gate = match claimed {
+    let gate = match claimed {
         Ok(gate) => gate,
         Err(busy_owner) => {
             drop(release);
@@ -1760,30 +1783,6 @@ pub(crate) async fn chat_inner(
             },
         );
     }
-    let recorded = state.store.for_owner(&owner).record_exchange_inner(
-        &session.session_id,
-        // A server-run loop turn stores its short label, not the framing sent.
-        req.stored_message.as_deref().unwrap_or(&req.message),
-        &reply.body_text,
-        &reply.model,
-        &usage,
-        &prompt_skills,
-        compaction.as_ref().map(|c| (c.keep, c.summary.clone())),
-        calibration,
-        &web_tools,
-    );
-    let (updated, web_turn) = recorded.map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-    if !cloud_selected {
-        let mut pin_ids = updated.pinned_ids_for(&owner);
-        pin_ids.extend(req.attachment_ids.iter().cloned());
-        let live_blobs = state.attachments.owned_blobs(&owner, &pin_ids);
-        let live = |id: &str| live_blobs.contains_key(id);
-        state
-            .store
-            .for_owner(&owner)
-            .merge_attachment_pins(&session.session_id, &owner, &req.attachment_ids, live)
-            .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-    }
     // Counts only, never bodies: the audit and the response say what this
     // turn's compaction kept, summarized and repaired.
     let compaction_report = compaction.as_ref().map(|c| {
@@ -1802,25 +1801,96 @@ pub(crate) async fn chat_inner(
             "dropped_corrections": c.repairs.dropped_corrections,
         })
     });
-    if let Some(reason) = compaction_skipped {
-        state.audit.log(json!({"event": "chat_compaction_skipped", "session_id": session.session_id, "reason": reason}));
-    }
-    if let Some(report) = &compaction_report {
-        let mut event = json!({"event": "chat_session_compacted", "session_id": session.session_id});
-        if let (Some(event), Some(report)) = (event.as_object_mut(), report.as_object()) {
-            event.extend(report.clone());
+    // The exchange and a local turn's pins are one session write: it reads,
+    // serializes and fsyncs the whole file under the store-wide lock, so it runs
+    // on the blocking pool. The generation gate goes with it and comes back, so
+    // a turn cancelled while the write waits still holds the gate until the
+    // write lands: `/session unpin` cannot run between them and be undone. The
+    // audit lines describing the write are logged with it for the same reason.
+    let write = {
+        let state = state.clone();
+        let owner = owner.clone();
+        let session_id = session.session_id.clone();
+        // A server-run loop turn stores its short label, not the framing sent.
+        let user_text = req.stored_message.clone().unwrap_or_else(|| req.message.clone());
+        let (assistant_text, reply_model) = (reply.body_text.clone(), reply.model.clone());
+        let compact = compaction.as_ref().map(|c| (c.keep, c.summary.clone()));
+        let web_events = web_tools.clone();
+        let report = compaction_report.clone();
+        let loop_turn = req.loop_turn;
+        // Pins this turn's snapshot already knows, plus the ones it adds.
+        let pin_request = (!cloud_selected).then(|| {
+            let mut known = session.pinned_ids_for(&owner);
+            known.extend(req.attachment_ids.iter().cloned());
+            (req.attachment_ids.clone(), known)
+        });
+        move || {
+            let gate = gate;
+            let live_blobs = pin_request
+                .as_ref()
+                .map(|(_, known)| state.attachments.owned_blobs(&owner, known))
+                .unwrap_or_default();
+            // Pins a turn that finished after this one loaded its session added
+            // are not in `known`: look those up, in one read, rather than drop
+            // them as dead.
+            let live = |candidates: &[String]| -> std::collections::BTreeSet<String> {
+                let known = pin_request.as_ref().map(|(_, known)| known.as_slice()).unwrap_or_default();
+                let unseen: Vec<String> = candidates.iter().filter(|id| !known.contains(id)).cloned().collect();
+                let late = state.attachments.owned_blobs(&owner, &unseen);
+                candidates
+                    .iter()
+                    .filter(|id| live_blobs.contains_key(*id) || late.contains_key(*id))
+                    .cloned()
+                    .collect()
+            };
+            let pins = pin_request.as_ref().map(|(ids, _)| crate::server::sessions::PinMerge {
+                owner: &owner,
+                ids,
+                live: &live,
+            });
+            let written = state
+                .store
+                .for_owner(&owner)
+                .record_exchange_inner(
+                    &session_id,
+                    &user_text,
+                    &assistant_text,
+                    &reply_model,
+                    &usage,
+                    &prompt_skills,
+                    compact,
+                    calibration,
+                    &web_events,
+                    pins,
+                )
+                .map(|(updated, web_turn)| {
+                    if let Some(reason) = compaction_skipped {
+                        state.audit.log(json!({"event": "chat_compaction_skipped", "session_id": session_id, "reason": reason}));
+                    }
+                    if let Some(report) = &report {
+                        let mut event = json!({"event": "chat_session_compacted", "session_id": session_id});
+                        if let (Some(event), Some(report)) = (event.as_object_mut(), report.as_object()) {
+                            event.extend(report.clone());
+                        }
+                        state.audit.log(event);
+                    }
+                    // Counts and codes only; the targets stay in the owner's session ledger.
+                    if let Some(turn) = &web_turn {
+                        let mut event = json!({"event": "chat_web_turn", "session_id": session_id});
+                        let fields = turn.audit_fields(updated.tally.exchanges, loop_turn, updated.compactions);
+                        if let (Some(event), Some(fields)) = (event.as_object_mut(), fields.as_object()) {
+                            event.extend(fields.clone());
+                        }
+                        state.audit.log(event);
+                    }
+                    updated
+                });
+            (gate, written)
         }
-        state.audit.log(event);
-    }
-    // Counts and codes only; the targets stay in the owner's session ledger.
-    if let Some(turn) = &web_turn {
-        let mut event = json!({"event": "chat_web_turn", "session_id": session.session_id});
-        let fields = turn.audit_fields(updated.tally.exchanges, req.loop_turn, updated.compactions);
-        if let (Some(event), Some(fields)) = (event.as_object_mut(), fields.as_object()) {
-            event.extend(fields.clone());
-        }
-        state.audit.log(event);
-    }
+    };
+    let (gate, written) = super::structured_memory::off_worker(write).await;
+    let _gate = gate;
+    let updated = written.map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     let sensitivity = {
         let scanner = crate::common::injection::Scanner::core();
         if scanner.count_matches(&req.message) > 0 || scanner.count_matches(&reply.body_text) > 0 {

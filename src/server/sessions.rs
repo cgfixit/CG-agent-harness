@@ -298,6 +298,58 @@ fn is_loop_framing(prompt: &str) -> bool {
     prompt.starts_with("Loop turn ") && prompt.contains(". Session goal: ")
 }
 
+/// A local turn's attachment pins, merged into the same session write as its
+/// exchange. `live` gets every candidate id at once and returns those `owner`
+/// still holds, so a write asks the attachment store at most one question.
+pub(crate) struct PinMerge<'a> {
+    pub owner: &'a str,
+    pub ids: &'a [String],
+    pub live: &'a dyn Fn(&[String]) -> std::collections::BTreeSet<String>,
+}
+
+/// Keeps `owner`'s live pins plus live `ids` (newest kept past the cap) and
+/// every other owner's pins untouched.
+fn merge_pins(
+    session: &mut Session,
+    owner: &str,
+    ids: &[String],
+    live: &dyn Fn(&[String]) -> std::collections::BTreeSet<String>,
+) {
+    let mut candidates: Vec<String> = session
+        .attachment_pins
+        .iter()
+        .filter(|pin| pin.owner == owner)
+        .map(|pin| pin.id.clone())
+        .collect();
+    candidates.extend(ids.iter().cloned());
+    let live = live(&candidates);
+    let mut others = Vec::new();
+    let mut mine = Vec::new();
+    for pin in session.attachment_pins.drain(..) {
+        if pin.owner == owner {
+            if live.contains(&pin.id) {
+                mine.push(pin);
+            }
+        } else {
+            others.push(pin);
+        }
+    }
+    for id in ids {
+        if live.contains(id) && !mine.iter().any(|pin| pin.id == *id) {
+            mine.push(AttachmentPin {
+                owner: owner.to_string(),
+                id: id.clone(),
+            });
+        }
+    }
+    if mine.len() > MAX_PINNED_ATTACHMENTS {
+        let drop = mine.len() - MAX_PINNED_ATTACHMENTS;
+        mine.drain(..drop);
+    }
+    others.extend(mine);
+    session.attachment_pins = others;
+}
+
 /// Appends a recalled prompt, keeping an immediate repeat once, as a shell does.
 /// The console is the only writer: a chat turn's text can be generated (/loop
 /// framing, the query of /memory retrieve), which is not what was typed.
@@ -669,6 +721,7 @@ impl OwnedSessionStore<'_> {
             None,
             None,
             &[],
+            None,
         )
         .map(|(session, _)| session)
     }
@@ -696,12 +749,14 @@ impl OwnedSessionStore<'_> {
             Some((keep_recent, summary.to_string())),
             None,
             &[],
+            None,
         )
         .map(|(session, _)| session)
     }
 
     /// Also folds the turn's `web_tools` events into the session's web ledger
-    /// and returns that turn's counts when it made a web read.
+    /// and returns that turn's counts when it made a web read. `pins`, when
+    /// given, is merged in the same write, so a turn never lands without them.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn record_exchange_inner(
         &self,
@@ -714,6 +769,7 @@ impl OwnedSessionStore<'_> {
         compact: Option<(usize, String)>,
         calibration: Option<crate::server::compaction::TokenCalibration>,
         web_events: &[Value],
+        pins: Option<PinMerge<'_>>,
     ) -> Result<(Session, Option<crate::server::web_ledger::TurnSummary>)> {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let mut session = self.get(session_id)?;
@@ -758,6 +814,9 @@ impl OwnedSessionStore<'_> {
             session.compactions,
             now,
         );
+        if let Some(pins) = pins {
+            merge_pins(&mut session, pins.owner, pins.ids, pins.live);
+        }
         self.write(&session)?;
         Ok((session, web_turn))
     }
@@ -841,6 +900,7 @@ impl OwnedSessionStore<'_> {
         Ok(removed)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn merge_attachment_pins(
         &self,
         session_id: &str,
@@ -850,31 +910,9 @@ impl OwnedSessionStore<'_> {
     ) -> Result<Session> {
         let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
         let mut session = self.get(session_id)?;
-        let mut others = Vec::new();
-        let mut mine = Vec::new();
-        for pin in session.attachment_pins.drain(..) {
-            if pin.owner == owner {
-                if live(&pin.id) {
-                    mine.push(pin);
-                }
-            } else {
-                others.push(pin);
-            }
-        }
-        for id in ids {
-            if live(id) && !mine.iter().any(|pin| pin.id == *id) {
-                mine.push(AttachmentPin {
-                    owner: owner.to_string(),
-                    id: id.clone(),
-                });
-            }
-        }
-        if mine.len() > MAX_PINNED_ATTACHMENTS {
-            let drop = mine.len() - MAX_PINNED_ATTACHMENTS;
-            mine.drain(..drop);
-        }
-        others.extend(mine);
-        session.attachment_pins = others;
+        merge_pins(&mut session, owner, ids, &|candidates| {
+            candidates.iter().filter(|id| live(id)).cloned().collect()
+        });
         self.write(&session)?;
         Ok(session)
     }
@@ -1429,6 +1467,51 @@ mod attachment_pin_tests {
             .merge_attachment_pins(&session.session_id, "local", &["gone".into()], |id| id == "live")
             .unwrap();
         assert_eq!(saved.pinned_ids_for("local"), vec!["live".to_string()]);
+    }
+
+    #[test]
+    fn an_exchange_and_its_pins_land_in_one_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let store_root = SessionStore::new(dir.path()).unwrap();
+        let store = store_root.for_owner("local");
+        let session = store.create("fixture", "pins").unwrap();
+        store
+            .merge_attachment_pins(&session.session_id, "local", &["old".into(), "dead".into()], live_all)
+            .unwrap();
+        let asked = std::cell::Cell::new(0);
+        let live = |candidates: &[String]| {
+            asked.set(asked.get() + 1);
+            candidates.iter().filter(|id| *id != "dead").cloned().collect()
+        };
+        let ids = vec!["new".to_string()];
+        let pins = PinMerge {
+            owner: "local",
+            ids: &ids,
+            live: &live,
+        };
+        let (saved, _) = store
+            .record_exchange_inner(
+                &session.session_id,
+                "question",
+                "answer",
+                "m",
+                &TokenTally::default(),
+                &[],
+                None,
+                None,
+                &[],
+                Some(pins),
+            )
+            .unwrap();
+        assert_eq!(saved.messages.len(), 2);
+        assert_eq!(
+            saved.pinned_ids_for("local"),
+            vec!["old".to_string(), "new".to_string()]
+        );
+        assert_eq!(asked.get(), 1, "liveness is asked once per write");
+        let loaded = store.get(&session.session_id).unwrap();
+        assert_eq!(loaded.messages.len(), 2);
+        assert_eq!(loaded.pinned_ids_for("local"), saved.pinned_ids_for("local"));
     }
 
     #[test]

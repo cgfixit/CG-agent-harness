@@ -388,8 +388,9 @@ impl Notifier {
                 .log(json!({"event":"notification_dropped","job_id":if event.valid(){Some(&event.job_id)}else{None},"code":code}));
         }
     }
+    /// Blocking: `authorized_now` rereads the config and destination files. That
+    /// happens before the outbox lock, which delivery and enqueue also take.
     pub fn status(&self, owner: &str) -> Value {
-        let g = self.0.outbox.lock().unwrap_or_else(|p| p.into_inner());
         let suppressed = self
             .0
             .suppressed_owners
@@ -398,11 +399,14 @@ impl Notifier {
             .clone();
         let destinations: Vec<_> = self.0.settings.destinations.iter().filter(|d| d.spec.owner == owner).map(|d|
             json!({"id":d.spec.id,"enabled":d.spec.enabled && !suppressed.contains(&d.spec.owner),"authorized_now":self.0.authorized(d),"events":d.spec.events,"rate_per_minute":d.spec.rate_per_minute,"bearer_configured":d.spec.use_bearer})).collect();
+        let g = self.0.outbox.lock().unwrap_or_else(|p| p.into_inner());
         let deliveries: Vec<_> = g.data.deliveries.values().filter(|d| d.owner == owner).map(|d|
             json!({"delivery_id":d.delivery_id,"event_id":d.event_id,"destination_id":d.destination_id,"job_id":d.completion.job_id,"job_status":d.completion.status,"finished_at":d.completion.finished_at,"state":d.state,"attempts":d.attempts,"replays":d.replays,"next_attempt_at":d.next_attempt_at,"last_code":d.last_code})).collect();
         json!({"enabled":true,"destinations":destinations,"deliveries":deliveries,"semantics":"at_least_once_with_receiver_deduplication"})
     }
-    pub fn replay(&self, owner: &str, id: &str) -> Result<()> {
+    /// Blocking (authority reread, outbox fsync). The reason itself is not kept:
+    /// the audit line records its length, as other reason-gated changes do.
+    pub fn replay(&self, owner: &str, id: &str, reason_chars: usize) -> Result<()> {
         let mut g = self.0.outbox.lock().unwrap_or_else(|p| p.into_inner());
         let mut next = g.data.clone();
         let d = next
@@ -441,7 +445,7 @@ impl Notifier {
         g.commit(next)?;
         self.0
             .audit
-            .log(json!({"event":"notification_replay","delivery_id":id}));
+            .log(json!({"event":"notification_replay","owner_id":owner,"delivery_id":id,"reason_chars":reason_chars}));
         Ok(())
     }
 

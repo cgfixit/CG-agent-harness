@@ -45,6 +45,16 @@ where
     .map_err(|_| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "auth task failed"))?
 }
 
+/// Account changes that rewrite the account database (`AuthManager::persist`
+/// replaces every row in one transaction while holding the lock each guarded
+/// request's session check needs) run on the blocking pool. They do not take a
+/// password permit: no scrypt runs, and a disable or logout must not queue
+/// behind sign-ins. The closure holds the whole change, its audit line and any
+/// owner retirement, so a dropped request never commits half of it.
+async fn account_change<T: Send + 'static>(change: impl FnOnce() -> ApiResult<T> + Send + 'static) -> ApiResult<T> {
+    super::structured_memory::off_worker(change).await
+}
+
 fn manager(state: &AppState) -> ApiResult<&AuthManager> {
     state.auth.as_deref().ok_or_else(|| {
         ApiError::new(
@@ -151,6 +161,16 @@ fn require_user_admin(account: &UserSummary) -> ApiResult<()> {
     Ok(())
 }
 
+/// The actor's authority as stored now. The check before the body parse, the
+/// blocking-pool queue and the password-permit wait can be stale by the time
+/// the change runs.
+fn require_current_admin(mgr: &AuthManager, account: &UserSummary) -> ApiResult<()> {
+    match mgr.get_user(&account.username) {
+        Some(current) if !current.disabled && current.user_id == account.user_id => require_user_admin(&current),
+        _ => Err(denied()),
+    }
+}
+
 fn user_payload(u: &UserSummary) -> Value {
     json!({
         "username": u.username,
@@ -218,12 +238,13 @@ pub async fn login(
 }
 
 pub async fn logout(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Response> {
-    let mgr = manager(&state)?;
+    manager(&state)?;
     if let Ok(account) = actor(&state, &req) {
         state.diag.forget_owner(&account.user_id);
     }
     if let Some(token) = cookie_value(&req) {
-        mgr.logout(&token).map_err(|e| map_auth_error(&e))?;
+        let st = state.clone();
+        account_change(move || manager(&st)?.logout(&token).map_err(|e| map_auth_error(&e))).await?;
     }
     let mut resp = Json(json!({"ok": true})).into_response();
     clear_cookie(&mut resp, crate::server::guards::request_scheme(&req) == "https");
@@ -271,32 +292,37 @@ pub async fn set_disabled(
     let account = actor(&state, &req)?;
     require_user_admin(&account)?;
     let ValidJson(body) = ValidJson::<AuthDisabledRequest>::from_request(req, &()).await?;
-    let mgr = manager(&state)?;
-    let owner_id = mgr.get_user(&username).map(|user| user.user_id);
-    if let Some(owner) = &owner_id {
-        state.diag.forget_owner(owner);
-    }
-    (if body.disabled {
-        mgr.disable_user(&username)
-    } else {
-        mgr.enable_user(&username)
-    })
-    .map_err(|e| map_auth_error(&e))?;
-    if let Some(user) = mgr.get_user(&username) {
-        audit_account(
-            &state,
-            "account.disabled_set",
-            &account.username,
-            &user.username,
-            json!({"disabled": body.disabled}),
-        );
-    }
-    if body.disabled {
-        if let Some(owner) = owner_id {
-            retire_disabled_owner(&state, &owner)?;
+    manager(&state)?;
+    account_change(move || {
+        let mgr = manager(&state)?;
+        require_current_admin(mgr, &account)?;
+        let owner_id = mgr.get_user(&username).map(|user| user.user_id);
+        if let Some(owner) = &owner_id {
+            state.diag.forget_owner(owner);
         }
-    }
-    Ok(Json(json!({"ok":true})))
+        (if body.disabled {
+            mgr.disable_user(&username)
+        } else {
+            mgr.enable_user(&username)
+        })
+        .map_err(|e| map_auth_error(&e))?;
+        if let Some(user) = mgr.get_user(&username) {
+            audit_account(
+                &state,
+                "account.disabled_set",
+                &account.username,
+                &user.username,
+                json!({"disabled": body.disabled}),
+            );
+        }
+        if body.disabled {
+            if let Some(owner) = owner_id {
+                retire_disabled_owner(&state, &owner)?;
+            }
+        }
+        Ok(Json(json!({"ok":true})))
+    })
+    .await
 }
 
 fn revoke_owner_automation(state: &AppState, owner: &str) -> ApiResult<()> {
@@ -396,8 +422,11 @@ pub async fn create_user(State(state): State<Arc<AppState>>, req: Request<Body>)
     let role = validate_role(body.role.as_deref().unwrap_or(crate::common::authn::DEFAULT_ROLE))
         .map_err(|e| map_auth_error(&e))?;
     let st = state.clone();
+    let checked = account.clone();
     let created = run_password_operation(state.auth_operation_permits.clone(), move || {
         manager(&st).and_then(|m| {
+            // The permit wait is shared with sign-ins; authority may have changed.
+            require_current_admin(m, &checked)?;
             m.create_user(&body.username, &body.password, &role)
                 .map_err(|e| map_auth_error(&e))
         })
@@ -429,8 +458,10 @@ pub async fn set_password(
         .username;
     let ValidJson(body) = ValidJson::<AuthSetPasswordRequest>::from_request(req, &()).await?;
     let st = state.clone();
+    let checked = account.clone();
     run_password_operation(state.auth_operation_permits.clone(), move || {
         manager(&st).and_then(|m| {
+            require_current_admin(m, &checked)?;
             m.set_password(&username, &body.password)
                 .map_err(|e| map_auth_error(&e))
         })
@@ -448,23 +479,28 @@ pub async fn set_role(
     let account = actor(&state, &req)?;
     require_user_admin(&account)?;
     let ValidJson(body) = ValidJson::<AuthSetRoleRequest>::from_request(req, &()).await?;
-    let manager = manager(&state)?;
-    if let Some(user) = manager.get_user(&username) {
-        state.diag.forget_owner(&user.user_id);
-    }
-    manager
-        .set_role(&username, &body.role)
-        .map_err(|e| map_auth_error(&e))?;
-    if let Some(user) = manager.get_user(&username) {
-        audit_account(
-            &state,
-            "account.role_set",
-            &account.username,
-            &user.username,
-            json!({"role": user.role}),
-        );
-    }
-    Ok(Json(json!({"ok": true})))
+    manager(&state)?;
+    account_change(move || {
+        let manager = manager(&state)?;
+        require_current_admin(manager, &account)?;
+        if let Some(user) = manager.get_user(&username) {
+            state.diag.forget_owner(&user.user_id);
+        }
+        manager
+            .set_role(&username, &body.role)
+            .map_err(|e| map_auth_error(&e))?;
+        if let Some(user) = manager.get_user(&username) {
+            audit_account(
+                &state,
+                "account.role_set",
+                &account.username,
+                &user.username,
+                json!({"role": user.role}),
+            );
+        }
+        Ok(Json(json!({"ok": true})))
+    })
+    .await
 }
 
 pub async fn delete_user(
@@ -474,74 +510,81 @@ pub async fn delete_user(
 ) -> ApiResult<Json<Value>> {
     let account = actor(&state, &req)?;
     require_user_admin(&account)?;
-    let manager = manager(&state)?;
-    // Blobs go only once the account is actually gone: a refused deletion
-    // (last enabled admin, persistence failure) must not lose user data.
-    let doomed = manager.get_user(&username);
-    let owner = doomed.as_ref().map(|summary| summary.user_id.clone());
-    if let Some(owner) = &owner {
-        state.diag.forget_owner(owner);
-    }
-    manager.delete_user(&username).map_err(|e| map_auth_error(&e))?;
-    if let Some(user) = &doomed {
-        audit_account(
-            &state,
-            "account.user_deleted",
-            &account.username,
-            &user.username,
-            json!({}),
-        );
-    }
-    // Cleanup is reported, never swallowed: a blob or uploaded note whose
-    // unlink failed keeps its manifest row (still charged to the quota) and
-    // is retried by the dead-owner sweeps at the next deletion or server start.
-    let cleanup = match owner.as_deref().map(|owner| state.attachments.unlink_owner(owner)) {
-        None => json!({"removed": 0}),
-        Some(Ok(removed)) => json!({"removed": removed}),
-        Some(Err(e)) => {
-            state.audit.log(json!({
-                "event": "chat_attachments_cleanup_incomplete",
-                "owner": owner,
-                "code": e.code,
-                "message": e.message,
-                "details": e.details,
-            }));
-            json!({"removed": e.details.get("removed").cloned().unwrap_or(json!(0)),
-                   "retained": e.details.get("retained").cloned().unwrap_or(json!(0)),
-                   "error": e.code})
+    manager(&state)?;
+    // The deletion, its cleanup and the owner's retirement are one blocking
+    // unit: a dropped request cannot delete the account and skip the rest.
+    account_change(move || {
+        let manager = manager(&state)?;
+        require_current_admin(manager, &account)?;
+        // Blobs go only once the account is actually gone: a refused deletion
+        // (last enabled admin, persistence failure) must not lose user data.
+        let doomed = manager.get_user(&username);
+        let owner = doomed.as_ref().map(|summary| summary.user_id.clone());
+        if let Some(owner) = &owner {
+            state.diag.forget_owner(owner);
         }
-    };
-    let mut notes_cleanup = json!({"removed": 0});
-    if let Some(owner) = owner.as_deref() {
-        let _ = state.store.drop_attachment_pins_for_owner(owner);
-        notes_cleanup = super::notes_corpus::cleanup_owner(&state, owner);
-    }
-    let live: std::collections::BTreeSet<String> = manager.list_users().into_iter().map(|u| u.user_id).collect();
-    let swept = state
-        .attachments
-        .sweep_dead_owners(&|candidate| candidate == "local" || live.contains(candidate))
-        .unwrap_or(0);
-    // Not the set above: the notes sweep reads the accounts itself once it holds
-    // its store lock, so one created while this request ran is not taken for deleted.
-    let notes_swept = state
-        .notes_corpus
-        .sweep_dead_owners(&|| {
-            let mut owners: std::collections::BTreeSet<String> =
-                manager.list_users().into_iter().map(|u| u.user_id).collect();
-            owners.insert("local".into());
-            owners
-        })
-        .unwrap_or(0);
-    if let Some(owner) = owner.as_deref() {
-        retire_disabled_owner(&state, owner)?;
-    }
-    Ok(Json(json!({
-        "ok": true,
-        "attachment_cleanup": cleanup,
-        "notes_cleanup": notes_cleanup,
-        "swept": swept,
-        "notes_swept": notes_swept,
-    })))
+        manager.delete_user(&username).map_err(|e| map_auth_error(&e))?;
+        if let Some(user) = &doomed {
+            audit_account(
+                &state,
+                "account.user_deleted",
+                &account.username,
+                &user.username,
+                json!({}),
+            );
+        }
+        // Cleanup is reported, never swallowed: a blob or uploaded note whose
+        // unlink failed keeps its manifest row (still charged to the quota) and
+        // is retried by the dead-owner sweeps at the next deletion or server start.
+        let cleanup = match owner.as_deref().map(|owner| state.attachments.unlink_owner(owner)) {
+            None => json!({"removed": 0}),
+            Some(Ok(removed)) => json!({"removed": removed}),
+            Some(Err(e)) => {
+                state.audit.log(json!({
+                    "event": "chat_attachments_cleanup_incomplete",
+                    "owner": owner,
+                    "code": e.code,
+                    "message": e.message,
+                    "details": e.details,
+                }));
+                json!({"removed": e.details.get("removed").cloned().unwrap_or(json!(0)),
+                       "retained": e.details.get("retained").cloned().unwrap_or(json!(0)),
+                       "error": e.code})
+            }
+        };
+        let mut notes_cleanup = json!({"removed": 0});
+        if let Some(owner) = owner.as_deref() {
+            let _ = state.store.drop_attachment_pins_for_owner(owner);
+            notes_cleanup = super::notes_corpus::cleanup_owner(&state, owner);
+        }
+        let live: std::collections::BTreeSet<String> = manager.list_users().into_iter().map(|u| u.user_id).collect();
+        let swept = state
+            .attachments
+            .sweep_dead_owners(&|candidate| candidate == "local" || live.contains(candidate))
+            .unwrap_or(0);
+        // Not the set above: the notes sweep reads the accounts itself once it holds
+        // its store lock, so one created while this request ran is not taken for deleted.
+        let notes_swept = state
+            .notes_corpus
+            .sweep_dead_owners(&|| {
+                let mut owners: std::collections::BTreeSet<String> =
+                    manager.list_users().into_iter().map(|u| u.user_id).collect();
+                owners.insert("local".into());
+                owners
+            })
+            .unwrap_or(0);
+        if let Some(owner) = owner.as_deref() {
+            retire_disabled_owner(&state, owner)?;
+        }
+        Ok(Json(json!({
+            "ok": true,
+            "attachment_cleanup": cleanup,
+            "notes_cleanup": notes_cleanup,
+            "swept": swept,
+            "notes_swept": notes_swept,
+        })))
+    })
+    .await
 }
 
 use axum::extract::FromRequest;
@@ -549,6 +592,30 @@ use axum::extract::FromRequest;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_admin_demoted_or_disabled_after_the_route_check_cannot_change_accounts() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = crate::common::config::AppConfig::from_str("{}", std::path::Path::new("config.yaml")).unwrap();
+        let mgr = AuthManager::open(&dir.path().join("auth.db"), &cfg).unwrap();
+        let password = crate::common::random_hex(24);
+        mgr.create_user("second-admin", &password, ROLE_ADMIN).unwrap();
+        mgr.create_user("operator-one", &password, ROLE_OPERATOR).unwrap();
+        // What the route checked before its waits.
+        let checked = mgr.get_user("second-admin").unwrap();
+        require_user_admin(&checked).unwrap();
+        require_current_admin(&mgr, &checked).unwrap();
+        mgr.set_role("second-admin", ROLE_OPERATOR).unwrap();
+        assert_eq!(require_current_admin(&mgr, &checked).unwrap_err().code, PERM_DENIED);
+        mgr.set_role("second-admin", ROLE_ADMIN).unwrap();
+        mgr.disable_user("second-admin").unwrap();
+        assert_eq!(require_current_admin(&mgr, &checked).unwrap_err().code, PERM_DENIED);
+        mgr.enable_user("second-admin").unwrap();
+        mgr.delete_user("second-admin").unwrap();
+        mgr.create_user("second-admin", &password, ROLE_ADMIN).unwrap();
+        // A new account under the same name is not the one that was checked.
+        assert_eq!(require_current_admin(&mgr, &checked).unwrap_err().code, PERM_DENIED);
+    }
 
     #[test]
     fn lockout_reply_keeps_the_wait_but_not_the_account() {
