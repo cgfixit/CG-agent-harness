@@ -659,7 +659,10 @@ pub async fn model_select(
         state
             .chat_owner
             .cancel_with(&owner, || state.abort_chat())
-            .map_err(|e| ApiError::from_err(StatusCode::CONFLICT, &e))?;
+            .map_err(chat_lock_refusal(
+                StatusCode::CONFLICT,
+                "change the model after it finishes",
+            ))?;
         let mut s = state.settings.lock().unwrap_or_else(|p| p.into_inner());
         from_provider = state.provider_for(&s.selected_model);
         let mut snapshot = s.clone();
@@ -1601,6 +1604,19 @@ pub(crate) async fn chat_inner(
                 ..Default::default()
             }, &model);
         }
+        // A web turn re-reads the account before each read and before its
+        // answer (`web_research::authorize_owner`). Losing it mid-turn is an
+        // account change, not a model-server failure: same status and code as
+        // a plain turn whose account was revoked, and nothing is stored.
+        if e.code == "WEB_PERMISSION_DENIED" {
+            state.audit.log(json!({"event":"chat_reply_withheld","owner_id":owner,
+                "session_id":session.session_id,"reason":"account_changed","web":true}));
+            return ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                "AUTH_REQUIRED",
+                "the account was disabled, deleted, demoted or had its password reset during this turn; the reply is withheld and nothing was saved",
+            );
+        }
         ApiError::from_err(llm_status(&e), &e)
     };
     let (mut reply, web_tools) = if cloud_selected {
@@ -1983,6 +1999,27 @@ pub(crate) async fn chat_inner(
 }
 
 /// Keep window, quota and context refusals distinct from upstream failures (502).
+/// The chat lock reuses the research lease, whose refusal reads "research
+/// belongs to another account". Stop and a model change are chat actions, so
+/// they name the chat turn instead (the code `WEB_PERMISSION_DENIED` read as a
+/// web or account problem when only another account's turn was running).
+fn chat_lock_refusal(
+    status: StatusCode,
+    action: &str,
+) -> impl Fn(crate::common::errors::HarnessError) -> ApiError + '_ {
+    move |e| {
+        if e.code == "WEB_PERMISSION_DENIED" {
+            ApiError::new(
+                status,
+                "CHAT_OTHER_ACCOUNT",
+                format!("another account's chat turn is running; {action}"),
+            )
+        } else {
+            ApiError::from_err(status, &e)
+        }
+    }
+}
+
 fn llm_status(error: &crate::common::errors::HarnessError) -> StatusCode {
     if error.code == "CLOUD_RATE_LIMITED" {
         StatusCode::TOO_MANY_REQUESTS
@@ -2043,15 +2080,12 @@ pub async fn cancel_chat(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
+    let refused = chat_lock_refusal(StatusCode::FORBIDDEN, "only that account can stop it");
     let cancelled = state
         .chat_owner
         .cancel_with(&owner, || state.abort_chat())
-        .map_err(|e| ApiError::from_err(StatusCode::FORBIDDEN, &e))?;
-    state
-        .web
-        .chat_turn
-        .cancel(&owner)
-        .map_err(|e| ApiError::from_err(StatusCode::FORBIDDEN, &e))?;
+        .map_err(&refused)?;
+    state.web.chat_turn.cancel(&owner).map_err(&refused)?;
     Ok(Json(json!({"cancelled": cancelled})))
 }
 

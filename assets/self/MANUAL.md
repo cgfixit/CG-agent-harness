@@ -380,6 +380,8 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 ## troubleshooting: symptom to fix (part 5)
 
 - `/agent` reports `gh: command not found` or "Agentic layer disabled" → `brew install gh && gh auth login`; follow coding config, then restart
+- Stop or `/model use` refused with `CHAT_OTHER_ACCOUNT` → Wait for it to finish; only that account can stop it
+- A chat turn ends with `401 AUTH_REQUIRED` and no reply → Sign in again; an administrator restores the account if needed
 - A write action is refused → See coding console steps and the kill switch; check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE`
 - Managed-key save or legacy migration fails → Keep plaintext opt-in off unless required and do not broaden file access; see credential privacy and recovery
 - `/diag` says `DIAG_DISABLED` → Set literal `true`, then restart
