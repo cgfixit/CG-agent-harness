@@ -1,9 +1,10 @@
 # Fast static checks for mistakes that kept reaching review or a later CI job:
 # an unannotated http:// literal in Rust or Python or weak-hash name (DevSkim
 # alerts after push), a stale self-manual, a Markdown file over its cap, a
-# raised cap with no `// why:`, a wall-clock test bound near runner jitter, and
-# a deleted doc left in the docs budget tables or still linked. Rules and their evidence:
-# scripts/lint-diff.py. tests/invariant_guard.rs and tests/self_manual.rs in
+# raised cap with no `// why:`, a wall-clock test bound near runner jitter, a
+# deleted doc left in the docs budget tables or still linked, and prose that
+# states a shipped config value the config does not ship. Rules and their
+# evidence: scripts/lint-diff.py. tests/invariant_guard.rs and tests/self_manual.rs in
 # ci.yml stay the authority; this job answers in seconds without a compile.
 name: Diff - Recurring-mistake lint
 

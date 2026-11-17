@@ -410,16 +410,18 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_tag_query_is_none_not_an_empty_install() {
-        // Bind then drop a listener so the port refuses connections.
-        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap(); // DevSkim: ignore DS162092 because this unit test needs a refused loopback port.
-        let port = listener.local_addr().unwrap().port();
-        drop(listener);
+        // Bound but never listening: the port refuses connections and stays
+        // reserved, so a parallel test's server cannot take it and answer.
+        let reserved = tokio::net::TcpSocket::new_v4().unwrap();
+        reserved.bind((std::net::Ipv4Addr::LOCALHOST, 0).into()).unwrap(); // DevSkim: ignore DS162092 because this unit test needs a refused loopback port.
+        let port = reserved.local_addr().unwrap().port();
         let limits = InventoryLimits {
             timeout: Duration::from_secs(2),
             max_bytes: 1 << 16,
         };
         let native = format!("http://127.0.0.1:{port}"); // DevSkim: ignore DS162092 because this unit test needs a refused loopback origin.
         assert!(list_tags(&native, limits).await.is_none());
+        drop(reserved);
     }
 
     #[test]

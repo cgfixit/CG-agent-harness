@@ -12,7 +12,8 @@ Reading scope: never open `docs/learning/*` unless the operator asks. Open other
 
 1. Code. 2. `assets/config.default.yaml` (every tunable; read, never copied
 elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
-When prose contradicts code, fix the prose in the same PR.
+When prose contradicts code, fix the prose in the same PR; `lint-diff.py`
+CG009 checks stated shipped config values.
 
 ## The map
 
