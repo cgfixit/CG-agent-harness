@@ -729,6 +729,18 @@ fn finish(state: &AppState, job: &Job, run_id: &str, reply_text: &str, reply_mod
         }
         !std::mem::replace(&mut has_summary, true)
     });
+    // Store what fits under the pending cap instead of failing the whole run.
+    // With no room at all the store still refuses with STRUCTURED_MEMORY_CAP,
+    // so a full list stays visible rather than becoming an empty run.
+    let (_, pending) = store.counts(&job.owner)?;
+    let room = store.limits().max_proposals_per_owner.saturating_sub(pending);
+    if room > 0 && bound.len() > room {
+        state
+            .audit
+            .log(json!({"event":"memory_suggestion_cap_trimmed","owner_id":job.owner,
+            "run_id":run_id,"source":job.source.name(),"kept":room,"dropped":bound.len() - room}));
+        bound.truncate(room);
+    }
     // Held across the write, so a chat clear cannot land between this check
     // and the stored proposals.
     let queue = state.memory_suggestions.queue();

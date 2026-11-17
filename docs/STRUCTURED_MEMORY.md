@@ -152,7 +152,9 @@ plus at most one active generation; waiting input expires after
 timeout. `status_poll_ms` (30000) is halved while generating.
 `min_consolidation_confidence` and `max_consolidation_candidates` are shared
 with consolidation, and `max_proposals_per_owner` (50; 32 if absent) is the
-pending-proposal capacity.
+pending-proposal capacity. A suggestion is refused before generation when the
+list is full; a run with more proposals than free slots stores the first that fit
+and audits `memory_suggestion_cap_trimmed`.
 
 Accepted inputs receive durable metadata-only `idle` receipts, then become
 `running`. Expiry, disabled gates, source clear, cancellation and inference

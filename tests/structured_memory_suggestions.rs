@@ -413,6 +413,60 @@ async fn a_full_proposal_list_refuses_before_the_model_is_asked() {
 }
 
 #[tokio::test]
+async fn a_run_with_more_proposals_than_room_stores_what_fits() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        options("insights").with("structured_memory.max_proposals_per_owner", "2"),
+    )
+    .await;
+    let (status, body) = s
+        .post_json(
+            "/api/structured-memory/proposals",
+            json!({"action":"add","content":"Waiting for review.","category":"note"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let id = stage(store, "local");
+    let candidates: Vec<Value> = ["The operator prefers metric units.", "The operator works in Rust."]
+        .iter()
+        .map(|text| {
+            json!({"action":"add", "category":"insight", "content":text,
+            "confidence":0.9, "sensitivity":"normal", "source_refs":[id]})
+        })
+        .collect();
+    model.set_reply(ok_reply(&json!({"candidates":candidates}).to_string(), 10, 20));
+    let attempt = suggest::enqueue(&s.state, "local", Source::Chat, Some(&id), "Noted.", "Acknowledged.");
+    assert_eq!(attempt["queued"], true, "{attempt}");
+    settled(&s, "local").await;
+
+    // One slot was free: the first proposal is stored, the second counts as
+    // rejected, and the run finishes instead of failing at the cap.
+    let run = &store.list_consolidation_runs("local").unwrap()[0];
+    assert_eq!(run.state, "done", "{:?}", run.error_class);
+    assert_eq!((run.candidate_count, run.rejected_count, run.proposal_count), (2, 1, 1));
+    let mut pending: Vec<String> = store
+        .list_pending_proposals("local")
+        .unwrap()
+        .into_iter()
+        .filter_map(|p| p.content)
+        .collect();
+    pending.sort();
+    assert_eq!(pending, ["The operator prefers metric units.", "Waiting for review."]);
+    s.state.audit.flush();
+    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    assert!(
+        audit
+            .lines()
+            .any(|l| l.contains(r#""event":"memory_suggestion_cap_trimmed""#)
+                && l.contains(r#""kept":1"#)
+                && l.contains(r#""dropped":1"#)),
+        "the trim is audited"
+    );
+}
+
+#[tokio::test]
 async fn repeats_of_a_fact_or_a_pending_or_rejected_proposal_are_not_proposed_again() {
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), options("both")).await;
