@@ -93,6 +93,81 @@ fn policy_refusal_now(session: &Session) -> Option<String> {
     }
 }
 
+/// Where a session's request verdicts come from.
+enum PolicySource {
+    /// A fixture session on a loopback page, which the public block list
+    /// cannot name: nothing is refused.
+    Open,
+    /// The shared policy file and its rule cap.
+    File(PathBuf, usize),
+    /// The home or its config could not be read: every request is refused.
+    Unreadable,
+}
+
+/// Answers the sidecar about each URL Chrome is about to request, so a
+/// path-scoped block rule holds inside a granted origin (#899). The file is
+/// re-read for every question and parsed again only when its bytes changed,
+/// so an edit applies to the next request, not the next model turn. An
+/// unreadable or invalid policy refuses every request.
+struct RequestPolicy {
+    source: PolicySource,
+    snapshot: Option<(Vec<u8>, crate::server::web_policy::Policy)>,
+    /// Fixtures only: a loopback origin and the public-looking name the block
+    /// rules use for it, because a rule cannot name a private address.
+    alias: Option<(String, String)>,
+}
+
+impl RequestPolicy {
+    fn open() -> Self {
+        Self::from(PolicySource::Open)
+    }
+
+    /// The operator's saved policy; unreadable when the home or config is.
+    fn shared() -> Self {
+        let home = Home::resolve(None);
+        let file = home
+            .load_config()
+            .ok()
+            .and_then(|cfg| crate::server::web_search::WebTool::new(&home.tools_dir(), &cfg).ok())
+            .map(|web| web.policy_file());
+        Self::from(file.map_or(PolicySource::Unreadable, |(path, max_rules)| {
+            PolicySource::File(path, max_rules)
+        }))
+    }
+
+    fn from(source: PolicySource) -> Self {
+        Self {
+            source,
+            snapshot: None,
+            alias: None,
+        }
+    }
+
+    fn refuses(&mut self, raw: &str) -> bool {
+        let (path, max_rules) = match &self.source {
+            PolicySource::Open => return false,
+            PolicySource::Unreadable => return true,
+            PolicySource::File(path, max_rules) => (path, *max_rules),
+        };
+        let Ok(bytes) = crate::server::web_policy::Policy::read(path, max_rules) else {
+            self.snapshot = None;
+            return true;
+        };
+        if self.snapshot.as_ref().is_none_or(|(seen, _)| *seen != bytes) {
+            self.snapshot = crate::server::web_policy::Policy::parse(&bytes, max_rules)
+                .ok()
+                .map(|policy| (bytes, policy));
+        }
+        let renamed = self
+            .alias
+            .as_ref()
+            .and_then(|(from, to)| raw.strip_prefix(from.as_str()).map(|rest| format!("{to}{rest}")));
+        self.snapshot
+            .as_ref()
+            .is_none_or(|(_, policy)| policy.blocks_request(renamed.as_deref().unwrap_or(raw)))
+    }
+}
+
 /// One observe/act surface the model loop drives. It takes the wire ops that
 /// `sidecar_op` builds. The browser sidecar is the only driver today;
 /// `computer::kimi_cu_call` maps the same ops for the native one later.
@@ -104,7 +179,8 @@ pub trait Driver {
 /// closes Chrome and exits. A sidecar that lingers is killed.
 struct Sidecar {
     child: Child,
-    stdin: Option<ChildStdin>,
+    /// Shared with the reader thread, which writes request verdicts.
+    stdin: std::sync::Arc<std::sync::Mutex<Option<ChildStdin>>>,
     /// Reply lines from a reader thread, so a call can stop waiting.
     replies: Receiver<Result<String, String>>,
     next_id: u64,
@@ -116,13 +192,17 @@ struct Sidecar {
 
 impl Sidecar {
     /// Takes the child's stdin and stdout. A thread reads one bounded line at
-    /// a time and stops at end of file, an error or an oversized line.
-    fn attach(mut child: Child, call_timeout: Duration) -> Result<Self, String> {
+    /// a time and stops at end of file, an error or an oversized line. It
+    /// answers the sidecar's `check` lines itself, from `policy`, so a page's
+    /// requests get a verdict while the task waits on the model too.
+    fn attach(mut child: Child, call_timeout: Duration, mut policy: RequestPolicy) -> Result<Self, String> {
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             let _ = child.kill();
             let _ = child.wait();
             return Err("sidecar pipes missing".into());
         };
+        let stdin = std::sync::Arc::new(std::sync::Mutex::new(Some(stdin)));
+        let verdicts = stdin.clone();
         let (send, replies) = mpsc::channel();
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
@@ -134,7 +214,16 @@ impl Sidecar {
                     Ok(read) if read as u64 > MAX_REPLY_BYTES => {
                         Err(format!("sidecar reply exceeded {MAX_REPLY_BYTES} bytes"))
                     }
-                    Ok(_) => Ok(line),
+                    Ok(_) => {
+                        if let Some(verdict) = request_verdict(&line, &mut policy) {
+                            // A lost verdict is a refusal: the sidecar stops waiting.
+                            if let Some(stdin) = verdicts.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
+                                let _ = writeln!(stdin, "{verdict}").and_then(|()| stdin.flush());
+                            }
+                            continue;
+                        }
+                        Ok(line)
+                    }
                     Err(err) => Err(err.to_string()),
                 };
                 let last = reply.is_err();
@@ -145,7 +234,7 @@ impl Sidecar {
         });
         Ok(Self {
             child,
-            stdin: Some(stdin),
+            stdin,
             replies,
             next_id: 0,
             call_timeout,
@@ -156,14 +245,20 @@ impl Sidecar {
     /// The sidecar is mid-line or unresponsive: stop it so every later call
     /// fails at once instead of waiting.
     fn stop(&mut self, why: String) -> String {
-        self.stdin = None;
+        *self.stdin.lock().unwrap_or_else(|p| p.into_inner()) = None;
         let _ = self.child.kill();
         format!("{why}; the session was stopped")
     }
 
     /// `allow_private` lets IP-literal grants reach loopback and private
     /// addresses; only test-support fixtures pass true.
-    fn start(script: &Path, session: &Session, headless: bool, allow_private: bool) -> Result<Self, String> {
+    fn start(
+        script: &Path,
+        session: &Session,
+        headless: bool,
+        allow_private: bool,
+        policy: RequestPolicy,
+    ) -> Result<Self, String> {
         if !script
             .parent()
             .is_some_and(|dir| dir.join("node_modules/playwright").exists())
@@ -180,7 +275,7 @@ impl Sidecar {
             .env("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1")
             .spawn()
             .map_err(|err| format!("node sidecar failed to start: {err}"))?;
-        let mut sidecar = Self::attach(child, SIDECAR_CALL_TIMEOUT)?;
+        let mut sidecar = Self::attach(child, SIDECAR_CALL_TIMEOUT, policy)?;
         let started = sidecar.call(
             json!({"op":"start","grants": session.grant_strings(),"headless": headless,"allow_private": allow_private}),
         )?;
@@ -198,9 +293,12 @@ impl Driver for Sidecar {
     fn call(&mut self, mut message: Value) -> Result<Value, String> {
         self.next_id += 1;
         message["id"] = json!(self.next_id);
-        let stdin = self.stdin.as_mut().ok_or("sidecar stdin closed")?;
-        writeln!(stdin, "{message}").map_err(|err| err.to_string())?;
-        stdin.flush().map_err(|err| err.to_string())?;
+        {
+            let mut stdin = self.stdin.lock().unwrap_or_else(|p| p.into_inner());
+            let stdin = stdin.as_mut().ok_or("sidecar stdin closed")?;
+            writeln!(stdin, "{message}").map_err(|err| err.to_string())?;
+            stdin.flush().map_err(|err| err.to_string())?;
+        }
         // A stuck renderer fails this call; the task's report still comes back.
         let line = match self.replies.recv_timeout(self.call_timeout) {
             Ok(Ok(line)) => line,
@@ -218,7 +316,7 @@ impl Driver for Sidecar {
 
 impl Drop for Sidecar {
     fn drop(&mut self) {
-        drop(self.stdin.take());
+        drop(self.stdin.lock().unwrap_or_else(|p| p.into_inner()).take());
         for _ in 0..50 {
             if matches!(self.child.try_wait(), Ok(Some(_))) {
                 return;
@@ -228,6 +326,19 @@ impl Drop for Sidecar {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// The answer to one sidecar `check` line, or `None` when `line` is an
+/// ordinary reply. The sidecar writes `check` first on those lines and `id`
+/// first on replies, so page text inside a reply cannot pass for a question.
+/// A question without a URL is refused.
+fn request_verdict(line: &str, policy: &mut RequestPolicy) -> Option<Value> {
+    if !line.starts_with("{\"check\":") {
+        return None;
+    }
+    let question: Value = serde_json::from_str(line).ok()?;
+    let allow = question["url"].as_str().is_some_and(|url| !policy.refuses(url));
+    Some(json!({"verdict": question["check"], "allow": allow}))
 }
 
 /// Decide, execute and re-mint one action. A refusal or handoff comes back as
@@ -257,6 +368,9 @@ fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value 
         .filter(|origins| origins.as_array().is_some_and(|rows| !rows.is_empty()))
     {
         outcome["not_granted"] = origins.clone();
+    }
+    if result["blocked"].as_u64().is_some_and(|count| count > 0) {
+        outcome["blocked_by_policy"] = result["blocked"].clone();
     }
     if let Some(note) = page_note(wire, &result) {
         outcome["more"] = json!(note);
@@ -400,7 +514,13 @@ fn read_page(sidecar: &Path, port: u16, headless: bool) -> Result<String, String
 /// sidecar error fails the run.
 fn drive(mut session: Session, script: &Path, steps: &[Value], headless: bool) -> Result<String, String> {
     // Fixtures serve on 127.0.0.1: a private grant needs a test-support build.
-    let mut sidecar = Sidecar::start(script, &session, headless, cfg!(feature = "test-support"))?;
+    let mut sidecar = Sidecar::start(
+        script,
+        &session,
+        headless,
+        cfg!(feature = "test-support"),
+        RequestPolicy::open(),
+    )?;
     let mut last_text = String::new();
     let mut rows: Vec<Value> = Vec::new();
     let mut lines = Vec::new();
@@ -541,7 +661,14 @@ pub fn run_task(
     // Origins only: a requested URL's path or query (a token, say) never reaches
     // the prompt or the report.
     let grants = session.grant_strings();
-    let mut sidecar = Sidecar::start(script, &session, headless, allow_private)?;
+    // A fixture session reaches only the loopback page this binary serves,
+    // which the public-URL block list cannot check and would always refuse.
+    let policy = if allow_private {
+        RequestPolicy::open()
+    } else {
+        RequestPolicy::shared()
+    };
+    let mut sidecar = Sidecar::start(script, &session, headless, allow_private, policy)?;
     let tools = browser_tools();
     let mut chat = |messages: &[Value]| {
         ollama_chat(api, model, messages, &tools, call_timeout(deadline))
@@ -551,8 +678,6 @@ pub fn run_task(
         &mut session,
         &mut sidecar,
         &mut chat,
-        // A fixture session reaches only the loopback page this binary serves,
-        // which the public-URL block list cannot check and would always refuse.
         &|session: &Session| {
             out_of_time(deadline).or_else(|| (!allow_private).then(|| policy_refusal_now(session)).flatten())
         },
@@ -579,7 +704,7 @@ fn model_loop(
     max_turns: usize,
 ) -> Result<Value, String> {
     let mut messages = vec![
-        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A long page comes in pages: when an observation has more, observe with page or find reaches the rest. A refusal is not success. A Handoff, or held_for_operator, ends the task: only the operator can do that step. not_granted lists sites the page asked for that this task may not reach. Call finish with your answer once the page shows it.", origins.join(", "))}),
+        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A long page comes in pages: when an observation has more, observe with page or find reaches the rest. A refusal is not success. A Handoff, or held_for_operator, ends the task: only the operator can do that step. not_granted lists sites the page asked for that this task may not reach. blocked_by_policy counts requests the operator's block list refused. Call finish with your answer once the page shows it.", origins.join(", "))}),
         json!({"role":"user","content": task}),
     ];
     let mut calls = 0usize;
@@ -1144,8 +1269,141 @@ const MAX_GUARDED_REPLY_BYTES: usize = 400_000;
 /// - an observation of a 1.14 MB page with a 20 KB link stays small, its text
 ///   is cut at 4,000 characters and the long href is dropped;
 /// - the sidecar proxy answers 407 to an unauthenticated CONNECT and to
-///   absolute-form GETs, and the sidecar keeps answering afterwards.
+///   absolute-form GETs, and the sidecar keeps answering afterwards;
+/// - a block rule on a path holds inside the granted origin (#899): see
+///   `guard_path_denials`.
+///
+/// The session's verdicts come from a policy file through `RequestPolicy`, as
+/// a task's do; only the loopback origin's name is swapped for the rules.
 pub fn run_guards_demo(script: &Path, headless: bool) -> Result<String, String> {
+    let dir = std::env::temp_dir().join(format!("cgah-guards-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let result = guards_with_policy(script, headless, &dir.join("web_allowlist.json"));
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
+/// The name block rules use for the guard fixture's loopback origin.
+const GUARD_RULE_HOST: &str = "guards.fixture.example";
+
+/// Replaces the fixture's policy file in one rename with a denylist that
+/// blocks `patterns`.
+fn write_guard_policy(file: &Path, patterns: &[String]) -> Result<(), String> {
+    use crate::server::web_policy::{Mode, Policy};
+    let mut policy = Policy::empty();
+    policy.mode = Mode::Denylist;
+    for pattern in patterns {
+        policy
+            .blocked
+            .push(Policy::block_rule(pattern).map_err(|err| err.message)?);
+    }
+    let bytes = serde_json::to_vec(&policy).map_err(|err| err.to_string())?;
+    let staged = file.with_extension("staged");
+    std::fs::write(&staged, bytes).map_err(|err| err.to_string())?;
+    std::fs::rename(&staged, file).map_err(|err| err.to_string())
+}
+
+/// A page inside the granted origin that asks for blocked paths every way a
+/// page can without the model: an image, a redirected image, a fetch, a
+/// redirected fetch, and a fetch every 300 ms for the policy-edit check.
+const GUARD_DENIALS_PAGE: &str = r#"
+<p>DOCS-OK</p>
+<a href="/private/page">Private link</a>
+<img src="/private/pixel"><img src="/to-private">
+<script>
+fetch("/private/api").catch(() => {});
+fetch("/to-private").catch(() => {});
+setInterval(() => fetch("/later/ping").catch(() => {}), 300);
+</script>
+"#;
+
+/// Path-level block rules inside a granted origin (#899), by what the server
+/// received:
+/// - no request reaches `/private/` from a page's own subresources, from a
+///   redirect to it, from a navigation or from a redirect chain, while the
+///   rest of the origin still loads;
+/// - a rule added while a page is open stops that page's next requests with
+///   no model turn in between;
+/// - with the policy file gone nothing new is sent, and browsing resumes when
+///   it is back.
+fn guard_path_denials(
+    sidecar: &mut Sidecar,
+    lines: &mut Vec<String>,
+    (base, rules, file): (&str, &str, &Path),
+    seen: &Received,
+) -> Result<(), String> {
+    let received = || seen.lock().unwrap_or_else(|p| p.into_inner()).clone();
+    let count = |row: &str| received().iter().filter(|seen| *seen == row).count();
+    let private = || -> Vec<String> {
+        received()
+            .into_iter()
+            .filter(|row| row.contains(" /private/"))
+            .collect()
+    };
+    let none_private = |after: &str| match private() {
+        leaked if leaked.is_empty() => Ok(()),
+        leaked => Err(format!("a blocked path was requested {after}: {leaked:?}")),
+    };
+    let refused = |sidecar: &mut Sidecar, path: &str| -> Result<String, String> {
+        let reply = sidecar.call(json!({"op":"navigate","url": format!("{base}{path}")}))?;
+        match reply["ok"] == true {
+            true => Err(format!("navigating to {path} was not refused")),
+            false => Ok(reply["error"].as_str().unwrap_or("").to_string()),
+        }
+    };
+    let only_private = [format!("{rules}/private/*")];
+
+    let (page, _) = guard_call(sidecar, lines, json!({"op":"navigate","url": format!("{base}/docs")}))?;
+    if !page["text"].as_str().unwrap_or("").contains("DOCS-OK") || page["blocked"].as_u64().unwrap_or(0) == 0 {
+        return Err(format!(
+            "the docs page did not load, or reported no blocked request: {page}"
+        ));
+    }
+    guard_call(sidecar, lines, json!({"op":"wait","timeout_ms": 1000}))?;
+    none_private("by a page's subresources or their redirects")?;
+    if count("GET /to-private") == 0 || count("GET /later/ping") == 0 {
+        return Err(format!(
+            "allowed paths beside a blocked one stopped loading: {:?}",
+            received()
+        ));
+    }
+
+    let why = refused(sidecar, "/private/page")?;
+    let chain = refused(sidecar, "/hop")?;
+    if !why.contains("block list") || !chain.contains("block list") {
+        return Err(format!("a blocked navigation did not say why: {why} / {chain}"));
+    }
+    none_private("by a navigation or a redirect chain")?;
+    lines.push(format!("blocked navigate -> {why}"));
+
+    // A rule added while the page is open: no op runs during the sleep, so
+    // the page's requests are judged with no model turn in between.
+    guard_call(sidecar, lines, json!({"op":"navigate","url": format!("{base}/docs")}))?;
+    write_guard_policy(file, &[only_private[0].clone(), format!("{rules}/later/*")])?;
+    thread::sleep(Duration::from_millis(700));
+    let pings = count("GET /later/ping");
+    thread::sleep(Duration::from_millis(1500));
+    if count("GET /later/ping") != pings {
+        return Err("a path blocked while the page was open was still requested".into());
+    }
+    lines.push(format!("rule added mid-page -> /later/ping stayed at {pings} requests"));
+
+    // Unreadable policy: nothing new is sent. Then it is back, and so is browsing.
+    std::fs::remove_file(file).map_err(|err| err.to_string())?;
+    let landed = count("GET /new");
+    refused(sidecar, "/new")?;
+    if count("GET /new") != landed {
+        return Err("a request was sent while the policy could not be read".into());
+    }
+    write_guard_policy(file, &only_private)?;
+    let (page, _) = guard_call(sidecar, lines, json!({"op":"navigate","url": format!("{base}/new")}))?;
+    if !page["text"].as_str().unwrap_or("").contains("REDIRECT-LANDED") {
+        return Err(format!("browsing did not resume with the policy back: {page}"));
+    }
+    none_private("after the policy edits")
+}
+
+fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Result<String, String> {
     let big = format!(
         "<p>{}</p><a href=\"/?q={}\">Long link</a><a href=\"/new\">Short link</a>",
         "filler ".repeat(BIG_TEXT_CHARS / 7),
@@ -1158,11 +1416,23 @@ pub fn run_guards_demo(script: &Path, headless: bool) -> Result<String, String> 
         ("/old", Reply::Redirect("/new")),
         ("/new", Reply::Html("<p>REDIRECT-LANDED</p>".to_string())),
         ("/big", Reply::Html(big)),
+        ("/docs", Reply::Html(GUARD_DENIALS_PAGE.to_string())),
+        ("/to-private", Reply::Redirect("/private/landing")),
+        ("/hop", Reply::Redirect("/to-private")),
+        ("/later/ping", Reply::Html(String::new())),
+        ("/private/page", Reply::Html("<p>PRIVATE</p>".to_string())),
+        ("/private/landing", Reply::Html("<p>PRIVATE</p>".to_string())),
+        ("/private/pixel", Reply::Html(String::new())),
+        ("/private/api", Reply::Html(String::new())),
     ])?;
     let session = Session::general([&origin]).map_err(|err| format!("{err:?}"))?;
-    // Fixtures serve on 127.0.0.1: a private grant needs a test-support build.
-    let mut sidecar = Sidecar::start(script, &session, headless, cfg!(feature = "test-support"))?;
     let base = format!("http://127.0.0.1:{port}");
+    let rules = format!("http://{GUARD_RULE_HOST}:{port}"); // DevSkim: ignore DS137138 because it renames a loopback test fixture
+    write_guard_policy(policy_file, &[format!("{rules}/private/*")])?;
+    let mut policy = RequestPolicy::from(PolicySource::File(policy_file.to_path_buf(), 64));
+    policy.alias = Some((base.clone(), rules.clone()));
+    // Fixtures serve on 127.0.0.1: a private grant needs a test-support build.
+    let mut sidecar = Sidecar::start(script, &session, headless, cfg!(feature = "test-support"), policy)?;
     let mut lines = Vec::new();
     let received = |seen: &Received| seen.lock().unwrap_or_else(|p| p.into_inner()).clone();
 
@@ -1197,6 +1467,8 @@ pub fn run_guards_demo(script: &Path, headless: bool) -> Result<String, String> 
     {
         return Err(format!("a same-origin redirect did not land on its target: {page}"));
     }
+
+    guard_path_denials(&mut sidecar, &mut lines, (&base, &rules, policy_file), &seen)?;
 
     // Caps: the reply, the text and each href stay within the sidecar's limits.
     let (page, size) = guard_call(
@@ -1502,7 +1774,7 @@ mod tests {
             .stdout(Stdio::piped())
             .spawn()
             .unwrap();
-        let mut sidecar = Sidecar::attach(child, Duration::from_secs(30)).unwrap();
+        let mut sidecar = Sidecar::attach(child, Duration::from_secs(30), RequestPolicy::open()).unwrap();
         let err = sidecar.call(json!({"op":"observe"})).unwrap_err();
         assert!(err.contains("exceeded"), "{err}");
         assert_eq!(
@@ -1522,7 +1794,7 @@ mod tests {
             .stdout(Stdio::piped())
             .spawn()
             .unwrap();
-        let mut sidecar = Sidecar::attach(child, Duration::from_millis(300)).unwrap();
+        let mut sidecar = Sidecar::attach(child, Duration::from_millis(300), RequestPolicy::open()).unwrap();
         let started = std::time::Instant::now();
         let err = sidecar.call(json!({"op":"observe"})).unwrap_err();
         assert!(err.contains("did not answer within"), "{err}");
@@ -1600,6 +1872,78 @@ mod tests {
         assert!(blocked_origin(&policy, &sneaky).is_some());
         let fine = Session::general(["https://fine.example/docs"]).unwrap();
         assert!(blocked_origin(&policy, &fine).is_none());
+    }
+
+    #[test]
+    fn request_verdicts_follow_the_policy_file_and_fail_closed() {
+        use crate::server::web_policy::{Mode, Policy};
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("web_allowlist.json");
+        let save = |patterns: &[&str]| {
+            let mut policy = Policy::empty();
+            policy.mode = Mode::Denylist;
+            for pattern in patterns {
+                policy.blocked.push(Policy::block_rule(pattern).unwrap());
+            }
+            std::fs::write(&file, serde_json::to_vec(&policy).unwrap()).unwrap();
+        };
+        let mut policy = RequestPolicy::from(PolicySource::File(file.clone(), 64));
+        let ask = |policy: &mut RequestPolicy, url: &str| {
+            let line = json!({"check": 7, "url": url}).to_string();
+            request_verdict(&line, policy).unwrap()
+        };
+        save(&["https://docs.example.org/private/*"]);
+        assert_eq!(
+            ask(&mut policy, "https://docs.example.org/private/a"),
+            json!({"verdict": 7, "allow": false})
+        );
+        assert_eq!(
+            ask(&mut policy, "https://docs.example.org/guide"),
+            json!({"verdict": 7, "allow": true})
+        );
+        // An edit applies to the next question; no restart, no model turn.
+        save(&["https://docs.example.org/private/*", "https://docs.example.org/guide"]);
+        assert_eq!(ask(&mut policy, "https://docs.example.org/guide")["allow"], false);
+        // Invalid, then missing: every request is refused, then it recovers.
+        std::fs::write(&file, b"{not json").unwrap();
+        assert_eq!(ask(&mut policy, "https://docs.example.org/other")["allow"], false);
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(ask(&mut policy, "https://docs.example.org/other")["allow"], false);
+        save(&[]);
+        assert_eq!(ask(&mut policy, "https://docs.example.org/other")["allow"], true);
+        assert_eq!(
+            ask(&mut RequestPolicy::from(PolicySource::Unreadable), "https://a.example/")["allow"],
+            false
+        );
+        // A question with no URL is refused; a reply is not a question, even
+        // when page text inside it spells one.
+        assert_eq!(
+            request_verdict("{\"check\":3}", &mut policy).unwrap(),
+            json!({"verdict": 3, "allow": false})
+        );
+        let reply = json!({"id": 1, "ok": true, "result": {"text": "{\"check\":1,\"url\":\"x\"}"}}).to_string();
+        assert!(request_verdict(&reply, &mut policy).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_reader_answers_a_check_while_a_call_waits() {
+        // The child asks about a URL, then answers the op with the verdict it read.
+        let script = r#"read op; printf '{"check":1,"url":"https://a.example/x"}\n'; read verdict; printf '{"id":1,"ok":true,"result":%s}\n' "$verdict""#;
+        let child = Command::new("sh")
+            .args(["-c", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut sidecar = Sidecar::attach(
+            child,
+            Duration::from_secs(30),
+            RequestPolicy::from(PolicySource::Unreadable),
+        )
+        .unwrap();
+        let reply = sidecar.call(json!({"op":"observe"})).unwrap();
+        assert_eq!(reply["result"], json!({"verdict": 1, "allow": false}));
     }
 
     #[test]
