@@ -423,6 +423,175 @@ fn missing_means_on_switches_are_read_only_through_their_accessor() {
     assert_eq!(reads, listed, "flag_missing_on reads exactly the MISSING_MEANS_ON keys");
 }
 
+/// Every path a file names outside test-only items, each as its segments:
+/// expression and type paths, `use` trees (a group yields one path per leaf)
+/// and `a::b` runs inside macro bodies, which syn leaves unparsed.
+#[derive(Default)]
+struct ProductionPaths(Vec<Vec<String>>);
+
+impl ProductionPaths {
+    fn use_tree(&mut self, tree: &syn::UseTree, prefix: &mut Vec<String>) {
+        match tree {
+            syn::UseTree::Path(path) => {
+                prefix.push(path.ident.unraw().to_string());
+                self.use_tree(&path.tree, prefix);
+                prefix.pop();
+            }
+            syn::UseTree::Name(name) => {
+                let mut full = prefix.clone();
+                full.push(name.ident.unraw().to_string());
+                self.0.push(full);
+            }
+            syn::UseTree::Rename(rename) => {
+                let mut full = prefix.clone();
+                full.push(rename.ident.unraw().to_string());
+                self.0.push(full);
+            }
+            syn::UseTree::Glob(_) => self.0.push(prefix.clone()),
+            syn::UseTree::Group(group) => {
+                for item in &group.items {
+                    self.use_tree(item, prefix);
+                }
+            }
+        }
+    }
+
+    fn macro_tokens(&mut self, mut cursor: syn::buffer::Cursor<'_>) {
+        let mut run: Vec<String> = Vec::new();
+        let mut colons = 0;
+        while !cursor.eof() {
+            if let Some((ident, next)) = cursor.ident() {
+                // An ident continues the run only straight after `::`.
+                if !run.is_empty() && colons != 2 {
+                    self.0.push(std::mem::take(&mut run));
+                }
+                run.push(ident.unraw().to_string());
+                colons = 0;
+                cursor = next;
+            } else if let Some((punct, next)) = cursor.punct().filter(|(p, _)| p.as_char() == ':') {
+                let _ = punct;
+                colons += 1;
+                cursor = next;
+            } else {
+                self.0.push(std::mem::take(&mut run));
+                colons = 0;
+                if let Some((body, _, _, next)) = cursor.any_group() {
+                    self.macro_tokens(body);
+                    cursor = next;
+                } else {
+                    cursor = cursor.token_tree().expect("nonempty token cursor").1;
+                }
+            }
+        }
+        self.0.push(run);
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for ProductionPaths {
+    fn visit_item_mod(&mut self, module: &'ast syn::ItemMod) {
+        if !test_only(&module.attrs) {
+            syn::visit::visit_item_mod(self, module);
+        }
+    }
+
+    fn visit_item_fn(&mut self, function: &'ast syn::ItemFn) {
+        if !test_only(&function.attrs) {
+            syn::visit::visit_item_fn(self, function);
+        }
+    }
+
+    fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
+        self.use_tree(&item.tree, &mut Vec::new());
+    }
+
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        self.0
+            .push(path.segments.iter().map(|s| s.ident.unraw().to_string()).collect());
+        syn::visit::visit_path(self, path);
+    }
+
+    fn visit_macro(&mut self, node: &'ast syn::Macro) {
+        let tokens = syn::buffer::TokenBuffer::new2(node.tokens.clone());
+        self.macro_tokens(tokens.begin());
+        syn::visit::visit_macro(self, node);
+    }
+}
+
+fn production_paths(path: &str, text: &str) -> Vec<Vec<String>> {
+    let file = syn::parse_file(text).unwrap_or_else(|error| panic!("{path} does not parse: {error}"));
+    let mut visitor = ProductionPaths::default();
+    syn::visit::visit_file(&mut visitor, &file);
+    visitor.0
+}
+
+/// What a production path under src/netconnect must not name, if anything.
+/// INVARIANTS "Netconnect is fail-closed": outside tests it imports only
+/// `crate::common` and `crate::server::slash`, and only connect.rs opens a
+/// socket. The needle lists in the test below miss both of these: another
+/// crate module's HTTP client (`crate::llm::ollama::http_client` names no
+/// needle and dials an IP literal), and a `libc::socket` whose type is a
+/// number, not a `SOCK_*` name.
+fn netconnect_path_violation(segments: &[String], dialer: bool) -> Option<&'static str> {
+    let names: Vec<&str> = segments.iter().map(String::as_str).collect();
+    // In a file directly under src/netconnect, `super::super` is the crate.
+    let in_crate = match names.as_slice() {
+        ["crate", rest @ ..] | ["super", "super", rest @ ..] => Some(rest),
+        _ => None,
+    };
+    match in_crate {
+        // A bare `crate` is `pub(crate)` visibility, not an import.
+        Some([] | ["common" | "netconnect", ..] | ["server", "slash", ..]) | None => {}
+        Some(_) => return Some("a crate module other than common, netconnect and server::slash"),
+    }
+    const LIBC_SOCKET_CALLS: &[&str] = &[
+        "socket",
+        "socketpair",
+        "connect",
+        "bind",
+        "listen",
+        "accept",
+        "sendto",
+        "sendmsg",
+    ];
+    match names.as_slice() {
+        ["libc", call] if !dialer && LIBC_SOCKET_CALLS.contains(call) => Some("a raw libc socket call"),
+        _ => None,
+    }
+}
+
+#[test]
+fn netconnect_path_rule_names_what_the_needles_miss() {
+    let violations = |code: &str, dialer: bool| -> Vec<&'static str> {
+        production_paths("probe", code)
+            .iter()
+            .filter_map(|segments| netconnect_path_violation(segments, dialer))
+            .collect()
+    };
+    for hostile in [
+        "fn f() { let _ = crate::llm::ollama::http_client(t); }",
+        "use crate::llm::ollama::{http_client as c};",
+        "use crate::{common::dns, llm::*};",
+        "fn f() { let _ = super::super::shim::run(); }",
+        "use crate::server::web_search;",
+        "fn f() { log!(crate::server::state::get()); }",
+        "fn f() { unsafe { libc::socket(libc::AF_INET, 1, 0) }; }",
+        "use libc::connect;",
+    ] {
+        assert!(!violations(hostile, false).is_empty(), "missed: {hostile}");
+    }
+    for fine in [
+        "use crate::common::process::run; use crate::netconnect::Scope;",
+        "fn f() { let _ = crate::server::slash::preexisting_slash_names(); }",
+        "fn f() { unsafe { libc::getifaddrs(p) }; }",
+        "#[cfg(test)] mod tests { use crate::server::views::list_wired_tools_with; }",
+        "#[test] fn t() { let _ = super::super::llm::x(); }",
+    ] {
+        assert!(violations(fine, false).is_empty(), "false alarm: {fine}");
+    }
+    // connect.rs owns the socket, so a raw call there is its own business.
+    assert!(violations("fn f() { unsafe { libc::socket(2, 1, 0) }; }", true).is_empty());
+}
+
 #[test]
 fn netconnect_dials_only_through_the_budgeted_dialer() {
     // Sockets and name lookups. Only connect.rs may open a socket, and
@@ -461,6 +630,11 @@ fn netconnect_dials_only_through_the_budgeted_dialer() {
                 "{path} reaches the network via {needle:?}; dial through netconnect::Dialer"
             );
         }
+        for segments in production_paths(&path, &text) {
+            if let Some(what) = netconnect_path_violation(&segments, dialer) {
+                panic!("{path} names {what}: {}", segments.join("::"));
+            }
+        }
         // The needles miss a renamed import (`use crate::common::{dns as d};`).
         let imports = use_idents(&path, &text);
         for name in ["dns", "reqwest"] {
@@ -476,8 +650,9 @@ fn netconnect_dials_only_through_the_budgeted_dialer() {
                     "{path} opens a socket via {needle:?}; dial through netconnect::Dialer"
                 );
             }
-            // Listeners and raw libc sockets (every `libc::socket` call names a
-            // SOCK_* type). Production syntax only: cli.rs tests bind fixtures.
+            // Listeners and `SOCK_*` names (`netconnect_path_violation` covers a
+            // `libc::socket` with a numeric type). Production syntax only:
+            // cli.rs tests bind fixtures.
             let production = scan_syntax(&path, &text, true);
             for needle in LISTENERS {
                 assert!(
