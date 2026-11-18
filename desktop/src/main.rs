@@ -363,6 +363,12 @@ async fn prepare_cargo(app: tauri::AppHandle) -> Result<(), String> {
         if !repo.join("Cargo.lock").is_file() { return Err("Selected repository has no Cargo.lock.".to_string()); }
         let python = backend::executable("python3").ok_or("Python 3 is required for Cargo preparation.")?;
         let helper = std::env::current_exe().map_err(|_| "Cannot locate bundle.")?.parent().ok_or("Invalid bundle.")?.join("../Resources/prepare-cargo.py");
+        // Same integrity rule as the bundled web launcher: macOS does not re-check
+        // Resources against the ad-hoc signature at run time.
+        let bundled = std::fs::read(&helper).map_err(|_| "Bundled preparation helper is missing; reinstall the complete app.")?;
+        if bundled != include_bytes!("../../scripts/prepare-cargo.py") {
+            return Err("Bundled preparation helper differs from this build; reinstall the complete app.".into());
+        }
         let home = backend::home()?;
         use std::os::unix::process::CommandExt;
         let tool_path = backend::configured_path(&home)?;
