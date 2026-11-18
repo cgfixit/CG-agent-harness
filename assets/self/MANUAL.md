@@ -311,7 +311,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/web/research/cancel`: Cancel the owner's running research, detached or not
 - POST, GET `/api/web/research/jobs`: Start a detached owner-bound research job (`/web job`) or list owned jobs; `GET…
 - POST `/api/web/inject`, `/api/web/forget`: Include your last selection in chat, or drop injected reads
-- POST `/api/browser/run`: Administrator `/browse` task: `{task, origins}`; literal `browser.enabled`, one task at…
+- POST `/api/browser/run`: Administrator `/browse` task: `{task, origins}`; literal `browser.enabled` and…
 
 ## api: registered routes (part 8)
 
@@ -339,6 +339,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 ## troubleshooting: symptom to fix
 
 - `/browse` says playwright is not prepared → From `browser/`, run `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci`; the app needs an absolute `browser.sidecar` (browser use)
+- `/browse` refused: `BROWSER_AUTH_REQUIRED` → Turn accounts on and sign in as an administrator (Browser use)
 - `/browse` refused: `BROWSER_ORIGIN_BLOCKED` or `BROWSER_PRIVATE_ADDRESS` → `/web status` lists the rules; browser tasks reach public addresses only
 - Spend reports partial, unreadable, too large or invalid UTF-8 → Preserve the ledger; inspect permissions and size. Missing evidence is not zero spend
 - A job finished but no webhook arrived → Check **Job webhooks**, `notification_delivery`/`notification_dropped` audit and `/agent job <id>`. Replay the delivery, never rerun the job
@@ -488,12 +489,12 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - web.stale_seconds: 60–31536000; fetch age, not publication-date verification
   - web.search
   - web.firecrawl
-- browser: Completion webhooks are explicit operator configuration and restart-only.
+- browser
   - browser.enabled
   - browser.sidecar
   - browser.max_turns: model turns per task, clamped to 1–40
   - browser.timeout_sec: whole task; the child tree is killed after it, clamped to 30–1800
-- notifications
+- notifications: Completion webhooks are explicit operator configuration and restart-only.
   - notifications.enabled
 
 ## config: sections and keys (values omitted) (part 6)

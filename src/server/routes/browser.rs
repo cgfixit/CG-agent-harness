@@ -1,6 +1,7 @@
 //! `POST /api/browser/run`: one model-driven browser task for an administrator.
 //!
-//! Gated by literal `browser.enabled` (ships true, restart-only). The request
+//! Gated by literal `browser.enabled` (ships true, restart-only) and literal
+//! `auth.enabled`: without accounts the admin check does not run. The request
 //! names the task and the origins it may reach; the page and the model cannot
 //! add one. The work runs in a fixed-argv `cgagentharness browser run` child
 //! with the browser environment allowlist, so the server spawns nothing itself
@@ -58,6 +59,15 @@ pub async fn run(
             StatusCode::CONFLICT,
             "BROWSER_DISABLED",
             "Browser sessions are off. Set browser.enabled: true in config.yaml and restart.",
+        ));
+    }
+    // Without accounts the admin check in guards.rs does not run, so any
+    // client holding the console's CSRF token could drive Chrome (#945).
+    if !cfg.flag_is_true("auth.enabled") {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "BROWSER_AUTH_REQUIRED",
+            "Browser tasks need accounts: set auth.enabled: true in config.yaml and restart, then sign in as an administrator.",
         ));
     }
     let session = Session::general(&req.origins)

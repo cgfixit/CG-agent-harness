@@ -109,6 +109,9 @@ struct Sidecar {
     replies: Receiver<Result<String, String>>,
     next_id: u64,
     call_timeout: Duration,
+    /// The sidecar proxy's loopback port, from its `start` reply. Only the
+    /// guard fixture uses it, to probe the proxy without the credential.
+    proxy_port: Option<u16>,
 }
 
 impl Sidecar {
@@ -146,6 +149,7 @@ impl Sidecar {
             replies,
             next_id: 0,
             call_timeout,
+            proxy_port: None,
         })
     }
 
@@ -183,6 +187,9 @@ impl Sidecar {
         if started.get("ok") != Some(&Value::Bool(true)) {
             return Err(format!("sidecar refused start: {started}"));
         }
+        sidecar.proxy_port = started["result"]["proxy_port"]
+            .as_u64()
+            .and_then(|port| u16::try_from(port).ok());
         Ok(sidecar)
     }
 }
@@ -1024,6 +1031,222 @@ pub fn run_reach_demo(sidecar: &Path, headless: bool) -> Result<String, String> 
     Ok(log)
 }
 
+/// One raw sidecar op for the guard fixture: its result and the reply's size.
+fn guard_call(sidecar: &mut Sidecar, lines: &mut Vec<String>, op: Value) -> Result<(Value, usize), String> {
+    let reply = sidecar.call(op.clone())?;
+    let size = reply.to_string().len();
+    if reply["ok"] != true {
+        return Err(format!("sidecar refused {op}: {}", truncate(&reply.to_string(), 300)));
+    }
+    lines.push(format!("{} -> {} bytes", op["op"], size));
+    Ok((reply["result"].clone(), size))
+}
+
+/// Request lines the guard fixture's server has received, as `METHOD /path`.
+type Received = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
+/// What the guard fixture's loopback server answers for one path.
+enum Reply {
+    Html(String),
+    Script(&'static str),
+    Redirect(&'static str),
+}
+
+/// A loopback server that answers fixed routes and records `METHOD /path` for
+/// every request it receives, so a guard is checked by what reached the
+/// server, not by an error the browser shows.
+fn serve_recording(routes: Vec<(&'static str, Reply)>) -> Result<(String, u16, Received), String> {
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|err| err.to_string())?;
+    let port = listener.local_addr().map_err(|err| err.to_string())?.port();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    thread::spawn(move || {
+        for _ in 0..256 {
+            let Ok((mut socket, _)) = listener.accept() else { break };
+            let _ = socket.set_read_timeout(Some(Duration::from_secs(2)));
+            let mut head = Vec::new();
+            let mut buf = [0u8; 4096];
+            while !head.windows(4).any(|w| w == b"\r\n\r\n") && head.len() < 16 * 1024 {
+                match socket.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => head.extend_from_slice(&buf[..n]),
+                }
+            }
+            let line = String::from_utf8_lossy(&head).lines().next().unwrap_or("").to_string();
+            let mut parts = line.split(' ');
+            let method = parts.next().unwrap_or("").to_string();
+            let target = parts.next().unwrap_or("");
+            let path = target.split('?').next().unwrap_or("").to_string();
+            log.lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(format!("{method} {path}"));
+            let (status, kind, body, extra) = match routes.iter().find(|(route, _)| *route == path).map(|(_, r)| r) {
+                Some(Reply::Html(body)) => (
+                    "200 OK",
+                    "text/html",
+                    format!("<!doctype html><html><body>{body}</body></html>"),
+                    String::new(),
+                ),
+                Some(Reply::Script(body)) => ("200 OK", "text/javascript", (*body).to_string(), String::new()),
+                Some(Reply::Redirect(to)) => (
+                    "301 Moved Permanently",
+                    "text/plain",
+                    String::new(),
+                    format!("location: {to}\r\n"),
+                ),
+                None => ("404 Not Found", "text/plain", String::new(), String::new()),
+            };
+            let response = format!(
+                "HTTP/1.1 {status}\r\ncontent-type: {kind}\r\ncontent-length: {}\r\n{extra}connection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = socket.write_all(response.as_bytes());
+        }
+    });
+    Ok((format!("http://127.0.0.1:{port}"), port, seen))
+}
+
+/// The status line the sidecar proxy gives a request sent without this
+/// session's credential.
+fn unauthenticated_proxy_status(proxy_port: u16, request: &str) -> Result<String, String> {
+    let mut socket = std::net::TcpStream::connect(("127.0.0.1", proxy_port)).map_err(|err| err.to_string())?;
+    socket
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|err| err.to_string())?;
+    socket.write_all(request.as_bytes()).map_err(|err| err.to_string())?;
+    let mut reply = Vec::new();
+    let mut buf = [0u8; 512];
+    while !reply.contains(&b'\n') && reply.len() < 4096 {
+        match socket.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => reply.extend_from_slice(&buf[..n]),
+        }
+    }
+    Ok(String::from_utf8_lossy(&reply).lines().next().unwrap_or("").to_string())
+}
+
+/// Characters of filler text on the caps page; a reply that carried it all
+/// would be over a megabyte.
+const BIG_TEXT_CHARS: usize = 1_140_000;
+/// Length of the caps page's long link target, over the sidecar's 8,192.
+const LONG_HREF_CHARS: usize = 20_000;
+/// A capped observation (40 elements, 8,192-character hrefs, 4,000 characters
+/// of text) stays well under this; the uncapped caps page is over a megabyte.
+const MAX_GUARDED_REPLY_BYTES: usize = 400_000;
+
+/// The sidecar guards from #921, #922 and #933 (#945). Each is checked by what
+/// the loopback fixture server received or by the sidecar's raw reply, so a
+/// guard that stops working fails here even when nothing looks wrong:
+/// - no dedicated, shared or blob worker starts, so none of their requests or
+///   WebSockets reach the server (`worker-src 'none'`);
+/// - a same-origin redirect lands on its target (the network gate lets
+///   redirects through to be checked again);
+/// - an observation of a 1.14 MB page with a 20 KB link stays small, its text
+///   is cut at 4,000 characters and the long href is dropped;
+/// - the sidecar proxy answers 407 to an unauthenticated CONNECT and to
+///   absolute-form GETs, and the sidecar keeps answering afterwards.
+pub fn run_guards_demo(script: &Path, headless: bool) -> Result<String, String> {
+    let big = format!(
+        "<p>{}</p><a href=\"/?q={}\">Long link</a><a href=\"/new\">Short link</a>",
+        "filler ".repeat(BIG_TEXT_CHARS / 7),
+        "a".repeat(LONG_HREF_CHARS)
+    );
+    let (origin, port, seen) = serve_recording(vec![
+        ("/workers", Reply::Html(GUARD_WORKERS_PAGE.to_string())),
+        ("/w.js", Reply::Script(GUARD_WORKER_SCRIPT)),
+        ("/sw.js", Reply::Script(GUARD_WORKER_SCRIPT)),
+        ("/old", Reply::Redirect("/new")),
+        ("/new", Reply::Html("<p>REDIRECT-LANDED</p>".to_string())),
+        ("/big", Reply::Html(big)),
+    ])?;
+    let session = Session::general([&origin]).map_err(|err| format!("{err:?}"))?;
+    // Fixtures serve on 127.0.0.1: a private grant needs a test-support build.
+    let mut sidecar = Sidecar::start(script, &session, headless, cfg!(feature = "test-support"))?;
+    let base = format!("http://127.0.0.1:{port}");
+    let mut lines = Vec::new();
+    let received = |seen: &Received| seen.lock().unwrap_or_else(|p| p.into_inner()).clone();
+
+    // Workers: give them time to start and call out, then read the server's log.
+    let (page, _) = guard_call(
+        &mut sidecar,
+        &mut lines,
+        json!({"op":"navigate","url": format!("{base}/workers")}),
+    )?;
+    if !page["text"].as_str().unwrap_or("").contains("workers tried") {
+        return Err(format!("the workers page did not render: {page}"));
+    }
+    guard_call(&mut sidecar, &mut lines, json!({"op":"wait","timeout_ms": 2000}))?;
+    let leaked: Vec<String> = received(&seen)
+        .into_iter()
+        .filter(|row| row.contains("/w.js") || row.contains("/sw.js") || row.contains("/beacon"))
+        .collect();
+    if !leaked.is_empty() {
+        return Err(format!(
+            "a worker started or called out (worker-src 'none' missing?): {leaked:?}"
+        ));
+    }
+
+    // Redirect: the 301 is followed and its target is loaded and shown.
+    let (page, _) = guard_call(
+        &mut sidecar,
+        &mut lines,
+        json!({"op":"navigate","url": format!("{base}/old")}),
+    )?;
+    if !page["text"].as_str().unwrap_or("").contains("REDIRECT-LANDED")
+        || !received(&seen).contains(&"GET /new".to_string())
+    {
+        return Err(format!("a same-origin redirect did not land on its target: {page}"));
+    }
+
+    // Caps: the reply, the text and each href stay within the sidecar's limits.
+    let (page, size) = guard_call(
+        &mut sidecar,
+        &mut lines,
+        json!({"op":"navigate","url": format!("{base}/big")}),
+    )?;
+    if size > MAX_GUARDED_REPLY_BYTES {
+        return Err(format!(
+            "an observation reply was {size} bytes; the caps should keep it under {MAX_GUARDED_REPLY_BYTES}"
+        ));
+    }
+    if page["text"].as_str().unwrap_or("").chars().count() > 4_000 {
+        return Err("an observation's text was not cut at 4,000 characters".into());
+    }
+    let elements = page["elements"].as_array().cloned().unwrap_or_default();
+    let named = |name: &str| elements.iter().find(|el| el["name"] == name).cloned();
+    let long = named("Long link").ok_or("the long link was not listed")?;
+    if long["href"].as_str().is_some_and(|href| href.len() > 8_192) {
+        return Err(format!("a {LONG_HREF_CHARS}-character href was listed whole"));
+    }
+    if named("Short link").and_then(|el| el["href"].as_str().map(str::to_string)) != Some(format!("{base}/new")) {
+        return Err("an ordinary href was not listed".into());
+    }
+
+    // Proxy: without the session credential every form of request gets 407.
+    let proxy = sidecar.proxy_port.ok_or("the sidecar did not report its proxy port")?;
+    for request in [
+        format!("CONNECT 127.0.0.1:{port} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"),
+        format!("GET https://127.0.0.1:{port}/ HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"),
+        format!("GET {base}/new HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n"),
+    ] {
+        let status = unauthenticated_proxy_status(proxy, &request)?;
+        let first = request.lines().next().unwrap_or("");
+        if !status.contains(" 407") {
+            return Err(format!(
+                "the sidecar proxy answered {status:?} to an unauthenticated {first:?}"
+            ));
+        }
+        lines.push(format!("unauthenticated {first} -> {status}"));
+    }
+    // The sidecar survived those and still observes the page.
+    let (page, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    if page["elements"].as_array().is_none_or(Vec::is_empty) {
+        return Err("the sidecar stopped answering after the proxy probes".into());
+    }
+    lines.push(format!("fixture server received: {:?}", received(&seen)));
+    Ok(lines.join("\n"))
+}
+
 pub fn browse_cli(args: &[OsString]) -> u8 {
     dispatch(args, true)
 }
@@ -1050,7 +1273,9 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
         match (key, value) {
             ("--headed", None) => headless = false,
             // Only general browsing runs model tasks; browser-verify keeps PR grants.
-            ("qwen" | "enter" | "reach" | "run", None) if browse && mode.is_none() => mode = Some(key.to_string()),
+            ("qwen" | "enter" | "reach" | "guards" | "run", None) if browse && mode.is_none() => {
+                mode = Some(key.to_string())
+            }
             ("--model", Some(v)) if !v.is_empty() => model = Some(v.to_string()),
             ("--sidecar", Some(v)) if !v.is_empty() => sidecar = PathBuf::from(v),
             ("--task", Some(v)) if (1..=MAX_TASK_CHARS).contains(&v.chars().count()) => task = Some(v.to_string()),
@@ -1116,6 +1341,7 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
             Err(code) => return code,
         },
         (Some("reach"), _) => run_reach_demo(&sidecar, headless),
+        (Some("guards"), _) => run_guards_demo(&sidecar, headless),
         (Some(_), _) => run_enter_demo(&sidecar, headless),
         (None, true) => run_browse_demo(&sidecar, headless),
         (None, false) => run_verify_demo(&sidecar, headless),
@@ -1143,6 +1369,25 @@ fn read_task_file(path: &Path) -> Option<String> {
         .ok()?;
     (1..=MAX_TASK_CHARS).contains(&text.chars().count()).then_some(text)
 }
+
+/// Starts a dedicated, a shared and a blob worker. Each would fetch a beacon
+/// and open a WebSocket on the fixture server if it ran. The blob worker's
+/// base is its `blob:` URL, so its beacon names the page's origin outright.
+const GUARD_WORKERS_PAGE: &str = r#"
+<p>workers tried</p>
+<script>
+const beacon = JSON.stringify(location.origin + "/beacon-blob");
+const blob = URL.createObjectURL(new Blob(["fetch(" + beacon + ");"], {type: "text/javascript"}));
+for (const make of [() => new Worker("/w.js"), () => new SharedWorker("/sw.js"), () => new Worker(blob)]) {
+  try { make(); } catch (e) {}
+}
+</script>
+"#;
+
+/// What a fixture worker would do: a GET the page route allows, a POST and a
+/// WebSocket, all to the fixture server.
+const GUARD_WORKER_SCRIPT: &str =
+    "fetch('/beacon-get'); fetch('/beacon-post', {method: 'POST', body: 'x'}); new WebSocket('ws://' + location.host + '/beacon-ws');";
 
 /// An option label longer than the 80 characters an observation lists.
 const LONG_OPTION: &str =
