@@ -1371,11 +1371,13 @@ fn read_task_file(path: &Path) -> Option<String> {
 }
 
 /// Starts a dedicated, a shared and a blob worker. Each would fetch a beacon
-/// and open a WebSocket on the fixture server if it ran.
+/// and open a WebSocket on the fixture server if it ran. The blob worker's
+/// base is its `blob:` URL, so its beacon names the page's origin outright.
 const GUARD_WORKERS_PAGE: &str = r#"
 <p>workers tried</p>
 <script>
-const blob = URL.createObjectURL(new Blob(["fetch('/beacon-blob')"], {type: "text/javascript"}));
+const beacon = JSON.stringify(location.origin + "/beacon-blob");
+const blob = URL.createObjectURL(new Blob(["fetch(" + beacon + ");"], {type: "text/javascript"}));
 for (const make of [() => new Worker("/w.js"), () => new SharedWorker("/sw.js"), () => new Worker(blob)]) {
   try { make(); } catch (e) {}
 }
