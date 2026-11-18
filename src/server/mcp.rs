@@ -528,12 +528,14 @@ async fn call_sse(runtime: &McpRuntime, raw_url: &str, tool: &str, arguments: Va
     if !sse.status().is_success() {
         return Err(mcp_err("MCP_SSE", format!("sse GET status {}", sse.status())));
     }
-    let body = read_sse_handshake(sse, runtime.max_result_bytes).await?;
-    let endpoint = sse_endpoint(&target, &body)?;
+    let mut stream = SseStream::new(sse, runtime.max_result_bytes);
+    let data = stream.endpoint().await?;
+    let endpoint = endpoint_url(&target, &data)?;
     jsonrpc_post(
         &client,
         runtime,
         &endpoint,
+        Some(&mut stream),
         "initialize",
         json!({
             "protocolVersion": "2024-11-05",
@@ -542,65 +544,149 @@ async fn call_sse(runtime: &McpRuntime, raw_url: &str, tool: &str, arguments: Va
         }),
     )
     .await?;
-    let _ = jsonrpc_post(&client, runtime, &endpoint, "notifications/initialized", json!({})).await;
+    let _ = jsonrpc_post(
+        &client,
+        runtime,
+        &endpoint,
+        None,
+        "notifications/initialized",
+        json!({}),
+    )
+    .await;
     jsonrpc_post(
         &client,
         runtime,
         &endpoint,
+        Some(&mut stream),
         "tools/call",
         json!({"name": tool, "arguments": arguments}),
     )
     .await
 }
 
-async fn read_sse_handshake(mut response: reqwest::Response, max: usize) -> Result<String> {
-    let mut buf = Vec::new();
-    loop {
-        let chunk = response.chunk().await.map_err(sse_transport_error)?;
-        let Some(chunk) = chunk else {
-            break;
-        };
-        buf.extend_from_slice(&chunk);
-        if buf.len() > max {
-            return Err(mcp_err("MCP_RESULT_TOO_LARGE", "sse handshake exceeds cap"));
+/// SSE framing: bytes in, complete events out. CRLF and lone CR count as LF,
+/// across chunk edges; only events ended by a blank line are returned, so a
+/// comment or keep-alive cannot cut one short; unparsed bytes stay under `max`.
+struct SseEvents {
+    pending: Vec<u8>,
+    after_cr: bool,
+    max: usize,
+}
+
+impl SseEvents {
+    fn new(max: usize) -> Self {
+        Self {
+            pending: Vec::new(),
+            after_cr: false,
+            max,
         }
-        if let Ok(text) = std::str::from_utf8(&buf) {
-            if endpoint_event_data(text).is_some() {
-                return Ok(text.to_string());
+    }
+
+    fn push(&mut self, chunk: &[u8]) -> Result<()> {
+        for &byte in chunk {
+            if std::mem::take(&mut self.after_cr) && byte == b'\n' {
+                continue;
+            }
+            if byte == b'\r' {
+                self.after_cr = true;
+                self.pending.push(b'\n');
+            } else {
+                self.pending.push(byte);
+            }
+        }
+        if self.pending.len() > self.max {
+            return Err(mcp_err("MCP_RESULT_TOO_LARGE", "sse event exceeds cap"));
+        }
+        Ok(())
+    }
+
+    /// The next complete event as (name, data). A missing `event` field means
+    /// `message`; several `data` lines join with a newline; a field may be
+    /// written with or without the space after its colon; comments, keep-alives and data-less
+    /// events are skipped.
+    fn take(&mut self) -> Result<Option<(String, String)>> {
+        while let Some(end) = self.pending.windows(2).position(|w| w == b"\n\n") {
+            let raw: Vec<u8> = self.pending.drain(..end + 2).collect();
+            let text =
+                std::str::from_utf8(&raw[..end]).map_err(|_| mcp_err("MCP_PROTOCOL", "sse event is not UTF-8"))?;
+            let (mut name, mut data) = (None, Vec::new());
+            for line in text.lines().filter(|line| !line.starts_with(':')) {
+                let (field, value) = line.split_once(':').unwrap_or((line, ""));
+                let value = value.strip_prefix(' ').unwrap_or(value);
+                match field {
+                    "event" => name = Some(value),
+                    "data" => data.push(value),
+                    _ => {}
+                }
+            }
+            // As in the SSE spec, an event without a data line is not dispatched.
+            if !data.is_empty() {
+                return Ok(Some((name.unwrap_or("message").to_string(), data.join("\n"))));
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// The GET event stream, held open for the whole call. Under the HTTP+SSE
+/// transport (`2024-11-05`) a server answers each POST with `202 Accepted` and
+/// sends the JSON-RPC reply here as a `message` event, so dropping the stream
+/// after the endpoint event would lose every reply. The caller's overall
+/// deadline bounds how long it is read.
+struct SseStream {
+    response: reqwest::Response,
+    events: SseEvents,
+}
+
+impl SseStream {
+    fn new(response: reqwest::Response, max: usize) -> Self {
+        Self {
+            response,
+            events: SseEvents::new(max),
+        }
+    }
+
+    async fn next_event(&mut self) -> Result<Option<(String, String)>> {
+        loop {
+            if let Some(event) = self.events.take()? {
+                return Ok(Some(event));
+            }
+            match self.response.chunk().await.map_err(sse_transport_error)? {
+                Some(chunk) => self.events.push(&chunk)?,
+                None => return Ok(None),
             }
         }
     }
-    Err(mcp_err("MCP_SSE", "sse stream closed before endpoint"))
+
+    async fn endpoint(&mut self) -> Result<String> {
+        while let Some((name, data)) = self.next_event().await? {
+            if name == "endpoint" {
+                return Ok(data);
+            }
+        }
+        Err(mcp_err("MCP_SSE", "sse stream closed before endpoint"))
+    }
+
+    /// The JSON-RPC reply with `id`, skipping server notifications, requests
+    /// and replies to other ids.
+    async fn reply(&mut self, id: i64) -> Result<Value> {
+        while let Some((name, data)) = self.next_event().await? {
+            if name != "message" {
+                continue;
+            }
+            let message: Value = serde_json::from_str(&data).map_err(|e| mcp_err("MCP_PROTOCOL", e.to_string()))?;
+            if message.get("id") == Some(&json!(id)) && message.get("method").is_none() {
+                return Ok(message);
+            }
+        }
+        Err(mcp_err("MCP_SSE", "sse stream closed before the reply"))
+    }
 }
 
-/// The `data` of the first complete `endpoint` event in an SSE stream.
-///
-/// An event ends at a blank line, and a field may be written with or without
-/// the space after its colon. Text after the last blank line is an event still
-/// arriving: it is not read, so a comment or keep-alive ahead of the endpoint
-/// cannot cut the endpoint short. The handshake and the endpoint reader both
-/// use this, so what one waits for is what the other parses.
-fn endpoint_event_data(stream: &str) -> Option<String> {
-    let stream = stream.replace("\r\n", "\n").replace('\r', "\n");
-    let (complete, _arriving) = stream.rsplit_once("\n\n")?;
-    complete.split("\n\n").find_map(|event| {
-        let field = |name: &str| {
-            event
-                .lines()
-                .find_map(|line| line.strip_prefix(name)?.strip_prefix(':'))
-                .map(str::trim)
-        };
-        (field("event") == Some("endpoint"))
-            .then(|| field("data"))
-            .flatten()
-            .map(str::to_string)
-    })
-}
-
-fn sse_endpoint(base: &Url, body: &str) -> Result<Url> {
-    let data = endpoint_event_data(body).ok_or_else(|| mcp_err("MCP_SSE", "sse stream missing endpoint event"))?;
+/// The endpoint event's URL, resolved against the configured SSE URL.
+fn endpoint_url(base: &Url, data: &str) -> Result<Url> {
     let endpoint = base
-        .join(&data)
+        .join(data.trim())
         .map_err(|_| mcp_err("MCP_SSE", "sse endpoint is not a valid URL"))?;
     // The pinned client only validated the configured host. An endpoint
     // on another scheme, host, or port (an IP literal skips DNS entirely)
@@ -636,6 +722,7 @@ async fn jsonrpc_post(
     client: &reqwest::Client,
     runtime: &McpRuntime,
     endpoint: &Url,
+    stream: Option<&mut SseStream>,
     method: &str,
     params: Value,
 ) -> Result<Value> {
@@ -660,8 +747,15 @@ async fn jsonrpc_post(
     if !response.status().is_success() {
         return Err(mcp_err("MCP_SSE", format!("sse POST status {}", response.status())));
     }
+    // A spec server answers `202 Accepted` (the Python SDK with the text body
+    // "Accepted") and sends the reply on the event stream; a server that
+    // replies in the POST body is still accepted.
+    let accepted = response.status() == reqwest::StatusCode::ACCEPTED;
     let bytes = read_capped_body(response, runtime.max_result_bytes).await?;
-    let reply: Value = serde_json::from_slice(&bytes).map_err(|e| mcp_err("MCP_PROTOCOL", e.to_string()))?;
+    let reply: Value = match (id, stream) {
+        (Some(id), Some(stream)) if accepted || bytes.iter().all(u8::is_ascii_whitespace) => stream.reply(id).await?,
+        _ => serde_json::from_slice(&bytes).map_err(|e| mcp_err("MCP_PROTOCOL", e.to_string()))?,
+    };
     if let Some(id) = id {
         if reply.get("id") != Some(&json!(id)) {
             return Err(mcp_err("MCP_PROTOCOL", "sse response id mismatch"));
@@ -715,8 +809,24 @@ mod config_tests {
         );
     }
 
-    fn endpoint_event(data: &str) -> String {
-        format!("event: endpoint\ndata: {data}\n\n")
+    /// The first `endpoint` event's data after pushing `stream`, either whole or
+    /// one byte at a time (so CRLF pairs straddle chunk edges).
+    fn endpoint_data(stream: &str, bytewise: bool) -> Option<String> {
+        let mut events = SseEvents::new(4096);
+        let chunks: Vec<&[u8]> = if bytewise {
+            stream.as_bytes().chunks(1).collect()
+        } else {
+            vec![stream.as_bytes()]
+        };
+        for chunk in chunks {
+            events.push(chunk).unwrap();
+            while let Some((name, data)) = events.take().unwrap() {
+                if name == "endpoint" {
+                    return Some(data);
+                }
+            }
+        }
+        None
     }
 
     #[test]
@@ -752,7 +862,7 @@ mod config_tests {
     }
 
     #[test]
-    fn endpoint_event_data_reads_only_complete_events_in_either_spelling() {
+    fn sse_events_read_only_complete_events_in_either_spelling() {
         for (stream, expected) in [
             ("event: endpoint\ndata: /m?s=1\n\n", Some("/m?s=1")),
             ("event:endpoint\ndata:/m?s=1\n\n", Some("/m?s=1")),
@@ -774,19 +884,35 @@ mod config_tests {
             ("event: endpoints\ndata: /m\n\n", None),
             ("", None),
         ] {
-            assert_eq!(endpoint_event_data(stream).as_deref(), expected, "{stream:?}");
+            for bytewise in [false, true] {
+                assert_eq!(
+                    endpoint_data(stream, bytewise).as_deref(),
+                    expected,
+                    "{stream:?} bytewise={bytewise}"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn sse_events_name_messages_join_data_and_bound_pending_bytes() {
+        let mut events = SseEvents::new(64);
+        events.push(b"data: {\"a\":\ndata: 1}\n\n: ping\n\n").unwrap();
+        assert_eq!(events.take().unwrap(), Some(("message".into(), "{\"a\":\n1}".into())));
+        assert_eq!(events.take().unwrap(), None);
+        let err = SseEvents::new(8).push(b"data: 0123456789").unwrap_err();
+        assert_eq!(err.code, "MCP_RESULT_TOO_LARGE");
     }
 
     #[test]
     fn sse_endpoint_accepts_same_origin() {
         let base = Url::parse("http://127.0.0.1:8791/sse?token=t").unwrap(); // DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
-        let relative = sse_endpoint(&base, &endpoint_event("/messages?session=1")).unwrap();
+        let relative = endpoint_url(&base, "/messages?session=1").unwrap();
         assert_eq!(relative.as_str(), "http://127.0.0.1:8791/messages?session=1"); // DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
-        let absolute = sse_endpoint(&base, &endpoint_event("http://127.0.0.1:8791/m")).unwrap(); // DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
+        let absolute = endpoint_url(&base, "http://127.0.0.1:8791/m").unwrap(); // DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
         assert_eq!(absolute.path(), "/m");
         let https = Url::parse("https://mcp.example.org/sse").unwrap();
-        let default_port = sse_endpoint(&https, &endpoint_event("https://MCP.example.org:443/m")).unwrap();
+        let default_port = endpoint_url(&https, "https://MCP.example.org:443/m").unwrap();
         assert_eq!(default_port.host_str(), Some("mcp.example.org"));
     }
 
@@ -800,7 +926,7 @@ mod config_tests {
             "//evil.example/m",    // scheme-relative other host
             "https://127.0.0.1:8791/m", // scheme switch DevSkim: ignore DS162092 because this is a loopback test fixture.
         ] {
-            let err = sse_endpoint(&base, &endpoint_event(data)).unwrap_err();
+            let err = endpoint_url(&base, data).unwrap_err();
             assert_eq!(err.code, "MCP_SSE", "{data}");
             assert!(
                 !err.message.contains("://") && !err.message.contains("169.254") && !err.message.contains("evil"),
@@ -808,8 +934,8 @@ mod config_tests {
             );
         }
         let https = Url::parse("https://mcp.example.org/sse").unwrap();
-        let downgrade = endpoint_event("http://mcp.example.org/m"); // DevSkim: ignore DS137138,DS162092 because this is an https-to-http downgrade the test expects refused and is never contacted.
-        assert!(sse_endpoint(&https, &downgrade).is_err());
+        let downgrade = "http://mcp.example.org/m"; // DevSkim: ignore DS137138,DS162092 because this is an https-to-http downgrade the test expects refused and is never contacted.
+        assert!(endpoint_url(&https, downgrade).is_err());
     }
 
     /// One-shot loopback HTTP server that answers the first request with `response`.
@@ -840,7 +966,7 @@ mod config_tests {
         };
         let endpoint = Url::parse(&format!("http://127.0.0.1:{port}/m")).unwrap(); // DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
-        jsonrpc_post(&client, &runtime, &endpoint, "tools/call", json!({})).await
+        jsonrpc_post(&client, &runtime, &endpoint, None, "tools/call", json!({})).await
     }
 
     #[tokio::test]

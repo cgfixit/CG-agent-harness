@@ -696,6 +696,10 @@ async fn stdio_stderr_is_drained_without_a_log_file_or_blocked_response() {
 #[derive(Clone, Copy)]
 enum PostReply {
     Echo,
+    /// Spec HTTP+SSE: answer each POST `202 Accepted` (body "Accepted", as the
+    /// Python SDK does) and send the JSON-RPC reply on the open event stream
+    /// as a `message` event.
+    OverStream,
     /// Declare a huge Content-Length, send `send` bytes, then stall.
     DeclaredHuge {
         send: usize,
@@ -756,6 +760,7 @@ async fn sse_stub_frames(bind: &str, frames: impl Fn(u16) -> Vec<String>, reply:
     let posts = Arc::new(AtomicUsize::new(0));
     let post_targets = Arc::new(std::sync::Mutex::new(Vec::new()));
     let (conns, post_count, targets) = (connections.clone(), posts.clone(), post_targets.clone());
+    let (replies, _) = tokio::sync::broadcast::channel::<String>(16);
     let task = tokio::spawn(async move {
         loop {
             let Ok((mut stream, _)) = listener.accept().await else {
@@ -765,6 +770,7 @@ async fn sse_stub_frames(bind: &str, frames: impl Fn(u16) -> Vec<String>, reply:
             let frames = frames.clone();
             let post_count = post_count.clone();
             let targets = targets.clone();
+            let replies = replies.clone();
             tokio::spawn(async move {
                 let mut buf = Vec::new();
                 let mut chunk = [0u8; 4096];
@@ -783,6 +789,7 @@ async fn sse_stub_frames(bind: &str, frames: impl Fn(u16) -> Vec<String>, reply:
                 };
                 let head = String::from_utf8_lossy(&buf[..head_end]).to_ascii_lowercase();
                 if head.starts_with("get ") {
+                    let mut stream_replies = replies.subscribe();
                     let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\n\r\n";
                     let mut pending = head.to_string();
                     for (index, frame) in frames.iter().enumerate() {
@@ -794,9 +801,23 @@ async fn sse_stub_frames(bind: &str, frames: impl Fn(u16) -> Vec<String>, reply:
                         let _ = stream.flush().await;
                         pending.clear();
                     }
-                    // Keep the event stream open like a real SSE server.
-                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                    return;
+                    // Keep the event stream open like a real SSE server, carrying
+                    // any replies an OverStream POST hands it.
+                    let deadline = tokio::time::sleep(std::time::Duration::from_secs(60));
+                    tokio::pin!(deadline);
+                    loop {
+                        tokio::select! {
+                            _ = &mut deadline => return,
+                            reply = stream_replies.recv() => {
+                                let Ok(reply) = reply else { return };
+                                let event = format!("event: message\r\ndata: {reply}\r\n\r\n");
+                                if stream.write_all(event.as_bytes()).await.is_err() {
+                                    return;
+                                }
+                                let _ = stream.flush().await;
+                            }
+                        }
+                    }
                 }
                 post_count.fetch_add(1, Ordering::SeqCst);
                 let target = String::from_utf8_lossy(&buf[..head_end])
@@ -824,15 +845,26 @@ async fn sse_stub_frames(bind: &str, frames: impl Fn(u16) -> Vec<String>, reply:
                         .await;
                     return;
                 };
+                let result = if request["method"] == "tools/call" {
+                    let text = serde_json::to_string(&request["params"]["arguments"]).unwrap();
+                    json!({"content":[{"type":"text","text":text}]})
+                } else {
+                    json!({"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"stub"}})
+                };
+                let body = json!({"jsonrpc":"2.0","id":id,"result":result}).to_string();
                 match reply {
+                    PostReply::OverStream => {
+                        // A server notification first, then the reply: the client
+                        // must match by id, not take the first message.
+                        let _ = replies
+                            .send(json!({"jsonrpc":"2.0","method":"notifications/message","params":{}}).to_string());
+                        let _ = replies.send(body);
+                        // The Python SDK's SseServerTransport answers with this body.
+                        let _ = stream
+                            .write_all(b"HTTP/1.1 202 Accepted\r\ncontent-type: text/plain\r\ncontent-length: 8\r\nconnection: close\r\n\r\nAccepted")
+                            .await;
+                    }
                     PostReply::Echo => {
-                        let result = if request["method"] == "tools/call" {
-                            let text = serde_json::to_string(&request["params"]["arguments"]).unwrap();
-                            json!({"content":[{"type":"text","text":text}]})
-                        } else {
-                            json!({"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"stub"}})
-                        };
-                        let body = json!({"jsonrpc":"2.0","id":id,"result":result}).to_string();
                         let response = format!(
                             "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                             body.len()
@@ -906,6 +938,30 @@ async fn sse_relative_and_same_origin_endpoints_are_accepted() {
             "initialize and tools/call must reach the configured origin"
         );
     }
+}
+
+/// A spec HTTP+SSE server (`2024-11-05`) answers every POST `202 Accepted`
+/// with no body and sends the JSON-RPC reply on the still-open event stream,
+/// after any server notification. The call must read the reply from there.
+#[tokio::test]
+async fn sse_replies_sent_on_the_event_stream_complete_the_call() {
+    let stub = sse_stub(
+        "127.0.0.1:0", // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+        |_| "/messages?session_id=spec".to_string(),
+        PostReply::OverStream,
+    )
+    .await
+    .expect("bind loopback stub");
+    let server = McpServer::boot(&sse_stub_yaml(stub.port), &[("mcp.sse_allow_loopback", "true")]).await;
+    let (status, body) = sse_stub_call(&server).await;
+    assert_eq!(status, 200, "{body}");
+    let text = body["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("\"k\":\"v\""), "{text}");
+    assert_eq!(
+        stub.connections(),
+        stub.posts() + 1,
+        "one event stream serves every reply"
+    );
 }
 
 /// The handshake must wait for the whole endpoint event and read it the way
@@ -1098,7 +1154,7 @@ async fn sse_post_body_over_the_cap_is_refused_while_streaming() {
         let label = match reply {
             PostReply::DeclaredHuge { .. } => "declared Content-Length",
             PostReply::ChunkedStall { .. } => "chunked",
-            PostReply::Echo => unreachable!(),
+            PostReply::Echo | PostReply::OverStream => unreachable!(),
         };
         assert_eq!(status, 502, "{label}: {body}");
         assert_eq!(

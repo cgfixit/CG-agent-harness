@@ -163,7 +163,10 @@ secrets stay out of the audit.
 | `MCP_TIMEOUT` | The overall invocation deadline expired |
 
 SSE declarations keep DNS-pinned URL checks and the separate, default-off
-`sse_allow_loopback` grant; they receive no stdio filesystem grants.
+`sse_allow_loopback` grant; they receive no stdio filesystem grants. The client
+speaks the `2024-11-05` HTTP+SSE transport: it keeps the event stream open and
+reads a `202 Accepted` POST's reply from it by id; a reply in the POST body is
+also accepted.
 
 ## Private read-only memory gateway
 
