@@ -381,14 +381,16 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - A short chat prompt fails with `HARNESS_LLM_ERROR` `model output was truncated` → Compare `tools_offered`, `finish_reason` and `completion_tokens` on `chat_model_call` lines in `logs/audit.jsonl` (no text). `probe-tool-repeat.py`…
 - `Address already in use` when starting `serve` → `lsof -i :8790`; stop only a known owner or choose another `--port`. Each server needs its own home
 - `/agent` reports `gh: command not found` or "Agentic layer disabled" → `brew install gh && gh auth login`; follow coding config, then restart
+- Stop or `/model use` refused with `CHAT_OTHER_ACCOUNT` → Wait for it to finish; only that account can stop it
+- A chat turn ends with `401 AUTH_REQUIRED` and no reply → Sign in again; an administrator restores the account if needed
 - A write action is refused → See coding console steps and the kill switch; check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE`
 - Managed-key save or legacy migration fails → Keep plaintext opt-in off unless required and do not broaden file access; see credential privacy and recovery
 - `/diag` says `DIAG_DISABLED` → Set literal `true`, then restart
-- `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` → Use an admin or `portal_auditor` account
-- A read or `/diag inject` says `DIAG_SCANNER_REFUSED` → Narrow with `--event`, `--since` or `--last`; nothing from it is shown or staged
 
 ## troubleshooting: symptom to fix (part 6)
 
+- `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` → Use an admin or `portal_auditor` account
+- A read or `/diag inject` says `DIAG_SCANNER_REFUSED` → Narrow with `--event`, `--since` or `--last`; nothing from it is shown or staged
 - Chat says `DIAG_SURFACE_FORBIDDEN` → Send a local turn first, or `/diag forget`
 - `/diag unslop` says `DIAG_NOT_FOUND` → `/diag` reads only `<home>/logs/unslop.jsonl`
 

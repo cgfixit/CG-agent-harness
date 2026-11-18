@@ -2110,7 +2110,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 188 words net of the post-#834 additions; measured 1270, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 1270, within a few words of the file.
-    ("docs/TROUBLESHOOTING.md", Guide, 1470),
+    // why: operator-approved (2026-11-17) +100: #961 and #966 each added troubleshooting rows, reaching 1495 of 1470.
+    ("docs/TROUBLESHOOTING.md", Guide, 1570),
     // why: operator-requested conversion of the routing research TXT, with implementation and measured limits.
     // why: moved out of docs/learning (operator reading material agents never open) into docs/ on 2026-11-08.
     // why: the 2026-11-11 trim-and-refresh pass cut 928 words net (now 3646); the cap drops by the same amount, rounded up to the next 10, keeping its earlier headroom.
