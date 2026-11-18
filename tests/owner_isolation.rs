@@ -362,12 +362,17 @@ async fn foreign_cancel_and_clear_cannot_stop_an_active_generation() {
         })
         .await
         .unwrap();
-        assert_eq!(
-            request(&s, &bob, Method::POST, "/api/chat/cancel", json!({}))
-                .await
-                .status(),
-            403
-        );
+        // Another account's turn holds the chat lock: a chat refusal, not the
+        // research lease's "research belongs to another account".
+        let stop = request(&s, &bob, Method::POST, "/api/chat/cancel", json!({})).await;
+        assert_eq!(stop.status(), 403);
+        let stop: Value = stop.json().await.unwrap();
+        assert_eq!(stop["detail"]["code"], "CHAT_OTHER_ACCOUNT", "{stop}");
+        assert!(!stop.to_string().contains("research"), "{stop}");
+        let switch = request(&s, &bob, Method::POST, "/api/model", json!({"model":"local"})).await;
+        assert_eq!(switch.status(), 409);
+        let switch: Value = switch.json().await.unwrap();
+        assert_eq!(switch["detail"]["code"], "CHAT_OTHER_ACCOUNT", "{switch}");
         json_request(
             &s,
             &bob,
@@ -380,6 +385,49 @@ async fn foreign_cancel_and_clear_cannot_stop_an_active_generation() {
     };
     let (reply, ()) = tokio::join!(chat, controls);
     assert!(reply["session_id"].is_string());
+}
+
+/// A web turn re-reads the account before its answer. An account disabled
+/// mid-turn is refused as an account change (401 AUTH_REQUIRED, the same as a
+/// plain turn), not as a model-server failure (502 WEB_PERMISSION_DENIED), and
+/// nothing from the turn is stored.
+#[tokio::test]
+async fn an_account_disabled_during_a_web_turn_is_refused_as_an_account_change() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default().with("auth.enabled", "true")).await;
+    let (owner, alice) = account(&s, "alice", "operator").await;
+    s.state.settings.lock().unwrap().web_enabled = true;
+    model.set_delay_ms(1500);
+    let turn = request(&s, &alice, Method::POST, "/api/chat", json!({"message":"look this up"}));
+    let revoke = async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while model.requests.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            model.last_request().unwrap().get("tools").is_some(),
+            "the turn must be a web turn"
+        );
+        s.state.auth.as_ref().unwrap().disable_user("alice").unwrap();
+    };
+    let (response, ()) = tokio::join!(turn, revoke);
+    assert_eq!(response.status(), 401);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["detail"]["code"], "AUTH_REQUIRED", "{body}");
+    assert!(!body.to_string().contains("pong"), "the reply is withheld: {body}");
+    let stored = s.state.store.for_owner(&owner).list();
+    assert!(
+        stored.iter().all(|row| row["message_count"].as_u64() == Some(0)),
+        "nothing from the turn is stored: {stored:?}"
+    );
+    s.state.audit.flush();
+    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    assert!(audit
+        .lines()
+        .any(|l| l.contains(r#""event":"chat_reply_withheld""#) && l.contains(r#""reason":"account_changed""#)));
 }
 
 async fn owned_schedule(s: &TestServer, cookie: &str) -> serde_json::Value {
