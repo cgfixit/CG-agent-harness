@@ -10,11 +10,14 @@ This manual is static text bundled with the build and indexed at startup. It is 
 
 - Web research: Search, permitted fetches and crawls, `/web research` jobs with checked quotes, local PDF text. Starts: On, allowlist mode, one seeded Google rule.
 - Goal loops: `/goal` and `/loop` continue a long piece in a run that outlives the tab. Starts: 50 turns, 200,000 tokens, two failed turns; cloud refuses loops.
-- Memory: Pinned and uploaded notes, account-private facts. Starts: On; proposals need review.
+- Memory: Pinned and uploaded notes, account-private facts; repeated suggestions are skipped. Starts: On; proposals need review.
 - Local chat: Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles. Starts: Ollama on loopback.
-- Browser tasks: `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Password fields and every request but GET or HEAD are held,… Starts: On for administrators; setup.
+- Browser tasks: `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Password fields and every request but GET or HEAD are held,… Starts: On for administrators; refused without accounts; setup.
 - Analytics, diagnostics: Token and run history, **Estimate draft**, `/diag` redacted logs. Starts: On; `/diag` admin or auditor.
 - Cloud chat: Optional Grok or Claude; only the new message leaves. Starts: Needs a provider key.
+
+## readme: capability overview (part 2)
+
 - Off by default: Reviewed coding in isolated clones, MCP tools and memory gateway, Netconnect LAN observation, Firecrawl fallback reads. Starts: Each needs configuration.
 
 ## agents: process and home map

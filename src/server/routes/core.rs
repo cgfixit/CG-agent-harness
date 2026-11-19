@@ -608,14 +608,7 @@ pub async fn soul_toggle(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<ToggleRequest>,
 ) -> ApiResult<Json<Value>> {
-    let snapshot = {
-        let mut s = state.settings.lock().unwrap_or_else(|p| p.into_inner());
-        s.soul_enabled = req.enabled;
-        s.clone()
-    };
-    snapshot
-        .save(&state.home)
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    let snapshot = super::panels::commit_setting(&state, move |s| s.soul_enabled = req.enabled).await?;
     Ok(Json(soul_status(&state, snapshot.soul_enabled)))
 }
 

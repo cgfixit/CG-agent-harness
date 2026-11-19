@@ -172,20 +172,35 @@ pub async fn web_status(
     Ok(Json(status))
 }
 
+/// Change one console setting the way `model_select` does: mutate a copy under
+/// the settings lock, save it, and publish it only after the save succeeded, so
+/// a failed save leaves the live value unchanged and concurrent toggles cannot
+/// save out of order. The fsync'd write runs off the async workers.
+pub(crate) async fn commit_setting(
+    state: &Arc<AppState>,
+    change: impl FnOnce(&mut crate::common::home::HarnessSettings) + Send + 'static,
+) -> ApiResult<crate::common::home::HarnessSettings> {
+    let state = state.clone();
+    super::structured_memory::off_worker(move || {
+        let mut s = state.settings.lock().unwrap_or_else(|p| p.into_inner());
+        let mut snapshot = s.clone();
+        change(&mut snapshot);
+        snapshot
+            .save(&state.home)
+            .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+        *s = snapshot.clone();
+        Ok(snapshot)
+    })
+    .await
+}
+
 pub async fn web_toggle(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<ToggleRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
-    let snapshot = {
-        let mut s = state.settings.lock().unwrap_or_else(|p| p.into_inner());
-        s.web_enabled = req.enabled;
-        s.clone()
-    };
-    snapshot
-        .save(&state.home)
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    let snapshot = commit_setting(&state, move |s| s.web_enabled = req.enabled).await?;
     state
         .audit
         .log(json!({"event": "web.enabled_set", "owner": owner, "enabled": snapshot.web_enabled}));
@@ -583,14 +598,7 @@ pub async fn memory_toggle(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<ToggleRequest>,
 ) -> ApiResult<Json<Value>> {
-    let snapshot = {
-        let mut s = state.settings.lock().unwrap_or_else(|p| p.into_inner());
-        s.memory_enabled = req.enabled;
-        s.clone()
-    };
-    snapshot
-        .save(&state.home)
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    commit_setting(&state, move |s| s.memory_enabled = req.enabled).await?;
     memory_payload(&state).map(Json)
 }
 
