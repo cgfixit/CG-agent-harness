@@ -17,18 +17,18 @@ Fresh home, loopback fixture model. [60-second demo](docs/screenshots/demo/CG-Ag
 |---|---|---|
 | **Web research** | Search, permitted fetches and crawls, `/web research` jobs with checked quotes, local PDF text. | On, allowlist mode, one seeded Google rule. |
 | **Goal loops** | `/goal` and `/loop` continue a long piece in a run that outlives the tab. | 50 turns, 200,000 tokens, two failed turns; cloud refuses loops. |
-| **Memory** | Pinned and [uploaded notes](docs/CONSOLE.md#text-file-attachments-and-prompt-preview), account-private facts. | On; proposals need review. |
+| **Memory** | Pinned and [uploaded notes](docs/CONSOLE.md#text-file-attachments-and-prompt-preview), account-private facts; repeated suggestions are skipped. | On; proposals need review. |
 | **Local chat** | Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles. | Ollama on loopback. |
-| **Browser tasks** | `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Password fields and every request but GET or HEAD are held, which ends the task. | On for administrators; [setup](#3-sign-in-and-research). |
+| **Browser tasks** | `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Password fields and every request but GET or HEAD are held, which ends the task. | On for administrators; refused without accounts; [setup](#3-sign-in-and-research). |
 | **Analytics, diagnostics** | Token and run history, **Estimate draft**, `/diag` redacted logs. | On; `/diag` admin or auditor. |
 | **Cloud chat** | Optional Grok or Claude; only the new message leaves. | Needs a provider key. |
 | **Off by default** | Reviewed coding in isolated clones, MCP tools and memory gateway, Netconnect LAN observation, Firecrawl fallback reads. | Each needs configuration. |
 
-Upgrades keep existing choices. User guide: [console](docs/CONSOLE.md#what-you-can-do).
+User guide: [console](docs/CONSOLE.md#what-you-can-do).
 
 ## How the research loop decides
 
-Permission, budget and deadline decisions are code; the model chooses what to search, which listings to read and what the evidence says.
+Permission, budget and deadline decisions are code; the model chooses searches, which listings to read and what the evidence says.
 
 ```mermaid
 flowchart TD
@@ -50,9 +50,9 @@ flowchart TD
     L --> A
 ```
 
-`all` is the shipped goal web mode. Zero results, a rejected key or a refused query never fall through to the next provider. The digest proves provenance, not logical support. A failed read goes back to the model; `GOAL_DONE` stays model advice.
+`all` is the shipped goal web mode. Zero results, a rejected key or a refused query never fall through to another provider. The digest proves provenance, not logical support. A failed read goes back to the model; `GOAL_DONE` stays model advice.
 
-Open phases: [#772](https://github.com/cgfixit/CG-agent-harness/issues/772). Design and measurements: [Web decision router](docs/WEB_DECISION_ROUTER.md).
+Open phases: [#772](https://github.com/cgfixit/CG-agent-harness/issues/772); measurements: [router](docs/WEB_DECISION_ROUTER.md).
 
 ## Design invariants
 
@@ -60,7 +60,7 @@ Contracts live in [INVARIANTS.md](INVARIANTS.md) and fail `cargo test`, not revi
 
 - **Loopback only.** Non-loopback binds are refused; fresh homes require HTTPS and login.
 - **Process isolation (I6).** The console never calls the coding pipeline in-process; it spawns `cgagentharness agentic …` through an allowlisted [shim](src/shim/mod.rs). Browser tasks run in their own child with no provider keys.
-- **Writes are gated.** Write gates ship false; approval, push and publication each need a reason and confirmation; checks run under Seatbelt or bubblewrap, and Linux without bubblewrap refuses unless you opt in.
+- **Writes are gated.** Write gates ship false; approval, push and publication each need a reason and confirmation; a revoked gate stops a run at its next iteration; checks run under Seatbelt or bubblewrap, and Linux without bubblewrap refuses unless you opt in.
 - **Web needs current permission.** Reads are DNS-pinned to public addresses; policy is rechecked after waits and before dispatch, storage and delivery.
 - **Strict config.** Gates need literal YAML `true`; malformed numbers stop startup.
 - **Secrets stay out.** Keys live in the OS credential store, never in a response, log or model context.
@@ -101,13 +101,13 @@ cargo build --release --locked
 ./target/release/cgagentharness serve
 ```
 
-Open `https://127.0.0.1:8790/` and trust the local certificate ([guide](docs/SECURE_RESEARCH.md#https-and-native-trust)).
+Open `https://127.0.0.1:8790/` and trust the [local certificate](docs/SECURE_RESEARCH.md#https-and-native-trust).
 
 ### 3. Sign in and research
 
 1. A fresh home opens **Set your password**: enter the setup code (app: **Setup and recovery**; terminal: `<home>/setup-code`) and a password of 12 or more characters.
-2. `/model list`, then `/model use <tag>`; `/status` and `/help` show the rest.
-3. `/web allow https://example.org/*`, then `/web research <question>`. For a longer piece, `/goal <question>` and `/loop 3` ([research](docs/SECURE_RESEARCH.md#search-fetch-and-research), [loops](docs/CONSOLE.md#71-sessions-and-bounded-chat-continuation)).
+2. `/model list`, then `/model use <tag>`; `/help` shows the rest.
+3. `/web allow https://example.org/*`, then `/web research <question>`. For a longer piece, `/goal <question>` and `/loop 3` ([loops](docs/CONSOLE.md#71-sessions-and-bounded-chat-continuation)).
 4. Browser tasks: install Google Chrome, run `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci` in `browser/` once, then `/browse docs.python.org what does zipfile.Path do?` ([browser use](docs/Browser-Use.md)).
 
 ## Commands and configuration
