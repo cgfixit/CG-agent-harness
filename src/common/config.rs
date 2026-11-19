@@ -48,14 +48,18 @@ pub(crate) fn resolve_secret(value: &str) -> Result<String> {
 /// Switches that read as on when the key is missing, each read through
 /// [`AppConfig::flag_missing_on`]: the two self-knowledge switches
 /// (`server::self_manual::SelfKnowledgeConfig`) and reads of a turn's own
-/// search results (`server::web_provider::ResultReads`).
+/// search results (`server::web_provider::ResultReads`), and chat fetch
+/// provenance (`server::chat_web`, #901 step 4).
 // why: operator decision (2026-11-12): a home whose config.yaml was written before
 // `web.search.result_reads.enabled` existed gets the shipped behaviour without an edit.
+// why: operator decision (2026-11-19): `web.fetch_provenance` likewise, so existing
+// homes get the composed-fetch confirmation without an edit.
 // Every other gate keeps `flag_is_true`, where a missing key is off.
 pub const MISSING_MEANS_ON: &[&str] = &[
     "diagnostics.self_knowledge",
     "diagnostics.live_state",
     "web.search.result_reads.enabled",
+    "web.fetch_provenance",
 ];
 
 /// Shipped numbers the code reads as floating point. [`AppConfig::load`]

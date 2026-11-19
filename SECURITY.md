@@ -42,7 +42,9 @@ The enforcement contracts live in [INVARIANTS.md](INVARIANTS.md):
   destinations. Discovery, cached passages and injected context use the same
   policy. One exception ships on (`web.search.result_reads`): an administrator's
   own chat or `/loop` turn may also read the exact URLs its search listed, for
-  that turn or run. Every other role stays bound by the policy. This is not an
+  that turn or run. Every other role stays bound by the policy. A URL the model
+  composed under a wildcard rule or denylist mode needs an administrator's
+  Approve in a live console turn and is refused elsewhere (#901). This is not an
   OS firewall or permission for model/GitHub connections.
 - Browser tasks (`/browse`, ship on) need accounts and run in their own child
   with no provider keys, on the origins the request names. The host judges

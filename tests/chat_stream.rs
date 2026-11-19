@@ -135,12 +135,12 @@ async fn multiple_streamed_tools_then_buffered_synthesis_keep_the_total_call_bud
         },
     )
     .await;
-    assert_eq!(
-        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"})) // DevSkim: ignore DS137138 because this synthetic grant resolves only to the loopback fixture.
-            .await
-            .0,
-        200
-    );
+    // Exact rules: these reads are named by policy, so no confirmation pauses
+    // the turn (#901 step 4; composed reads are covered below).
+    let exact: Vec<String> = (0..4)
+        .map(|index| format!("http://docs.example/docs/{index}")) // DevSkim: ignore DS137138 because this synthetic URL is test text resolved only to a loopback fixture or never fetched.
+        .collect(); // DevSkim: ignore DS137138 because these synthetic grants resolve only to the loopback fixture.
+    assert_eq!(s.post_json("/api/web/allow", json!({"urls": exact})).await.0, 200);
     for (message, expected) in [("compare", "done"), ("overlimit", "error")] {
         let (_, session) = s.post_json("/api/sessions", json!({})).await;
         let id = session["session_id"].as_str().unwrap();
@@ -173,6 +173,135 @@ async fn multiple_streamed_tools_then_buffered_synthesis_keep_the_total_call_bud
     assert_eq!(rows[1]["usage_missing"], false);
     task.abort();
 }
+/// #901 step 4: a URL only a subtree rule permits, that no search listed and
+/// the operator did not write, pauses a live administrator turn on a
+/// `confirm_fetch` event. Approve reads it once; decline refuses it with
+/// `WEB_FETCH_COMPOSED`; a non-streaming turn cannot be asked and is refused.
+#[tokio::test]
+async fn a_composed_fetch_waits_for_the_operator_and_reads_only_on_approval() {
+    let reads = Arc::new(AtomicUsize::new(0));
+    let read_counter = reads.clone();
+    let fixture = Router::new()
+        .route(
+            "/docs/{page}",
+            axum::routing::get(move || {
+                let reads = read_counter.clone();
+                async move {
+                    reads.fetch_add(1, Ordering::SeqCst);
+                    ([("content-type", "text/plain")], "COMPOSED_SOURCE")
+                }
+            }),
+        )
+        .route(
+            "/v1/chat/completions",
+            axum::routing::post(|Json(request): Json<Value>| async move {
+                let messages = request["messages"].as_array().unwrap();
+                if messages.last().unwrap()["role"] == "tool" {
+                    return Json(ok_reply("Answered.", 10, 2)).into_response();
+                }
+                let call = json!({"index":0,"id":"call_0","type":"function","function":{"name":"web_fetch","arguments":json!({"url":"http://docs.example/docs/page?d=private-memo"}).to_string()}}); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                let body = json!({"choices":[{"index":0,"delta":{"tool_calls":[call]},"finish_reason":"tool_calls"}]}).to_string();
+                if request["stream"] == true {
+                    let frames = vec![body, json!({"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2}}).to_string(), "[DONE]".into()];
+                    Sse::new(futures_util::stream::iter(frames.into_iter().map(|frame| {
+                        Ok::<_, std::convert::Infallible>(Event::default().data(frame))
+                    })))
+                    .into_response()
+                } else {
+                    let call = json!({"id":"call_0","type":"function","function":call["function"]});
+                    Json(json!({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":"","tool_calls":[call]}}],"usage":{"prompt_tokens":10,"completion_tokens":2}})).into_response()
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, fixture).await.unwrap();
+    });
+    let s = Arc::new(
+        spawn_server(
+            &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+            ServerOptions {
+                web_resolve: Some(("docs.example".into(), address)),
+                ..ServerOptions::default()
+            },
+        )
+        .await,
+    );
+    assert_eq!(
+        s.post_json("/api/web/allow", json!({"url":"http://docs.example/docs/*"})) // DevSkim: ignore DS137138 because this synthetic grant resolves only to the loopback fixture.
+            .await
+            .0,
+        200
+    );
+    // Decline first, so the read count shows the declined read never ran.
+    for approve in [false, true] {
+        let (_, session) = s.post_json("/api/sessions", json!({})).await;
+        let id = session["session_id"].as_str().unwrap().to_string();
+        let mut response = start(&s, &id, "read the docs").await;
+        let mut text = String::new();
+        let question = loop {
+            let chunk = tokio::time::timeout(Duration::from_secs(20), response.chunk())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            text.push_str(std::str::from_utf8(&chunk).unwrap());
+            if let Some(event) = events(&text).into_iter().find(|event| event["type"] == "confirm_fetch") {
+                break event;
+            }
+        };
+        assert_eq!(question["url"], "http://docs.example/docs/page?d=private-memo"); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        assert_eq!(reads.load(Ordering::SeqCst), 0, "nothing is read before the answer");
+        let answer = json!({"id": question["id"], "approve": approve});
+        assert_eq!(s.post_json("/api/chat/fetch-confirm", answer.clone()).await.0, 200);
+        assert_eq!(
+            s.post_json("/api/chat/fetch-confirm", answer).await.0,
+            404,
+            "answered once"
+        );
+        text.push_str(&response.text().await.unwrap());
+        let last = events(&text).pop().unwrap();
+        assert_eq!(last["type"], "done", "{text}");
+        let fetch = &last["data"]["web_tools"][0];
+        if approve {
+            assert_eq!(fetch["ok"], true, "{fetch}");
+            assert_eq!(reads.load(Ordering::SeqCst), 1);
+        } else {
+            assert_eq!(fetch["code"], "WEB_FETCH_COMPOSED", "{fetch}");
+            assert_eq!(reads.load(Ordering::SeqCst), 0, "a declined read never runs");
+        }
+    }
+    // A JSON (non-streaming) turn has no one to ask: refused, not read.
+    let (status, body) = s.post_json("/api/chat", json!({"message":"read the docs"})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["web_tools"][0]["code"], "WEB_FETCH_COMPOSED", "{body}");
+    // Naming the URL in the message makes it given: read without a question.
+    let (status, body) = s
+        .post_json(
+            "/api/chat",
+            json!({"message":"read http://docs.example/docs/page?d=private-memo"}), // DevSkim: ignore DS137138 because this synthetic URL is test text resolved only to a loopback fixture or never fetched.
+        ) // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["web_tools"][0]["ok"], true, "{body}");
+    assert_eq!(reads.load(Ordering::SeqCst), 2);
+    s.state.audit.flush_async().await;
+    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    let outcomes: Vec<String> = audit
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|row| row["event"] == "web_fetch_provenance")
+        .map(|row| row["outcome"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(outcomes, ["asked", "denied", "asked", "approved", "refused"]);
+    assert!(
+        !audit.contains("private-memo"),
+        "audit names the origin, never the path or query"
+    );
+    task.abort();
+}
+
 fn events(text: &str) -> Vec<Value> {
     text.lines()
         .filter_map(|line| line.strip_prefix("data: "))

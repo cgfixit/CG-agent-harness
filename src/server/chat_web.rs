@@ -453,6 +453,106 @@ pub struct UsageSnapshot {
     pub(crate) known_completion_tokens: u64,
 }
 
+/// Canonical http(s) URLs the operator wrote in `text`, trailing punctuation trimmed.
+fn operator_urls(text: &str) -> impl Iterator<Item = String> + '_ {
+    text.split_whitespace().filter_map(|word| {
+        let start = word.find("https://").or_else(|| word.find("http://"))?;
+        let url = word[start..].trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', '\'']);
+        super::web_policy::canonical_url(url).ok().map(|url| url.to_string())
+    })
+}
+
+/// #901 step 4: a `web_fetch` URL the model composed (only a subtree or
+/// subdomain rule, or denylist mode, permits it; no search listed it and the
+/// operator did not write it) needs the operator. An interactive
+/// administrator turn pauses and streams a `confirm_fetch` event; a detached
+/// run, another role or a non-streaming turn is refused. Policy and the web
+/// switch are reloaded after the wait. Audit lines carry the origin only.
+#[allow(clippy::too_many_arguments)]
+async fn confirm_provenance(
+    state: &AppState,
+    web: &WebTool,
+    owner: &str,
+    raw: &str,
+    given: &mut std::collections::BTreeSet<String>,
+    interactive_admin: bool,
+    loop_turn: bool,
+    output: Option<&tokio::sync::mpsc::Sender<Value>>,
+) -> Result<()> {
+    use super::web_policy::ReadAuthority;
+    let Ok(target) = super::web_policy::canonical_url(raw) else {
+        return Ok(()); // the read itself refuses it, with its own code
+    };
+    // Validated at boot; an unreadable value here enforces (fails closed).
+    if given.contains(target.as_str()) || !state.cfg.flag_missing_on("web.fetch_provenance").unwrap_or(true) {
+        return Ok(());
+    }
+    let authority = |web: &WebTool, target: &url::Url| {
+        let (reader, target) = (web.clone(), target.clone());
+        async move {
+            tokio::task::spawn_blocking(move || reader.policy().ok().and_then(|p| p.read_authority(&target)))
+                .await
+                .ok()
+                .flatten()
+        }
+    };
+    if authority(web, &target).await != Some(ReadAuthority::Composed) {
+        return Ok(()); // listed, exact, or not permitted (the read refuses it)
+    }
+    let origin = target.origin().ascii_serialization();
+    let audit = |outcome: &str| {
+        state
+            .audit
+            .log(json!({"event":"web_fetch_provenance","owner":owner,"origin":origin,
+            "outcome":outcome,"loop_turn":loop_turn}))
+    };
+    let composed = |message: &str| error("WEB_FETCH_COMPOSED", message);
+    let (true, Some(sender)) = (interactive_admin, output) else {
+        audit("refused");
+        return Err(composed(
+            "the model composed this URL (no search listed it, no exact rule names it, the message did not give it); \
+             only an administrator's live chat turn can confirm it. Name the URL in the message or add an exact rule",
+        ));
+    };
+    let Some(mut pending) = state.fetch_confirms.open(owner) else {
+        audit("refused_busy");
+        return Err(composed(
+            "too many fetch confirmations are open; answer or cancel one first",
+        ));
+    };
+    audit("asked");
+    let wait = super::fetch_confirm::CONFIRM_WAIT_SECS;
+    sender
+        .send(json!({"type":"confirm_fetch","id":pending.id,"url":target.as_str(),"origin":origin,"wait_sec":wait}))
+        .await
+        .map_err(|_| error("WEB_CANCELLED", "chat stream disconnected"))?;
+    let answer = tokio::time::timeout(Duration::from_secs(wait), &mut pending.answer).await;
+    drop(pending);
+    match answer {
+        Ok(Ok(true)) => {}
+        Ok(Ok(false)) => {
+            audit("denied");
+            return Err(composed("the operator declined this read"));
+        }
+        _ => {
+            audit("expired");
+            return Err(composed("nobody confirmed this read in time"));
+        }
+    }
+    // Permission checked before the wait is stale (AGENTS.md): reload both.
+    let web_on = state.settings.lock().unwrap_or_else(|p| p.into_inner()).web_enabled;
+    if !web_on || authority(web, &target).await.is_none() {
+        audit("policy_changed");
+        return Err(error(
+            "WEB_POLICY_CHANGED",
+            "web access or the URL policy changed while waiting; not read",
+        ));
+    }
+    audit("approved");
+    given.insert(target.to_string());
+    Ok(())
+}
+
 /// Cancellation covers model calls AND reads. The caller owns the generation gate.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_stream(
@@ -570,6 +670,13 @@ async fn run_inner(
     } else {
         (Vec::new(), None)
     };
+    // #901 step 4: URLs the operator wrote, and evidence this goal already
+    // read under its authority, are given; a composed URL needs confirmation.
+    let mut given: std::collections::BTreeSet<String> = operator_urls(user_message)
+        .chain(operator_urls(goal))
+        .chain(passages.iter().map(|p| p.url.clone()))
+        .collect();
+    let interactive_admin = result_reads && !loop_turn && run_id.is_none();
     let mut restored_context = false;
     if !passages.is_empty() || !run_evidence.queries.is_empty() {
         let receipt_sources: Vec<_> = passages
@@ -1107,39 +1214,54 @@ async fn run_inner(
                     }
                     "web_fetch" => {
                         let args = fetch_args(args)?;
-                        let canonical = super::web_policy::canonical_url(&args.url)
-                            .ok()
-                            .map(|url| url.to_string());
-                        let (refresh, refresh_reused) = effective_refresh(
-                            args.refresh,
+                        if let Err(failure) = confirm_provenance(
+                            state,
+                            web,
+                            owner,
+                            &args.url,
+                            &mut given,
+                            interactive_admin,
                             loop_turn,
-                            canonical
-                                .as_ref()
-                                .is_some_and(|url| passages.iter().any(|p| &p.url == url)),
-                            canonical.as_ref().is_some_and(|url| refreshed.contains(url)),
-                        );
-                        let query = args.query.unwrap_or_else(|| crate::common::clip_chars(question, 200));
-                        // Readable only because one of this turn's searches
-                        // listed it: marked on the result and audited.
-                        let by_grant = web.read_by_search_grant(&args.url);
-                        evidence::read(web, &args.url, &query, refresh, refresh_reused, &state.audit, owner)
-                            .await
-                            .map(|(mut result, found)| {
-                                selected = found;
-                                if refresh {
-                                    refreshed.extend(canonical);
-                                }
-                                if refresh_reused {
-                                    result["refresh_reused"] = json!(true);
-                                }
-                                if by_grant {
-                                    result["granted_by"] = json!("search_result");
-                                    state.audit.log(
+                            output,
+                        )
+                        .await
+                        {
+                            Err(failure)
+                        } else {
+                            let canonical = super::web_policy::canonical_url(&args.url)
+                                .ok()
+                                .map(|url| url.to_string());
+                            let (refresh, refresh_reused) = effective_refresh(
+                                args.refresh,
+                                loop_turn,
+                                canonical
+                                    .as_ref()
+                                    .is_some_and(|url| passages.iter().any(|p| &p.url == url)),
+                                canonical.as_ref().is_some_and(|url| refreshed.contains(url)),
+                            );
+                            let query = args.query.unwrap_or_else(|| crate::common::clip_chars(question, 200));
+                            // Readable only because one of this turn's searches
+                            // listed it: marked on the result and audited.
+                            let by_grant = web.read_by_search_grant(&args.url);
+                            evidence::read(web, &args.url, &query, refresh, refresh_reused, &state.audit, owner)
+                                .await
+                                .map(|(mut result, found)| {
+                                    selected = found;
+                                    if refresh {
+                                        refreshed.extend(canonical);
+                                    }
+                                    if refresh_reused {
+                                        result["refresh_reused"] = json!(true);
+                                    }
+                                    if by_grant {
+                                        result["granted_by"] = json!("search_result");
+                                        state.audit.log(
                                         json!({"event":"web_result_read","url":result["url"],"loop_turn":loop_turn}),
                                     );
-                                }
-                                result
-                            })
+                                    }
+                                    result
+                                })
+                        }
                     }
                     _ => return Err(error("WEB_TOOL_DENIED", "model requested an unavailable tool")),
                 }
@@ -1247,6 +1369,16 @@ async fn run_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn operator_urls_are_canonical_and_lose_trailing_punctuation() {
+        let urls: Vec<String> = operator_urls(
+            "Read https://Example.com/docs/a?q=1, then (http://example.org/b). Not ftp://x or example.net/c", // DevSkim: ignore DS137138 because this synthetic URL is test text resolved only to a loopback fixture or never fetched.
+        )
+        .collect();
+        assert_eq!(urls, ["https://example.com/docs/a?q=1", "http://example.org/b"]); // DevSkim: ignore DS137138 because this synthetic URL is test text resolved only to a loopback fixture or never fetched.
+        assert_eq!(operator_urls("no links here").count(), 0);
+    }
 
     #[test]
     fn sticky_route_denies_web_search_after_a_local_read() {

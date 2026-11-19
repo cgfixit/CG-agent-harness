@@ -202,6 +202,9 @@
   #pane-memory .fact-select input[type=checkbox] { display: inline-block; width: auto; padding: 0; margin: 0; accent-color: var(--accent-amber); }
   #pane-memory button { cursor: pointer; margin: 6px 6px 0 0; padding: 6px 10px; color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 4px; }
   #pane-memory button:disabled { opacity: .5; cursor: default; }
+  .fetch-confirm button { cursor: pointer; margin: 6px 6px 0 0; padding: 6px 10px; color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--accent-amber); border-radius: 4px; }
+  .fetch-confirm button:disabled { opacity: .5; cursor: default; }
+  .fetch-confirm code { display: block; margin: 6px 0; word-break: break-all; }
 
   .cmd-item {
     display: block; width: 100%; text-align: left; background: none; border: none;
@@ -1627,6 +1630,33 @@ async function api(path, method, body, timeoutMs, onDelta, signal) {
   return data;
 }
 
+/* #901 step 4: a paused turn asks before reading a URL the model composed.
+   The full URL is shown as text so the operator sees what would leave; one
+   answer per question, and the turn reloads policy before any read. */
+function showFetchConfirm(event) {
+  const body = document.createElement('div'); body.className = 'fetch-confirm';
+  const lead = document.createElement('div');
+  lead.textContent = 'The model wants to read a URL it composed: no search listed it, no exact rule names it, and your message did not give it. Its path and query leave this machine if you approve.';
+  const url = document.createElement('code'); url.className = 'confirm-url'; url.textContent = String(event.url || '');
+  const row = document.createElement('div');
+  const note = document.createElement('div'); note.className = 'meta';
+  note.textContent = 'Waiting up to ' + Number(event.wait_sec || 0) + ' s; no answer refuses it.';
+  const answer = async approve => {
+    yes.disabled = no.disabled = true;
+    try {
+      await api('/api/chat/fetch-confirm', 'POST', { id: String(event.id || ''), approve });
+      note.textContent = approve ? 'Approved: the turn re-checks policy, then reads it once.' : 'Declined: the turn continues without it.';
+    } catch (e) { note.textContent = (e && e.message) || String(e); }
+  };
+  const yes = document.createElement('button'); yes.type = 'button'; yes.textContent = 'Approve this read';
+  const no = document.createElement('button'); no.type = 'button'; no.textContent = 'Decline';
+  yes.addEventListener('click', () => answer(true));
+  no.addEventListener('click', () => answer(false));
+  row.appendChild(yes); row.appendChild(no);
+  body.appendChild(lead); body.appendChild(url); body.appendChild(row); body.appendChild(note);
+  addMsg('sys', 'harness', body);
+}
+
 async function readChatStream(resp, onDelta) {
   const reader = resp.body.getReader();
   const decoder = new TextDecoder('utf-8', { fatal: true });
@@ -1647,6 +1677,7 @@ async function readChatStream(resp, onDelta) {
         if (!data) continue;
         const event = JSON.parse(data);
         if (event.type === 'delta') onDelta(event.text);
+        else if (event.type === 'confirm_fetch') showFetchConfirm(event);
         else if (event.type === 'done') return event.data;
         else if (event.type === 'error') {
           const detail = event.error.detail;
