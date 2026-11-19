@@ -313,11 +313,15 @@ rejected key, transport failure (including an interrupted body) or timeout never
 
 Content permission grants no account or provider-configuration authority, and
 none of these substitutes for coding/write/publication gates. Page text is
-data, never a tool command.
+data, never a tool command. A reply renders as text, so a Markdown image or
+`<img>` that page text asked for fetches nothing; the console CSP refuses
+cross-origin images and connections even for markup past the renderer, and the
+preview frame's CSP refuses every connection.
 
 - Locked by: `server::web_policy::tests`, `server::web_search::tests`,
-  `server::web_provider::tests`, `tests/web_research.rs`, `tests/web_phase2_redteam.rs`, `tests/chat_web.rs` and
-  the web section of `tests/panels.rs`.
+  `server::web_provider::tests`, `tests/web_research.rs`, `tests/web_phase2_redteam.rs`, `tests/chat_web.rs`,
+  the web section of `tests/panels.rs` and `scripts/chat-browser-acceptance.mjs`
+  (reply, inserted markup and preview against a collector, under the CSPs read from `console.rs`).
 
 Server-managed goal evidence holds bounded references, not page bodies. Reuse
 requires current account/URL authority, matching cache hashes and acceptable age;
