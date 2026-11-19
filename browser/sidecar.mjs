@@ -45,6 +45,15 @@ const held = [];
 const notGranted = new Set();
 // Tabs a page opened whose verdict is pending; every action waits for it.
 const opening = new Set();
+// Longest wait for the parent's verdict on one URL; none in time is a refusal.
+const CHECK_TIMEOUT_MS = 5000;
+// Questions to the parent that have no verdict yet, by number.
+const asked = new Map();
+let questions = 0;
+// Requests the operator's block list refused since the last observation.
+let blocked = 0;
+// The same, for page loads only, so a refused navigate can say why.
+let blockedLoads = 0;
 
 // Same rule as the harness web reader (web_policy::is_public_ip): a granted
 // name must resolve to global unicast only. An IP-literal grant skips lookup.
@@ -78,6 +87,27 @@ function publicLookup(hostname, options, callback) {
 
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
+}
+
+// Asks the parent whether the operator's block list lets this URL be
+// requested. The rules and their matcher live in the parent only; this file
+// has no copy. The parent judges a URL over its own 2,048-byte limit by host
+// alone, so a cut one gets the same verdict. Anything but a clear yes in time
+// is a refusal.
+function permitted(url) {
+  return new Promise((resolve) => {
+    const id = (questions += 1);
+    const timer = setTimeout(() => {
+      asked.delete(id);
+      resolve(false);
+    }, CHECK_TIMEOUT_MS);
+    asked.set(id, (allow) => {
+      clearTimeout(timer);
+      asked.delete(id);
+      resolve(allow === true);
+    });
+    send({ check: id, url: url.slice(0, MAX_URL) });
+  });
 }
 
 function originOf(raw) {
@@ -223,8 +253,10 @@ async function observe(view = {}) {
     pages: Math.max(1, Math.ceil(matched / MAX_ELEMENTS), Math.ceil(shown.length / MAX_TEXT)),
     held: held.splice(0),
     not_granted: [...notGranted],
+    blocked,
   };
   notGranted.clear();
+  blocked = 0;
   return result;
 }
 
@@ -465,6 +497,13 @@ async function gate(cdp, event) {
     }
     return cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" });
   }
+  // Last, and for every hop: a redirect's target pauses here as a new request,
+  // so a block rule on a path holds for links, subresources and redirects alike.
+  if (!local && !(await permitted(request.url))) {
+    blocked += 1;
+    if (event.resourceType === "Document") blockedLoads += 1;
+    return cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" });
+  }
   return cdp.send("Fetch.continueRequest", { requestId });
 }
 
@@ -576,11 +615,20 @@ async function handle(message) {
   switch (message.op) {
     case "start":
       return start(message);
-    case "navigate":
-      await page.goto(message.url, { waitUntil: "domcontentloaded", timeout: 10000 });
+    case "navigate": {
+      const before = blockedLoads;
+      await page.goto(message.url, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(async (error) => {
+        if (blockedLoads === before) throw error;
+        // Chrome commits its error page a moment after a refused load; a
+        // navigate sent before that would be interrupted by it.
+        await page.waitForEvent("framenavigated", { timeout: 1000 }).catch(() => {});
+        // Not the URL: the reason is the operator's rule, and the model has the URL.
+        throw new Error("the operator's web block list covers that page");
+      });
       // A page that renders from a fetch is still a shell at domcontentloaded.
       await settle();
       return observe();
+    }
     case "observe":
       return observe(message);
     case "click":
@@ -640,18 +688,32 @@ async function handle(message) {
   }
 }
 
-const lines = createInterface({ input: process.stdin });
-for await (const line of lines) {
-  if (!line.trim()) continue;
-  let message;
+async function answer(message) {
   try {
-    message = JSON.parse(line);
-    const result = await handle(message);
-    send({ id: message.id, ok: true, result });
+    send({ id: message.id, ok: true, result: await handle(message) });
   } catch (error) {
     send({ id: message?.id, ok: false, error: String(error.message || error).slice(0, 300) });
   }
 }
+
+// Ops run one at a time, in order. A verdict is taken as its line arrives: the
+// op that is running may be waiting on the very request it answers.
+let ops = Promise.resolve();
+const lines = createInterface({ input: process.stdin });
+lines.on("line", (line) => {
+  if (!line.trim()) return;
+  let message;
+  try {
+    message = JSON.parse(line);
+  } catch (error) {
+    send({ ok: false, error: String(error.message || error).slice(0, 300) });
+    return;
+  }
+  if (message?.verdict !== undefined) asked.get(message.verdict)?.(message.allow);
+  else ops = ops.then(() => answer(message));
+});
+await new Promise((resolve) => lines.once("close", resolve));
+await ops;
 // stdin closed: the parent is gone or done. Close Chrome rather than orphan it.
 await context?.close().catch(() => {});
 if (profileDir) fs.rmSync(profileDir, { recursive: true, force: true });

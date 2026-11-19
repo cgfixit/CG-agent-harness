@@ -1,6 +1,6 @@
 # Browser use and computer use
 
-Status as of 2026-11-17. The local model (the `/model use` selection, else
+Status as of 2026-11-18. The local model (the `/model use` selection, else
 `models.local_llm.model`; `qwen3.8:27b-mlx-cg` on a 32K window) drives a real
 Chrome. Computer use (native apps) is a skeleton that nothing calls.
 
@@ -13,8 +13,8 @@ literal `true` (ships `true`, restart-only), one task at a time, stopped after
 `true`) the admin check cannot run, so it refuses with `BROWSER_AUTH_REQUIRED`.
 Only the first site may be a bare domain (meaning `https://`), so a task word like
 `README.md` is never a grant. A bare first word ending in a file extension
-(`setup.py`; `.py`, `.md`, `.sh` and `.rs` are also country domains) is shown with
-its grant and runs only when the same line is sent again; `https://` skips that.
+(`setup.py`; `.py` is also a country domain) is shown with its grant and runs
+only when the same line is sent again; `https://` skips that.
 
 How a run works:
 
@@ -42,30 +42,32 @@ How a run works:
 Boundaries, enforced in code:
 
 - Origins come only from the request; pages and the model cannot add one.
-  Origins on the shared web block list, or that cannot be checked, are refused.
   Only each URL's origin is kept: its path and query never reach argv, the
   audit line, the prompt or the report. The task text reaches the child in a
   private temporary file, never argv; the audit keeps only its SHA-256.
 - A page cannot flood the run: a link target over 8,192 characters is
-  dropped, the model sees each one cut to 300, the title to 300 and the URL to
-  8,192, and a sidecar reply line over 4 MiB stops the task.
+  dropped, the model sees each cut to 300, the title to 300 and the URL to
+  8,192; a sidecar reply line over 4 MiB stops the task.
 - The sidecar's loopback proxy is the egress check, and it answers only this
   task's Chrome (a per-session credential). The task's fresh profile
   keeps WebRTC to proxied TCP, so a page cannot send UDP around it. A granted
   name must resolve to public addresses (`localhost` is refused), and a
   loopback or private IP origin is refused; only a `test-support` build lets
   the fixtures use `127.0.0.1`.
-- The block list is checked on the granted origin before launch, again before
-  every model turn, and once more before the report is returned.
+- The block list is checked on the granted origin (one that cannot be
+  checked is refused) before launch, every model turn and the report. Inside a grant, the host judges every request
+  and redirect hop before it is sent, so path rules hold; an edit applies to
+  the next request and an unreadable policy stops all. On a host a rule
+  names, a URL the matcher cannot judge (over 2,048 bytes, an encoded
+  separator) is refused.
 - A task holds the shared model gate (no chat or research overlap). A tuned
-  model is loaded first; a window under 13K is refused (`BROWSER_WINDOW`).
+  model loads first; a window under 13K is refused (`BROWSER_WINDOW`).
 - Clicks may run, including a link with no target. Every request except GET
   and HEAD is held for the operator: a held page load answers 204 so the page
-  stays, a held `fetch` fails. Two
-  layers hold it: Playwright's page route, and a browser-wide CDP `Fetch` gate
-  that also sees requests the route misses, such as a SharedWorker's.
-- Pages cannot start workers: every document gets `worker-src 'none'`, since
-  a worker's WebSocket passes both the page-level block and the proxy tunnel.
+  stays, a held `fetch` fails. Two layers hold it: Playwright's page route and
+  a browser-wide CDP `Fetch` gate, which also sees a SharedWorker's requests.
+- Pages cannot start workers (`worker-src 'none'` on every document): a
+  worker's WebSocket passes the page-level block and the proxy tunnel.
 - Password and one-time-code fields hand off and are never typed. A hand-off
   or hold ends the task at once. The console lists each one, then the origins
   (never paths) a page asked for outside the grant.
@@ -73,27 +75,27 @@ Boundaries, enforced in code:
 Verified by running: fixtures `browser`, `browser enter` (new tab, search,
 select, password hand-off, held POSTs, no WebRTC UDP), `browser reach` (late
 content, an ungranted tab closed and named, `page` and `find`) and
-`browser-verify`; Qwen listed the games behind Start → Games on cgfixit.com
-(2026-11-14). `browser guards` checks the sidecar guards by what its loopback
-server received: no worker starts, a same-origin redirect lands, a 1.14 MB page
-with a 20 KB link gives a capped reply, and the proxy answers 407 without the
-session credential. CI's `browser-guards` job runs every fixture here, sandbox on (#945).
+`browser-verify`; Qwen listed cgfixit.com's games (2026-11-14). `browser guards` checks by what its loopback server received:
+no worker starts, a redirect lands, a blocked path gets no request
+(subresource, redirect, navigation, mid-page rule), a 1.14 MB page gives a
+capped reply, and the proxy answers 407 without the session credential. CI's
+`browser-guards` job runs every fixture, sandbox on.
 
 ## Honest limits
 
-- Grants are exact origins. Scripts and styles from a CDN origin are blocked,
+- Grants are exact origins. A CDN origin's scripts and styles are blocked,
   so many large sites render partly.
-- Path-level block rules are not enforced inside a granted origin.
-- No screenshots, so canvas and image-only UIs are opaque. `alert` and
+- A block rule stops requests, not content a page loaded before the rule.
+- No screenshots: canvas and image-only UIs are opaque. `alert` and
   `confirm` are dismissed unseen.
 - `scroll` and `wait` are not model tools: load-on-scroll content stays unread.
 - No approve-and-resume after a hand-off or hold.
-- Holding `fetch` POSTs can break background saves (chat widgets,
-  autosave). Sites that need a web worker (some editors, PDF viewers) lose it.
+- Held `fetch` POSTs can break background saves (autosave). Sites that
+  need a web worker (some editors, PDF viewers) lose it.
 - Page text is untrusted. Grants and holds bound what it can cause; an
-  answer can still be wrong.
-- `/goal` and `/loop` have no browser tools: a goal that says "/browse" runs
-  web search and fetch.
+  answer can be wrong.
+- `/goal` and `/loop` have no browser tools: "/browse" in a goal runs web
+  search and fetch.
 
 ## Roadmap: broader browser use
 
@@ -103,9 +105,7 @@ session credential. CI's `browser-guards` job runs every fixture here, sandbox o
 3. Vision: send the latest screenshot to the model (`qwen3.8` lists the
    `vision` capability) and retire older images like observations.
 4. Model tools for `scroll` and `wait`.
-5. Path-level block rules, in the page-request route: the proxy sees only an
-   HTTPS host.
-6. Browser tools for `/goal` and `/loop`, behind their own gate and the same
+5. Browser tools for `/goal` and `/loop`, behind their own gate and the same
    grants.
 
 ## Roadmap: computer use
