@@ -19,7 +19,7 @@ Fresh home, loopback fixture model. [60-second demo](docs/screenshots/demo/CG-Ag
 | **Goal loops** | `/goal` and `/loop` continue a long piece in a run that outlives the tab. | 50 turns, 200,000 tokens, two failed turns; cloud refuses loops. |
 | **Memory** | Pinned and [uploaded notes](docs/CONSOLE.md#text-file-attachments-and-prompt-preview), account-private facts; repeated suggestions are skipped. | On; proposals need review. |
 | **Local chat** | Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles. | Ollama on loopback. |
-| **Browser tasks** | `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Password fields and every request but GET or HEAD are held, which ends the task. | On for administrators; refused without accounts; [setup](#3-sign-in-and-research). |
+| **Browser tasks** | `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Block rules apply to every request and redirect; password fields and anything but GET or HEAD are held, ending the task. | On for administrators; refused without accounts; [setup](#3-sign-in-and-research). |
 | **Analytics, diagnostics** | Token and run history, **Estimate draft**, `/diag` redacted logs. | On; `/diag` admin or auditor. |
 | **Cloud chat** | Optional Grok or Claude; only the new message leaves. | Needs a provider key. |
 | **Off by default** | Reviewed coding in isolated clones, MCP tools and memory gateway, Netconnect LAN observation, Firecrawl fallback reads. | Each needs configuration. |
@@ -50,7 +50,7 @@ flowchart TD
     L --> A
 ```
 
-`all` is the shipped goal web mode. Zero results, a rejected key or a refused query never fall through to another provider. The digest proves provenance, not logical support. A failed read goes back to the model; `GOAL_DONE` stays model advice.
+`all` is the shipped goal web mode. The digest proves provenance, not logical support. A failed read goes back to the model; `GOAL_DONE` stays model advice.
 
 Open phases: [#772](https://github.com/cgfixit/CG-agent-harness/issues/772); measurements: [router](docs/WEB_DECISION_ROUTER.md).
 
@@ -61,7 +61,7 @@ Contracts live in [INVARIANTS.md](INVARIANTS.md) and fail `cargo test`, not revi
 - **Loopback only.** Non-loopback binds are refused; fresh homes require HTTPS and login.
 - **Process isolation (I6).** The console never calls the coding pipeline in-process; it spawns `cgagentharness agentic …` through an allowlisted [shim](src/shim/mod.rs). Browser tasks run in their own child with no provider keys.
 - **Writes are gated.** Write gates ship false; approval, push and publication each need a reason and confirmation; a revoked gate stops a run at its next iteration; checks run under Seatbelt or bubblewrap, and Linux without bubblewrap refuses unless you opt in.
-- **Web needs current permission.** Reads are DNS-pinned to public addresses; policy is rechecked after waits and before dispatch, storage and delivery.
+- **Web needs current permission.** Reads are DNS-pinned to public addresses; policy is rechecked after waits and before dispatch, storage and delivery. Replies render as text, so an injected Markdown image fetches nothing.
 - **Strict config.** Gates need literal YAML `true`; malformed numbers stop startup.
 - **Secrets stay out.** Keys live in the OS credential store, never in a response, log or model context.
 - **No telemetry.** `deny.toml` bans telemetry crates; CI runs `cargo deny`.
@@ -114,7 +114,7 @@ Open `https://127.0.0.1:8790/` and trust the [local certificate](docs/SECURE_RES
 
 Public CLI commands, each with `--help`: `serve`, `account`, `web`, `tls`, `mcp-key`, `netconnect`. Console commands: [slash reference](docs/CONSOLE.md#78-slash-command-quick-reference).
 
-First launch seeds `config.yaml` from [the defaults](assets/config.default.yaml); edit it and restart, or use **Reload limits** ([reloadable](docs/INSTALL.md#reload-limits-without-a-restart)). Contributors: `bash scripts/ensure-githooks.sh`, then [AGENTS.md](AGENTS.md) and `SKIP_LIVE=1 scripts/verify-local.sh` ([CI](docs/INSTALL.md#tests-and-cicd)). Windows has CI but no release.
+First launch seeds `config.yaml` from [the defaults](assets/config.default.yaml); edit it and restart, or use **Reload limits** ([reloadable](docs/INSTALL.md#reload-limits-without-a-restart)). Contributors: `bash scripts/ensure-githooks.sh`, then [AGENTS.md](AGENTS.md) ([CI](docs/INSTALL.md#tests-and-cicd)). Windows has CI but no release.
 
 ## Documentation
 

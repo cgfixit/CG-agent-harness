@@ -2,7 +2,7 @@
 
 CGagentHarness is early software (`0.1.x` / `main`): a loopback-only Rust chat
 and coding harness. Sessions, memory notes, the chat persona and the bounded
-public-web cache and research controller are local surfaces. No Telegram integration.
+public-web cache and research controller are local surfaces.
 
 ## Supported versions
 
@@ -44,6 +44,13 @@ The enforcement contracts live in [INVARIANTS.md](INVARIANTS.md):
   own chat or `/loop` turn may also read the exact URLs its search listed, for
   that turn or run. Every other role stays bound by the policy. This is not an
   OS firewall or permission for model/GitHub connections.
+- Browser tasks (`/browse`, ship on) need accounts and run in their own child
+  with no provider keys, on the origins the request names. The host judges
+  every request and redirect hop against the block list and holds password
+  fields and anything but GET or HEAD. Assistant replies render as text under a
+  CSP with no cross-origin images or connections. Model-composed navigation,
+  fetch destinations and typed text are not yet provenance-checked
+  ([#901](https://github.com/cgfixit/CG-agent-harness/issues/901)).
 - Native TLS trust is bound to the owned sidecar's exact certificate; no system
   root install or global validation bypass.
 - I6: the HTTP process never calls the agentic pipeline in-process; it
