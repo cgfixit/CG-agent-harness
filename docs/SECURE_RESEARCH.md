@@ -209,10 +209,10 @@ IDNA and hostname case normalize; schemes never downgrade; fragments are
 stripped. Trailing-dot hosts, credentials, alternate IP spellings, dot
 segments, encoded path separators/dots/nested escapes, malformed escapes,
 encoded controls and ambiguous authorities are refused. Encoded
-punctuation/space in query data keeps its identity and cannot change the
-parsed host or path. Path wildcards include query strings, but never suffix
-impostors or alternate ports. `www.example.org` and `example.org` are distinct.
-Discovered links still require current permission.
+punctuation/space in query data keeps its identity and cannot move
+host or path. Path wildcards include query strings, but never suffix
+impostors or alternate ports. Blocked rules match unreserved escapes decoded and slashes merged. `www.example.org` and `example.org` are distinct.
+Discovered links require current permission.
 
 HTML extraction shares the request deadline and stops on cancellation.
 `web.html_parser_handles` (seeded 4096, 512 if absent, range 64–4096,
