@@ -373,7 +373,7 @@ impl Notifier {
                 if inner.stop.is_cancelled() {
                     break;
                 }
-                tokio::select! { _ = inner.stop.cancelled() => break, _ = inner.tick() => {} }
+                tokio::select! { _ = inner.stop.cancelled() => break, _ = inner.clone().tick() => {} }
             }
         });
         Ok(Some(Self(inner)))
@@ -487,7 +487,7 @@ impl Notifier {
     /// One worker pass; the background task calls `tick` directly.
     #[cfg(any(test, feature = "test-support"))]
     pub async fn poll_once(&self) {
-        self.0.tick().await;
+        self.0.clone().tick().await;
     }
 }
 impl Inner {
@@ -600,144 +600,185 @@ impl Inner {
             Ok(())
         }
     }
-    async fn tick(&self) {
-        // Sweep even with zero configured destinations: removing the last grant
-        // must revoke retained work rather than leave it misleadingly pending.
-        {
-            let now = crate::common::now_ts();
-            let allowed: BTreeSet<_> = self
+    /// Revoke or fail retained pending deliveries (blocking: rereads config and
+    /// destination files per destination and fsyncs the outbox).
+    fn sweep(&self) -> bool {
+        let now = crate::common::now_ts();
+        let allowed: BTreeSet<_> = self
+            .settings
+            .destinations
+            .iter()
+            .filter(|d| self.authorized(d))
+            .map(|d| (d.spec.id.clone(), d.revision.clone()))
+            .collect();
+        let mut g = self.outbox.lock().unwrap_or_else(|p| p.into_inner());
+        let mut next = g.data.clone();
+        next.deliveries
+            .retain(|_, d| d.completion.finished_at + self.settings.retention as f64 > now);
+        for d in next.deliveries.values_mut().filter(|d| d.state == "pending") {
+            if !allowed.contains(&(d.destination_id.clone(), d.destination_revision.clone())) {
+                d.state = "revoked".into();
+                d.last_code = Some("authority_revoked".into());
+            } else if d.attempts >= self.settings.attempts {
+                d.state = "failed".into();
+                d.last_code = Some("attempts_exhausted".into());
+            }
+        }
+        if g.commit(next).is_err() {
+            self.audit.log(json!({"event":"notification_store_failed"}));
+            return false;
+        }
+        true
+    }
+
+    /// Claim this destination's next due batch and persist the attempt
+    /// (blocking: one authority check and one outbox commit).
+    fn claim_batch(&self, index: usize, now: f64) -> Option<Vec<Delivery>> {
+        let destination = &self.settings.destinations[index];
+        let authorized = self.authorized(destination);
+        let mut g = self.outbox.lock().unwrap_or_else(|p| p.into_inner());
+        let mut next = g.data.clone();
+        next.deliveries
+            .retain(|_, d| d.completion.finished_at + self.settings.retention as f64 > now);
+        for d in next.deliveries.values_mut().filter(|d| d.state == "pending") {
+            let exists = self
                 .settings
                 .destinations
                 .iter()
-                .filter(|d| self.authorized(d))
-                .map(|d| (d.spec.id.clone(), d.revision.clone()))
-                .collect();
-            let mut g = self.outbox.lock().unwrap_or_else(|p| p.into_inner());
-            let mut next = g.data.clone();
-            next.deliveries
-                .retain(|_, d| d.completion.finished_at + self.settings.retention as f64 > now);
-            for d in next.deliveries.values_mut().filter(|d| d.state == "pending") {
-                if !allowed.contains(&(d.destination_id.clone(), d.destination_revision.clone())) {
-                    d.state = "revoked".into();
-                    d.last_code = Some("authority_revoked".into());
-                } else if d.attempts >= self.settings.attempts {
-                    d.state = "failed".into();
-                    d.last_code = Some("attempts_exhausted".into());
-                }
-            }
-            if g.commit(next).is_err() {
-                self.audit.log(json!({"event":"notification_store_failed"}));
-                return;
+                .any(|x| x.spec.id == d.destination_id && x.revision == d.destination_revision);
+            if !exists || (d.destination_id == destination.spec.id && !authorized) {
+                d.state = "revoked".into();
+                d.last_code = Some("authority_revoked".into());
+            } else if d.attempts >= self.settings.attempts {
+                d.state = "failed".into();
+                d.last_code = Some("attempts_exhausted".into());
             }
         }
-        for destination in &self.settings.destinations {
+        let mut batch = Vec::new();
+        let rate_ok = next.next_send_at.get(&destination.spec.id).is_none_or(|t| *t <= now);
+        if authorized && rate_ok {
+            for d in next
+                .deliveries
+                .values_mut()
+                .filter(|d| {
+                    d.state == "pending"
+                        && d.destination_id == destination.spec.id
+                        && d.destination_revision == destination.revision
+                        && d.next_attempt_at <= now
+                })
+                .take(self.settings.batch_size)
+            {
+                d.attempts += 1;
+                let base =
+                    (self.settings.retry_delay.saturating_mul(1u64 << (d.attempts - 1))).min(self.settings.max_backoff);
+                use rand::Rng;
+                let jitter =
+                    rand::thread_rng().gen_range(0.0..=base as f64 * self.settings.jitter_percent as f64 / 100.0);
+                d.next_attempt_at = now + self.settings.timeout.as_secs_f64() + base as f64 + jitter;
+                batch.push(d.clone());
+            }
+            if !batch.is_empty() {
+                next.next_send_at.insert(
+                    destination.spec.id.clone(),
+                    now + 60.0 / destination.spec.rate_per_minute as f64,
+                );
+            }
+        }
+        next.next_send_at
+            .retain(|id, _| self.settings.destinations.iter().any(|d| &d.spec.id == id));
+        if g.commit(next).is_err() {
+            self.audit.log(json!({"event":"notification_store_failed"}));
+            return None;
+        }
+        Some(batch)
+    }
+
+    /// Record a batch outcome (blocking: one outbox commit) and audit it.
+    fn record_result(
+        &self,
+        batch: &[Delivery],
+        batch_id: &str,
+        result: std::result::Result<(), &'static str>,
+        now: f64,
+    ) {
+        let retry = matches!(
+            result,
+            Err("timeout" | "transport_failed" | "dns_failed" | "retryable_status")
+        );
+        let mut g = self.outbox.lock().unwrap_or_else(|p| p.into_inner());
+        let mut next = g.data.clone();
+        for sent in batch {
+            if let Some(d) = next.deliveries.get_mut(&sent.delivery_id) {
+                d.state = if result.is_ok() {
+                    "delivered"
+                } else if result == Err("authority_revoked") {
+                    "revoked"
+                } else if retry && d.attempts < self.settings.attempts {
+                    "pending"
+                } else {
+                    "failed"
+                }
+                .into();
+                d.last_code = result.err().map(str::to_string);
+                // Waiting time excludes an unused request timeout budget.
+                if d.state == "pending" {
+                    d.next_attempt_at = crate::common::now_ts()
+                        + (sent.next_attempt_at - now - self.settings.timeout.as_secs_f64()).max(0.0);
+                }
+            }
+        }
+        let persisted = g.commit(next).is_ok();
+        self.audit.log(json!({"event":"notification_delivery","batch_id":batch_id,"count":batch.len(),"ok":result.is_ok(),"code":result.err(),"result_persisted":persisted}));
+    }
+
+    /// Every authority check and outbox commit runs on the blocking pool: each
+    /// rereads config and destination files, and each commit fsyncs under the
+    /// outbox mutex. Only DNS and the HTTP send stay on the async worker.
+    async fn tick(self: Arc<Self>) {
+        // Sweep even with zero configured destinations: removing the last grant
+        // must revoke retained work rather than leave it misleadingly pending.
+        if !self.blocking(Self::sweep).await {
+            return;
+        }
+        for index in 0..self.settings.destinations.len() {
             if self.stop.is_cancelled() {
                 return;
             }
-            let authorized = self.authorized(destination);
             let now = crate::common::now_ts();
-            let batch = {
-                let mut g = self.outbox.lock().unwrap_or_else(|p| p.into_inner());
-                let mut next = g.data.clone();
-                next.deliveries
-                    .retain(|_, d| d.completion.finished_at + self.settings.retention as f64 > now);
-                for d in next.deliveries.values_mut().filter(|d| d.state == "pending") {
-                    let exists = self
-                        .settings
-                        .destinations
-                        .iter()
-                        .any(|x| x.spec.id == d.destination_id && x.revision == d.destination_revision);
-                    if !exists || (d.destination_id == destination.spec.id && !authorized) {
-                        d.state = "revoked".into();
-                        d.last_code = Some("authority_revoked".into());
-                    } else if d.attempts >= self.settings.attempts {
-                        d.state = "failed".into();
-                        d.last_code = Some("attempts_exhausted".into());
-                    }
-                }
-                let mut batch = Vec::new();
-                let rate_ok = next.next_send_at.get(&destination.spec.id).is_none_or(|t| *t <= now);
-                if authorized && rate_ok {
-                    for d in next
-                        .deliveries
-                        .values_mut()
-                        .filter(|d| {
-                            d.state == "pending"
-                                && d.destination_id == destination.spec.id
-                                && d.destination_revision == destination.revision
-                                && d.next_attempt_at <= now
-                        })
-                        .take(self.settings.batch_size)
-                    {
-                        d.attempts += 1;
-                        let base = (self.settings.retry_delay.saturating_mul(1u64 << (d.attempts - 1)))
-                            .min(self.settings.max_backoff);
-                        use rand::Rng;
-                        let jitter = rand::thread_rng()
-                            .gen_range(0.0..=base as f64 * self.settings.jitter_percent as f64 / 100.0);
-                        d.next_attempt_at = now + self.settings.timeout.as_secs_f64() + base as f64 + jitter;
-                        batch.push(d.clone());
-                    }
-                    if !batch.is_empty() {
-                        next.next_send_at.insert(
-                            destination.spec.id.clone(),
-                            now + 60.0 / destination.spec.rate_per_minute as f64,
-                        );
-                    }
-                }
-                next.next_send_at
-                    .retain(|id, _| self.settings.destinations.iter().any(|d| &d.spec.id == id));
-                if g.commit(next).is_err() {
-                    self.audit.log(json!({"event":"notification_store_failed"}));
-                    continue;
-                }
-                batch
+            let Some(batch) = self.blocking(move |inner| inner.claim_batch(index, now)).await else {
+                continue;
             };
             if batch.is_empty() {
                 continue;
             }
+            let destination = &self.settings.destinations[index];
             let ids: Vec<_> = batch.iter().map(|d| d.delivery_id.as_str()).collect();
             let batch_id = sha256_bytes_hex(ids.join(":").as_bytes());
             let events:Vec<_>=batch.iter().map(|d|json!({"event_id":d.event_id,"delivery_id":d.delivery_id,"job_id":d.completion.job_id,"status":d.completion.status,"created_at":d.completion.created_at,"finished_at":d.completion.finished_at})).collect();
             let payload = json!({"version":2,"batch_id":batch_id,"events":events});
             let result = if serde_json::to_vec(&payload).map_or(true, |b| b.len() > 65536) {
                 Err("payload_too_large")
-            } else if !self.authorized(destination) {
+            } else if !self
+                .blocking(move |inner| inner.authorized(&inner.settings.destinations[index]))
+                .await
+            {
                 Err("authority_revoked")
             } else {
-                tokio::time::timeout(self.settings.timeout, deliver(self, destination, &payload, &batch_id))
-                    .await
-                    .unwrap_or(Err("timeout"))
+                tokio::time::timeout(
+                    self.settings.timeout,
+                    deliver(&self, index, destination, &payload, &batch_id),
+                )
+                .await
+                .unwrap_or(Err("timeout"))
             };
-            let retry = matches!(
-                result,
-                Err("timeout" | "transport_failed" | "dns_failed" | "retryable_status")
-            );
-            let mut g = self.outbox.lock().unwrap_or_else(|p| p.into_inner());
-            let mut next = g.data.clone();
-            for sent in &batch {
-                if let Some(d) = next.deliveries.get_mut(&sent.delivery_id) {
-                    d.state = if result.is_ok() {
-                        "delivered"
-                    } else if result == Err("authority_revoked") {
-                        "revoked"
-                    } else if retry && d.attempts < self.settings.attempts {
-                        "pending"
-                    } else {
-                        "failed"
-                    }
-                    .into();
-                    d.last_code = result.err().map(str::to_string);
-                    // Waiting time excludes an unused request timeout budget.
-                    if d.state == "pending" {
-                        d.next_attempt_at = crate::common::now_ts()
-                            + (sent.next_attempt_at - now - self.settings.timeout.as_secs_f64()).max(0.0);
-                    }
-                }
-            }
-            let persisted = g.commit(next).is_ok();
-            self.audit.log(json!({"event":"notification_delivery","batch_id":batch_id,"count":batch.len(),"ok":result.is_ok(),"code":result.err(),"result_persisted":persisted}));
+            self.blocking(move |inner| inner.record_result(&batch, &batch_id, result, now))
+                .await;
         }
+    }
+
+    async fn blocking<T: Send + 'static>(self: &Arc<Self>, work: impl FnOnce(&Self) -> T + Send + 'static) -> T {
+        let inner = self.clone();
+        crate::server::routes::structured_memory::off_worker(move || work(&inner)).await
     }
 }
 
@@ -755,7 +796,8 @@ fn allowed_addresses(addresses: &[SocketAddr], private: bool) -> bool {
 }
 
 async fn deliver(
-    notifier: &Inner,
+    notifier: &Arc<Inner>,
+    index: usize,
     destination: &Destination,
     payload: &serde_json::Value,
     batch_id: &str,
@@ -774,7 +816,10 @@ async fn deliver(
     let addresses = crate::common::dns::lookup_bounded(host, port)
         .await
         .map_err(|_| "dns_failed")?;
-    if !notifier.authorized(destination) {
+    if !notifier
+        .blocking(move |inner| inner.authorized(&inner.settings.destinations[index]))
+        .await
+    {
         return Err("authority_revoked");
     }
     send_pinned(
