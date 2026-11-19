@@ -65,17 +65,21 @@ pub async fn selection(
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
-    let session = state
-        .store
-        .for_owner(&owner)
-        .get(&id)
-        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
-    let available = resolve(&state, &session.selected_skills);
-    Ok(Json(
-        json!({"selected":session.selected_skills,"ready":available.is_ok(),
+    // The session read and the skill files block, as in `select`.
+    super::structured_memory::off_worker(move || {
+        let session = state
+            .store
+            .for_owner(&owner)
+            .get(&id)
+            .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+        let available = resolve(&state, &session.selected_skills);
+        Ok(Json(
+            json!({"selected":session.selected_skills,"ready":available.is_ok(),
         "unavailable_reason":available.err().map(|e|e.code),"last_result":session.last_prompt_skills,
         "type":"prompt_context","scope":"session chat only; no executable authority"}),
-    ))
+        ))
+    })
+    .await
 }
 pub async fn select(
     State(state): State<Arc<AppState>>,

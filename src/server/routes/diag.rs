@@ -72,11 +72,12 @@ pub async fn status(
     let owner = authorize(&state, &user)?;
     let cfg = &state.diag.config;
     let logs = state.home.logs_dir();
-    let files: Vec<_> = cfg
-        .allowed_files
-        .iter()
-        .map(|name| diag_reader::file_status(&logs, name))
-        .collect();
+    // One metadata read per allowlisted file: off the async workers.
+    let names = cfg.allowed_files.clone();
+    let files: Vec<_> = super::structured_memory::off_worker(move || {
+        names.iter().map(|name| diag_reader::file_status(&logs, name)).collect()
+    })
+    .await;
     let last = state.diag.last(&owner).map(|r| {
         json!({"file": r.file, "lines_returned": r.lines_returned, "truncated": r.truncated,
                "malformed": r.malformed, "generated_at": r.generated_at, "sha256": r.sha256})
@@ -209,11 +210,13 @@ pub async fn inject(
     ValidJson(req): ValidJson<DiagInjectRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = authorize(&state, &user)?;
-    state
-        .store
-        .for_owner(&owner)
-        .get(&req.session_id)
-        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    // The session read blocks: off the async workers.
+    {
+        let (state, owner, session_id) = (state.clone(), owner.clone(), req.session_id.clone());
+        super::structured_memory::off_worker(move || state.store.for_owner(&owner).get(&session_id))
+            .await
+            .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    }
     let staged = state.diag.stage(&owner, &req.session_id).map_err(|e| diag_error(&e))?;
     state
         .audit
