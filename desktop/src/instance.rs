@@ -74,6 +74,11 @@ impl Instance {
 
     pub fn requested_focus(&self) -> bool {
         if let Ok((mut connection, _)) = self.listener.accept() {
+            // BSD/macOS accept() inherits O_NONBLOCK from the listener, which
+            // would void the read timeout and drop a frame not yet written.
+            if connection.set_nonblocking(false).is_err() {
+                return false;
+            }
             let _ = connection.set_read_timeout(Some(std::time::Duration::from_millis(100)));
             let mut frame = [0u8; 6];
             return connection.read_exact(&mut frame).is_ok() && &frame == b"focus\n";

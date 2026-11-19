@@ -136,15 +136,15 @@ planners or switches a runtime. Send a short chat to test inference
 `probe_timeout_sec` (default 1.5 s, 0.1–30). Malformed values are refused.
 
 **Choose repository and prepare offline** runs the bundled `prepare-cargo.py`
-with fixed arguments and a native folder choice. Python 3, Cargo, the selected
-Rust toolchain, SDK, Cargo.lock and cached sources are prerequisites. It creates
-the read-only preparation inventory without downloading dependencies or models,
-discards tool output and shows bounded static results. Missing inputs need
-operator preparation; online preparation stays an explicit CLI helper option.
+(refused unless its bytes match the build) with fixed arguments on a native
+folder choice. Python 3, Cargo, the Rust toolchain, SDK, Cargo.lock and cached
+sources are prerequisites. It builds the read-only preparation inventory without
+downloading dependencies or models, discards tool output and shows bounded
+results. Missing inputs need operator preparation; online preparation is CLI-only.
 
-The app adds no automatic toolchain installation, cloud inference, model pull,
-external probe or telemetry; a loopback model endpoint does not prove its
-service stays offline.
+The app adds no toolchain install, cloud inference, model pull, external probe
+or telemetry; a loopback model endpoint does not prove its service stays
+offline.
 
 ## Closing, quitting and recovery
 
@@ -223,7 +223,8 @@ Desktop CI (bundle, release or dispatch) checks both architectures, system
 linkage, nested signatures, resources, CLI/worker dispatch, policy tests, the
 extracted ZIP, and dependencies; artifacts last 14 days. Pull requests that
 change `desktop/`, `src/common/local_tls.rs` (which `desktop/src/backend.rs`
-includes through `#[path]`) or `scripts/start-web.sh` run `desktop-check.yml`
+includes through `#[path]`), `scripts/start-web.sh` or `scripts/prepare-cargo.py`
+run `desktop-check.yml`
 instead: fmt, clippy, tests and deny without packaging. A successful build is
 not GUI acceptance.
 

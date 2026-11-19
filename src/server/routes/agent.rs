@@ -499,16 +499,15 @@ pub async fn schedule_create(
         .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
     let request = serde_json::to_value(&body.request)
         .map_err(|_| ApiError::bad_request("INVALID_SCHEDULE_REQUEST", "request could not be stored"))?;
-    let created = state
-        .schedules
-        .activate(
-            body.preview_id.as_deref().unwrap_or(""),
-            spec,
-            request,
-            &owner,
-            crate::common::now_ts(),
-        )
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
+    // Activation persists the schedule store (fsync) under its mutex.
+    let (activate_state, preview_id) = (state.clone(), body.preview_id.unwrap_or_default());
+    let created = super::structured_memory::off_worker(move || {
+        activate_state
+            .schedules
+            .activate(&preview_id, spec, request, &owner, crate::common::now_ts())
+    })
+    .await
+    .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
     state
         .audit
         .log(json!({"event":"agent_schedule_created","schedule_id":created.schedule_id,"schema_version":1}));
@@ -553,9 +552,10 @@ pub async fn schedule_cancel(
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
     let id = validated_schedule_id(&schedule_id)?;
-    let v = state
-        .schedules
-        .cancel(&owner, &id)
+    // Saving the cancellation (fsync) blocks, as for jobs.
+    let (cancel_state, cancel_id) = (state.clone(), id.clone());
+    let v = super::structured_memory::off_worker(move || cancel_state.schedules.cancel(&owner, &cancel_id))
+        .await
         .map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "SCHEDULE_NOT_FOUND", "no such schedule"))?;
     state
@@ -578,7 +578,15 @@ fn schedule_owner_authorized(state: &AppState, owner: &str) -> bool {
 }
 
 /// Evaluate due schedules with a caller-supplied clock (tests inject `now`).
+/// Each occurrence persists the schedule store and runs `start_job` (session
+/// reads, job-store and goal-stage writes), so the whole tick runs on the
+/// blocking pool, as `agent_job_create` runs `start_job`.
 pub async fn tick_schedules(state: &Arc<AppState>, now: f64) {
+    let state = state.clone();
+    super::structured_memory::off_worker(move || tick_schedules_blocking(&state, now)).await
+}
+
+fn tick_schedules_blocking(state: &Arc<AppState>, now: f64) {
     use crate::server::agent_schedules::{parse_request, DispatchOutcome};
     for due in state.schedules.due(now) {
         let owner = due.owner.clone();

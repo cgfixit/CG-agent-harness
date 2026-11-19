@@ -3,8 +3,9 @@
 # release.yml, and desktop/ is not a member of the root Cargo workspace, so the
 # backend fmt, clippy and test jobs never see it. desktop/src/backend.rs also
 # `#[path]`-includes src/common/local_tls.rs, and desktop/src/web_launcher.rs
-# `include_bytes!`-embeds scripts/start-web.sh. A desktop/**, desktop/Cargo.lock
-# (Dependabot's /desktop updates), local_tls.rs or start-web.sh change
+# `include_bytes!`-embeds scripts/start-web.sh; desktop/src/main.rs embeds
+# scripts/prepare-cargo.py the same way. A desktop/**, desktop/Cargo.lock
+# (Dependabot's /desktop updates), local_tls.rs or embedded-script change
 # therefore merged green and broke the next main push. This workflow compiles,
 # lints and tests the crate the way desktop.yml does, without lipo, codesign
 # or packaging. `tests/invariant_guard.rs` pins every out-of-tree input the
@@ -74,7 +75,7 @@ jobs:
              paths=$(git diff --no-renames --name-only "$base" HEAD) &&
              [ -n "$paths" ] &&
              ! printf '%s\n' "$paths" |
-               grep -Eq '^(desktop/|src/common/local_tls\.rs$|scripts/(start-web|package-desktop)\.sh$|\.github/workflows/desktop-check\.yml$)'; then
+               grep -Eq '^(desktop/|src/common/local_tls\.rs$|scripts/(start-web\.sh|package-desktop\.sh|prepare-cargo\.py)$|\.github/workflows/desktop-check\.yml$)'; then
             desktop=false
           fi
           echo "desktop=$desktop" >> "$GITHUB_OUTPUT"
