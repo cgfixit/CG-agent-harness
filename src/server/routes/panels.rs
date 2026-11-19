@@ -590,8 +590,9 @@ fn memory_payload(state: &AppState) -> ApiResult<Value> {
     Ok(payload)
 }
 
+// `memory_payload` reads the note file: every caller runs it off the worker.
 pub async fn memory_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
-    memory_payload(&state).map(Json)
+    super::structured_memory::off_worker(move || memory_payload(&state).map(Json)).await
 }
 
 pub async fn memory_toggle(
@@ -599,7 +600,7 @@ pub async fn memory_toggle(
     ValidJson(req): ValidJson<ToggleRequest>,
 ) -> ApiResult<Json<Value>> {
     commit_setting(&state, move |s| s.memory_enabled = req.enabled).await?;
-    memory_payload(&state).map(Json)
+    super::structured_memory::off_worker(move || memory_payload(&state).map(Json)).await
 }
 
 pub async fn memory_add(

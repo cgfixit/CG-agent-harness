@@ -458,10 +458,17 @@ pub async fn get_session(
     let owner = super::auth::context_owner(user.clone());
     let read_owner = owner.clone();
     let read_state = Arc::clone(&state);
-    let session =
-        super::structured_memory::off_worker(move || read_state.store.for_owner(&read_owner).get(&session_id))
-            .await
-            .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    // The session read and the attachment lookup both block (the store mutex
+    // is held across an upload's fsyncs): one hop off the async workers.
+    let (session, live_attachment_pins) = super::structured_memory::off_worker(move || {
+        let session = read_state.store.for_owner(&read_owner).get(&session_id)?;
+        let pinned = session.pinned_ids_for(&read_owner);
+        let live_blobs = read_state.attachments.owned_blobs(&read_owner, &pinned);
+        let live = pinned.iter().filter(|id| live_blobs.contains_key(*id)).count();
+        Ok::<_, crate::common::errors::HarnessError>((session, live))
+    })
+    .await
+    .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
     let messages: Vec<Value> = session
         .messages
         .iter()
@@ -474,12 +481,7 @@ pub async fn get_session(
     out["goal_web_mode"] = json!(session.goal_web_mode);
     out["style"] = json!(session.style);
     out["web_sources"] = json!(session.web_sources);
-    let live_blobs = state.attachments.owned_blobs(&owner, &session.pinned_ids_for(&owner));
-    out["live_attachment_pins"] = json!(session
-        .pinned_ids_for(&owner)
-        .iter()
-        .filter(|id| live_blobs.contains_key(*id))
-        .count());
+    out["live_attachment_pins"] = json!(live_attachment_pins);
     Ok(Json(out))
 }
 
@@ -642,51 +644,65 @@ pub async fn model_select(
         .and_then(|c| c["provider"].as_str())
         .unwrap_or(&state.backend.provider)
         .to_string();
-    let result = (|| -> ApiResult<()> {
-        if cloud.is_some() {
-            check_cloud_ready(&state, selected)?;
-            if !req.confirm {
-                require_cloud_consent(&state, &owner, selected)?;
-            }
-        }
-        state
-            .chat_owner
-            .cancel_with(&owner, || state.abort_chat())
-            .map_err(chat_lock_refusal(
-                StatusCode::CONFLICT,
-                "change the model after it finishes",
-            ))?;
-        let mut s = state.settings.lock().unwrap_or_else(|p| p.into_inner());
-        from_provider = state.provider_for(&s.selected_model);
-        let mut snapshot = s.clone();
-        snapshot.selected_model = if selected.eq_ignore_ascii_case("local") {
-            String::new()
-        } else if cloud.is_some() {
-            // Persist provider identity, so changing its model ID cannot turn a saved cloud selection into a local tag.
-            to_provider.clone()
-        } else {
-            model.clone()
-        };
-        snapshot.selected_model_config = Some(
-            state
-                .cfg
-                .str_or("models.local_llm.model", &state.backend.model)
-                .trim()
-                .to_string(),
-        );
-        snapshot
-            .save(&state.home)
-            .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-        *s = snapshot;
-        let mut consents = state.cloud_consents.lock().unwrap_or_else(|p| p.into_inner());
-        if cloud.is_some() {
-            consents.insert((owner.clone(), to_provider.clone()));
-        } else {
-            consents.retain(|(account, _)| account != &owner);
-        }
-        state.set_tuning(None);
-        Ok(())
-    })();
+    // The settings save is fsync'd under the settings lock: run it, with the
+    // checks and publication it orders, off the async workers (as
+    // `panels::commit_setting` does), so other settings readers never park a
+    // worker behind it.
+    let (from_provider, result) = {
+        let (state, owner, cloud) = (Arc::clone(&state), owner.clone(), cloud.clone());
+        let (selected, model, to_provider, confirm) =
+            (selected.to_string(), model.clone(), to_provider.clone(), req.confirm);
+        super::structured_memory::off_worker(move || {
+            let selected = selected.as_str();
+            let result = (|| -> ApiResult<()> {
+                if cloud.is_some() {
+                    check_cloud_ready(&state, selected)?;
+                    if !confirm {
+                        require_cloud_consent(&state, &owner, selected)?;
+                    }
+                }
+                state
+                    .chat_owner
+                    .cancel_with(&owner, || state.abort_chat())
+                    .map_err(chat_lock_refusal(
+                        StatusCode::CONFLICT,
+                        "change the model after it finishes",
+                    ))?;
+                let mut s = state.settings.lock().unwrap_or_else(|p| p.into_inner());
+                from_provider = state.provider_for(&s.selected_model);
+                let mut snapshot = s.clone();
+                snapshot.selected_model = if selected.eq_ignore_ascii_case("local") {
+                    String::new()
+                } else if cloud.is_some() {
+                    // Persist provider identity, so changing its model ID cannot turn a saved cloud selection into a local tag.
+                    to_provider.clone()
+                } else {
+                    model.clone()
+                };
+                snapshot.selected_model_config = Some(
+                    state
+                        .cfg
+                        .str_or("models.local_llm.model", &state.backend.model)
+                        .trim()
+                        .to_string(),
+                );
+                snapshot
+                    .save(&state.home)
+                    .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+                *s = snapshot;
+                let mut consents = state.cloud_consents.lock().unwrap_or_else(|p| p.into_inner());
+                if cloud.is_some() {
+                    consents.insert((owner.clone(), to_provider.clone()));
+                } else {
+                    consents.retain(|(account, _)| account != &owner);
+                }
+                state.set_tuning(None);
+                Ok(())
+            })();
+            (from_provider, result)
+        })
+        .await
+    };
     state.audit.log(
         json!({"event":"model_switched","from_provider":from_provider,"to_provider":to_provider,
         "model":model,"cloud":cloud.is_some(),"tuning_profile":cloud.as_ref().map(|c| &c["tuning_profile"]),
@@ -895,6 +911,21 @@ fn busy_label(owner: &str) -> &str {
         crate::server::model_limits::TUNE_OWNER => "a model speed measurement",
         other => other,
     }
+}
+
+/// The owner's pins whose blobs are still live. The store lock and manifest
+/// read block, and an upload holds that lock across its fsyncs, so the lookup
+/// runs off the async workers.
+pub(super) async fn live_pins(state: &Arc<AppState>, owner: &str, pinned: Vec<String>) -> Vec<String> {
+    if pinned.is_empty() {
+        return pinned;
+    }
+    let (state, owner) = (Arc::clone(state), owner.to_string());
+    super::structured_memory::off_worker(move || {
+        let live = state.attachments.owned_blobs(&owner, &pinned);
+        pinned.into_iter().filter(|id| live.contains_key(id)).collect()
+    })
+    .await
 }
 
 pub(crate) async fn chat_inner(
@@ -1136,12 +1167,7 @@ pub(crate) async fn chat_inner(
     let live_pins: Vec<String> = if portal_auditor {
         Vec::new()
     } else {
-        let live_blobs = state.attachments.owned_blobs(&owner, &session.pinned_ids_for(&owner));
-        session
-            .pinned_ids_for(&owner)
-            .into_iter()
-            .filter(|id| live_blobs.contains_key(id))
-            .collect()
+        live_pins(&state, &owner, session.pinned_ids_for(&owner)).await
     };
     crate::server::retrieval::refuse_forbidden_attachments(surface, &req.attachment_ids, &live_pins)
         .map_err(|e| attachments::upload_error(&e))?;
