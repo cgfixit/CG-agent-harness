@@ -376,7 +376,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - App waits at startup → Check macOS prompts; quit, move the complete app to Applications and retry. Do not delete the home
 - Changing config appears to do nothing → Reload limits, or Cmd-Q/relaunch or restart `serve`. Window close only hides it
 - Offline preparation fails in the app → See Setup and offline Cargo verification; the app downloads nothing
-- A coding check refuses with `HARD_SANDBOX_UNAVAILABLE` on Linux → Install bubblewrap. `agentic.sandbox.allow_linux_netns_fallback: true` accepts network isolation with the host filesystem visible (boundary)
+- A coding run refuses with `HARD_SANDBOX_UNAVAILABLE` on Linux, before any model call → Install bubblewrap. `agentic.sandbox.allow_linux_netns_fallback: true` accepts network isolation with the host filesystem visible (boundary)
 - Chat takes too long or times out → Check inventory, `/model` and Setup diagnostics; cancel with `/loop stop` rather than resubmitting
 - Chat reports `502 HARNESS_LLM_ERROR` with `model server returned HTTP ...` → Check the endpoint, model and model-server logs; the harness drops the error body unread and never logs it
 
