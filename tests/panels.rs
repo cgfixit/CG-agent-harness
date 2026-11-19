@@ -1612,3 +1612,40 @@ fn status_of(response: &str) -> u16 {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0)
 }
+
+#[tokio::test]
+async fn a_failed_settings_save_leaves_the_live_toggle_unchanged() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let read = |body: &serde_json::Value| body["enabled"].as_bool();
+    let (_, web) = s.get_json("/api/web").await;
+    let (_, memory) = s.get_json("/api/memory").await;
+    let (_, soul) = s.get_json("/api/soul").await;
+    let before = (read(&web), read(&memory), read(&soul));
+    assert!(
+        before.0.is_some() && before.1.is_some() && before.2.is_some(),
+        "{web} {memory} {soul}"
+    );
+    // A directory where harness.json belongs makes every save fail.
+    let settings = s.home.join("harness.json");
+    let saved = std::fs::read(&settings).ok();
+    let _ = std::fs::remove_file(&settings);
+    std::fs::create_dir(&settings).unwrap();
+    for (path, now) in [
+        ("/api/web", before.0),
+        ("/api/memory", before.1),
+        ("/api/soul", before.2),
+    ] {
+        let (status, body) = s.post_json(path, json!({"enabled": !now.unwrap()})).await;
+        assert_eq!(status, 502, "{path}: {body}");
+        let (_, after) = s.get_json(path).await;
+        assert_eq!(read(&after), now, "{path} must keep its live value after a failed save");
+    }
+    std::fs::remove_dir(&settings).unwrap();
+    if let Some(bytes) = saved {
+        std::fs::write(&settings, bytes).unwrap();
+    }
+    let (status, body) = s.post_json("/api/web", json!({"enabled": !before.0.unwrap()})).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(read(&body), Some(!before.0.unwrap()));
+}

@@ -26,8 +26,10 @@ the server or the shim.
   worker or its WebSocket runs, the sidecar proxy answers only its session's Chrome
   (per-session credential), WebRTC sends no UDP past the sidecar proxy
   (session profile; `browser enter` fixture), an origin whose root URL (`{origin}/`)
-  the web block list blocks is refused (rechecked each turn and before delivery;
-  path-level rules are not enforced inside a grant, #899), and a granted name or IP literal
+  the web block list blocks is refused (rechecked each turn and before delivery),
+  the host answers the sidecar about every request and redirect hop from that list
+  before it is sent (`Policy::blocks_request`; an unreadable policy, or an unjudgeable
+  URL on a host a rule names, is refused; `browser guards`), and a granted name or IP literal
   must be public; only `test-support` fixtures may use loopback.
 - A SIGKILL'd child may leak a clone, but cannot corrupt server memory or bypass
   guards. The exit-code contract is 0 ok / 2 failed / 3 env_config / 4 write_refused.
