@@ -29,6 +29,78 @@ fn invalid(message: &str) -> HarnessError {
     HarnessError::new(super::openai_chat::LLM_ERROR_CODE, message)
 }
 
+/// Ends a local reply early when one sentence or line repeats `limit` times in
+/// a row (#941: some tags loop on a short answer while tools are offered and
+/// would otherwise spend the whole reply budget). A piece is the text between
+/// `\n`, `.`, `!` or `?`, compared trimmed, lowercased and with whitespace
+/// collapsed. Pieces with no letter (`}`, `0`, `|---|`) neither count nor
+/// break a run, so code and numeric tables do not trip it. `limit` 0 is off.
+#[derive(Default)]
+pub(crate) struct RepeatGuard {
+    limit: usize,
+    partial: String,
+    last: Option<String>,
+    run: usize,
+}
+
+/// A piece longer than this is not a short loop; it is dropped and ends a run.
+const REPEAT_PIECE_CHARS: usize = 512;
+
+impl RepeatGuard {
+    pub(crate) fn new(limit: usize) -> Self {
+        Self {
+            limit,
+            ..Self::default()
+        }
+    }
+
+    /// Feed streamed text; `true` once a piece has repeated `limit` times.
+    pub(crate) fn push(&mut self, text: &str) -> bool {
+        if self.limit == 0 {
+            return false;
+        }
+        for ch in text.chars() {
+            if matches!(ch, '\n' | '.' | '!' | '?') {
+                let piece = std::mem::take(&mut self.partial);
+                if self.piece(&piece) {
+                    return true;
+                }
+            } else if self.partial.chars().count() < REPEAT_PIECE_CHARS {
+                self.partial.push(ch);
+            } else {
+                self.partial.clear();
+                self.last = None;
+                self.run = 0;
+            }
+        }
+        false
+    }
+
+    fn piece(&mut self, raw: &str) -> bool {
+        if !raw.chars().any(char::is_alphabetic) {
+            return false;
+        }
+        let piece = raw.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+        if self.last.as_deref() == Some(piece.as_str()) {
+            self.run += 1;
+        } else {
+            self.last = Some(piece);
+            self.run = 1;
+        }
+        self.run >= self.limit
+    }
+}
+
+/// The error a fired [`RepeatGuard`] ends the call with. The partial reply is
+/// never returned, so nothing is saved.
+pub(crate) fn repeat_error(limit: usize) -> HarnessError {
+    invalid(&format!(
+        "model reply repeated one line {limit} times in a row; it was stopped early and not saved"
+    ))
+    .detail("repeat_detector", true)
+    .detail("finish_reason", "repeat")
+}
+
 #[derive(Default)]
 struct Decoder {
     pending: Vec<u8>,
@@ -165,8 +237,9 @@ impl Decoder {
     }
 }
 
-pub async fn read(mut response: reqwest::Response, output: Output<'_>) -> Result<Value> {
+pub async fn read(mut response: reqwest::Response, output: Output<'_>, repeat_limit: usize) -> Result<Value> {
     let mut decoder = Decoder::default();
+    let mut repeats = RepeatGuard::new(repeat_limit);
     let mut bytes = 0usize;
     while let Some(chunk) = response
         .chunk()
@@ -178,6 +251,11 @@ pub async fn read(mut response: reqwest::Response, output: Output<'_>) -> Result
             return Err(invalid("model response exceeds limit"));
         }
         for text in decoder.push(&chunk)? {
+            // Returning drops the response, which closes the connection, so the
+            // model server stops generating instead of running to the cap.
+            if repeats.push(&text) {
+                return Err(repeat_error(repeat_limit));
+            }
             output.text(&text).await?;
         }
         if decoder.done {
@@ -190,6 +268,41 @@ pub async fn read(mut response: reqwest::Response, output: Output<'_>) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fires(limit: usize, chunks: &[&str]) -> bool {
+        let mut guard = RepeatGuard::new(limit);
+        chunks.iter().any(|chunk| guard.push(chunk))
+    }
+
+    #[test]
+    fn the_repeat_guard_stops_a_looping_short_answer_and_spares_ordinary_output() {
+        // #941's shape: one word repeated, streamed in small deltas.
+        let loop_reply: Vec<&str> = std::iter::repeat_n(["Jun", "iper", ". "], 8).flatten().collect();
+        assert!(fires(8, &loop_reply), "eight in a row stop the stream");
+        assert!(!fires(8, &loop_reply[..loop_reply.len() - 1]), "seven do not");
+        assert!(
+            fires(8, &["juniper\n", "JUNIPER!  ", "Juniper?\n"].repeat(3)),
+            "case, spacing and the delimiter do not matter"
+        );
+        assert!(!fires(0, &loop_reply), "0 turns the guard off");
+        // Legitimate output that repeats without looping on one sentence.
+        let code = "fn a() {\n    if x {\n        y();\n    }\n}\n".repeat(4) + &"}\n".repeat(20);
+        let table = "| a | b |\n|---|---|\n".to_string() + &"| 0 | 0.0 |\n".repeat(40);
+        let list = (1..=30).map(|n| format!("- item {n}.\n")).collect::<String>();
+        let alternating = "Yes. No. ".repeat(20);
+        for text in [code.as_str(), table.as_str(), list.as_str(), alternating.as_str()] {
+            assert!(!fires(8, &[text]), "{text}");
+        }
+        // A non-letter piece neither counts nor breaks a run.
+        assert!(fires(3, &["Juniper.\n}\nJuniper.\n0\nJuniper."]));
+        // A piece too long to be a short loop resets the run.
+        let long = "w".repeat(REPEAT_PIECE_CHARS + 1);
+        assert!(!fires(3, &["Juniper. Juniper. ", &long, " Juniper. "]));
+        let err = repeat_error(8);
+        assert_eq!(err.code, crate::llm::openai_chat::LLM_ERROR_CODE);
+        assert_eq!(err.details["repeat_detector"], true);
+        assert_eq!(err.details["finish_reason"], "repeat");
+    }
     #[test]
     fn streamed_tool_indices_have_a_bounded_contiguous_domain() {
         for index in [

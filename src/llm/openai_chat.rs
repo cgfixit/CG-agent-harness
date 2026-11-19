@@ -60,7 +60,13 @@ pub struct ChatClient {
     /// A measured per-model deadline (`models.local_llm.auto_tune`) that
     /// replaces `timeout_sec` only for requests naming that exact model.
     timeout_override: Mutex<Option<(String, f64)>>,
+    /// `models.local_llm.repeat_abort_lines`: a streamed reply that repeats one
+    /// line this many times in a row is stopped (#941). `0` is off.
+    repeat_limit: std::sync::atomic::AtomicUsize,
 }
+
+/// The shipped `models.local_llm.repeat_abort_lines`, also the row default.
+pub const DEFAULT_REPEAT_ABORT_LINES: usize = 8;
 
 impl std::fmt::Debug for ChatClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -367,7 +373,13 @@ impl ChatClient {
             http,
             inflight: Mutex::new(BTreeMap::new()),
             timeout_override: Mutex::new(None),
+            repeat_limit: std::sync::atomic::AtomicUsize::new(DEFAULT_REPEAT_ABORT_LINES),
         })
+    }
+
+    /// Set `models.local_llm.repeat_abort_lines` (`0` turns the guard off).
+    pub fn set_repeat_limit(&self, lines: usize) {
+        self.repeat_limit.store(lines, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Install (or clear) the measured deadline for one model.
@@ -652,7 +664,8 @@ impl ChatClient {
                     .and_then(|v| v.to_str().ok())
                     .is_some_and(|v| v.split(';').next().unwrap_or("").trim() == "text/event-stream")
                 {
-                    return super::openai_stream::read(resp, output).await;
+                    let limit = self.repeat_limit.load(std::sync::atomic::Ordering::Relaxed);
+                    return super::openai_stream::read(resp, output, limit).await;
                 }
             }
             // Bound model-controlled JSON independently of the requested tokens.
@@ -938,6 +951,107 @@ mod tests {
             assert_eq!(payload["reasoning_effort"], "none");
             assert_eq!(payload["tool_choice"], if tools.is_empty() { "none" } else { "auto" });
         }
+    }
+
+    #[tokio::test]
+    async fn a_looping_stream_is_stopped_early_and_its_connection_closed() {
+        use axum::body::{Body, Bytes};
+        let sent = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = sent.clone();
+        // An endless `Juniper.` stream, as #941's tag sent with tools offered.
+        let app = axum::Router::new().route(
+            "/v1/chat/completions",
+            axum::routing::post(move || {
+                let counter = counter.clone();
+                async move {
+                    let stream = futures_util::stream::unfold(counter, |counter| async move {
+                        counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        tokio::time::sleep(Duration::from_millis(2)).await;
+                        let event =
+                            json!({"choices":[{"index":0,"delta":{"content":"Juniper. "},"finish_reason":null}]});
+                        Some((
+                            Ok::<_, std::io::Error>(Bytes::from(format!("data: {event}\n\n"))),
+                            counter,
+                        ))
+                    });
+                    axum::response::Response::builder()
+                        .header("content-type", "text/event-stream")
+                        .body(Body::from_stream(stream))
+                        .unwrap()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only ephemeral loopback.
+        let url = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this fixture uses no credentials and binds only to loopback.
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ChatClient::new(&url, "qwen3.8:27b-mlx-cg", 30.0, "", Some("none".into())).unwrap();
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let drain = tokio::spawn(async move { while rx.recv().await.is_some() {} });
+        let output = super::super::openai_stream::Output {
+            sender: &tx,
+            validate: &|| Ok(()),
+        };
+        let started = std::time::Instant::now();
+        let err = client
+            .chat_with_tools_stream(
+                "s",
+                &[],
+                "qwen3.8:27b-mlx-cg",
+                4096,
+                0.1,
+                &[json!({"type":"function"})],
+                Some(output),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "stopped early, not at the deadline"
+        );
+        assert_eq!(err.details["repeat_detector"], true);
+        assert_eq!(err.details["finish_reason"], "repeat");
+        // Dropping the response closed the connection: the producer stops.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let after_stop = sent.load(std::sync::atomic::Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            sent.load(std::sync::atomic::Ordering::SeqCst) <= after_stop + 1,
+            "the stream kept producing"
+        );
+        assert!(after_stop < 50, "only a handful of events were read: {after_stop}");
+
+        // With the guard off, the same stream runs until the deadline.
+        client.set_repeat_limit(0);
+        client.set_timeout_override(Some(("qwen3.8:27b-mlx-cg".into(), 1.0)));
+        let output = super::super::openai_stream::Output {
+            sender: &tx,
+            validate: &|| Ok(()),
+        };
+        let err = client
+            .chat_with_tools_stream(
+                "s",
+                &[],
+                "qwen3.8:27b-mlx-cg",
+                4096,
+                0.1,
+                &[json!({"type":"function"})],
+                Some(output),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.details.get("repeat_detector").is_none(), "{err:?}");
+        drop(tx);
+        drain.await.unwrap();
+        server.abort();
+    }
+
+    #[test]
+    fn the_repeat_guard_default_matches_its_config_row() {
+        let config = crate::common::config::AppConfig::from_str("{}", std::path::Path::new("x.yaml")).unwrap();
+        assert_eq!(
+            config.limit("models.local_llm.repeat_abort_lines"),
+            DEFAULT_REPEAT_ABORT_LINES as u64
+        );
     }
 
     #[tokio::test]
