@@ -82,6 +82,33 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(module.language("scripts/a.py"), ("#", "\"'"))
         self.assertIsNone(module.language("docs/a.md"))
 
+    def test_an_added_line_that_looks_like_a_file_header_is_content(self):
+        diff = "\n".join([
+            "diff --git a/docs/a.md b/docs/a.md",
+            "--- a/docs/a.md",
+            "+++ b/docs/a.md",
+            "@@ -2,0 +3,4 @@",
+            "+plain",
+            "+++ looks like a header",
+            "+++x looks like one too",
+            "+after",
+            "@@ -9 +11 @@",
+            "-old",
+            "+one line, no count",
+            "\\ No newline at end of file",
+            "diff --git a/src/b.rs b/src/b.rs",
+            "--- a/src/b.rs",
+            "+++ b/src/b.rs",
+            "@@ -0,0 +1,2 @@",
+            "+fn b() {}",
+            "+",
+        ])
+        self.assertEqual(module.parse_added(diff), {
+            "docs/a.md": {3: "plain", 4: "++ looks like a header", 5: "++x looks like one too", 6: "after",
+                          11: "one line, no count"},
+            "src/b.rs": {1: "fn b() {}", 2: ""},
+        })
+
     def test_budget_rows_stop_at_the_table_end(self):
         text = GUARD.format(agents="1_460", extra='    ("docs/A.md", Guide, 90),\n') + '("late.md", Guide, 1),\n'
         self.assertEqual(module.budget_rows(text), {"AGENTS.md": (1460, 2), "docs/A.md": (90, 3)})

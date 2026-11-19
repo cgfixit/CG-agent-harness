@@ -149,8 +149,15 @@ impl ScheduleStore {
         prepare_schedule_dir(path)?;
         let mut rows = BTreeMap::new();
         if let Some(text) = read_schedule_text(path)? {
-            let parsed: Vec<Schedule> = serde_json::from_str(&text)
+            let mut parsed: Vec<Schedule> = serde_json::from_str(&text)
                 .map_err(|_| HarnessError::harness_config("schedule file is invalid; preserve it for inspection"))?;
+            // Only active schedules count against a lowered limit: `create_spec`
+            // already drops cancelled and exhausted rows for room, so they must
+            // not stop the server from starting. The file keeps them until the
+            // next write.
+            if parsed.len() > settings.max_schedules {
+                parsed.retain(|row| row.status == ACTIVE);
+            }
             if parsed.len() > settings.max_schedules {
                 return Err(HarnessError::harness_config("schedule inventory exceeds its bound"));
             }
@@ -676,6 +683,34 @@ mod tests {
         )
         .unwrap();
         assert!(ScheduleStore::open(&path).is_err());
+    }
+
+    #[test]
+    fn a_lowered_limit_counts_only_active_rows_at_startup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("schedules.json");
+        let store = ScheduleStore::open(&path).unwrap();
+        let ids: Vec<String> = (0..3)
+            .map(|i| store.create(60, req(), "local", i as f64).unwrap().schedule_id)
+            .collect();
+        store.cancel("local", &ids[0]).unwrap();
+        store.cancel("local", &ids[1]).unwrap();
+        let lowered = |max_schedules| Settings {
+            max_schedules,
+            ..Settings::default()
+        };
+        // Three rows, one active: a limit of one starts and keeps that one.
+        let reopened = ScheduleStore::open_at(&path, 10.0, lowered(1)).unwrap();
+        let rows = reopened.list("local");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            (rows[0].schedule_id.as_str(), rows[0].status.as_str()),
+            (ids[2].as_str(), ACTIVE)
+        );
+        // Two active rows over a limit of one is still refused.
+        let again = ScheduleStore::open(&path).unwrap();
+        again.create(60, req(), "local", 5.0).unwrap();
+        assert!(ScheduleStore::open_at(&path, 10.0, lowered(1)).is_err());
     }
 
     #[test]
