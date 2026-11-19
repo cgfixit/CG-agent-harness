@@ -356,6 +356,21 @@ fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value 
         return json!({"error": reply.get("error").cloned().unwrap_or(reply)});
     }
     let result = reply.get("result").cloned().unwrap_or(json!({}));
+    // What the page showed is what a model-driven task may later navigate to
+    // or type (#901): its URL, text, element names and option labels.
+    let raw_elements = result["elements"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let shown: Vec<&str> = result["text"]
+        .as_str()
+        .into_iter()
+        .chain(raw_elements.iter().filter_map(|el| el["name"].as_str()))
+        .chain(
+            raw_elements
+                .iter()
+                .flat_map(|el| el["options"].as_array().into_iter().flatten())
+                .filter_map(Value::as_str),
+        )
+        .collect();
+    session.saw_page(result["url"].as_str(), &shown);
     let mut outcome = json!({"url": result.get("url"), "text": result.get("text")});
     if let Some(held) = result
         .get("held")
@@ -703,8 +718,10 @@ fn model_loop(
     origins: &[String],
     max_turns: usize,
 ) -> Result<Value, String> {
+    // Every model-driven task is bound: URLs and typed text need provenance.
+    session.bind_task(task);
     let mut messages = vec![
-        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A long page comes in pages: when an observation has more, observe with page or find reaches the rest. A refusal is not success. A Handoff, or held_for_operator, ends the task: only the operator can do that step. not_granted lists sites the page asked for that this task may not reach. blocked_by_policy counts requests the operator's block list refused. Call finish with your answer once the page shows it.", origins.join(", "))}),
+        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A long page comes in pages: when an observation has more, observe with page or find reaches the rest. A refusal is not success. A Handoff, or held_for_operator, ends the task: only the operator can do that step. not_granted lists sites the page asked for that this task may not reach. blocked_by_policy counts requests the operator's block list refused. Navigate only to a URL the task names, a granted site's root, or one a page showed; to go deeper, follow a link by its ref. Text you type must appear in the task or on the page; anything else is held for the operator. Call finish with your answer once the page shows it.", origins.join(", "))}),
         json!({"role":"user","content": task}),
     ];
     let mut calls = 0usize;
@@ -718,6 +735,8 @@ fn model_loop(
     let mut for_operator: Vec<Value> = Vec::new();
     // Origins a page asked for that the request did not grant.
     let mut not_granted = std::collections::BTreeSet::new();
+    // Origins of composed navigations refused for provenance; never the path or query.
+    let mut refused_composed = std::collections::BTreeSet::new();
     'turns: for turn in 0..max_turns {
         // Permission checked at launch is stale after a wait (AGENTS.md).
         if let Some(reason) = recheck(session) {
@@ -795,6 +814,21 @@ fn model_loop(
                 (Some(wire), None) => step(session, sidecar, wire),
                 (None, None) => json!({"refused":"malformed browser action"}),
             };
+            if outcome["decision"]
+                .as_str()
+                .is_some_and(|decision| decision.contains(crate::common::browser::COMPOSED_URL_REFUSAL))
+            {
+                if let Some(origin) = wire
+                    .as_ref()
+                    .and_then(|wire| wire["url"].as_str())
+                    .and_then(|url| url::Url::parse(url).ok())
+                    .map(|url| url.origin().ascii_serialization())
+                {
+                    if refused_composed.len() < MAX_FOR_OPERATOR {
+                        refused_composed.insert(origin);
+                    }
+                }
+            }
             let needs_operator = handoff.is_some() || outcome.get("held_for_operator").is_some();
             note_for_operator(&mut for_operator, handoff, &outcome);
             for origin in outcome["not_granted"].as_array().into_iter().flatten() {
@@ -834,6 +868,7 @@ fn model_loop(
         "model_calls_with_tools": calls,
         "for_operator": for_operator,
         "not_granted": not_granted,
+        "refused_composed": refused_composed,
         "final_url": last_url,
         "page_text": last_text,
         "transcript": transcript,
@@ -2051,6 +2086,8 @@ mod tests {
                     {"ref": "pw", "role": "textbox", "name": "Password", "input": "secret"},
                     {"ref": "save", "role": "button", "name": "Save"},
                     {"ref": "after", "role": "button", "name": "After"},
+                    {"ref": "filter", "role": "textbox", "name": "Filter", "input": "text"},
+                    {"ref": "next", "role": "link", "name": "Next", "href": "https://example.com/next"},
                 ],
             }}))
         }
@@ -2058,6 +2095,11 @@ mod tests {
 
     /// Navigate, then send `batch` (tool name, element name) in one turn.
     fn run_batch(batch: &[(&str, &str)]) -> (Value, Vec<String>) {
+        run_batch_with(batch, "task", "x")
+    }
+
+    /// `run_batch` for task text `task`, typing `typed` in every `type` call.
+    fn run_batch_with(batch: &[(&str, &str)], task: &str, typed: &str) -> (Value, Vec<String>) {
         let origins = vec!["https://example.com".to_string()];
         let mut session = Session::general(&origins).unwrap();
         let mut page = ScriptedPage::default();
@@ -2086,7 +2128,7 @@ mod tests {
                         .iter()
                         .map(|(tool, target)| match *tool {
                             "navigate" => json!({"function": {"name": "navigate", "arguments": {"url": target}}}),
-                            "type" => json!({"function": {"name": "type", "arguments": {"ref_id": ref_of(target), "text": "x"}}}),
+                            "type" => json!({"function": {"name": "type", "arguments": {"ref_id": ref_of(target), "text": typed}}}),
                             _ => json!({"function": {"name": tool, "arguments": {"ref_id": ref_of(target)}}}),
                         })
                         .collect()
@@ -2095,8 +2137,52 @@ mod tests {
             };
             Ok(json!({"message": {"role": "assistant", "content": "done", "tool_calls": calls}}))
         };
-        let report = model_loop(&mut session, &mut page, &mut chat, &|_| None, "task", &origins, 6).unwrap();
+        let report = model_loop(&mut session, &mut page, &mut chat, &|_| None, task, &origins, 6).unwrap();
         (report, page.ops)
+    }
+
+    /// #901 step 2: a URL the model composed on a granted origin is refused,
+    /// and the report keeps its origin only, never the path or query.
+    #[test]
+    fn a_composed_navigation_is_refused_and_reported_by_origin_only() {
+        let (report, ops) = run_batch(&[("navigate", "https://example.com/collect?d=private-memo-text")]);
+        assert_eq!(ops, ["navigate"], "the composed URL never reached the page");
+        assert_eq!(report["refused_composed"], json!(["https://example.com"]));
+        assert!(!report.to_string().contains("private-memo-text"), "{report}");
+        assert!(!report.to_string().contains("/collect"), "{report}");
+        // A link the page showed, a URL the task names and the granted root still go.
+        let (_, ops) = run_batch(&[("navigate", "https://example.com/next#part")]);
+        assert_eq!(ops, ["navigate", "navigate"]);
+        let (report, ops) = run_batch_with(
+            &[("navigate", "https://example.com/docs/a?b=1")],
+            "Read https://example.com/docs/a?b=1, then summarize.",
+            "x",
+        );
+        assert_eq!(ops, ["navigate", "navigate"]);
+        assert_eq!(report["refused_composed"], json!([]));
+    }
+
+    /// #901 step 3: typed text must come from the task or the current page;
+    /// anything else is held for the operator and ends the task.
+    #[test]
+    fn typed_text_needs_the_task_or_the_page_as_its_source() {
+        for (task, typed) in [("Set the filter to open issues", "open issues"), ("task", "page")] {
+            let (report, ops) = run_batch_with(&[("type", "Filter")], task, typed);
+            assert_eq!(ops, ["navigate", "type filter"], "{typed}");
+            assert!(report["for_operator"].as_array().unwrap().is_empty());
+        }
+        let (report, ops) = run_batch_with(
+            &[("type", "Filter"), ("press_enter", "Filter")],
+            "task",
+            "my private memo",
+        );
+        assert_eq!(ops, ["navigate"], "neither the text nor Enter reached the page");
+        assert_eq!(report["for_operator"][0]["element"], "Filter");
+        assert_eq!(
+            report["for_operator"][0]["reason"],
+            crate::common::browser::TYPED_TEXT_HOLD
+        );
+        assert!(!report.to_string().contains("my private memo"), "{report}");
     }
 
     #[test]

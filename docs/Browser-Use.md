@@ -1,6 +1,6 @@
 # Browser use and computer use
 
-Status as of 2026-11-18. The local model (the `/model use` selection, else
+Status as of 2026-11-19. The local model (the `/model use` selection, else
 `models.local_llm.model`; `qwen3.8:27b-mlx-cg` on a 32K window) drives a real
 Chrome. Computer use (native apps) is a skeleton that nothing calls.
 
@@ -12,9 +12,8 @@ literal `true` (ships `true`, restart-only), one task at a time, stopped after
 `browser.timeout_sec` (default 300). Without accounts (`auth.enabled` not literal
 `true`) the admin check cannot run, so it refuses with `BROWSER_AUTH_REQUIRED`.
 Only the first site may be a bare domain (meaning `https://`), so a task word like
-`README.md` is never a grant. A bare first word ending in a file extension
-(`setup.py`; `.py` is also a country domain) is shown with its grant and runs
-only when the same line is sent again; `https://` skips that.
+`README.md` is never a grant. A bare first word with a file extension
+(`setup.py`) runs only when the line is sent twice; `https://` skips that.
 
 How a run works:
 
@@ -68,6 +67,9 @@ Boundaries, enforced in code:
   a browser-wide CDP `Fetch` gate, which also sees a SharedWorker's requests.
 - Pages cannot start workers (`worker-src 'none'` on every document): a
   worker's WebSocket passes the page-level block and the proxy tunnel.
+- Provenance (#901): `navigate` takes only a URL the task names, a granted
+  root, a page URL or a shown link; others are refused, reported by origin.
+  Typed text not in the task or page is held (GET forms too).
 - Password and one-time-code fields hand off and are never typed. A hand-off
   or hold ends the task at once. The console lists each one, then the origins
   (never paths) a page asked for outside the grant.
@@ -92,7 +94,7 @@ capped reply, and the proxy answers 407 without the session credential. CI's
 - No approve-and-resume after a hand-off or hold.
 - Held `fetch` POSTs can break background saves (autosave). Sites that
   need a web worker (some editors, PDF viewers) lose it.
-- Page text is untrusted. Grants and holds bound what it can cause; an
+- Page text is untrusted. Grants and holds bound its effect; an
   answer can be wrong.
 - `/goal` and `/loop` have no browser tools: "/browse" in a goal runs web
   search and fetch.
@@ -127,13 +129,12 @@ binary (the plugin's wrapper script is world-writable), turning
 the model, so nothing leaves the machine. Kimi Computer Use is proprietary;
 its TCC grants (Accessibility, Screen Recording) belong to the operator.
 
-**Option B, hand the task to Kimi Code.** The harness passes the whole task
-to the Kimi Code agent (`kimi acp`). This is the quickest route, but Kimi's
-model, not the harness policy, decides each step, and the task leaves the
-machine. It would need its own opt-in and an explicit warning.
+**Option B, hand the task to Kimi Code** (`kimi acp`). Quickest, but Kimi's
+model, not harness policy, decides each step and the task leaves the machine;
+it needs its own opt-in and warning.
 
 **Option C, no Kimi.** A first-party, signed macOS Accessibility helper behind
 the same `Driver` seam. Most work, fewest outside dependencies.
 
-The first pilot for any option stays attended: one packaged app, one window,
-fixture data, operator takeover, and one result checked outside the model.
+Any first pilot stays attended: one app, one window, fixture data, operator
+takeover, a result checked outside the model.
