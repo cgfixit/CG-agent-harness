@@ -49,8 +49,7 @@ The enforcement contracts live in [INVARIANTS.md](INVARIANTS.md):
   every request and redirect hop against the block list and holds password
   fields and anything but GET or HEAD. Assistant replies render as text under a
   CSP with no cross-origin images or connections. A task navigates only to
-  URLs it was given or shown, and types only text from its task or page.
-  Chat fetch destinations are not yet provenance-checked
+  URLs it was given or shown, and types only text from its task or page
   ([#901](https://github.com/cgfixit/CG-agent-harness/issues/901)).
 - Native TLS trust is bound to the owned sidecar's exact certificate; no system
   root install or global validation bypass.
