@@ -183,6 +183,45 @@ pub fn valid_group(group: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
 }
 
+/// The form block rules match: escapes of unreserved characters decoded
+/// (RFC 3986 6.2.2.2 makes `%61` and `a` the same URL) in the path and query,
+/// and runs of `/` in the path merged, as nginx and Apache do by default.
+/// Only matching uses it: a read still sends the URL as written. Case is kept,
+/// so a case-insensitive server's `/PRIVATE/` is not covered by `/private/*`.
+fn block_match_form(url: &Url) -> Url {
+    fn decode_unreserved(text: &str, merge_slashes: bool) -> String {
+        let bytes = text.as_bytes();
+        let mut out = String::with_capacity(text.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            // `Url` paths and queries are ASCII; the byte slice keeps a
+            // multibyte character from splitting a str boundary regardless.
+            let decoded = (bytes[i] == b'%' && i + 2 < bytes.len())
+                .then(|| std::str::from_utf8(&bytes[i + 1..i + 3]).ok())
+                .flatten()
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+                .filter(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'~'));
+            if let Some(b) = decoded {
+                out.push(b as char);
+                i += 3;
+                continue;
+            }
+            let c = text[i..].chars().next().unwrap_or('/');
+            if !(merge_slashes && c == '/' && out.ends_with('/')) {
+                out.push(c);
+            }
+            i += c.len_utf8();
+        }
+        out
+    }
+    let mut form = url.clone();
+    form.set_path(&decode_unreserved(url.path(), true));
+    if let Some(query) = url.query() {
+        form.set_query(Some(&decode_unreserved(query, false)));
+    }
+    form
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rule {
@@ -383,17 +422,33 @@ impl Policy {
     }
 
     /// A blocked rule covers the target over HTTP or HTTPS alike, so blocking
-    /// `https://example.org/*` also blocks `http://example.org/`.
+    /// `https://example.org/*` also blocks `http://example.org/`. It also
+    /// covers the spellings a server resolves to the same path (see
+    /// [`block_match_form`]), on both the rule's and the target's side.
     pub fn blocks(&self, target: &Url) -> bool {
-        let mut other = target.clone();
-        let swapped = match target.scheme() {
-            "https" => other.set_scheme("http").is_ok(),
-            "http" => other.set_scheme("https").is_ok(),
-            _ => false,
-        };
-        self.blocked
-            .iter()
-            .any(|r| r.permits(target) || swapped && r.permits(&other))
+        let forms = [target.clone(), block_match_form(target)];
+        let mut swapped = Vec::with_capacity(2);
+        for form in &forms {
+            let mut other = form.clone();
+            let ok = match form.scheme() {
+                "https" => other.set_scheme("http").is_ok(),
+                "http" => other.set_scheme("https").is_ok(),
+                _ => false,
+            };
+            if ok {
+                swapped.push(other);
+            }
+        }
+        self.blocked.iter().any(|r| {
+            Pattern::parse(&r.pattern).is_ok_and(|p| {
+                let normal = Pattern {
+                    url: block_match_form(&p.url),
+                    subdomains: p.subdomains,
+                    subtree: p.subtree,
+                };
+                forms.iter().chain(&swapped).any(|t| p.permits(t) || normal.permits(t))
+            })
+        })
     }
 
     /// Whether a browser task must not send a request to `raw`, a URL Chrome is
@@ -852,6 +907,35 @@ mod tests {
             let elsewhere = url.replace("docs.example.org", "cdn.example.net");
             assert!(!policy.blocks_request(&elsewhere), "{elsewhere}");
         }
+        // Spellings the canonicalizer accepts but a server resolves to the
+        // covered path: escaped unreserved characters (RFC 3986 6.2.2.2) and
+        // doubled slashes (nginx and Apache merge them by default).
+        for url in [
+            "https://docs.example.org/priv%61te/a",
+            "https://docs.example.org/%70%72%69%76%61%74%65/a",
+            "https://docs.example.org//private/a",
+            "https://docs.example.org///private//a",
+            "http://docs.example.org//priv%61te/", // DevSkim: ignore DS137138 because a rule must cover both schemes
+        ] {
+            assert!(canonical_url(url).is_ok(), "{url}");
+            assert!(policy.blocks(&canonical_url(url).unwrap()), "{url}");
+            assert!(policy.blocks_request(url), "{url}");
+        }
+        // Reserved escapes keep their meaning, and other paths stay open.
+        for url in [
+            "https://docs.example.org/private%3Fa",
+            "https://docs.example.org//public/private/a",
+            "https://docs.example.org/priv%61teer",
+        ] {
+            assert!(!policy.blocks(&canonical_url(url).unwrap()), "{url}");
+        }
+        // A rule written with escapes covers the plain spelling too.
+        let mut escaped = Policy::empty();
+        escaped.mode = Mode::Denylist;
+        escaped
+            .blocked
+            .push(Policy::block_rule("https://docs.example.org/%70rivate/*").unwrap());
+        assert!(escaped.blocks(&canonical_url("https://docs.example.org/private/a").unwrap()));
         // Another port is another origin; no URL at all is refused.
         assert!(!policy.blocks_request("https://docs.example.org:8443/a%20b"));
         assert!(policy.blocks_request("not a url"));

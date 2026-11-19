@@ -227,7 +227,10 @@ needs an administrator's grant or, on an administrator's own turn, a listing fro
 home whose rules are all removed refuses reads (`WEB_ALLOWLIST_EMPTY`). Only an administrator's confirmed switch
 (`/api/web/mode`, `confirm: true`) selects block-list mode, which reads any
 public URL no blocked rule covers; a named group still narrows to its allow
-rules. Blocked rules cover HTTP and HTTPS and win in both modes; private
+rules. Blocked rules cover HTTP and HTTPS and win in both modes, and match
+target and pattern with unreserved escapes decoded and `/` runs merged
+(RFC 3986 6.2.2.2; nginx and Apache defaults), so `/priv%61te/` and
+`//private/` stay covered; path case is kept. Private
 addresses stay refused, with no exception for any search provider. Existing choices persist; absent/invalid legacy
 `web_enabled` stays off. `tools/web_allowlist.json` is versioned and bounded by
 restart-only `web.max_rules` (default 64); over-cap, malformed, missing,
@@ -235,7 +238,7 @@ unreadable or partially invalid policy refuses access.
 Exact HTTP(S) rules retain scheme, port, path and query identity.
 Only explicit `*.host` and `/path/*` rules broaden scope. Path wildcards include
 query strings; exact rules retain exact query identity. Encoded query data cannot
-alter host/path, and encoded path escapes stay refused. Legacy rows authorize
+alter host/path, and encoded path separators, dots, spaces and `%` stay refused. Legacy rows authorize
 only their stored fetch target, never old host aliases or implicit descendants.
 Wildcard grants can send arbitrary query data to the allowed site. This is an
 accepted single-operator residual, not prevented by prompt framing; use exact
@@ -310,11 +313,15 @@ rejected key, transport failure (including an interrupted body) or timeout never
 
 Content permission grants no account or provider-configuration authority, and
 none of these substitutes for coding/write/publication gates. Page text is
-data, never a tool command.
+data, never a tool command. A reply renders as text, so a Markdown image or
+`<img>` that page text asked for fetches nothing; the console CSP refuses
+cross-origin images and connections even for markup past the renderer, and the
+preview frame's CSP refuses every connection.
 
 - Locked by: `server::web_policy::tests`, `server::web_search::tests`,
-  `server::web_provider::tests`, `tests/web_research.rs`, `tests/web_phase2_redteam.rs`, `tests/chat_web.rs` and
-  the web section of `tests/panels.rs`.
+  `server::web_provider::tests`, `tests/web_research.rs`, `tests/web_phase2_redteam.rs`, `tests/chat_web.rs`,
+  the web section of `tests/panels.rs` and `scripts/chat-browser-acceptance.mjs`
+  (reply, inserted markup and preview against a collector, under the CSPs read from `console.rs`).
 
 Server-managed goal evidence holds bounded references, not page bodies. Reuse
 requires current account/URL authority, matching cache hashes and acceptable age;
