@@ -595,6 +595,11 @@ impl WebTool {
         self.tools_dir
             .join(format!("web_{}_context.json", crate::common::sha256_hex(owner)))
     }
+    /// The saved policy file and its rule cap, for a caller that re-reads it
+    /// per request and parses only changed bytes (the browser host).
+    pub fn policy_file(&self) -> (PathBuf, usize) {
+        (self.allow_path(), self.limits.max_rules)
+    }
     pub fn policy(&self) -> Result<Policy> {
         let mut policy = Policy::load(&self.allow_path(), self.limits.max_rules)?;
         if let Some(grants) = &self.search_grants {

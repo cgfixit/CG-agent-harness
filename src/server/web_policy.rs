@@ -396,6 +396,32 @@ impl Policy {
             .any(|r| r.permits(target) || swapped && r.permits(&other))
     }
 
+    /// Whether a browser task must not send a request to `raw`, a URL Chrome is
+    /// about to request inside a granted origin. A URL the canonicalizer
+    /// accepts gets the same answer as `blocks`. One it refuses to judge (over
+    /// `MAX_URL_BYTES`, an encoded separator, a `*`) could be a covered path
+    /// under another spelling, so it is refused on any host a blocked rule
+    /// names and sent everywhere else: ordinary sites use such URLs daily.
+    pub fn blocks_request(&self, raw: &str) -> bool {
+        match canonical_url(raw) {
+            Ok(url) => self.blocks(&url),
+            Err(_) => Url::parse(raw).map_or(true, |url| self.blocks_host(&url)),
+        }
+    }
+
+    /// A blocked rule names the target's host and port, whatever its path.
+    fn blocks_host(&self, target: &Url) -> bool {
+        let mut other = target.clone();
+        let swapped = match target.scheme() {
+            "https" => other.set_scheme("http").is_ok(),
+            "http" => other.set_scheme("https").is_ok(),
+            _ => false,
+        };
+        self.blocked.iter().any(|r| {
+            Pattern::parse(&r.pattern).is_ok_and(|p| p.permits_host(target) || swapped && p.permits_host(&other))
+        })
+    }
+
     /// Blocked rules use the same pattern grammar as allow rules, scheme aside:
     /// `blocks` checks both schemes. One entry per pattern; the ID ignores group.
     pub fn block_rule(pattern: &str) -> Result<Rule> {
@@ -513,6 +539,12 @@ impl Policy {
     }
 
     pub fn load(path: &Path, max_rules: usize) -> Result<Self> {
+        Self::parse(&Self::read(path, max_rules)?, max_rules)
+    }
+
+    /// The policy file's bytes, one over the cap at most; `parse` judges them.
+    /// A caller that keeps the last bytes can skip parsing an unchanged file.
+    pub fn read(path: &Path, max_rules: usize) -> Result<Vec<u8>> {
         let mut options = std::fs::OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
@@ -531,7 +563,7 @@ impl Policy {
         }
         let mut bytes = Vec::new();
         file.take(max_policy_bytes(max_rules) + 1).read_to_end(&mut bytes)?;
-        Self::parse(&bytes, max_rules)
+        Ok(bytes)
     }
 
     /// A named group always narrows to that group's allow rules, in either
@@ -780,6 +812,50 @@ mod tests {
         let padded = [bytes.as_slice(), &vec![b' '; 70_000]].concat();
         assert!(Policy::parse(&padded, 3).is_err());
         assert_eq!(Policy::parse(&padded, DEFAULT_MAX_RULES).unwrap().rules.len(), 3);
+    }
+
+    #[test]
+    fn a_browser_request_gets_the_block_lists_answer_and_ambiguity_is_refused_only_on_a_blocked_host() {
+        let mut policy = Policy::empty();
+        policy.mode = Mode::Denylist;
+        policy
+            .blocked
+            .push(Policy::block_rule("https://docs.example.org/private/*").unwrap());
+        // Parity: whatever the canonicalizer accepts gets exactly `blocks`.
+        for url in [
+            "https://docs.example.org/private/a?x=1",
+            "http://docs.example.org/private/", // DevSkim: ignore DS137138 because a rule must cover both schemes
+            "https://docs.example.org/public/a",
+            "https://docs.example.org/privateer",
+            "https://other.example.org/private/a",
+            "https://docs.example.org:8443/private/a",
+        ] {
+            assert_eq!(
+                policy.blocks_request(url),
+                policy.blocks(&canonical_url(url).unwrap()),
+                "{url}"
+            );
+        }
+        assert!(policy.blocks_request("https://docs.example.org/private/a#frag"));
+        assert!(!policy.blocks_request("https://docs.example.org/public/a"));
+        // Spellings the canonicalizer will not judge: refused where a rule
+        // names the host, since they could be the covered path renamed.
+        let long = format!("https://docs.example.org/public/{}", "a".repeat(MAX_URL_BYTES));
+        for url in [
+            "https://docs.example.org/public%2Fprivate/a",
+            "https://docs.example.org/a%20b",
+            "https://docs.example.org/public/a?glob=*",
+            long.as_str(),
+        ] {
+            assert!(canonical_url(url).is_err() && policy.blocks_request(url), "{url}");
+            // The same spelling on a host no rule names is ordinary browsing.
+            let elsewhere = url.replace("docs.example.org", "cdn.example.net");
+            assert!(!policy.blocks_request(&elsewhere), "{elsewhere}");
+        }
+        // Another port is another origin; no URL at all is refused.
+        assert!(!policy.blocks_request("https://docs.example.org:8443/a%20b"));
+        assert!(policy.blocks_request("not a url"));
+        assert!(!Policy::empty().blocks_request("https://docs.example.org/a%20b"));
     }
 
     #[test]
