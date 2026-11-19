@@ -345,12 +345,13 @@ pub async fn preview(
             "portal_auditor previews only its own local chat prompt",
         ));
     }
-    let session = req
-        .session_id
-        .as_deref()
-        .map(|id| state.store.for_owner(&owner).get(id))
-        .transpose()
-        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    // The session read blocks, as in `get_session`: off the async worker.
+    let session = {
+        let (state, owner, id) = (Arc::clone(&state), owner.clone(), req.session_id.clone());
+        super::structured_memory::off_worker(move || id.map(|id| state.store.for_owner(&owner).get(&id)).transpose())
+            .await
+            .map_err(|e| ApiError::from_err(session_status(&e), &e))?
+    };
     if let Some(content) = &req.soul_content {
         validate_content(&state, content)?;
     }
@@ -413,12 +414,7 @@ pub async fn preview(
         &pinned_ids,
     )
     .map_err(|e| crate::server::attachments::upload_error(&e))?;
-    let live_blobs = state.attachments.owned_blobs(&owner, &pinned_ids);
-    let live_pins: Vec<String> = pinned_ids
-        .iter()
-        .filter(|id| live_blobs.contains_key(*id))
-        .cloned()
-        .collect();
+    let live_pins = super::core::live_pins(&state, &owner, pinned_ids.clone()).await;
     let ids = crate::server::retrieval::attachment_ids_for_prompt(&live_pins, &req.attachment_ids);
     let attachment_fence = if portal_auditor {
         String::new()
