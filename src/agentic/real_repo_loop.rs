@@ -17,7 +17,7 @@ use serde_json::json;
 use crate::common::errors::{HarnessError, Result};
 
 use super::ctx::AgenticCtx;
-use super::executor::{run_verification, Check, HardSandbox, VerificationReport};
+use super::executor::{production_sandbox, run_verification, Check, HardSandbox, VerificationReport};
 use super::governance::{inspect_candidate_text, inspect_code_shape, GovernanceFinding};
 use super::proposer::ProposerClient;
 use super::unslop::UnslopProbe;
@@ -295,7 +295,15 @@ pub fn parse_file_blocks(text: &str) -> Result<BTreeMap<String, String>> {
             );
         }
         destinations.insert(destination, path.clone());
-        blocks.insert(path, caps["body"].to_string());
+        // The newline before the END marker belongs to the marker, so the
+        // capture has lost the file's last one. Put it back: a text file
+        // written without it fails `cargo fmt --check` and shows
+        // "\ No newline at end of file" in the review diff.
+        let mut body = caps["body"].to_string();
+        if !body.is_empty() && !body.ends_with('\n') {
+            body.push('\n');
+        }
+        blocks.insert(path, body);
     }
     if normalized.matches("=== FILE ").count() != blocks.len()
         || normalized.matches("=== END FILE ===").count() != blocks.len()
@@ -579,6 +587,17 @@ pub fn run_real_repo_loop(
         }
     }
 
+    // No check can run without the hard sandbox, so a host that lacks one is
+    // refused here: before the first model request, not after a planner call
+    // that can take `planner_timeout_sec` and, for a cloud provider, has
+    // already sent the prompt. Built once: the Linux fallback probe is not
+    // cached, and every iteration used to repeat it.
+    let owned_sandbox = match p.sandbox {
+        Some(_) => None,
+        None => Some(production_sandbox(ctx.acfg.allow_linux_netns_fallback)?),
+    };
+    let sandbox = p.sandbox.or(owned_sandbox.as_deref());
+
     let mut feedback = String::new();
     let mut rejection_history: Vec<String> = Vec::new();
     let mut read_paths: Vec<String> = p.read_paths.to_vec();
@@ -714,7 +733,7 @@ pub fn run_real_repo_loop(
                 tools.worktree(),
                 p.checks,
                 &ctx.audit,
-                p.sandbox,
+                sandbox,
                 Some(&ctx.home_root.join("data/agentic/cargo-prepared")),
                 ctx.acfg.allow_linux_netns_fallback,
             )?)
@@ -879,7 +898,7 @@ mod tests {
     fn parses_one_block_and_normalizes_crlf() {
         let text = "=== FILE src/a.rs ===\r\nfn a() {}\r\n=== END FILE ===";
         let blocks = parse_file_blocks(text).unwrap();
-        assert_eq!(blocks.get("src/a.rs").unwrap(), "fn a() {}");
+        assert_eq!(blocks.get("src/a.rs").unwrap(), "fn a() {}\n");
     }
 
     #[test]
@@ -890,8 +909,8 @@ mod tests {
                      === FILE b.txt ===\nB\n=== END FILE ===\n";
         let blocks = parse_file_blocks(text).unwrap();
         assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks.get("a.txt").unwrap(), "A");
-        assert_eq!(blocks.get("b.txt").unwrap(), "B");
+        assert_eq!(blocks.get("a.txt").unwrap(), "A\n");
+        assert_eq!(blocks.get("b.txt").unwrap(), "B\n");
     }
 
     #[test]

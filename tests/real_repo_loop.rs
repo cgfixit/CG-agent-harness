@@ -42,8 +42,12 @@ const HEX_RE: &str = "^[0-9a-f]{32}$";
 fn file_block_parsing_normalizes_crlf_and_refuses_aliases() {
     let text = "rationale\r\n=== FILE .\\src\\a.rs ===\r\nfn a() {}\r\n=== END FILE ===\r\n=== FILE docs/b.md ===\nhello\n=== END FILE ===\n";
     let blocks = parse_file_blocks(text).unwrap();
-    assert_eq!(blocks.get("src/a.rs").unwrap(), "fn a() {}");
-    assert_eq!(blocks.get("docs/b.md").unwrap(), "hello");
+    // A whole-file block keeps the file's final newline (the one before the
+    // END marker is the marker's).
+    assert_eq!(blocks.get("src/a.rs").unwrap(), "fn a() {}\n");
+    assert_eq!(blocks.get("docs/b.md").unwrap(), "hello\n");
+    let spaced = parse_file_blocks("=== FILE c.txt ===\nx\n\n=== END FILE ===\n").unwrap();
+    assert_eq!(spaced.get("c.txt").unwrap(), "x\n", "an explicit one is not doubled");
     let dup = "=== FILE x.py ===\n1\n=== END FILE ===\n=== FILE ./X.py. ===\n2\n=== END FILE ===\n";
     assert!(parse_file_blocks(dup).unwrap_err().message.contains("same file path"));
     let unsafe_path = "=== FILE /etc/passwd ===\nx\n=== END FILE ===\n";
@@ -553,7 +557,7 @@ fn loop_iterates_on_feedback_then_accepts_and_finalizes() {
         .unwrap_err()
         .message
         .contains("mismatch"));
-    std::fs::write(clone.join("target.txt"), "goodbye").unwrap();
+    std::fs::write(clone.join("target.txt"), "goodbye\n").unwrap();
     let original_policy = std::fs::read_to_string(&ctx.config_path).unwrap();
     std::fs::write(
         &ctx.config_path,
@@ -606,6 +610,33 @@ fn loop_refuses_operator_read_file_of_a_denied_basename() {
     assert!(
         proposer.prompts.borrow().is_empty(),
         "denied operator selectors must not reach collect/prompt"
+    );
+}
+
+/// Without a hard sandbox no check can run, so the run is refused before the
+/// planner is asked, not after its first reply. This needs a host that has
+/// none (a Linux runner without bwrap); where one exists there is nothing to
+/// refuse and the test says so instead of passing silently.
+#[test]
+fn a_host_without_a_hard_sandbox_is_refused_before_the_first_model_request() {
+    if cgagentharness::agentic::executor::production_sandbox(false).is_ok() {
+        eprintln!("SKIP sandbox preflight: this host has a hard sandbox");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let ctx = loop_ctx(dir.path());
+    let clone = clone_into_workspace(&ctx, dir.path());
+    let ws = RepoWorkspace::attach(&ctx, &clone).unwrap();
+    let checks = vec![Check::new("true", vec!["true".into()]).unwrap()];
+    let (protected, read_paths): (Vec<String>, Vec<String>) = (vec![], vec![]);
+    let proposer = ScriptedProposer::new(&[&block("target.txt", "goodbye")]);
+    let mut p = params(&checks, &protected, &read_paths);
+    p.sandbox = None;
+    let err = run_real_repo_loop(&ctx, &ws, &proposer, &p).unwrap_err();
+    assert_eq!(err.code, "HARD_SANDBOX_UNAVAILABLE");
+    assert!(
+        proposer.prompts.borrow().is_empty(),
+        "the planner was asked before the sandbox refusal"
     );
 }
 

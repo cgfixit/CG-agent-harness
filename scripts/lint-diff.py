@@ -91,18 +91,29 @@ def git(*args, check=True):
 def added_lines(diff_args):
     """{path: {line number: text}} for every line the diff adds."""
     out = git("diff", "--no-color", "--no-ext-diff", "--no-renames", "--diff-filter=AM", "-U0", *diff_args)
-    added, path, line = {}, None, 0
+    return parse_added(out)
+
+
+def parse_added(out):
+    """added_lines for one `git diff -U0` text. A hunk header says how many
+    lines it adds, and that many `+` lines are content whatever they start
+    with: an added line `++ note` reads `+++ note` in the diff, which is not
+    the next file's header and must not end this file's findings."""
+    added, path, line, left = {}, None, 0, 0
     for raw in out.splitlines():
+        if left and raw.startswith("+"):
+            if path:
+                added.setdefault(path, {})[line] = raw[1:]
+            line += 1
+            left -= 1
+            continue
         if raw.startswith("+++ "):
             path = raw[6:] if raw.startswith("+++ b/") else None
             continue
         hunk = HUNK.match(raw)
         if hunk:
             line = int(hunk.group(1))
-            continue
-        if path and raw.startswith("+") and not raw.startswith("+++"):
-            added.setdefault(path, {})[line] = raw[1:]
-            line += 1
+            left = int(hunk.group(2)) if hunk.group(2) is not None else 1
     return added
 
 

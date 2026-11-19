@@ -935,13 +935,17 @@ fn cli_surface_hides_agentic_and_refuses_unknown_subcommands() {
         "self-test must report a passed/total tally: {out} / {err}"
     );
     // Value starting with --confirm binds to its option, never becomes a flag.
+    // The spec is otherwise complete, so the only thing left to refuse it is
+    // the missing confirmation: without `--body` an empty-body error gave the
+    // same non-zero exit whether or not the value had become the flag.
     let (code, _, err) = run_agentic(
         &dir.path().join("config.yaml"),
-        &["apply-skill", "--name=x", "--desc=--confirm", "--reason=r"],
+        &["apply-skill", "--name=x", "--desc=--confirm", "--body=b", "--reason=r"],
         &[],
         dir.path(),
     );
-    assert_ne!(code, 0);
+    assert_eq!(code, 4, "{err}");
+    assert!(err.contains("requires --confirm"), "{err}");
     assert!(!err.contains("unexpected argument"), "{err}");
 }
 
