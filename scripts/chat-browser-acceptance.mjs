@@ -112,7 +112,7 @@ const server=createServer(async(req,res)=>{
   if(apiSet){reply({kind:'dispatch',dispatch:true,canonical:'/api set '+apiSet[1],command:'api',sub:'set',rest:apiSet[1]});return;}
   reply({kind:'dispatch',dispatch:true,canonical:body.line});return;
  }
- if(path==='/api/browser/run'){reply({finished:true,report:{answer:'BROWSE_FIXTURE_ANSWER',stopped:'answered'}});return;}
+ if(path==='/api/browser/run'){reply({finished:true,report:{answer:'BROWSE_FIXTURE_ANSWER',stopped:'answered',for_operator:[{held_background:'POST https://docs.python.org/autosave'},{held:'POST https://docs.python.org/save'}]}});return;}
  if(path==='/api/auth/whoami'){if(whoamiDrop){req.socket.destroy();return;}reply(authFixture&&signedIn?{username:authUsername,role:authRole,user_id:userIds[authUsername],must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
  if(path==='/api/auth/setup-status'){reply({enabled:true,default_password:false,setup_code:authFixture&&adminPassword===FIXTURE_SETUP_CODE});return;}
  if(path==='/api/auth/login'){
@@ -600,6 +600,11 @@ try {
   await send('/browse setup.py explain a different task');
   await until('document.getElementById("stream").innerText.includes("BROWSE_FIXTURE_ANSWER")');
   assert.deepEqual(browseRuns().at(-1)[2],{task:'explain a different task',origins:['https://setup.py']});
+  // #894: a request the page sent on its own is listed apart from the operator's steps.
+  const listed=await until('(t=>t.includes("Held, not sent: POST https://docs.python.org/save")&&t)(document.getElementById("stream").innerText)');
+  assert.ok(listed.includes('Held in the background, not sent: POST https://docs.python.org/autosave'),'a background hold has its own line');
+  assert.ok(listed.includes('the page sent these on its own; the task went on'),'and says the task went on');
+  assert.ok(!listed.includes('Held, not sent: POST https://docs.python.org/autosave'),'it is not listed as the operator\'s step');
   await send('/browse docs.python.org find the latest Python version');
   for(let i=0;i<100&&browseRuns().length<before+2;i++)await pause(50);
   assert.deepEqual(browseRuns().at(-1)[2].origins,['https://docs.python.org'],'an ordinary bare site runs at once');

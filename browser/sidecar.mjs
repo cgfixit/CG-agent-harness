@@ -39,8 +39,17 @@ let profileDir;
 let grants = new Set();
 // Only test-support fixtures set this; production refuses non-public literals.
 let allowPrivate = false;
-// Form submissions the operator must make; reported with the next observation.
+// Requests only the operator may send: a page load, or one the model's own
+// action caused. Reported with the next observation; they end the task.
 const held = [];
+// Requests a page sent on its own (autosave, analytics). Never sent either,
+// but listed and the task goes on (#894).
+const heldBackground = [];
+// Ops that put the model's input into the page.
+const ACTS = new Set(["click", "follow_link", "type", "press_enter", "select", "select_tab", "scroll"]);
+// True while one of ACTS runs, until it loads a new page: that page's own
+// requests are not the model's.
+let acting = false;
 // Origins a page asked for that this task was not granted; reported the same way.
 const notGranted = new Set();
 // Tabs a page opened whose verdict is pending; every action waits for it.
@@ -252,6 +261,7 @@ async function observe(view = {}) {
     page: pageNo,
     pages: Math.max(1, Math.ceil(matched / MAX_ELEMENTS), Math.ceil(shown.length / MAX_TEXT)),
     held: held.splice(0),
+    held_background: heldBackground.splice(0),
     not_granted: [...notGranted],
     blocked,
   };
@@ -444,9 +454,23 @@ function track(opened) {
   opening.add(verdict);
 }
 
-// Records a request that could write to a server, for the operator. It was not sent.
-function hold(method, url) {
-  if (held.length < 20) held.push(`${method} ${url.slice(0, 200)}`);
+// Records a request that could write to a server, for the operator. It was
+// not sent. A page load always counts as the operator's step; any other
+// request does only while the model's own action is running.
+function hold(method, url, pageLoad) {
+  const rows = pageLoad || acting ? held : heldBackground;
+  if (rows.length < 20) rows.push(`${method} ${url.slice(0, 200)}`);
+}
+
+// True for a request that loads a new top-level page. A new tab's first
+// request has no frame yet, which Playwright reports by throwing.
+function topLevelLoad(request) {
+  if (!request.isNavigationRequest()) return false;
+  try {
+    return request.frame().parentFrame() === null;
+  } catch {
+    return true;
+  }
 }
 
 // Every document a task loads carries this policy beside the site's own, and
@@ -490,7 +514,7 @@ async function gate(cdp, event) {
     return cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" });
   }
   if (request.method !== "GET" && request.method !== "HEAD") {
-    hold(request.method, request.url);
+    hold(request.method, request.url, event.resourceType === "Document");
     // A held page load answers 204 so the page stays, as the page route does.
     if (event.resourceType === "Document") {
       return cdp.send("Fetch.fulfillRequest", { requestId, responseCode: 204, body: "" });
@@ -556,12 +580,14 @@ async function start(message) {
     // waits for the operator: every request but GET and HEAD is held here.
     const method = request.method();
     if (method !== "GET" && method !== "HEAD") {
-      hold(method, url);
+      hold(method, url, request.isNavigationRequest());
       // A held page load answers 204 so the page stays; a fetch/XHR fails.
       if (request.isNavigationRequest()) route.fulfill({ status: 204, body: "" });
       else route.abort("blockedbyclient");
       return;
     }
+    // The action loaded a new page: what that page requests is its own doing.
+    if (topLevelLoad(request)) acting = false;
     route.continue();
   });
   await context.routeWebSocket("**/*", (ws) => {
@@ -689,10 +715,13 @@ async function handle(message) {
 }
 
 async function answer(message) {
+  acting = ACTS.has(message?.op);
   try {
     send({ id: message.id, ok: true, result: await handle(message) });
   } catch (error) {
     send({ id: message?.id, ok: false, error: String(error.message || error).slice(0, 300) });
+  } finally {
+    acting = false;
   }
 }
 

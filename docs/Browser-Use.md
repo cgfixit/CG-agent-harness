@@ -71,16 +71,18 @@ Boundaries, enforced in code:
   root, a page URL or a shown link; others are refused, reported by origin.
   Typed text not in the task or page is held (GET forms too).
 - Password and one-time-code fields hand off and are never typed. A hand-off
-  or hold ends the task at once. The console lists each one, then the origins
-  (never paths) a page asked for outside the grant.
+  ends the task at once, as does a held page load or a request held during
+  the model's own action, until that action loads a new page. Other held
+  requests are the page's own: listed, and the task goes on. The console lists
+  each, then the origins (never paths) a page asked for outside the grant.
 
 Verified by running: fixtures `browser`, `browser enter` (new tab, search,
-select, password hand-off, held POSTs, no WebRTC UDP), `browser reach` (late
+select, password hand-off, both kinds of held POST, no WebRTC UDP), `browser reach` (late
 content, an ungranted tab closed and named, `page` and `find`) and
-`browser-verify`; Qwen listed cgfixit.com's games (2026-11-14). `browser guards` checks by what its loopback server received:
-no worker starts, a redirect lands, a blocked path gets no request
-(subresource, redirect, navigation, mid-page rule), a 1.14 MB page gives a
-capped reply, and the proxy answers 407 without the session credential. CI's
+`browser-verify`. `browser guards` checks by what its loopback server received:
+no worker starts, a redirect lands, no held POST arrives, a blocked path gets
+no request (subresource, redirect, navigation, mid-page rule), a 1.14 MB page
+gives a capped reply, and the proxy answers 407 without the session credential. CI's
 `browser-guards` job runs every fixture, sandbox on.
 
 ## Honest limits
@@ -91,9 +93,8 @@ capped reply, and the proxy answers 407 without the session credential. CI's
 - No screenshots: canvas and image-only UIs are opaque. `alert` and
   `confirm` are dismissed unseen.
 - `scroll` and `wait` are not model tools: load-on-scroll content stays unread.
-- No approve-and-resume after a hand-off or hold.
-- Held `fetch` POSTs can break background saves (autosave). Sites that
-  need a web worker (some editors, PDF viewers) lose it.
+- Held `fetch` POSTs break background saves; one sent during a model
+  action still ends the task. Sites needing a web worker lose it.
 - Page text is untrusted. Grants and holds bound its effect; an
   answer can be wrong.
 - `/goal` and `/loop` have no browser tools: "/browse" in a goal runs web
@@ -101,7 +102,7 @@ capped reply, and the proxy answers 407 without the session credential. CI's
 
 ## Roadmap: broader browser use
 
-1. Takeover: approve a listed held request or hand-off and resume.
+1. Takeover, not built: approve a listed held request or hand-off and resume.
 2. Subresource policy: let GET subresources load from public origins without
    cookies while navigation stays on granted origins.
 3. Vision: send the latest screenshot to the model (`qwen3.8` lists the
@@ -117,7 +118,7 @@ policy kernel carries over unchanged: per-observation refs, trusted element
 facts, allow, hand-off or refuse. Only the driver behind
 `browser_host::Driver` changes.
 
-**Option A, with Kimi Computer Use as the driver.** Kimi Computer Use
+**Chosen driver: Kimi Computer Use.** It
 (`/Applications/KimiCU.app`, `kimi-cu mcp`, tools checked at 0.7.6) reads the
 Accessibility tree and acts without moving the pointer.
 `src/common/computer.rs` maps the wire ops to `get_app_state`, `click`,
@@ -129,12 +130,9 @@ binary (the plugin's wrapper script is world-writable), turning
 the model, so nothing leaves the machine. Kimi Computer Use is proprietary;
 its TCC grants (Accessibility, Screen Recording) belong to the operator.
 
-**Option B, hand the task to Kimi Code** (`kimi acp`). Quickest, but Kimi's
-model, not harness policy, decides each step and the task leaves the machine;
-it needs its own opt-in and warning.
-
-**Option C, no Kimi.** A first-party, signed macOS Accessibility helper behind
-the same `Driver` seam. Most work, fewest outside dependencies.
+Not chosen: Kimi Code (`kimi acp`), where Kimi's model decides each step and
+the task leaves the machine; and a first-party Accessibility helper, the most
+work.
 
 Any first pilot stays attended: one app, one window, fixture data, operator
 takeover, a result checked outside the model.
