@@ -318,9 +318,11 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 ## api: registered routes (part 8)
 
-- POST `/api/browser/jobs`: The same request, detached (macOS and Linux): 202 `{job_id, status}` once the job holds…
-- GET `/api/browser/jobs/{job_id}`: Your job: `status` (`running`, `cancelling`, `finished`, `failed`, `cancelled`),…
-- POST `/api/browser/jobs/{job_id}/cancel`: Stop before the next model turn; killed after ten seconds
+- POST `/api/browser/jobs`: The same, detached: 202 `{job_id, status, takeover}`
+- GET `/api/browser/jobs/{job_id}`: Your job: `status`, `turns`, a `waiting` request as `pending`, `result` or `error`
+- POST `/api/browser/jobs/{job_id}/cancel`: Stop before the next model turn
+- POST `/api/browser/jobs/{job_id}/approve`: Send the `pending` request once: `{request, sha256, confirm: true, reason}`;…
+- POST `/api/browser/jobs/{job_id}/deny`: Hold it: `{request}`
 - GET `/api/mcp`: Declared MCP servers, namespaced tools and versioned stdio capability policies; no…
 - POST `/api/mcp/call`: Call one declared MCP tool; `confirm` is never defaulted
 - GET `/api/github/status`: GitHub credential and write-gate posture
@@ -330,11 +332,11 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET `/api/agent/jobs/{job_id}`: Job status
 - POST `/api/agent/jobs/{job_id}/cancel`: Cancel a job
 - POST `/api/agent/schedules/preview`: Preview five occurrences and return an owner-bound receipt
-- GET, POST `/api/agent/schedules`: List owned schedules or activate the exact previewed request
-- GET `/api/agent/schedules/{schedule_id}`: One schedule
 
 ## api: registered routes (part 9)
 
+- GET, POST `/api/agent/schedules`: List owned schedules or activate the exact previewed request
+- GET `/api/agent/schedules/{schedule_id}`: One schedule
 - POST `/api/agent/schedules/{schedule_id}/cancel`: Cancel a schedule
 - GET `/api/agent/runs`, `/api/agent/runs/{run_id}`: Retained run metadata; one run and its diff
 - POST `/api/agent/runs/{run_id}/decision`: Approve (`reason`, confirm) or reject
@@ -501,6 +503,7 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - browser.sidecar
   - browser.max_turns: model turns per task, clamped to 1–40
   - browser.timeout_sec: whole task; the child tree is killed after it, clamped to 30–1800
+  - browser.takeover
 - notifications: Completion webhooks are explicit operator configuration and restart-only.
   - notifications.enabled
 
