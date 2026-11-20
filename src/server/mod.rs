@@ -22,6 +22,7 @@ pub mod diag_reader;
 mod docx;
 pub mod env_keys;
 pub mod errors;
+pub mod fetch_confirm;
 pub mod generation_gate;
 pub mod guards;
 pub mod headers;
@@ -240,6 +241,8 @@ pub async fn build_app_with_sources(
     let auth_operation_permits = Arc::new(tokio::sync::Semaphore::new(state::auth_operation_concurrency(&cfg)?));
     let upload_permits = Arc::new(tokio::sync::Semaphore::new(state::upload_concurrency(&cfg)?));
     let upload_body_timeout = state::upload_body_timeout(&cfg)?;
+    // A malformed `web.fetch_provenance` fails boot, naming the key (#901).
+    cfg.flag_missing_on("web.fetch_provenance")?;
     let auth = if cfg.flag_is_true("auth.enabled") {
         let mgr = AuthManager::open(&home.auth_path(), &cfg)?;
         mgr.bootstrap_if_empty()?;
@@ -427,6 +430,7 @@ pub async fn build_app_with_sources(
         ollama: state::OllamaControl::new(),
         tuning: std::sync::Mutex::new(None),
         loops,
+        fetch_confirms: Default::default(),
         netconnect_sources,
         netconnect_rate: crate::netconnect::RateBucket::new(),
     });
