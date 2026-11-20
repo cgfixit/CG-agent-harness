@@ -4323,7 +4323,12 @@ async function runSlash(line, webCommand) {
         sys(rep.answer || r.reason || 'The model gave no answer.', meta);
         /* Held requests were never sent and handed-off fields never typed. The
            rows carry page-derived text, so they render as text only. */
-        const mine = Array.isArray(rep.for_operator) ? rep.for_operator : [];
+        const rows = Array.isArray(rep.for_operator) ? rep.for_operator : [];
+        const mine = rows.filter(s => !s.held_background);
+        /* Requests a page sent on its own: not sent either, and the task went on. */
+        const own = rows.filter(s => s.held_background);
+        if (own.length) sys(own.map(s => 'Held in the background, not sent: ' + String(s.held_background)).join('\n'),
+          'the page sent these on its own; the task went on');
         if (mine.length) sys(mine.map(s => s.held ? 'Held, not sent: ' + String(s.held)
           : 'Handed to you: ' + (s.element ? String(s.element) + ' (' + String(s.handoff) + ')' : String(s.handoff))
             + (s.reason ? ': ' + String(s.reason) : '')).join('\n'),

@@ -90,11 +90,15 @@ pub async fn run(
         ));
     }
     // One model operation at a time: browser tasks share the local backend.
-    let _gate = state.generation_gate.claim("browser").ok_or_else(|| {
+    // Refused at once, never queued; the refusal says what holds the model.
+    let _gate = state.generation_gate.claim_or_busy_owner("browser").map_err(|holder| {
         ApiError::new(
             StatusCode::CONFLICT,
             "BROWSER_BUSY",
-            "a model operation is already running",
+            format!(
+                "The local model is busy: {}. Nothing was started; send /browse again when it finishes.",
+                busy_reason(&holder)
+            ),
         )
     })?;
     // Under the gate: a tuned model that is not loaded (keep_alive ran out) is
@@ -248,9 +252,24 @@ fn current_policy(state: &AppState) -> ApiResult<crate::server::web_policy::Poli
         ApiError::new(
             StatusCode::CONFLICT,
             "WEB_POLICY_UNAVAILABLE",
-            "The shared URL policy file is missing or unreadable, so browser tasks are refused.",
+            "The shared URL policy file is missing or unreadable, so browser tasks are refused. \
+             An administrator's /web allow creates a missing one; an unreadable file is never reset.",
         )
     })
+}
+
+/// What holds the model gate, in the operator's words. The gate's labels are
+/// internal, so one this list does not know is described, not printed.
+fn busy_reason(holder: &str) -> &'static str {
+    use crate::server::{model_limits::TUNE_OWNER, structured_memory_suggest::GATE_OWNER};
+    match holder {
+        TUNE_OWNER => "its speed is being measured after /model use, which takes a few seconds",
+        "chat" => "a chat reply is being written",
+        "browser" => "another browser task is running",
+        "agent" => "a coding run is using it",
+        "consolidation" | GATE_OWNER => "memory is being updated",
+        _ => "another model operation is running",
+    }
 }
 
 /// True for a loopback, private or other non-public IP-literal origin.
@@ -268,6 +287,17 @@ fn non_public_literal(origin: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #894: the busy refusal names what holds the model, in fixed words.
+    #[test]
+    fn a_busy_refusal_names_the_holder_without_printing_its_label() {
+        let tune = busy_reason(crate::server::model_limits::TUNE_OWNER);
+        assert!(tune.contains("/model use"), "{tune}");
+        assert_eq!(busy_reason("browser"), "another browser task is running");
+        for holder in ["attachment_unpin", "", "anything-new"] {
+            assert_eq!(busy_reason(holder), "another model operation is running");
+        }
+    }
 
     #[test]
     fn only_a_primary_backend_names_the_task_model() {

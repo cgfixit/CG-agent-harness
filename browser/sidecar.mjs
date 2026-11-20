@@ -39,10 +39,27 @@ let profileDir;
 let grants = new Set();
 // Only test-support fixtures set this; production refuses non-public literals.
 let allowPrivate = false;
-// Form submissions the operator must make; reported with the next observation.
+// Requests only the operator may send: a page load, or one the model's own
+// action caused. Reported with the next observation; they end the task.
 const held = [];
+// Requests a page sent on its own (autosave, analytics). Never sent either,
+// but listed and the task goes on (#894).
+const heldBackground = [];
+// Ops that put the model's input into the page.
+const ACTS = new Set(["click", "follow_link", "type", "press_enter", "select", "select_tab", "scroll"]);
+// True while one of ACTS runs, until it loads a new page: that page's own
+// requests are not the model's.
+let acting = false;
 // Origins a page asked for that this task was not granted; reported the same way.
 const notGranted = new Set();
+// alert, confirm and prompt text since the last observation. Each was
+// dismissed, as before; the text is page-written and reported, not obeyed.
+const dialogs = [];
+const MAX_DIALOGS = 5;
+const MAX_DIALOG_CHARS = 300;
+// One screen is about 800 px; the policy kernel refuses more than 2,000.
+const MAX_SCROLL_PX = 2000;
+const MAX_WAIT_MS = 5000;
 // Tabs a page opened whose verdict is pending; every action waits for it.
 const opening = new Set();
 // Longest wait for the parent's verdict on one URL; none in time is a refusal.
@@ -252,6 +269,8 @@ async function observe(view = {}) {
     page: pageNo,
     pages: Math.max(1, Math.ceil(matched / MAX_ELEMENTS), Math.ceil(shown.length / MAX_TEXT)),
     held: held.splice(0),
+    held_background: heldBackground.splice(0),
+    dialogs: dialogs.splice(0),
     not_granted: [...notGranted],
     blocked,
   };
@@ -387,6 +406,7 @@ function startProxy() {
 
 // A task killed at its deadline cannot remove its profile, which holds that
 // task's cookies and cache. Remove profiles whose sidecar process is gone.
+// The server does the same at start (browser_host::sweep_stale_profiles).
 function sweepProfiles() {
   let names = [];
   try {
@@ -444,9 +464,23 @@ function track(opened) {
   opening.add(verdict);
 }
 
-// Records a request that could write to a server, for the operator. It was not sent.
-function hold(method, url) {
-  if (held.length < 20) held.push(`${method} ${url.slice(0, 200)}`);
+// Records a request that could write to a server, for the operator. It was
+// not sent. A page load always counts as the operator's step; any other
+// request does only while the model's own action is running.
+function hold(method, url, pageLoad) {
+  const rows = pageLoad || acting ? held : heldBackground;
+  if (rows.length < 20) rows.push(`${method} ${url.slice(0, 200)}`);
+}
+
+// True for a request that loads a new top-level page. A new tab's first
+// request has no frame yet, which Playwright reports by throwing.
+function topLevelLoad(request) {
+  if (!request.isNavigationRequest()) return false;
+  try {
+    return request.frame().parentFrame() === null;
+  } catch {
+    return true;
+  }
 }
 
 // Every document a task loads carries this policy beside the site's own, and
@@ -490,7 +524,7 @@ async function gate(cdp, event) {
     return cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" });
   }
   if (request.method !== "GET" && request.method !== "HEAD") {
-    hold(request.method, request.url);
+    hold(request.method, request.url, event.resourceType === "Document");
     // A held page load answers 204 so the page stays, as the page route does.
     if (event.resourceType === "Document") {
       return cdp.send("Fetch.fulfillRequest", { requestId, responseCode: 204, body: "" });
@@ -556,12 +590,14 @@ async function start(message) {
     // waits for the operator: every request but GET and HEAD is held here.
     const method = request.method();
     if (method !== "GET" && method !== "HEAD") {
-      hold(method, url);
+      hold(method, url, request.isNavigationRequest());
       // A held page load answers 204 so the page stays; a fetch/XHR fails.
       if (request.isNavigationRequest()) route.fulfill({ status: 204, body: "" });
       else route.abort("blockedbyclient");
       return;
     }
+    // The action loaded a new page: what that page requests is its own doing.
+    if (topLevelLoad(request)) acting = false;
     route.continue();
   });
   await context.routeWebSocket("**/*", (ws) => {
@@ -572,6 +608,12 @@ async function start(message) {
     download.cancel();
   });
   context.on("page", track);
+  // Playwright dismisses a dialog nobody listens for. Listening must keep
+  // that: an accepted confirm could delete something.
+  context.on("dialog", (dialog) => {
+    if (dialogs.length < MAX_DIALOGS) dialogs.push(`${dialog.type()}: ${dialog.message().slice(0, MAX_DIALOG_CHARS)}`);
+    dialog.dismiss().catch(() => {});
+  });
   // Page requests only, so Chrome's own background traffic (also refused by
   // the proxy) is not listed. A redirect to another site fails here too.
   context.on("requestfailed", (request) => {
@@ -677,11 +719,16 @@ async function handle(message) {
       await locator.click({ timeout: 5000 });
       return observe();
     }
-    case "scroll":
-      await bounded(page.mouse.wheel(0, message.dy || 0), "scroll");
+    case "scroll": {
+      const dy = Math.max(-MAX_SCROLL_PX, Math.min(MAX_SCROLL_PX, Number(message.dy) || 0));
+      await bounded(page.mouse.wheel(0, dy), "scroll");
+      // The scroll itself and what it loads both land after the wheel event.
+      await page.waitForTimeout(300);
+      await settle();
       return observe();
+    }
     case "wait":
-      await page.waitForTimeout(message.timeout_ms);
+      await page.waitForTimeout(Math.max(0, Math.min(MAX_WAIT_MS, Number(message.timeout_ms) || 0)));
       return observe();
     default:
       throw new Error("malformed browser action");
@@ -689,10 +736,13 @@ async function handle(message) {
 }
 
 async function answer(message) {
+  acting = ACTS.has(message?.op);
   try {
     send({ id: message.id, ok: true, result: await handle(message) });
   } catch (error) {
     send({ id: message?.id, ok: false, error: String(error.message || error).slice(0, 300) });
+  } finally {
+    acting = false;
   }
 }
 

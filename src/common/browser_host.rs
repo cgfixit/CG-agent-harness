@@ -43,6 +43,14 @@ const OUT_OF_TIME: &str = "the task's time budget ran out";
 pub const TASK_PROMPT_TOKENS: u64 = 12_000;
 /// Characters of a link target an observation shows the model.
 const MAX_SHOWN_HREF_CHARS: usize = 300;
+/// Page dialogs one observation shows the model, and the characters of each.
+const MAX_SHOWN_DIALOGS: usize = 5;
+const MAX_SHOWN_DIALOG_CHARS: usize = 320;
+/// Pixels one model `scroll` moves the page: about two screens, inside the
+/// policy kernel's 2,000.
+const SCROLL_STEP_PX: i64 = 1_500;
+/// Longest model `wait`, matching the policy kernel's 5,000 ms.
+const MAX_WAIT_SECONDS: u64 = 5;
 
 /// The only variables a browser child sees. Chrome renderers parse hostile
 /// pages and inherit this, so provider keys and tokens never enter it.
@@ -65,6 +73,51 @@ pub fn child_environment() -> std::collections::BTreeMap<String, String> {
     .iter()
     .filter_map(|key| std::env::var(key).ok().map(|value| ((*key).to_string(), value)))
     .collect()
+}
+
+/// Prefix of a task's Chrome profile in the temporary directory. The sidecar
+/// names it `cgah-browser-<its pid>-<random>` (`freshProfile` in sidecar.mjs).
+const PROFILE_PREFIX: &str = "cgah-browser-";
+
+/// Removes the Chrome profiles of browser tasks whose sidecar is gone, and
+/// returns how many. A task killed at its deadline cannot remove its own, and
+/// it holds that task's cookies and cache. The sidecar does the same when a
+/// task starts; the server calls this at start, so a profile does not wait for
+/// the next task (#894).
+pub fn sweep_stale_profiles() -> usize {
+    sweep_profiles_in(&std::env::temp_dir(), &super::process::pid_alive)
+}
+
+/// Only a real directory named `cgah-browser-<digits>-...` whose pid is dead is
+/// removed. A name without a pid is left alone, whatever it holds: nothing
+/// says who owns it, and such a directory has held a harness home.
+fn sweep_profiles_in(dir: &Path, alive: &dyn Fn(u32) -> bool) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(profile_owner) else {
+            continue;
+        };
+        // file_type does not follow a symlink, so a link is never followed.
+        if alive(pid) || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        if std::fs::remove_dir_all(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// The sidecar pid in a profile directory's name, or `None` for any other name.
+fn profile_owner(name: &str) -> Option<u32> {
+    let (pid, rest) = name.strip_prefix(PROFILE_PREFIX)?.split_once('-')?;
+    (!rest.is_empty() && !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| pid.parse().ok())
+        .flatten()
 }
 
 /// The first granted origin the shared web block list covers, or that cannot
@@ -378,6 +431,13 @@ fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value 
     {
         outcome["held_for_operator"] = held.clone();
     }
+    // Requests a page sent on its own: never sent, listed, and the task goes on.
+    if let Some(held) = result
+        .get("held_background")
+        .filter(|held| held.as_array().is_some_and(|rows| !rows.is_empty()))
+    {
+        outcome["held_in_background"] = held.clone();
+    }
     if let Some(origins) = result
         .get("not_granted")
         .filter(|origins| origins.as_array().is_some_and(|rows| !rows.is_empty()))
@@ -386,6 +446,20 @@ fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value 
     }
     if result["blocked"].as_u64().is_some_and(|count| count > 0) {
         outcome["blocked_by_policy"] = result["blocked"].clone();
+    }
+    // Page-written, like the text: shown to the model, never obeyed by the host.
+    if let Some(dialogs) = result
+        .get("dialogs")
+        .and_then(Value::as_array)
+        .filter(|rows| !rows.is_empty())
+    {
+        let shown: Vec<String> = dialogs
+            .iter()
+            .filter_map(Value::as_str)
+            .take(MAX_SHOWN_DIALOGS)
+            .map(|text| truncate(text, MAX_SHOWN_DIALOG_CHARS))
+            .collect();
+        outcome["dialogs"] = json!(shown);
     }
     if let Some(note) = page_note(wire, &result) {
         outcome["more"] = json!(note);
@@ -524,9 +598,10 @@ fn read_page(sidecar: &Path, port: u16, headless: bool) -> Result<String, String
 }
 
 /// Run fixed steps. A step may carry `expect`: `handoff` (the policy must hand
-/// it to the operator), `held` (the sidecar must hold a form submission) or
-/// `shows <text>` (the step's outcome must contain it). Any other refusal or
-/// sidecar error fails the run.
+/// it to the operator), `held` (the sidecar must hold a request as the
+/// operator's step), `background` (it must hold one as the page's own, and
+/// none as the operator's) or `shows <text>` (the step's outcome must contain
+/// it). Any other refusal or sidecar error fails the run.
 fn drive(mut session: Session, script: &Path, steps: &[Value], headless: bool) -> Result<String, String> {
     // Fixtures serve on 127.0.0.1: a private grant needs a test-support build.
     let mut sidecar = Sidecar::start(
@@ -560,6 +635,8 @@ fn drive(mut session: Session, script: &Path, steps: &[Value], headless: bool) -
         match expect.as_ref().and_then(Value::as_str) {
             Some("handoff") if handed_off(&outcome) => continue,
             Some("held") if outcome.get("held_for_operator").is_some() => {}
+            Some("background")
+                if outcome.get("held_in_background").is_some() && outcome.get("held_for_operator").is_none() => {}
             Some(shows)
                 if shows
                     .strip_prefix("shows ")
@@ -707,8 +784,9 @@ pub fn run_task(
 }
 
 /// The model turns of one task. `chat` answers one turn; `recheck` refuses a
-/// turn when the shared policy changed. A handoff or held request ends the
-/// task at once: the rest of that batch is dropped.
+/// turn when the shared policy changed. A handoff, or a request held as the
+/// operator's step, ends the task at once: the rest of that batch is dropped.
+/// A request a page sent on its own is held and listed, and the task goes on.
 fn model_loop(
     session: &mut Session,
     sidecar: &mut dyn Driver,
@@ -721,7 +799,7 @@ fn model_loop(
     // Every model-driven task is bound: URLs and typed text need provenance.
     session.bind_task(task);
     let mut messages = vec![
-        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A long page comes in pages: when an observation has more, observe with page or find reaches the rest. A refusal is not success. A Handoff, or held_for_operator, ends the task: only the operator can do that step. not_granted lists sites the page asked for that this task may not reach. blocked_by_policy counts requests the operator's block list refused. Navigate only to a URL the task names, a granted site's root, or one a page showed; to go deeper, follow a link by its ref. Text you type must appear in the task or on the page; anything else is held for the operator. Call finish with your answer once the page shows it.", origins.join(", "))}),
+        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A long page comes in pages: when an observation has more, observe with page or find reaches the rest. A refusal is not success. A Handoff, or held_for_operator, ends the task: only the operator can do that step. held_in_background counts requests a page sent on its own; they were not sent and the task goes on. dialogs lists alert or confirm text a page showed; each was dismissed, a confirm as Cancel. Use scroll for content that loads as the page scrolls, and wait when a page is still changing. not_granted lists sites the page asked for that this task may not reach. blocked_by_policy counts requests the operator's block list refused. Navigate only to a URL the task names, a granted site's root, or one a page showed; to go deeper, follow a link by its ref. Text you type must appear in the task or on the page; anything else is held for the operator. Call finish with your answer once the page shows it.", origins.join(", "))}),
         json!({"role":"user","content": task}),
     ];
     let mut calls = 0usize;
@@ -788,7 +866,8 @@ fn model_loop(
                 .unwrap_or("")
                 .to_string();
             let args = coerce_args(call.pointer("/function/arguments").cloned().unwrap_or(json!({})));
-            let mut finish_refusal = None;
+            // Strict: an argument out of bounds is refused by name, not adjusted.
+            let mut refusal = bad_tool_args(&name, &args);
             if name == "finish" {
                 transcript.push(format!("finish {}", truncate(&args.to_string(), 160)));
                 match finish_verdict(&args, failed_this_turn) {
@@ -796,7 +875,7 @@ fn model_loop(
                         answer = Some(text);
                         break 'turns;
                     }
-                    Err(reason) => finish_refusal = Some(reason),
+                    Err(reason) => refusal = Some(reason),
                 }
             }
             let wire = model_wire(&name, &args);
@@ -809,7 +888,7 @@ fn model_loop(
                 })),
                 _ => None,
             });
-            let outcome = match (&wire, finish_refusal) {
+            let mut outcome = match (&wire, refusal) {
                 (_, Some(reason)) => json!({ "refused": reason }),
                 (Some(wire), None) => step(session, sidecar, wire),
                 (None, None) => json!({"refused":"malformed browser action"}),
@@ -831,6 +910,11 @@ fn model_loop(
             }
             let needs_operator = handoff.is_some() || outcome.get("held_for_operator").is_some();
             note_for_operator(&mut for_operator, handoff, &outcome);
+            // The operator's rows keep each request. The model gets the count:
+            // a page writes those URLs, and nothing it must act on is in them.
+            if let Some(count) = outcome["held_in_background"].as_array().map(Vec::len) {
+                outcome["held_in_background"] = json!(count);
+            }
             for origin in outcome["not_granted"].as_array().into_iter().flatten() {
                 if let (Some(origin), true) = (origin.as_str(), not_granted.len() < MAX_FOR_OPERATOR) {
                     not_granted.insert(origin.to_string());
@@ -949,9 +1033,25 @@ fn finish_verdict(args: &Value, failed_earlier_this_turn: bool) -> Result<String
 
 /// Requests held and elements handed off during a task, at most
 /// `MAX_FOR_OPERATOR` rows. The console lists them; nothing here sends them.
+/// `held_background` rows are requests a page sent on its own. At the cap, a
+/// hold or handoff replaces the newest background row: it is what stopped the
+/// task, so it must be listed.
 fn note_for_operator(rows: &mut Vec<Value>, handoff: Option<Value>, outcome: &Value) {
     let held = outcome["held_for_operator"].as_array().into_iter().flatten();
     for row in held.map(|request| json!({"held": request})).chain(handoff) {
+        if rows.contains(&row) {
+            continue;
+        }
+        if rows.len() >= MAX_FOR_OPERATOR {
+            let Some(newest) = rows.iter().rposition(|shown| shown.get("held_background").is_some()) else {
+                continue;
+            };
+            rows.remove(newest);
+        }
+        rows.push(row);
+    }
+    let background = outcome["held_in_background"].as_array().into_iter().flatten();
+    for row in background.map(|request| json!({"held_background": request})) {
         if rows.len() < MAX_FOR_OPERATOR && !rows.contains(&row) {
             rows.push(row);
         }
@@ -977,11 +1077,37 @@ fn model_wire(name: &str, args: &Value) -> Option<Value> {
             wire
         }
         "select_tab" => json!({"action":"select_tab","tab": args["tab"]}),
+        "scroll" => {
+            json!({"action":"scroll","dy": if args["direction"] == "up" { -SCROLL_STEP_PX } else { SCROLL_STEP_PX }})
+        }
+        "wait" => json!({"action":"wait","timeout_ms": wait_seconds(args).unwrap_or(0) * 1_000}),
         "type" => json!({"action":"type","ref_id": args["ref_id"],"text": args["text"]}),
         "select" => json!({"action":"select","ref_id": args["ref_id"],"value": args["option"]}),
         "press_enter" | "click" | "follow_link" => json!({"action": name,"ref_id": args["ref_id"]}),
         _ => return None,
     })
+}
+
+/// The whole seconds a `wait` call asks for. Models send numbers as text.
+fn wait_seconds(args: &Value) -> Option<u64> {
+    match &args["seconds"] {
+        Value::String(text) => text.trim().parse().ok(),
+        other => other.as_u64(),
+    }
+}
+
+/// Why a `scroll` or `wait` call is refused before it reaches the page, naming
+/// the argument. Other tools are judged by the policy kernel.
+fn bad_tool_args(name: &str, args: &Value) -> Option<&'static str> {
+    match name {
+        "scroll" if !matches!(args["direction"].as_str(), Some("down" | "up")) => {
+            Some("scroll takes direction: down or up")
+        }
+        "wait" if !wait_seconds(args).is_some_and(|secs| (1..=MAX_WAIT_SECONDS).contains(&secs)) => {
+            Some("wait takes seconds: a whole number from 1 to 5")
+        }
+        _ => None,
+    }
 }
 
 /// Refs expire with every observation, so older page dumps only spend the 32k window.
@@ -1005,6 +1131,8 @@ fn browser_tools() -> Value {
         {"type":"function","function":{"name":"select","description":"Choose one of the options a select box ref lists in the latest observation, by its label.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"},"option":{"type":"string"}},"required":["ref_id","option"]}}},
         {"type":"function","function":{"name":"type","description":"Type into a text box ref from the latest observation.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"},"text":{"type":"string"}},"required":["ref_id","text"]}}},
         {"type":"function","function":{"name":"press_enter","description":"Press Enter on a text box ref from the latest observation. The key is always Enter.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"}},"required":["ref_id"]}}},
+        {"type":"function","function":{"name":"scroll","description":"Scroll the page down or up, for content that loads as the page scrolls. Returns a fresh observation.","parameters":{"type":"object","properties":{"direction":{"type":"string","enum":["down","up"]}},"required":["direction"]}}},
+        {"type":"function","function":{"name":"wait","description":"Wait 1 to 5 seconds while the page is still changing, then read it again.","parameters":{"type":"object","properties":{"seconds":{"type":"integer"}},"required":["seconds"]}}},
         {"type":"function","function":{"name":"follow_link","description":"Follow a link ref from the latest observation.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"}},"required":["ref_id"]}}},
         {"type":"function","function":{"name":"finish","description":"Stop after the visible paragraph is correct.","parameters":{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}}}
     ])
@@ -1118,16 +1246,28 @@ fn shown_href(href: &str) -> String {
     }
 }
 
-/// A target=_blank link replaces the page; Enter submits a GET search; a
-/// select box takes a listed option; a password field hands off; Enter in a
-/// POST form and a button whose script POSTs are both held; and the page's
-/// WebRTC sends nothing to a UDP port the session never granted.
+/// A POST the page sends as it loads is held as the page's own; a
+/// target=_blank link replaces the page; Enter submits a GET search; a select
+/// box takes a listed option; a password field hands off; Enter in a POST
+/// form and a button whose script POSTs are both held as the operator's
+/// step; and the page's WebRTC sends nothing to a UDP port the session never
+/// granted.
 pub fn run_enter_demo(sidecar: &Path, headless: bool) -> Result<String, String> {
     let stun = std::net::UdpSocket::bind("127.0.0.1:0").map_err(|err| err.to_string())?;
     stun.set_nonblocking(true).map_err(|err| err.to_string())?;
     let stun_port = stun.local_addr().map_err(|err| err.to_string())?.port();
+    let page = SEARCH_PAGE
+        .replace("STUN_PORT", &stun_port.to_string())
+        .replace("LONG_OPTION", LONG_OPTION);
+    let (origin, port) = serve_html(&page)?;
+    let session = Session::general([&origin]).map_err(|err| format!("{err:?}"))?;
     let steps = [
-        json!({"action":"follow_link","ref_id":"@Open in a new tab"}),
+        // The page POSTs as it loads. That is the page's own request, whether
+        // the model navigated, followed a link or opened a tab: held, listed
+        // and not the operator's step.
+        json!({"action":"navigate","url": format!("http://127.0.0.1:{port}/"),"expect":"background"}),
+        json!({"action":"follow_link","ref_id":"@Load again","expect":"background"}),
+        json!({"action":"follow_link","ref_id":"@Open in a new tab","expect":"background"}),
         json!({"action":"type","ref_id":"@Query","text":"github cgfixit"}),
         json!({"action":"press_enter","ref_id":"@Query"}),
         json!({"action":"select","ref_id":"@Size","value":"Large"}),
@@ -1138,20 +1278,14 @@ pub fn run_enter_demo(sidecar: &Path, headless: bool) -> Result<String, String> 
         json!({"action":"press_enter","ref_id":"@Amount","expect":"held"}),
         json!({"action":"click","ref_id":"@Save","expect":"held"}),
     ];
-    let log = run_fixture(
-        &SEARCH_PAGE
-            .replace("STUN_PORT", &stun_port.to_string())
-            .replace("LONG_OPTION", LONG_OPTION),
-        &steps,
-        |text| {
-            text.contains("second tab")
-                && text.contains("submitted github cgfixit")
-                && text.contains("picked l")
-                && text.contains("shipped f")
-        },
-        sidecar,
-        headless,
-    )?;
+    let log = drive(session, sidecar, &steps, headless)?;
+    let last = log.lines().next_back().unwrap_or("");
+    if !["second tab", "submitted github cgfixit", "picked l", "shipped f"]
+        .iter()
+        .all(|want| last.contains(want))
+    {
+        return Err(format!("fixture text was not visible:\n{log}"));
+    }
     // Both tabs ran the probe during the steps; one datagram means UDP got past the proxy.
     if stun.recv_from(&mut [0u8; 512]).is_ok() {
         return Err(format!("the page's WebRTC sent UDP around the proxy:\n{log}"));
@@ -1161,9 +1295,10 @@ pub fn run_enter_demo(sidecar: &Path, headless: bool) -> Result<String, String> 
 
 /// A page that renders after a fetch is read once it has; a tab the page opens
 /// on a site the task was not granted is closed, the page stays and the site
-/// is named; `observe` with `page` or `find` reaches past the first 40
-/// elements and 4,000 characters; and a link whose label has inline markup
-/// is listed.
+/// is named; `scroll` brings content that loads on scroll, `wait` content that
+/// arrives late, and an alert's text is reported; `observe` with `page` or
+/// `find` reaches past the first 40 elements and 4,000 characters; and a link
+/// whose label has inline markup is listed.
 pub fn run_reach_demo(sidecar: &Path, headless: bool) -> Result<String, String> {
     let entries: String = (1..=60)
         .map(|n| {
@@ -1178,6 +1313,12 @@ pub fn run_reach_demo(sidecar: &Path, headless: bool) -> Result<String, String> 
     let steps = [
         json!({"action":"navigate","url": format!("http://127.0.0.1:{port}/"),"expect":"shows late content"}),
         json!({"action":"click","ref_id":"@Share","expect":"shows http://127.0.0.1:1"}),
+        // Content that appears on scroll, content that appears after a delay,
+        // and an alert's text: each shows in the step's own observation.
+        json!({"action":"scroll","dy": SCROLL_STEP_PX,"expect":"shows LAZY-LOADED"}),
+        json!({"action":"click","ref_id":"@Start timer","expect":"shows timer idle"}),
+        json!({"action":"wait","timeout_ms": 2_500,"expect":"shows TIMER-DONE"}),
+        json!({"action":"click","ref_id":"@Notify","expect":"shows alert: Saved draft 7"}),
         json!({"action":"observe","page":3,"expect":"shows RELEASE-MARKER"}),
         // Inline markup in a label: the link is named by its text.
         json!({"action":"observe","find":"changelog","expect":"shows Changelog of releases"}),
@@ -1306,7 +1447,9 @@ const MAX_GUARDED_REPLY_BYTES: usize = 400_000;
 /// - the sidecar proxy answers 407 to an unauthenticated CONNECT and to
 ///   absolute-form GETs, and the sidecar keeps answering afterwards;
 /// - a block rule on a path holds inside the granted origin (#899): see
-///   `guard_path_denials`.
+///   `guard_path_denials`;
+/// - a held POST never reaches the server, whether the page sent it on its
+///   own or the model's click caused it (#894): see `guard_holds`.
 ///
 /// The session's verdicts come from a policy file through `RequestPolicy`, as
 /// a task's do; only the loopback origin's name is swapped for the rules.
@@ -1438,6 +1581,55 @@ fn guard_path_denials(
     none_private("after the policy edits")
 }
 
+/// A page that POSTs as it loads, with a button whose click POSTs.
+const GUARD_HOLDS_PAGE: &str = r#"
+<p>HOLDS-PAGE</p>
+<button onclick="fetch('/save', {method: 'POST', body: 'order'}).catch(() => {})">Save</button>
+<script>fetch('/autosave', {method: 'POST', body: 'draft'}).catch(() => {});</script>
+"#;
+
+/// The two kinds of held request (#894), by what the server received: a POST
+/// the page sends on its own is listed as background, a POST the model's click
+/// causes is listed as the operator's step, and neither reaches the server.
+fn guard_holds(sidecar: &mut Sidecar, lines: &mut Vec<String>, base: &str, seen: &Received) -> Result<(), String> {
+    let rows = |page: &Value, key: &str| -> Vec<String> {
+        page[key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|row| row.as_str().map(str::to_string))
+            .collect()
+    };
+    let (page, _) = guard_call(sidecar, lines, json!({"op":"navigate","url": format!("{base}/holds")}))?;
+    if rows(&page, "held_background") != [format!("POST {base}/autosave")] || !rows(&page, "held").is_empty() {
+        return Err(format!("a page's own POST was not held as background: {page}"));
+    }
+    let save = page["elements"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|el| el["name"] == "Save")
+        .and_then(|el| el["ref"].as_str())
+        .ok_or("the Save button was not listed")?
+        .to_string();
+    let (page, _) = guard_call(sidecar, lines, json!({"op":"click","target":{"ref": save}}))?;
+    if rows(&page, "held") != [format!("POST {base}/save")] || !rows(&page, "held_background").is_empty() {
+        return Err(format!("a click's POST was not held as the operator's step: {page}"));
+    }
+    let sent: Vec<String> = seen
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .filter(|row| !row.starts_with("GET "))
+        .cloned()
+        .collect();
+    if !sent.is_empty() {
+        return Err(format!("a held request reached the server: {sent:?}"));
+    }
+    lines.push("holds -> page's own POST listed as background, click's POST as the operator's; neither sent".into());
+    Ok(())
+}
+
 fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Result<String, String> {
     let big = format!(
         "<p>{}</p><a href=\"/?q={}\">Long link</a><a href=\"/new\">Short link</a>",
@@ -1451,6 +1643,7 @@ fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Resu
         ("/old", Reply::Redirect("/new")),
         ("/new", Reply::Html("<p>REDIRECT-LANDED</p>".to_string())),
         ("/big", Reply::Html(big)),
+        ("/holds", Reply::Html(GUARD_HOLDS_PAGE.to_string())),
         ("/docs", Reply::Html(GUARD_DENIALS_PAGE.to_string())),
         ("/to-private", Reply::Redirect("/private/landing")),
         ("/hop", Reply::Redirect("/to-private")),
@@ -1503,6 +1696,7 @@ fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Resu
         return Err(format!("a same-origin redirect did not land on its target: {page}"));
     }
 
+    guard_holds(&mut sidecar, &mut lines, &base, &seen)?;
     guard_path_denials(&mut sidecar, &mut lines, (&base, &rules, policy_file), &seen)?;
 
     // Caps: the reply, the text and each href stay within the sidecar's limits.
@@ -1703,6 +1897,7 @@ const LONG_OPTION: &str =
 const SEARCH_PAGE: &str = r#"
 <p id="tab">first tab</p>
 <a href="/?tab=2" target="_blank">Open in a new tab</a>
+<a href="/?again">Load again</a>
 <form id="find">
 <label>Query <input id="q" role="searchbox" aria-label="Query"></label>
 <p id="result">waiting</p>
@@ -1715,6 +1910,7 @@ const SEARCH_PAGE: &str = r#"
 <label>Shipping <select aria-label="Shipping" onchange="document.getElementById('shipped').textContent = 'shipped ' + this.value"><option value="s">Standard</option><option value="f">LONG_OPTION</option></select></label>
 <p id="shipped">not shipped</p>
 <script>
+fetch('/loaded', {method: 'POST'}).catch(() => {});
 if (location.search === '?tab=2') document.getElementById('tab').textContent = 'second tab';
 try {
   const probe = new RTCPeerConnection({iceServers: [{urls: 'stun:127.0.0.1:STUN_PORT'}]});
@@ -1733,11 +1929,16 @@ const REACH_PAGE: &str = r#"
 <p id="late">loading</p>
 <p id="where">start</p>
 <button onclick="window.open('http://127.0.0.1:1/away')">Share</button>
+<p id="lazy">lazy pending</p>
+<button onclick="setTimeout(() => { document.getElementById('timed').textContent = 'TIMER-DONE'; }, 1500)">Start timer</button>
+<p id="timed">timer idle</p>
+<button onclick="alert('Saved draft 7')">Notify</button>
 ENTRIES
 <p>RELEASE-MARKER 9.9.9</p>
 <a href="/?changelog"><code>Changelog</code> of releases</a>
 <script>
 fetch('/data').then(() => setTimeout(() => { document.getElementById('late').textContent = 'late content'; }, 300));
+addEventListener('scroll', () => { document.getElementById('lazy').textContent = 'LAZY-LOADED'; }, {once: true});
 if (location.search === '?changelog') document.getElementById('where').textContent = 'changelog open';
 </script>
 "#;
@@ -2060,6 +2261,26 @@ mod tests {
         assert_eq!(rows.len(), MAX_FOR_OPERATOR);
     }
 
+    #[test]
+    fn a_hold_or_handoff_is_listed_even_when_background_rows_fill_the_cap() {
+        let mut rows = Vec::new();
+        for n in 0..MAX_FOR_OPERATOR + 5 {
+            note_for_operator(
+                &mut rows,
+                None,
+                &json!({"held_in_background": [format!("POST /beacon/{n}")]}),
+            );
+        }
+        assert_eq!(rows.len(), MAX_FOR_OPERATOR);
+        let save = json!({"held_for_operator": ["POST /save"], "held_in_background": ["POST /late"]});
+        let handoff = json!({"handoff": "type", "element": "Password", "reason": "secret"});
+        note_for_operator(&mut rows, Some(handoff.clone()), &save);
+        assert_eq!(rows.len(), MAX_FOR_OPERATOR);
+        assert!(rows.contains(&json!({"held": "POST /save"})) && rows.contains(&handoff));
+        assert!(rows.contains(&json!({"held_background": "POST /beacon/0"})));
+        assert!(!rows.contains(&json!({"held_background": "POST /late"})));
+    }
+
     /// A page with a password field, a button whose POST is held, and a plain
     /// button. Records every op it is sent.
     #[derive(Default)]
@@ -2080,9 +2301,21 @@ mod tests {
             } else {
                 vec![]
             };
+            let background: Vec<&str> = if target == "auto" {
+                vec!["POST https://example.com/autosave?draft=page-private-text"]
+            } else {
+                vec![]
+            };
+            let dialogs: Vec<String> = if op["op"] == "wait" {
+                vec!["confirm: Delete the draft?".into(), "z".repeat(1_000)]
+            } else {
+                vec![]
+            };
             Ok(json!({"ok": true, "result": {
-                "url": "https://example.com/", "text": "page", "held": held,
+                "url": "https://example.com/", "text": "page", "held": held, "held_background": background,
+                "dialogs": dialogs,
                 "elements": [
+                    {"ref": "auto", "role": "button", "name": "Autosaves"},
                     {"ref": "pw", "role": "textbox", "name": "Password", "input": "secret"},
                     {"ref": "save", "role": "button", "name": "Save"},
                     {"ref": "after", "role": "button", "name": "After"},
@@ -2100,12 +2333,20 @@ mod tests {
 
     /// `run_batch` for task text `task`, typing `typed` in every `type` call.
     fn run_batch_with(batch: &[(&str, &str)], task: &str, typed: &str) -> (Value, Vec<String>) {
+        let (report, ops, _) = run_batch_seen(batch, task, typed);
+        (report, ops)
+    }
+
+    /// `run_batch_with`, also returning every message the model was sent.
+    fn run_batch_seen(batch: &[(&str, &str)], task: &str, typed: &str) -> (Value, Vec<String>, String) {
         let origins = vec!["https://example.com".to_string()];
         let mut session = Session::general(&origins).unwrap();
         let mut page = ScriptedPage::default();
         let mut turn = 0;
+        let mut sent = String::new();
         let mut chat = |messages: &[Value]| {
             turn += 1;
+            sent = json!(messages).to_string();
             let calls: Vec<Value> = match turn {
                 1 => vec![json!({"function": {"name": "navigate", "arguments": {"url": "https://example.com/"}}})],
                 2 => {
@@ -2138,7 +2379,7 @@ mod tests {
             Ok(json!({"message": {"role": "assistant", "content": "done", "tool_calls": calls}}))
         };
         let report = model_loop(&mut session, &mut page, &mut chat, &|_| None, task, &origins, 6).unwrap();
-        (report, page.ops)
+        (report, page.ops, sent)
     }
 
     /// #901 step 2: a URL the model composed on a granted origin is refused,
@@ -2205,6 +2446,168 @@ mod tests {
         assert_eq!(report["finished"], false);
         assert!(report["stopped"].as_str().unwrap().starts_with("needs the operator"));
         assert_eq!(report["for_operator"][0]["held"], "POST https://example.com/save");
+    }
+
+    /// #894: the model's `scroll` and `wait` reach the page only with their
+    /// bounded arguments, and what they send the policy kernel allows.
+    #[test]
+    fn scroll_and_wait_take_only_their_bounded_arguments() {
+        let session = Session::general(["https://example.com"]).unwrap();
+        for (name, args, wire) in [
+            (
+                "scroll",
+                json!({"direction": "down"}),
+                json!({"action": "scroll", "dy": 1500}),
+            ),
+            (
+                "scroll",
+                json!({"direction": "up"}),
+                json!({"action": "scroll", "dy": -1500}),
+            ),
+            (
+                "wait",
+                json!({"seconds": 1}),
+                json!({"action": "wait", "timeout_ms": 1000}),
+            ),
+            (
+                "wait",
+                json!({"seconds": "5"}),
+                json!({"action": "wait", "timeout_ms": 5000}),
+            ),
+        ] {
+            assert_eq!(bad_tool_args(name, &args), None, "{name} {args}");
+            assert_eq!(model_wire(name, &args), Some(wire.clone()), "{name} {args}");
+            assert!(session.decide(&wire).is_allow(), "{wire}");
+        }
+        for (name, args) in [
+            ("scroll", json!({})),
+            ("scroll", json!({"direction": "left"})),
+            ("scroll", json!({"direction": 3000})),
+            ("wait", json!({})),
+            ("wait", json!({"seconds": 0})),
+            ("wait", json!({"seconds": 6})),
+            ("wait", json!({"seconds": -1})),
+            ("wait", json!({"seconds": 2.5})),
+            ("wait", json!({"seconds": "soon"})),
+        ] {
+            assert!(
+                bad_tool_args(name, &args).is_some_and(|why| why.starts_with(name)),
+                "{name} {args}"
+            );
+        }
+        assert_eq!(bad_tool_args("click", &json!({})), None);
+        let names: Vec<String> = browser_tools()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(names
+            .iter()
+            .all(|name| name == "finish" || model_wire(name, &json!({})).is_some()));
+        assert!(names.contains(&"scroll".to_string()) && names.contains(&"wait".to_string()));
+    }
+
+    /// A refused `wait` never reaches the page, and a page dialog's text is
+    /// shown to the model within its caps.
+    #[test]
+    fn a_bad_wait_is_refused_and_dialog_text_is_shown() {
+        let origins = vec!["https://example.com".to_string()];
+        let mut session = Session::general(&origins).unwrap();
+        let mut page = ScriptedPage::default();
+        let mut turn = 0;
+        let mut sent = String::new();
+        let mut chat = |messages: &[Value]| {
+            turn += 1;
+            sent = json!(messages).to_string();
+            let calls = match turn {
+                1 => vec![json!({"function": {"name": "navigate", "arguments": {"url": "https://example.com/"}}})],
+                2 => vec![
+                    json!({"function": {"name": "wait", "arguments": {"seconds": 60}}}),
+                    json!({"function": {"name": "wait", "arguments": {"seconds": 2}}}),
+                ],
+                _ => vec![],
+            };
+            Ok(json!({"message": {"role": "assistant", "content": "done", "tool_calls": calls}}))
+        };
+        let report = model_loop(&mut session, &mut page, &mut chat, &|_| None, "task", &origins, 6).unwrap();
+        assert_eq!(page.ops, ["navigate", "wait"], "only the bounded wait reached the page");
+        assert_eq!(report["finished"], true);
+        assert!(sent.contains("wait takes seconds"), "{sent}");
+        assert!(sent.contains("confirm: Delete the draft?"), "{sent}");
+        assert!(
+            !sent.contains(&"z".repeat(MAX_SHOWN_DIALOG_CHARS + 1)),
+            "a long dialog is cut"
+        );
+    }
+
+    /// #894: only a profile whose name carries a dead sidecar's pid is removed.
+    #[test]
+    fn the_profile_sweep_removes_only_dead_pid_profiles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let make = |name: &str| {
+            let dir = tmp.path().join(name);
+            std::fs::create_dir_all(dir.join("Default")).unwrap();
+            std::fs::write(dir.join("Default/Cookies"), "c").unwrap();
+            dir
+        };
+        let dead = make("cgah-browser-4242-AbC123");
+        let live = make("cgah-browser-7-xYz789");
+        // No pid in the name: a hand-made test home or another tool's profile.
+        let pidless = [
+            make("cgah-browser-AbCdEf12"),
+            make("cgah-browser-123456"),
+            make("cgah-browser--x"),
+            make("cgah-browser-12x-y"),
+            make("cgah-browser-4242-"),
+            make("cgah-chat-browser-4242-x"),
+        ];
+        let file = tmp.path().join("cgah-browser-4242-file");
+        std::fs::write(&file, "not a directory").unwrap();
+        #[cfg(unix)]
+        let link = {
+            let target = make("kept-target");
+            let link = tmp.path().join("cgah-browser-4242-link");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            (link, target)
+        };
+        assert_eq!(sweep_profiles_in(tmp.path(), &|pid| pid == 7), 1);
+        assert!(!dead.exists());
+        assert!(live.join("Default/Cookies").exists());
+        assert!(pidless.iter().all(|dir| dir.join("Default/Cookies").exists()));
+        assert!(file.exists());
+        #[cfg(unix)]
+        assert!(link.0.exists() && link.1.join("Default/Cookies").exists());
+        assert_eq!(sweep_profiles_in(tmp.path(), &|pid| pid == 7), 0);
+        assert_eq!(sweep_profiles_in(&tmp.path().join("missing"), &|_| false), 0);
+        for (name, pid) in [
+            ("cgah-browser-4242-AbC123", Some(4242)),
+            ("cgah-browser-99999999999-x", None),
+        ] {
+            assert_eq!(profile_owner(name), pid, "{name}");
+        }
+    }
+
+    /// #894: a request the page sent on its own is listed for the operator
+    /// and the task goes on; the model is told how many, never the URL.
+    #[test]
+    fn a_background_hold_is_listed_and_the_task_goes_on() {
+        let (report, ops, sent) = run_batch_seen(&[("click", "Autosaves")], "task", "x");
+        assert_eq!(ops, ["navigate", "click auto"]);
+        assert_eq!(report["finished"], true);
+        assert!(report["stopped"].is_null());
+        assert_eq!(
+            report["for_operator"],
+            json!([{"held_background": "POST https://example.com/autosave?draft=page-private-text"}])
+        );
+        assert!(
+            sent.contains("\\\"held_in_background\\\":1"),
+            "the model sees the count"
+        );
+        assert!(!sent.contains("page-private-text"), "the model never sees the held URL");
+        // The rest of a batch still runs after one.
+        let (_, ops) = run_batch(&[("click", "Autosaves"), ("navigate", "https://example.com/next")]);
+        assert_eq!(ops, ["navigate", "click auto", "navigate"]);
     }
 
     /// A model call that fails after the first turn stops the task with the

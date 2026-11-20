@@ -19,7 +19,7 @@
 | **Goal loops** | `/goal` and `/loop` continue a long piece after the tab closes. | 50 turns, 200,000 tokens, two failed turns; cloud refuses loops. |
 | **Memory** | Pinned and [uploaded notes](docs/CONSOLE.md#text-file-attachments-and-prompt-preview), account-private facts; repeated suggestions are skipped. | On; proposals need review. |
 | **Local chat** | Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles; looping replies stop. | Ollama on loopback. |
-| **Browser tasks** | `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Block rules cover every request and redirect; navigation stays on task or page URLs; password fields and non-GET/HEAD requests are held, ending the task. | On for administrators; refused without accounts; [setup](#3-sign-in-and-research). |
+| **Browser tasks** | `/browse <site> <task>`: the local model drives sandboxed Chrome on those sites only. Block rules cover every request and redirect; navigation stays on task or page URLs; password fields and non-GET/HEAD requests are held; a model-caused one ends it. | On for administrators; refused without accounts; [setup](#3-sign-in-and-research). |
 | **Analytics, diagnostics** | Token and run history, **Estimate draft**, `/diag` redacted logs. | On; `/diag` admin or auditor. |
 | **Cloud chat** | Optional Grok or Claude; only the new message leaves. | Needs a provider key. |
 | **Off by default** | Reviewed coding in isolated clones, MCP tools and memory gateway, Netconnect LAN observation, Firecrawl fallback reads. | Each needs configuration. |
