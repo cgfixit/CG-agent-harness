@@ -74,6 +74,8 @@ let takeoverWaitMs = 0;
 const MAX_TAKEOVER_WAIT_MS = 600000;
 // Resolves when the paused request has been decided and answered.
 let pendingApproval = null;
+// True once a request of the running op has been paused for the operator.
+let askedThisOp = false;
 // One-shot passes for the network gate: {method, url, sha256, until}. The
 // page route asks; only a matching request, once, passes the gate.
 const allowances = [];
@@ -522,6 +524,8 @@ async function decideHeld(route, request, method, url) {
   const contentType = (await request.headerValue("content-type").catch(() => null)) ?? "";
   if (await operatorAllows(method, url, contentType, body, sha256)) {
     allowances.push({ method, url, sha256, until: Date.now() + ALLOWANCE_MS });
+    // The action loaded a new page: what that page requests is its own doing.
+    if (topLevelLoad(request)) acting = false;
     await route.continue().catch(() => {});
     // Still this action's request until it is answered or fails, so the
     // observation that follows shows the page with the answer.
@@ -536,7 +540,9 @@ async function decideHeld(route, request, method, url) {
 // hand it over (a large or streamed body): such a request has no pass.
 function gateBody(request) {
   if (Array.isArray(request.postDataEntries)) {
-    return Buffer.concat(request.postDataEntries.map((entry) => Buffer.from(entry.bytes ?? "", "base64")));
+    // An entry without bytes (a file part, say) is data nobody was shown.
+    if (request.postDataEntries.some((entry) => typeof entry.bytes !== "string")) return null;
+    return Buffer.concat(request.postDataEntries.map((entry) => Buffer.from(entry.bytes, "base64")));
   }
   if (typeof request.postData === "string") return Buffer.from(request.postData, "utf8");
   return request.hasPostData ? null : Buffer.alloc(0);
@@ -698,6 +704,7 @@ async function start(message) {
           if (pendingApproval === waiting) pendingApproval = null;
         });
         pendingApproval = waiting;
+        askedThisOp = true;
         return;
       }
       hold(method, url, request.isNavigationRequest());
@@ -755,6 +762,18 @@ async function opensTab(locator) {
     .catch(() => false);
 }
 
+// Runs one Playwright action. An action that loads a page waits for that
+// load, and gives up after its own few seconds. If the load is a request
+// paused for the operator, that is not a failure: the observation that
+// follows waits for the verdict instead.
+async function acted(action) {
+  try {
+    await action;
+  } catch (error) {
+    if (!askedThisOp) throw error;
+  }
+}
+
 async function locatorFor(target) {
   if (typeof target?.ref !== "string") throw new Error("stale or unknown target");
   const locator = page.getByRef(target.ref);
@@ -787,7 +806,7 @@ async function handle(message) {
     case "follow_link": {
       const locator = await locatorFor(message.target);
       const tab = (await opensTab(locator)) ? page.waitForEvent("popup", { timeout: 5000 }).catch(() => null) : null;
-      await locator.click({ timeout: 5000 });
+      await acted(locator.click({ timeout: 5000 }));
       await tab;
       await settle();
       return observe();
@@ -799,7 +818,7 @@ async function handle(message) {
     }
     case "press_enter": {
       const locator = await locatorFor(message.target);
-      await locator.press("Enter", { timeout: 5000 });
+      await acted(locator.press("Enter", { timeout: 5000 }));
       await settle();
       return observe();
     }
@@ -819,14 +838,14 @@ async function handle(message) {
         { timeout: 2000 },
       );
       if (index < 0) throw new Error("no single listed option has that label");
-      await locator.selectOption({ index }, { timeout: 5000 });
+      await acted(locator.selectOption({ index }, { timeout: 5000 }));
       await settle();
       return observe();
     }
     case "select_tab": {
       const locator = page.getByRole("tab", { name: message.tab, exact: true });
       if ((await bounded(locator.count(), "tab lookup")) !== 1) throw new Error("unknown tab");
-      await locator.click({ timeout: 5000 });
+      await acted(locator.click({ timeout: 5000 }));
       return observe();
     }
     case "scroll": {
@@ -847,6 +866,7 @@ async function handle(message) {
 
 async function answer(message) {
   acting = ACTS.has(message?.op);
+  askedThisOp = false;
   try {
     send({ id: message.id, ok: true, result: await handle(message) });
   } catch (error) {

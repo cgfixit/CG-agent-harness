@@ -1795,6 +1795,10 @@ function saveTwice() { post().then(() => post()).then(() => show('saved twice'))
 </script>
 "#;
 
+/// What an approved order loads: a page that POSTs on its own as it loads.
+const TAKEOVER_RESULT_PAGE: &str =
+    "<p>ORDER-PLACED</p><script>fetch('/api/beacon', {method: 'POST', body: 'seen'}).catch(() => {});</script>";
+
 /// What the takeover fixture's operator does with the next question.
 enum Verdict {
     Allow,
@@ -1865,7 +1869,8 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
     let (origin, port, seen) = serve_recording(vec![
         ("/shop", Reply::Html(TAKEOVER_PAGE.to_string())),
         ("/api/save", Reply::Html("SAVED".to_string())),
-        ("/api/order", Reply::Html("<p>ORDER-PLACED</p>".to_string())),
+        ("/api/order", Reply::Html(TAKEOVER_RESULT_PAGE.to_string())),
+        ("/api/beacon", Reply::Html(String::new())),
     ])?;
     let session = Session::general([&origin]).map_err(|err| format!("{err:?}"))?;
     let base = format!("http://127.0.0.1:{port}");
@@ -1987,12 +1992,28 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
     if count("POST /api/order") != 0 || rows(&page, "held") != [order.clone()] {
         return Err(format!("a denied form POST was sent, or not listed as held: {page}"));
     }
-    operator.plan([Verdict::Allow]);
+    // The yes comes later than a click waits for a page load: the click is
+    // not a failure, and the wait is the operator's.
+    operator.plan([Verdict::AllowAfter(Duration::from_secs(6))]);
+    let asked_before = operator.asked().len();
     let page = click(&mut sidecar, &mut lines, "Order")?;
     if count("POST /api/order") != 1 || !page["text"].as_str().unwrap_or("").contains("ORDER-PLACED") {
         return Err(format!("an approved form POST did not load its result: {page}"));
     }
-    lines.push("form POST -> denied stays on the page, approved loads the result once".into());
+    // The page that loaded POSTs on its own: held as background, never asked about.
+    if operator.asked().len() != asked_before + 1
+        || rows(&page, "held_background") != [format!("POST {base}/api/beacon")]
+        || !rows(&page, "held").is_empty()
+        || count("POST /api/beacon") != 0
+    {
+        return Err(format!(
+            "the approved page's own POST was asked about, sent, or held as the operator's: {page}"
+        ));
+    }
+    lines.push(
+        "form POST -> denied stays on the page; approved after 6 s loads the result once, its own POST held as background"
+            .into(),
+    );
 
     // A block rule added while the operator decides: approved, and still not sent.
     operator.plan([Verdict::BlockThenAllow]);
