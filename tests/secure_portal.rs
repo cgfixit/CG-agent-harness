@@ -803,6 +803,79 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             assert_eq!(reply.status(), status, "{path}");
             assert_eq!(reply.json::<Value>().await.unwrap()["detail"]["code"], code, "{path}");
         }
+        // The shared URL policy refuses before the model gate (still held here,
+        // so a check that let a task through would answer BROWSER_BUSY), and a
+        // stored report is withheld on every read while the policy covers it.
+        let admin_id = server.state.auth.as_ref().unwrap().get_user("admin").unwrap().user_id;
+        let job_id = "fedcba9876543210fedcba9876543210";
+        let job_path = format!("/api/browser/jobs/{job_id}");
+        let (input, _child_input) = std::sync::mpsc::channel();
+        server.state.browser_jobs.insert(
+            job_id,
+            &admin_id,
+            &["https://example.com".to_string()],
+            cgagentharness::server::browser_jobs::CancelHandle {
+                input,
+                token: Default::default(),
+            },
+        );
+        server.state.browser_jobs.finish(
+            job_id,
+            cgagentharness::server::browser_jobs::Outcome::Report(json!({"answer":"stored"})),
+        );
+        let stored = |blocked: bool| {
+            let (server, admin, job_path) = (&server, &admin, &job_path);
+            async move {
+                let job = request(server, admin, Method::GET, job_path, Value::Null).await;
+                assert_eq!(job.status(), 200);
+                let job = job.json::<Value>().await.unwrap();
+                if blocked {
+                    assert!(job.get("result").is_none(), "{job}");
+                    assert_eq!(job["error"]["code"], "WEB_POLICY_CHANGED", "{job}");
+                } else {
+                    assert_eq!(job["result"]["answer"], "stored", "{job}");
+                    assert!(job.get("error").is_none(), "{job}");
+                }
+            }
+        };
+        let refused = |status: u16, code: &'static str| {
+            let (server, admin) = (&server, &admin);
+            async move {
+                for path in ["/api/browser/run", "/api/browser/jobs"] {
+                    let browse = json!({"task":"read the page","origins":["https://example.com"]});
+                    let reply = request(server, admin, Method::POST, path, browse).await;
+                    assert_eq!(reply.status(), status, "{path}");
+                    assert_eq!(reply.json::<Value>().await.unwrap()["detail"]["code"], code, "{path}");
+                }
+            }
+        };
+        stored(false).await;
+        let block = json!({"urls":["https://example.com"]});
+        assert_eq!(
+            request(&server, &admin, Method::POST, "/api/web/block", block)
+                .await
+                .status(),
+            200
+        );
+        refused(403, "BROWSER_ORIGIN_BLOCKED").await;
+        stored(true).await;
+        let unblock = json!({"url":"https://example.com"});
+        assert_eq!(
+            request(&server, &admin, Method::POST, "/api/web/unblock", unblock)
+                .await
+                .status(),
+            200
+        );
+        stored(false).await;
+        // A policy file that cannot be read refuses a new task and fails closed on a read.
+        let (policy_file, _) = server.state.web.policy_file();
+        let aside = policy_file.with_extension("aside");
+        std::fs::rename(&policy_file, &aside).unwrap();
+        refused(409, "WEB_POLICY_UNAVAILABLE").await;
+        stored(true).await;
+        std::fs::rename(&aside, &policy_file).unwrap();
+        refused(409, "BROWSER_BUSY").await;
+        stored(false).await;
     }
     assert_eq!(
         request(
