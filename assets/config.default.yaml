@@ -279,6 +279,13 @@ browser:
     enabled: true
     wait_sec: 120  # how long a held request waits for the verdict, inside timeout_sec; clamped to 10–600
 
+# Native computer use (issue #996; docs/Browser-Use.md#roadmap-computer-use).
+# Nothing reads this key yet: no route, child or driver exists. It ships now so
+# the gate is closed before any of them is built. Only literal true will turn
+# it on, and only once the pilot's code has landed. Restart-only.
+computer:
+  enabled: false
+
 # Completion webhooks are explicit operator configuration and restart-only.
 notifications:
   enabled: false

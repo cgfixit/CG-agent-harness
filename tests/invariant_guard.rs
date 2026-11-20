@@ -1276,6 +1276,8 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "netconnect.home_automation",
         "notifications.enabled",
         "diagnostics.model_tool",
+        // #996: native computer use ships off before any of its code exists.
+        "computer.enabled",
         // #647 Phase 2: spending another search provider is opt-in; the free public
         // Google hop ships on (asserted below).
         "web.search.fallback_to_serpapi",
