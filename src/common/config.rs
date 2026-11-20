@@ -151,6 +151,7 @@ pub const NUMERIC_LIMITS: &[Limit<u64>] = &[
     refuse("agentic.deepagent_github.planner_max_tokens", 3072, 1, 131_072),
     clamp("app.agent_job_poll_ms", 1500, 1000, 30_000),
     clamp("browser.max_turns", 12, 1, 40),
+    clamp("browser.takeover.wait_sec", 120, 10, 600),
     clamp("browser.timeout_sec", 300, 30, 1800),
     clamp("chat.compact_keep_messages", 8, 2, 40),
     clamp("chat.compact_max_prefill_sec", 120, 30, 1800),

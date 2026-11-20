@@ -640,28 +640,30 @@ it ends; lid-close and manual sleep still apply.
   `src/server/web_research.rs` and `src/common/process.rs` unit tests.
 
 `POST /api/browser/jobs` runs `POST /api/browser/run`'s checked request the same
-way (macOS and Linux). Both start from one `prepare`, so every refusal stays
-synchronous; 202 means the job's task holds the generation gate, the task file and
-the child. Jobs are administrator-only, owner-bound (`BROWSER_JOB_NOT_FOUND` for
-another account), memory-only (at most eight) and ended by a restart. Cancel
-(`POST /api/browser/jobs/{job_id}/cancel`) sends the child one `cancel` line; it
-stops before its next model turn and its report is kept. A child still running ten
-seconds later is killed with its tree. The child treats a closed stdin as a cancel,
-so a dead server does not leave Chrome driven. The terminal state is set once, and
-every read of a stored report rechecks the block list (`WEB_POLICY_CHANGED`).
-Nothing can be approved through a job yet.
+way (macOS and Linux). Both start from one `prepare`, so refusals stay synchronous;
+202 means the job's task holds the generation gate, the task file and the child.
+Jobs are administrator-only, owner-bound (`BROWSER_JOB_NOT_FOUND`), memory-only (at
+most eight) and ended by a restart. Cancel sends one `cancel` line: the child stops
+before its next model turn and its report is kept; one still running ten seconds
+later is killed with its tree. A closed stdin is a cancel. The terminal state is set once; every read of
+a stored report rechecks the block list.
 
-The sidecar can hold one such request open for a verdict (takeover, #995), but
-only a session started with an approver, and none is outside the `browser takeover`
-fixture. The page route pauses a request held as the operator's step and asks the
-host, showing method, whole URL, content type, size, body SHA-256 and a text
-preview. A yes records a pass of `{method, URL, SHA-256}` that the CDP gate uses up
-on the first matching request, after asking the block list again; a no, a late
-answer, a second request while one waits, or a body the gate cannot read is held
-as before. A page's own background requests are never asked about.
+An administrator can let one held request of their own job be sent (takeover,
+#995), behind literal `browser.takeover.enabled` (ships `true`; restart-only).
+Only a job asks; `/api/browser/run` holds every request. The page route pauses a request held as the operator's step; the job
+reads `waiting` and shows method, whole URL, content type, size, body SHA-256 and
+a text preview for at most `browser.takeover.wait_sec`.
+`POST /api/browser/jobs/{job_id}/approve` needs that request's id and hash,
+`confirm: true` and a `reason` (no defaults); it rechecks both gates, the block
+list for that URL and origin, and that the request still waits, then passes the
+verdict on once. The sidecar's CDP gate uses up a pass of `{method, URL, SHA-256}`
+on the first matching request, after asking the block list again. A no, a late
+answer, cancel, a second request while one waits, or a body the gate cannot read
+is held; a page's own requests are never asked about. Each decision
+writes one `browser.approval` audit line (never the path or body).
 
 - Locked by: `browser takeover` (by what its loopback server received),
-  `src/server/browser_jobs.rs`, `src/shim/mod.rs` and
+  `src/server/browser_jobs.rs` (verdict binding), `src/shim/mod.rs` and
   `src/common/process.rs` unit tests;
   `tests/secure_portal.rs::https_bootstrap_roles_revocation_and_private_web_context`.
 

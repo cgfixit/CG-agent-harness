@@ -271,6 +271,13 @@ browser:
   sidecar: "browser/sidecar.mjs"
   max_turns: 12  # model turns per task, clamped to 1–40
   timeout_sec: 300  # whole task; the child tree is killed after it, clamped to 30–1800
+  takeover:
+    # Literal true lets an administrator approve one held request of their own
+    # browser job (POST /api/browser/jobs/{job_id}/approve, with confirm and a
+    # reason). That request is then sent once, as shown. Restart-only. false:
+    # every held request ends the task, as before.
+    enabled: true
+    wait_sec: 120  # how long a held request waits for the verdict, inside timeout_sec; clamped to 10–600
 
 # Completion webhooks are explicit operator configuration and restart-only.
 notifications:
