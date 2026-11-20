@@ -461,6 +461,7 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - web.chat_tool_calls: 1–30 read-only calls per chat or local /loop turn; web.total_tokens usually binds first
   - web.carry_forward_sources: 0 (off) or 1–50 earlier reads (URL/query only, no page text) listed in web turns; reloadable
   - web.goal_web_default: off|fetch|all; restart-only. The mode a /goal gets without --web.
+  - web.fetch_provenance: restart-only; a missing key is also on; false reads as before
   - web.response_bytes: 1024–1048576; compressed bodies refused. Shipped 262144 until 2026-11-10: uncompressed, many documentation…
 
 ## config: sections and keys (values omitted) (part 4)

@@ -270,11 +270,12 @@ reads (`web.search.result_reads.enabled`, on unless literal `false`, even in a
 home whose config predates the key). A listed `https://arxiv.org/abs/<id>` also
 grants exactly `https://arxiv.org/pdf/<id>`, its `full_text_url`, within
 `max_urls` (`result_reads.arxiv_pdf`, literal `true` only); a PDF past that cap
-is not offered. No repository, shell, policy,
-account, key or mutation tool is exposed. Batches validate before sequential
+is not offered. A URL only a `/*`, `*.` rule or denylist permits, unlisted and
+not named in the message, pauses a live admin turn for Approve; elsewhere it is
+refused (`WEB_FETCH_COMPOSED`, `web.fetch_provenance`). No
+repository, shell, policy, account, key or mutation tool is exposed. Batches validate before sequential
 reads; `web.chat_tool_calls` bounds all rounds (1–30, default 30).
 
-Every hop writes up to the chat ceiling at the configured `temperature`.
 Each call fits prompt, definitions, one reply and
 minimal results inside `web.total_tokens`; a batch without room runs no reads,
 and results shrink to the remaining calibrated room. `WEB_TOKEN_BUDGET`
@@ -294,21 +295,20 @@ reuses fresh evidence already read for this goal; other reads default fresh.
 a fresh read, including current facts, once per page per turn: a repeat
 re-selects passages from that read (`refresh_reused`).
 
-Before choosing further tools, new useful passages receive a bounded digest
-(≤1,024 output tokens) whose quotes and source IDs are validated; that proves
-provenance, not logical support, and the final answer remains unvalidated.
+Before further tools, new useful passages get a bounded digest (≤1,024 output
+tokens) with validated quotes and source IDs: provenance, not logical support;
+the answer stays unvalidated.
 Server-managed goal runs retain at most nine URL/hash receipts, three passage
 IDs per URL and sixteen queries, plus the digest. Reuse rechecks age, hashes
 and permissions. References survive compaction, not completion, cancellation
 or restart.
 
-`POST /api/chat` returns `web_tools`, reply and aggregate usage; the console
-shows listings, selected passages, cache reuse, extraction path and digest
-outcomes separately. Each entry records its call's `query` and `refresh`, or
+`POST /api/chat` returns `web_tools`, reply and usage; the console shows each
+outcome separately. Each entry records its call's `query` and `refresh`, or
 `count`; a digest entry lists one `drop_reasons` code per dropped claim. Session `web_sources` is a bounded metadata ledger,
 never a second page store. `web.carry_forward_sources` ships off; when
 enabled it supplies permitted earlier URLs/queries, not page text.
-Design and measurements: [router](WEB_DECISION_ROUTER.md); one-page version:
+Design: [router](WEB_DECISION_ROUTER.md); summary:
 [README](../README.md#how-the-research-loop-decides).
 
 ### Google search

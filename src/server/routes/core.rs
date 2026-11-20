@@ -2156,6 +2156,49 @@ pub async fn cancel_chat(
     Ok(Json(json!({"cancelled": cancelled})))
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FetchConfirmRequest {
+    pub id: String,
+    pub approve: bool,
+}
+
+impl crate::server::schemas::Validate for FetchConfirmRequest {
+    fn validate(&self) -> Vec<String> {
+        if (1..=64).contains(&self.id.len()) {
+            vec![]
+        } else {
+            vec!["id".into()]
+        }
+    }
+}
+
+/// `POST /api/chat/fetch-confirm`: answer a paused chat turn's composed-fetch
+/// question (#901 step 4). Only an administrator, and only the account whose
+/// turn asked; the turn reloads policy before it reads anything.
+pub async fn fetch_confirm(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    ValidJson(req): ValidJson<FetchConfirmRequest>,
+) -> ApiResult<Json<Value>> {
+    if !super::auth::may_read_search_results(&state, user.as_deref()) {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "AUTH_PERMISSION_DENIED",
+            "only an administrator confirms a composed fetch",
+        ));
+    }
+    let owner = super::auth::context_owner(user);
+    if !state.fetch_confirms.resolve(&owner, &req.id, req.approve) {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "WEB_CONFIRM_GONE",
+            "no open question with that id for this account: it was answered, expired or ended with its turn",
+        ));
+    }
+    Ok(Json(json!({"delivered": true, "approve": req.approve})))
+}
+
 // Account identity comes only from the guarded request extension.
 type Caller = Option<axum::Extension<crate::common::auth_store::UserSummary>>;
 

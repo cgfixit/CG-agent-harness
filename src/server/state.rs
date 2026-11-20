@@ -99,6 +99,8 @@ pub struct AppState {
     pub loop_inflight: Mutex<HashMap<String, f64>>,
     /// Server-side `/loop` runs that outlive the browser connection.
     pub loops: super::loop_runner::LoopManager,
+    /// Chat turns waiting for the operator to confirm a composed fetch (#901).
+    pub fetch_confirms: super::fetch_confirm::FetchConfirms,
     pub generation_gate: GenerationGate,
     pub agent_run_gate: GenerationGate,
     pub csrf_token: String,

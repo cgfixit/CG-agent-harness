@@ -348,6 +348,11 @@ impl Rule {
         Pattern::parse(&self.pattern).is_ok_and(|p| p.permits(target))
     }
 
+    /// Whether this rule names `target` exactly: no `*.` host and no `/*` path.
+    fn names_exactly(&self, target: &Url) -> bool {
+        Pattern::parse(&self.pattern).is_ok_and(|p| !p.subdomains && !p.subtree && p.permits(target))
+    }
+
     pub fn start_urls(&self) -> Vec<String> {
         if !self.seeds.is_empty() {
             return self.seeds.clone();
@@ -378,6 +383,17 @@ impl Mode {
     fn is_allowlist(&self) -> bool {
         *self == Mode::Allowlist
     }
+}
+
+/// How a permitted chat read is authorized ([`Policy::read_authority`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadAuthority {
+    /// A URL this turn's or run's own search listed (`web.search.result_reads`).
+    Listed,
+    /// An allow rule names exactly this URL.
+    ExactRule,
+    /// Only a subtree or subdomain rule, or denylist mode, permits it.
+    Composed,
 }
 
 /// Group name every blocked rule carries; it is never an allow group.
@@ -640,6 +656,23 @@ impl Policy {
             .any(|r| group.is_none_or(|g| r.group == g) && r.permits(target))
     }
 
+    /// Why a chat read of `target` (no group) is permitted, or `None` when it
+    /// is not. `Composed` is a URL only a subtree or subdomain rule, or
+    /// denylist mode, permits: the model could have built its path or query
+    /// (#901 step 4).
+    pub fn read_authority(&self, target: &Url) -> Option<ReadAuthority> {
+        if !self.permits(target, None) {
+            return None;
+        }
+        Some(if self.granted.contains(target.as_str()) {
+            ReadAuthority::Listed
+        } else if self.rules.iter().any(|rule| rule.names_exactly(target)) {
+            ReadAuthority::ExactRule
+        } else {
+            ReadAuthority::Composed
+        })
+    }
+
     pub fn authorize(&self, raw: &str, group: Option<&str>) -> Result<Url> {
         let target = canonical_url(raw)?;
         if self.blocks(&target) {
@@ -683,6 +716,59 @@ impl Policy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_authority_separates_listed_exact_and_composed_reads() {
+        let url = |raw: &str| canonical_url(raw).unwrap();
+        let mut policy = Policy::empty();
+        policy
+            .rules
+            .push(Rule::new("https://example.com/docs/*", "default", &[]).unwrap());
+        policy
+            .rules
+            .push(Rule::new("https://example.com/exact?q=1", "default", &[]).unwrap());
+        policy
+            .rules
+            .push(Rule::new("https://*.example.org/page", "default", &[]).unwrap());
+        policy
+            .blocked
+            .push(Policy::block_rule("https://example.com/docs/private/*").unwrap());
+        policy.granted = std::sync::Arc::new(["https://example.com/docs/listed".to_string()].into());
+        assert_eq!(
+            policy.read_authority(&url("https://example.com/exact?q=1")),
+            Some(ReadAuthority::ExactRule)
+        );
+        assert_eq!(
+            policy.read_authority(&url("https://example.com/docs/listed")),
+            Some(ReadAuthority::Listed)
+        );
+        for composed in ["https://example.com/docs/a?d=memo", "https://a.example.org/page"] {
+            assert_eq!(
+                policy.read_authority(&url(composed)),
+                Some(ReadAuthority::Composed),
+                "{composed}"
+            );
+        }
+        assert_eq!(
+            policy.read_authority(&url("https://example.com/exact?q=2")),
+            None,
+            "not permitted"
+        );
+        assert_eq!(
+            policy.read_authority(&url("https://example.com/docs/private/x")),
+            None,
+            "blocked"
+        );
+        policy.mode = Mode::Denylist;
+        assert_eq!(
+            policy.read_authority(&url("https://elsewhere.example/x")),
+            Some(ReadAuthority::Composed)
+        );
+        assert_eq!(
+            policy.read_authority(&url("https://example.com/exact?q=1")),
+            Some(ReadAuthority::ExactRule)
+        );
+    }
 
     #[test]
     fn exact_and_explicit_wildcards_preserve_authority_and_query_boundaries() {
