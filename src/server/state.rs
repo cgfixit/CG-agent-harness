@@ -139,6 +139,8 @@ pub struct AppState {
     pub mcp_tool_allowlist_override: Option<BTreeSet<String>>,
     /// The only server -> agentic edge (a child process).
     pub shim: crate::shim::ShimContext,
+    /// Detached `/browse` tasks (`/api/browser/jobs`); memory only.
+    pub browser_jobs: Arc<crate::server::browser_jobs::BrowserJobs>,
     /// Detached real-repo runs (`/api/agent/jobs`).
     pub jobs: crate::server::agent_jobs::JobStore,
     /// Persisted recurring agent jobs (`/api/agent/schedules`).

@@ -682,6 +682,21 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             ),
             (
                 Method::POST,
+                "/api/browser/jobs",
+                json!({"task":"read the page","origins":["https://example.com"]}),
+            ),
+            (
+                Method::GET,
+                "/api/browser/jobs/0123456789abcdef0123456789abcdef",
+                Value::Null,
+            ),
+            (
+                Method::POST,
+                "/api/browser/jobs/0123456789abcdef0123456789abcdef/cancel",
+                Value::Null,
+            ),
+            (
+                Method::POST,
                 "/api/structured-memory/gates",
                 json!({"gate":"retrieval","enabled":true}),
             ),
@@ -764,6 +779,30 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             busy["detail"]["message"].as_str().unwrap().contains("/model use"),
             "{busy}"
         );
+        // A job is the same checked request: it refuses the same way, synchronously,
+        // and records nothing. An unknown or malformed id reads as such.
+        let busy = request(&server, &admin, Method::POST, "/api/browser/jobs", browse).await;
+        assert_eq!(busy.status(), 409);
+        assert_eq!(busy.json::<Value>().await.unwrap()["detail"]["code"], "BROWSER_BUSY");
+        for (method, path, status, code) in [
+            (
+                Method::GET,
+                "/api/browser/jobs/0123456789abcdef0123456789abcdef",
+                404,
+                "BROWSER_JOB_NOT_FOUND",
+            ),
+            (
+                Method::POST,
+                "/api/browser/jobs/0123456789abcdef0123456789abcdef/cancel",
+                404,
+                "BROWSER_JOB_NOT_FOUND",
+            ),
+            (Method::GET, "/api/browser/jobs/not-a-job-id", 400, "INVALID_JOB_ID"),
+        ] {
+            let reply = request(&server, &admin, method, path, Value::Null).await;
+            assert_eq!(reply.status(), status, "{path}");
+            assert_eq!(reply.json::<Value>().await.unwrap()["detail"]["code"], code, "{path}");
+        }
     }
     assert_eq!(
         request(
