@@ -442,12 +442,21 @@ impl ProductionPaths {
                 full.push(name.ident.unraw().to_string());
                 self.0.push(full);
             }
+            // `as` and `*` are not identifiers, so no real path has these
+            // segments: a rule can tell `use crate as root;` and `use crate::*;`
+            // from the bare `crate` of `pub(crate)`.
             syn::UseTree::Rename(rename) => {
                 let mut full = prefix.clone();
                 full.push(rename.ident.unraw().to_string());
+                full.push("as".into());
+                full.push(rename.rename.unraw().to_string());
                 self.0.push(full);
             }
-            syn::UseTree::Glob(_) => self.0.push(prefix.clone()),
+            syn::UseTree::Glob(_) => {
+                let mut full = prefix.clone();
+                full.push("*".into());
+                self.0.push(full);
+            }
             syn::UseTree::Group(group) => {
                 for item in &group.items {
                     self.use_tree(item, prefix);
@@ -504,6 +513,20 @@ impl<'ast> syn::visit::Visit<'ast> for ProductionPaths {
         self.use_tree(&item.tree, &mut Vec::new());
     }
 
+    /// `extern crate self as root;` names the crate root like `use crate as root;`.
+    fn visit_item_extern_crate(&mut self, item: &'ast syn::ItemExternCrate) {
+        if test_only(&item.attrs) {
+            return;
+        }
+        let name = item.ident.unraw().to_string();
+        let mut full = vec![if name == "self" { "crate".to_string() } else { name }];
+        if let Some((_, rename)) = &item.rename {
+            full.push("as".into());
+            full.push(rename.unraw().to_string());
+        }
+        self.0.push(full);
+    }
+
     fn visit_path(&mut self, path: &'ast syn::Path) {
         self.0
             .push(path.segments.iter().map(|s| s.ident.unraw().to_string()).collect());
@@ -532,7 +555,11 @@ fn production_paths(path: &str, text: &str) -> Vec<Vec<String>> {
 /// needle and dials an IP literal), and a `libc::socket` whose type is a
 /// number, not a `SOCK_*` name.
 fn netconnect_path_violation(segments: &[String], dialer: bool) -> Option<&'static str> {
-    let names: Vec<&str> = segments.iter().map(String::as_str).collect();
+    let mut names: Vec<&str> = segments.iter().map(String::as_str).collect();
+    // `self::super::super::llm` is `super::super::llm`.
+    while names.first() == Some(&"self") {
+        names.remove(0);
+    }
     // In a file directly under src/netconnect, `super::super` is the crate.
     let in_crate = match names.as_slice() {
         ["crate", rest @ ..] | ["super", "super", rest @ ..] => Some(rest),
@@ -541,6 +568,9 @@ fn netconnect_path_violation(segments: &[String], dialer: bool) -> Option<&'stat
     match in_crate {
         // A bare `crate` is `pub(crate)` visibility, not an import.
         Some([] | ["common" | "netconnect", ..] | ["server", "slash", ..]) | None => {}
+        // `use crate as root;`, `extern crate self as root;` and `use crate::*;`
+        // bring every crate module into scope under a name this rule cannot follow.
+        Some(["as", ..] | ["*"]) => return Some("an alias or glob of the crate root"),
         Some(_) => return Some("a crate module other than common, netconnect and server::slash"),
     }
     const LIBC_SOCKET_CALLS: &[&str] = &[
@@ -554,7 +584,11 @@ fn netconnect_path_violation(segments: &[String], dialer: bool) -> Option<&'stat
         "sendmsg",
     ];
     match names.as_slice() {
-        ["libc", call] if !dialer && LIBC_SOCKET_CALLS.contains(call) => Some("a raw libc socket call"),
+        ["libc", call] | ["libc", call, "as", _] if !dialer && LIBC_SOCKET_CALLS.contains(call) => {
+            Some("a raw libc socket call")
+        }
+        // `use libc::*;` makes a later bare `socket(..)` a raw call with no `libc::` on it.
+        ["libc", "*"] if !dialer => Some("a glob of libc, which hides raw socket calls"),
         _ => None,
     }
 }
@@ -576,10 +610,23 @@ fn netconnect_path_rule_names_what_the_needles_miss() {
         "fn f() { log!(crate::server::state::get()); }",
         "fn f() { unsafe { libc::socket(libc::AF_INET, 1, 0) }; }",
         "use libc::connect;",
+        // An alias or glob of the crate root hides the module every later
+        // path names, and so does a `self::` in front of `super::super`.
+        "use crate as root; fn f() { let _ = root::llm::ollama::http_client(t); }",
+        "use super::super as up; fn f() { let _ = up::shim::run(); }",
+        "extern crate self as root; fn f() { let _ = root::llm::ollama::http_client(t); }",
+        "use crate::*; fn f() { let _ = llm::ollama::http_client(t); }",
+        "use super::super::*; fn f() { let _ = llm::ollama::http_client(t); }",
+        "fn f() { let _ = self::super::super::llm::ollama::http_client(t); }",
+        "use self::super::super::llm;",
+        "use libc::{socket as s};",
+        "use libc::*; fn f() { unsafe { socket(2, 1, 0) }; }",
     ] {
         assert!(!violations(hostile, false).is_empty(), "missed: {hostile}");
     }
     for fine in [
+        "use crate::common::process as p; use super::scope::*; use self::scope::Scope;",
+        "pub(crate) fn f() {} pub(in crate::netconnect) fn g() {} fn h() { self::g() }",
         "use crate::common::process::run; use crate::netconnect::Scope;",
         "fn f() { let _ = crate::server::slash::preexisting_slash_names(); }",
         "fn f() { unsafe { libc::getifaddrs(p) }; }",

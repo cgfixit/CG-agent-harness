@@ -26,6 +26,9 @@ pub struct CargoInputs {
     linker: Option<PathBuf>,
 }
 
+/// Largest `Cargo.lock` read from a clone. Real locks are well under 1 MiB.
+const MAX_LOCK_BYTES: u64 = 8 * 1024 * 1024;
+
 pub(crate) fn missing(detail: &str) -> HarnessError {
     HarnessError::config(format!("offline Cargo verification is not prepared: {detail}; run scripts/prepare-cargo.py REPOSITORY HARNESS_HOME after provisioning the required toolchain/dependencies (use --online only for authorized preparation)"))
 }
@@ -34,9 +37,53 @@ fn executable(name: &str) -> String {
     format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }
 
+/// Read the clone's `Cargo.lock`. The repository chose that entry, so it is
+/// opened as the clone jail opens a file: a link is refused rather than
+/// followed (to `/dev/zero`, a FIFO or a host file), and so is anything but a
+/// regular file of at most `MAX_LOCK_BYTES`.
+fn read_lock(worktree: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let refused = |what: &str| {
+        HarnessError::config(format!(
+            "offline Cargo verification refused: the clone's Cargo.lock is {what}"
+        ))
+    };
+    let path = worktree.join("Cargo.lock");
+    let entry = std::fs::symlink_metadata(&path).map_err(|_| missing("Cargo.lock is required"))?;
+    if !entry.file_type().is_file() {
+        return Err(refused("not a regular file (a link is never followed)"));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // The entry can change after the check above: never follow or block on it.
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options
+        .open(&path)
+        .map_err(|_| refused("not a regular file (a link is never followed)"))?;
+    let opened = file.metadata()?;
+    if !opened.is_file() {
+        return Err(refused("not a regular file (a link is never followed)"));
+    }
+    let too_large = || refused(&format!("larger than {MAX_LOCK_BYTES} bytes"));
+    if opened.len() > MAX_LOCK_BYTES {
+        return Err(too_large());
+    }
+    let mut lock = Vec::new();
+    // One byte past the cap catches a file that grew after the size check.
+    file.take(MAX_LOCK_BYTES + 1).read_to_end(&mut lock)?;
+    if lock.len() as u64 > MAX_LOCK_BYTES {
+        return Err(too_large());
+    }
+    Ok(lock)
+}
+
 impl CargoInputs {
     pub fn load(worktree: &Path, prepared_root: Option<&Path>) -> Result<Self> {
-        let lock = std::fs::read(worktree.join("Cargo.lock")).map_err(|_| missing("Cargo.lock is required"))?;
+        let lock = read_lock(worktree)?;
         let digest = crate::common::sha256_bytes_hex(&lock);
         let root = prepared_root.ok_or_else(|| missing("prepared source root is absent"))?;
         let snapshot =
@@ -162,5 +209,54 @@ impl CargoInputs {
         }
         out.extend_from_slice(&original[split..]);
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CargoInputs;
+    use std::path::Path;
+
+    fn refusal(worktree: &Path, prepared: &Path) -> String {
+        match CargoInputs::load(worktree, Some(prepared)) {
+            Ok(_) => panic!("an unprepared lock loaded"),
+            Err(e) => e.message,
+        }
+    }
+
+    /// The clone chose its `Cargo.lock` entry: it is read only as a bounded
+    /// regular file, never through a link and never to the end of a huge one.
+    #[test]
+    fn the_clone_lock_is_read_only_as_a_bounded_regular_file() {
+        let home = tempfile::tempdir().unwrap();
+        let (worktree, prepared) = (home.path().join("clone"), home.path().join("prepared"));
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::create_dir_all(&prepared).unwrap();
+        let lock = worktree.join("Cargo.lock");
+
+        // A regular lock is read and hashed; only its snapshot is missing.
+        std::fs::write(&lock, b"version = 4\n").unwrap();
+        assert!(refusal(&worktree, &prepared).contains("no snapshot for this Cargo.lock"));
+
+        // One byte over the cap is refused by size instead of read and hashed.
+        std::fs::File::create(&lock)
+            .unwrap()
+            .set_len(super::MAX_LOCK_BYTES + 1)
+            .unwrap();
+        assert!(refusal(&worktree, &prepared).contains("larger than"));
+
+        #[cfg(unix)]
+        {
+            // A link to a file outside the clone is refused, not followed.
+            let outside = home.path().join("outside.lock");
+            std::fs::write(&outside, b"version = 4\n").unwrap();
+            std::fs::remove_file(&lock).unwrap();
+            std::os::unix::fs::symlink(&outside, &lock).unwrap();
+            assert!(refusal(&worktree, &prepared).contains("not a regular file"));
+            // A link to an endless device returns at once instead of reading it.
+            std::fs::remove_file(&lock).unwrap();
+            std::os::unix::fs::symlink("/dev/zero", &lock).unwrap();
+            assert!(refusal(&worktree, &prepared).contains("not a regular file"));
+        }
     }
 }
