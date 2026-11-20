@@ -616,7 +616,10 @@ fn loop_refuses_operator_read_file_of_a_denied_basename() {
 /// Without a hard sandbox no check can run, so the run is refused before the
 /// planner is asked, not after its first reply. This needs a host that has
 /// none (a Linux runner without bwrap); where one exists there is nothing to
-/// refuse and the test says so instead of passing silently.
+/// refuse and the test says so instead of passing silently. Unix only, like the
+/// helpers it uses: `production_sandbox` always returns the Job Object sandbox
+/// on Windows, so there the test could only skip.
+#[cfg(unix)]
 #[test]
 fn a_host_without_a_hard_sandbox_is_refused_before_the_first_model_request() {
     if cgagentharness::agentic::executor::production_sandbox(false).is_ok() {

@@ -382,7 +382,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 ## troubleshooting: symptom to fix (part 5)
 
-- A short chat prompt fails with `HARNESS_LLM_ERROR` `model output was truncated` → Compare `tools_offered`, `finish_reason` and `completion_tokens` on `chat_model_call` lines in `logs/audit.jsonl` (no text). `probe-tool-repeat.py`…
+- A short chat prompt fails with `HARNESS_LLM_ERROR` `model output was truncated` or `repeated one line` → A streamed reply that repeats one line `models.local_llm.repeat_abort_lines` times in a row is stopped early and not saved (`finish_reason`…
 - `Address already in use` when starting `serve` → `lsof -i :8790`; stop only a known owner or choose another `--port`. Each server needs its own home
 - `/agent` reports `gh: command not found` or "Agentic layer disabled" → `brew install gh && gh auth login`; follow coding config, then restart
 - Stop or `/model use` refused with `CHAT_OTHER_ACCOUNT` → Wait for it to finish; only that account can stop it

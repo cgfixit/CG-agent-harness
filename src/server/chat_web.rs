@@ -118,13 +118,16 @@ impl ModelCall<'_> {
             .log(json!({"event":"chat_model_call","path":self.path,"model":self.model,
             "loop_turn":self.loop_turn,"round":self.round,"tools_offered":self.tools_offered,
             "finish_reason":self.finish_reason,"tool_calls":self.tool_calls,
-            "completion_tokens":self.completion_tokens,"error":self.error}));
+            "completion_tokens":self.completion_tokens,"error":self.error,
+            "repeat_detector_fired":self.finish_reason == "repeat"}));
     }
 }
 
 /// The fixed finish label an incomplete-reply error carries, else `error`.
+/// `repeat` is a stream the repeat guard stopped (#941).
 pub(crate) fn error_finish_label(err: &crate::common::errors::HarnessError) -> &'static str {
     match err.details["finish_reason"].as_str() {
+        Some("repeat") => "repeat",
         Some("stop") => "stop",
         Some("length") => "length",
         Some("tool_calls") => "tool_calls",
