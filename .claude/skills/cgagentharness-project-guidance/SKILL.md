@@ -27,7 +27,8 @@ you touch the behavior.
 |---|---|
 | `cgagentharness serve` | `src/server` (axum, bind `127.0.0.1` only) |
 | `cgagentharness agentic <action>` | `src/agentic`, spawned only via `src/shim` |
-| Exit codes | `0` ok, `2` failed, `3` env/config, `4` write refused |
+| Hidden children | `pdf-text-worker`, `browser`/`browser-verify`, `mcp-stdio-worker`, `desktop`: spawned by the server or shell, never typed |
+| Exit codes | `agentic`/`netconnect`: `0` ok, `2` failed, `3` env/config, `4` refused; others in `AGENTS.md` (The map) |
 | Home | `~/.CGagentHarness` / `CGAGENTHARNESS_HOME` |
 | Allowed writes | Home directory, or pipeline clones under `data/agentic/workspaces` |
 | Console asset | `assets/static/harness.html` (CSRF placeholders contractual) |
@@ -50,6 +51,13 @@ approval binding, secrets redaction, detached-run gates.
 | Routes / console listing | `src/server/routes/mod.rs` (`REGISTERED_PATHS`), `views.rs` |
 | Install / local verify | `scripts/verify-local.sh`, `scripts/smoke-ollama.sh`, `README.md`, `docs/INSTALL.md`, `docs/MODELS.md` |
 | Packaging / release | `scripts/package-release.sh`, `docs/RELEASING.md`, `docs/DESKTOP.md` |
+| Web search, fetch, research | `src/server/web_*.rs`, `chat_web.rs`, `docs/SECURE_RESEARCH.md`, `docs/WEB_DECISION_ROUTER.md` |
+| PDF text, `/browse` | `src/common/pdf_text.rs`, `src/common/browser_host.rs`, `browser/sidecar.mjs`, `docs/Browser-Use.md` |
+| MCP (outbound client, inbound memory gateway) | `src/server/mcp*.rs`, `src/common/mcp*.rs`, `docs/MCP.md` |
+| Memory, notes, facts | `src/server/structured_memory*.rs`, `docs/STRUCTURED_MEMORY.md` |
+| Dependencies, telemetry | `docs/DEPENDENCIES.md`, both `deny.toml`, `browser/package-lock.json` |
+
+Any other feature: the "Changing / Read first" table in `AGENTS.md`.
 
 Core paths always require an invariant statement in the PR body when touched:
 `src/shim`, `src/server/guards.rs`, `src/server/headers.rs`,
@@ -84,7 +92,7 @@ Core paths always require an invariant statement in the PR body when touched:
 - New routes → `REGISTERED_PATHS` (+ console views if listed)
 - New shim actions → `shim::ACTIONS` + CLI dispatch + invariant whitelist together
 - Draft PRs, driver-prefixed branches (`claude/`, `codex/`, `grok/`, `kimi/`,
-  `agent/`), `scripts/check-pr-template.sh`, one concern each
+  `cyclaw/`, `agent/`), `scripts/check-pr-template.sh`, one concern each
 
 ## 6. Authorization boundary
 
