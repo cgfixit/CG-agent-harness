@@ -24,7 +24,13 @@ for binary in cgagentharness cg-agent-harness-desktop; do
   codesign --verify --strict "$path"
   # Only system libraries are acceptable runtime linkage. Rust/SDK are build
   # prerequisites, never a runtime dylib dependency from the checkout/Homebrew.
-  if otool -arch all -L "$path" | awk '/^[[:space:]]/ {print $1}' | grep -Ev '^(/usr/lib/|/System/Library/)'; then
+  # otool runs on its own line: inside the `if` pipeline its failure ended in
+  # grep's "no match" status and read as "only system libraries". Every Mach-O
+  # executable links libSystem, so an empty list means otool listed nothing.
+  linkage="$(otool -arch all -L "$path")"
+  libraries="$(awk '/^[[:space:]]/ {print $1}' <<<"$linkage")"
+  [[ -n "$libraries" ]] || { echo "otool listed no dynamic libraries for $binary." >&2; exit 1; }
+  if grep -Ev '^(/usr/lib/|/System/Library/)' <<<"$libraries"; then
     echo 'Unexpected non-system dynamic dependency.' >&2; exit 1
   fi
 done
