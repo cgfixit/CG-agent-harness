@@ -239,7 +239,7 @@ SITES: dict[str, dict[str, object]] = {
     # a browser. Chrome's egress is the sidecar's loopback proxy.
     "browser-sidecar": {
         "file": "src/common/browser_host.rs",
-        "signature": r"fn start\(",
+        "signature": r"fn start_with\(",
         "launches": ("node",),
         "pairs": {"PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1"},
         "mentions": ("env_clear()", "child_environment()"),
@@ -606,8 +606,8 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "enforcement": "env_clear() + browser_host::child_environment allowlist; "
                        "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1; loopback proxy refuses ungranted and non-public "
                        "destinations; Chrome sandbox on; gate browser.enabled ships true, admin only",
-        "scope": "/api/browser/run and the hidden browser CLI", "reviewed": "2026-11-15",
-        "evidence": "src/common/browser_host.rs Sidecar::start; browser/sidecar.mjs startProxy()",
+        "scope": "/api/browser/run and the hidden browser CLI", "reviewed": "2026-11-20",
+        "evidence": "src/common/browser_host.rs Sidecar::start_with (Sidecar::start delegates); browser/sidecar.mjs startProxy()",
     },
     {
         "name": "tauri desktop shell", "category": 5, "controls": {},
