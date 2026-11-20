@@ -29,11 +29,18 @@ fn governed_registry(state: &AppState) -> std::path::PathBuf {
         .governed_registry_path(live.as_ref().unwrap_or(state.cfg.as_ref()))
 }
 
+/// These panels read config.yaml and registry files from disk on every call:
+/// off the async workers.
 pub async fn registry(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(views::full_registry(&state.home, &governed_registry(&state)))
+    super::structured_memory::off_worker(move || Json(views::full_registry(&state.home, &governed_registry(&state))))
+        .await
 }
 
 pub async fn tools(State(state): State<Arc<AppState>>) -> Json<Value> {
+    super::structured_memory::off_worker(move || tools_report(&state)).await
+}
+
+fn tools_report(state: &AppState) -> Json<Value> {
     let extras = crate::netconnect::NetconnectConfig::from_config(state.cfg.as_ref())
         .map(|cfg| crate::netconnect::tools::catalog_rows(&cfg))
         .unwrap_or_default();
@@ -95,7 +102,10 @@ pub async fn netconnect_diag(State(state): State<Arc<AppState>>) -> ApiResult<Js
 }
 
 pub async fn skills(State(state): State<Arc<AppState>>) -> Json<Value> {
-    Json(views::list_wired_skills(&state.home, &governed_registry(&state)))
+    super::structured_memory::off_worker(move || {
+        Json(views::list_wired_skills(&state.home, &governed_registry(&state)))
+    })
+    .await
 }
 
 // ---------------------------------------------------------------- web
@@ -155,6 +165,17 @@ fn web_enabled(state: &AppState) -> bool {
     state.settings.lock().unwrap_or_else(|p| p.into_inner()).web_enabled
 }
 
+/// Run one web policy read or edit on the blocking pool. Each takes the policy
+/// lock, reads or fsyncs the policy file, and `status` may ask the OS
+/// credential store for a saved key, which can block on a locked store.
+async fn web_blocking<T: Send + 'static>(
+    state: &Arc<AppState>,
+    work: impl FnOnce(&crate::server::web_search::WebTool, bool) -> T + Send + 'static,
+) -> T {
+    let (web, enabled) = (state.web_snapshot(), web_enabled(state));
+    super::structured_memory::off_worker(move || work(&web, enabled)).await
+}
+
 pub async fn web_status(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
@@ -162,9 +183,8 @@ pub async fn web_status(
     // Every other caller of `status` is administrator-only; this read is not.
     let result_reads = super::auth::may_read_search_results(&state, user.as_deref());
     let owner = super::auth::context_owner(user);
-    let mut status = state
-        .web_snapshot()
-        .status(web_enabled(&state), &owner)
+    let mut status = web_blocking(&state, move |web, enabled| web.status(enabled, &owner))
+        .await
         .map_err(|e| web_err(&e))?;
     if !result_reads {
         status["search_result_reads"] = json!(false);
@@ -204,9 +224,9 @@ pub async fn web_toggle(
     state
         .audit
         .log(json!({"event": "web.enabled_set", "owner": owner, "enabled": snapshot.web_enabled}));
-    state
-        .web_snapshot()
-        .status(snapshot.web_enabled, &owner)
+    let (web, enabled) = (state.web_snapshot(), snapshot.web_enabled);
+    super::structured_memory::off_worker(move || web.status(enabled, &owner))
+        .await
         .map(Json)
         .map_err(|e| web_err(&e))
 }
@@ -227,15 +247,18 @@ pub async fn web_allow(
     ValidJson(req): ValidJson<WebRuleRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
-    let enabled = web_enabled(&state);
-    let web = state.web_snapshot();
     let patterns = req.patterns();
-    let changed = web.allow_rules(&patterns, &req.group, &req.seeds, enabled);
-    audit_web_rules(&state, &owner, "allow", patterns.len(), changed.is_ok());
-    changed
-        .and_then(|_| web.status(enabled, &owner))
-        .map(Json)
-        .map_err(|e| web_err(&e))
+    let (rules, status_owner) = (patterns.len(), owner.clone());
+    let (changed, status) = web_blocking(&state, move |web, enabled| {
+        let changed = web.allow_rules(&patterns, &req.group, &req.seeds, enabled);
+        (
+            changed.is_ok(),
+            changed.and_then(|_| web.status(enabled, &status_owner)),
+        )
+    })
+    .await;
+    audit_web_rules(&state, &owner, "allow", rules, changed);
+    status.map(Json).map_err(|e| web_err(&e))
 }
 
 pub async fn web_deny(
@@ -244,14 +267,17 @@ pub async fn web_deny(
     ValidJson(req): ValidJson<WebUrlRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
-    let enabled = web_enabled(&state);
-    let web = state.web_snapshot();
-    let changed = web.deny(&req.url, enabled);
-    audit_web_rules(&state, &owner, "deny", 1, changed.is_ok());
-    changed
-        .and_then(|_| web.status(enabled, &owner))
-        .map(Json)
-        .map_err(|e| web_err(&e))
+    let status_owner = owner.clone();
+    let (changed, status) = web_blocking(&state, move |web, enabled| {
+        let changed = web.deny(&req.url, enabled);
+        (
+            changed.is_ok(),
+            changed.and_then(|_| web.status(enabled, &status_owner)),
+        )
+    })
+    .await;
+    audit_web_rules(&state, &owner, "deny", 1, changed);
+    status.map(Json).map_err(|e| web_err(&e))
 }
 
 pub async fn web_mode(
@@ -260,13 +286,15 @@ pub async fn web_mode(
     ValidJson(req): ValidJson<WebModeRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
-    let enabled = web_enabled(&state);
-    let web = state.web_snapshot();
-    let result = web
-        .set_mode(req.mode, req.confirm, enabled)
-        .and_then(|_| web.status(enabled, &owner))
-        .map(Json)
-        .map_err(|e| web_err(&e));
+    let status_owner = owner.clone();
+    let (mode, confirm) = (req.mode, req.confirm);
+    let result = web_blocking(&state, move |web, enabled| {
+        web.set_mode(mode, confirm, enabled)
+            .and_then(|_| web.status(enabled, &status_owner))
+    })
+    .await
+    .map(Json)
+    .map_err(|e| web_err(&e));
     if result.is_ok() {
         state
             .audit
@@ -281,14 +309,17 @@ pub async fn web_block(
     ValidJson(req): ValidJson<WebBlockRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
-    let enabled = web_enabled(&state);
-    let web = state.web_snapshot();
-    let changed = web.block_rules(&req.urls, enabled);
-    audit_web_rules(&state, &owner, "block", req.urls.len(), changed.is_ok());
-    changed
-        .and_then(|_| web.status(enabled, &owner))
-        .map(Json)
-        .map_err(|e| web_err(&e))
+    let (rules, status_owner) = (req.urls.len(), owner.clone());
+    let (changed, status) = web_blocking(&state, move |web, enabled| {
+        let changed = web.block_rules(&req.urls, enabled);
+        (
+            changed.is_ok(),
+            changed.and_then(|_| web.status(enabled, &status_owner)),
+        )
+    })
+    .await;
+    audit_web_rules(&state, &owner, "block", rules, changed);
+    status.map(Json).map_err(|e| web_err(&e))
 }
 
 pub async fn web_unblock(
@@ -297,14 +328,17 @@ pub async fn web_unblock(
     ValidJson(req): ValidJson<WebUrlRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
-    let enabled = web_enabled(&state);
-    let web = state.web_snapshot();
-    let changed = web.unblock(&req.url, enabled);
-    audit_web_rules(&state, &owner, "unblock", 1, changed.is_ok());
-    changed
-        .and_then(|_| web.status(enabled, &owner))
-        .map(Json)
-        .map_err(|e| web_err(&e))
+    let status_owner = owner.clone();
+    let (changed, status) = web_blocking(&state, move |web, enabled| {
+        let changed = web.unblock(&req.url, enabled);
+        (
+            changed.is_ok(),
+            changed.and_then(|_| web.status(enabled, &status_owner)),
+        )
+    })
+    .await;
+    audit_web_rules(&state, &owner, "unblock", 1, changed);
+    status.map(Json).map_err(|e| web_err(&e))
 }
 
 pub async fn web_fetch(
@@ -339,11 +373,12 @@ pub async fn web_check(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<WebFetchRequest>,
 ) -> ApiResult<Json<Value>> {
-    state
-        .web_snapshot()
-        .check_urls(&req.targets(), req.group.as_deref(), web_enabled(&state))
-        .map(Json)
-        .map_err(|e| web_err(&e))
+    web_blocking(&state, move |web, enabled| {
+        web.check_urls(&req.targets(), req.group.as_deref(), enabled)
+    })
+    .await
+    .map(Json)
+    .map_err(|e| web_err(&e))
 }
 
 pub async fn web_search(
@@ -395,9 +430,8 @@ pub async fn web_inject(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
-    state
-        .web_snapshot()
-        .inject(web_enabled(&state), &owner)
+    web_blocking(&state, move |web, enabled| web.inject(enabled, &owner))
+        .await
         .map(Json)
         .map_err(|e| web_err(&e))
 }
@@ -456,9 +490,8 @@ pub async fn web_forget(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
-    state
-        .web_snapshot()
-        .forget(web_enabled(&state), &owner)
+    web_blocking(&state, move |web, enabled| web.forget(enabled, &owner))
+        .await
         .map(Json)
         .map_err(|e| web_err(&e))
 }
@@ -770,7 +803,12 @@ pub async fn api_keys_set(
 
 // ---------------------------------------------------------------- harness runs
 
+/// Lists and stats every accepted run record: off the async workers.
 pub async fn harness_runs(State(state): State<Arc<AppState>>) -> Json<Value> {
+    super::structured_memory::off_worker(move || harness_runs_report(&state)).await
+}
+
+fn harness_runs_report(state: &AppState) -> Json<Value> {
     let accepted = state.home.optimizer_runs_dir().join("accepted");
     let mut files: Vec<(std::time::SystemTime, String)> = Vec::new();
     if let Ok(rd) = std::fs::read_dir(&accepted) {

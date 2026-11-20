@@ -774,6 +774,10 @@ impl WebTool {
         }
     }
 
+    /// Reads the policy and context files and, under the `auto` provider with
+    /// no key in the environment, asks the OS credential store for the saved
+    /// keys. That call can block on a locked store, so no caller holds the
+    /// policy lock across it, and async callers run it on the blocking pool.
     pub fn status(&self, enabled: bool, owner: &str) -> Result<Value> {
         let (policy, missing) = self.policy_or_empty()?;
         let stored = self.read_page(&self.context_path(owner), None).is_ok();
@@ -828,7 +832,7 @@ impl WebTool {
                 return Err(error("WEB_POLICY_INVALID", "seed is outside every requested rule"));
             }
         }
-        let _guard = self
+        let guard = self
             .mutation
             .lock()
             .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
@@ -855,6 +859,7 @@ impl WebTool {
             }
         }
         self.save_policy(&policy)?;
+        drop(guard);
         self.status(enabled, "")
     }
 
@@ -881,7 +886,7 @@ impl WebTool {
     }
 
     pub fn deny(&self, raw: &str, enabled: bool) -> Result<Value> {
-        let _guard = self
+        let guard = self
             .mutation
             .lock()
             .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
@@ -897,6 +902,7 @@ impl WebTool {
             return Err(error("WEB_RULE_UNKNOWN", "no rule has that ID or pattern"));
         }
         self.save_policy(&policy)?;
+        drop(guard);
         self.status(enabled, "")
     }
 
@@ -910,7 +916,7 @@ impl WebTool {
     }
 
     pub fn forget(&self, enabled: bool, owner: &str) -> Result<Value> {
-        let _guard = self
+        let guard = self
             .mutation
             .lock()
             .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
@@ -921,12 +927,13 @@ impl WebTool {
                 Err(_) => return Err(error("WEB_CLEAR_FAILED", "could not clear saved web evidence")),
             }
         }
+        drop(guard);
         self.status(enabled, owner)
     }
 
     pub fn inject(&self, enabled: bool, owner: &str) -> Result<Value> {
         self.require_enabled(enabled)?;
-        let _guard = self
+        let guard = self
             .mutation
             .lock()
             .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
@@ -936,6 +943,7 @@ impl WebTool {
         }
         page.validate(&self.policy()?, None)?;
         crate::common::atomic::write_json_atomic_mode(&self.context_path(owner), &serde_json::to_value(&page)?, 0o600)?;
+        drop(guard);
         self.status(enabled, owner)
     }
 
@@ -983,13 +991,14 @@ impl WebTool {
                 "switching to the denylist permits every public URL that is not blocked; resend with confirm: true",
             ));
         }
-        let _guard = self
+        let guard = self
             .mutation
             .lock()
             .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
         let mut policy = self.policy_for_change()?;
         policy.mode = mode;
         self.save_policy(&policy)?;
+        drop(guard);
         self.status(enabled, "")
     }
 
@@ -1014,7 +1023,7 @@ impl WebTool {
                 }
             }
         }
-        let _guard = self
+        let guard = self
             .mutation
             .lock()
             .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
@@ -1035,13 +1044,14 @@ impl WebTool {
             policy.blocked.push(rule);
         }
         self.save_policy(&policy)?;
+        drop(guard);
         self.status(enabled, "")
     }
 
     /// Remove one blocked rule by ID or exact pattern. A bare host removes the
     /// pair `block` added for it.
     pub fn unblock(&self, raw: &str, enabled: bool) -> Result<Value> {
-        let _guard = self
+        let guard = self
             .mutation
             .lock()
             .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
@@ -1056,6 +1066,7 @@ impl WebTool {
             return Err(error("WEB_RULE_UNKNOWN", "no blocked rule has that ID or pattern"));
         }
         self.save_policy(&policy)?;
+        drop(guard);
         self.status(enabled, "")
     }
 
@@ -1360,11 +1371,48 @@ impl WebTool {
         })
     }
 
-    pub(super) fn store_last(&self, page: &Page, group: Option<&str>, owner: &str) -> Result<()> {
+    /// Run web-store work that blocks (the policy lock, cache scans, fsync'd
+    /// writes) on the blocking pool, as `provider_key_off_worker` does for the
+    /// credential store: a held lock or a slow disk stalls a blocking-pool
+    /// thread, never a runtime worker. `wanted` turns false once this call's
+    /// future is dropped, so work that publishes an owner-visible selection
+    /// can stop instead of publishing for a request that is gone.
+    pub(super) async fn off_worker<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&WebTool, &dyn Fn() -> bool) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        struct Dropped(Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let _request = Dropped(dropped.clone());
+        let tool = self.clone();
+        tokio::task::spawn_blocking(move || work(&tool, &|| !dropped.load(Ordering::SeqCst)))
+            .await
+            .map_err(|_| error("WEB_CACHE_INVALID", "web store task stopped"))?
+    }
+
+    /// Publish `page` as the owner's last extract. Every caller runs this off
+    /// its request's task (`off_worker`), so `wanted` is asked under the lock,
+    /// just before the write: a request dropped while this waited publishes no
+    /// selection.
+    pub(super) fn store_last(
+        &self,
+        page: &Page,
+        group: Option<&str>,
+        owner: &str,
+        wanted: &dyn Fn() -> bool,
+    ) -> Result<()> {
         let _guard = self
             .mutation
             .lock()
             .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
+        if !wanted() {
+            return Err(error("WEB_CANCELLED", "request cancelled"));
+        }
         self.check_enabled()?;
         page.validate(&self.policy()?, group)?;
         crate::common::atomic::write_json_atomic_mode(&self.last_path(owner), &serde_json::to_value(page)?, 0o600)
@@ -1383,11 +1431,17 @@ impl WebTool {
         // an origin's robots.txt, which is discovery's exception and not a grant.
         policy.authorize(raw, None)?;
         let page = self.get_or_fallback(raw, None, None, audit, None).await?;
-        self.cache_page(&page, None)?;
-        self.store_last(&page, None, owner)?;
-        self.check_enabled()?;
-        page.validate(&self.policy()?, None)?;
-        Ok(page)
+        let owner = owner.to_string();
+        // Both writes take the policy lock and end in an fsync, and the cache
+        // write scans its directory: off the async workers.
+        self.off_worker(move |web, wanted| {
+            web.cache_page(&page, None)?;
+            web.store_last(&page, None, &owner, wanted)?;
+            web.check_enabled()?;
+            page.validate(&web.policy()?, None)?;
+            Ok(page)
+        })
+        .await
     }
 }
 

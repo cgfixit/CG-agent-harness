@@ -283,6 +283,17 @@ impl WebTool {
         crate::common::atomic::write_atomic(&path, &payload, Some(0o600))
     }
 
+    /// `cache_page` on the blocking pool: it takes the policy lock, scans the
+    /// cache directory, evicts and ends in an fsync. Returns the page.
+    async fn cache_off_worker(&self, page: Page, group: Option<&str>) -> Result<Page> {
+        let selected = group.map(str::to_string);
+        self.off_worker(move |web, _| {
+            web.cache_page(&page, selected.as_deref())?;
+            Ok(page)
+        })
+        .await
+    }
+
     pub(super) fn cached_pages(&self, group: Option<&str>) -> Result<(Vec<Page>, Vec<Value>)> {
         let mut pages = Vec::new();
         let mut errors = Vec::new();
@@ -448,7 +459,7 @@ impl WebTool {
                 )
                 .await
             {
-                self.cache_page(&page, group)?;
+                let page = self.cache_off_worker(page, group).await?;
                 coverage.searched.push(page.url.clone());
                 for link in &page.links {
                     if queue.len() >= 256 {
@@ -619,7 +630,7 @@ impl WebTool {
                 )
                 .await
             {
-                self.cache_page(&page, group)?;
+                let page = self.cache_off_worker(page, group).await?;
                 coverage.searched.push(page.url.clone());
                 pages.push(page);
             }
@@ -634,8 +645,10 @@ impl WebTool {
         for page in &pages {
             page.validate(&policy, group)?;
         }
-        if let Some(first) = pages.first() {
-            self.store_last(first, group, owner)?;
+        if let Some(first) = pages.first().cloned() {
+            let (selected, last_owner) = (group.map(str::to_string), owner.to_string());
+            self.off_worker(move |web, wanted| web.store_last(&first, selected.as_deref(), &last_owner, wanted))
+                .await?;
         }
         coverage.elapsed_ms = start.elapsed().as_millis();
         Ok(
@@ -711,8 +724,9 @@ impl WebTool {
             .map_err(|_| error("WEB_BUSY", "a web search is already running"))?;
         let coverage = self.discover(group).await?;
         // Reading, hashing and parsing the cache (16 MiB at the default cap)
-        // can block. Keep the owner-visible selection in the request so a
-        // dropped request cannot publish a selection after the search returns.
+        // can block. The owner-visible selection is published separately
+        // below, only while this request is still wanted, so a dropped request
+        // cannot publish a selection after the search returns.
         let tool = self.clone();
         let q = query.to_string();
         let selected = group.map(str::to_string);
@@ -731,11 +745,24 @@ impl WebTool {
             .into_iter()
             .filter(|p| current.authorize(&p.url, group).is_ok())
             .collect();
-        if let Some(first) = found.first() {
-            self.store_last(&self.read_page(&self.cache_path(&first.url), group)?, group, owner)?;
-        } else {
-            self.forget(enabled, owner)?;
-        }
+        // Publishing takes the policy lock and writes, and `forget` answers
+        // with a status that may read a saved key: off the async workers.
+        let first = found.first().map(|p| p.url.clone());
+        let (selected, last_owner) = (group.map(str::to_string), owner.to_string());
+        self.off_worker(move |web, wanted| {
+            let group = selected.as_deref();
+            match first {
+                Some(url) => web.store_last(
+                    &web.read_page(&web.cache_path(&url), group)?,
+                    group,
+                    &last_owner,
+                    wanted,
+                ),
+                None if wanted() => web.forget(enabled, &last_owner).map(|_| ()),
+                None => Err(error("WEB_CANCELLED", "request cancelled")),
+            }
+        })
+        .await?;
         let hits: Vec<_> = found
             .iter()
             .map(|p| json!({"url":p.url,"snippets":[p.text],"passage_id":p.id}))
