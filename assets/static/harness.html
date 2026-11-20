@@ -1229,6 +1229,7 @@ function errorCopy(e, raw) {
   if (code === 'HARNESS_LLM_ERROR') {
     if (/unreachable/i.test(raw)) return { title: "Can't reach the model", action: 'Nothing is answering at ' + modelEndpoint() + '. Start the model service (Ollama: OLLAMA_CONTEXT_LENGTH=32768 ollama serve), then send again.' };
     if (/deadline/i.test(raw)) return { title: 'The model took too long to answer', action: 'It may still be loading. Wait a moment and send again, or choose a smaller model with /model use <tag>.' };
+    if (/repeated one line/i.test(raw)) return { title: 'The model got stuck repeating itself', action: 'It was stopped early and nothing was saved. Rephrase the message, or send it with /web off, then try again.' };
     if (/no model selected/i.test(raw)) return { title: 'No chat model is selected', action: 'Choose an installed model with /model use <exact-installed-tag>.' };
     if (/HTTP 404/.test(raw)) return { title: 'The model server answered 404', action: lastStatus && lastStatus.provider === 'ollama'
       ? 'The tag may not be installed. Check the exact tag (ollama list), then /model use <tag>.'
