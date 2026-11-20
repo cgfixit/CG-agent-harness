@@ -526,6 +526,24 @@ async fn disabling_one_account_cancels_only_that_owners_schedules() {
 
 #[tokio::test]
 async fn an_account_disabled_during_a_turn_keeps_the_exchange_but_not_the_reply() {
+    reply_is_withheld_after("disable", |auth| auth.disable_user("alice").unwrap()).await;
+}
+
+/// A role change and a password reset revoke the account's sign-ins as a
+/// disable does. A turn in flight keeps its exchange but not its reply.
+#[tokio::test]
+async fn sign_ins_revoked_during_a_turn_keep_the_exchange_but_not_the_reply() {
+    reply_is_withheld_after("role change", |auth| auth.set_role("alice", "portal_auditor").unwrap()).await;
+    reply_is_withheld_after("password reset", |auth| {
+        auth.set_password("alice", &cgagentharness::common::random_hex(24))
+            .unwrap()
+    })
+    .await;
+}
+
+/// Run one plain chat turn as operator `alice`, apply `revoke` after the model
+/// answered and before the exchange is written, and check the outcome.
+async fn reply_is_withheld_after(what: &str, revoke: impl FnOnce(&cgagentharness::common::auth_store::AuthManager)) {
     let model = start_mock_model().await;
     let s = spawn_server(
         &model.base_url(),
@@ -578,16 +596,19 @@ async fn an_account_disabled_during_a_turn_keeps_the_exchange_but_not_the_reply(
     })
     .await
     .expect("the turn reached its session write");
-    s.state.auth.as_ref().unwrap().disable_user("alice").unwrap();
+    revoke(s.state.auth.as_ref().unwrap());
     release_tx.send(()).unwrap();
     holder.join().unwrap();
 
     let response = chat.await.unwrap();
-    assert_eq!(response.status().as_u16(), 401);
+    assert_eq!(response.status().as_u16(), 401, "{what}");
     let body: Value =
         serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 1 << 20).await.unwrap()).unwrap();
-    assert_eq!(body["detail"]["code"], "AUTH_REQUIRED", "{body}");
-    assert!(!body.to_string().contains("pong"), "the reply is withheld: {body}");
+    assert_eq!(body["detail"]["code"], "AUTH_REQUIRED", "{what}: {body}");
+    assert!(
+        !body.to_string().contains("pong"),
+        "{what}: the reply is withheld: {body}"
+    );
     // Stored all the same, in the owner's session.
     let stored = s.state.store.for_owner(&alice_id).get(&sid).unwrap();
     let texts: Vec<_> = stored.messages.iter().map(|m| m.text.as_str()).collect();
