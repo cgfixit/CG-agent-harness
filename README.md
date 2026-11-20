@@ -3,11 +3,11 @@
 [![CI](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/ci.yml)
 [![Bundle](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml/badge.svg)](https://github.com/cgfixit/CG-agent-harness/actions/workflows/bundle.yml)
 
-**An affordable, secure research agent loop on your own machine.** One loopback-only Rust service runs long-form research with a local model: goal loops, evidence-checked web research, browser tasks on sites you name, and memory for the findings. Cloud calls are optional and priced first; every read is bounded and passes your URL rules.
+**An affordable, secure research agent loop on your own machine.** One loopback-only Rust service researches with a local model: goal loops, evidence-checked web research, browser tasks on sites you name, and memory for the findings. Cloud calls are optional and priced first; every read is bounded and passes your URL rules.
 
 [![Console after sign-in: status chips, a local reply with token counts, searchable command guide](docs/screenshots/console-chat-2026-10-30.png)](docs/screenshots/console-chat-2026-10-30.png)
 
-Fresh home, loopback fixture model. [60-second demo](docs/screenshots/demo/CG-Agent-Harness-60-second-demo.mp4) ([notes](docs/screenshots/demo/voiceover-cues.txt)).
+Loopback fixture model: [60-second demo](docs/screenshots/demo/CG-Agent-Harness-60-second-demo.mp4) ([notes](docs/screenshots/demo/voiceover-cues.txt)).
 
 [Quick start](#quick-start) · [Research loop](#how-the-research-loop-decides) · [Invariants](#design-invariants) · [Documentation](#documentation)
 
@@ -59,11 +59,11 @@ Open phases: [#772](https://github.com/cgfixit/CG-agent-harness/issues/772); mea
 Contracts live in [INVARIANTS.md](INVARIANTS.md) and fail `cargo test`, not review ([guard](tests/invariant_guard.rs)).
 
 - **Loopback only.** Non-loopback binds are refused; fresh homes require HTTPS and login.
-- **Process isolation (I6).** The console never calls the coding pipeline in-process; it spawns `cgagentharness agentic …` through an allowlisted [shim](src/shim/mod.rs). Browser tasks run in their own child with no provider keys.
+- **Process isolation (I6).** The console never runs the coding pipeline in-process; it spawns `cgagentharness agentic …` through an allowlisted [shim](src/shim/mod.rs). Browser tasks run in their own child with no provider keys.
 - **Writes are gated.** Write gates ship false; approval, push and publication each need a reason and confirmation; a revoked gate stops a run at its next iteration; checks run under Seatbelt or bubblewrap, and Linux without bubblewrap refuses unless you opt in.
-- **Web needs current permission.** Reads are DNS-pinned to public addresses; policy is rechecked after waits and before dispatch, storage and delivery. Replies render as text, so an injected Markdown image fetches nothing.
+- **Web needs current permission.** Reads are DNS-pinned to public addresses; policy is rechecked after waits and before dispatch, storage and delivery. Replies render as text, so an injected Markdown image fetches nothing. Composed wildcard-rule URLs need Approve.
 - **Strict config.** Gates need literal YAML `true`; malformed numbers stop startup.
-- **Secrets stay out.** Keys live in the OS credential store, never in a response, log or model context.
+- **Secrets stay out.** Keys live in the OS credential store, never in responses, logs or model context.
 - **No telemetry.** `deny.toml` bans telemetry crates; CI runs `cargo deny`.
 
 Accounts are not tenants ([shared state](SECURITY.md#local-authority-and-shared-resources)).

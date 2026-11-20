@@ -1,5 +1,13 @@
 //! Real HTTP tool-protocol checks; model output cannot grant URL permission.
 mod common;
+
+/// These tests predate #901 step 4: their models read pages a subtree rule
+/// permits in JSON and `/loop` turns, which cannot pause for the operator.
+/// `web.fetch_provenance: false` keeps them on what they test; the
+/// confirmation itself is covered in `tests/chat_stream.rs`.
+fn legacy_options() -> common::ServerOptions {
+    common::ServerOptions::default().with("web.fetch_provenance", "false")
+}
 use axum::{
     routing::{get, post},
     Json, Router,
@@ -62,7 +70,7 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
         &format!("http://{address}/v1"),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..common::ServerOptions::default().with("web.chat_tool_calls", "3")
+            ..legacy_options().with("web.chat_tool_calls", "3")
         },
     )
     .await;
@@ -168,7 +176,7 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
 #[tokio::test]
 async fn loop_advertises_only_permitted_web_tool_types_when_enabled() {
     let model = common::start_mock_model().await;
-    let s = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
+    let s = common::spawn_server(&model.base_url(), legacy_options()).await;
     s.post_json("/api/web", json!({"enabled":true})).await;
     let (_, session) = s.post_json("/api/sessions", json!({})).await;
     let id = session["session_id"].as_str().unwrap();
@@ -230,7 +238,7 @@ async fn goal_web_modes_persist_filter_definitions_and_reject_mixed_batches_befo
         &format!("http://{addr}/v1"),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), addr)),
-            ..common::ServerOptions::default().with("web.chat_tool_calls", "3")
+            ..legacy_options().with("web.chat_tool_calls", "3")
         },
     )
     .await;
@@ -336,7 +344,7 @@ async fn goal_web_modes_persist_filter_definitions_and_reject_mixed_batches_befo
 async fn goal_web_default_is_configurable_and_explicit_modes_still_win() {
     let s = common::spawn_server(
         "http://127.0.0.1:9/v1",
-        common::ServerOptions::default().with("web.goal_web_default", "fetch"),
+        legacy_options().with("web.goal_web_default", "fetch"),
     )
     .await;
     let (_, created) = s.post_json("/api/sessions", json!({})).await;
@@ -403,7 +411,7 @@ async fn check_fetch_evidence(loop_turn: bool) {
         &format!("http://{address}/v1"),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..Default::default()
+            ..legacy_options()
         },
     )
     .await;
@@ -569,7 +577,7 @@ async fn a_later_web_turn_lists_earlier_reads_only_when_carry_forward_is_on() {
             &format!("http://{address}/v1"),
             common::ServerOptions {
                 web_resolve: Some(("docs.example".into(), address)),
-                ..common::ServerOptions::default().with("web.carry_forward_sources", rows)
+                ..legacy_options().with("web.carry_forward_sources", rows)
             },
         )
         .await;
@@ -699,7 +707,7 @@ async fn web_chat_tool_rounds_stay_inside_the_web_token_budget() {
         &format!("http://{address}/v1"),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..Default::default()
+            ..legacy_options()
         }
         .with("models.local_llm.provider", "lmstudio")
         .with("models.local_llm.max_tokens", "2048"),
@@ -850,7 +858,7 @@ async fn web_chat_compacts_before_a_tool_round_stops_fitting() {
         &format!("http://{address}/v1"),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..Default::default()
+            ..legacy_options()
         }
         .with("models.local_llm.max_tokens", "2048")
         .with("web.total_tokens", "16000"),
@@ -979,7 +987,7 @@ async fn web_chat_batches_keep_calibrated_room_for_each_later_result() {
         &format!("http://{address}/v1"),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..Default::default()
+            ..legacy_options()
         }
         .with("models.local_llm.provider", "lmstudio")
         .with("models.local_llm.max_tokens", "512")
@@ -1101,7 +1109,7 @@ async fn budget_server(router: Router, calls: usize) -> (common::TestServer, Arc
         &format!("http://{address}/v1"),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..Default::default()
+            ..legacy_options()
         }
         .with("models.local_llm.max_tokens", "2048")
         .with("api.harness_loop_rate_limit.max_tokens", "2048")
@@ -1248,7 +1256,7 @@ async fn web_chat_grounds_a_web_denial_only_when_the_answer_was_offered_tools() 
             &format!("http://{address}/v1"),
             common::ServerOptions {
                 web_resolve: Some(("docs.example".into(), address)),
-                ..Default::default()
+                ..legacy_options()
             }
             .with("models.local_llm.max_tokens", &reservation.to_string())
             .with("web.total_tokens", &total.to_string()),
@@ -1349,7 +1357,7 @@ async fn check_fetch_cancel(loop_turn: bool, partial_usage: bool) {
         &model.base_url(),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..Default::default()
+            ..legacy_options()
         },
     )
     .await;
@@ -1414,7 +1422,7 @@ async fn check_fetch_cancel(loop_turn: bool, partial_usage: bool) {
 async fn cancel_before_model_response_does_not_invent_spend() {
     let model = common::start_mock_model().await;
     model.set_delay_ms(30_000);
-    let s = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
+    let s = common::spawn_server(&model.base_url(), legacy_options()).await;
     let read = s.post_json("/api/chat", json!({"message":"hello"}));
     let cancel = async {
         tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -1491,7 +1499,7 @@ async fn check_revoked_source(phase: &'static str) {
         &format!("http://{address}/v1"),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..Default::default()
+            ..legacy_options()
         },
     )
     .await;
@@ -1537,7 +1545,7 @@ async fn chat_empty_allowlist_refuses_fetch_and_search() {
         r#"{"url":"http://docs.example/docs/item"}"#,
         "empty_fetch",
     ));
-    let s = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
+    let s = common::spawn_server(&model.base_url(), legacy_options()).await;
     let (status, web) = s.get_json("/api/web").await;
     assert_eq!(status, 200);
     assert_eq!(web["enabled"], true);
@@ -1582,7 +1590,7 @@ async fn an_empty_answer_after_a_failed_batch_keeps_the_refusal() {
         tool_call_reply("web_fetch", r#"{"url":"http://docs.example/docs/item"}"#, "empty_fetch"), // DevSkim: ignore DS137138 because docs.example is never contacted; the empty policy refuses it.
         common::ok_reply("", 20, 0)
     ]));
-    let s = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
+    let s = common::spawn_server(&model.base_url(), legacy_options()).await;
     let (status, reply) = s
         .post_json("/api/chat", json!({"message": "Read http://docs.example/docs/item"})) // DevSkim: ignore DS137138 because docs.example is never contacted; the empty policy refuses it.
         .await;
@@ -1629,7 +1637,7 @@ async fn chat_origin_grant_fetches_within_bound_and_refuses_n_plus_one() {
         &model.base_url(),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..common::ServerOptions::default()
+            ..legacy_options()
                 .with("web.pace_ms", "100")
                 .with("models.local_llm.max_tokens", "256")
         },
@@ -1674,7 +1682,7 @@ async fn chat_search_without_google_pattern_returns_google_permission() {
         r#"{"query":"veeam software cve"}"#,
         "google_denied",
     ));
-    let s = common::spawn_server(&model.base_url(), common::ServerOptions::default()).await;
+    let s = common::spawn_server(&model.base_url(), legacy_options()).await;
     assert_eq!(
         s.post_json("/api/web/allow", json!({"url": "http://docs.example/*"}))
             .await
@@ -1734,7 +1742,7 @@ async fn loop_search_after_a_google_challenge_cools_down_without_a_second_reques
             web_resolve: Some(("google.fixture".into(), address)),
             public_search: Some(url::Url::parse("http://google.fixture/search").unwrap()), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
             // Inline appends, so the audit file is complete when the reply returns.
-            ..common::ServerOptions::default().with("logging.audit_queue_lines", "0")
+            ..legacy_options().with("logging.audit_queue_lines", "0")
         },
     )
     .await;
@@ -1840,7 +1848,7 @@ async fn chat_public_google_searches_in_one_turn_are_paced_by_the_floor() {
         common::ServerOptions {
             web_resolve: Some(("google.fixture".into(), address)),
             public_search: Some(url::Url::parse("http://google.fixture/search").unwrap()), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
-            ..common::ServerOptions::default().with("web.pace_ms", "100")
+            ..legacy_options().with("web.pace_ms", "100")
         },
     )
     .await;
@@ -1932,7 +1940,7 @@ async fn loop_search_falls_back_from_a_down_tavily_and_audits_the_provider() {
             public_search: Some(url::Url::parse("http://google.fixture/search").unwrap()), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
             resolve_extra: vec![("tavily.fixture".into(), down_addr)],
             tavily_search: Some(url::Url::parse("http://tavily.fixture/search").unwrap()), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the refused loopback port.
-            ..common::ServerOptions::default()
+            ..legacy_options()
                 .with("logging.audit_queue_lines", "0")
                 .with("security.allow_plaintext_key_file", "true")
                 .with("web.search.provider", "tavily")
@@ -2069,7 +2077,7 @@ async fn small_model_tool_call_shapes_complete_one_bounded_round() {
         &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..common::ServerOptions::default()
+            ..legacy_options()
         },
     )
     .await;
@@ -2144,7 +2152,7 @@ async fn window_warning_counts_the_tool_results_a_web_turn_sends() {
         &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..common::ServerOptions::default()
+            ..legacy_options()
                 .with("models.local_llm.model", "mock-model")
                 .with("models.local_llm.inventory.refresh_sec", "1")
         },
@@ -2224,7 +2232,7 @@ async fn window_warning_counts_the_largest_middle_round() {
         &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..common::ServerOptions::default()
+            ..legacy_options()
                 .with("models.local_llm.model", "mock-model")
                 .with("web.chat_tool_calls", "2")
         },
@@ -2379,7 +2387,7 @@ async fn restored_evidence_does_not_inflate_token_calibration() {
         &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..common::ServerOptions::default()
+            ..legacy_options()
         },
     )
     .await;
@@ -2514,7 +2522,7 @@ async fn check_goal_evidence_reuse(reread: bool, refresh: Option<bool>, valid_di
         &format!("http://{address}/v1"),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..common::ServerOptions::default().with("web.evidence_tokens", &evidence_budget.to_string())
+            ..legacy_options().with("web.evidence_tokens", &evidence_budget.to_string())
         },
     )
     .await;
@@ -2609,7 +2617,7 @@ async fn truncated_goal_digest_counts_reported_usage() {
         &format!("http://{address}/v1"),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..common::ServerOptions::default().with("loop.max_failures", "1")
+            ..legacy_options().with("loop.max_failures", "1")
         },
     )
     .await;
@@ -2762,7 +2770,7 @@ async fn refreshed_goal_digest_excludes_superseded_passages() {
         &format!("http://{address}/v1"),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..common::ServerOptions::default()
+            ..legacy_options()
         },
     )
     .await;
@@ -2850,7 +2858,7 @@ async fn restored_goal_evidence_fits_the_remaining_turn_budget() {
         &format!("http://{address}/v1"),
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..common::ServerOptions::default()
+            ..legacy_options()
         }
         .with("models.local_llm.max_tokens", "2048")
         .with("web.total_tokens", "16000"),
@@ -2943,7 +2951,7 @@ async fn listing_server(
     address: std::net::SocketAddr,
     result_reads: Option<bool>,
 ) -> common::TestServer {
-    let mut options = common::ServerOptions::default();
+    let mut options = legacy_options();
     if let Some(on) = result_reads {
         options = options.with("web.search.result_reads.enabled", if on { "true" } else { "false" });
     }
@@ -3151,7 +3159,7 @@ async fn a_turn_may_read_the_exact_urls_its_own_search_listed() {
 async fn only_an_administrators_turn_may_read_its_search_results() {
     let (address, reads, task) = listing_fixture().await;
     let model = common::start_mock_model().await;
-    let options = common::ServerOptions::default().with("auth.enabled", "true");
+    let options = legacy_options().with("auth.enabled", "true");
     let s = listing_spawn(&model, address, options).await;
     let cookie = |response: &reqwest::Response| {
         let header = response.headers()["set-cookie"].to_str().unwrap();
@@ -3412,7 +3420,7 @@ async fn a_suppressed_refresh_is_cache_only_after_eviction() {
         &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because this is the loopback-only mock model.
         common::ServerOptions {
             web_resolve: Some(("docs.example".into(), address)),
-            ..common::ServerOptions::default().with("web.cache_pages", "1")
+            ..legacy_options().with("web.cache_pages", "1")
         },
     )
     .await;

@@ -280,6 +280,13 @@ unproven saved evidence is inaccessible, including old shared plain-text context
 Revocation cannot erase historical chat or content already sent to a model. No atomicity against arbitrary external file
 edits between an authorization check and an OS operation is claimed.
 
+A chat `web_fetch` URL that only a `/*` or `*.` rule, or denylist mode, permits, that no
+search listed and the turn's message or goal did not name, is composed (#901): an
+administrator's streaming console turn pauses for Approve or Decline
+(`/api/chat/fetch-confirm`; owner-bound, one answer, 120 s) and rechecks web and policy
+before reading; `/loop`, JSON and other-role turns refuse it (`WEB_FETCH_COMPOSED`).
+Audit lines name its origin only. `web.fetch_provenance: false` turns this off.
+
 Chat exposes only two read-only model tools while web is enabled: configured-provider
 search and permitted URL fetch. The dispatcher bounds calls, tokens, time and
 arguments and rechecks current account/URL permissions before reads and evidence
