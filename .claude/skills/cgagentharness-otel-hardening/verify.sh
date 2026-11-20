@@ -48,6 +48,9 @@ _mktree() {
   mkdir -p "$d/desktop"
   cp "$repo_root/Cargo.toml" "$repo_root/Cargo.lock" "$d/"
   cp "$repo_root/desktop/Cargo.toml" "$repo_root/desktop/Cargo.lock" "$d/desktop/"
+  mkdir -p "$d/browser" "$d/docs"
+  cp "$repo_root/browser/package.json" "$repo_root/browser/package-lock.json" "$d/browser/"
+  cp "$repo_root/docs/Browser-Use.md" "$d/docs/"
   cp -r "$repo_root/src" "$d/src"
   cp -r "$repo_root/desktop/src" "$d/desktop/src"
   # finetune/requirements.txt is optional: the MLX workflow left the tree.
@@ -227,6 +230,30 @@ import re
 text, n = re.subn(r"name = \"reqwest\"\nversion = \"[0-9.]+\"", "name = \"reqwest\"\nversion = \"0.12.999\"", text)
 assert n == 1'
 _expect "T6 crate-pin-drift mutation" 0 "WARN  \[T6\] Cargo.lock: reqwest"
+
+# T6: the sidecar's lock moves without the oracle pin.
+a="$(_mktree)"
+_mutate "$a/browser/package-lock.json" '
+text = text.replace("\"version\": \"1.65.1\"", "\"version\": \"1.65.2\"", 1)'
+_expect "T6 npm lock drift mutation" 0 "WARN  \[T6\] browser/package-lock.json: playwright is 1.65.2"
+
+# T6: package.json loosens the exact pin to a range.
+a="$(_mktree)"
+_mutate "$a/browser/package.json" '
+text = text.replace("\"playwright\": \"1.65.1\"", "\"playwright\": \"^1.65.1\"")'
+_expect "T6 npm range-pin mutation" 0 "WARN  \[T6\] browser/package.json: playwright is"
+
+# T6: Browser-Use.md names an older Playwright than the lock.
+a="$(_mktree)"
+_mutate "$a/docs/Browser-Use.md" '
+text = text.replace("Playwright 1.65.1", "Playwright 1.65.0")'
+_expect "T6 npm docs-drift mutation" 0 "WARN  \[T6\] docs/Browser-Use.md names Playwright"
+
+# T6: an unclassified npm dependency joins the sidecar.
+a="$(_mktree)"
+_mutate "$a/browser/package.json" '
+text = text.replace("\"playwright\": \"1.65.1\"", "\"playwright\": \"1.65.1\",\n    \"zz-unknown\": \"1.0.0\"")'
+_expect "T6 unclassified npm dependency mutation" 0 "WARN  \[T6\] browser/package.json: unclassified npm dependency zz-unknown"
 
 # T7: a spawn appears in an unlisted file (prepended: the test tail is stripped).
 a="$(_mktree)"
