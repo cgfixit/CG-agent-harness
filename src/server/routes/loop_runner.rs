@@ -118,8 +118,31 @@ fn start_blocking(
             ))
         }
     };
-    // A goal or web mode on the request persists on the session first, exactly
-    // like the console's `/loop <goal>` does before it starts turning.
+    let base = state.runtime_limits().loop_limits;
+    let config = LoopLimits {
+        max_turns: override_limit("max_turns", req.max_turns, 0, 1_000_000)?.unwrap_or(base.max_turns),
+        max_total_completion_tokens: override_limit(
+            "max_total_completion_tokens",
+            req.max_total_completion_tokens,
+            0,
+            100_000_000,
+        )?
+        .unwrap_or(base.max_total_completion_tokens),
+        max_failures: override_limit("max_failures", req.max_failures, 1, 100)?.unwrap_or(base.max_failures),
+        cooldown_ms: override_limit("cooldown_ms", req.cooldown_ms, 0, 300_000)?.unwrap_or(base.cooldown_ms),
+    };
+    // Refuse before persisting anything: a goal saved for a start that then
+    // meets a live run would end that run with LOOP_GOAL_CHANGED. `start`
+    // still re-checks under its lock for a racing start.
+    if state.loops.active_for_session(&owner, &session.session_id).is_some() {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "LOOP_IN_FLIGHT",
+            "a loop run is already active for this session",
+        ));
+    }
+    // A goal or web mode on a valid request persists on the session first,
+    // exactly like the console's `/loop <goal>` does before it starts turning.
     let session = if req.goal.is_some() || web_mode.is_some() {
         let goal = req.goal.clone().unwrap_or_else(|| session.goal.clone());
         if goal.trim().is_empty() {
@@ -146,19 +169,6 @@ fn start_blocking(
     if session.goal.trim().is_empty() {
         return Err(ApiError::bad_request("LOOP_REQUIRES_GOAL", "set a /goal before /loop"));
     }
-    let base = state.runtime_limits().loop_limits;
-    let config = LoopLimits {
-        max_turns: override_limit("max_turns", req.max_turns, 0, 1_000_000)?.unwrap_or(base.max_turns),
-        max_total_completion_tokens: override_limit(
-            "max_total_completion_tokens",
-            req.max_total_completion_tokens,
-            0,
-            100_000_000,
-        )?
-        .unwrap_or(base.max_total_completion_tokens),
-        max_failures: override_limit("max_failures", req.max_failures, 1, 100)?.unwrap_or(base.max_failures),
-        cooldown_ms: override_limit("cooldown_ms", req.cooldown_ms, 0, 300_000)?.unwrap_or(base.cooldown_ms),
-    };
     let run = LoopRun {
         run_id: uuid::Uuid::new_v4().to_string(),
         session_id: session.session_id.clone(),
