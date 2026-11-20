@@ -7,7 +7,7 @@
 
 [![Console after sign-in: status chips, a local reply with token counts, searchable command guide](docs/screenshots/console-chat-2026-10-30.png)](docs/screenshots/console-chat-2026-10-30.png)
 
-Loopback fixture model: [60-second demo](docs/screenshots/demo/CG-Agent-Harness-60-second-demo.mp4) ([notes](docs/screenshots/demo/voiceover-cues.txt)).
+[60-second demo](docs/screenshots/demo/CG-Agent-Harness-60-second-demo.mp4) ([notes](docs/screenshots/demo/voiceover-cues.txt)).
 
 [Quick start](#quick-start) · [Research loop](#how-the-research-loop-decides) · [Invariants](#design-invariants) · [Documentation](#documentation)
 
@@ -64,7 +64,7 @@ Contracts live in [INVARIANTS.md](INVARIANTS.md) and fail `cargo test`, not revi
 - **Web needs current permission.** Reads are DNS-pinned to public addresses; policy is rechecked after waits and before dispatch, storage and delivery. Replies render as text, so an injected Markdown image fetches nothing. Composed wildcard-rule URLs need Approve.
 - **Strict config.** Gates need literal YAML `true`; malformed numbers stop startup.
 - **Secrets stay out.** Keys live in the OS credential store, never in responses, logs or model context.
-- **No telemetry.** `deny.toml` bans telemetry crates; CI runs `cargo deny`.
+- **No telemetry.** Both `deny.toml` files ban telemetry crates; CI runs `cargo deny` and daily advisory checks, npm included.
 
 Accounts are not tenants ([shared state](SECURITY.md#local-authority-and-shared-resources)).
 
@@ -92,7 +92,7 @@ open "CG Agent Harness.app"
 
 The app is ad-hoc signed ([Gatekeeper](docs/DESKTOP.md)).
 
-**Standalone server, macOS or Linux** (Rust 1.89, a C toolchain; [Install](docs/INSTALL.md)):
+**Standalone server, macOS or Linux** (Rust 1.89, a C compiler; [Install](docs/INSTALL.md)):
 
 ```bash
 git clone https://github.com/cgfixit/CG-agent-harness.git
@@ -101,7 +101,7 @@ cargo build --release --locked
 ./target/release/cgagentharness serve
 ```
 
-Open `https://127.0.0.1:8790/` and trust the [local certificate](docs/SECURE_RESEARCH.md#https-and-native-trust).
+Open `https://127.0.0.1:8790/`, trusting the [local certificate](docs/SECURE_RESEARCH.md#https-and-native-trust).
 
 ### 3. Sign in and research
 
@@ -112,7 +112,7 @@ Open `https://127.0.0.1:8790/` and trust the [local certificate](docs/SECURE_RES
 
 ## Commands and configuration
 
-Public CLI commands, each with `--help`: `serve`, `account`, `web`, `tls`, `mcp-key`, `netconnect`. Console commands: [slash reference](docs/CONSOLE.md#78-slash-command-quick-reference).
+CLI commands (`--help` each): `serve`, `account`, `web`, `tls`, `mcp-key`, `netconnect`. Console: [slash reference](docs/CONSOLE.md#78-slash-command-quick-reference).
 
 First launch seeds `config.yaml` from [the defaults](assets/config.default.yaml); edit it and restart, or use **Reload limits** ([reloadable](docs/INSTALL.md#reload-limits-without-a-restart)). Contributors: `bash scripts/ensure-githooks.sh`, then [AGENTS.md](AGENTS.md) ([CI](docs/INSTALL.md#tests-and-cicd)). Windows has CI but no release.
 

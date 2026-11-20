@@ -119,7 +119,8 @@ server -> browser child -> Playwright sidecar -> Chrome (granted origins only)
   selection's reply is dropped.
 - Reuse `common::dns::lookup_bounded` and `web_search::pinned_client_builder`
   for pinned egress; callers still authorize destinations. Fixture bypasses
-  require `test-support`, absent from default release builds.
+  require `test-support`, absent from default release builds. reqwest 0.13
+  verifies public TLS through the OS trust store (#992).
 
 ## Quality bar
 
