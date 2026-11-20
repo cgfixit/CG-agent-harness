@@ -1010,7 +1010,9 @@ impl StructuredMemoryStore {
         Ok(cleaned.to_string())
     }
 
-    fn validate_reason(&self, reason: &str) -> Result<()> {
+    /// The reason rule every store mutation applies. A caller that changes
+    /// other state first checks it up front, so the store cannot refuse after.
+    pub(crate) fn validate_reason(&self, reason: &str) -> Result<()> {
         let reason = reason.trim();
         if crate::common::is_visibly_blank(reason)
             || reason.chars().count() > self.limits.max_reason_chars

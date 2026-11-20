@@ -564,6 +564,39 @@ async fn session_clear_keeps_episodes_unless_explicit_cascade() {
     assert_eq!(s.get_json("/api/structured-memory/episodes").await.1["count"], 0);
 }
 
+/// The cascade's reason rule (the configured length, no NUL) is stricter than
+/// the clear request's own. A reason it refuses is refused before the clear
+/// deletes anything: the session, its episode and the audit log are unchanged.
+#[tokio::test]
+async fn session_clear_refuses_a_bad_cascade_reason_before_deleting_anything() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), capture()).await;
+    let (status, chat) = s.post_json("/api/chat", json!({"message": "keep everything"})).await;
+    assert_eq!(status, 200, "{chat}");
+    let id = chat["session_id"].as_str().unwrap().to_string();
+    let (status, refused) = s
+        .post_json(
+            "/api/sessions/clear",
+            json!({"confirm":true,"reason":"cleanup\u{0}","delete_derived_episodes":true}),
+        )
+        .await;
+    assert!(
+        s.state.store.for_owner("local").get(&id).is_ok(),
+        "a clear that answered {status} deleted the session: {refused}"
+    );
+    assert_eq!(status, 400, "{refused}");
+    assert_eq!(code(&refused), "STRUCTURED_MEMORY_CONTENT");
+    assert_eq!(s.get_json("/api/structured-memory/episodes").await.1["count"], 1);
+    assert!(!s.audit_log().contains("sessions_cleared"));
+    // Without the cascade the store is not asked, so its rule does not apply.
+    let (status, cleared) = s
+        .post_json("/api/sessions/clear", json!({"confirm":true,"reason":"cleanup\u{0}"}))
+        .await;
+    assert_eq!(status, 200, "{cleared}");
+    assert_eq!(cleared["deleted_sessions"], 1);
+    assert_eq!(cleared["derived_episodes_retained"], 1);
+}
+
 #[tokio::test]
 async fn expired_episode_purge_route_requires_confirm_and_keeps_live_episodes() {
     let model = start_mock_model().await;

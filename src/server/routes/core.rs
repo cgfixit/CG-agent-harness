@@ -382,6 +382,16 @@ pub async fn clear_sessions(
     // disconnects part-way.
     super::structured_memory::off_worker(move || {
     let owner = super::auth::context_owner(user.clone());
+    // Refuse before changing anything. The cascade applies the store's reason
+    // rule (the configured length, no NUL), which is stricter than this
+    // request's own and used to run only after the sessions were deleted.
+    if req.delete_derived_episodes {
+        if let Some(store) = state.structured_memory.as_ref() {
+            store
+                .validate_reason(&req.reason)
+                .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
+        }
+    }
     crate::server::structured_memory_suggest::clear_chat_queue(&state, &owner);
     state.diag.forget(&owner);
     let _ = state.chat_owner.cancel_with(&owner, || state.abort_chat());
