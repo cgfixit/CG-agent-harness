@@ -36,6 +36,7 @@ on enforcement; the review gate remains advisory.
 |---|---|
 | [`workflow-lint.yml`](workflow-lint.yml) | actionlint, zizmor and release/review fixtures; pushes/PRs touching workflow or lint config, or manual. |
 | [`diff-lint.yml`](diff-lint.yml) | [`lint-diff.py`](../../scripts/lint-diff.py) on a PR's added lines: DevSkim annotations, self-manual drift, docs caps, deleted-doc rows, CG009 shipped-value prose, timing bounds; every PR or manual; advisory until required. |
+| [`telemetry-contract.yml`](telemetry-contract.yml) | [`check_otel.py`](../../.claude/skills/cgagentharness-otel-hardening/check_otel.py) and its mutation self-test: child-environment opt-outs, telemetry-free lock graphs, classified dependencies and spawn files; every PR, main push, weekly (dated inventory review) or manual; advisory until required. |
 | [`script-lint.yml`](script-lint.yml) | ShellCheck, Python compilation, Node syntax and disposable Git-hook behavior checks; filtered pushes/PRs or manual. |
 | [`clippy-sarif.yml`](clippy-sarif.yml) | Clippy findings in Security; separate from CI's Clippy gate; main push, PR, weekly or manual. |
 | [`codeql.yml`](codeql.yml) | Rust and Actions code scanning; main push, PR, weekly or manual. |

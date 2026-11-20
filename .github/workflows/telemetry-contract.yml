@@ -1,0 +1,44 @@
+# Static telemetry-kill contract: every child environment the harness builds
+# carries its opt-outs, neither lock graph holds a telemetry SDK crate, and every
+# dependency, external binary and spawn file is classified. The oracle is
+# .claude/skills/cgagentharness-otel-hardening/check_otel.py; verify.sh runs it
+# on the clean tree and then proves each rule can fail with one mutation apiece.
+# Both are standard-library Python and bash: no cargo, no network, no writes
+# outside a temp tree. The skill's live vendor-document sweep is not run here;
+# that stays an operator step. The weekly run alone uses today's date, so an
+# inventory row past its 120-day review turns that run red without blocking a PR.
+name: Telemetry - Child environment and dependency contract
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "37 10 * * 2"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: telemetry-contract-${{ github.workflow }}-${{ github.ref }}
+  # Pull requests only. Do not cancel main or scheduled runs.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.ref != 'refs/heads/main' }}
+
+jobs:
+  telemetry-contract:
+    name: check_otel (oracle, mutation self-test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Contract on the clean tree, then one mutation per rule
+        run: bash .claude/skills/cgagentharness-otel-hardening/verify.sh
+      - name: Inventory review dates as of today (weekly and manual runs)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: |
+          set -euo pipefail
+          python3 .claude/skills/cgagentharness-otel-hardening/check_otel.py --strict --as-of "$(date -u +%F)"
