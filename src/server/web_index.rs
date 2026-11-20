@@ -649,6 +649,13 @@ impl WebTool {
             let (selected, last_owner) = (group.map(str::to_string), owner.to_string());
             self.off_worker(move |web, wanted| web.store_last(&first, selected.as_deref(), &last_owner, wanted))
                 .await?;
+            // Publishing waited for the blocking pool and the policy lock, and
+            // rechecked only the first page: reload before any page is delivered.
+            self.check_enabled()?;
+            let policy = self.policy()?;
+            for page in &pages {
+                page.validate(&policy, group)?;
+            }
         }
         coverage.elapsed_ms = start.elapsed().as_millis();
         Ok(
@@ -745,8 +752,7 @@ impl WebTool {
             .into_iter()
             .filter(|p| current.authorize(&p.url, group).is_ok())
             .collect();
-        // Publishing takes the policy lock and writes, and `forget` answers
-        // with a status that may read a saved key: off the async workers.
+        // Publishing takes the policy lock and writes: off the async workers.
         let first = found.first().map(|p| p.url.clone());
         let (selected, last_owner) = (group.map(str::to_string), owner.to_string());
         self.off_worker(move |web, wanted| {
@@ -758,11 +764,17 @@ impl WebTool {
                     &last_owner,
                     wanted,
                 ),
-                None if wanted() => web.forget(enabled, &last_owner).map(|_| ()),
-                None => Err(error("WEB_CANCELLED", "request cancelled")),
+                None => web.forget_if(&last_owner, wanted),
             }
         })
         .await?;
+        // Publishing waited: reload, and deliver only what is still permitted.
+        self.check_enabled()?;
+        let current = self.policy()?;
+        let found: Vec<_> = found
+            .into_iter()
+            .filter(|p| current.authorize(&p.url, group).is_ok())
+            .collect();
         let hits: Vec<_> = found
             .iter()
             .map(|p| json!({"url":p.url,"snippets":[p.text],"passage_id":p.id}))
@@ -826,6 +838,50 @@ mod tests {
             .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(age))
             .unwrap();
         path
+    }
+
+    /// Work that left its request's task asks `wanted` under the policy lock:
+    /// a request dropped while that work waited for the lock publishes
+    /// nothing and clears nothing.
+    #[test]
+    fn a_request_dropped_while_waiting_for_the_policy_lock_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let web = cache_tool(dir.path());
+        let kept = web.read_page(&cache_doc(&web, "kept", 1), None).unwrap();
+        web.store_last(&kept, None, "owner", &|| true).unwrap();
+        let late = web.read_page(&cache_doc(&web, "late", 2), None).unwrap();
+        for clear in [false, true] {
+            let wanted = Arc::new(std::sync::atomic::AtomicBool::new(true));
+            let guard = web.mutation.lock().unwrap();
+            let (tool, flag, late) = (web.clone(), wanted.clone(), late.clone());
+            let (started, has_started) = std::sync::mpsc::channel();
+            let waiter = std::thread::spawn(move || {
+                started.send(()).unwrap();
+                let wanted = || flag.load(Ordering::SeqCst);
+                if clear {
+                    tool.forget_if("owner", &wanted)
+                } else {
+                    tool.store_last(&late, None, "owner", &wanted)
+                }
+            });
+            has_started.recv().unwrap();
+            // Let the waiter reach the lock, then drop its request and release.
+            std::thread::sleep(Duration::from_millis(100));
+            wanted.store(false, Ordering::SeqCst);
+            drop(guard);
+            assert_eq!(
+                waiter.join().unwrap().unwrap_err().code,
+                "WEB_CANCELLED",
+                "clear={clear}"
+            );
+            // The last extract is still the earlier page: it injects as before.
+            web.inject(true, "owner").unwrap();
+            let context = web.context_text(true, "owner");
+            assert!(
+                context.starts_with(&format!("Source: {}", kept.url)),
+                "clear={clear}: {context}"
+            );
+        }
     }
 
     fn cached_urls(web: &WebTool) -> Vec<String> {

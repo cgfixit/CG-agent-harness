@@ -916,10 +916,21 @@ impl WebTool {
     }
 
     pub fn forget(&self, enabled: bool, owner: &str) -> Result<Value> {
-        let guard = self
+        self.forget_if(owner, &|| true)?;
+        self.status(enabled, owner)
+    }
+
+    /// Clear the owner's saved context and last extract. As in `store_last`,
+    /// `wanted` is asked under the lock, so a request dropped while this
+    /// waited clears nothing.
+    pub(super) fn forget_if(&self, owner: &str, wanted: &dyn Fn() -> bool) -> Result<()> {
+        let _guard = self
             .mutation
             .lock()
             .map_err(|_| error("WEB_POLICY_UNAVAILABLE", "policy lock failed"))?;
+        if !wanted() {
+            return Err(error("WEB_CANCELLED", "request cancelled"));
+        }
         for path in [self.context_path(owner), self.last_path(owner)] {
             match std::fs::remove_file(path) {
                 Ok(()) => {}
@@ -927,8 +938,7 @@ impl WebTool {
                 Err(_) => return Err(error("WEB_CLEAR_FAILED", "could not clear saved web evidence")),
             }
         }
-        drop(guard);
-        self.status(enabled, owner)
+        Ok(())
     }
 
     pub fn inject(&self, enabled: bool, owner: &str) -> Result<Value> {
@@ -1434,14 +1444,17 @@ impl WebTool {
         let owner = owner.to_string();
         // Both writes take the policy lock and end in an fsync, and the cache
         // write scans its directory: off the async workers.
-        self.off_worker(move |web, wanted| {
-            web.cache_page(&page, None)?;
-            web.store_last(&page, None, &owner, wanted)?;
-            web.check_enabled()?;
-            page.validate(&web.policy()?, None)?;
-            Ok(page)
-        })
-        .await
+        let page = self
+            .off_worker(move |web, wanted| {
+                web.cache_page(&page, None)?;
+                web.store_last(&page, None, &owner, wanted)?;
+                Ok(page)
+            })
+            .await?;
+        // The writes waited: reload before the page is delivered.
+        self.check_enabled()?;
+        page.validate(&self.policy()?, None)?;
+        Ok(page)
     }
 }
 
