@@ -33,8 +33,9 @@ fn invalid(message: &str) -> HarnessError {
 /// a row (#941: some tags loop on a short answer while tools are offered and
 /// would otherwise spend the whole reply budget). A piece is the text between
 /// `\n`, `.`, `!` or `?`, compared trimmed, lowercased and with whitespace
-/// collapsed. Pieces with no letter (`}`, `0`, `|---|`) neither count nor
-/// break a run, so code and numeric tables do not trip it. `limit` 0 is off.
+/// collapsed. Pieces with no letter neither count nor trip it; one with a
+/// digit (a list number, a table cell) also breaks the run, so numbered
+/// answers and numeric tables do not trip it. `limit` 0 is off.
 #[derive(Default)]
 pub(crate) struct RepeatGuard {
     limit: usize,
@@ -78,6 +79,13 @@ impl RepeatGuard {
 
     fn piece(&mut self, raw: &str) -> bool {
         if !raw.chars().any(char::is_alphabetic) {
+            // A list number (`2.` splits to `2`) separates items: identical
+            // numbered answers are a list, not a loop. Other letterless
+            // pieces (`}`, `|---|`) are skipped.
+            if raw.chars().any(|c| c.is_ascii_digit()) {
+                self.last = None;
+                self.run = 0;
+            }
             return false;
         }
         let piece = raw.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
@@ -293,8 +301,12 @@ mod tests {
         for text in [code.as_str(), table.as_str(), list.as_str(), alternating.as_str()] {
             assert!(!fires(8, &[text]), "{text}");
         }
-        // A non-letter piece neither counts nor breaks a run.
-        assert!(fires(3, &["Juniper.\n}\nJuniper.\n0\nJuniper."]));
+        // A piece with no letter and no digit (`}`, `|---|`) neither counts nor breaks a run.
+        assert!(fires(3, &["Juniper.\n}\nJuniper.\n|---|\nJuniper."]));
+        // A list number breaks it: eight numbered answers that read the same are a list,
+        // not a loop (Codex review on #981).
+        let numbered: String = (1..=12).map(|n| format!("{n}. Yes.\n")).collect();
+        assert!(!fires(8, &[numbered.as_str()]), "{numbered}");
         // A piece too long to be a short loop resets the run.
         let long = "w".repeat(REPEAT_PIECE_CHARS + 1);
         assert!(!fires(3, &["Juniper. Juniper. ", &long, " Juniper. "]));
