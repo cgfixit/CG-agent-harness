@@ -30,7 +30,10 @@ the server or the shim.
   the host answers the sidecar about every request and redirect hop from that list
   before it is sent (`Policy::blocks_request`; an unreadable policy, or an unjudgeable
   URL on a host a rule names, is refused; `browser guards`), and a granted name or IP literal
-  must be public; only `test-support` fixtures may use loopback.
+  must be public; only `test-support` fixtures may use loopback. A model task
+  navigates only to a URL its task names, a granted origin's root, a page URL or an
+  observed link target, else it is refused; typed text must appear in the task or the
+  current page, else it is held (#901). Report and audit name origins, never paths.
 - A SIGKILL'd child may leak a clone, but cannot corrupt server memory or bypass
   guards. The exit-code contract is 0 ok / 2 failed / 3 env_config / 4 write_refused.
 
