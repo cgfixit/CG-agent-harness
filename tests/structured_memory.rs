@@ -597,6 +597,58 @@ async fn session_clear_refuses_a_bad_cascade_reason_before_deleting_anything() {
     assert_eq!(cleared["derived_episodes_retained"], 1);
 }
 
+/// The cascade runs after the sessions are deleted. When the store then fails,
+/// the clear has still happened: it answers 200 and names the cascade failure
+/// rather than 502, records `sessions_cleared`, and keeps the episodes.
+#[tokio::test]
+async fn session_clear_reports_a_cascade_the_store_failed_after_the_delete() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), capture()).await;
+    let (status, chat) = s.post_json("/api/chat", json!({"message": "clear me"})).await;
+    assert_eq!(status, 200, "{chat}");
+    let id = chat["session_id"].as_str().unwrap().to_string();
+    // The cascade's first statement reads this table; without it the store
+    // fails only once the cascade starts, after the reason check passed.
+    let database = s.home.join("memory/structured.sqlite3");
+    rusqlite::Connection::open(database)
+        .unwrap()
+        .execute_batch("ALTER TABLE proposal_episode_refs RENAME TO proposal_episode_refs_gone")
+        .unwrap();
+    let (status, cleared) = s
+        .post_json(
+            "/api/sessions/clear",
+            json!({"confirm":true,"reason":"cleanup","delete_derived_episodes":true}),
+        )
+        .await;
+    assert!(
+        s.state.store.for_owner("local").get(&id).is_err(),
+        "the session survived a clear that answered {status}: {cleared}"
+    );
+    assert_eq!(status, 200, "the sessions are gone, so the clear did happen: {cleared}");
+    assert_eq!(cleared["deleted_sessions"], 1);
+    assert_eq!(cleared["derived_episodes_deleted"], 0);
+    assert_eq!(cleared["derived_episodes_retained"], 1);
+    assert_eq!(cleared["derived_episodes_error"], "STRUCTURED_MEMORY_IO");
+    assert!(
+        cleared["note"].as_str().unwrap().contains("could not be deleted"),
+        "{cleared}"
+    );
+    let audit = s.audit_log();
+    assert!(audit.contains("sessions_cleared"), "the clear was not recorded");
+    assert!(audit.contains("session_clear_cascade_incomplete"));
+    // A clear whose cascade succeeds carries no error field.
+    let s = spawn_server(&model.base_url(), capture()).await;
+    s.post_json("/api/chat", json!({"message": "clear me"})).await;
+    let (status, cleared) = s
+        .post_json(
+            "/api/sessions/clear",
+            json!({"confirm":true,"reason":"cleanup","delete_derived_episodes":true}),
+        )
+        .await;
+    assert_eq!(status, 200, "{cleared}");
+    assert!(cleared.get("derived_episodes_error").is_none(), "{cleared}");
+}
+
 #[tokio::test]
 async fn expired_episode_purge_route_requires_confirm_and_keeps_live_episodes() {
     let model = start_mock_model().await;
