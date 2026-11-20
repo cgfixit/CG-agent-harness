@@ -25,6 +25,18 @@ to Claude Code.
 - Branch prefix is `claude/`. Draft PR, one concern, based on `main`, body from
   `.github/PULL_REQUEST_TEMPLATE.md`.
 - Never comment `@codex review` on a PR without the operator's approval.
+- The pre-commit security gate prints questions when a diff touches an agent
+  instruction surface or adds an execution path; answer them in the PR body.
+- After a dependency, network-crate or `Command::new(` change, ask the operator
+  to run `/cgagentharness-otel-hardening`: no workflow runs its checker.
+
+## Cloud sessions (Linux container)
+- No `gh`: use the GitHub MCP tools. `cargo-deny` may be absent; say so, never
+  count it as a pass.
+- `desktop/` does not compile here (macOS-only bindings); its compile gate is
+  `desktop-check.yml`.
+- Keep extra build output outside the repository (`CARGO_TARGET_DIR`); an
+  untracked directory blocks the stop hook.
 
 ## Local verification
 Lint (fmt, clippy), then run the changed code. Never the full suite locally; CI
