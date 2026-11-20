@@ -1033,15 +1033,25 @@ fn finish_verdict(args: &Value, failed_earlier_this_turn: bool) -> Result<String
 
 /// Requests held and elements handed off during a task, at most
 /// `MAX_FOR_OPERATOR` rows. The console lists them; nothing here sends them.
-/// `held_background` rows are requests a page sent on its own.
+/// `held_background` rows are requests a page sent on its own. At the cap, a
+/// hold or handoff replaces the newest background row: it is what stopped the
+/// task, so it must be listed.
 fn note_for_operator(rows: &mut Vec<Value>, handoff: Option<Value>, outcome: &Value) {
     let held = outcome["held_for_operator"].as_array().into_iter().flatten();
+    for row in held.map(|request| json!({"held": request})).chain(handoff) {
+        if rows.contains(&row) {
+            continue;
+        }
+        if rows.len() >= MAX_FOR_OPERATOR {
+            let Some(newest) = rows.iter().rposition(|shown| shown.get("held_background").is_some()) else {
+                continue;
+            };
+            rows.remove(newest);
+        }
+        rows.push(row);
+    }
     let background = outcome["held_in_background"].as_array().into_iter().flatten();
-    for row in held
-        .map(|request| json!({"held": request}))
-        .chain(handoff)
-        .chain(background.map(|request| json!({"held_background": request})))
-    {
+    for row in background.map(|request| json!({"held_background": request})) {
         if rows.len() < MAX_FOR_OPERATOR && !rows.contains(&row) {
             rows.push(row);
         }
@@ -2249,6 +2259,26 @@ mod tests {
             note_for_operator(&mut rows, None, &json!({"held_for_operator": [format!("POST /{n}")]}));
         }
         assert_eq!(rows.len(), MAX_FOR_OPERATOR);
+    }
+
+    #[test]
+    fn a_hold_or_handoff_is_listed_even_when_background_rows_fill_the_cap() {
+        let mut rows = Vec::new();
+        for n in 0..MAX_FOR_OPERATOR + 5 {
+            note_for_operator(
+                &mut rows,
+                None,
+                &json!({"held_in_background": [format!("POST /beacon/{n}")]}),
+            );
+        }
+        assert_eq!(rows.len(), MAX_FOR_OPERATOR);
+        let save = json!({"held_for_operator": ["POST /save"], "held_in_background": ["POST /late"]});
+        let handoff = json!({"handoff": "type", "element": "Password", "reason": "secret"});
+        note_for_operator(&mut rows, Some(handoff.clone()), &save);
+        assert_eq!(rows.len(), MAX_FOR_OPERATOR);
+        assert!(rows.contains(&json!({"held": "POST /save"})) && rows.contains(&handoff));
+        assert!(rows.contains(&json!({"held_background": "POST /beacon/0"})));
+        assert!(!rows.contains(&json!({"held_background": "POST /late"})));
     }
 
     /// A page with a password field, a button whose POST is held, and a plain
