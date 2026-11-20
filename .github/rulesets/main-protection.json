@@ -46,7 +46,8 @@
           { "context": "invariant guard (I6 source scan)", "integration_id": 15368 },
           { "context": "bakeoff harness self-test (fake Ollama)", "integration_id": 15368 },
           { "context": "cargo deny (advisories, licenses, bans)", "integration_id": 15368 },
-          { "context": "chat slash-command browser acceptance", "integration_id": 15368 }
+          { "context": "chat slash-command browser acceptance", "integration_id": 15368 },
+          { "context": "browser sidecar guards (fixtures, Chrome sandbox on)", "integration_id": 15368 }
         ]
       }
     },
