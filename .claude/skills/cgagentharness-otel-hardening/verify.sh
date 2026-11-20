@@ -125,6 +125,17 @@ _mutate "$a/src/common/child_env.rs" '
 text = text.replace("            (\"GH_NO_EXTENSION_UPDATE_NOTIFIER\", \"1\"),\n", "", 1)'
 _expect "T2 builder extension-notifier dropped mutation" 2 "FAIL  \[T2\] agentic-git: missing GH_NO_EXTENSION_UPDATE_NOTIFIER"
 
+# T2: the Playwright sidecar loses its download guard, or stops clearing the
+# inherited environment. The spawn lives in `start_with`; `start` delegates.
+a="$(_mktree)"
+_mutate "$a/src/common/browser_host.rs" '
+text = text.replace("            .env(\"PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD\", \"1\")\n", "", 1)'
+_expect "T2 browser-sidecar download-guard dropped mutation" 2 "FAIL  \[T2\] browser-sidecar: missing PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"
+a="$(_mktree)"
+_mutate "$a/src/common/browser_host.rs" '
+text = text.replace("            .env_clear()\n            .envs(child_environment())\n", "", 1)'
+_expect "T2 browser-sidecar env_clear-dropped mutation" 2 "FAIL  \[T2\] browser-sidecar: body no longer mentions"
+
 # T2: a new arm lands unpinned.
 a="$(_mktree)"
 _mutate "$a/src/common/child_env.rs" '
