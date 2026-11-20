@@ -1945,10 +1945,20 @@ impl StructuredMemoryStore {
     /// episodes whose current consolidator failed or was cancelled. Those
     /// episodes remain available for an explicit manual retry.
     pub fn next_auto_consolidation_batch(&self) -> Result<Option<(String, Vec<String>)>> {
+        self.next_auto_consolidation_batch_for(&|_| true)
+    }
+
+    /// `next_auto_consolidation_batch` over the owners `active` accepts, in
+    /// owner order. An owner it refuses is passed over, so one retired account
+    /// with episodes waiting cannot keep every later owner from its turn.
+    pub fn next_auto_consolidation_batch_for(
+        &self,
+        active: &dyn Fn(&str) -> bool,
+    ) -> Result<Option<(String, Vec<String>)>> {
         let conn = self.lock();
         let now = crate::common::now_ts();
-        let owner: Option<String> = conn
-            .query_row(
+        let owners: Vec<String> = conn
+            .prepare(
                 "SELECT e.owner_id FROM episodes e
                  WHERE e.consolidation_state IN ('none','pending')
                    AND e.semantic_summary IS NOT NULL AND length(trim(e.semantic_summary)) >= 1
@@ -1964,14 +1974,14 @@ impl StructuredMemoryStore {
                        AND instr(r.episode_ids, e.public_id) > 0
                    )
                  GROUP BY e.owner_id
-                 ORDER BY e.owner_id
-                 LIMIT 1",
-                params![now, SUMMARIZER_VERSION],
-                |r| r.get(0),
+                 ORDER BY e.owner_id",
             )
-            .optional()
+            .map_err(sql)?
+            .query_map(params![now, SUMMARIZER_VERSION], |r| r.get(0))
+            .map_err(sql)?
+            .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(sql)?;
-        let Some(owner) = owner else {
+        let Some(owner) = owners.into_iter().find(|owner| active(owner)) else {
             return Ok(None);
         };
         let mut stmt = conn
@@ -3961,6 +3971,14 @@ mod tests {
         let batch = store.next_auto_consolidation_batch().unwrap().unwrap();
         assert_eq!(batch.0, "user_alice");
         assert_eq!(batch.1, vec![alice.id.clone()]);
+        // An owner the caller refuses is passed over, not waited on: the next
+        // owner gets its batch, and with every owner refused there is none.
+        let after_alice = store
+            .next_auto_consolidation_batch_for(&|owner| owner != "user_alice")
+            .unwrap()
+            .unwrap();
+        assert_eq!(after_alice, ("user_bob".to_string(), vec![bob.id.clone()]));
+        assert!(store.next_auto_consolidation_batch_for(&|_| false).unwrap().is_none());
         store
             .begin_consolidation_run("user_alice", std::slice::from_ref(&alice.id), SUMMARIZER_VERSION)
             .unwrap();

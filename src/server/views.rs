@@ -105,7 +105,7 @@ pub fn full_registry(home: &Home, registry: &Path) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 82] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 84] = [
     ("analytics", "/analytics", "GET", "/api/analytics/summary", "retained session, token and coding-run analytics"),
     ("config-reload", "(Reload limits button)", "POST", "/api/config/reload", "administrator-only atomic reload of supported non-secret limits"),
     (
@@ -441,31 +441,45 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 82] = [
     ),
     (
         "browser-run",
-        "/browse <site> <task>",
+        "(/browse where jobs are not offered)",
         "POST",
         "/api/browser/run",
         "admin browser task with the local model; origins from the request (browser.enabled)",
     ),
     (
         "browser-job-start",
-        "(API only)",
+        "/browse <site> <task>",
         "POST",
         "/api/browser/jobs",
         "the same admin browser task, detached: the job holds the model, not the request",
     ),
     (
         "browser-job",
-        "(API only)",
+        "(polled by /browse)",
         "GET",
         "/api/browser/jobs/{job_id}",
         "poll your browser job; carries the report once it ends",
     ),
     (
         "browser-job-cancel",
-        "(API only)",
+        "/browse cancel",
         "POST",
         "/api/browser/jobs/{job_id}/cancel",
         "stop your browser job before its next model turn",
+    ),
+    (
+        "browser-job-approve",
+        "(Send this request once button)",
+        "POST",
+        "/api/browser/jobs/{job_id}/approve",
+        "send the one held request waiting on your browser job, once, as shown (confirm + reason; browser.takeover.enabled)",
+    ),
+    (
+        "browser-job-deny",
+        "(Hold it button)",
+        "POST",
+        "/api/browser/jobs/{job_id}/deny",
+        "hold the request waiting on your browser job",
     ),
     (
         "agent-job-start",
@@ -923,7 +937,7 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 82);
+        assert_eq!(HARNESS_SURFACES.len(), 84);
         let report = list_wired_tools(&registered);
         assert_eq!(report["total"], HARNESS_SURFACES.len());
         assert_eq!(report["wired"], HARNESS_SURFACES.len(), "a catalog surface is unwired");

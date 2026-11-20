@@ -383,14 +383,73 @@ pub struct ComposedPrompt {
     pub style: Option<crate::server::style::StyleLoad>,
 }
 
+/// The operator files one composition reads: the persona (`soul.md`) and the
+/// selected style overlay, loaded within the budget the persona leaves. Both
+/// are blocking reads, so an async caller takes `PromptInputs::file_request`,
+/// loads it on the blocking pool and composes with `compose_system_prompt_with`
+/// or `compose_prompt_parts_with`: nothing is read on a runtime worker.
+pub struct PromptFiles {
+    /// The persona as found on disk, whatever override the inputs carry.
+    pub soul: TextLoad,
+    style: Option<crate::server::style::StyleLoad>,
+}
+
+/// What `PromptFiles` is loaded from, owned so it can cross to another thread.
+pub struct PromptFileRequest {
+    home: std::path::PathBuf,
+    soul_enabled: bool,
+    soul_max_chars: usize,
+    soul_override: Option<String>,
+    style_name: Option<String>,
+}
+
+impl PromptFileRequest {
+    /// Blocking: one read of `soul.md` and at most one of the style overlay.
+    pub fn load(self) -> PromptFiles {
+        let soul = load_text(&self.home, Path::new("soul.md"), self.soul_enabled, self.soul_max_chars);
+        let persona = self.soul_override.as_deref().unwrap_or(&soul.text);
+        // Soul and style share one operator-text budget (`soul_max_chars`): the
+        // style gets what the persona left, so raising the cap to its 64 KiB
+        // maximum with a large soul cannot push every local turn past the chat
+        // token ceiling.
+        let budget = style_budget_for_persona(persona, self.soul_enabled, self.soul_max_chars);
+        let style = self
+            .style_name
+            .as_deref()
+            .filter(|name| !name.is_empty() && *name != "off")
+            .map(|name| crate::server::style::load_style_within(&self.home, name, budget));
+        PromptFiles { soul, style }
+    }
+}
+
+impl PromptInputs<'_> {
+    /// The files these inputs compose from, for a caller that loads them off
+    /// its own thread.
+    pub fn file_request(&self) -> PromptFileRequest {
+        PromptFileRequest {
+            home: self.soul_path.parent().unwrap_or(Path::new("")).to_path_buf(),
+            soul_enabled: self.soul_enabled,
+            soul_max_chars: self.soul_max_chars,
+            soul_override: self.soul_override.map(str::to_string),
+            style_name: self.style_name.map(str::to_string),
+        }
+    }
+}
+
 /// Soul, then style, then HEADER/CAPABILITIES. The policy tail still wins.
+/// Reads the persona and style files; async callers use the `_with` form.
 pub fn compose_system_prompt(inputs: &PromptInputs<'_>) -> String {
     compose_system_prompt_detailed(inputs).prompt
 }
 
+/// `compose_system_prompt` from files already loaded for these inputs.
+pub fn compose_system_prompt_with(inputs: &PromptInputs<'_>, files: PromptFiles) -> String {
+    compose(inputs, false, files).0.prompt
+}
+
 /// `compose_system_prompt` plus the style load result of this composition.
 pub fn compose_system_prompt_detailed(inputs: &PromptInputs<'_>) -> ComposedPrompt {
-    compose(inputs, false).0
+    compose(inputs, false, inputs.file_request().load()).0
 }
 
 /// The system prompt without the sections that change with each message, and
@@ -399,11 +458,15 @@ pub fn compose_system_prompt_detailed(inputs: &PromptInputs<'_>) -> ComposedProm
 /// excerpts and a staged `/diag` excerpt. Local chat turns and `/prompt` use
 /// this; `/loop` turns keep one system prompt, since theirs does not vary.
 pub fn compose_prompt_parts(inputs: &PromptInputs<'_>) -> (ComposedPrompt, String) {
-    compose(inputs, true)
+    compose(inputs, true, inputs.file_request().load())
 }
 
-fn compose(inputs: &PromptInputs<'_>, split: bool) -> (ComposedPrompt, String) {
-    let home = inputs.soul_path.parent().unwrap_or(Path::new(""));
+/// `compose_prompt_parts` from files already loaded for these inputs.
+pub fn compose_prompt_parts_with(inputs: &PromptInputs<'_>, files: PromptFiles) -> (ComposedPrompt, String) {
+    compose(inputs, true, files)
+}
+
+fn compose(inputs: &PromptInputs<'_>, split: bool, files: PromptFiles) -> (ComposedPrompt, String) {
     let mut parts: Vec<String> = Vec::new();
     // Per-message sections go to `turn` when split, else to their usual place.
     let mut turn: Vec<String> = Vec::new();
@@ -414,21 +477,15 @@ fn compose(inputs: &PromptInputs<'_>, split: bool) -> (ComposedPrompt, String) {
             parts
         }
     }
-    let soul = load_text(home, Path::new("soul.md"), inputs.soul_enabled, inputs.soul_max_chars);
+    let PromptFiles { soul, style } = files;
     let persona = inputs.soul_override.map(str::to_string).unwrap_or(soul.text);
-    // Soul and style share one operator-text budget (`soul_max_chars`): the
-    // style gets what the persona left, so raising the cap to its 64 KiB
-    // maximum with a large soul cannot push every local turn past the chat
-    // token ceiling.
     if inputs.soul_enabled && !persona.trim().is_empty() {
         let persona = crate::common::clip_chars(&persona, inputs.soul_max_chars);
         parts.push(format!("## Operator persona (soul, read-only)\n\n{persona}"));
     }
     let mut style_label = "off".to_string();
     let mut style_load = None;
-    let style_budget = style_budget_for_persona(&persona, inputs.soul_enabled, inputs.soul_max_chars);
-    if let Some(name) = inputs.style_name.filter(|n| !n.is_empty() && *n != "off") {
-        let loaded = crate::server::style::load_style_within(home, name, style_budget);
+    if let Some(loaded) = style {
         if loaded.loaded {
             style_label = loaded.name.clone();
             parts.push(format!(
@@ -975,6 +1032,41 @@ mod tests {
         let prompt = compose_system_prompt(&inputs(cap));
         assert!(!prompt.contains("## Output style"));
         assert!(prompt.contains("style=off"));
+    }
+
+    /// `compose_*_with` reads nothing: it uses the persona and style it was
+    /// handed, and gives what the reading form gives for the same inputs.
+    #[test]
+    fn composing_from_loaded_files_reads_no_file_and_matches_the_reading_form() {
+        let tmp = tempfile::tempdir().unwrap();
+        let soul_path = tmp.path().join("soul.md");
+        let style_path = tmp.path().join("styles").join("mine.md");
+        std::fs::write(&soul_path, "LOADED_PERSONA").unwrap();
+        std::fs::create_dir_all(style_path.parent().unwrap()).unwrap();
+        std::fs::write(&style_path, "LOADED_STYLE").unwrap();
+        let mut inputs = sample(&soul_path, false, None);
+        inputs.soul_enabled = true;
+        inputs.style_name = Some("mine");
+        let (reading, reading_turn) = super::compose_prompt_parts(&inputs);
+        let files = inputs.file_request().load();
+        assert!(files.soul.loaded);
+        // Both files change after the load: a composition that read them
+        // again would show it.
+        std::fs::write(&soul_path, "CHANGED_PERSONA").unwrap();
+        std::fs::remove_file(&style_path).unwrap();
+        let (composed, turn) = super::compose_prompt_parts_with(&inputs, files);
+        assert!(composed.prompt.contains("LOADED_PERSONA") && composed.prompt.contains("LOADED_STYLE"));
+        assert!(!composed.prompt.contains("CHANGED_PERSONA"));
+        assert_eq!(composed.prompt, reading.prompt);
+        assert_eq!(composed.style, reading.style);
+        assert_eq!(turn, reading_turn);
+        // The reading form sees the change, and the two system-prompt forms agree on it.
+        let changed = compose_system_prompt(&inputs);
+        assert!(changed.contains("CHANGED_PERSONA") && !changed.contains("LOADED_STYLE"));
+        assert_eq!(
+            super::compose_system_prompt_with(&inputs, inputs.file_request().load()),
+            changed
+        );
     }
 
     #[test]

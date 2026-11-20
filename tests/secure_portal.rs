@@ -697,6 +697,16 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             ),
             (
                 Method::POST,
+                "/api/browser/jobs/0123456789abcdef0123456789abcdef/approve",
+                json!({"request":1,"sha256":"ab".repeat(32),"confirm":true,"reason":"fixture"}),
+            ),
+            (
+                Method::POST,
+                "/api/browser/jobs/0123456789abcdef0123456789abcdef/deny",
+                json!({"request":1}),
+            ),
+            (
+                Method::POST,
                 "/api/structured-memory/gates",
                 json!({"gate":"retrieval","enabled":true}),
             ),
@@ -803,6 +813,49 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             assert_eq!(reply.status(), status, "{path}");
             assert_eq!(reply.json::<Value>().await.unwrap()["detail"]["code"], code, "{path}");
         }
+        // #995: an approval names a waiting request of the caller's own job, and
+        // says confirm and why. Nothing here has a default.
+        let approve = "/api/browser/jobs/0123456789abcdef0123456789abcdef/approve";
+        let full = json!({"request":1,"sha256":"ab".repeat(32),"confirm":true,"reason":"the order I asked for"});
+        let without = |key: &str| {
+            let mut body = full.clone();
+            body.as_object_mut().unwrap().remove(key);
+            body
+        };
+        for (body, status, code) in [
+            (full.clone(), 404, "BROWSER_JOB_NOT_FOUND"),
+            (
+                json!({"request":1,"sha256":"ab".repeat(32),"confirm":false,"reason":"x"}),
+                422,
+                "VALIDATION_ERROR",
+            ),
+            (
+                json!({"request":1,"sha256":"ab".repeat(32),"confirm":true,"reason":"  "}),
+                422,
+                "VALIDATION_ERROR",
+            ),
+            (
+                json!({"request":1,"sha256":"short","confirm":true,"reason":"x"}),
+                422,
+                "VALIDATION_ERROR",
+            ),
+            (without("confirm"), 422, "VALIDATION_ERROR"),
+            (without("reason"), 422, "VALIDATION_ERROR"),
+            (without("sha256"), 422, "VALIDATION_ERROR"),
+        ] {
+            let reply = request(&server, &admin, Method::POST, approve, body.clone()).await;
+            assert_eq!(reply.status(), status, "{body}");
+            assert_eq!(reply.json::<Value>().await.unwrap()["detail"]["code"], code, "{body}");
+        }
+        let deny = request(
+            &server,
+            &admin,
+            Method::POST,
+            "/api/browser/jobs/0123456789abcdef0123456789abcdef/deny",
+            json!({"request":1}),
+        )
+        .await;
+        assert_eq!(deny.status(), 404);
     }
     assert_eq!(
         request(

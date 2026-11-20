@@ -12,6 +12,8 @@ use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 pub const JOB_RUNNING: &str = "running";
+/// A held request is paused in the task's Chrome, waiting for its owner's verdict.
+pub const JOB_WAITING: &str = "waiting";
 /// Cancel was asked for; the child has not exited yet.
 pub const JOB_CANCELLING: &str = "cancelling";
 pub const JOB_FINISHED: &str = "finished";
@@ -19,8 +21,25 @@ pub const JOB_FAILED: &str = "failed";
 pub const JOB_CANCELLED: &str = "cancelled";
 /// Retained browser jobs; the oldest ended ones are evicted first.
 pub const MAX_BROWSER_JOBS: usize = 8;
-/// The longest stdout line read as a progress event.
-const MAX_EVENT_LINE_BYTES: usize = 512;
+/// The longest stdout line read as an event. A `waiting` line carries a URL of
+/// up to 8,192 characters and 2,000 characters of body, JSON-escaped.
+const MAX_EVENT_LINE_BYTES: usize = 96 * 1024;
+/// The longest `turn` or `resumed` line.
+const MAX_SHORT_EVENT_BYTES: usize = 512;
+/// What of a paused request is kept and shown: the same cuts the sidecar makes.
+const MAX_SHOWN_URL_CHARS: usize = 8_192;
+const MAX_SHOWN_PREVIEW_CHARS: usize = 2_000;
+
+/// Why a verdict was not passed on.
+#[derive(Debug, PartialEq)]
+pub enum VerdictRefusal {
+    /// No such job for this account.
+    NoJob,
+    /// The job has no request waiting (it was decided, expired, or never asked).
+    NothingWaiting,
+    /// The verdict names a different request than the one waiting.
+    Stale,
+}
 
 /// How a job's task ended, as its routes report it.
 pub enum Outcome {
@@ -49,12 +68,14 @@ struct BrowserJob {
     turns: u64,
     result: Option<Value>,
     error: Option<Value>,
+    /// The paused request, as its owner is shown it.
+    pending: Option<Value>,
     cancel: Option<CancelHandle>,
 }
 
 impl BrowserJob {
     fn ended(&self) -> bool {
-        !matches!(self.status, JOB_RUNNING | JOB_CANCELLING)
+        !matches!(self.status, JOB_RUNNING | JOB_WAITING | JOB_CANCELLING)
     }
 
     fn to_json(&self) -> Value {
@@ -66,6 +87,9 @@ impl BrowserJob {
             "finished_at": self.finished_at,
             "turns": self.turns,
         });
+        if let Some(pending) = &self.pending {
+            job["pending"] = pending.clone();
+        }
         if let Some(result) = &self.result {
             job["result"] = result.clone();
         }
@@ -97,6 +121,7 @@ impl BrowserJobs {
             turns: 0,
             result: None,
             error: None,
+            pending: None,
             cancel: Some(cancel),
         });
         while jobs.len() > MAX_BROWSER_JOBS {
@@ -107,8 +132,10 @@ impl BrowserJobs {
         }
     }
 
-    /// One stdout line from the job's child. Only a short
-    /// `{"event":"turn","turn":N}` line changes anything; the count only grows.
+    /// One stdout line from the job's child. A short `{"event":"turn","turn":N}`
+    /// line moves the turn count, which only grows. A `waiting` line records the
+    /// paused request and a `resumed` line clears it. Anything else, and any
+    /// line for a job that ended or is being cancelled, changes nothing.
     pub fn note_line(&self, job_id: &str, line: &str) {
         if line.len() > MAX_EVENT_LINE_BYTES {
             return;
@@ -116,13 +143,79 @@ impl BrowserJobs {
         let Ok(event) = serde_json::from_str::<Value>(line) else {
             return;
         };
-        let (Some("turn"), Some(turn)) = (event["event"].as_str(), event["turn"].as_u64()) else {
+        let mut jobs = self.lock();
+        let Some(job) = jobs.iter_mut().find(|job| job.job_id == job_id) else {
             return;
         };
-        if let Some(job) = self.lock().iter_mut().find(|job| job.job_id == job_id) {
-            if !job.ended() {
-                job.turns = job.turns.max(turn);
+        if !matches!(job.status, JOB_RUNNING | JOB_WAITING) {
+            return;
+        }
+        // Only a `waiting` line has a reason to be long.
+        let short = line.len() <= MAX_SHORT_EVENT_BYTES;
+        match event["event"].as_str().filter(|name| short || *name == "waiting") {
+            Some("turn") => {
+                if let Some(turn) = event["turn"].as_u64() {
+                    job.turns = job.turns.max(turn);
+                }
             }
+            Some("waiting") => {
+                if let Some(pending) = shown_request(&event) {
+                    job.pending = Some(pending);
+                    job.status = JOB_WAITING;
+                }
+            }
+            Some("resumed") => {
+                job.pending = None;
+                job.status = JOB_RUNNING;
+            }
+            _ => {}
+        }
+    }
+
+    /// Pass the owner's verdict on the waiting request to the child. `request`
+    /// and `sha256` must name the request that is waiting now, so an answer to
+    /// an earlier question, or to a body the owner did not see, sends nothing.
+    /// On success the request is no longer waiting and is returned as it was
+    /// shown, for the audit line. A verdict is passed on at most once.
+    pub fn verdict(
+        &self,
+        owner: &str,
+        job_id: &str,
+        (request, sha256): (u64, Option<&str>),
+        allow: bool,
+    ) -> Result<Value, VerdictRefusal> {
+        let mut jobs = self.lock();
+        let job = jobs
+            .iter_mut()
+            .find(|job| job.owner == owner && job.job_id == job_id)
+            .ok_or(VerdictRefusal::NoJob)?;
+        let (JOB_WAITING, Some(pending)) = (job.status, &job.pending) else {
+            return Err(VerdictRefusal::NothingWaiting);
+        };
+        if pending["request"].as_u64() != Some(request)
+            || sha256.is_some_and(|sha256| pending["sha256"].as_str() != Some(sha256))
+        {
+            return Err(VerdictRefusal::Stale);
+        }
+        let line = json!({"verdict": if allow { "approve" } else { "deny" }, "id": request});
+        if let Some(cancel) = &job.cancel {
+            // A child that already exited has no reader; its job ends by itself.
+            let _ = cancel.input.send(format!("{line}\n").into_bytes());
+        }
+        job.status = JOB_RUNNING;
+        job.pending.take().ok_or(VerdictRefusal::NothingWaiting)
+    }
+
+    /// The request waiting on `owner`'s job, if one is.
+    pub fn pending(&self, owner: &str, job_id: &str) -> Result<Value, VerdictRefusal> {
+        let jobs = self.lock();
+        let job = jobs
+            .iter()
+            .find(|job| job.owner == owner && job.job_id == job_id)
+            .ok_or(VerdictRefusal::NoJob)?;
+        match (job.status, &job.pending) {
+            (JOB_WAITING, Some(pending)) => Ok(pending.clone()),
+            _ => Err(VerdictRefusal::NothingWaiting),
         }
     }
 
@@ -132,8 +225,10 @@ impl BrowserJobs {
     pub fn cancel(&self, owner: &str, job_id: &str) -> Option<Value> {
         let mut jobs = self.lock();
         let job = jobs.iter_mut().find(|job| job.owner == owner && job.job_id == job_id)?;
-        if job.status == JOB_RUNNING {
+        if matches!(job.status, JOB_RUNNING | JOB_WAITING) {
             job.status = JOB_CANCELLING;
+            // The child answers its own waiting request with a no.
+            job.pending = None;
             if let Some(cancel) = &job.cancel {
                 // A child that already exited has no reader; the token still ends the task.
                 let _ = cancel.input.send(b"cancel\n".to_vec());
@@ -155,6 +250,7 @@ impl BrowserJobs {
         }
         let cancelling = job.status == JOB_CANCELLING;
         job.finished_at = Some(crate::common::now_ts());
+        job.pending = None;
         // Dropping the handle closes the child's stdin.
         job.cancel = None;
         match outcome {
@@ -183,6 +279,31 @@ impl BrowserJobs {
             .find(|job| job.owner == owner && job.job_id == job_id)
             .map(BrowserJob::to_json)
     }
+}
+
+/// The paused request from a child's `waiting` line, as it is stored and
+/// shown: fixed fields, each of the expected type and cut to the sidecar's
+/// limits. Everything but the id, size and hash is page-written text. `None`
+/// when the line is not a complete question.
+fn shown_request(event: &Value) -> Option<Value> {
+    let question = &event["question"];
+    let sha256 = question["sha256"].as_str()?;
+    if !crate::common::is_lower_hex(sha256, 64) {
+        return None;
+    }
+    let cut = |key: &str, max: usize| -> Option<String> { Some(question[key].as_str()?.chars().take(max).collect()) };
+    let now = crate::common::now_ts();
+    Some(json!({
+        "request": question["approve"].as_u64()?,
+        "method": cut("method", 16)?,
+        "url": cut("url", MAX_SHOWN_URL_CHARS)?,
+        "content_type": cut("content_type", 200)?,
+        "size": question["size"].as_u64()?,
+        "sha256": sha256,
+        "preview": cut("preview", MAX_SHOWN_PREVIEW_CHARS)?,
+        "asked_at": now,
+        "expires_at": now + event["wait_sec"].as_u64()? as f64,
+    }))
 }
 
 #[cfg(test)]
@@ -252,6 +373,106 @@ mod tests {
         ));
         // A cancel after the end changes nothing.
         assert_eq!(jobs.cancel("admin-1", "a").unwrap()["status"], JOB_CANCELLED);
+    }
+
+    fn waiting(id: u64, body_sha: &str) -> String {
+        json!({"event": "waiting", "wait_sec": 120, "question": {
+            "approve": id, "method": "POST", "url": "https://example.com/save", "content_type": "text/plain",
+            "size": 5, "sha256": body_sha, "preview": "qty=2",
+        }})
+        .to_string()
+    }
+
+    /// #995: a verdict reaches the child once, only for the request that is
+    /// waiting now, only from the job's owner.
+    #[test]
+    fn a_verdict_is_passed_on_once_and_only_for_the_waiting_request() {
+        let jobs = BrowserJobs::default();
+        let (sent, _token) = start(&jobs, "a", "admin-1");
+        let sha = "ab".repeat(32);
+        let other = "cd".repeat(32);
+        assert_eq!(
+            jobs.verdict("admin-1", "a", (7, Some(&sha)), true),
+            Err(VerdictRefusal::NothingWaiting)
+        );
+        jobs.note_line("a", &waiting(7, &sha));
+        let job = jobs.get("admin-1", "a").unwrap();
+        assert_eq!(job["status"], JOB_WAITING);
+        assert_eq!(job["pending"]["preview"], "qty=2");
+        assert_eq!(job["pending"]["request"], 7);
+        assert_eq!(
+            jobs.verdict("admin-2", "a", (7, Some(&sha)), true),
+            Err(VerdictRefusal::NoJob)
+        );
+        assert_eq!(
+            jobs.verdict("admin-1", "a", (6, Some(&sha)), true),
+            Err(VerdictRefusal::Stale)
+        );
+        assert_eq!(
+            jobs.verdict("admin-1", "a", (7, Some(&other)), true),
+            Err(VerdictRefusal::Stale)
+        );
+        assert!(sent.try_recv().is_err(), "a refused verdict writes nothing");
+        let shown = jobs.verdict("admin-1", "a", (7, Some(&sha)), true).unwrap();
+        assert_eq!(shown["url"], "https://example.com/save");
+        assert_eq!(
+            String::from_utf8(sent.try_recv().unwrap()).unwrap(),
+            "{\"id\":7,\"verdict\":\"approve\"}\n"
+        );
+        assert_eq!(
+            jobs.verdict("admin-1", "a", (7, Some(&sha)), true),
+            Err(VerdictRefusal::NothingWaiting)
+        );
+        assert_eq!(jobs.get("admin-1", "a").unwrap()["status"], JOB_RUNNING);
+        // A deny needs no hash; a resumed line clears a question nobody answered.
+        jobs.note_line("a", &waiting(8, &sha));
+        jobs.verdict("admin-1", "a", (8, None), false).unwrap();
+        assert!(String::from_utf8(sent.try_recv().unwrap())
+            .unwrap()
+            .contains("\"deny\""));
+        jobs.note_line("a", &waiting(9, &sha));
+        jobs.note_line("a", r#"{"event":"resumed","id":9,"decision":"expired"}"#);
+        let job = jobs.get("admin-1", "a").unwrap();
+        assert!(job.get("pending").is_none() && job["status"] == JOB_RUNNING);
+    }
+
+    #[test]
+    fn a_waiting_line_is_stored_only_when_complete_and_is_cut_to_the_shown_limits() {
+        let jobs = BrowserJobs::default();
+        let _held = start(&jobs, "a", "admin-1");
+        let sha = "ab".repeat(32);
+        for bad in [
+            waiting(1, "not-a-hash"),
+            json!({"event": "waiting", "wait_sec": 120, "question": {"approve": 1, "sha256": sha}}).to_string(),
+            json!({"event": "waiting", "question": {"approve": 1}}).to_string(),
+        ] {
+            jobs.note_line("a", &bad);
+            assert_eq!(jobs.get("admin-1", "a").unwrap()["status"], JOB_RUNNING, "{bad}");
+        }
+        let long = json!({"event": "waiting", "wait_sec": 30, "question": {
+            "approve": 2, "method": "POST", "url": format!("https://example.com/{}", "u".repeat(9_000)),
+            "content_type": "text/plain", "size": 9_000, "sha256": sha, "preview": "p".repeat(3_000), "extra": "dropped",
+        }})
+        .to_string();
+        jobs.note_line("a", &long);
+        let pending = jobs.pending("admin-1", "a").unwrap();
+        assert_eq!(pending["url"].as_str().unwrap().chars().count(), MAX_SHOWN_URL_CHARS);
+        assert_eq!(
+            pending["preview"].as_str().unwrap().chars().count(),
+            MAX_SHOWN_PREVIEW_CHARS
+        );
+        assert!(pending.get("extra").is_none());
+        assert_eq!(
+            pending["expires_at"].as_f64().unwrap() - pending["asked_at"].as_f64().unwrap(),
+            30.0
+        );
+        // Cancel while waiting: nothing is left to approve.
+        jobs.cancel("admin-1", "a");
+        assert_eq!(jobs.pending("admin-1", "a"), Err(VerdictRefusal::NothingWaiting));
+        assert_eq!(
+            jobs.verdict("admin-1", "a", (2, Some(&sha)), true),
+            Err(VerdictRefusal::NothingWaiting)
+        );
     }
 
     #[test]

@@ -29,7 +29,7 @@ use super::guards;
 use super::state::AppState;
 
 /// Every path the router registers (axum template syntax).
-pub const REGISTERED_PATHS: [&str; 123] = [
+pub const REGISTERED_PATHS: [&str; 125] = [
     "/api/analytics/summary",
     "/api/config/reload",
     "/",
@@ -131,6 +131,8 @@ pub const REGISTERED_PATHS: [&str; 123] = [
     "/api/browser/jobs",
     "/api/browser/jobs/{job_id}",
     "/api/browser/jobs/{job_id}/cancel",
+    "/api/browser/jobs/{job_id}/approve",
+    "/api/browser/jobs/{job_id}/deny",
     "/api/agent/runs",
     "/api/agent/runs/{run_id}",
     "/api/agent/runs/{run_id}/decision",
@@ -367,6 +369,8 @@ pub fn build_router(state: Arc<AppState>) -> Router {
         .route("/api/browser/jobs", post(browser::job_start))
         .route("/api/browser/jobs/{job_id}", get(browser::job_get))
         .route("/api/browser/jobs/{job_id}/cancel", post(browser::job_cancel))
+        .route("/api/browser/jobs/{job_id}/approve", post(browser::job_approve))
+        .route("/api/browser/jobs/{job_id}/deny", post(browser::job_deny))
         .route("/api/agent/runs", get(agent::agent_runs))
         .route("/api/agent/runs/{run_id}", get(agent::agent_run_status))
         .route("/api/agent/runs/{run_id}/decision", post(agent::agent_run_decision))
@@ -468,7 +472,7 @@ mod tests {
         for p in REGISTERED_PATHS {
             assert!(listed.insert(p), "duplicate REGISTERED_PATHS entry {p}");
         }
-        assert_eq!(REGISTERED_PATHS.len(), 123);
+        assert_eq!(REGISTERED_PATHS.len(), 125);
 
         let all = registered_paths();
         assert!(

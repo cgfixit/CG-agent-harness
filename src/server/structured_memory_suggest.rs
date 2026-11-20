@@ -553,6 +553,9 @@ fn pick(state: &AppState) -> Pick {
     jobs.retain(|job| {
         let reason = if job.created.elapsed() > Duration::from_secs(ttl) {
             Some("queue_expired")
+        } else if !crate::server::structured_memory_auto::owner_active(state, &job.owner) {
+            // Disabled, deleted or demoted after it queued this job.
+            Some("owner_retired")
         } else {
             refusal(state, job.source, &job.model)
         };
