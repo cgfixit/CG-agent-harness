@@ -117,8 +117,13 @@ pub(super) async fn read(
     let page = match cached {
         Some(page) => {
             web.gate_tool("web_fetch", std::slice::from_ref(&url), true, audit)?;
-            web.store_last(&page, None, owner)?;
-            page
+            let last_owner = owner.to_string();
+            // The last-page write takes the policy lock and fsyncs.
+            web.off_worker(move |web, wanted| {
+                web.store_last(&page, None, &last_owner, wanted)?;
+                Ok(page)
+            })
+            .await?
         }
         // A suppressed same-turn refresh never reaches the origin, even after eviction.
         None if cache_only => return Err(error(
@@ -254,6 +259,57 @@ mod tests {
         assert!(run.restore(&web).unwrap().0.is_empty());
         std::fs::remove_file(path).unwrap();
         assert!(run.restore(&web).unwrap().0.is_empty());
+        server.abort();
+    }
+
+    /// The cache and last-page writes take the policy lock and end in an fsync.
+    /// While another thread holds that lock they must wait on the blocking
+    /// pool. On this one-thread runtime a write on the runtime thread would
+    /// stop the timer below, so the lock would only be released by its timeout.
+    #[tokio::test]
+    async fn a_held_policy_lock_never_stalls_the_runtime_during_a_read() {
+        use std::time::Duration;
+        let app = axum::Router::new().route(
+            "/page",
+            axum::routing::get(|| async { ([("content-type", "text/plain")], "The LOCK_ANCHOR page body.\n") }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let cfg =
+            crate::common::config::AppConfig::from_str("web: {pace_ms: 100}", std::path::Path::new("config.yaml"))
+                .unwrap();
+        let mut web = WebTool::new(dir.path(), &cfg).unwrap();
+        web.test_resolve = Some(("lock.invalid".into(), address));
+        let url = format!("http://lock.invalid:{}/page", address.port()); // DevSkim: ignore DS137138 because this synthetic host resolves only to the loopback fixture.
+        web.allow_rule(&url, "pages", &[], true).unwrap();
+        let audit = Audit::new(dir.path().join("audit.jsonl"), &cfg);
+        // A fresh read writes the cache and the last page; a reuse writes the last page.
+        for refresh in [true, false] {
+            let (locked, is_locked) = std::sync::mpsc::channel();
+            let (release, released) = std::sync::mpsc::channel::<()>();
+            let lock = web.mutation.clone();
+            let holder = std::thread::spawn(move || {
+                let _guard = lock.lock().unwrap();
+                locked.send(()).unwrap();
+                // The timer releases the lock; the timeout only ends a failed run.
+                released.recv_timeout(Duration::from_secs(5)).is_ok()
+            });
+            is_locked.recv().unwrap();
+            let timer = async {
+                tokio::time::sleep(Duration::from_millis(700)).await;
+                let _ = release.send(());
+            };
+            let (page, ()) = tokio::join!(read(&web, &url, "LOCK_ANCHOR", refresh, false, &audit, "owner"), timer);
+            assert_eq!(page.unwrap().0["cache_reused"], !refresh);
+            assert!(
+                holder.join().unwrap(),
+                "refresh={refresh}: a write waited for the policy lock on the runtime thread"
+            );
+        }
         server.abort();
     }
 

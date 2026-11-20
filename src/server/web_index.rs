@@ -283,6 +283,17 @@ impl WebTool {
         crate::common::atomic::write_atomic(&path, &payload, Some(0o600))
     }
 
+    /// `cache_page` on the blocking pool: it takes the policy lock, scans the
+    /// cache directory, evicts and ends in an fsync. Returns the page.
+    async fn cache_off_worker(&self, page: Page, group: Option<&str>) -> Result<Page> {
+        let selected = group.map(str::to_string);
+        self.off_worker(move |web, _| {
+            web.cache_page(&page, selected.as_deref())?;
+            Ok(page)
+        })
+        .await
+    }
+
     pub(super) fn cached_pages(&self, group: Option<&str>) -> Result<(Vec<Page>, Vec<Value>)> {
         let mut pages = Vec::new();
         let mut errors = Vec::new();
@@ -448,7 +459,7 @@ impl WebTool {
                 )
                 .await
             {
-                self.cache_page(&page, group)?;
+                let page = self.cache_off_worker(page, group).await?;
                 coverage.searched.push(page.url.clone());
                 for link in &page.links {
                     if queue.len() >= 256 {
@@ -619,7 +630,7 @@ impl WebTool {
                 )
                 .await
             {
-                self.cache_page(&page, group)?;
+                let page = self.cache_off_worker(page, group).await?;
                 coverage.searched.push(page.url.clone());
                 pages.push(page);
             }
@@ -634,8 +645,17 @@ impl WebTool {
         for page in &pages {
             page.validate(&policy, group)?;
         }
-        if let Some(first) = pages.first() {
-            self.store_last(first, group, owner)?;
+        if let Some(first) = pages.first().cloned() {
+            let (selected, last_owner) = (group.map(str::to_string), owner.to_string());
+            self.off_worker(move |web, wanted| web.store_last(&first, selected.as_deref(), &last_owner, wanted))
+                .await?;
+            // Publishing waited for the blocking pool and the policy lock, and
+            // rechecked only the first page: reload before any page is delivered.
+            self.check_enabled()?;
+            let policy = self.policy()?;
+            for page in &pages {
+                page.validate(&policy, group)?;
+            }
         }
         coverage.elapsed_ms = start.elapsed().as_millis();
         Ok(
@@ -711,8 +731,9 @@ impl WebTool {
             .map_err(|_| error("WEB_BUSY", "a web search is already running"))?;
         let coverage = self.discover(group).await?;
         // Reading, hashing and parsing the cache (16 MiB at the default cap)
-        // can block. Keep the owner-visible selection in the request so a
-        // dropped request cannot publish a selection after the search returns.
+        // can block. The owner-visible selection is published separately
+        // below, only while this request is still wanted, so a dropped request
+        // cannot publish a selection after the search returns.
         let tool = self.clone();
         let q = query.to_string();
         let selected = group.map(str::to_string);
@@ -731,11 +752,29 @@ impl WebTool {
             .into_iter()
             .filter(|p| current.authorize(&p.url, group).is_ok())
             .collect();
-        if let Some(first) = found.first() {
-            self.store_last(&self.read_page(&self.cache_path(&first.url), group)?, group, owner)?;
-        } else {
-            self.forget(enabled, owner)?;
-        }
+        // Publishing takes the policy lock and writes: off the async workers.
+        let first = found.first().map(|p| p.url.clone());
+        let (selected, last_owner) = (group.map(str::to_string), owner.to_string());
+        self.off_worker(move |web, wanted| {
+            let group = selected.as_deref();
+            match first {
+                Some(url) => web.store_last(
+                    &web.read_page(&web.cache_path(&url), group)?,
+                    group,
+                    &last_owner,
+                    wanted,
+                ),
+                None => web.forget_if(&last_owner, wanted),
+            }
+        })
+        .await?;
+        // Publishing waited: reload, and deliver only what is still permitted.
+        self.check_enabled()?;
+        let current = self.policy()?;
+        let found: Vec<_> = found
+            .into_iter()
+            .filter(|p| current.authorize(&p.url, group).is_ok())
+            .collect();
         let hits: Vec<_> = found
             .iter()
             .map(|p| json!({"url":p.url,"snippets":[p.text],"passage_id":p.id}))
@@ -799,6 +838,50 @@ mod tests {
             .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(age))
             .unwrap();
         path
+    }
+
+    /// Work that left its request's task asks `wanted` under the policy lock:
+    /// a request dropped while that work waited for the lock publishes
+    /// nothing and clears nothing.
+    #[test]
+    fn a_request_dropped_while_waiting_for_the_policy_lock_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let web = cache_tool(dir.path());
+        let kept = web.read_page(&cache_doc(&web, "kept", 1), None).unwrap();
+        web.store_last(&kept, None, "owner", &|| true).unwrap();
+        let late = web.read_page(&cache_doc(&web, "late", 2), None).unwrap();
+        for clear in [false, true] {
+            let wanted = Arc::new(std::sync::atomic::AtomicBool::new(true));
+            let guard = web.mutation.lock().unwrap();
+            let (tool, flag, late) = (web.clone(), wanted.clone(), late.clone());
+            let (started, has_started) = std::sync::mpsc::channel();
+            let waiter = std::thread::spawn(move || {
+                started.send(()).unwrap();
+                let wanted = || flag.load(Ordering::SeqCst);
+                if clear {
+                    tool.forget_if("owner", &wanted)
+                } else {
+                    tool.store_last(&late, None, "owner", &wanted)
+                }
+            });
+            has_started.recv().unwrap();
+            // Let the waiter reach the lock, then drop its request and release.
+            std::thread::sleep(Duration::from_millis(100));
+            wanted.store(false, Ordering::SeqCst);
+            drop(guard);
+            assert_eq!(
+                waiter.join().unwrap().unwrap_err().code,
+                "WEB_CANCELLED",
+                "clear={clear}"
+            );
+            // The last extract is still the earlier page: it injects as before.
+            web.inject(true, "owner").unwrap();
+            let context = web.context_text(true, "owner");
+            assert!(
+                context.starts_with(&format!("Source: {}", kept.url)),
+                "clear={clear}: {context}"
+            );
+        }
     }
 
     fn cached_urls(web: &WebTool) -> Vec<String> {
