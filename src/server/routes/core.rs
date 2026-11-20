@@ -947,6 +947,13 @@ pub(crate) async fn chat_inner(
     expected_loop_goal: Option<&str>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
+    // What the account's sign-in revocation count is as this turn begins. A
+    // server-run loop turn has no requesting sign-in: the loop reloads its
+    // account's authority itself before each turn.
+    let sign_ins = match (state.auth.as_ref(), user.as_ref()) {
+        (Some(auth), Some(user)) if expected_loop_goal.is_none() => Some(auth.sign_in_revocations(&user.0.username)),
+        _ => None,
+    };
     if req.loop_turn && req.session_id.as_deref().unwrap_or("").is_empty() {
         return Err(loop_error(
             "LOOP_REQUIRES_SESSION",
@@ -1876,8 +1883,9 @@ pub(crate) async fn chat_inner(
     // audit lines describing the write are logged with it for the same reason.
     //
     // The account is read again under the store lock, after every wait this
-    // turn made: one disabled or deleted meanwhile still gets its exchange
-    // stored, but no new pins, no reply and no memory staging.
+    // turn made: one disabled or deleted meanwhile, or whose sign-ins were
+    // revoked by a role or password change, still gets its exchange stored,
+    // but no new pins, no reply and no memory staging.
     let write = {
         let state = state.clone();
         let owner = owner.clone();
@@ -1899,9 +1907,7 @@ pub(crate) async fn chat_inner(
         move || {
             let gate = gate;
             let owner_live = || match (state.auth.as_ref(), account.as_ref()) {
-                (Some(manager), Some(account)) => manager
-                    .get_user(&account.username)
-                    .is_some_and(|current| current.user_id == account.user_id && !current.disabled),
+                (Some(manager), Some(account)) => manager.account_unchanged(account, sign_ins),
                 _ => true,
             };
             let live_blobs = pin_request
@@ -1981,7 +1987,7 @@ pub(crate) async fn chat_inner(
         return Err(ApiError::new(
             StatusCode::UNAUTHORIZED,
             "AUTH_REQUIRED",
-            "the account was disabled or deleted during this turn; the exchange was saved but the reply is withheld",
+            "the account was disabled or deleted, or its sign-ins were revoked by a role or password change, during this turn; the exchange was saved but the reply is withheld",
         ));
     }
     let sensitivity = {
