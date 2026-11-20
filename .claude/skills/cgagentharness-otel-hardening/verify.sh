@@ -15,7 +15,7 @@ checker="$here/check_otel.py"
 # `reviewed`). The strict clean-tree run pins it so this script stays
 # deterministic; the default run uses today so real staleness still surfaces
 # as WARN/exit 0 without breaking the script.
-AS_OF="2026-10-13"
+AS_OF="2026-11-20"
 
 echo "== cgagentharness-otel-hardening verify =="
 
@@ -276,6 +276,19 @@ a="$(_mktree)"
 _mutate "$a/desktop/src/main.rs" '
 text = text.replace("                    .env_clear()\n                    .env(\"PATH\", \"/usr/bin:/bin\")", "                    .env(\"PATH\", \"/usr/bin:/bin\")", 1)'
 _expect "T11 opener env_clear-dropped mutation" 2 "FAIL  \[T11\] desktop/src/main.rs"
+
+# T11: the Terminal web launcher stops clearing its environment.
+a="$(_mktree)"
+_mutate "$a/desktop/src/web_launcher.rs" '
+text = text.replace("            .env_clear()\n            .env(\"PATH\", \"/usr/bin:/bin\")", "            .env(\"PATH\", \"/usr/bin:/bin\")", 1)'
+_expect "T11 web-launcher env_clear-dropped mutation" 2 "FAIL  \[T11\] desktop/src/web_launcher.rs"
+
+# T7: a tests module gated `#[cfg(all(test, ...))]` is still a test tail (a
+# spawn after it is not a production site), and a spawn before it still is.
+a="$(_mktree)"
+_mutate "$a/src/common/file_lease.rs" '
+text = "fn zz_spawn() { let _ = std::process::Command::new(\"curl\"); }\n" + text'
+_expect "T7 spawn ahead of a cfg(all(test)) tail (--strict)" 2 "FAIL  \[T7\] src/common/file_lease.rs: new spawn site" "--strict"
 
 # T12: the bwrap wrapper stops unsharing the network namespace.
 a="$(_mktree)"
