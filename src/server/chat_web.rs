@@ -456,12 +456,23 @@ pub struct UsageSnapshot {
     pub(crate) known_completion_tokens: u64,
 }
 
-/// Canonical http(s) URLs the operator wrote in `text`, trailing punctuation trimmed.
+/// Canonical http(s) URLs the operator wrote in `text`, as typed and with trailing punctuation trimmed.
 fn operator_urls(text: &str) -> impl Iterator<Item = String> + '_ {
-    text.split_whitespace().filter_map(|word| {
-        let start = word.find("https://").or_else(|| word.find("http://"))?;
-        let url = word[start..].trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', '\'']);
-        super::web_policy::canonical_url(url).ok().map(|url| url.to_string())
+    text.split_whitespace().flat_map(|word| {
+        let typed = word
+            .find("https://")
+            .or_else(|| word.find("http://"))
+            .map(|start| &word[start..]);
+        // Both the URL as typed and without trailing punctuation are the
+        // operator's own text: `Function_(mathematics)` and `?q=hello!` keep
+        // their last character, and `(https://a/b).` still yields `https://a/b`.
+        let trimmed = typed
+            .map(|url| url.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', '\'']))
+            .filter(|url| Some(*url) != typed);
+        typed
+            .into_iter()
+            .chain(trimmed)
+            .filter_map(|url| super::web_policy::canonical_url(url).ok().map(|url| url.to_string()))
     })
 }
 
@@ -1374,13 +1385,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn operator_urls_are_canonical_and_lose_trailing_punctuation() {
+    fn operator_urls_are_canonical_as_typed_and_without_trailing_punctuation() {
         let urls: Vec<String> = operator_urls(
             "Read https://Example.com/docs/a?q=1, then (http://example.org/b). Not ftp://x or example.net/c", // DevSkim: ignore DS137138 because this synthetic URL is test text resolved only to a loopback fixture or never fetched.
         )
         .collect();
-        assert_eq!(urls, ["https://example.com/docs/a?q=1", "http://example.org/b"]); // DevSkim: ignore DS137138 because this synthetic URL is test text resolved only to a loopback fixture or never fetched.
+        let expected = ["https://example.com/docs/a?q=1", "http://example.org/b"]; // DevSkim: ignore DS137138 because this synthetic URL is test text never fetched.
+        for url in expected {
+            assert!(urls.iter().any(|u| u == url), "{url} in {urls:?}");
+        }
         assert_eq!(operator_urls("no links here").count(), 0);
+        // A URL that ends in valid URL punctuation keeps it as typed (Codex review on #982).
+        let urls: Vec<String> =
+            operator_urls("Read https://example.com/wiki/Function_(mathematics) and https://example.com/s?q=hello!")
+                .collect();
+        for url in [
+            "https://example.com/wiki/Function_(mathematics)",
+            "https://example.com/s?q=hello!",
+        ] {
+            assert!(urls.iter().any(|u| u == url), "{url} in {urls:?}");
+        }
     }
 
     #[test]
