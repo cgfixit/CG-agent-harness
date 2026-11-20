@@ -1,6 +1,6 @@
 # Browser use and computer use
 
-Status as of 2026-11-19. The local model (the `/model use` selection, else
+Status as of 2026-11-20. The local model (the `/model use` selection, else
 `models.local_llm.model`; `qwen3.8:27b-mlx-cg` on a 32K window) drives a real
 Chrome. Computer use (native apps) is a skeleton that nothing calls.
 
@@ -27,8 +27,8 @@ How a run works:
    names, absolute link targets. `src/common/browser.rs` mints refs that
    expire with every observation, so a stale ref cannot act.
 4. The model calls `navigate`, `observe`, `click`, `type`, `press_enter`,
-   `select` (a listed option of a select box), `select_tab`, `follow_link` and
-   `finish`. An observation is 40 elements and 4,000 characters, read after
+   `select` (a listed option of a select box), `select_tab`, `follow_link`,
+   `scroll`, `wait` (1 to 5 s) and `finish`. An observation is 40 elements and 4,000 characters, read after
    the page's fetches settle; `observe` takes `page` for the next part and
    `find` for what contains a word. Older observations are dropped to fit
    32K. Three refused or failed actions in a row, or a reply with no action
@@ -78,7 +78,8 @@ Boundaries, enforced in code:
 
 Verified by running: fixtures `browser`, `browser enter` (new tab, search,
 select, password hand-off, both kinds of held POST, no WebRTC UDP), `browser reach` (late
-content, an ungranted tab closed and named, `page` and `find`) and
+content, an ungranted tab closed and named, scroll, wait, an alert's text,
+`page` and `find`) and
 `browser-verify`. `browser guards` checks by what its loopback server received:
 no worker starts, a redirect lands, no held POST arrives, a blocked path gets no request, a 1.14 MB page
 gives a capped reply, and the proxy answers 407 without the session credential. CI's
@@ -92,8 +93,7 @@ gives a capped reply, and the proxy answers 407 without the session credential. 
 - A killed task's profile (cookies, cache) stays until the next task or
   server start.
 - No screenshots: canvas and image-only UIs are opaque. `alert` and
-  `confirm` are dismissed unseen.
-- `scroll` and `wait` are not model tools: load-on-scroll content stays unread.
+  `confirm` text is shown to the model, then dismissed (a confirm as Cancel).
 - Held `fetch` POSTs break background saves; one sent during a model
   action still ends the task. Sites needing a web worker lose it.
 - Page text is untrusted. Grants and holds bound its effect; an
@@ -108,8 +108,7 @@ gives a capped reply, and the proxy answers 407 without the session credential. 
    cookies while navigation stays on granted origins.
 3. Vision: send the latest screenshot to the model (`qwen3.8` lists the
    `vision` capability) and retire older images like observations.
-4. Model tools for `scroll` and `wait`.
-5. Browser tools for `/goal` and `/loop`, behind their own gate and the same
+4. Browser tools for `/goal` and `/loop`, behind their own gate and the same
    grants.
 
 ## Roadmap: computer use

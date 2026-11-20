@@ -43,6 +43,14 @@ const OUT_OF_TIME: &str = "the task's time budget ran out";
 pub const TASK_PROMPT_TOKENS: u64 = 12_000;
 /// Characters of a link target an observation shows the model.
 const MAX_SHOWN_HREF_CHARS: usize = 300;
+/// Page dialogs one observation shows the model, and the characters of each.
+const MAX_SHOWN_DIALOGS: usize = 5;
+const MAX_SHOWN_DIALOG_CHARS: usize = 320;
+/// Pixels one model `scroll` moves the page: about two screens, inside the
+/// policy kernel's 2,000.
+const SCROLL_STEP_PX: i64 = 1_500;
+/// Longest model `wait`, matching the policy kernel's 5,000 ms.
+const MAX_WAIT_SECONDS: u64 = 5;
 
 /// The only variables a browser child sees. Chrome renderers parse hostile
 /// pages and inherit this, so provider keys and tokens never enter it.
@@ -439,6 +447,20 @@ fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value 
     if result["blocked"].as_u64().is_some_and(|count| count > 0) {
         outcome["blocked_by_policy"] = result["blocked"].clone();
     }
+    // Page-written, like the text: shown to the model, never obeyed by the host.
+    if let Some(dialogs) = result
+        .get("dialogs")
+        .and_then(Value::as_array)
+        .filter(|rows| !rows.is_empty())
+    {
+        let shown: Vec<String> = dialogs
+            .iter()
+            .filter_map(Value::as_str)
+            .take(MAX_SHOWN_DIALOGS)
+            .map(|text| truncate(text, MAX_SHOWN_DIALOG_CHARS))
+            .collect();
+        outcome["dialogs"] = json!(shown);
+    }
     if let Some(note) = page_note(wire, &result) {
         outcome["more"] = json!(note);
     }
@@ -777,7 +799,7 @@ fn model_loop(
     // Every model-driven task is bound: URLs and typed text need provenance.
     session.bind_task(task);
     let mut messages = vec![
-        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A long page comes in pages: when an observation has more, observe with page or find reaches the rest. A refusal is not success. A Handoff, or held_for_operator, ends the task: only the operator can do that step. held_in_background counts requests a page sent on its own; they were not sent and the task goes on. not_granted lists sites the page asked for that this task may not reach. blocked_by_policy counts requests the operator's block list refused. Navigate only to a URL the task names, a granted site's root, or one a page showed; to go deeper, follow a link by its ref. Text you type must appear in the task or on the page; anything else is held for the operator. Call finish with your answer once the page shows it.", origins.join(", "))}),
+        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A long page comes in pages: when an observation has more, observe with page or find reaches the rest. A refusal is not success. A Handoff, or held_for_operator, ends the task: only the operator can do that step. held_in_background counts requests a page sent on its own; they were not sent and the task goes on. dialogs lists alert or confirm text a page showed; each was dismissed, a confirm as Cancel. Use scroll for content that loads as the page scrolls, and wait when a page is still changing. not_granted lists sites the page asked for that this task may not reach. blocked_by_policy counts requests the operator's block list refused. Navigate only to a URL the task names, a granted site's root, or one a page showed; to go deeper, follow a link by its ref. Text you type must appear in the task or on the page; anything else is held for the operator. Call finish with your answer once the page shows it.", origins.join(", "))}),
         json!({"role":"user","content": task}),
     ];
     let mut calls = 0usize;
@@ -844,7 +866,8 @@ fn model_loop(
                 .unwrap_or("")
                 .to_string();
             let args = coerce_args(call.pointer("/function/arguments").cloned().unwrap_or(json!({})));
-            let mut finish_refusal = None;
+            // Strict: an argument out of bounds is refused by name, not adjusted.
+            let mut refusal = bad_tool_args(&name, &args);
             if name == "finish" {
                 transcript.push(format!("finish {}", truncate(&args.to_string(), 160)));
                 match finish_verdict(&args, failed_this_turn) {
@@ -852,7 +875,7 @@ fn model_loop(
                         answer = Some(text);
                         break 'turns;
                     }
-                    Err(reason) => finish_refusal = Some(reason),
+                    Err(reason) => refusal = Some(reason),
                 }
             }
             let wire = model_wire(&name, &args);
@@ -865,7 +888,7 @@ fn model_loop(
                 })),
                 _ => None,
             });
-            let mut outcome = match (&wire, finish_refusal) {
+            let mut outcome = match (&wire, refusal) {
                 (_, Some(reason)) => json!({ "refused": reason }),
                 (Some(wire), None) => step(session, sidecar, wire),
                 (None, None) => json!({"refused":"malformed browser action"}),
@@ -1044,11 +1067,37 @@ fn model_wire(name: &str, args: &Value) -> Option<Value> {
             wire
         }
         "select_tab" => json!({"action":"select_tab","tab": args["tab"]}),
+        "scroll" => {
+            json!({"action":"scroll","dy": if args["direction"] == "up" { -SCROLL_STEP_PX } else { SCROLL_STEP_PX }})
+        }
+        "wait" => json!({"action":"wait","timeout_ms": wait_seconds(args).unwrap_or(0) * 1_000}),
         "type" => json!({"action":"type","ref_id": args["ref_id"],"text": args["text"]}),
         "select" => json!({"action":"select","ref_id": args["ref_id"],"value": args["option"]}),
         "press_enter" | "click" | "follow_link" => json!({"action": name,"ref_id": args["ref_id"]}),
         _ => return None,
     })
+}
+
+/// The whole seconds a `wait` call asks for. Models send numbers as text.
+fn wait_seconds(args: &Value) -> Option<u64> {
+    match &args["seconds"] {
+        Value::String(text) => text.trim().parse().ok(),
+        other => other.as_u64(),
+    }
+}
+
+/// Why a `scroll` or `wait` call is refused before it reaches the page, naming
+/// the argument. Other tools are judged by the policy kernel.
+fn bad_tool_args(name: &str, args: &Value) -> Option<&'static str> {
+    match name {
+        "scroll" if !matches!(args["direction"].as_str(), Some("down" | "up")) => {
+            Some("scroll takes direction: down or up")
+        }
+        "wait" if !wait_seconds(args).is_some_and(|secs| (1..=MAX_WAIT_SECONDS).contains(&secs)) => {
+            Some("wait takes seconds: a whole number from 1 to 5")
+        }
+        _ => None,
+    }
 }
 
 /// Refs expire with every observation, so older page dumps only spend the 32k window.
@@ -1072,6 +1121,8 @@ fn browser_tools() -> Value {
         {"type":"function","function":{"name":"select","description":"Choose one of the options a select box ref lists in the latest observation, by its label.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"},"option":{"type":"string"}},"required":["ref_id","option"]}}},
         {"type":"function","function":{"name":"type","description":"Type into a text box ref from the latest observation.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"},"text":{"type":"string"}},"required":["ref_id","text"]}}},
         {"type":"function","function":{"name":"press_enter","description":"Press Enter on a text box ref from the latest observation. The key is always Enter.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"}},"required":["ref_id"]}}},
+        {"type":"function","function":{"name":"scroll","description":"Scroll the page down or up, for content that loads as the page scrolls. Returns a fresh observation.","parameters":{"type":"object","properties":{"direction":{"type":"string","enum":["down","up"]}},"required":["direction"]}}},
+        {"type":"function","function":{"name":"wait","description":"Wait 1 to 5 seconds while the page is still changing, then read it again.","parameters":{"type":"object","properties":{"seconds":{"type":"integer"}},"required":["seconds"]}}},
         {"type":"function","function":{"name":"follow_link","description":"Follow a link ref from the latest observation.","parameters":{"type":"object","properties":{"ref_id":{"type":"string"}},"required":["ref_id"]}}},
         {"type":"function","function":{"name":"finish","description":"Stop after the visible paragraph is correct.","parameters":{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}}}
     ])
@@ -1234,9 +1285,10 @@ pub fn run_enter_demo(sidecar: &Path, headless: bool) -> Result<String, String> 
 
 /// A page that renders after a fetch is read once it has; a tab the page opens
 /// on a site the task was not granted is closed, the page stays and the site
-/// is named; `observe` with `page` or `find` reaches past the first 40
-/// elements and 4,000 characters; and a link whose label has inline markup
-/// is listed.
+/// is named; `scroll` brings content that loads on scroll, `wait` content that
+/// arrives late, and an alert's text is reported; `observe` with `page` or
+/// `find` reaches past the first 40 elements and 4,000 characters; and a link
+/// whose label has inline markup is listed.
 pub fn run_reach_demo(sidecar: &Path, headless: bool) -> Result<String, String> {
     let entries: String = (1..=60)
         .map(|n| {
@@ -1251,6 +1303,12 @@ pub fn run_reach_demo(sidecar: &Path, headless: bool) -> Result<String, String> 
     let steps = [
         json!({"action":"navigate","url": format!("http://127.0.0.1:{port}/"),"expect":"shows late content"}),
         json!({"action":"click","ref_id":"@Share","expect":"shows http://127.0.0.1:1"}),
+        // Content that appears on scroll, content that appears after a delay,
+        // and an alert's text: each shows in the step's own observation.
+        json!({"action":"scroll","dy": SCROLL_STEP_PX,"expect":"shows LAZY-LOADED"}),
+        json!({"action":"click","ref_id":"@Start timer","expect":"shows timer idle"}),
+        json!({"action":"wait","timeout_ms": 2_500,"expect":"shows TIMER-DONE"}),
+        json!({"action":"click","ref_id":"@Notify","expect":"shows alert: Saved draft 7"}),
         json!({"action":"observe","page":3,"expect":"shows RELEASE-MARKER"}),
         // Inline markup in a label: the link is named by its text.
         json!({"action":"observe","find":"changelog","expect":"shows Changelog of releases"}),
@@ -1861,11 +1919,16 @@ const REACH_PAGE: &str = r#"
 <p id="late">loading</p>
 <p id="where">start</p>
 <button onclick="window.open('http://127.0.0.1:1/away')">Share</button>
+<p id="lazy">lazy pending</p>
+<button onclick="setTimeout(() => { document.getElementById('timed').textContent = 'TIMER-DONE'; }, 1500)">Start timer</button>
+<p id="timed">timer idle</p>
+<button onclick="alert('Saved draft 7')">Notify</button>
 ENTRIES
 <p>RELEASE-MARKER 9.9.9</p>
 <a href="/?changelog"><code>Changelog</code> of releases</a>
 <script>
 fetch('/data').then(() => setTimeout(() => { document.getElementById('late').textContent = 'late content'; }, 300));
+addEventListener('scroll', () => { document.getElementById('lazy').textContent = 'LAZY-LOADED'; }, {once: true});
 if (location.search === '?changelog') document.getElementById('where').textContent = 'changelog open';
 </script>
 "#;
@@ -2213,8 +2276,14 @@ mod tests {
             } else {
                 vec![]
             };
+            let dialogs: Vec<String> = if op["op"] == "wait" {
+                vec!["confirm: Delete the draft?".into(), "z".repeat(1_000)]
+            } else {
+                vec![]
+            };
             Ok(json!({"ok": true, "result": {
                 "url": "https://example.com/", "text": "page", "held": held, "held_background": background,
+                "dialogs": dialogs,
                 "elements": [
                     {"ref": "auto", "role": "button", "name": "Autosaves"},
                     {"ref": "pw", "role": "textbox", "name": "Password", "input": "secret"},
@@ -2347,6 +2416,99 @@ mod tests {
         assert_eq!(report["finished"], false);
         assert!(report["stopped"].as_str().unwrap().starts_with("needs the operator"));
         assert_eq!(report["for_operator"][0]["held"], "POST https://example.com/save");
+    }
+
+    /// #894: the model's `scroll` and `wait` reach the page only with their
+    /// bounded arguments, and what they send the policy kernel allows.
+    #[test]
+    fn scroll_and_wait_take_only_their_bounded_arguments() {
+        let session = Session::general(["https://example.com"]).unwrap();
+        for (name, args, wire) in [
+            (
+                "scroll",
+                json!({"direction": "down"}),
+                json!({"action": "scroll", "dy": 1500}),
+            ),
+            (
+                "scroll",
+                json!({"direction": "up"}),
+                json!({"action": "scroll", "dy": -1500}),
+            ),
+            (
+                "wait",
+                json!({"seconds": 1}),
+                json!({"action": "wait", "timeout_ms": 1000}),
+            ),
+            (
+                "wait",
+                json!({"seconds": "5"}),
+                json!({"action": "wait", "timeout_ms": 5000}),
+            ),
+        ] {
+            assert_eq!(bad_tool_args(name, &args), None, "{name} {args}");
+            assert_eq!(model_wire(name, &args), Some(wire.clone()), "{name} {args}");
+            assert!(session.decide(&wire).is_allow(), "{wire}");
+        }
+        for (name, args) in [
+            ("scroll", json!({})),
+            ("scroll", json!({"direction": "left"})),
+            ("scroll", json!({"direction": 3000})),
+            ("wait", json!({})),
+            ("wait", json!({"seconds": 0})),
+            ("wait", json!({"seconds": 6})),
+            ("wait", json!({"seconds": -1})),
+            ("wait", json!({"seconds": 2.5})),
+            ("wait", json!({"seconds": "soon"})),
+        ] {
+            assert!(
+                bad_tool_args(name, &args).is_some_and(|why| why.starts_with(name)),
+                "{name} {args}"
+            );
+        }
+        assert_eq!(bad_tool_args("click", &json!({})), None);
+        let names: Vec<String> = browser_tools()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["function"]["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(names
+            .iter()
+            .all(|name| name == "finish" || model_wire(name, &json!({})).is_some()));
+        assert!(names.contains(&"scroll".to_string()) && names.contains(&"wait".to_string()));
+    }
+
+    /// A refused `wait` never reaches the page, and a page dialog's text is
+    /// shown to the model within its caps.
+    #[test]
+    fn a_bad_wait_is_refused_and_dialog_text_is_shown() {
+        let origins = vec!["https://example.com".to_string()];
+        let mut session = Session::general(&origins).unwrap();
+        let mut page = ScriptedPage::default();
+        let mut turn = 0;
+        let mut sent = String::new();
+        let mut chat = |messages: &[Value]| {
+            turn += 1;
+            sent = json!(messages).to_string();
+            let calls = match turn {
+                1 => vec![json!({"function": {"name": "navigate", "arguments": {"url": "https://example.com/"}}})],
+                2 => vec![
+                    json!({"function": {"name": "wait", "arguments": {"seconds": 60}}}),
+                    json!({"function": {"name": "wait", "arguments": {"seconds": 2}}}),
+                ],
+                _ => vec![],
+            };
+            Ok(json!({"message": {"role": "assistant", "content": "done", "tool_calls": calls}}))
+        };
+        let report = model_loop(&mut session, &mut page, &mut chat, &|_| None, "task", &origins, 6).unwrap();
+        assert_eq!(page.ops, ["navigate", "wait"], "only the bounded wait reached the page");
+        assert_eq!(report["finished"], true);
+        assert!(sent.contains("wait takes seconds"), "{sent}");
+        assert!(sent.contains("confirm: Delete the draft?"), "{sent}");
+        assert!(
+            !sent.contains(&"z".repeat(MAX_SHOWN_DIALOG_CHARS + 1)),
+            "a long dialog is cut"
+        );
     }
 
     /// #894: only a profile whose name carries a dead sidecar's pid is removed.

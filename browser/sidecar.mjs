@@ -52,6 +52,14 @@ const ACTS = new Set(["click", "follow_link", "type", "press_enter", "select", "
 let acting = false;
 // Origins a page asked for that this task was not granted; reported the same way.
 const notGranted = new Set();
+// alert, confirm and prompt text since the last observation. Each was
+// dismissed, as before; the text is page-written and reported, not obeyed.
+const dialogs = [];
+const MAX_DIALOGS = 5;
+const MAX_DIALOG_CHARS = 300;
+// One screen is about 800 px; the policy kernel refuses more than 2,000.
+const MAX_SCROLL_PX = 2000;
+const MAX_WAIT_MS = 5000;
 // Tabs a page opened whose verdict is pending; every action waits for it.
 const opening = new Set();
 // Longest wait for the parent's verdict on one URL; none in time is a refusal.
@@ -262,6 +270,7 @@ async function observe(view = {}) {
     pages: Math.max(1, Math.ceil(matched / MAX_ELEMENTS), Math.ceil(shown.length / MAX_TEXT)),
     held: held.splice(0),
     held_background: heldBackground.splice(0),
+    dialogs: dialogs.splice(0),
     not_granted: [...notGranted],
     blocked,
   };
@@ -599,6 +608,12 @@ async function start(message) {
     download.cancel();
   });
   context.on("page", track);
+  // Playwright dismisses a dialog nobody listens for. Listening must keep
+  // that: an accepted confirm could delete something.
+  context.on("dialog", (dialog) => {
+    if (dialogs.length < MAX_DIALOGS) dialogs.push(`${dialog.type()}: ${dialog.message().slice(0, MAX_DIALOG_CHARS)}`);
+    dialog.dismiss().catch(() => {});
+  });
   // Page requests only, so Chrome's own background traffic (also refused by
   // the proxy) is not listed. A redirect to another site fails here too.
   context.on("requestfailed", (request) => {
@@ -704,11 +719,16 @@ async function handle(message) {
       await locator.click({ timeout: 5000 });
       return observe();
     }
-    case "scroll":
-      await bounded(page.mouse.wheel(0, message.dy || 0), "scroll");
+    case "scroll": {
+      const dy = Math.max(-MAX_SCROLL_PX, Math.min(MAX_SCROLL_PX, Number(message.dy) || 0));
+      await bounded(page.mouse.wheel(0, dy), "scroll");
+      // The scroll itself and what it loads both land after the wheel event.
+      await page.waitForTimeout(300);
+      await settle();
       return observe();
+    }
     case "wait":
-      await page.waitForTimeout(message.timeout_ms);
+      await page.waitForTimeout(Math.max(0, Math.min(MAX_WAIT_MS, Number(message.timeout_ms) || 0)));
       return observe();
     default:
       throw new Error("malformed browser action");
