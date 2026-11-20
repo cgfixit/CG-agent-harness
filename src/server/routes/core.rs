@@ -402,13 +402,28 @@ pub async fn clear_sessions(
         .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     let mut derived_deleted = 0usize;
     let mut derived_retained = 0usize;
+    // The sessions are already gone, so a cascade the store fails is reported
+    // in the answer, like an incomplete attachment cleanup, not as a failed
+    // clear: the remaining cleanup and the audit line still run.
+    let mut derived_error: Option<String> = None;
     if req.delete_derived_episodes {
         if let Some(store) = state.structured_memory.as_ref() {
-            let (deleted_eps, retained) = store
-                .delete_unreferenced_episodes(&owner, &req.reason)
-                .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-            derived_deleted = deleted_eps;
-            derived_retained = retained;
+            match store.delete_unreferenced_episodes(&owner, &req.reason) {
+                Ok((deleted_eps, retained)) => {
+                    derived_deleted = deleted_eps;
+                    derived_retained = retained;
+                }
+                Err(e) => {
+                    state.audit.log(json!({
+                        "event": "session_clear_cascade_incomplete",
+                        "owner_id": owner,
+                        "code": e.code,
+                        "message": e.message,
+                    }));
+                    derived_retained = store.episode_count(&owner).unwrap_or(0);
+                    derived_error = Some(e.code.to_string());
+                }
+            }
         }
     } else if let Some(store) = state.structured_memory.as_ref() {
         derived_retained = store.episode_count(&owner).unwrap_or(0);
@@ -441,21 +456,28 @@ pub async fn clear_sessions(
         "deleted_sessions": deleted,
         "delete_derived_episodes": req.delete_derived_episodes,
         "derived_episodes_deleted": derived_deleted,
+        "derived_episodes_error": derived_error,
         "reason_chars": req.reason.trim().chars().count(),
     }));
-    Ok(Json(json!({
+    let mut body = json!({
         "deleted_sessions": deleted,
         "attachment_cleanup": attachment_cleanup,
         "notes_cleanup": notes_cleanup,
         "derived_episodes_deleted": derived_deleted,
         "derived_episodes_retained": derived_retained,
         "delete_derived_episodes": req.delete_derived_episodes,
-        "note": if req.delete_derived_episodes {
+        "note": if derived_error.is_some() {
+            "Session history was cleared. Derived episodes could not be deleted and remain; clear again with delete_derived_episodes to retry. Facts and proposals are never cleared here."
+        } else if req.delete_derived_episodes {
             "Session history was cleared. This owner's unreferenced derived episodes were deleted. Facts, proposals, and episodes referenced by pending proposals were kept."
         } else {
             "Session history was cleared. Derived structured-memory episodes remain unless delete_derived_episodes is confirmed. Facts and proposals are never cleared here."
         }
-    })))
+    });
+    if let Some(code) = derived_error {
+        body["derived_episodes_error"] = json!(code);
+    }
+    Ok(Json(body))
     })
     .await
 }

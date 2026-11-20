@@ -3079,7 +3079,9 @@ $('sessionClearConfirm').addEventListener('click', async () => {
     paintGoalLoop();
     $('sessionClearDialog').close();
     $('sessionClearDerivedEpisodes').checked = false;
-    const kept = deleteDerived
+    const kept = cleared && cleared.derived_episodes_error
+      ? (' Derived episodes could not be deleted (' + String(cleared.derived_episodes_error) + ') and remain; clear again with the cascade to retry.')
+      : deleteDerived
       ? (' Derived episodes deleted: ' + String(cleared.derived_episodes_deleted || 0) + '; retained because a pending proposal still references them: ' + String(cleared.derived_episodes_retained || 0) + '.')
       : ' Derived structured-memory episodes remain unless you also confirm that cascade.';
     const cleanup = cleared && cleared.attachment_cleanup;
