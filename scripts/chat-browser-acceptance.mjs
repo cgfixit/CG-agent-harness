@@ -125,6 +125,8 @@ const server=createServer(async(req,res)=>{
  if(path.startsWith('/api/browser/jobs/')){
   const [,id,verb]=path.match(/^\/api\/browser\/jobs\/([0-9a-f]{32})(?:\/(approve|deny|cancel))?$/)||[];
   if(!browseJob||id!==browseJob.id){reply({detail:{code:'BROWSER_JOB_NOT_FOUND',message:'no such browser job'}},404);return;}
+  // The server refuses a reason that is only invisible characters (is_visibly_blank).
+  if(verb==='approve'&&!String(body.reason||'').replace(/[\u200b\s]/g,'')){reply({detail:{code:'VALIDATION_ERROR',message:'request body failed validation: reason',details:{fields:['reason']}}},422);return;}
   if(verb==='approve'||verb==='deny'){browseJob.decided=verb;reply({job_id:id,decision:verb==='approve'?'approved':'denied',request:body.request});return;}
   if(verb==='cancel'){browseJob.decided='cancel';reply({job_id:id,status:'cancelling'});return;}
   if(browseJob.waits&&!browseJob.decided){
@@ -647,6 +649,10 @@ try {
   assert.equal(await evaluate('window.BROWSE_INJECTED===undefined'),true,'and none of it ran');
   assert.equal(await evaluate(card+'.querySelectorAll("button")[0].disabled'),true,'approve needs a reason first');
   assert.equal(posted('approve').length,0,'nothing is approved by showing the card');
+  // A refused reason leaves the card usable: the request is still waiting.
+  await evaluate('(()=>{const box='+card+'.querySelector("input");box.value="\\u200b";box.dispatchEvent(new Event("input"));'+card+'.querySelectorAll("button")[0].click();})()');
+  await until(card+'.innerText.includes("VALIDATION_ERROR")');
+  assert.deepEqual(await evaluate('[...'+card+'.querySelectorAll("button,input")].map(el=>el.disabled)'),[false,false,false],'a refused approval can be corrected or held');
   await evaluate('(()=>{const box='+card+'.querySelector("input");box.value="the order I asked for";box.dispatchEvent(new Event("input"));'+card+'.querySelectorAll("button")[0].click();})()');
   await until(text()+'.includes("Sent with your approval: POST https://shop.example/api/order?ref=1")');
   assert.deepEqual(posted('approve').at(-1)[2],{request:7,sha256:BROWSE_SHA,confirm:true,reason:'the order I asked for'},'the yes names the request shown, its hash, confirm and the reason');

@@ -1133,6 +1133,9 @@ const AGENT_STATUS_TIMEOUT_MS = 190000;
 const AGENT_WRITE_TIMEOUT_MS = 1210000;
 /* Outlasts the largest browser.timeout_sec (1800 s); the server enforces the configured one. */
 const BROWSE_WAIT_MS = 1830000;
+/* Starting a job answers once the model is loaded, which the server allows up
+   to models.local_llm.warmup.timeout_sec for (120 s at most). */
+const BROWSE_START_MS = 150000;
 /* A bare first /browse word ending in one of these is more likely a file than a
    site (.py, .md, .sh and .rs are also country domains), so the console shows
    the grant and asks for the same line again before running it (#945). */
@@ -2952,7 +2955,18 @@ function showBrowseApproval(jobId, pending) {
         await api(base + '/deny', 'POST', { request: Number(pending.request) });
       }
       note.textContent = approve ? 'Approved: policy is checked again, then it is sent once.' : 'Held: not sent. The task reports it.';
-    } catch (e) { note.textContent = (e && e.message) || String(e); }
+    } catch (e) {
+      note.textContent = (e && e.message) || String(e);
+      /* Decided, expired, replaced or blocked: nothing is left to answer here.
+         Anything else (a refused reason, a dropped connection) can be retried;
+         the server answers a repeat of a delivered verdict with one of these. */
+      const over = ['BROWSER_NOTHING_WAITING', 'BROWSER_APPROVAL_STALE', 'BROWSER_JOB_NOT_FOUND', 'WEB_POLICY_CHANGED',
+        'BROWSER_TAKEOVER_DISABLED', 'BROWSER_DISABLED'];
+      if (!over.includes(e && e.code)) {
+        no.disabled = reason.disabled = false;
+        yes.disabled = !reason.value.trim();
+      }
+    }
   };
   const yes = document.createElement('button'); yes.type = 'button'; yes.textContent = 'Send this request once'; yes.disabled = true;
   const no = document.createElement('button'); no.type = 'button'; no.textContent = 'Hold it';
@@ -4432,7 +4446,7 @@ async function runSlash(line, webCommand) {
            decision here (#995). Where jobs are not offered the task runs as
            one held request, and every such request ends it as before. */
         let job = null;
-        try { job = await api('/api/browser/jobs', 'POST', {task, origins}); }
+        try { job = await api('/api/browser/jobs', 'POST', {task, origins}, BROWSE_START_MS); }
         catch (e) { if (!e || e.code !== 'BROWSER_JOBS_UNSUPPORTED') throw e; }
         if (staleReview()) break;
         if (job) { watchBrowseJob(String(job.job_id || '')); break; }
