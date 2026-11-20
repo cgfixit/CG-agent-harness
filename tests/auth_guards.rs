@@ -75,6 +75,16 @@ fn guarded_routes() -> Vec<(Method, &'static str, serde_json::Value)> {
         ),
         (
             Method::POST,
+            "/api/browser/jobs/0123456789abcdef0123456789abcdef/approve",
+            json!({"request": 1, "sha256": "ab".repeat(32), "confirm": true, "reason": "fixture"}),
+        ),
+        (
+            Method::POST,
+            "/api/browser/jobs/0123456789abcdef0123456789abcdef/deny",
+            json!({"request": 1}),
+        ),
+        (
+            Method::POST,
             "/api/agent/run",
             json!({"instruction": "x", "branch": "claude/x", "commit_message": "m", "reason": "r"}),
         ),
@@ -483,7 +493,9 @@ async fn only_explicit_auth_opt_out_allows_login_free_operations() {
                 if path == "/api/browser/run" || path == "/api/browser/jobs" {
                     assert_eq!(status, 409, "browser.enabled: false refuses: {result}");
                 }
-                if path.starts_with("/api/browser/jobs/") {
+                if path.ends_with("/approve") {
+                    assert_eq!(status, 409, "browser.enabled: false refuses: {result}");
+                } else if path.starts_with("/api/browser/jobs/") {
                     assert_eq!(status, 404, "no job was ever started: {result}");
                 }
                 if path == "/api/agent/jobs" && method == Method::POST {
