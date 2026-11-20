@@ -28,7 +28,8 @@ to Claude Code.
 - The pre-commit security gate prints questions when a diff touches an agent
   instruction surface or adds an execution path; answer them in the PR body.
 - After a dependency, network-crate or `Command::new(` change, ask the operator
-  to run `/cgagentharness-otel-hardening`: no workflow runs its checker.
+  to run `/cgagentharness-otel-hardening`: CI runs its static checker
+  (`telemetry-contract.yml`), never its vendor sweep.
 
 ## Cloud sessions (Linux container)
 - No `gh`: use the GitHub MCP tools. `cargo-deny` may be absent; say so, never
