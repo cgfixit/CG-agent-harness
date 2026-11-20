@@ -82,8 +82,8 @@ content, an ungranted tab closed and named, scroll, wait, an alert's text,
 `page` and `find`) and
 `browser-verify`. `browser guards` checks by what its loopback server received:
 no worker starts, a redirect lands, no held POST arrives, a blocked path gets no request, a 1.14 MB page
-gives a capped reply, and the proxy answers 407 without the session credential. CI's
-`browser-guards` job runs every fixture, sandbox on.
+gives a capped reply, and the proxy answers 407 unauthenticated. `browser takeover`
+checks one-shot approval (#995). CI runs every fixture, sandbox on.
 
 ## Honest limits
 
