@@ -876,6 +876,46 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
         std::fs::rename(&aside, &policy_file).unwrap();
         refused(409, "BROWSER_BUSY").await;
         stored(false).await;
+        // The same recheck when a child exits: its report is delivered only
+        // while the policy still allows every origin the task was granted.
+        let exited = |policy_allows: bool| {
+            let state = &server.state;
+            async move {
+                let origins = ["https://example.com".to_string()];
+                let report = r#"{"event":"turn"}
+{"answer":"fresh"}
+"#;
+                let delivered =
+                    cgagentharness::server::routes::browser::deliver_exited_child(state, &origins, 0, report).await;
+                if policy_allows {
+                    let body = delivered.unwrap_or_else(|err| panic!("refused: {}", err.code));
+                    assert_eq!(body["finished"], true, "{body}");
+                    assert_eq!(body["report"]["answer"], "fresh", "{body}");
+                } else {
+                    assert_eq!(delivered.unwrap_err().code, "WEB_POLICY_CHANGED");
+                }
+            }
+        };
+        exited(true).await;
+        let block = json!({"urls":["https://example.com"]});
+        assert_eq!(
+            request(&server, &admin, Method::POST, "/api/web/block", block)
+                .await
+                .status(),
+            200
+        );
+        exited(false).await;
+        let unblock = json!({"url":"https://example.com"});
+        assert_eq!(
+            request(&server, &admin, Method::POST, "/api/web/unblock", unblock)
+                .await
+                .status(),
+            200
+        );
+        std::fs::rename(&policy_file, &aside).unwrap();
+        exited(false).await;
+        std::fs::rename(&aside, &policy_file).unwrap();
+        exited(true).await;
     }
     assert_eq!(
         request(

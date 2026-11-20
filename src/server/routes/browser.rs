@@ -261,6 +261,29 @@ async fn deliver(state: &Arc<AppState>, asked: &Asked, result: ChildResult) -> A
     Ok(body)
 }
 
+/// Test seam: `deliver` for a child that has already exited, so a test can
+/// change the URL policy between a task's launch check and its delivery
+/// without a real browser. Absent from default release builds.
+#[cfg(any(test, feature = "test-support"))]
+pub async fn deliver_exited_child(
+    state: &Arc<AppState>,
+    origins: &[String],
+    exit_code: i32,
+    stdout: &str,
+) -> ApiResult<Value> {
+    let session = Session::general(origins)
+        .map_err(|_| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "BROWSER_BAD_ORIGIN", "origins"))?;
+    let asked = Asked {
+        grants: session.grant_strings(),
+        session,
+        model: None,
+        owner: "test".into(),
+        task_sha256: String::new(),
+        job: None,
+    };
+    deliver(state, &asked, Ok((exit_code, stdout.into(), String::new()))).await
+}
+
 /// Whether the shared block list covers a granted origin. The policy file is
 /// read and matched on the blocking pool, never on an async worker; an
 /// unreadable file is the `WEB_POLICY_UNAVAILABLE` refusal.
