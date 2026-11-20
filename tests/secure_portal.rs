@@ -747,6 +747,24 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
         .status(),
         200
     );
+    // #894: a held model gate refuses an administrator's browser task at
+    // once and names the holder; nothing is queued.
+    {
+        let browse = json!({"task":"read the page","origins":["https://example.com"]});
+        let _tuning = server
+            .state
+            .generation_gate
+            .claim(cgagentharness::server::model_limits::TUNE_OWNER)
+            .unwrap();
+        let busy = request(&server, &admin, Method::POST, "/api/browser/run", browse.clone()).await;
+        assert_eq!(busy.status(), 409);
+        let busy = busy.json::<Value>().await.unwrap();
+        assert_eq!(busy["detail"]["code"], "BROWSER_BUSY", "{busy}");
+        assert!(
+            busy["detail"]["message"].as_str().unwrap().contains("/model use"),
+            "{busy}"
+        );
+    }
     assert_eq!(
         request(
             &server,
