@@ -318,6 +318,9 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 ## api: registered routes (part 8)
 
+- POST `/api/browser/jobs`: The same request, detached (macOS and Linux): 202 `{job_id, status}` once the job holds…
+- GET `/api/browser/jobs/{job_id}`: Your job: `status` (`running`, `cancelling`, `finished`, `failed`, `cancelled`),…
+- POST `/api/browser/jobs/{job_id}/cancel`: Stop before the next model turn; killed after ten seconds
 - GET `/api/mcp`: Declared MCP servers, namespaced tools and versioned stdio capability policies; no…
 - POST `/api/mcp/call`: Call one declared MCP tool; `confirm` is never defaulted
 - GET `/api/github/status`: GitHub credential and write-gate posture
@@ -329,12 +332,12 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/agent/schedules/preview`: Preview five occurrences and return an owner-bound receipt
 - GET, POST `/api/agent/schedules`: List owned schedules or activate the exact previewed request
 - GET `/api/agent/schedules/{schedule_id}`: One schedule
-- POST `/api/agent/schedules/{schedule_id}/cancel`: Cancel a schedule
-- GET `/api/agent/runs`, `/api/agent/runs/{run_id}`: Retained run metadata; one run and its diff
-- POST `/api/agent/runs/{run_id}/decision`: Approve (`reason`, confirm) or reject
 
 ## api: registered routes (part 9)
 
+- POST `/api/agent/schedules/{schedule_id}/cancel`: Cancel a schedule
+- GET `/api/agent/runs`, `/api/agent/runs/{run_id}`: Retained run metadata; one run and its diff
+- POST `/api/agent/runs/{run_id}/decision`: Approve (`reason`, confirm) or reject
 - POST `/api/agent/runs/{run_id}/push`, `/api/agent/runs/{run_id}/publish`, `/api/agent/runs/{run_id}/discard`: Push the approved commit, open a draft PR, or discard the run
 - GET `/api/notifications`: Owned destinations and retained delivery metadata; no URLs, credentials or job content
 - POST `/api/notifications/{delivery_id}/replay`: Confirmed owner replay within current grants/limits; never reruns a job
