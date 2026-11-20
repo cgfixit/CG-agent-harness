@@ -224,6 +224,16 @@ SITES: dict[str, dict[str, object]] = {
         "pairs": {"PATH": "/usr/bin:/bin"},
         "mentions": ("env_clear()",),
     },
+    # Native-confirmed "open the web console in Terminal": the same fixed OS
+    # opener and cleared env, pointed at a private command file that re-execs
+    # the integrity-checked bundled start-web.sh under `env -i`.
+    "desktop-web-launcher": {
+        "file": "desktop/src/web_launcher.rs",
+        "signature": r"pub fn open\(",
+        "launches": ("/usr/bin/open",),
+        "pairs": {"PATH": "/usr/bin:/bin"},
+        "mentions": ("env_clear()", "/usr/bin/env -i PATH=/usr/bin:/bin", "start-web.sh"),
+    },
     # Playwright sidecar for /api/browser/run and the browser CLI: cleared env
     # plus browser_host::child_environment (no provider keys); never downloads
     # a browser. Chrome's egress is the sidecar's loopback proxy.
@@ -304,16 +314,17 @@ DENIED_TELEMETRY_CRATE_PATTERNS: tuple[str, ...] = (
 # read when that description was written. Drift WARNs: not a leak, the prompt
 # to re-read the changelog (SKILL.md step 3).
 LAST_VERIFIED_CRATE_PINS: dict[str, str] = {
-    "reqwest": "0.12.28",
-    "rmcp": "3.5.0",
+    "reqwest": "0.13.5",
+    "rmcp": "3.9.0",
     "axum": "0.8.9",
-    "rustls": "0.23.45",
-    "hyper": "1.11.1",
-    "keyring": "3.6.3",
-    "tantivy": "0.26.2",
+    "rustls": "0.23.46",
+    "hyper": "1.12.0",
+    "keyring-core": "1.0.1",
+    "tantivy": "0.27.0",
+    "lopdf": "0.47.0",
     "tracing-subscriber": "0.3.23",
 }
-DESKTOP_VERIFIED_CRATE_PINS: dict[str, str] = {"tauri": "2.12.0", "reqwest": "0.12.28"}
+DESKTOP_VERIFIED_CRATE_PINS: dict[str, str] = {"tauri": "2.12.4", "reqwest": "0.13.5"}
 
 # gh floor the agentic layer enforces (src/agentic/gh_client.rs DEFAULT_MIN_GH).
 EXPECTED_MIN_GH = (2, 40, 0)
@@ -332,6 +343,7 @@ KNOWN_SPAWN_FILES: frozenset[str] = frozenset({
     "src/shim/mod.rs",
     "desktop/src/backend.rs",
     "desktop/src/main.rs",
+    "desktop/src/web_launcher.rs",
 })
 
 # External executables any harness code path can launch, each resolving to an
@@ -345,7 +357,7 @@ KNOWN_EXTERNAL_BINARIES: tuple[str, ...] = (
 # site still spawns; the row describes the surface and its gate, never a binary.
 DYNAMIC_LAUNCHER_SITES: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("mcp-stdio-servers", "src/common/mcp.rs", ("cmd.env_clear()", "filter_env(")),
-    ("executor-caller-checks", "src/agentic/executor/runner.rs", ("production_sandbox()", "scrubbed_env")),
+    ("executor-caller-checks", "src/agentic/executor/runner.rs", ("production_sandbox(", "scrubbed_env")),
     ("shim-agentic-child", "src/shim/mod.rs", ("run_argv",)),
 )
 
@@ -374,11 +386,11 @@ INVENTORY: tuple[dict[str, object], ...] = (
                        "writer.rs) and git.rs environment() because git's credential.helper is "
                        "`!gh auth git-credential`; executor-runner carries it in the verifier arm for "
                        "checks that shell out to gh",
-        "scope": "agentic read/write ops", "reviewed": "2026-10-03",
-        "evidence": "code read 2026-10-03: one builder arm delivers it to both gh sites and the verifier "
-                    "(parity O6 closed); the control name and true/false/log semantics are inherited "
-                    "from CyClaw's 2026-08-27 vendor-doc read, not re-read here -- step 3 re-verifies "
-                    "against gh help environment",
+        "scope": "agentic read/write ops", "reviewed": "2026-11-20",
+        "evidence": "one builder arm delivers it to both gh sites and the verifier (parity O6 closed). "
+                    "gh help environment re-read 2026-11-20: GH_TELEMETRY `false` or `0` disables, "
+                    "`log` prints instead of sending, and it takes precedence over DO_NOT_TRACK "
+                    "(`true` or `1`), which gh also honors",
     },
     {
         "name": "huggingface-hub telemetry ping (inside verified repositories)", "category": 1,
@@ -414,10 +426,10 @@ INVENTORY: tuple[dict[str, object], ...] = (
                        "GH_NO_EXTENSION_UPDATE_NOTIFIER landed with the shared builder (parity O6), "
                        "closing the step 4 candidate: extension update checks are a second release-"
                        "endpoint lookup gh runs on its own, independent of the CLI's own notifier",
-        "scope": "agentic gh children", "reviewed": "2026-10-03",
-        "evidence": "version-check egress to the release endpoint (CLI and installed extensions); "
-                    "reports nothing about usage; both names mirror CyClaw's utils/telemetry_kill.py "
-                    "UPDATE_CHECK_OPT_OUT",
+        "scope": "agentic gh children", "reviewed": "2026-11-20",
+        "evidence": "version-check egress to the release endpoint (CLI every 24 hours, and installed "
+                    "extensions); reports nothing about usage; gh help environment re-read 2026-11-20 "
+                    "still documents both names as set-to-any-value switches",
     },
     {
         "name": "pip index / version check", "category": 2,
@@ -449,12 +461,19 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "name": "cloud chat providers (xAI Grok, Anthropic Claude, OpenAI-compatible)", "category": 3,
         "controls": {},
         "url": "docs/MODELS.md",
-        "versions": "reqwest 0.12 (rustls-tls); src/llm/cloud_chat.rs, src/llm/openai_chat.rs",
+        "versions": "reqwest 0.13 (feature rustls: aws-lc-rs provider, rustls-platform-verifier 0.7); "
+                    "src/llm/cloud_chat.rs, src/llm/openai_chat.rs",
         "enforcement": "provider key present (OS credential store or inherited env) + model selection; "
                        "spend ledger records tokens; no vendor-SDK telemetry switch exists -- the only "
                        "egress IS the model call",
-        "scope": "console chat and coding runs", "reviewed": "2026-10-03",
-        "evidence": "feature traffic, not telemetry; never block with an env pair",
+        "scope": "console chat and coding runs", "reviewed": "2026-11-20",
+        "evidence": "feature traffic, not telemetry; never block with an env pair. reqwest "
+                    "0.12.28->0.13.5 changelog read 2026-11-20: no telemetry or update check; 0.13.0 "
+                    "made the OS platform verifier the default for public TLS, so on macOS and Windows "
+                    "the OS trust evaluator may fetch revocation or intermediate data on its own "
+                    "(rustls-platform-verifier 0.7.1 apple.rs says it does not limit that). No env "
+                    "control exists; loopback clients pin a certificate through "
+                    "use_preconfigured_tls and never reach the verifier",
     },
     {
         "name": "agentic cloud proposer", "category": 3, "controls": {},
@@ -475,15 +494,21 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "evidence": "loopback generate/tags are category 4; the pull is the one intentional egress",
     },
     {
-        "name": "web search / fetch (SerpAPI, public Google, permitted URLs)", "category": 3,
+        "name": "web search / fetch (Tavily, SerpAPI, public Google, Firecrawl, permitted URLs)", "category": 3,
         "controls": {},
         "url": "docs/SECURE_RESEARCH.md",
-        "versions": "src/server/web_search.rs, web_policy.rs, web_research.rs",
+        "versions": "src/server/web_search.rs, web_provider.rs, web_tavily.rs, web_google.rs, "
+                    "web_firecrawl.rs, web_policy.rs, web_research.rs",
         "enforcement": "web.enabled + exact/wildcard URL allowlist + DNS-pinned SSRF checks; proxies, "
-                       "redirects, compression, retries and connection reuse disabled on the client",
-        "scope": "chat web_search/web_fetch tools", "reviewed": "2026-10-13",
-        "evidence": "policy-gated feature traffic; html5ever 0.39 (scraper's own parser, pinned directly "
-                    "for cancellable bounded parsing) has no network code",
+                       "redirects, compression, retries and connection reuse disabled on the client. "
+                       "web.search.provider auto prefers a saved Tavily key (api.tavily.com), then "
+                       "SerpAPI; search.result_reads grants admin-turn exact-URL reads of listed "
+                       "results (a listed arXiv abstract also its PDF); web.firecrawl.enabled ships "
+                       "false and sends only the same exact URL to api.firecrawl.dev",
+        "scope": "chat web_search/web_fetch tools, /api/web research jobs", "reviewed": "2026-11-20",
+        "evidence": "policy-gated feature traffic, hosts and gates re-read in "
+                    "assets/config.default.yaml 2026-11-20; html5ever 0.39 (scraper's own parser, "
+                    "pinned directly for cancellable bounded parsing) has no network code",
     },
     {
         "name": "completion webhooks", "category": 3, "controls": {},
@@ -497,15 +522,17 @@ INVENTORY: tuple[dict[str, object], ...] = (
     {
         "name": "mcp clients (SSE / streamable HTTP)", "category": 3, "controls": {},
         "url": "docs/MCP.md",
-        "versions": "reqwest clients in src/server/mcp.rs (SSE + streamable HTTP); rmcp =3.5.0 is "
+        "versions": "reqwest clients in src/server/mcp.rs (SSE + streamable HTTP); rmcp =3.9.0 is "
                     "server-only here (features server, transport-streamable-http-server) behind the "
                     "inbound memory server in src/server/mcp_server.rs",
         "enforcement": "mcp.enabled literal true, declared mcp.servers only, DNS-pinned SSRF, "
                        "sse_allow_loopback ships false, confirm: true per call",
-        "scope": "declared MCP servers", "reviewed": "2026-10-13",
-        "evidence": "policy-gated feature traffic; rmcp 3.4.0->3.5.0 changelog and crates.io dependency "
-                    "set read 2026-10-13: inbound Origin/header validation fixes only, no new "
-                    "dependency, no client transport feature enabled",
+        "scope": "declared MCP servers", "reviewed": "2026-11-20",
+        "evidence": "policy-gated feature traffic; rmcp 3.5.0->3.9.0 release notes read 2026-11-20: "
+                    "no telemetry or update check; the 3.6.0 same-origin redirect following is in "
+                    "the Streamable HTTP *client*, which is not compiled here (the enabled server "
+                    "features pull no HTTP client: rmcp 3.9.0 Cargo.toml). The outbound SSE client "
+                    "keeps its GET stream open and reads a 202 reply from it",
     },
     {
         "name": "github via gh/git (agentic reads and gated writes)", "category": 3, "controls": {},
@@ -528,13 +555,18 @@ INVENTORY: tuple[dict[str, object], ...] = (
     {
         "name": "local stores and logs", "category": 4, "controls": {},
         "url": "docs/SPEND_AND_NOTIFICATIONS.md",
-        "versions": "rusqlite (bundled), tantivy 0.26, keyring 3.6.3 (OS store; Linux Secret Service "
-                    "over D-Bus is local IPC), tracing-subscriber 0.3 (stderr + env-filter), audit and "
-                    "spend JSONL",
+        "versions": "rusqlite (bundled), tantivy 0.27, keyring-core =1.0.1 with one store crate per "
+                    "OS (apple-native keychain, windows-native, dbus-secret-service with crypto-rust + "
+                    "vendored; Linux Secret Service over D-Bus is local IPC), lopdf 0.47 (default "
+                    "features off, parsed only in the env-empty pdf-text-worker child), "
+                    "tracing-subscriber 0.3 (stderr + env-filter), audit and spend JSONL",
         "enforcement": "no exporter crate in either lock graph (T5); `docs/SPEND_AND_NOTIFICATIONS.md` is the local "
                        "spend/usage rollup, not vendor analytics",
-        "scope": "process-local", "reviewed": "2026-10-03",
-        "evidence": "T5 lock scan clean on 2026-10-03",
+        "scope": "process-local", "reviewed": "2026-11-20",
+        "evidence": "T5 lock scan clean on 2026-11-20; the keyring-core, store-crate and lopdf 0.47.0 "
+                    "sources in the cargo registry were grepped the same day for sockets and HTTP "
+                    "clients: none (URLs appear in comments and PDF namespaces only); tantivy "
+                    "0.26.2->0.27.0 changelog: stemmer moved to frostem, no network entry",
     },
     {
         "name": "hard-sandboxed verification children", "category": 4, "controls": {},
@@ -562,8 +594,10 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "versions": "fixed path, env_clear(), PATH=/usr/bin:/bin",
         "enforcement": "native confirmation dialog first; scheme-checked URL; the browser that opens "
                        "is the OS's process, outside this contract",
-        "scope": "desktop external links", "reviewed": "2026-10-03",
-        "evidence": "desktop/src/main.rs external_link()",
+        "scope": "desktop external links and the Terminal web launcher", "reviewed": "2026-11-20",
+        "evidence": "desktop/src/main.rs external_link(); desktop/src/web_launcher.rs open() hands "
+                    "Terminal a private command file that re-execs the byte-compared bundled "
+                    "start-web.sh under `env -i`, which only opens the app's own loopback URL",
     },
     {
         "name": "playwright browser sidecar (node)", "category": 4, "controls": {},
@@ -578,13 +612,13 @@ INVENTORY: tuple[dict[str, object], ...] = (
     {
         "name": "tauri desktop shell", "category": 5, "controls": {},
         "url": "https://v2.tauri.app/",
-        "versions": "tauri =2.12.0, tauri-plugin-dialog 2, tauri-build 2; objc2/WebKit bindings",
+        "versions": "tauri =2.12.4, tauri-plugin-dialog 2, tauri-build 2; objc2/WebKit bindings",
         "enforcement": "no analytics or crash-reporting crate in desktop/Cargo.lock (T5); the webview's "
                        "own OS-level network behavior is Apple's, not this process's",
-        "scope": "desktop/", "reviewed": "2026-10-13",
-        "evidence": "T5 lock scan clean on 2026-10-13; tauri 2.11.5->2.12.0 changelog read 2026-10-13: no "
-                    "telemetry, updater or crash reporting, adds limit_navigations_to_app_bound_domains "
-                    "(a restriction), MSRV 1.90 matches the desktop pin; tauri's updater plugin is NOT a "
+        "scope": "desktop/", "reviewed": "2026-11-20",
+        "evidence": "T5 lock scan clean on 2026-11-20; tauri 2.12.0->2.12.4 changelog read 2026-11-20: "
+                    "bug fixes and tauri-utils/runtime bumps only, no telemetry, updater or crash "
+                    "reporting; MSRV 1.90 matches the desktop pin; tauri's updater plugin is NOT a "
                     "dependency",
     },
     {
@@ -614,7 +648,10 @@ INVENTORY: tuple[dict[str, object], ...] = (
 INVENTORY_ALIASES: dict[str, str] = {
     # backend crates
     "rusqlite": "local stores and logs", "tantivy": "local stores and logs",
-    "keyring": "local stores and logs", "tracing": "local stores and logs",
+    "keyring-core": "local stores and logs", "apple-native-keyring-store": "local stores and logs",
+    "windows-native-keyring-store": "local stores and logs",
+    "dbus-secret-service-keyring-store": "local stores and logs",
+    "lopdf": "local stores and logs", "tracing": "local stores and logs",
     "tracing-subscriber": "local stores and logs",
     "axum": "loopback console + sidecar transport", "axum-server": "loopback console + sidecar transport",
     "rustls": "loopback console + sidecar transport", "rcgen": "loopback console + sidecar transport",
@@ -633,9 +670,9 @@ INVENTORY_ALIASES: dict[str, str] = {
     "thiserror": "pure library crates", "anyhow": "pure library crates",
     "walkdir": "pure library crates", "zip": "pure library crates", "quick-xml": "pure library crates",
     "dunce": "pure library crates", "cap-std": "pure library crates",
-    "scraper": "web search / fetch (SerpAPI, public Google, permitted URLs)",
-    "html5ever": "web search / fetch (SerpAPI, public Google, permitted URLs)",
-    "robotstxt": "web search / fetch (SerpAPI, public Google, permitted URLs)",
+    "scraper": "web search / fetch (Tavily, SerpAPI, public Google, Firecrawl, permitted URLs)",
+    "html5ever": "web search / fetch (Tavily, SerpAPI, public Google, Firecrawl, permitted URLs)",
+    "robotstxt": "web search / fetch (Tavily, SerpAPI, public Google, Firecrawl, permitted URLs)",
     "libc": "pure library crates", "windows-sys": "pure library crates",
     # desktop crates
     "tauri": "tauri desktop shell", "tauri-plugin-dialog": "tauri desktop shell",
@@ -697,11 +734,14 @@ def _read(root: Path, rel: str) -> str | None:
         return None
 
 
+_TEST_TAIL_RE = re.compile(r"#\[cfg\((?:all\(\s*)?test\s*[,)]")
+
+
 def _strip_test_tail(text: str) -> str:
-    """Drop everything from the first `#[cfg(test)]` on (repo convention: the
-    tests module is the last item in a file)."""
-    idx = text.find("#[cfg(test)]")
-    return text if idx < 0 else text[:idx]
+    """Drop everything from the first `#[cfg(test)]` or `#[cfg(all(test, ...))]`
+    on (repo convention: the tests module is the last item in a file)."""
+    m = _TEST_TAIL_RE.search(text)
+    return text if m is None else text[:m.start()]
 
 
 def _strip_line_comments(text: str) -> str:
@@ -1171,6 +1211,7 @@ def check_launcher_posture(root: Path) -> None:
         ("src/common/mcp.rs", r"pub async fn spawn\(", ("cmd.env_clear()", "filter_env(")),
         ("src/common/mcp_worker.rs", r"async fn run\(", (".env_clear()", ".envs(&spec.env)")),
         ("desktop/src/main.rs", r"fn external_link\(", (".env_clear()",)),
+        ("desktop/src/web_launcher.rs", r"pub fn open\(", (".env_clear()",)),
         ("desktop/src/backend.rs", r"pub fn start\(", ('.env("CGAGENTHARNESS_HOME"',)),
     )
     bad = 0
@@ -1185,7 +1226,7 @@ def check_launcher_posture(root: Path) -> None:
                 fail("T11", f"{rel}: /{sig}/ no longer contains {needle!r}")
                 bad += 1
     if not bad:
-        ok("T11", "MCP spawn and worker clear the env; opener clears; sidecar pins its home")
+        ok("T11", "MCP spawn and worker clear the env; opener and web launcher clear; sidecar pins its home")
 
 
 def check_sandbox_network(root: Path) -> None:
