@@ -609,8 +609,10 @@ to list handles and `/agent job <id>` to inspect one; inspect `/agent status <id
 before deciding or discarding a run. The harness never replays a commit, push,
 publication or approval.
 
-`data/agentic/console-schedules.json` stores schedules. Occurrences are consumed
-before launch, and missed windows are skipped. Notifications do not replace job
+`data/agentic/console-schedules.json` stores schedules. Preview and create refuse
+a request every firing would refuse (bad shape, unreviewed stage, a goal session
+that pins an attachment). Occurrences are consumed before launch, and missed
+windows are skipped. Notifications do not replace job
 records: the private bounded outbox persists delivery state before networking
 and resumes eligible attempts after restart ([spend and notifications](SPEND_AND_NOTIFICATIONS.md)).
 
