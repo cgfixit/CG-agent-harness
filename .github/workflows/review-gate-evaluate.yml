@@ -7,7 +7,7 @@
 # cancelled as a whole (a newer evaluation of this PR replaced it, or a manual
 # cancel) closes its marker as neutral. Resolving a thread alone emits no
 # webhook: re-run the dispatcher after the poll window expires.
-name: review gate evaluation
+name: Review gate - Evaluation
 
 on:
   workflow_call:

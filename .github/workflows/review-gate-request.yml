@@ -1,6 +1,6 @@
 # Fork and Dependabot events run with no write permissions or secrets.
 # This workflow cannot authorize a verdict; it only wakes the trusted gate.
-name: review gate request
+name: Review gate - Request relay
 
 on:
   pull_request:
