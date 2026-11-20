@@ -1,10 +1,12 @@
 # Base-repository dispatcher. The read-only relay is only a wake-up signal:
 # never download its artifacts, execute its code, or trust its verdict.
-name: review gate
+name: Review gate - Trusted dispatcher
 
 on:
   workflow_run: # zizmor: ignore[dangerous-triggers] source run identity checked via API; no checkout, artifacts, caches, or untrusted verdicts
-    workflows: [review gate request]
+    # Matches the relay by workflow name. The old name stays listed: a pull
+    # request whose merge ref predates the rename still runs the relay under it.
+    workflows: ["Review gate - Request relay", "review gate request"]
     types: [completed]
   issue_comment:
     types: [created, edited]
