@@ -222,6 +222,22 @@ impl RequestPolicy {
     }
 }
 
+/// Decides one request the sidecar has paused for the operator (#995). It is
+/// given the sidecar's question: method, whole URL, content type, size, the
+/// body's SHA-256 and a text preview. All of it but the hash is page-written.
+/// It may block for as long as the session's wait; `true` sends the request.
+pub type Approver = std::sync::Arc<dyn Fn(&Value) -> bool + Send + Sync>;
+
+/// Takeover for one session: how long a paused request waits, and who decides.
+#[derive(Clone)]
+pub struct Takeover {
+    pub wait: Duration,
+    pub approver: Approver,
+}
+
+/// The longest wait a session may ask the sidecar for; it clamps to the same.
+pub const MAX_TAKEOVER_WAIT: Duration = Duration::from_secs(600);
+
 /// One observe/act surface the model loop drives. It takes the wire ops that
 /// `sidecar_op` builds. The browser sidecar is the only driver today;
 /// `computer::kimi_cu_call` maps the same ops for the native one later.
@@ -248,8 +264,16 @@ impl Sidecar {
     /// Takes the child's stdin and stdout. A thread reads one bounded line at
     /// a time and stops at end of file, an error or an oversized line. It
     /// answers the sidecar's `check` lines itself, from `policy`, so a page's
-    /// requests get a verdict while the task waits on the model too.
-    fn attach(mut child: Child, call_timeout: Duration, mut policy: RequestPolicy) -> Result<Self, String> {
+    /// requests get a verdict while the task waits on the model too. An
+    /// `approve` line is answered on its own thread by `approver`, so block-list
+    /// questions keep being answered while the operator decides. Without an
+    /// approver, or while one decision is already open, the answer is no.
+    fn attach(
+        mut child: Child,
+        call_timeout: Duration,
+        mut policy: RequestPolicy,
+        approver: Option<Approver>,
+    ) -> Result<Self, String> {
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             let _ = child.kill();
             let _ = child.wait();
@@ -257,6 +281,7 @@ impl Sidecar {
         };
         let stdin = std::sync::Arc::new(std::sync::Mutex::new(Some(stdin)));
         let verdicts = stdin.clone();
+        let deciding = std::sync::Arc::new(AtomicBool::new(false));
         let (send, replies) = mpsc::channel();
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
@@ -274,6 +299,10 @@ impl Sidecar {
                             if let Some(stdin) = verdicts.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
                                 let _ = writeln!(stdin, "{verdict}").and_then(|()| stdin.flush());
                             }
+                            continue;
+                        }
+                        if let Some(question) = approval_question(&line) {
+                            answer_approval(question, approver.clone(), deciding.clone(), verdicts.clone());
                             continue;
                         }
                         Ok(line)
@@ -313,6 +342,19 @@ impl Sidecar {
         allow_private: bool,
         policy: RequestPolicy,
     ) -> Result<Self, String> {
+        Self::start_with(script, session, headless, allow_private, policy, None)
+    }
+
+    /// `start`, with takeover when `takeover` is given: a request held as the
+    /// operator's step stays paused for its verdict instead of failing at once.
+    fn start_with(
+        script: &Path,
+        session: &Session,
+        headless: bool,
+        allow_private: bool,
+        policy: RequestPolicy,
+        takeover: Option<Takeover>,
+    ) -> Result<Self, String> {
         if !script
             .parent()
             .is_some_and(|dir| dir.join("node_modules/playwright").exists())
@@ -329,10 +371,19 @@ impl Sidecar {
             .env("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1")
             .spawn()
             .map_err(|err| format!("node sidecar failed to start: {err}"))?;
-        let mut sidecar = Self::attach(child, SIDECAR_CALL_TIMEOUT, policy)?;
-        let started = sidecar.call(
-            json!({"op":"start","grants": session.grant_strings(),"headless": headless,"allow_private": allow_private}),
-        )?;
+        let wait = takeover
+            .as_ref()
+            .map_or(Duration::ZERO, |takeover| takeover.wait.min(MAX_TAKEOVER_WAIT));
+        // An op whose request is paused answers only after the verdict or the wait.
+        let call_timeout = SIDECAR_CALL_TIMEOUT + wait;
+        let mut sidecar = Self::attach(child, call_timeout, policy, takeover.map(|takeover| takeover.approver))?;
+        let started = sidecar.call(json!({
+            "op": "start",
+            "grants": session.grant_strings(),
+            "headless": headless,
+            "allow_private": allow_private,
+            "takeover_wait_ms": wait.as_millis() as u64,
+        }))?;
         if started.get("ok") != Some(&Value::Bool(true)) {
             return Err(format!("sidecar refused start: {started}"));
         }
@@ -395,6 +446,43 @@ fn request_verdict(line: &str, policy: &mut RequestPolicy) -> Option<Value> {
     Some(json!({"verdict": question["check"], "allow": allow}))
 }
 
+/// The sidecar's question about one paused request, or `None` when `line` is
+/// anything else. As with `check`, the sidecar writes `approve` first on these
+/// lines and `id` first on replies, so page text inside a reply cannot pass
+/// for a question.
+fn approval_question(line: &str) -> Option<Value> {
+    if !line.starts_with("{\"approve\":") {
+        return None;
+    }
+    serde_json::from_str(line).ok()
+}
+
+/// Answer one approval question off the reader thread. One decision is open
+/// at a time; a second question, or any question with no approver, is refused
+/// at once. A lost answer is a refusal: the sidecar stops waiting by itself.
+fn answer_approval(
+    question: Value,
+    approver: Option<Approver>,
+    deciding: std::sync::Arc<AtomicBool>,
+    stdin: std::sync::Arc<std::sync::Mutex<Option<ChildStdin>>>,
+) {
+    let write = |allow: bool, id: &Value, stdin: &std::sync::Mutex<Option<ChildStdin>>| {
+        let verdict = json!({"verdict": id, "allow": allow});
+        if let Some(stdin) = stdin.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
+            let _ = writeln!(stdin, "{verdict}").and_then(|()| stdin.flush());
+        }
+    };
+    let Some(approver) = approver.filter(|_| !deciding.swap(true, Ordering::AcqRel)) else {
+        write(false, &question["approve"], &stdin);
+        return;
+    };
+    thread::spawn(move || {
+        let allow = approver(&question);
+        deciding.store(false, Ordering::Release);
+        write(allow, &question["approve"], &stdin);
+    });
+}
+
 /// Decide, execute and re-mint one action. A refusal or handoff comes back as
 /// `decision` and a sidecar failure as `error`. Neither ends the session.
 fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value {
@@ -438,6 +526,13 @@ fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value 
         .filter(|held| held.as_array().is_some_and(|rows| !rows.is_empty()))
     {
         outcome["held_in_background"] = held.clone();
+    }
+    // Requests the operator approved and the gate then sent.
+    if let Some(sent) = result
+        .get("approved")
+        .filter(|sent| sent.as_array().is_some_and(|rows| !rows.is_empty()))
+    {
+        outcome["approved_by_operator"] = sent.clone();
     }
     if let Some(origins) = result
         .get("not_granted")
@@ -960,6 +1055,9 @@ fn model_loop(
             if let Some(count) = outcome["held_in_background"].as_array().map(Vec::len) {
                 outcome["held_in_background"] = json!(count);
             }
+            if let Some(count) = outcome["approved_by_operator"].as_array().map(Vec::len) {
+                outcome["approved_by_operator"] = json!(count);
+            }
             for origin in outcome["not_granted"].as_array().into_iter().flatten() {
                 if let (Some(origin), true) = (origin.as_str(), not_granted.len() < MAX_FOR_OPERATOR) {
                     not_granted.insert(origin.to_string());
@@ -1078,13 +1176,19 @@ fn finish_verdict(args: &Value, failed_earlier_this_turn: bool) -> Result<String
 
 /// Requests held and elements handed off during a task, at most
 /// `MAX_FOR_OPERATOR` rows. The console lists them; nothing here sends them.
-/// `held_background` rows are requests a page sent on its own. At the cap, a
-/// hold or handoff replaces the newest background row: it is what stopped the
-/// task, so it must be listed.
+/// `held_background` rows are requests a page sent on its own; `approved` rows
+/// are requests the operator let through, which were sent. At the cap, a hold,
+/// handoff or approval replaces the newest background row.
 fn note_for_operator(rows: &mut Vec<Value>, handoff: Option<Value>, outcome: &Value) {
     let held = outcome["held_for_operator"].as_array().into_iter().flatten();
-    for row in held.map(|request| json!({"held": request})).chain(handoff) {
-        if rows.contains(&row) {
+    // Each approval sent a request, so each is listed, repeats included.
+    let approved = outcome["approved_by_operator"].as_array().into_iter().flatten();
+    for row in held
+        .map(|request| json!({"held": request}))
+        .chain(handoff)
+        .chain(approved.map(|request| json!({"approved": request})))
+    {
+        if row.get("approved").is_none() && rows.contains(&row) {
             continue;
         }
         if rows.len() >= MAX_FOR_OPERATOR {
@@ -1675,6 +1779,267 @@ fn guard_holds(sidecar: &mut Sidecar, lines: &mut Vec<String>, base: &str, seen:
     Ok(())
 }
 
+/// A shop page for the takeover fixture: a button whose click POSTs, one that
+/// sends the identical POST again once the first is answered, and a form.
+const TAKEOVER_PAGE: &str = r#"
+<p>SHOP</p>
+<button onclick="save()">Save</button>
+<button onclick="saveTwice()">Save twice</button>
+<form method="post" action="/api/order"><input name="item" value="tea"><button>Order</button></form>
+<p id="state">idle</p>
+<script>
+const show = (text) => { document.getElementById('state').textContent = text; };
+const post = () => fetch('/api/save', {method: 'POST', body: 'qty=2'});
+function save() { post().then((r) => show('saved ' + r.status)).catch(() => show('not saved')); }
+function saveTwice() { post().then(() => post()).then(() => show('saved twice')).catch(() => show('second not saved')); }
+</script>
+"#;
+
+/// What the takeover fixture's operator does with the next question.
+enum Verdict {
+    Allow,
+    Deny,
+    /// Answer yes, but only after this long.
+    AllowAfter(Duration),
+    /// Block the request's path in the policy file, then answer yes.
+    BlockThenAllow,
+}
+
+/// The fixture's operator: answers each question from `plan` in order (no
+/// plan left means no) and keeps every question it was asked.
+struct ScriptedOperator {
+    plan: std::sync::Mutex<std::collections::VecDeque<Verdict>>,
+    asked: std::sync::Mutex<Vec<Value>>,
+    block: Box<dyn Fn() + Send + Sync>,
+}
+
+impl ScriptedOperator {
+    fn decide(&self, question: &Value) -> bool {
+        self.asked
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .push(question.clone());
+        let next = self.plan.lock().unwrap_or_else(|p| p.into_inner()).pop_front();
+        match next {
+            Some(Verdict::Allow) => true,
+            Some(Verdict::AllowAfter(delay)) => {
+                thread::sleep(delay);
+                true
+            }
+            Some(Verdict::BlockThenAllow) => {
+                (self.block)();
+                true
+            }
+            Some(Verdict::Deny) | None => false,
+        }
+    }
+
+    fn plan(&self, verdicts: impl IntoIterator<Item = Verdict>) {
+        *self.plan.lock().unwrap_or_else(|p| p.into_inner()) = verdicts.into_iter().collect();
+    }
+
+    fn asked(&self) -> Vec<Value> {
+        self.asked.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+}
+
+/// One-shot approval of a held request (#995), by what the loopback server
+/// received:
+/// - an approved POST reaches the server once, and the page gets its answer;
+/// - the identical POST sent again is a new question, and refused it is held;
+/// - a denied POST and one whose answer comes after the wait never arrive;
+/// - a block rule added while the operator decides stops an approved POST;
+/// - an approved form POST loads its result, a denied one leaves the page.
+///
+/// The operator is asked with the method, whole URL, size, SHA-256 and text
+/// of the body that would be sent.
+pub fn run_takeover_demo(script: &Path, headless: bool) -> Result<String, String> {
+    let dir = std::env::temp_dir().join(format!("cgah-takeover-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let result = takeover_with_policy(script, headless, &dir.join("web_allowlist.json"));
+    let _ = std::fs::remove_dir_all(&dir);
+    result
+}
+
+fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Result<String, String> {
+    let (origin, port, seen) = serve_recording(vec![
+        ("/shop", Reply::Html(TAKEOVER_PAGE.to_string())),
+        ("/api/save", Reply::Html("SAVED".to_string())),
+        ("/api/order", Reply::Html("<p>ORDER-PLACED</p>".to_string())),
+    ])?;
+    let session = Session::general([&origin]).map_err(|err| format!("{err:?}"))?;
+    let base = format!("http://127.0.0.1:{port}");
+    let rules = format!("http://{GUARD_RULE_HOST}:{port}"); // DevSkim: ignore DS137138 because it renames a loopback test fixture
+    write_guard_policy(policy_file, &[])?;
+    let policy = || {
+        let mut policy = RequestPolicy::from(PolicySource::File(policy_file.to_path_buf(), 64));
+        policy.alias = Some((base.clone(), rules.clone()));
+        policy
+    };
+    let operator = std::sync::Arc::new(ScriptedOperator {
+        plan: Default::default(),
+        asked: Default::default(),
+        block: {
+            let (file, rule) = (policy_file.to_path_buf(), format!("{rules}/api/*"));
+            Box::new(move || {
+                let _ = write_guard_policy(&file, std::slice::from_ref(&rule));
+            })
+        },
+    });
+    let takeover = |wait: Duration| {
+        let operator = operator.clone();
+        Takeover {
+            wait,
+            approver: std::sync::Arc::new(move |question: &Value| operator.decide(question)),
+        }
+    };
+    let count = |row: &str| {
+        seen.lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .filter(|seen| *seen == row)
+            .count()
+    };
+    let rows = |page: &Value, key: &str| -> Vec<String> {
+        page[key]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|row| row.as_str().map(str::to_string))
+            .collect()
+    };
+    let mut lines = Vec::new();
+    // Load the shop page, then click the button with this name.
+    let click = |sidecar: &mut Sidecar, lines: &mut Vec<String>, name: &str| -> Result<Value, String> {
+        let (page, _) = guard_call(sidecar, lines, json!({"op":"navigate","url": format!("{base}/shop")}))?;
+        let target = page["elements"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|el| el["name"] == name)
+            .and_then(|el| el["ref"].as_str())
+            .ok_or_else(|| format!("the {name} button was not listed"))?
+            .to_string();
+        Ok(guard_call(sidecar, lines, json!({"op":"click","target":{"ref": target}}))?.0)
+    };
+    let save = format!("POST {base}/api/save");
+    let order = format!("POST {base}/api/order");
+    // Fixtures serve on 127.0.0.1: a private grant needs a test-support build.
+    let private = cfg!(feature = "test-support");
+    let mut sidecar = Sidecar::start_with(
+        script,
+        &session,
+        headless,
+        private,
+        policy(),
+        Some(takeover(Duration::from_secs(20))),
+    )?;
+
+    // Approved once: sent once, and the page gets the server's answer.
+    operator.plan([Verdict::Allow]);
+    let page = click(&mut sidecar, &mut lines, "Save")?;
+    if rows(&page, "approved") != [save.clone()] || !rows(&page, "held").is_empty() || count("POST /api/save") != 1 {
+        return Err(format!("an approved POST was not sent exactly once: {page}"));
+    }
+    if !page["text"].as_str().unwrap_or("").contains("saved 200") {
+        return Err(format!("the page did not get the approved request's answer: {page}"));
+    }
+    let asked = operator.asked();
+    let question = asked.last().ok_or("the operator was not asked")?;
+    let expected = json!({
+        "method": "POST",
+        "url": format!("{base}/api/save"),
+        "size": 5,
+        "sha256": crate::common::sha256_hex("qty=2"),
+        "preview": "qty=2",
+    });
+    if expected
+        .as_object()
+        .into_iter()
+        .flatten()
+        .any(|(key, value)| &question[key] != value)
+    {
+        return Err(format!("the operator was not shown the request as sent: {question}"));
+    }
+    lines.push("approved -> asked with method, URL, size, hash and body; sent once".into());
+
+    // The identical request again is a new question; refused, it is held.
+    operator.plan([Verdict::Allow, Verdict::Deny]);
+    let page = click(&mut sidecar, &mut lines, "Save twice")?;
+    if operator.asked().len() != 3 || count("POST /api/save") != 2 || rows(&page, "held") != [save.clone()] {
+        return Err(format!(
+            "an identical second POST passed on the first one's approval: {page}"
+        ));
+    }
+    lines.push("identical second POST -> asked again, refused, held".into());
+
+    // Denied: never sent.
+    operator.plan([Verdict::Deny]);
+    let page = click(&mut sidecar, &mut lines, "Save")?;
+    if count("POST /api/save") != 2 || rows(&page, "held") != [save.clone()] || !rows(&page, "approved").is_empty() {
+        return Err(format!("a denied POST was sent, or not listed as held: {page}"));
+    }
+    lines.push("denied -> held, not sent".into());
+
+    // A form POST: approved it loads its result, denied the page stays.
+    operator.plan([Verdict::Deny]);
+    let page = click(&mut sidecar, &mut lines, "Order")?;
+    if count("POST /api/order") != 0 || rows(&page, "held") != [order.clone()] {
+        return Err(format!("a denied form POST was sent, or not listed as held: {page}"));
+    }
+    operator.plan([Verdict::Allow]);
+    let page = click(&mut sidecar, &mut lines, "Order")?;
+    if count("POST /api/order") != 1 || !page["text"].as_str().unwrap_or("").contains("ORDER-PLACED") {
+        return Err(format!("an approved form POST did not load its result: {page}"));
+    }
+    lines.push("form POST -> denied stays on the page, approved loads the result once".into());
+
+    // A block rule added while the operator decides: approved, and still not sent.
+    operator.plan([Verdict::BlockThenAllow]);
+    let page = click(&mut sidecar, &mut lines, "Save")?;
+    if count("POST /api/save") != 2 || !rows(&page, "approved").is_empty() {
+        return Err(format!("an approved POST was sent after its path was blocked: {page}"));
+    }
+    lines.push("rule added while waiting -> approved, not sent".into());
+    write_guard_policy(policy_file, &[])?;
+    drop(sidecar);
+
+    // An answer after the wait is too late: held, and the late yes sends nothing.
+    let mut sidecar = Sidecar::start_with(
+        script,
+        &session,
+        headless,
+        private,
+        policy(),
+        Some(takeover(Duration::from_secs(1))),
+    )?;
+    operator.plan([Verdict::AllowAfter(Duration::from_secs(3))]);
+    let page = click(&mut sidecar, &mut lines, "Save")?;
+    if rows(&page, "held") != [save] {
+        return Err(format!("a POST whose wait ran out was not held: {page}"));
+    }
+    thread::sleep(Duration::from_secs(3));
+    guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    if count("POST /api/save") != 2 {
+        return Err("a yes that came after the wait sent the request".into());
+    }
+    lines.push("expired -> held; the late yes sent nothing".into());
+
+    // Without takeover nothing is asked and nothing waits.
+    drop(sidecar);
+    let before = operator.asked().len();
+    let mut sidecar = Sidecar::start(script, &session, headless, private, policy())?;
+    let page = click(&mut sidecar, &mut lines, "Save")?;
+    if operator.asked().len() != before || rows(&page, "held").len() != 1 || count("POST /api/save") != 2 {
+        return Err(format!("a session without takeover asked or sent: {page}"));
+    }
+    lines.push(format!(
+        "fixture server received: {:?}",
+        seen.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    ));
+    Ok(lines.join("\n"))
+}
+
 fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Result<String, String> {
     let big = format!(
         "<p>{}</p><a href=\"/?q={}\">Long link</a><a href=\"/new\">Short link</a>",
@@ -1822,7 +2187,7 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
             // The server's job runner: progress lines out, `cancel` in.
             ("--job", None) => job = true,
             // Only general browsing runs model tasks; browser-verify keeps PR grants.
-            ("qwen" | "enter" | "reach" | "guards" | "run", None) if browse && mode.is_none() => {
+            ("qwen" | "enter" | "reach" | "guards" | "takeover" | "run", None) if browse && mode.is_none() => {
                 mode = Some(key.to_string())
             }
             ("--model", Some(v)) if !v.is_empty() => model = Some(v.to_string()),
@@ -1898,6 +2263,7 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
         },
         (Some("reach"), _) => run_reach_demo(&sidecar, headless),
         (Some("guards"), _) => run_guards_demo(&sidecar, headless),
+        (Some("takeover"), _) => run_takeover_demo(&sidecar, headless),
         (Some(_), _) => run_enter_demo(&sidecar, headless),
         (None, true) => run_browse_demo(&sidecar, headless),
         (None, false) => run_verify_demo(&sidecar, headless),
@@ -2065,7 +2431,7 @@ mod tests {
             .stdout(Stdio::piped())
             .spawn()
             .unwrap();
-        let mut sidecar = Sidecar::attach(child, Duration::from_secs(30), RequestPolicy::open()).unwrap();
+        let mut sidecar = Sidecar::attach(child, Duration::from_secs(30), RequestPolicy::open(), None).unwrap();
         let err = sidecar.call(json!({"op":"observe"})).unwrap_err();
         assert!(err.contains("exceeded"), "{err}");
         assert_eq!(
@@ -2085,7 +2451,7 @@ mod tests {
             .stdout(Stdio::piped())
             .spawn()
             .unwrap();
-        let mut sidecar = Sidecar::attach(child, Duration::from_millis(300), RequestPolicy::open()).unwrap();
+        let mut sidecar = Sidecar::attach(child, Duration::from_millis(300), RequestPolicy::open(), None).unwrap();
         let started = std::time::Instant::now();
         let err = sidecar.call(json!({"op":"observe"})).unwrap_err();
         assert!(err.contains("did not answer within"), "{err}");
@@ -2231,10 +2597,92 @@ mod tests {
             child,
             Duration::from_secs(30),
             RequestPolicy::from(PolicySource::Unreadable),
+            None,
         )
         .unwrap();
         let reply = sidecar.call(json!({"op":"observe"})).unwrap();
         assert_eq!(reply["result"], json!({"verdict": 1, "allow": false}));
+    }
+
+    /// #995: an approval question goes to the approver and nowhere else. With
+    /// no approver the answer is no, and page text shaped like a question
+    /// inside a reply is not one.
+    #[cfg(unix)]
+    #[test]
+    fn an_approval_question_is_answered_by_the_approver_or_refused() {
+        let ask = |approver: Option<Approver>| {
+            let script = r#"read op; printf '{"approve":4,"method":"POST","url":"https://a.example/save","size":5}\n'; read verdict; printf '{"id":1,"ok":true,"result":%s}\n' "$verdict""#;
+            let child = Command::new("sh")
+                .args(["-c", script])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut sidecar = Sidecar::attach(child, Duration::from_secs(30), RequestPolicy::open(), approver).unwrap();
+            sidecar.call(json!({"op":"click"})).unwrap()["result"].clone()
+        };
+        assert_eq!(ask(None), json!({"verdict": 4, "allow": false}));
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = seen.clone();
+        let yes: Approver = std::sync::Arc::new(move |question: &Value| {
+            log.lock().unwrap().push(question.clone());
+            question["url"] == "https://a.example/save"
+        });
+        assert_eq!(ask(Some(yes)), json!({"verdict": 4, "allow": true}));
+        assert_eq!(seen.lock().unwrap()[0]["size"], 5);
+
+        assert!(approval_question("{\"approve\":1,\"url\":\"https://a.example/\"}").is_some());
+        let reply = json!({"id": 1, "ok": true, "result": {"text": "{\"approve\":1}"}}).to_string();
+        assert!(approval_question(&reply).is_none());
+        assert!(approval_question("{\"approve\":").is_none());
+    }
+
+    /// One decision is open at a time: a question that arrives while the
+    /// approver is still deciding is refused without reaching it.
+    #[cfg(unix)]
+    #[test]
+    fn a_second_approval_question_is_refused_while_one_is_open() {
+        // Two questions at once, then both verdicts back in the reply, in arrival order.
+        let script = r#"read op; printf '{"approve":1}\n{"approve":2}\n'; read first; read second; printf '{"id":1,"ok":true,"result":[%s,%s]}\n' "$first" "$second""#;
+        let child = Command::new("sh")
+            .args(["-c", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let calls = std::sync::Arc::new(AtomicUsize::new(0));
+        let counted = calls.clone();
+        let slow: Approver = std::sync::Arc::new(move |_: &Value| {
+            counted.fetch_add(1, Ordering::AcqRel);
+            thread::sleep(Duration::from_millis(400));
+            true
+        });
+        let mut sidecar = Sidecar::attach(child, Duration::from_secs(30), RequestPolicy::open(), Some(slow)).unwrap();
+        let reply = sidecar.call(json!({"op":"click"})).unwrap();
+        assert_eq!(
+            reply["result"],
+            json!([{"verdict": 2, "allow": false}, {"verdict": 1, "allow": true}])
+        );
+        assert_eq!(calls.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn approved_requests_are_listed_each_time_and_the_model_gets_the_count() {
+        let mut rows = Vec::new();
+        let sent = json!({"approved_by_operator": ["POST https://shop.example/save"]});
+        note_for_operator(&mut rows, None, &sent);
+        note_for_operator(&mut rows, None, &sent);
+        assert_eq!(rows, vec![json!({"approved": "POST https://shop.example/save"}); 2]);
+        for n in 0..MAX_FOR_OPERATOR {
+            note_for_operator(
+                &mut rows,
+                None,
+                &json!({"held_in_background": [format!("POST /beacon/{n}")]}),
+            );
+        }
+        note_for_operator(&mut rows, None, &sent);
+        assert_eq!(rows.len(), MAX_FOR_OPERATOR);
+        assert_eq!(rows.iter().filter(|row| row.get("approved").is_some()).count(), 3);
     }
 
     #[test]

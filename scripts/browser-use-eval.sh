@@ -15,6 +15,8 @@ if [ ! -x "$bin" ]; then
 fi
 echo "guards"
 "$bin" browser guards --sidecar="$sidecar"
+echo "takeover"
+"$bin" browser takeover --sidecar="$sidecar"
 echo "enter"
 "$bin" browser enter --sidecar="$sidecar"
 echo "reach"

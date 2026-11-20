@@ -67,6 +67,22 @@ const CHECK_TIMEOUT_MS = 5000;
 // Questions to the parent that have no verdict yet, by number.
 const asked = new Map();
 let questions = 0;
+// Takeover (#995). Zero means off: every held request is answered at once.
+// Otherwise a request held as the operator's step stays paused this long for
+// the parent's verdict. One request waits at a time; a second is held.
+let takeoverWaitMs = 0;
+const MAX_TAKEOVER_WAIT_MS = 600000;
+// Resolves when the paused request has been decided and answered.
+let pendingApproval = null;
+// One-shot passes for the network gate: {method, url, sha256, until}. The
+// page route asks; only a matching request, once, passes the gate.
+const allowances = [];
+// How long the released request has to reach the gate before its pass lapses.
+const ALLOWANCE_MS = 5000;
+// Characters of a request body the operator is shown, as text.
+const MAX_PREVIEW_CHARS = 2000;
+// Requests sent with the operator's approval since the last observation.
+const approved = [];
 // Requests the operator's block list refused since the last observation.
 let blocked = 0;
 // The same, for page loads only, so a refused navigate can say why.
@@ -231,6 +247,12 @@ function excerpts(body, find) {
 // `view.page` picks a later page; `view.find` keeps only the elements whose
 // name contains that text, and the page text around it.
 async function observe(view = {}) {
+  // A request this action caused may be waiting on the operator. The
+  // observation is of the page once that request has been sent or held.
+  while (pendingApproval) {
+    await pendingApproval;
+    await settle();
+  }
   const find = typeof view.find === "string" ? view.find.trim().toLowerCase().slice(0, MAX_FIND_CHARS) : "";
   const pageNo = Number.isInteger(view.page) && view.page > 0 ? view.page : 1;
   const elements = [];
@@ -270,6 +292,7 @@ async function observe(view = {}) {
     pages: Math.max(1, Math.ceil(matched / MAX_ELEMENTS), Math.ceil(shown.length / MAX_TEXT)),
     held: held.splice(0),
     held_background: heldBackground.splice(0),
+    approved: approved.splice(0),
     dialogs: dialogs.splice(0),
     not_granted: [...notGranted],
     blocked,
@@ -464,6 +487,73 @@ function track(opened) {
   opening.add(verdict);
 }
 
+function digest(bytes) {
+  return crypto.createHash("sha256").update(bytes).digest("hex");
+}
+
+// Asks the parent whether the operator lets this one request be sent. The
+// parent sees what would be sent: method, whole URL, content type, size, the
+// body's SHA-256 and its first characters as text. Anything but a clear yes
+// inside the window is a refusal.
+function operatorAllows(method, url, contentType, body, sha256) {
+  return new Promise((resolve) => {
+    const id = (questions += 1);
+    const timer = setTimeout(() => {
+      asked.delete(id);
+      resolve(false);
+    }, takeoverWaitMs);
+    asked.set(id, (allow) => {
+      clearTimeout(timer);
+      asked.delete(id);
+      resolve(allow === true);
+    });
+    send({ approve: id, method, url, content_type: contentType.slice(0, 200), size: body.length, sha256, preview: body.toString("utf8").slice(0, MAX_PREVIEW_CHARS) });
+  });
+}
+
+// A request held as the operator's step, with takeover on: keep it paused,
+// ask, then release this same request or hold it as before. Release only
+// lets it leave the page route; the network gate still checks it against the
+// pass recorded here, and against the block list as it is then.
+async function decideHeld(route, request, method, url) {
+  const pageLoad = request.isNavigationRequest();
+  const body = request.postDataBuffer() ?? Buffer.alloc(0);
+  const sha256 = digest(body);
+  const contentType = (await request.headerValue("content-type").catch(() => null)) ?? "";
+  if (await operatorAllows(method, url, contentType, body, sha256)) {
+    allowances.push({ method, url, sha256, until: Date.now() + ALLOWANCE_MS });
+    await route.continue().catch(() => {});
+    // Still this action's request until it is answered or fails, so the
+    // observation that follows shows the page with the answer.
+    await bounded(request.response(), "approved request").catch(() => {});
+    return;
+  }
+  if (held.length < 20) held.push(`${method} ${url.slice(0, 200)}`);
+  await (pageLoad ? route.fulfill({ status: 204, body: "" }) : route.abort("blockedbyclient")).catch(() => {});
+}
+
+// The body Chrome is about to send, as bytes, or null when Chrome did not
+// hand it over (a large or streamed body): such a request has no pass.
+function gateBody(request) {
+  if (Array.isArray(request.postDataEntries)) {
+    return Buffer.concat(request.postDataEntries.map((entry) => Buffer.from(entry.bytes ?? "", "base64")));
+  }
+  if (typeof request.postData === "string") return Buffer.from(request.postData, "utf8");
+  return request.hasPostData ? null : Buffer.alloc(0);
+}
+
+// Uses up the pass for this exact request, if the operator gave one.
+function takeAllowance(request) {
+  const body = gateBody(request);
+  if (body === null) return false;
+  const sha256 = digest(body);
+  const now = Date.now();
+  const at = allowances.findIndex((pass) => pass.until > now && pass.method === request.method && pass.url === request.url && pass.sha256 === sha256);
+  if (at < 0) return false;
+  allowances.splice(at, 1);
+  return true;
+}
+
 // Records a request that could write to a server, for the operator. It was
 // not sent. A page load always counts as the operator's step; any other
 // request does only while the model's own action is running.
@@ -524,6 +614,16 @@ async function gate(cdp, event) {
     return cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" });
   }
   if (request.method !== "GET" && request.method !== "HEAD") {
+    if (takeAllowance(request)) {
+      // Approved a moment ago; the block list is asked again now.
+      if (!local && !(await permitted(request.url))) {
+        blocked += 1;
+        if (event.resourceType === "Document") blockedLoads += 1;
+        return cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" });
+      }
+      if (approved.length < 20) approved.push(`${request.method} ${request.url.slice(0, 200)}`);
+      return cdp.send("Fetch.continueRequest", { requestId });
+    }
     hold(request.method, request.url, event.resourceType === "Document");
     // A held page load answers 204 so the page stays, as the page route does.
     if (event.resourceType === "Document") {
@@ -560,6 +660,7 @@ async function start(message) {
   if (context) throw new Error("session already started");
   grants = new Set(message.grants || []);
   allowPrivate = message.allow_private === true;
+  takeoverWaitMs = Math.max(0, Math.min(MAX_TAKEOVER_WAIT_MS, Math.trunc(Number(message.takeover_wait_ms) || 0)));
   const proxyPort = await startProxy();
   profileDir = freshProfile();
   context = await chromium.launchPersistentContext(profileDir, {
@@ -590,6 +691,15 @@ async function start(message) {
     // waits for the operator: every request but GET and HEAD is held here.
     const method = request.method();
     if (method !== "GET" && method !== "HEAD") {
+      // The operator's step, with takeover on: pause it and ask. The whole
+      // URL must fit the question, and only one request waits at a time.
+      if (takeoverWaitMs && (acting || request.isNavigationRequest()) && !pendingApproval && url.length <= MAX_URL) {
+        const waiting = decideHeld(route, request, method, url).finally(() => {
+          if (pendingApproval === waiting) pendingApproval = null;
+        });
+        pendingApproval = waiting;
+        return;
+      }
       hold(method, url, request.isNavigationRequest());
       // A held page load answers 204 so the page stays; a fetch/XHR fails.
       if (request.isNavigationRequest()) route.fulfill({ status: 204, body: "" });

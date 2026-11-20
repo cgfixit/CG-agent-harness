@@ -651,7 +651,17 @@ so a dead server does not leave Chrome driven. The terminal state is set once, a
 every read of a stored report rechecks the block list (`WEB_POLICY_CHANGED`).
 Nothing can be approved through a job yet.
 
-- Locked by: `src/server/browser_jobs.rs`, `src/shim/mod.rs` and
+The sidecar can hold one such request open for a verdict (takeover, #995), but
+only a session started with an approver, and none is outside the `browser takeover`
+fixture. The page route pauses a request held as the operator's step and asks the
+host, showing method, whole URL, content type, size, body SHA-256 and a text
+preview. A yes records a pass of `{method, URL, SHA-256}` that the CDP gate uses up
+on the first matching request, after asking the block list again; a no, a late
+answer, a second request while one waits, or a body the gate cannot read is held
+as before. A page's own background requests are never asked about.
+
+- Locked by: `browser takeover` (by what its loopback server received),
+  `src/server/browser_jobs.rs`, `src/shim/mod.rs` and
   `src/common/process.rs` unit tests;
   `tests/secure_portal.rs::https_bootstrap_roles_revocation_and_private_web_context`.
 
