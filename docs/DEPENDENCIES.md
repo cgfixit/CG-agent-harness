@@ -35,18 +35,17 @@ does not certify safe runtime use of a crate.
   A semver-compatible release can still exceed the backend MSRV, so
   `.cargo/config.toml` sets `resolver.incompatible-rust-versions = "fallback"`
   for both crates: plain `cargo update` prefers releases within each crate's
-  `rust-version`, and `--ignore-rust-version` or `--precise` remain explicit
-  overrides. Rust 1.89 admits `rusqlite` 0.41 (RUSTSEC-2026-0459); `uuid` 1.27
-  and later are no longer MSRV-held.
+  `rust-version`; `--ignore-rust-version` or `--precise` override it. Rust
+  1.89 admits `rusqlite` 0.41 (RUSTSEC-2026-0459); `uuid` 1.27 and later are no
+  longer MSRV-held.
 - Incompatible major lines are separate API migrations, not drift: backend
   `axum-server` 0.8, `base64` 0.22, `rand` 0.8, `scrypt` 0.11, `scraper` 0.27 with `html5ever`
   0.39, `windows-sys` 0.59 and the `rmcp` pin; desktop `toml` 0.8.2,
   held by upstream constraints with `generic-array` and `matchit`. Newer
   available versions alone do not make a valid lockfile stale or justify
   expanding a security refresh into a framework/toolchain migration.
-- Manual refreshes follow Dependabot's 7-day cooldown (`.github/dependabot.yml`):
-  a compatible release younger than a week is not drift yet, unless it fixes an
-  advisory against a locked crate.
+- Manual refreshes follow Dependabot's 7-day cooldown: a younger compatible
+  release is not drift unless it fixes an advisory against a locked crate.
 - The backend license allowlist names only identifiers the locked graph uses;
   add one deliberately, with the crate that needs it.
 - Desktop Tauri is pinned to `=2.12.4`; its `tauri-utils` 2.10.2 routes
@@ -80,10 +79,11 @@ does not certify safe runtime use of a crate.
 - GHSA-qwgh-2vcv-g2f7 (`block-buffer`) affects only `>=0.11.0, <0.12.1`. Both
   locks carry 0.10.4 and 0.12.1, outside it, so no `deny.toml` ignore is
   needed; a `scrypt` 0.12 move stays an optional API migration, not a fix.
-- `browser/package-lock.json` (npm) pins the `/browse` sidecar's Playwright.
-  `cargo deny` does not read it: Dependabot watches it weekly and the daily
-  advisory workflow runs `npm audit --package-lock-only`, which installs
-  nothing. [Browser-Use.md](Browser-Use.md) names the version; move both together.
+- `browser/package-lock.json` (npm) pins the `/browse` sidecar's Playwright,
+  outside `cargo deny`: Dependabot watches it weekly and the daily advisory
+  workflow runs `npm audit --package-lock-only` (installs nothing). Chrome is not
+  locked: the sidecar drives the runner's installed Google Chrome and moves with
+  the CI runner image. [Browser-Use.md](Browser-Use.md) names the version; move both.
 - Duplicate versions are warnings. Advisories, unapproved licenses, wildcard
   requirements and unknown sources block.
 - Both `deny.toml` files ban push-telemetry and analytics SDK crates by exact
@@ -135,5 +135,5 @@ alone; no other package or edge changed. `errno` 0.3.15, `mio` 1.2.5,
 and `webpki-root-certs`: each re-resolved unrelated `syn`, `getrandom` or
 `windows-sys` edges under Cargo 1.89/1.90. Every other compatible candidate
 was younger than the cooldown. The Tauri family waits on the `tauri` pin and
-`rmcp` 3.10 on its own. Dated results describe that pass only; rerun the
-checks above before trusting them.
+`rmcp` 3.10 on its own. Rerun the checks above before
+trusting a dated result.
