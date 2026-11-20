@@ -1712,6 +1712,7 @@ pub(crate) async fn chat_inner(
             &state,
             &web,
             &owner,
+            user.as_ref().zip(sign_ins).map(|(user, seen)| (&user.0, seen)),
             &system_prompt,
             &history,
             &model,
