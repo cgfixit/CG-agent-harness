@@ -430,6 +430,66 @@ async fn an_account_disabled_during_a_web_turn_is_refused_as_an_account_change()
         .any(|l| l.contains(r#""event":"chat_reply_withheld""#) && l.contains(r#""reason":"account_changed""#)));
 }
 
+/// A password reset or a role change that keeps web access revokes the
+/// account's sign-ins without disabling it. A web turn in flight makes no
+/// further read or model call under that sign-in: the tool call the model
+/// asked for is not run, and the turn is refused like any account change.
+#[tokio::test]
+async fn sign_ins_revoked_during_a_web_turn_stop_it_before_the_next_read() {
+    web_turn_stops_after("password reset", |auth| {
+        auth.set_password("alice", &cgagentharness::common::random_hex(24))
+            .unwrap()
+    })
+    .await;
+    web_turn_stops_after("role change", |auth| auth.set_role("alice", "admin").unwrap()).await;
+}
+
+async fn web_turn_stops_after(what: &str, revoke: impl FnOnce(&cgagentharness::common::auth_store::AuthManager)) {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default().with("auth.enabled", "true")).await;
+    let (owner, alice) = account(&s, "alice", "operator").await;
+    s.state.settings.lock().unwrap().web_enabled = true;
+    model.set_reply(json!({"model":"mock","choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+        "tool_calls":[{"id":"call_1","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"anything\",\"count\":1}"}}]}}],
+        "usage":{"prompt_tokens":10,"completion_tokens":2}}));
+    model.set_delay_ms(1500);
+    let turn = request(&s, &alice, Method::POST, "/api/chat", json!({"message":"look this up"}));
+    let change = async {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while model.requests.lock().unwrap().is_empty() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        revoke(s.state.auth.as_ref().unwrap());
+    };
+    let (response, ()) = tokio::join!(turn, change);
+    let status = response.status();
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(status, 401, "{what}: {body}");
+    assert_eq!(body["detail"]["code"], "AUTH_REQUIRED", "{what}: {body}");
+    assert_eq!(
+        model.requests.lock().unwrap().len(),
+        1,
+        "{what}: the turn went on to another model call after its sign-ins were revoked"
+    );
+    let stored = s.state.store.for_owner(&owner).list();
+    assert!(
+        stored.iter().all(|row| row["message_count"].as_u64() == Some(0)),
+        "{what}: nothing from the turn is stored: {stored:?}"
+    );
+    s.state.audit.flush();
+    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    assert!(
+        !audit.contains(r#""event":"web_search""#) && !audit.contains(r#""event":"chat_web_turn""#),
+        "{what}: a read ran after the revocation"
+    );
+    assert!(audit
+        .lines()
+        .any(|l| l.contains(r#""event":"chat_reply_withheld""#) && l.contains(r#""reason":"account_changed""#)));
+}
+
 async fn owned_schedule(s: &TestServer, cookie: &str) -> serde_json::Value {
     let response = request(s, cookie, Method::POST, "/api/sessions", json!({})).await;
     assert!(response.status().is_success());

@@ -436,8 +436,29 @@ fn final_empty_reply(events: &[Value]) -> String {
     lines.join("\n")
 }
 
-fn check_evidence(state: &AppState, web: &WebTool, owner: &str, sources: &[String]) -> Result<()> {
+/// The requesting account and its `AuthManager::sign_in_revocations` count as
+/// the turn began. `None` for a server-run loop turn, which has no requesting
+/// sign-in, and when sign-in is off.
+pub type SignIn<'a> = Option<(&'a crate::common::auth_store::UserSummary, u64)>;
+
+/// `authorize_owner`, plus what it cannot see from the account row: a
+/// password reset, or a role change that keeps web access, revokes every
+/// sign-in of the account and leaves it enabled.
+fn authorize_turn(state: &AppState, owner: &str, sign_in: SignIn<'_>) -> Result<()> {
     authorize_owner(state, owner)?;
+    if let (Some(auth), Some((account, seen))) = (state.auth.as_ref(), sign_in) {
+        if !auth.account_unchanged(account, Some(seen)) {
+            return Err(error(
+                "WEB_PERMISSION_DENIED",
+                "the account's sign-ins were revoked during this turn",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn check_evidence(state: &AppState, web: &WebTool, owner: &str, sign_in: SignIn<'_>, sources: &[String]) -> Result<()> {
+    authorize_turn(state, owner, sign_in)?;
     if !sources.is_empty() {
         // This turn's snapshot: with `web.search.result_reads` on it also
         // carries the URLs the turn's own searches listed.
@@ -487,6 +508,7 @@ async fn confirm_provenance(
     state: &AppState,
     web: &WebTool,
     owner: &str,
+    sign_in: SignIn<'_>,
     raw: &str,
     given: &mut std::collections::BTreeSet<String>,
     interactive_admin: bool,
@@ -553,7 +575,12 @@ async fn confirm_provenance(
             return Err(composed("nobody confirmed this read in time"));
         }
     }
-    // Permission checked before the wait is stale (AGENTS.md): reload both.
+    // Permission checked before the wait is stale (AGENTS.md): reload the
+    // account, the web switch and the policy.
+    if let Err(failure) = authorize_turn(state, owner, sign_in) {
+        audit("account_changed");
+        return Err(failure);
+    }
     let web_on = state.settings.lock().unwrap_or_else(|p| p.into_inner()).web_enabled;
     if !web_on || authority(web, &target).await.is_none() {
         audit("policy_changed");
@@ -573,6 +600,7 @@ pub async fn run_stream(
     state: &AppState,
     web: &WebTool,
     owner: &str,
+    sign_in: SignIn<'_>,
     system: &str,
     history: &[ChatMessage],
     model: &str,
@@ -597,7 +625,7 @@ pub async fn run_stream(
         _ = lease.token.cancelled() => Err(error("WEB_CANCELLED", "chat web turn cancelled")),
         // A turn of several tool rounds gets more than one call's deadline; each
         // model call keeps its own (`ChatClient::timeout_for`).
-        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, system, history, model, cap, temperature, token_ratio, web_mode, result_reads, sized_tuned, loop_turn, goal, user_message, run_id, output, &mut usage, &mut known_completion_tokens, usage_snapshot)) =>
+        result = tokio::time::timeout(Duration::from_secs_f64(state.web_turn_deadline_sec(model, &web.limits).max(1.0)), run_inner(state, web, owner, sign_in, system, history, model, cap, temperature, token_ratio, web_mode, result_reads, sized_tuned, loop_turn, goal, user_message, run_id, output, &mut usage, &mut known_completion_tokens, usage_snapshot)) =>
             result.unwrap_or_else(|_| Err(error("WEB_TIMEOUT", "chat web turn deadline exceeded"))),
     };
     result.map_err(|failure| match usage {
@@ -615,6 +643,7 @@ async fn run_inner(
     state: &AppState,
     web: &WebTool,
     owner: &str,
+    sign_in: SignIn<'_>,
     system: &str,
     history: &[ChatMessage],
     model: &str,
@@ -731,7 +760,7 @@ async fn run_inner(
     // One round past the tool-call ceiling: the single ANSWER_NOW retry, which
     // offers no tools and so cannot spend a call.
     for turn in 0..=web.limits.chat_tool_calls + 1 {
-        check_evidence(state, web, owner, &sources)?;
+        check_evidence(state, web, owner, sign_in, &sources)?;
         let reservation = super::compaction::reply_reservation(&state.backend, cap);
         // Summarize new passages before choosing more tools, not after drafting an answer.
         if loop_turn && evidence_changed && !passages.is_empty() {
@@ -758,7 +787,7 @@ async fn run_inner(
                 }
             }
             if !selected.is_empty() {
-                check_evidence(state, web, owner, &sources)?;
+                check_evidence(state, web, owner, sign_in, &sources)?;
                 state
                     .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
                     .await?;
@@ -804,7 +833,7 @@ async fn run_inner(
                     pending: Some(totals.clone()),
                     known_completion_tokens: *known_completion_tokens,
                 };
-                check_evidence(state, web, owner, &sources)?;
+                check_evidence(state, web, owner, sign_in, &sources)?;
                 let (parsed, drop_reasons) =
                     super::web_research::Answer::parse_with_reasons(&digest.body_text, &selected);
                 match parsed {
@@ -887,7 +916,7 @@ async fn run_inner(
         // definitions, which the final round may no longer carry.
         let extra = appended_tokens(&messages[history.len()..]) + if available.is_empty() { 0 } else { offered_tokens };
         peak_extra = peak_extra.max(extra);
-        let validate = || check_evidence(state, web, owner, &sources);
+        let validate = || check_evidence(state, web, owner, sign_in, &sources);
         // A tool round may run long: the window must still allow this budget.
         state
             .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
@@ -978,9 +1007,9 @@ async fn run_inner(
             prompt_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("prompt_tokens")));
         completion_tokens =
             completion_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("completion_tokens")));
-        check_evidence(state, web, owner, &sources)?;
+        check_evidence(state, web, owner, sign_in, &sources)?;
         let final_tools = !available.is_empty();
-        check_evidence(state, web, owner, &sources)?;
+        check_evidence(state, web, owner, sign_in, &sources)?;
         let choice = &response["choices"][0];
         let message = &choice["message"];
         // `"tool_calls": null` (sent by some servers on a plain answer) is no calls.
@@ -1160,7 +1189,7 @@ async fn run_inner(
                 .as_str()
                 .filter(|s| s.len() <= 4096)
                 .ok_or_else(|| error("WEB_TOOL_ARGUMENTS", "invalid tool arguments"))?;
-            authorize_owner(state, owner)?;
+            authorize_turn(state, owner, sign_in)?;
             let argv = tool_argv(name, args);
             // The URL or query as asked, for the session's web ledger (`web_ledger`).
             let target = argv.first().cloned().unwrap_or_default();
@@ -1232,6 +1261,7 @@ async fn run_inner(
                             state,
                             web,
                             owner,
+                            sign_in,
                             &args.url,
                             &mut given,
                             interactive_admin,
@@ -1297,7 +1327,7 @@ async fn run_inner(
                 .ok_or_else(|| error("WEB_TOKEN_BUDGET", "web.total_tokens has no room left for this result")),
                 Err(failure) => Err(failure),
             };
-            check_evidence(state, web, owner, &sources)?;
+            check_evidence(state, web, owner, sign_in, &sources)?;
             // A refused or failed read is that call's result, not the end of the
             // turn: the model is handed the harness's own code and message (never
             // page text) and answers from the reads that did succeed. A refused
@@ -1359,7 +1389,7 @@ async fn run_inner(
                         sources.push(source.to_string());
                     }
                 }
-                check_evidence(state, web, owner, &sources)?;
+                check_evidence(state, web, owner, sign_in, &sources)?;
                 events.push(json!({"tool":name,"ok":true,"target":target,"args":call_args,"result":result}));
             }
             messages.push(tool_message(id, &result)?);
