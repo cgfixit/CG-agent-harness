@@ -9,9 +9,10 @@ Chrome. Computer use (native apps) is a skeleton that nothing calls.
 `/browse <site> [https://site ...] <task>` in the console, or
 `POST /api/browser/run` with `{task, origins}`. Administrator only, refused unless `browser.enabled` is
 literal `true` (ships `true`, restart-only), one task at a time, stopped after
-`browser.timeout_sec` (default 300). Without accounts (`auth.enabled` not literal
-`true`) the admin check cannot run, so it refuses with `BROWSER_AUTH_REQUIRED`.
-Only the first site may be a bare domain (meaning `https://`), so a task word like
+`browser.timeout_sec` (default 300). Without accounts it refuses
+(`BROWSER_AUTH_REQUIRED`). The console runs a job: a request the model's
+action causes shows a card, sent once if approved; `/browse cancel` stops it.
+Only the first site may be a bare domain (`https://`), so a task word like
 `README.md` is never a grant. A bare first word with a file extension
 (`setup.py`) runs only when the line is sent twice; `https://` skips that.
 
@@ -94,8 +95,7 @@ checks one-shot approval (#995). CI runs every fixture, sandbox on.
   server start.
 - No screenshots: canvas and image-only UIs are opaque. `alert` and
   `confirm` text is shown to the model, then dismissed (a confirm as Cancel).
-- Held `fetch` POSTs break background saves; one sent during a model
-  action still ends the task. Sites needing a web worker lose it.
+- Held `fetch` POSTs break background saves. Sites needing a web worker lose it.
 - Page text is untrusted. Grants and holds bound its effect; an
   answer can be wrong.
 - `/goal` and `/loop` have no browser tools: "/browse" in a goal runs web

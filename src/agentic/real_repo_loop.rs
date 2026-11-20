@@ -182,6 +182,26 @@ fn sensitive_read_reason(raw_selector: &str, denied: &[String]) -> Option<&'stat
     denied_read_basename(&canonical, denied).then_some("sensitive_basename")
 }
 
+/// Refuse an operator `--read-file` whose final segment is on the deny-list.
+/// The selector alone decides this, so `real-repo-run` asks before it clones
+/// or records a run, and the loop asks again for a caller that reaches it
+/// directly.
+pub(crate) fn refuse_sensitive_read_paths(ctx: &AgenticCtx, read_paths: &[String]) -> Result<()> {
+    let denied = &ctx.acfg.deepagent.denied_read_basenames;
+    for selector in read_paths {
+        if let Some(reason) = sensitive_read_reason(selector, denied) {
+            ctx.audit.log(json!({
+                "event": "agentic_real_repo_read_request_refused",
+                "selector": crate::common::clip_chars(selector, 200),
+                "reason": reason,
+            }));
+            return Err(HarnessError::agentic("read selector refused: sensitive_basename")
+                .detail("selector", crate::common::clip_chars(selector, 200)));
+        }
+    }
+    Ok(())
+}
+
 /// Honor a planner READ selector for a **local** proposer only. Cloud
 /// proposers refuse every model-requested read (operator `--read-file`
 /// selectors are not passed through this function). A later request for the
@@ -574,18 +594,8 @@ pub fn run_real_repo_loop(
     ctx.audit
         .log(json!({"event": "agentic_real_repo_loop_started", "max_iterations": p.max_iterations}));
 
+    refuse_sensitive_read_paths(ctx, p.read_paths)?;
     let denied_read_basenames = &ctx.acfg.deepagent.denied_read_basenames;
-    for selector in p.read_paths {
-        if let Some(reason) = sensitive_read_reason(selector, denied_read_basenames) {
-            ctx.audit.log(json!({
-                "event": "agentic_real_repo_read_request_refused",
-                "selector": crate::common::clip_chars(selector, 200),
-                "reason": reason,
-            }));
-            return Err(HarnessError::agentic("read selector refused: sensitive_basename")
-                .detail("selector", crate::common::clip_chars(selector, 200)));
-        }
-    }
 
     // No check can run without the hard sandbox, so a host that lacks one is
     // refused here: before the first model request, not after a planner call

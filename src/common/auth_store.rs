@@ -69,6 +69,10 @@ struct AuthDb {
     /// Keyed by `hash_token(session_id)`; the raw id is never stored.
     #[serde(default)]
     sessions: BTreeMap<String, SessionRow>,
+    /// How many times each account's sign-ins were revoked since this process
+    /// started. In memory only: see `AuthManager::sign_in_revocations`.
+    #[serde(skip)]
+    revocations: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -327,6 +331,35 @@ impl AuthManager {
         db.users.get(&canonical).map(|u| Self::summary(&canonical, u))
     }
 
+    /// How many times this account's sign-ins have been revoked since the
+    /// server started: a role change, a password set or change, a disable and
+    /// a delete each count. An admin password reset leaves no other trace on
+    /// the account (it clears `must_change_password`), and a session's
+    /// `revoked` flag is also set by ordinary expiry.
+    pub fn sign_in_revocations(&self, username: &str) -> u64 {
+        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        stored
+            .1
+            .revocations
+            .get(&Self::canonical(username))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Whether `account`, as read when some work began, is still the same
+    /// enabled account. With `revocations` (the `sign_in_revocations` value
+    /// read then), also whether its sign-ins have not been revoked since.
+    /// One lock, so an account change cannot land between the two answers.
+    pub fn account_unchanged(&self, account: &UserSummary, revocations: Option<u64>) -> bool {
+        let canonical = Self::canonical(&account.username);
+        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let db = &stored.1;
+        db.users
+            .get(&canonical)
+            .is_some_and(|current| current.user_id == account.user_id && !current.disabled)
+            && revocations.is_none_or(|seen| db.revocations.get(&canonical).copied().unwrap_or(0) == seen)
+    }
+
     pub fn list_users(&self) -> Vec<UserSummary> {
         let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let db = &stored.1;
@@ -376,6 +409,7 @@ impl AuthManager {
         }
         db.users.remove(&canonical);
         db.sessions.retain(|_, row| row.username != canonical);
+        *db.revocations.entry(canonical.clone()).or_default() += 1;
         self.persist(&mut stored, &db)
     }
 
@@ -630,11 +664,57 @@ fn revoke_sessions_for(db: &mut AuthDb, username: &str) {
             row.revoked = true;
         }
     }
+    *db.revocations.entry(username.to_string()).or_default() += 1;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every action that revokes an account's sign-ins moves its counter, a
+    /// password reset included; signing in, logging out and other accounts'
+    /// changes do not.
+    #[test]
+    fn each_sign_in_revocation_is_counted_for_its_account_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig::from_str("{}", Path::new("config.yaml")).unwrap();
+        let auth = AuthManager::open(&dir.path().join("auth.db"), &cfg).unwrap();
+        let password = crate::common::random_hex(24);
+        auth.create_user("second-admin", &password, "admin").unwrap();
+        auth.create_user("alice", &password, "operator").unwrap();
+        let alice = auth.get_user("alice").unwrap();
+        let seen = auth.sign_in_revocations("alice");
+        let session = auth.login("alice", &password).unwrap().session_id;
+        assert!(auth.logout(&session).unwrap());
+        auth.set_role("second-admin", "operator").unwrap();
+        assert_eq!(auth.sign_in_revocations("Alice "), seen, "not alice's sign-ins");
+        assert!(auth.account_unchanged(&alice, Some(seen)));
+
+        let mut count = seen;
+        let next = crate::common::random_hex(24);
+        let changes: [(&str, &dyn Fn()); 4] = [
+            ("role", &|| auth.set_role("alice", "portal_auditor").unwrap()),
+            ("password reset", &|| auth.set_password("alice", &next).unwrap()),
+            ("password change", &|| {
+                auth.change_password("alice", &next, &password).unwrap();
+            }),
+            ("disable", &|| auth.disable_user("alice").unwrap()),
+        ];
+        for (what, change) in changes {
+            change();
+            assert_eq!(auth.sign_in_revocations("alice"), count + 1, "{what}");
+            count += 1;
+            assert!(!auth.account_unchanged(&alice, Some(seen)), "{what}");
+        }
+        // Without a count the answer is the earlier rule: same enabled account.
+        assert!(!auth.account_unchanged(&alice, None), "disabled");
+        auth.enable_user("alice").unwrap();
+        assert!(auth.account_unchanged(&alice, None));
+        assert!(!auth.account_unchanged(&alice, Some(seen)));
+        auth.delete_user("alice").unwrap();
+        assert_eq!(auth.sign_in_revocations("alice"), count + 1, "delete");
+        assert!(!auth.account_unchanged(&alice, None));
+    }
 
     #[test]
     fn session_timeouts_outside_one_minute_to_thirty_days_refuse_before_the_store_opens() {

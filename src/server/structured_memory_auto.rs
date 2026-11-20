@@ -60,6 +60,22 @@ pub fn sync_worker(state: &Arc<AppState>) {
     }
 }
 
+/// Whether memory automation may still work for `owner`: an enabled operator
+/// or administrator account past its setup code, the rule schedules and
+/// completion notifications apply. A disabled, deleted or demoted account's
+/// episodes are passed over, not deleted, and are picked up again if the
+/// account returns. With accounts off there is nothing to retire.
+pub(crate) fn owner_active(state: &AppState, owner: &str) -> bool {
+    state.auth.as_ref().is_none_or(|auth| {
+        auth.list_users().iter().any(|user| {
+            user.user_id == owner
+                && !user.disabled
+                && !user.must_change_password
+                && matches!(user.role.as_str(), "admin" | "operator")
+        })
+    })
+}
+
 fn worker_available(state: &AppState) -> bool {
     !state.shutdown.is_cancelled()
         && auto_consolidation_available(&state.cfg, state.structured_memory.is_some(), &current_gates(state))
@@ -97,7 +113,10 @@ async fn worker_loop(state: Arc<AppState>) {
         // No batch due, or the store could not say: wait and ask again.
         let Some(batch) = off_worker(move || {
             let store = picker.structured_memory.as_ref()?;
-            store.next_auto_consolidation_batch().ok().flatten()
+            store
+                .next_auto_consolidation_batch_for(&|owner| owner_active(&picker, owner))
+                .ok()
+                .flatten()
         })
         .await
         else {
@@ -118,6 +137,11 @@ async fn worker_loop(state: Arc<AppState>) {
         if !state.auto_consolidation.claims_allowed() || !worker_available(&state) {
             drop(_gate);
             break;
+        }
+        // The pick was before the waits above: the account may have changed.
+        if !owner_active(&state, &batch.0) {
+            drop(_gate);
+            continue;
         }
         let outcome = run_manual(&state, &batch.0, &batch.1).await;
         match outcome {
