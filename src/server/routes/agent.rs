@@ -291,6 +291,14 @@ fn refuse_bound_session_pins(state: &AppState, owner: &str, req: &AgentRunReques
         .diag
         .for_turn(owner, "", crate::server::diag_reader::Surface::Agent)
         .map_err(|e| super::diag::diag_error(&e))?;
+    refuse_session_pins(state, owner, req)
+}
+
+/// The persistent half of `refuse_bound_session_pins`: a goal session that still
+/// pins a live attachment. Schedule preview and create apply it too, because
+/// every firing would refuse the same session; the staged `/diag` excerpt is
+/// transient, so only firings check it.
+fn refuse_session_pins(state: &AppState, owner: &str, req: &AgentRunRequest) -> ApiResult<()> {
     let Some(binding) = &req.goal_stage else {
         return Ok(());
     };
@@ -466,14 +474,26 @@ pub(crate) fn start_job(
     ))
 }
 
+/// What a firing would refuse about the request itself, checked before a
+/// schedule is previewed or stored. The binding and pin checks read the session
+/// file, so the whole check runs on the blocking pool.
+async fn refuse_unschedulable(state: &Arc<AppState>, req: &AgentRunRequest, owner: &str) -> ApiResult<()> {
+    let (state, req, owner) = (state.clone(), req.clone(), owner.to_string());
+    super::structured_memory::off_worker(move || {
+        super::goals::validate_binding(&state, &req, &owner)?;
+        refuse_session_pins(&state, &owner, &req)?;
+        resolve_run_shape(&state, &req).map(|_| ())
+    })
+    .await
+}
+
 pub async fn schedule_preview(
     State(state): State<Arc<AppState>>,
     user: Caller,
     ValidJson(body): ValidJson<AgentScheduleCreate>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
-    super::goals::validate_binding(&state, &body.request, &owner)?;
-    resolve_run_shape(&state, &body.request)?;
+    refuse_unschedulable(&state, &body.request, &owner).await?;
     let spec = body
         .spec()
         .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
@@ -492,8 +512,7 @@ pub async fn schedule_create(
     ValidJson(body): ValidJson<AgentScheduleCreate>,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     let owner = super::auth::context_owner(user);
-    super::goals::validate_binding(&state, &body.request, &owner)?;
-    resolve_run_shape(&state, &body.request)?;
+    refuse_unschedulable(&state, &body.request, &owner).await?;
     let spec = body
         .spec()
         .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
