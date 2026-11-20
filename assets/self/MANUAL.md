@@ -504,12 +504,14 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - browser.max_turns: model turns per task, clamped to 1–40
   - browser.timeout_sec: whole task; the child tree is killed after it, clamped to 30–1800
   - browser.takeover
-- notifications: Completion webhooks are explicit operator configuration and restart-only.
-  - notifications.enabled
 
 ## config: sections and keys (values omitted) (part 6)
 
-- notifications.schema_version
+- computer: Native computer use (issue #996; docs/Browser-Use.md#roadmap-computer-use). Nothing reads this key yet: no route, child or driver exists. It ships now so the gate is closed before any of them is…
+  - computer.enabled
+- notifications: Completion webhooks are explicit operator configuration and restart-only.
+  - notifications.enabled
+  - notifications.schema_version
   - notifications.destinations: max 8: explicit id, owner, enabled, url, events, use_bearer, rate_per_minute
   - notifications.webhook_url: legacy global URL must be migrated explicitly; never invent an owner
   - notifications.private_url_allowlist: exact URLs only; loopback/RFC1918/ULA require this grant
@@ -519,14 +521,14 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - notifications.poll_interval_sec: 1–60; durable outbox scan
   - notifications.max_attempts: 1–3 per delivery/replay; IDs remain stable
   - notifications.retry_delay_sec: 1–60; exponential backoff base
-  - notifications.max_backoff_sec: 1–3600; before bounded jitter
-  - notifications.jitter_percent: 0–50; nonnegative random delay
-  - notifications.retention_sec: 60–2592000; pending and terminal delivery retention
-  - notifications.max_replays: 0–10; explicit owner-confirmed replay cycles
 
 ## config: sections and keys (values omitted) (part 7)
 
-- notifications.timeout_sec: 1–30, includes DNS and request
+- notifications.max_backoff_sec: 1–3600; before bounded jitter
+  - notifications.jitter_percent: 0–50; nonnegative random delay
+  - notifications.retention_sec: 60–2592000; pending and terminal delivery retention
+  - notifications.max_replays: 0–10; explicit owner-confirmed replay cycles
+  - notifications.timeout_sec: 1–30, includes DNS and request
 - mcp: External MCP tools. Off until an operator declares servers. Never auto-discover. SSE loopback is an explicit toggle and ships off. MCP tools never appear on /loop. stdio command[0] must be an…
   - mcp.server
   - mcp.enabled
@@ -540,7 +542,10 @@ Future remote exposure requires a separate reviewed change: There is no remote m
 - tls
   - tls.enabled: newly seeded homes use HTTPS; existing configs are not rewritten
   - tls.auto_generate: unique local cert/key in a private atomic PEM bundle
-  - tls.certificate_days: 1–365; renew explicitly before expiry
+
+## config: sections and keys (values omitted) (part 8)
+
+- tls.certificate_days: 1–365; renew explicitly before expiry
   - tls.cert_file: optional operator PEM chain, relative to home or absolute
   - tls.key_file: paired private PEM key; never overwritten by automatic generation
 - auth
@@ -548,10 +553,7 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - auth.max_concurrent_operations
   - auth.session
 - logging
-
-## config: sections and keys (values omitted) (part 8)
-
-- logging.request_log
+  - logging.request_log
   - logging.audit_file
   - logging.spend_file
   - logging.max_file_bytes: clamped to 64 KiB–64 MiB; oversized events are dropped
@@ -570,7 +572,10 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - agentic.enabled: master switch; CLI no-ops (exit 0) while false
   - agentic.repo: set owner/name explicitly before enabling coding
   - agentic.mode: "read" | "write"
-  - agentic.writes_enabled: writes need mode=write AND this AND reason AND confirm
+
+## config: sections and keys (values omitted) (part 9)
+
+- agentic.writes_enabled: writes need mode=write AND this AND reason AND confirm
   - agentic.gh_min_version
   - agentic.gh_timeout_sec
   - agentic.gh_retries
@@ -579,10 +584,7 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - agentic.sandbox
   - agentic.deepagent_github
 - unslop
-
-## config: sections and keys (values omitted) (part 9)
-
-- unslop.enabled: opt-in planner probe: counts fixed filler phrases, may nudge the next iteration; never rewrites or gates
+  - unslop.enabled: opt-in planner probe: counts fixed filler phrases, may nudge the next iteration; never rewrites or gates
   - unslop.metrics_path
 - diagnostics: Read-only /diag log inspection. New homes ship logs_enabled as literal true (quoted "true" is off); only admin and portal_auditor accounts may read. An existing home config.yaml is not rewritten.…
   - diagnostics.logs_enabled
@@ -593,12 +595,12 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - diagnostics.model_tool
   - diagnostics.self_knowledge
   - diagnostics.self_manual_max_chunks: 1–8 chunks per turn
-  - diagnostics.self_manual_max_chars: 512–16000 injected characters per turn
-  - diagnostics.self_manual_min_score: finite, >= 0; Tantivy score floor, 0 keeps every hit
-  - diagnostics.live_state
 
 ## config: sections and keys (values omitted) (part 10)
 
+- diagnostics.self_manual_max_chars: 512–16000 injected characters per turn
+  - diagnostics.self_manual_min_score: finite, >= 0; Tantivy score floor, 0 keeps every hit
+  - diagnostics.live_state
 - memory: Account-private structured facts, governed proposals, and optional episodes. Distinct from harness.json.memory_enabled, which only includes pinned /memory notes in the chat prompt. Missing, quoted,…
   - memory.enabled
 - structured_memory
@@ -614,13 +616,13 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - structured_memory.suggestion_mode: summaries | insights | both; invalid values disable suggestions
   - structured_memory.suggestion_supported
   - structured_memory.suggestion_max_input_chars: clamped to 256–32000; total across input/output, split equally
-  - structured_memory.suggestion_max_queue: clamped to 1–32; queued inputs; one additional generation may be running
-  - structured_memory.suggestion_queue_ttl_secs: clamped to 1–3600; volatile inputs expire; restart drops them
-  - structured_memory.suggestion_idle_ms: clamped to 10–30000
 
 ## config: sections and keys (values omitted) (part 11)
 
-- structured_memory.status_poll_ms: clamped to 250–30000; visible Memory pane only
+- structured_memory.suggestion_max_queue: clamped to 1–32; queued inputs; one additional generation may be running
+  - structured_memory.suggestion_queue_ttl_secs: clamped to 1–3600; volatile inputs expire; restart drops them
+  - structured_memory.suggestion_idle_ms: clamped to 10–30000
+  - structured_memory.status_poll_ms: clamped to 250–30000; visible Memory pane only
   - structured_memory.max_facts_per_owner: clamped to 1–256
   - structured_memory.max_fact_chars: clamped to 1–4000
   - structured_memory.max_category_chars: clamped to 1–64
@@ -633,14 +635,14 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - structured_memory.max_export_bytes: clamped to 1 KiB–8 MiB
   - structured_memory.max_selected_facts: clamped to 1–32
   - structured_memory.max_search_query_chars: clamped to 1–256
-  - structured_memory.max_search_results: clamped to 1–64
-  - structured_memory.max_retrieval_results: clamped to 1–16
-  - structured_memory.max_retrieval_tokens: clamped to 1–16
-  - structured_memory.max_retrieval_token_chars: clamped to 1–64
 
 ## config: sections and keys (values omitted) (part 12)
 
-- structured_memory.max_search_time_ms: clamped to 10–5000
+- structured_memory.max_search_results: clamped to 1–64
+  - structured_memory.max_retrieval_results: clamped to 1–16
+  - structured_memory.max_retrieval_tokens: clamped to 1–16
+  - structured_memory.max_retrieval_token_chars: clamped to 1–64
+  - structured_memory.max_search_time_ms: clamped to 10–5000
   - structured_memory.pinned_prompt_chars: clamped to 1–3000
   - structured_memory.selected_fact_prompt_chars: clamped to 1–3000
   - structured_memory.max_consolidation_episodes: clamped to 1–16
@@ -656,7 +658,10 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - netconnect.throughput
   - netconnect.anomaly_detection
   - netconnect.home_automation
-  - netconnect.allowed_cidrs
+
+## config: sections and keys (values omitted) (part 13)
+
+- netconnect.allowed_cidrs
   - netconnect.port_allowlist
   - netconnect.host_cap
   - netconnect.rate_limit_per_min
@@ -664,10 +669,7 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - netconnect.read_timeout_ms
   - netconnect.max_dials
   - netconnect.diagnostics_targets
-
-## config: sections and keys (values omitted) (part 13)
-
-- netconnect.throughput_endpoint
+  - netconnect.throughput_endpoint
   - netconnect.ha_endpoint
   - netconnect.mqtt_endpoint
   - netconnect.untrusted_string_max_chars
