@@ -821,8 +821,10 @@ fn job_turn() -> Option<String> {
         return Some(JOB_CANCELLED_REASON.to_string());
     }
     let turn = JOB_TURNS.fetch_add(1, Ordering::AcqRel) + 1;
-    println!("{}", json!({"event": "turn", "turn": turn}));
-    let _ = std::io::stdout().flush();
+    // A server that went away closes this pipe; the cancel flag then ends the task.
+    let mut out = std::io::stdout();
+    let _ = writeln!(out, "{}", json!({"event": "turn", "turn": turn}));
+    let _ = out.flush();
     None
 }
 
