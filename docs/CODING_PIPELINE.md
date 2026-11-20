@@ -349,7 +349,8 @@ Run the harness with `CGAGENTHARNESS_HOME` set to that home, and keep
 reviewed preparation, and no model retry can make uncached dependencies
 available. Missing components or sources, permission failures and Cargo
 timeouts are setup errors; compile and test failures are feedback for a
-correction.
+correction. A linked or oversized `Cargo.lock` in the clone is refused, never
+followed.
 
 ### Execution boundary
 
