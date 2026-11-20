@@ -114,8 +114,8 @@ checks one-shot approval (#995). CI runs every fixture, sandbox on.
 ## Roadmap: computer use
 
 A browser grant never authorizes Accessibility, screen capture or input. The
-policy kernel carries over unchanged: per-observation refs, trusted element
-facts, allow, hand-off or refuse. Only the driver behind
+policy kernel carries over with a desktop profile (`Session::desktop`): only
+operator-listed actions run, nothing typed. The driver behind
 `browser_host::Driver` changes.
 
 **Chosen driver: Kimi Computer Use.** It
