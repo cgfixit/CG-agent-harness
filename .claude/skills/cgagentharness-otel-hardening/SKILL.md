@@ -64,9 +64,10 @@ it actually calls, and an arm's names are never re-pinned at a site.
    bash .claude/skills/cgagentharness-otel-hardening/verify.sh
    ```
 
-   One mutation per rule, each asserting it changed the file. Neither script is
-   in `.claude/settings.json`'s allowlist or any workflow: expect a permission
-   prompt, and treat a red run as work, not as advisory.
+   One mutation per rule, each asserting it changed the file. `telemetry-contract.yml`
+   runs this script on every PR and `main` push, and step 1 weekly; neither is in
+   `.claude/settings.json`'s allowlist, so expect a permission prompt. A red run
+   is work, not advisory. Step 3 runs nowhere but here.
 
 3. **Live vendor sweep** (network) — for each category-1/2 row whose `reviewed`
    is old or whose pin drifted (T6), re-read the row's URL and confirm the

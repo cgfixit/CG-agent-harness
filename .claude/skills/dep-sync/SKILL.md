@@ -125,8 +125,8 @@ cd desktop && cargo build --all-targets --locked && cd ..
 ```
 
 A network crate that moved (reqwest, rmcp, rustls, hyper, tauri, a new direct
-dependency) also drifts the telemetry oracle: ask the operator to run
-`/cgagentharness-otel-hardening` (operator-only).
+dependency) also drifts the telemetry oracle (`telemetry-contract.yml`): ask
+the operator to run `/cgagentharness-otel-hardening` (operator-only).
 
 Never pipe a pass/fail command into grep or suppress its exit status. A
 missing `cargo-deny` binary is a missing required check, not a pass. Do not
