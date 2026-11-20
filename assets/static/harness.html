@@ -205,6 +205,8 @@
   .fetch-confirm button { cursor: pointer; margin: 6px 6px 0 0; padding: 6px 10px; color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--accent-amber); border-radius: 4px; }
   .fetch-confirm button:disabled { opacity: .5; cursor: default; }
   .fetch-confirm code { display: block; margin: 6px 0; word-break: break-all; }
+  .fetch-confirm input { display: block; width: 100%; box-sizing: border-box; margin: 6px 0; padding: 6px 8px; color: var(--text-primary); background: var(--bg-tertiary); border: 1px solid var(--border); }
+  .fetch-confirm code { white-space: pre-wrap; }
 
   .cmd-item {
     display: block; width: 100%; text-align: left; background: none; border: none;
@@ -2891,6 +2893,111 @@ function renderResearch(result) {
   sources.appendChild(table((result.passages || []).map(p => [p.id, p.url, p.text]), ['citation', 'source', 'original extract'])); sys(sources);
   sys(renderWebCoverage(result.coverage),'Bounded research; not an exhaustive site summary.');
 }
+/* The reply of a finished browser task, from the synchronous route or a job. */
+function renderBrowseResult(r) {
+  const rep = r.report || {};
+  const meta = [r.finished ? 'finished' : 'not finished', rep.stopped, rep.final_url,
+    (rep.model_calls_with_tools || 0) + ' tool calls', 'page text is untrusted'].filter(Boolean).join(' · ');
+  sys(rep.answer || r.reason || 'The model gave no answer.', meta);
+  /* Held requests were never sent and handed-off fields never typed. The
+     rows carry page-derived text, so they render as text only. */
+  const rows = Array.isArray(rep.for_operator) ? rep.for_operator : [];
+  const mine = rows.filter(s => !s.held_background && !s.approved);
+  /* Requests you approved while the task waited: these were sent, once each. */
+  const sent = rows.filter(s => s.approved);
+  if (sent.length) sys(sent.map(s => 'Sent with your approval: ' + String(s.approved)).join('\n'), 'sent once each, as shown when you approved');
+  /* Requests a page sent on its own: not sent either, and the task went on. */
+  const own = rows.filter(s => s.held_background);
+  if (own.length) sys(own.map(s => 'Held in the background, not sent: ' + String(s.held_background)).join('\n'),
+    'the page sent these on its own; the task went on');
+  if (mine.length) sys(mine.map(s => s.held ? 'Held, not sent: ' + String(s.held)
+    : 'Handed to you: ' + (s.element ? String(s.element) + ' (' + String(s.handoff) + ')' : String(s.handoff))
+      + (s.reason ? ': ' + String(s.reason) : '')).join('\n'),
+    'only you can do these; the task did not');
+  /* Origins a page asked for outside the grant. Page-derived, so text only. */
+  const refused = Array.isArray(rep.not_granted) ? rep.not_granted : [];
+  if (refused.length) sys('Not granted, so blocked: ' + refused.map(String).join(', '),
+    'name a site before the task to let a run reach it');
+}
+
+/* #995: one request the task's own action caused is paused in its Chrome.
+   Everything shown but the size and hash was written by the page, so it is
+   set as text. Approve sends that request once; the server binds the yes to
+   this request's id and body hash and checks policy again. */
+function showBrowseApproval(jobId, pending) {
+  const body = document.createElement('div'); body.className = 'fetch-confirm';
+  const lead = document.createElement('div');
+  lead.textContent = 'The browser task wants to send this request. It is paused, not sent. Approve only if it is what you asked for: it is sent once, exactly as shown.';
+  const url = document.createElement('code'); url.className = 'confirm-url';
+  url.textContent = String(pending.method || '') + ' ' + String(pending.url || '');
+  const facts = document.createElement('div'); facts.className = 'meta';
+  facts.textContent = [String(pending.content_type || 'no content type'), Number(pending.size || 0) + ' bytes',
+    'SHA-256 ' + String(pending.sha256 || '')].join(' · ');
+  const preview = document.createElement('code'); preview.className = 'confirm-url';
+  preview.textContent = String(pending.preview || '') || '(empty body)';
+  const reason = document.createElement('input'); reason.type = 'text'; reason.maxLength = 500;
+  reason.placeholder = 'Why you are sending this (required)'; reason.setAttribute('aria-label', 'Reason for approving');
+  const row = document.createElement('div');
+  const note = document.createElement('div'); note.className = 'meta';
+  const left = Math.max(0, Math.round(Number(pending.expires_at || 0) - Date.now() / 1000));
+  note.textContent = 'Waiting about ' + left + ' s; no answer holds it and the task reports it.';
+  const base = '/api/browser/jobs/' + encodeURIComponent(jobId);
+  const answer = async approve => {
+    yes.disabled = no.disabled = reason.disabled = true;
+    try {
+      if (approve) {
+        await api(base + '/approve', 'POST', { request: Number(pending.request), sha256: String(pending.sha256 || ''),
+          confirm: true, reason: reason.value.trim() });
+      } else {
+        await api(base + '/deny', 'POST', { request: Number(pending.request) });
+      }
+      note.textContent = approve ? 'Approved: policy is checked again, then it is sent once.' : 'Held: not sent. The task reports it.';
+    } catch (e) { note.textContent = (e && e.message) || String(e); }
+  };
+  const yes = document.createElement('button'); yes.type = 'button'; yes.textContent = 'Send this request once'; yes.disabled = true;
+  const no = document.createElement('button'); no.type = 'button'; no.textContent = 'Hold it';
+  reason.addEventListener('input', () => { yes.disabled = !reason.value.trim(); });
+  yes.addEventListener('click', () => answer(true));
+  no.addEventListener('click', () => answer(false));
+  row.appendChild(yes); row.appendChild(no);
+  for (const part of [lead, url, facts, preview, reason, row, note]) body.appendChild(part);
+  addMsg('sys', 'harness', body);
+}
+
+/* The browser task this page started, while it runs: /browse cancel stops it. */
+let browseJobId = '';
+let browseWatchGeneration = 0;
+const BROWSE_POLL_MS = 1500;
+async function watchBrowseJob(id) {
+  const generation = ++browseWatchGeneration, revision = sessionRevision;
+  const stale = () => generation !== browseWatchGeneration || revision !== sessionRevision;
+  browseJobId = id;
+  let asked = 0;
+  try {
+    while (!stale()) {
+      const job = await api('/api/browser/jobs/' + encodeURIComponent(id));
+      if (stale()) return;
+      /* One card per paused request: a request's number is never reused in a task. */
+      if (job.status === 'waiting' && job.pending && Number(job.pending.request) !== asked) {
+        asked = Number(job.pending.request);
+        showBrowseApproval(id, job.pending);
+      }
+      if (['running', 'waiting', 'cancelling'].includes(job.status)) {
+        await new Promise(resolve => setTimeout(resolve, BROWSE_POLL_MS));
+        continue;
+      }
+      if (job.result) renderBrowseResult(job.result);
+      if (job.status === 'cancelled') sys('The browser task was cancelled.');
+      if (job.error) sys(String(job.error.code) + ': ' + String(job.error.message));
+      return;
+    }
+  } catch (e) {
+    if (!stale()) sys((e && e.message) || String(e));
+  } finally {
+    if (browseJobId === id) browseJobId = '';
+  }
+}
+
 async function watchResearchJob(id) {
   const generation = ++researchWatchGeneration, revision = sessionRevision;
   const stale = () => generation !== researchWatchGeneration || revision !== sessionRevision;
@@ -4288,6 +4395,12 @@ async function runSlash(line, webCommand) {
       case 'browse': {
         /* Leading http(s) URLs are the only origins the task may reach; the
            server re-validates them, refuses blocked ones and runs the task. */
+        if (rest.length === 1 && rest[0] === 'cancel') {
+          if (!browseJobId) { sys('No browser task is running here.'); break; }
+          const stopped = await api('/api/browser/jobs/' + encodeURIComponent(browseJobId) + '/cancel', 'POST');
+          sys('Browser task: ' + String(stopped.status) + '.', 'it stops before its next model turn');
+          break;
+        }
         const words = rest.slice();
         const origins = [];
         /* Only the first site may be a bare domain (docs.python.org means https);
@@ -4315,28 +4428,17 @@ async function runSlash(line, webCommand) {
         }
         pendingBrowse = '';
         sys('Browsing ' + origins.join(', ') + ' with the local model; this can take a few minutes.');
+        /* A job, so a request the task's own action causes can wait for a
+           decision here (#995). Where jobs are not offered the task runs as
+           one held request, and every such request ends it as before. */
+        let job = null;
+        try { job = await api('/api/browser/jobs', 'POST', {task, origins}); }
+        catch (e) { if (!e || e.code !== 'BROWSER_JOBS_UNSUPPORTED') throw e; }
+        if (staleReview()) break;
+        if (job) { watchBrowseJob(String(job.job_id || '')); break; }
         const r = await api('/api/browser/run', 'POST', {task, origins}, BROWSE_WAIT_MS);
         if (staleReview()) break;
-        const rep = r.report || {};
-        const meta = [r.finished ? 'finished' : 'not finished', rep.stopped, rep.final_url,
-          (rep.model_calls_with_tools || 0) + ' tool calls', 'page text is untrusted'].filter(Boolean).join(' · ');
-        sys(rep.answer || r.reason || 'The model gave no answer.', meta);
-        /* Held requests were never sent and handed-off fields never typed. The
-           rows carry page-derived text, so they render as text only. */
-        const rows = Array.isArray(rep.for_operator) ? rep.for_operator : [];
-        const mine = rows.filter(s => !s.held_background);
-        /* Requests a page sent on its own: not sent either, and the task went on. */
-        const own = rows.filter(s => s.held_background);
-        if (own.length) sys(own.map(s => 'Held in the background, not sent: ' + String(s.held_background)).join('\n'),
-          'the page sent these on its own; the task went on');
-        if (mine.length) sys(mine.map(s => s.held ? 'Held, not sent: ' + String(s.held)
-          : 'Handed to you: ' + (s.element ? String(s.element) + ' (' + String(s.handoff) + ')' : String(s.handoff))
-            + (s.reason ? ': ' + String(s.reason) : '')).join('\n'),
-          'only you can do these; the task did not');
-        /* Origins a page asked for outside the grant. Page-derived, so text only. */
-        const refused = Array.isArray(rep.not_granted) ? rep.not_granted : [];
-        if (refused.length) sys('Not granted, so blocked: ' + refused.map(String).join(', '),
-          'name a site before the task to let a run reach it');
+        renderBrowseResult(r);
         break;
       }
 
