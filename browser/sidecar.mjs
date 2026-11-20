@@ -397,6 +397,7 @@ function startProxy() {
 
 // A task killed at its deadline cannot remove its profile, which holds that
 // task's cookies and cache. Remove profiles whose sidecar process is gone.
+// The server does the same at start (browser_host::sweep_stale_profiles).
 function sweepProfiles() {
   let names = [];
   try {

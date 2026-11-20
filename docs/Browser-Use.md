@@ -80,8 +80,7 @@ Verified by running: fixtures `browser`, `browser enter` (new tab, search,
 select, password hand-off, both kinds of held POST, no WebRTC UDP), `browser reach` (late
 content, an ungranted tab closed and named, `page` and `find`) and
 `browser-verify`. `browser guards` checks by what its loopback server received:
-no worker starts, a redirect lands, no held POST arrives, a blocked path gets
-no request (subresource, redirect, navigation, mid-page rule), a 1.14 MB page
+no worker starts, a redirect lands, no held POST arrives, a blocked path gets no request, a 1.14 MB page
 gives a capped reply, and the proxy answers 407 without the session credential. CI's
 `browser-guards` job runs every fixture, sandbox on.
 
@@ -90,6 +89,8 @@ gives a capped reply, and the proxy answers 407 without the session credential. 
 - Grants are exact origins. A CDN origin's scripts and styles are blocked,
   so many large sites render partly.
 - A block rule stops requests, not content a page loaded before the rule.
+- A killed task's profile (cookies, cache) stays until the next task or
+  server start.
 - No screenshots: canvas and image-only UIs are opaque. `alert` and
   `confirm` are dismissed unseen.
 - `scroll` and `wait` are not model tools: load-on-scroll content stays unread.
@@ -130,9 +131,8 @@ binary (the plugin's wrapper script is world-writable), turning
 the model, so nothing leaves the machine. Kimi Computer Use is proprietary;
 its TCC grants (Accessibility, Screen Recording) belong to the operator.
 
-Not chosen: Kimi Code (`kimi acp`), where Kimi's model decides each step and
-the task leaves the machine; and a first-party Accessibility helper, the most
-work.
+Not chosen: Kimi Code (`kimi acp`; the task leaves the machine) or a
+first-party Accessibility helper.
 
 Any first pilot stays attended: one app, one window, fixture data, operator
 takeover, a result checked outside the model.

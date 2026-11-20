@@ -19,7 +19,8 @@ assert.equal(new URL(base).hostname,'127.0.0.1');
 assert.equal(new URL(base).protocol,'http:','Use browser-fixture.py --http; HTTPS/native trust has separate acceptance');
 assert.ok(!(await (await fetch(base+'/api/status')).json()).home,'public status must be minimal');
 const key=''; // Account authentication remains required with an empty optional key.
-const profile=await mkdtemp(join(tmpdir(),'cgah-browser-'));
+// Not cgah-browser-: that prefix is the /browse sidecar's, whose sweep reads a pid from the name.
+const profile=await mkdtemp(join(tmpdir(),'cgah-acceptance-chrome-'));
 const binary=process.env.CHROME_BIN || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const chrome=spawn(binary,['--headless=new','--no-first-run','--disable-background-networking','--disable-sync','--disable-extensions','--remote-debugging-port=0','--user-data-dir='+profile,'about:blank'],{stdio:'ignore'});
 const pause=ms=>new Promise(r=>setTimeout(r,ms));

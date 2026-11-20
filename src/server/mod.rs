@@ -542,9 +542,18 @@ pub fn serve_blocking(host: Option<String>, port: Option<u16>) -> anyhow::Result
         tracing::warn!("{warning}");
     }
     options.credential_warnings = loaded.warnings;
+    // Before the runtime: a browser task killed at its deadline left its Chrome
+    // profile (cookies, cache) behind, and nothing else removes it until the
+    // next task starts.
+    let stale_profiles = crate::common::browser_host::sweep_stale_profiles();
     let rt = tokio::runtime::Runtime::new()?;
     let outcome = rt.block_on(async move {
         let (app, state) = build_app(options).await?;
+        if stale_profiles > 0 {
+            state
+                .audit
+                .log(serde_json::json!({"event": "browser.profiles_swept", "removed": stale_profiles}));
+        }
         #[cfg(unix)]
         let _reload = config_reload::install_sighup(&state)?;
         let transport = transport::Transport::load(&state.home, &state.cfg, &host)?;

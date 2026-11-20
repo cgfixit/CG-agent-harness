@@ -67,6 +67,51 @@ pub fn child_environment() -> std::collections::BTreeMap<String, String> {
     .collect()
 }
 
+/// Prefix of a task's Chrome profile in the temporary directory. The sidecar
+/// names it `cgah-browser-<its pid>-<random>` (`freshProfile` in sidecar.mjs).
+const PROFILE_PREFIX: &str = "cgah-browser-";
+
+/// Removes the Chrome profiles of browser tasks whose sidecar is gone, and
+/// returns how many. A task killed at its deadline cannot remove its own, and
+/// it holds that task's cookies and cache. The sidecar does the same when a
+/// task starts; the server calls this at start, so a profile does not wait for
+/// the next task (#894).
+pub fn sweep_stale_profiles() -> usize {
+    sweep_profiles_in(&std::env::temp_dir(), &super::process::pid_alive)
+}
+
+/// Only a real directory named `cgah-browser-<digits>-...` whose pid is dead is
+/// removed. A name without a pid is left alone, whatever it holds: nothing
+/// says who owns it, and such a directory has held a harness home.
+fn sweep_profiles_in(dir: &Path, alive: &dyn Fn(u32) -> bool) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(profile_owner) else {
+            continue;
+        };
+        // file_type does not follow a symlink, so a link is never followed.
+        if alive(pid) || !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        if std::fs::remove_dir_all(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
+/// The sidecar pid in a profile directory's name, or `None` for any other name.
+fn profile_owner(name: &str) -> Option<u32> {
+    let (pid, rest) = name.strip_prefix(PROFILE_PREFIX)?.split_once('-')?;
+    (!rest.is_empty() && !pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| pid.parse().ok())
+        .flatten()
+}
+
 /// The first granted origin the shared web block list covers, or that cannot
 /// be checked at all. It checks the normalized origin Chrome is actually
 /// granted, not the operator's raw text, and fails closed on a parse error.
@@ -2302,6 +2347,53 @@ mod tests {
         assert_eq!(report["finished"], false);
         assert!(report["stopped"].as_str().unwrap().starts_with("needs the operator"));
         assert_eq!(report["for_operator"][0]["held"], "POST https://example.com/save");
+    }
+
+    /// #894: only a profile whose name carries a dead sidecar's pid is removed.
+    #[test]
+    fn the_profile_sweep_removes_only_dead_pid_profiles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let make = |name: &str| {
+            let dir = tmp.path().join(name);
+            std::fs::create_dir_all(dir.join("Default")).unwrap();
+            std::fs::write(dir.join("Default/Cookies"), "c").unwrap();
+            dir
+        };
+        let dead = make("cgah-browser-4242-AbC123");
+        let live = make("cgah-browser-7-xYz789");
+        // No pid in the name: a hand-made test home or another tool's profile.
+        let pidless = [
+            make("cgah-browser-AbCdEf12"),
+            make("cgah-browser-123456"),
+            make("cgah-browser--x"),
+            make("cgah-browser-12x-y"),
+            make("cgah-browser-4242-"),
+            make("cgah-chat-browser-4242-x"),
+        ];
+        let file = tmp.path().join("cgah-browser-4242-file");
+        std::fs::write(&file, "not a directory").unwrap();
+        #[cfg(unix)]
+        let link = {
+            let target = make("kept-target");
+            let link = tmp.path().join("cgah-browser-4242-link");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            (link, target)
+        };
+        assert_eq!(sweep_profiles_in(tmp.path(), &|pid| pid == 7), 1);
+        assert!(!dead.exists());
+        assert!(live.join("Default/Cookies").exists());
+        assert!(pidless.iter().all(|dir| dir.join("Default/Cookies").exists()));
+        assert!(file.exists());
+        #[cfg(unix)]
+        assert!(link.0.exists() && link.1.join("Default/Cookies").exists());
+        assert_eq!(sweep_profiles_in(tmp.path(), &|pid| pid == 7), 0);
+        assert_eq!(sweep_profiles_in(&tmp.path().join("missing"), &|_| false), 0);
+        for (name, pid) in [
+            ("cgah-browser-4242-AbC123", Some(4242)),
+            ("cgah-browser-99999999999-x", None),
+        ] {
+            assert_eq!(profile_owner(name), pid, "{name}");
+        }
     }
 
     /// #894: a request the page sent on its own is listed for the operator
