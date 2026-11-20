@@ -7,7 +7,7 @@
 
 [![Console after sign-in: status chips, a local reply with token counts, searchable command guide](docs/screenshots/console-chat-2026-10-30.png)](docs/screenshots/console-chat-2026-10-30.png)
 
-[60-second demo](docs/screenshots/demo/CG-Agent-Harness-60-second-demo.mp4) ([notes](docs/screenshots/demo/voiceover-cues.txt)).
+[60-second demo](docs/screenshots/demo/CG-Agent-Harness-60-second-demo.mp4).
 
 [Quick start](#quick-start) · [Research loop](#how-the-research-loop-decides) · [Invariants](#design-invariants) · [Documentation](#documentation)
 
@@ -23,8 +23,6 @@
 | **Analytics, diagnostics** | Token and run history, **Estimate draft**, `/diag` redacted logs. | On; `/diag` admin or auditor. |
 | **Cloud chat** | Optional Grok or Claude; only the new message leaves. | Needs a provider key. |
 | **Off by default** | Reviewed coding in isolated clones, MCP tools and memory gateway, Netconnect LAN observation, Firecrawl fallback reads. | Each needs configuration. |
-
-User guide: [console](docs/CONSOLE.md#what-you-can-do).
 
 ## How the research loop decides
 
@@ -52,7 +50,7 @@ flowchart TD
 
 `all` is the shipped goal web mode. The digest proves provenance, not logical support. A failed read goes back to the model; `GOAL_DONE` stays model advice.
 
-Open phases: [#772](https://github.com/cgfixit/CG-agent-harness/issues/772); measurements: [router](docs/WEB_DECISION_ROUTER.md).
+Open phases: [#772](https://github.com/cgfixit/CG-agent-harness/issues/772).
 
 ## Design invariants
 
@@ -106,19 +104,19 @@ Open `https://127.0.0.1:8790/`, trusting the [local certificate](docs/SECURE_RES
 ### 3. Sign in and research
 
 1. A fresh home opens **Set your password**: enter the setup code (app: **Setup and recovery**; terminal: `<home>/setup-code`) and a 12+ character password.
-2. `/model list`, then `/model use <tag>`; `/help` shows the rest.
-3. `/web allow https://example.org/*`, then `/web research <question>`. For a longer piece, `/goal <question>` and `/loop 3` ([loops](docs/CONSOLE.md#71-sessions-and-bounded-chat-continuation)).
-4. Browser tasks: install Google Chrome, run `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci` in `browser/` once, then `/browse docs.python.org what does zipfile.Path do?` ([browser use](docs/Browser-Use.md)).
+2. `/model list`, then `/model use <tag>`; then `/help`.
+3. `/web allow https://example.org/*`, then `/web research <question>`. For a longer piece, `/goal <question>` and `/loop 3`.
+4. Browser tasks: install Google Chrome, run `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci` in `browser/` once, then `/browse docs.python.org what does zipfile.Path do?`.
 
 ## Commands and configuration
 
 CLI commands (`--help` each): `serve`, `account`, `web`, `tls`, `mcp-key`, `netconnect`. Console: [slash reference](docs/CONSOLE.md#78-slash-command-quick-reference).
 
-First launch seeds `config.yaml` from [the defaults](assets/config.default.yaml); edit it and restart, or use **Reload limits** ([reloadable](docs/INSTALL.md#reload-limits-without-a-restart)). Contributors: `bash scripts/ensure-githooks.sh`, then [AGENTS.md](AGENTS.md) ([CI](docs/INSTALL.md#tests-and-cicd)). Windows has CI but no release.
+First launch seeds `config.yaml` from [the defaults](assets/config.default.yaml); edit it and restart, or use **Reload limits** ([reloadable](docs/INSTALL.md#reload-limits-without-a-restart)). Contributors: `bash scripts/ensure-githooks.sh`, then [AGENTS.md](AGENTS.md). Windows has CI but no release.
 
 ## Documentation
 
-[docs/README.md](docs/README.md) indexes every guide with the code and tests it owns.
+[docs/README.md](docs/README.md) indexes every guide with its code and tests.
 
 | Topic | Guide |
 |---|---|
@@ -126,6 +124,7 @@ First launch seeds `config.yaml` from [the defaults](assets/config.default.yaml)
 | Chat, loops, commands, memory | [Console](docs/CONSOLE.md), [Memory](docs/MEMORY_GUIDE.md) |
 | Research, web boundaries, browser tasks | [Web decision router](docs/WEB_DECISION_ROUTER.md), [Secure research](docs/SECURE_RESEARCH.md), [Browser use](docs/Browser-Use.md), [Security](SECURITY.md) |
 | Coding, MCP, desktop app, routes | [Coding pipeline](docs/CODING_PIPELINE.md), [MCP](docs/MCP.md), [Desktop](docs/DESKTOP.md), [Routes](docs/API_ROUTES.md) |
+| Crates, pins | [Dependencies](docs/DEPENDENCIES.md): axum, rustls, reqwest, rusqlite, tantivy; Tauri; Playwright |
 
 ## License
 
