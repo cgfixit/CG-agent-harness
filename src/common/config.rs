@@ -160,6 +160,11 @@ pub const NUMERIC_LIMITS: &[Limit<u64>] = &[
     },
     clamp("logging.max_file_bytes", 8 * MIB, 64 * KIB, 64 * MIB),
     clamp("models.local_llm.inventory.refresh_sec", 30, 1, 3600),
+    // `0` turns the #941 repeat guard off; the default is `DEFAULT_REPEAT_ABORT_LINES`.
+    Limit {
+        out_of_range: OutOfRange::ClampKeepZero,
+        ..clamp("models.local_llm.repeat_abort_lines", 8, 4, 1000)
+    },
     clamp("models.local_llm.pull.max_response_bytes", MIB, KIB, 4 * MIB),
     clamp("models.local_llm.pull.timeout_sec", 600, 1, 3600),
     clamp("models.local_llm.warmup.keep_alive_sec", 300, 1, 3600),
