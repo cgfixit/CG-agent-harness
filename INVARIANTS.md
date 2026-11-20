@@ -59,6 +59,9 @@ Process edges; update this map when adding one.
   `shim::run_argv_with_env` (task and each origin one `--opt=value` element), which starts
   `node browser/sidecar.mjs`; that launches installed Chrome, sandbox on, on a temporary
   profile. A timeout kills the tree. `browser-verify` is the separate PR-check session.
+  `/api/browser/jobs` runs the same child with `--job` through
+  `shim::run_argv_streaming`: the argv rules, environment, deadline, byte ceiling and
+  tree kill are unchanged; the server also reads its stdout by line and holds its stdin.
 - **MCP stdio children:** declared servers, spawned by `src/common/mcp.rs` in the
   sandbox wrapper. Strict Linux mode puts the hidden `cgagentharness mcp-stdio-worker`
   byte pump between them, in a transient `systemd-run` service.
@@ -635,6 +638,32 @@ it ends; lid-close and manual sleep still apply.
 
 - Locked by: `tests/web_research.rs::a_detached_research_job_outlives_its_request_and_refuses_like_the_route`,
   `src/server/web_research.rs` and `src/common/process.rs` unit tests.
+
+`POST /api/browser/jobs` runs `POST /api/browser/run`'s checked request the same
+way (macOS and Linux). Both start from one `prepare`, so every refusal stays
+synchronous; 202 means the job's task holds the generation gate, the task file and
+the child. Jobs are administrator-only, owner-bound (`BROWSER_JOB_NOT_FOUND` for
+another account), memory-only (at most eight) and ended by a restart. Cancel
+(`POST /api/browser/jobs/{job_id}/cancel`) sends the child one `cancel` line; it
+stops before its next model turn and its report is kept. A child still running ten
+seconds later is killed with its tree. The child treats a closed stdin as a cancel,
+so a dead server does not leave Chrome driven. The terminal state is set once, and
+every read of a stored report rechecks the block list (`WEB_POLICY_CHANGED`).
+Nothing can be approved through a job yet.
+
+The sidecar can hold one such request open for a verdict (takeover, #995), but
+only a session started with an approver, and none is outside the `browser takeover`
+fixture. The page route pauses a request held as the operator's step and asks the
+host, showing method, whole URL, content type, size, body SHA-256 and a text
+preview. A yes records a pass of `{method, URL, SHA-256}` that the CDP gate uses up
+on the first matching request, after asking the block list again; a no, a late
+answer, a second request while one waits, or a body the gate cannot read is held
+as before. A page's own background requests are never asked about.
+
+- Locked by: `browser takeover` (by what its loopback server received),
+  `src/server/browser_jobs.rs`, `src/shim/mod.rs` and
+  `src/common/process.rs` unit tests;
+  `tests/secure_portal.rs::https_bootstrap_roles_revocation_and_private_web_context`.
 
 Local `/loop` turns, console or detached, are local-only (cloud refuses
 `CLOUD_CHAT_LOOP`), need a session goal and take the loop rate limit. They reuse

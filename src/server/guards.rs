@@ -203,7 +203,7 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
                 || path == "/api/config/reload"
                 || path == "/api/keys"
                 || path == "/api/structured-memory/gates"
-                || path == "/api/browser/run"
+                || path.starts_with("/api/browser/")
                 || matches!(
                     path.as_str(),
                     "/api/web/allow" | "/api/web/deny" | "/api/web/mode" | "/api/web/block" | "/api/web/unblock"

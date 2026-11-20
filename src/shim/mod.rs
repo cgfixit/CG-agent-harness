@@ -559,6 +559,56 @@ pub(crate) async fn run_argv_with_env(
     timeout: Duration,
     env: BTreeMap<String, String>,
 ) -> Result<(i32, String, String), ShimError> {
+    run_child(argv, cwd, timeout, env, None).await
+}
+
+/// A live channel to a child started by `run_argv_streaming`.
+pub(crate) struct ChildChannel {
+    /// Each complete stdout line, as the child prints it. The whole of stdout
+    /// is still returned at exit, under the runner's byte ceiling.
+    pub lines: tokio::sync::mpsc::UnboundedSender<String>,
+    /// Bytes for the child's stdin. Dropping the sender closes the pipe.
+    pub input: std::sync::mpsc::Receiver<Vec<u8>>,
+}
+
+/// `run_argv_with_env` for a child the caller talks to while it runs. The
+/// argv, environment, deadline, byte ceiling and process-tree cleanup are the
+/// same; only the pipes differ. The caller still supplies a fixed argv.
+#[cfg(unix)]
+pub(crate) async fn run_argv_streaming(
+    argv: &[String],
+    cwd: &Path,
+    timeout: Duration,
+    env: BTreeMap<String, String>,
+    channel: ChildChannel,
+) -> Result<(i32, String, String), ShimError> {
+    run_child(argv, cwd, timeout, env, Some(channel)).await
+}
+
+/// No streaming runner exists off unix; the caller refuses the request.
+#[cfg(not(unix))]
+pub(crate) async fn run_argv_streaming(
+    _argv: &[String],
+    _cwd: &Path,
+    _timeout: Duration,
+    _env: BTreeMap<String, String>,
+    channel: ChildChannel,
+) -> Result<(i32, String, String), ShimError> {
+    let ChildChannel { lines, input } = channel;
+    drop((lines, input));
+    Err(ShimError::Io(
+        "a streaming child is supported on macOS and Linux only".into(),
+    ))
+}
+
+#[cfg(unix)]
+async fn run_child(
+    argv: &[String],
+    cwd: &Path,
+    timeout: Duration,
+    env: BTreeMap<String, String>,
+    channel: Option<ChildChannel>,
+) -> Result<(i32, String, String), ShimError> {
     use crate::common::process::{self, ProcessError, RunSpec};
     use std::sync::{
         atomic::{AtomicBool, Ordering},
@@ -577,15 +627,31 @@ pub(crate) async fn run_argv_with_env(
     // No reader tasks detach. The worker owns every pipe and observes cancellation
     // during bounded nonblocking I/O, including when this future is aborted.
     let worker = tokio::task::spawn_blocking(move || {
-        process::run_cancellable(
-            RunSpec {
-                argv: &argv,
-                cwd: Some(&cwd),
-                env: Some(&env),
-                timeout,
-                stdin: None,
-            },
+        let spec = |stdin| RunSpec {
+            argv: &argv,
+            cwd: Some(&cwd),
+            env: Some(&env),
+            timeout,
+            stdin,
+        };
+        let Some(ChildChannel { lines, input }) = channel else {
+            return process::run_cancellable(spec(None), &cancelled);
+        };
+        let mut partial = Vec::new();
+        let mut on_stdout = |bytes: &[u8]| {
+            partial.extend_from_slice(bytes);
+            while let Some(end) = partial.iter().position(|byte| *byte == b'\n') {
+                let line: Vec<u8> = partial.drain(..=end).collect();
+                let _ = lines.send(String::from_utf8_lossy(&line[..end]).into_owned());
+            }
+        };
+        process::run_streaming(
+            spec(Some(&[])),
             &cancelled,
+            process::Stream {
+                on_stdout: &mut on_stdout,
+                input: &input,
+            },
         )
     });
     let output = match tokio::time::timeout(timeout, worker).await {
@@ -719,5 +785,62 @@ impl ActiveOperation {
 impl Drop for ActiveOperation {
     fn drop(&mut self) {
         ACTIVE_OPERATIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// The streaming runner hands over each stdout line as it is printed,
+    /// writes what the caller sends, and still returns the whole output.
+    #[tokio::test]
+    async fn a_streaming_child_exchanges_lines_and_dropping_it_stops_the_child() {
+        let sh = |script: &str| vec!["/bin/sh".to_string(), "-c".to_string(), script.to_string()];
+        let cwd = std::env::temp_dir();
+        let (lines, mut printed) = tokio::sync::mpsc::unbounded_channel();
+        let (send, input) = std::sync::mpsc::channel();
+        let argv = sh("echo one; read verdict; echo \"two $verdict\"; printf tail");
+        let child = run_argv_streaming(
+            &argv,
+            &cwd,
+            Duration::from_secs(10),
+            child_environment(""),
+            ChildChannel { lines, input },
+        );
+        tokio::pin!(child);
+        let first = tokio::select! {
+            line = printed.recv() => line,
+            _ = &mut child => panic!("the child exited before it was answered"),
+        };
+        assert_eq!(first.as_deref(), Some("one"));
+        send.send(b"cancel\n".to_vec()).unwrap();
+        let (code, stdout, _) = child.await.unwrap();
+        assert_eq!((code, stdout.as_str()), (0, "one\ntwo cancel\ntail"));
+        // Only complete lines are handed over; the unterminated tail is in stdout.
+        assert_eq!(printed.recv().await.as_deref(), Some("two cancel"));
+        assert_eq!(printed.recv().await, None);
+
+        // Dropping the future kills a child that is still waiting.
+        let marker = tempfile::NamedTempFile::new().unwrap();
+        let path = marker.path().display().to_string();
+        let (lines, mut printed) = tokio::sync::mpsc::unbounded_channel();
+        let (_held, input) = std::sync::mpsc::channel();
+        let argv = sh(&format!("echo up; read line; echo late > '{path}'"));
+        let mut child = Box::pin(run_argv_streaming(
+            &argv,
+            &cwd,
+            Duration::from_secs(10),
+            child_environment(""),
+            ChildChannel { lines, input },
+        ));
+        tokio::select! {
+            line = printed.recv() => assert_eq!(line.as_deref(), Some("up")),
+            _ = &mut child => panic!("the child exited by itself"),
+        }
+        // The sender is still held, so stdin is open: only the kill ends the child.
+        drop(child);
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert_eq!(std::fs::read_to_string(marker.path()).unwrap(), "");
     }
 }

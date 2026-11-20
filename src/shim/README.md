@@ -7,7 +7,8 @@ The one crossing of the I6 boundary. **Core path**: read
   children the server may spawn, and `JSON_ACTIONS` (10; `status` and `test` are
   text-only). Builds a fixed argv list, never a shell string; free text travels as
   one `--opt=value` element or a temp file. Timeouts here are duplicated on
-  purpose in `agentic/`.
+  purpose in `agentic/`. `run_argv_streaming` is the same runner with the
+  child's stdin and stdout lines live, for browser jobs.
 
 A new action touches this file, `agentic/commands.rs::dispatch` and
 [tests/invariant_guard.rs](../../tests/invariant_guard.rs) together. Tests:
