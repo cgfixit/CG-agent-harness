@@ -434,7 +434,14 @@ fn current_authority(
     Ok(Some(axum::Extension(current)))
 }
 
-fn persist(dir: &std::path::Path, run: &LoopRun) {
+/// Write the run record on the blocking pool and wait for it: the turn task
+/// awaits each write, so records land in order and never share the temp file.
+async fn persist(dir: &std::path::Path, run: &LoopRun) {
+    let (dir, run) = (dir.to_path_buf(), run.clone());
+    crate::server::routes::structured_memory::off_worker(move || persist_blocking(&dir, &run)).await
+}
+
+fn persist_blocking(dir: &std::path::Path, run: &LoopRun) {
     if let Err(e) = std::fs::create_dir_all(dir) {
         tracing::warn!(error = %e, "loop run persistence directory could not be created");
         return;
@@ -486,12 +493,13 @@ async fn run_turns(
                 "stopped by operator".into(),
                 &events,
                 &dir,
-            );
+            )
+            .await;
             return;
         }
         if run.config.max_turns > 0 && run.stats.turns_completed >= run.config.max_turns {
             let reason = format!("loop budget exhausted ({} turn(s))", run.stats.turns_completed);
-            finish(&state, &run_id, run, LoopRunState::Done, reason, &events, &dir);
+            finish(&state, &run_id, run, LoopRunState::Done, reason, &events, &dir).await;
             return;
         }
         if run.config.max_total_completion_tokens > 0
@@ -501,7 +509,7 @@ async fn run_turns(
                 "loop aggregate token budget exhausted ({} total completion tokens)",
                 run.stats.total_completion_tokens
             );
-            finish(&state, &run_id, run, LoopRunState::Done, reason, &events, &dir);
+            finish(&state, &run_id, run, LoopRunState::Done, reason, &events, &dir).await;
             return;
         }
         match wait_for_model(&state, &cancel, MODEL_BUSY_WAIT).await {
@@ -515,7 +523,8 @@ async fn run_turns(
                     "stopped by operator".into(),
                     &events,
                     &dir,
-                );
+                )
+                .await;
                 return;
             }
             Err(BusyWait::TimedOut) => {
@@ -523,7 +532,7 @@ async fn run_turns(
                     "loop aborted — the local model stayed busy for {} minutes",
                     MODEL_BUSY_WAIT.as_secs() / 60
                 );
-                finish(&state, &run_id, run, LoopRunState::Failed, reason, &events, &dir);
+                finish(&state, &run_id, run, LoopRunState::Failed, reason, &events, &dir).await;
                 return;
             }
         }
@@ -541,7 +550,8 @@ async fn run_turns(
                     format!("loop aborted — {reason}"),
                     &events,
                     &dir,
-                );
+                )
+                .await;
                 return;
             }
         };
@@ -649,13 +659,13 @@ async fn run_turns(
                     entry.run = run.clone();
                 }
             }
-            persist(&dir, &run);
+            persist(&dir, &run).await;
             let _ = events.send(json!({"type": "turn", "run": run}));
             if run.config.cooldown_ms > 0 {
                 tokio::select! {
                     biased;
                     _ = cancel.cancelled() => {
-                        finish(&state, &run_id, run, LoopRunState::Stopped, "stopped by operator".into(), &events, &dir);
+                        finish(&state, &run_id, run, LoopRunState::Stopped, "stopped by operator".into(), &events, &dir).await;
                         return;
                     }
                     _ = tokio::time::sleep(std::time::Duration::from_millis(run.config.cooldown_ms)) => {}
@@ -663,12 +673,12 @@ async fn run_turns(
             }
             continue;
         };
-        finish(&state, &run_id, run, final_state, reason, &events, &dir);
+        finish(&state, &run_id, run, final_state, reason, &events, &dir).await;
         return;
     }
 }
 
-fn finish(
+async fn finish(
     state: &Arc<crate::server::state::AppState>,
     run_id: &str,
     mut run: LoopRun,
@@ -686,7 +696,7 @@ fn finish(
             entry.web_evidence = Default::default();
         }
     }
-    persist(dir, &run);
+    persist(dir, &run).await;
     state.audit.log(json!({
         "event": "loop_run_finished",
         "run_id": run.run_id,

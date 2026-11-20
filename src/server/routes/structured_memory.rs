@@ -208,6 +208,7 @@ pub async fn status(
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactListQuery {
     q: Option<String>,
     category: Option<String>,
@@ -697,14 +698,18 @@ pub async fn set_gates(
     off_worker(move || {
         let _store = require_store(&state)?;
         let owner = owner(user);
+        // Set a copy, save it under the lock, then publish: a failed save leaves
+        // the live gate unchanged and concurrent posts cannot save out of order
+        // (the save-then-publish rule `panels::commit_setting` follows).
         let snapshot = {
             let mut gates = state.structured_gates.lock().unwrap_or_else(|p| p.into_inner());
-            gates.set(&req.gate, req.enabled).map_err(|e| store_err(&e))?;
-            gates.clone()
+            let mut next = gates.clone();
+            next.set(&req.gate, req.enabled).map_err(|e| store_err(&e))?;
+            next.save(&state.home)
+                .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+            *gates = next.clone();
+            next
         };
-        snapshot
-            .save(&state.home)
-            .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
         if req.gate == "retrieval" && req.enabled {
             if let Some(store) = state.structured_memory.as_ref() {
                 if let Err(err) = store.rebuild_facts_fts() {

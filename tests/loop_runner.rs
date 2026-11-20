@@ -853,6 +853,35 @@ async fn loop_start_validates_goal_config_and_run_ids() {
         .await;
     assert_eq!(status, 409);
     assert_eq!(code(&body), "LOOP_IN_FLIGHT");
+    let web_mode = s.get_json(&format!("/api/sessions/{sid}")).await.1["goal_web_mode"].clone();
+
+    // A refused start changes nothing: a new goal or web mode on a request that
+    // meets a live run, or that carries an invalid override, is not persisted
+    // (a saved goal would end the live run with LOOP_GOAL_CHANGED).
+    let (status, body) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id": sid, "goal": "something else", "web_mode": "all", "max_turns": 1}),
+        )
+        .await;
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(code(&body), "LOOP_IN_FLIGHT");
+    let (status, body) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id": sid, "goal": "something else", "max_turns": 1000001}),
+        )
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(code(&body), "LOOP_CONFIG_INVALID");
+    let session = s.get_json(&format!("/api/sessions/{sid}")).await.1;
+    assert_eq!(session["goal"], "ship it", "a refused start persisted its goal");
+    assert_eq!(
+        session["goal_web_mode"], web_mode,
+        "a refused start persisted its web mode"
+    );
+    let live = s.get_json(&format!("/api/loop/status?run_id={run_id}")).await.1;
+    assert_ne!(live["run"]["reason"], "LOOP_GOAL_CHANGED", "{live}");
 
     // Out-of-range overrides and unknown web modes refuse before anything runs.
     let (status, body) = s

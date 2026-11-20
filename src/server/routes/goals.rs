@@ -125,11 +125,13 @@ pub async fn status(
     Path(id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
-    let session = state
-        .store
-        .for_owner(&owner)
-        .get(&id)
-        .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
+    // The session read blocks, as in `stage`; the run status below is awaited.
+    let session = {
+        let (state, owner) = (state.clone(), owner.clone());
+        super::structured_memory::off_worker(move || state.store.for_owner(&owner).get(&id))
+            .await
+            .map_err(|e| ApiError::from_err(session_status(&e), &e))?
+    };
     let Some(stage) = session.goal_stage else {
         return Ok(Json(json!({"status":"not_staged"})));
     };
