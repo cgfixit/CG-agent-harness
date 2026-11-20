@@ -1801,6 +1801,49 @@ async fn feature_off_and_quoted_auto_start_no_worker() {
     assert!(!s.state.auto_consolidation.is_spawned());
 }
 
+/// The idle worker passes over an owner whose account is disabled, and picks
+/// its episodes up again once the account is enabled. Nothing is deleted.
+#[tokio::test]
+async fn auto_consolidation_passes_over_a_disabled_account_until_it_is_enabled() {
+    let summary = "Prefer metric units.";
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), auto_consolidation().with("auth.enabled", "true")).await;
+    assert!(s.state.auto_consolidation.is_spawned());
+    let auth = s.state.auth.as_ref().unwrap();
+    auth.create_user("alice", &cgagentharness::common::random_hex(24), "operator")
+        .unwrap();
+    let alice = auth.get_user("alice").unwrap().user_id;
+    auth.disable_user("alice").unwrap();
+    let episode_id = stage_store_episode(&s, &alice);
+    store_of(&s)
+        .set_episode_summary(&alice, &episode_id, summary, "operator fixture summary")
+        .unwrap();
+    model.set_reply(consolidator_reply(&episode_id, summary));
+    // The batch is due and the worker idles 40 ms between looks.
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert!(
+        store_of(&s).list_proposals(&alice).unwrap().is_empty(),
+        "a disabled account's episodes were consolidated"
+    );
+    assert!(
+        model
+            .last_request()
+            .is_none_or(|request| !request.to_string().contains(summary)),
+        "a disabled account's summary reached the local model"
+    );
+    assert_eq!(
+        store_of(&s).list_episodes(&alice).unwrap().len(),
+        1,
+        "nothing is deleted"
+    );
+    auth.enable_user("alice").unwrap();
+    wait_until(
+        || store_of(&s).list_proposals(&alice).unwrap().len() == 1,
+        "the re-enabled account's pending proposal",
+    )
+    .await;
+}
+
 #[tokio::test]
 async fn auto_consolidation_creates_pending_proposals_only() {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(

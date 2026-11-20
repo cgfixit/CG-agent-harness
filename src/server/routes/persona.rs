@@ -1,7 +1,6 @@
 //! Guarded operator persona editing. No model output is applied automatically.
 use cap_std::fs::{Dir, OpenOptions};
 use std::io::{Read, Write};
-use std::path::Path as FsPath;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Path, Query, State};
@@ -12,7 +11,7 @@ use serde_json::{json, Value};
 
 use crate::common::sha256_hex;
 use crate::server::errors::{session_status, ApiError, ApiResult};
-use crate::server::prompts::{load_text, PromptInputs};
+use crate::server::prompts::PromptInputs;
 use crate::server::schemas::{StructuredFactSelection, ValidJson, Validate, MAX_SELECTED_FACTS};
 use crate::server::state::AppState;
 
@@ -406,10 +405,10 @@ pub async fn preview(
     let selected = if portal_auditor {
         Vec::new()
     } else {
-        super::skills::resolve(
-            &state,
-            session.as_ref().map(|s| s.selected_skills.as_slice()).unwrap_or(&[]),
-        )?
+        // Each selected skill is a file read: off the async worker.
+        let state = state.clone();
+        let ids = session.as_ref().map(|s| s.selected_skills.clone()).unwrap_or_default();
+        super::structured_memory::off_worker(move || super::skills::resolve(&state, &ids)).await?
     };
     let pinned_ids = if portal_auditor {
         Vec::new()
@@ -523,7 +522,12 @@ pub async fn preview(
     };
     // The next local chat turn: its system prompt, then the context it sends
     // fenced ahead of the new message, shown under its own preamble.
-    let (composed, turn_context) = crate::server::prompts::compose_prompt_parts(&inputs);
+    // The persona and style files are read once, on the blocking pool. The
+    // soul state reported below is that same read.
+    let request = inputs.file_request();
+    let files = super::structured_memory::off_worker(move || request.load()).await;
+    let soul_load = json!(files.soul);
+    let (composed, turn_context) = crate::server::prompts::compose_prompt_parts_with(&inputs, files);
     let turn_context = crate::server::prompts::with_turn_context(&turn_context, "");
     let prompt = if turn_context.is_empty() {
         composed.prompt
@@ -542,7 +546,7 @@ pub async fn preview(
         .collect();
     Ok(Json(
         json!({"prompt":prompt,"discipline_sections":[],"selected_skill_sections":sections,
-        "soul":load_text(&state.home.root, FsPath::new("soul.md"), settings.soul_enabled && !portal_auditor, max_chars(&state)),
+        "soul":soul_load,
         // The effective load state, not just the persisted name: an overlay
         // that was deleted, made unreadable, oversized or now trips the
         // injection scanner is omitted from the prompt, and the preview says

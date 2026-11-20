@@ -702,6 +702,35 @@ async fn disabling_a_queued_source_records_why_without_calling_the_model() {
     }
 }
 
+/// A job an account queued before it was disabled is discarded when its turn
+/// comes: the reason is recorded and the local model is never called.
+#[tokio::test]
+async fn a_job_queued_by_an_account_that_is_then_disabled_never_reaches_the_model() {
+    let model = model().await;
+    let s = spawn_server(&model.base, options("both").with("auth.enabled", "true")).await;
+    let auth = s.state.auth.as_ref().unwrap();
+    auth.create_user("alice", &cgagentharness::common::random_hex(24), "operator")
+        .unwrap();
+    let alice = auth.get_user("alice").unwrap().user_id;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let id = stage(store, &alice);
+    let gate = s.state.generation_gate.claim("chat").unwrap();
+    let queued = suggest::enqueue(&s.state, &alice, Source::Chat, Some(&id), "metric", "reply");
+    assert_eq!(queued["queued"], true, "{queued}");
+    auth.disable_user("alice").unwrap();
+    settled(&s, &alice).await;
+    let run = store
+        .get_consolidation_run(&alice, queued["run_id"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        (run.state.as_str(), run.error_class.as_deref()),
+        ("failed", Some("owner_retired"))
+    );
+    assert!(model.requests.lock().unwrap().is_empty());
+    assert!(store.list_proposals(&alice).unwrap().is_empty());
+    drop(gate);
+}
+
 #[tokio::test]
 async fn skipped_attempt_metadata_is_bounded_by_owner_and_never_contains_input() {
     let model = model().await;

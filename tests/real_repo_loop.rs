@@ -1264,6 +1264,64 @@ fn cloud_proposer_gates_sanitizes_and_retries() {
     }
 }
 
+/// An operator `--read-file` on the deny-list is refused from the selector
+/// alone: before the clone, and before a run record exists.
+#[cfg(unix)]
+#[test]
+fn a_denied_read_file_is_refused_before_the_clone_and_the_run_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let bare = real_bare_repo_on(dir.path(), "trunk");
+    let bin = install_fake_gh(dir.path(), &bare);
+    let path = path_with(&bin);
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    config_with(
+        &home,
+        &[
+            ("agentic.enabled", "true"),
+            ("agentic.deepagent_github.enabled", "true"),
+            ("agentic.deepagent_github.allow_git_write_tools", "true"),
+            ("agentic.deepagent_github.model", "\"mock-model\""),
+        ],
+    );
+    let checks = home.join("checks.json");
+    std::fs::write(
+        &checks,
+        json!({"checks": [{"name": "true", "argv": ["true"]}]}).to_string(),
+    )
+    .unwrap();
+    let (code, out, err) = run_agentic(
+        &home.join("config.yaml"),
+        &[
+            "real-repo-run",
+            "--instruction=x",
+            "--checks-file",
+            checks.to_str().unwrap(),
+            "--branch=claude/denied-read",
+            "--commit-message=m",
+            "--reason=r",
+            "--confirm",
+            "--read-file=config/.env",
+        ],
+        &[("PATH", &path), ("GROK_API_KEY", ""), ("ANTHROPIC_API_KEY", "")],
+        &home,
+    );
+    assert_eq!(code, 2, "stdout={out} stderr={err}");
+    assert!(
+        format!("{out}{err}").contains("sensitive_basename"),
+        "stdout={out} stderr={err}"
+    );
+    let audit = std::fs::read_to_string(home.join("logs/audit.jsonl")).unwrap_or_default();
+    assert!(audit.contains("agentic_real_repo_read_request_refused"), "{audit}");
+    assert!(
+        !audit.contains("agentic_repo_workspace_cloned"),
+        "the repository was cloned before the refusal"
+    );
+    let entries = |sub: &str| std::fs::read_dir(home.join(sub)).map(|rd| rd.count()).unwrap_or(0);
+    assert_eq!(entries("data/agentic/workspaces"), 0, "a clone was left or made");
+    assert_eq!(entries("data/agentic/workspaces/runs"), 0, "a run record was written");
+}
+
 // ---------------------------------------------------------------- END-TO-END SMOKE (real binary)
 
 #[cfg(unix)]

@@ -14,7 +14,7 @@ use crate::llm::openai_chat::ChatMessage;
 use crate::server::attachments;
 use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::guards::retry_after_error;
-use crate::server::prompts::{compose_system_prompt, PromptInputs};
+use crate::server::prompts::{compose_system_prompt_with, PromptInputs};
 use crate::server::schemas::*;
 use crate::server::sessions::TokenTally;
 use crate::server::slash::{parse_line, SlashParseRequest};
@@ -633,9 +633,13 @@ fn soul_status(state: &AppState, enabled: bool) -> Value {
     ))
 }
 
+/// `soul_status` reads `soul.md`: off the async workers.
 pub async fn soul_state(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let enabled = state.settings.lock().unwrap_or_else(|p| p.into_inner()).soul_enabled;
-    Json(soul_status(&state, enabled))
+    super::structured_memory::off_worker(move || {
+        let enabled = state.settings.lock().unwrap_or_else(|p| p.into_inner()).soul_enabled;
+        Json(soul_status(&state, enabled))
+    })
+    .await
 }
 
 pub async fn soul_toggle(
@@ -643,7 +647,7 @@ pub async fn soul_toggle(
     ValidJson(req): ValidJson<ToggleRequest>,
 ) -> ApiResult<Json<Value>> {
     let snapshot = super::panels::commit_setting(&state, move |s| s.soul_enabled = req.enabled).await?;
-    Ok(Json(soul_status(&state, snapshot.soul_enabled)))
+    Ok(super::structured_memory::off_worker(move || Json(soul_status(&state, snapshot.soul_enabled))).await)
 }
 
 pub async fn model_select(
@@ -969,6 +973,13 @@ pub(crate) async fn chat_inner(
     expected_loop_goal: Option<&str>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
+    // What the account's sign-in revocation count is as this turn begins. A
+    // server-run loop turn has no requesting sign-in: the loop reloads its
+    // account's authority itself before each turn.
+    let sign_ins = match (state.auth.as_ref(), user.as_ref()) {
+        (Some(auth), Some(user)) if expected_loop_goal.is_none() => Some(auth.sign_in_revocations(&user.0.username)),
+        _ => None,
+    };
     if req.loop_turn && req.session_id.as_deref().unwrap_or("").is_empty() {
         return Err(loop_error(
             "LOOP_REQUIRES_SESSION",
@@ -1033,7 +1044,9 @@ pub(crate) async fn chat_inner(
     let selected_skills = if cloud_selected || portal_auditor {
         Vec::new()
     } else {
-        super::skills::resolve(&state, &session.selected_skills)?
+        // Each selected skill is a file read: off the async worker.
+        let (state, ids) = (state.clone(), session.selected_skills.clone());
+        super::structured_memory::off_worker(move || super::skills::resolve(&state, &ids)).await?
     };
 
     let sized_tuned = state.tuning_for(&model).is_some();
@@ -1345,11 +1358,15 @@ pub(crate) async fn chat_inner(
             diag_context: diag.as_ref().map(|staged| staged.block.as_str()),
             web_reads: web_reads.as_deref(),
         };
+        // The persona and style files are read on the blocking pool; the
+        // composition itself touches no file.
+        let request = inputs.file_request();
+        let files = super::structured_memory::off_worker(move || request.load()).await;
         if local_turn {
-            let (composed, turn_context) = crate::server::prompts::compose_prompt_parts(&inputs);
+            let (composed, turn_context) = crate::server::prompts::compose_prompt_parts_with(&inputs, files);
             (composed.prompt, turn_context)
         } else {
-            (compose_system_prompt(&inputs), String::new())
+            (compose_system_prompt_with(&inputs, files), String::new())
         }
     };
     // What this turn sends as its new message. The session stores `req.message`.
@@ -1898,8 +1915,9 @@ pub(crate) async fn chat_inner(
     // audit lines describing the write are logged with it for the same reason.
     //
     // The account is read again under the store lock, after every wait this
-    // turn made: one disabled or deleted meanwhile still gets its exchange
-    // stored, but no new pins, no reply and no memory staging.
+    // turn made: one disabled or deleted meanwhile, or whose sign-ins were
+    // revoked by a role or password change, still gets its exchange stored,
+    // but no new pins, no reply and no memory staging.
     let write = {
         let state = state.clone();
         let owner = owner.clone();
@@ -1921,9 +1939,7 @@ pub(crate) async fn chat_inner(
         move || {
             let gate = gate;
             let owner_live = || match (state.auth.as_ref(), account.as_ref()) {
-                (Some(manager), Some(account)) => manager
-                    .get_user(&account.username)
-                    .is_some_and(|current| current.user_id == account.user_id && !current.disabled),
+                (Some(manager), Some(account)) => manager.account_unchanged(account, sign_ins),
                 _ => true,
             };
             let live_blobs = pin_request
@@ -2003,7 +2019,7 @@ pub(crate) async fn chat_inner(
         return Err(ApiError::new(
             StatusCode::UNAUTHORIZED,
             "AUTH_REQUIRED",
-            "the account was disabled or deleted during this turn; the exchange was saved but the reply is withheld",
+            "the account was disabled or deleted, or its sign-ins were revoked by a role or password change, during this turn; the exchange was saved but the reply is withheld",
         ));
     }
     let sensitivity = {

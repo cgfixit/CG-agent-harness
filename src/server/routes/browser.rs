@@ -23,7 +23,7 @@ use serde_json::{json, Value};
 
 use crate::common::browser::Session;
 use crate::common::browser_host::{blocked_origin, child_environment, MAX_TASK_CHARS, TASK_PROMPT_TOKENS};
-use crate::server::browser_jobs::{CancelHandle, Outcome, JOB_RUNNING};
+use crate::server::browser_jobs::{CancelHandle, Outcome, VerdictRefusal, JOB_RUNNING};
 use crate::server::errors::{ApiError, ApiResult};
 use crate::server::schemas::{ValidJson, Validate};
 use crate::server::state::AppState;
@@ -93,7 +93,8 @@ async fn prepare(
         .map_err(|_| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "BROWSER_BAD_ORIGIN", "origins"))?;
     // A name is checked at connect time by the sidecar; an IP literal skips DNS,
     // so loopback and private literals are refused here (fixtures are test-only).
-    if session.grant_strings().iter().any(|origin| non_public_literal(origin)) {
+    let fixture = fixture_origins();
+    if !fixture && session.grant_strings().iter().any(|origin| non_public_literal(origin)) {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "BROWSER_PRIVATE_ADDRESS",
@@ -101,7 +102,7 @@ async fn prepare(
         ));
     }
     // shortcut: only origin-level block rules are enforced; a path-level rule needs the proxy to see it.
-    if blocked_origin(&current_policy(state)?, &session).is_some() {
+    if !fixture && blocked_origin(&current_policy(state)?, &session).is_some() {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "BROWSER_ORIGIN_BLOCKED",
@@ -166,6 +167,9 @@ async fn prepare(
     argv.push(format!("--deadline-sec={}", child_deadline_sec(timeout_sec)));
     argv.extend(model.iter().map(|model| format!("--model={model}")));
     argv.extend(grants.iter().map(|origin| format!("--origin={origin}")));
+    if fixture {
+        argv.push("--allow-private".into());
+    }
     Ok(Prepared {
         session,
         grants,
@@ -262,7 +266,8 @@ fn deliver(state: &AppState, asked: &Asked, result: ChildResult) -> ApiResult<Va
 }
 
 fn policy_now_blocks(state: &AppState, session: &Session) -> bool {
-    current_policy(state).map_or(true, |policy| blocked_origin(&policy, session).is_some())
+    // The public block list cannot name a fixture's loopback origin.
+    !fixture_origins() && current_policy(state).map_or(true, |policy| blocked_origin(&policy, session).is_some())
 }
 
 fn policy_changed() -> ApiError {
@@ -336,6 +341,14 @@ pub async fn job_start(
         gate,
     } = prepare(&state, user, &req).await?;
     argv.push("--job".into());
+    // Literal true only: a job started without it holds every request, as before.
+    let takeover = state.cfg.flag_is_true("browser.takeover.enabled");
+    if takeover {
+        argv.push(format!(
+            "--takeover-wait-sec={}",
+            state.cfg.limit("browser.takeover.wait_sec")
+        ));
+    }
     let job_id = crate::common::random_hex(16);
     let (lines, mut printed) = tokio::sync::mpsc::unbounded_channel();
     let (input, child_input) = std::sync::mpsc::channel();
@@ -414,7 +427,7 @@ pub async fn job_start(
     });
     Ok((
         StatusCode::ACCEPTED,
-        Json(json!({"job_id": job_id, "status": JOB_RUNNING})),
+        Json(json!({"job_id": job_id, "status": JOB_RUNNING, "takeover": takeover})),
     ))
 }
 
@@ -478,6 +491,184 @@ pub async fn job_cancel(
         "status": job["status"],
     }));
     Ok(Json(job))
+}
+
+/// The operator's yes to the one request waiting on their job. `request` and
+/// `sha256` are the ones the job showed, so the yes cannot land on a request
+/// the operator did not see. `confirm` and `reason` have no default.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserApproveRequest {
+    pub request: u64,
+    pub sha256: String,
+    pub confirm: bool,
+    pub reason: String,
+}
+
+impl Validate for BrowserApproveRequest {
+    fn validate(&self) -> Vec<String> {
+        let mut bad = Vec::new();
+        if !crate::common::is_lower_hex(&self.sha256, 64) {
+            bad.push("sha256".into());
+        }
+        if !self.confirm {
+            bad.push("confirm".into());
+        }
+        if crate::common::is_visibly_blank(&self.reason)
+            || !(1..=MAX_APPROVAL_REASON_CHARS).contains(&self.reason.trim().chars().count())
+        {
+            bad.push("reason".into());
+        }
+        bad
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrowserDenyRequest {
+    pub request: u64,
+}
+
+impl Validate for BrowserDenyRequest {
+    fn validate(&self) -> Vec<String> {
+        Vec::new()
+    }
+}
+
+const MAX_APPROVAL_REASON_CHARS: usize = 500;
+
+fn verdict_refused(refusal: VerdictRefusal) -> ApiError {
+    match refusal {
+        VerdictRefusal::NoJob => no_such_job(),
+        VerdictRefusal::NothingWaiting => ApiError::new(
+            StatusCode::CONFLICT,
+            "BROWSER_NOTHING_WAITING",
+            "No request is waiting on this job: it was decided, its wait ran out, or the job ended.",
+        ),
+        VerdictRefusal::Stale => ApiError::new(
+            StatusCode::CONFLICT,
+            "BROWSER_APPROVAL_STALE",
+            "That is not the request waiting now. Read the job again and decide on what it shows.",
+        ),
+    }
+}
+
+/// One `browser.approval` line: who, which job, and the request by method,
+/// origin, size and hash. Never the path, the query or the body.
+fn audit_approval(state: &AppState, owner: &str, job_id: &str, shown: &Value, decision: &str, reason: Option<&str>) {
+    let origin = shown["url"]
+        .as_str()
+        .and_then(|url| url::Url::parse(url).ok())
+        .map(|url| url.origin().ascii_serialization());
+    state.audit.log(json!({
+        "event": "browser.approval",
+        "owner": owner,
+        "job": job_id,
+        "method": shown["method"],
+        "origin": origin,
+        "size": shown["size"],
+        "sha256": shown["sha256"],
+        "decision": decision,
+        "reason": reason,
+    }));
+}
+
+/// `POST /api/browser/jobs/{job_id}/approve`: let the one request waiting on
+/// the caller's job be sent, once, as shown. Everything is checked again
+/// now, after the wait: the feature and `/browse` are still on, the block
+/// list still allows that URL and its origin, and that request is still the
+/// one waiting. The sidecar's network gate then binds the pass to the
+/// request's method, URL and body hash and asks the block list once more.
+pub async fn job_approve(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    axum::extract::Path(job_id): axum::extract::Path<String>,
+    ValidJson(req): ValidJson<BrowserApproveRequest>,
+) -> ApiResult<Json<Value>> {
+    checked_job_id(&job_id)?;
+    let cfg = state.cfg.clone();
+    if !cfg.flag_is_true("browser.enabled") || !cfg.flag_is_true("auth.enabled") {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "BROWSER_DISABLED",
+            "Browser sessions are off, or accounts are; nothing was approved.",
+        ));
+    }
+    if !cfg.flag_is_true("browser.takeover.enabled") {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "BROWSER_TAKEOVER_DISABLED",
+            "Approving a held request is off. Set browser.takeover.enabled: true in config.yaml and restart.",
+        ));
+    }
+    let owner = super::auth::context_owner(user);
+    let pending = state.browser_jobs.pending(&owner, &job_id).map_err(verdict_refused)?;
+    // Reload policy after the wait and before the send (AGENTS.md).
+    // The policy file is read on the blocking pool, never on an async worker.
+    // The verdict below names the request again, so one that was decided or
+    // replaced while the file was read is refused there.
+    let url = pending["url"].as_str().unwrap_or("").to_string();
+    let reader = state.clone();
+    let blocked = !fixture_origins()
+        && super::structured_memory::off_worker(move || {
+            current_policy(&reader).map_or(true, |policy| {
+                policy.blocks_request(&url)
+                    || url::Url::parse(&url).map_or(true, |parsed| {
+                        Session::general([parsed.origin().ascii_serialization()])
+                            .map_or(true, |session| blocked_origin(&policy, &session).is_some())
+                    })
+            })
+        })
+        .await;
+    if blocked {
+        // The owner's no, so the child stops waiting and the request is held.
+        if let Ok(shown) = state.browser_jobs.verdict(&owner, &job_id, (req.request, None), false) {
+            audit_approval(&state, &owner, &job_id, &shown, "refused_by_policy", None);
+        }
+        return Err(policy_changed());
+    }
+    if pending["expires_at"]
+        .as_f64()
+        .is_none_or(|until| crate::common::now_ts() >= until)
+    {
+        return Err(verdict_refused(VerdictRefusal::NothingWaiting));
+    }
+    let shown = state
+        .browser_jobs
+        .verdict(&owner, &job_id, (req.request, Some(&req.sha256)), true)
+        .map_err(verdict_refused)?;
+    audit_approval(&state, &owner, &job_id, &shown, "approved", Some(req.reason.trim()));
+    Ok(Json(
+        json!({"job_id": job_id, "decision": "approved", "request": req.request}),
+    ))
+}
+
+/// `POST /api/browser/jobs/{job_id}/deny`: the waiting request is held, as
+/// every held request was before, and the task reports it.
+pub async fn job_deny(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    axum::extract::Path(job_id): axum::extract::Path<String>,
+    ValidJson(req): ValidJson<BrowserDenyRequest>,
+) -> ApiResult<Json<Value>> {
+    checked_job_id(&job_id)?;
+    let owner = super::auth::context_owner(user);
+    let shown = state
+        .browser_jobs
+        .verdict(&owner, &job_id, (req.request, None), false)
+        .map_err(verdict_refused)?;
+    audit_approval(&state, &owner, &job_id, &shown, "denied", None);
+    Ok(Json(
+        json!({"job_id": job_id, "decision": "denied", "request": req.request}),
+    ))
+}
+
+/// True only in a `test-support` build whose server was started with
+/// `CGAH_TEST_PRIVATE_BROWSER_ORIGINS` set: a task may then name a loopback
+/// origin, so the whole job path can be run against a local fixture page.
+/// Release builds have no such switch.
+fn fixture_origins() -> bool {
+    cfg!(feature = "test-support") && std::env::var_os("CGAH_TEST_PRIVATE_BROWSER_ORIGINS").is_some()
 }
 
 /// The model tag the child is told to use: chat's `/model use` selection when
