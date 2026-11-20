@@ -1,5 +1,5 @@
 //! Nonblocking pipes under one deadline. Darwin ancestry cleanup is best-effort.
-use super::{build_command, Output, ProcessError, RunSpec, MAX_CAPTURE_BYTES, OUTPUT_LIMIT};
+use super::{build_command, Output, ProcessError, RunSpec, Stream, MAX_CAPTURE_BYTES, OUTPUT_LIMIT};
 use std::io::{Read, Write};
 use std::os::fd::AsRawFd;
 use std::process::Child;
@@ -208,7 +208,14 @@ impl Identity {
     }
 }
 
-pub(super) fn run(spec: RunSpec<'_>, cancelled: &AtomicBool) -> Result<Output, ProcessError> {
+/// Bytes a streaming caller may have queued for the child's stdin at once.
+const MAX_PENDING_INPUT_BYTES: usize = 64 * 1024;
+
+pub(super) fn run(
+    spec: RunSpec<'_>,
+    cancelled: &AtomicBool,
+    mut stream: Option<Stream<'_>>,
+) -> Result<Output, ProcessError> {
     let started = Instant::now();
     if cancelled.load(Ordering::Acquire) {
         return Err(ProcessError::Capture("command cancelled".into()));
@@ -229,8 +236,10 @@ pub(super) fn run(spec: RunSpec<'_>, cancelled: &AtomicBool) -> Result<Output, P
     let mut out = Vec::new();
     let mut err = Vec::new();
     let mut total = 0;
-    let mut written = 0;
-    let data = spec.stdin.unwrap_or_default();
+    // Input not yet written. A streaming caller adds to it while the child runs;
+    // stdin closes once this is empty and the caller's sender is gone.
+    let mut pending = spec.stdin.unwrap_or_default().to_vec();
+    let mut feed_open = stream.is_some();
     let mut observed = Instant::now() - Duration::from_secs(1);
     loop {
         if cancelled.load(Ordering::Acquire) {
@@ -245,12 +254,22 @@ pub(super) fn run(spec: RunSpec<'_>, cancelled: &AtomicBool) -> Result<Output, P
             owner.observe(false);
             observed = Instant::now();
         }
+        if let (true, Some(stream)) = (feed_open, stream.as_ref()) {
+            match stream.input.try_recv() {
+                Ok(bytes) if pending.len() + bytes.len() <= MAX_PENDING_INPUT_BYTES => pending.extend(bytes),
+                Ok(_) => return Err(ProcessError::Capture("stdin feed exceeded its limit".into())),
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => feed_open = false,
+            }
+        }
         if let Some(pipe) = input.as_mut() {
-            if written == data.len() {
-                input = None;
+            if pending.is_empty() {
+                if !feed_open {
+                    input = None;
+                }
             } else {
-                match pipe.write(&data[written..data.len().min(written + 8192)]) {
-                    Ok(n) => written += n,
+                match pipe.write(&pending[..pending.len().min(8192)]) {
+                    Ok(n) => drop(pending.drain(..n)),
                     Err(e)
                         if matches!(
                             e.kind(),
@@ -262,7 +281,11 @@ pub(super) fn run(spec: RunSpec<'_>, cancelled: &AtomicBool) -> Result<Output, P
             }
         }
         let before = total;
+        let seen = out.len();
         read_chunk(&mut stdout, &mut out, &mut total)?;
+        if let (Some(stream), true) = (stream.as_mut(), out.len() > seen) {
+            (stream.on_stdout)(&out[seen..]);
+        }
         read_chunk(&mut stderr, &mut err, &mut total)?;
         if stdout.is_none() && stderr.is_none() && exited(&owner.child)? {
             owner.cleanup();

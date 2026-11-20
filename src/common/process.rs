@@ -59,6 +59,16 @@ pub struct RunSpec<'a> {
     pub stdin: Option<&'a [u8]>,
 }
 
+/// A live channel to a running child (unix). The child's stdin stays open
+/// until `input`'s sender is dropped and everything sent has been written.
+#[cfg(unix)]
+pub struct Stream<'a> {
+    /// Called with each new piece of stdout as it arrives; the bytes are still
+    /// captured in `Output::stdout` under the same ceiling.
+    pub on_stdout: &'a mut dyn FnMut(&[u8]),
+    pub input: &'a std::sync::mpsc::Receiver<Vec<u8>>,
+}
+
 fn build_command(spec: &RunSpec<'_>) -> Command {
     let mut cmd = Command::new(&spec.argv[0]);
     cmd.args(&spec.argv[1..]);
@@ -113,7 +123,22 @@ pub fn run(spec: RunSpec<'_>) -> Result<Output, ProcessError> {
 #[cfg(unix)]
 pub fn run_cancellable(spec: RunSpec<'_>, cancelled: &std::sync::atomic::AtomicBool) -> Result<Output, ProcessError> {
     assert!(!spec.argv.is_empty(), "argv must not be empty");
-    unix::run(spec, cancelled)
+    unix::run(spec, cancelled, None)
+}
+
+/// `run_cancellable` with a live channel: stdout is handed over as it arrives
+/// and the caller can write to the child's stdin while it runs. `spec.stdin`
+/// must be `Some` (it may be empty) so the child gets a pipe. Same deadline,
+/// byte ceiling and process-group cleanup as every other run.
+#[cfg(unix)]
+pub fn run_streaming(
+    spec: RunSpec<'_>,
+    cancelled: &std::sync::atomic::AtomicBool,
+    stream: Stream<'_>,
+) -> Result<Output, ProcessError> {
+    assert!(!spec.argv.is_empty(), "argv must not be empty");
+    assert!(spec.stdin.is_some(), "a streaming child needs a stdin pipe");
+    unix::run(spec, cancelled, Some(stream))
 }
 
 #[cfg(not(unix))]
@@ -376,6 +401,70 @@ mod tests {
             .map(|v| v.parse().unwrap())
             .collect();
         (pid, f[1], f[2])
+    }
+
+    /// A streaming child hears what the caller sends while it runs, the caller
+    /// sees stdout before the exit, and dropping the sender closes stdin.
+    #[cfg(unix)]
+    #[test]
+    fn a_streaming_child_is_written_to_and_read_while_it_runs() {
+        let argv: Vec<String> = ["/bin/sh", "-c", "echo ready; read line; echo \"got $line\"; cat"]
+            .map(String::from)
+            .to_vec();
+        let (send, input) = std::sync::mpsc::channel::<Vec<u8>>();
+        let mut send = Some(send);
+        let mut seen = String::new();
+        let mut on_stdout = |bytes: &[u8]| {
+            seen.push_str(&String::from_utf8_lossy(bytes));
+            // Answer only once the child has spoken; then let stdin close.
+            if seen.contains("ready") {
+                if let Some(send) = send.take() {
+                    send.send(b"hello\nrest".to_vec()).unwrap();
+                }
+            }
+        };
+        let out = run_streaming(
+            RunSpec {
+                argv: &argv,
+                cwd: None,
+                env: None,
+                timeout: Duration::from_secs(10),
+                stdin: Some(&[]),
+            },
+            &std::sync::atomic::AtomicBool::new(false),
+            Stream {
+                on_stdout: &mut on_stdout,
+                input: &input,
+            },
+        )
+        .expect("the child exits once stdin closes");
+        assert_eq!(out.status, Some(0));
+        assert_eq!(out.stdout, "ready\ngot hello\nrest");
+        assert_eq!(seen, out.stdout);
+    }
+
+    /// With the sender still held the child's stdin stays open, so the
+    /// deadline, not end of input, ends a child that waits for it.
+    #[cfg(unix)]
+    #[test]
+    fn a_streaming_child_waiting_on_open_stdin_ends_at_the_deadline() {
+        let argv = vec!["/bin/cat".to_string()];
+        let (_held, input) = std::sync::mpsc::channel::<Vec<u8>>();
+        let result = run_streaming(
+            RunSpec {
+                argv: &argv,
+                cwd: None,
+                env: None,
+                timeout: Duration::from_millis(300),
+                stdin: Some(&[]),
+            },
+            &std::sync::atomic::AtomicBool::new(false),
+            Stream {
+                on_stdout: &mut |_| {},
+                input: &input,
+            },
+        );
+        assert!(matches!(result, Err(ProcessError::Timeout { .. })));
     }
 
     #[test]

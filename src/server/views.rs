@@ -105,7 +105,7 @@ pub fn full_registry(home: &Home, registry: &Path) -> Value {
 // ---------------------------------------------------------------- tools
 
 /// Paths must match the router templates in `routes/mod.rs` exactly.
-pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 79] = [
+pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 82] = [
     ("analytics", "/analytics", "GET", "/api/analytics/summary", "retained session, token and coding-run analytics"),
     ("config-reload", "(Reload limits button)", "POST", "/api/config/reload", "administrator-only atomic reload of supported non-secret limits"),
     (
@@ -445,6 +445,27 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 79] = [
         "POST",
         "/api/browser/run",
         "admin browser task with the local model; origins from the request (browser.enabled)",
+    ),
+    (
+        "browser-job-start",
+        "(API only)",
+        "POST",
+        "/api/browser/jobs",
+        "the same admin browser task, detached: the job holds the model, not the request",
+    ),
+    (
+        "browser-job",
+        "(API only)",
+        "GET",
+        "/api/browser/jobs/{job_id}",
+        "poll your browser job; carries the report once it ends",
+    ),
+    (
+        "browser-job-cancel",
+        "(API only)",
+        "POST",
+        "/api/browser/jobs/{job_id}/cancel",
+        "stop your browser job before its next model turn",
     ),
     (
         "agent-job-start",
@@ -902,7 +923,7 @@ mod tests {
                 "HARNESS_SURFACES path {path} is not in registered_paths()"
             );
         }
-        assert_eq!(HARNESS_SURFACES.len(), 79);
+        assert_eq!(HARNESS_SURFACES.len(), 82);
         let report = list_wired_tools(&registered);
         assert_eq!(report["total"], HARNESS_SURFACES.len());
         assert_eq!(report["wired"], HARNESS_SURFACES.len(), "a catalog surface is unwired");

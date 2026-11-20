@@ -11,6 +11,7 @@ pub mod agent_policy;
 pub mod agent_schedules;
 pub mod attachment_index;
 pub mod attachments;
+pub mod browser_jobs;
 mod chat_web;
 pub mod client;
 pub mod compaction;
@@ -422,6 +423,7 @@ pub async fn build_app_with_sources(
         mcp_tool_allowlist_override: opts.mcp_tool_allowlist_override,
         shim,
         jobs,
+        browser_jobs: Arc::default(),
         schedules,
         spend_file,
         request_log: cfg.flag_is_true("logging.request_log"),
