@@ -194,11 +194,36 @@ const CARGO_STATUS_VERBS: [&str; 12] = [
     "Running",
 ];
 
+/// A Cargo line that only quotes a package or target name, or relays text a
+/// package's build script printed. None of them can name a preparation fault.
+fn quotes_repository_text(line: &str) -> bool {
+    // error: test failed, to rerun pass `-p pkg --test name` (also doctest, bench).
+    if line.starts_with("error: ") && line.contains(" failed, to rerun pass `") {
+        return true;
+    }
+    // warning: `pkg` (lib test) generated 2 warnings (run `cargo fix ...`)
+    if line.starts_with("warning: `") && line.contains("` (") && line.contains(") generated ") {
+        return true;
+    }
+    // warning: pkg@1.2.3: text / error: pkg@1.2.3: text (cargo:warning=, cargo::error=).
+    line.strip_prefix("warning: ")
+        .or_else(|| line.strip_prefix("error: "))
+        .and_then(|rest| rest.split_once(": "))
+        .and_then(|(id, _)| id.split_once('@'))
+        .is_some_and(|(name, version)| {
+            !name.is_empty()
+                && !name.contains(char::is_whitespace)
+                && version.starts_with(|c: char| c.is_ascii_digit())
+                && !version.contains(char::is_whitespace)
+        })
+}
+
 /// True when a failed Cargo check's stderr says preparation, not the candidate,
 /// is at fault. Only Cargo's and the toolchain's own lines are matched: a rustc
 /// diagnostic with a source location (header, `-->` line and snippet up to the
-/// blank line), status lines and `could not compile` quote repository code or
-/// crate names, so a candidate that calls a function named `checksum` fails as
+/// blank line), status lines, `could not compile`, the rerun hints, warning
+/// counts and build-script messages quote repository code, names or text, so a
+/// candidate that calls a function or names a test target `checksum` fails as
 /// an ordinary check the planner can see instead of aborting the run.
 fn cargo_preparation_failure(stderr: &str) -> bool {
     const PREPARATION: [&str; 7] = [
@@ -232,11 +257,19 @@ fn cargo_preparation_failure(stderr: &str) -> bool {
             }
             continue;
         }
+        // `error: 2 targets failed:` lists each failed target's rerun arguments.
+        if line.starts_with("error: ") && line.ends_with(" targets failed:") {
+            i += 1;
+            while i < lines.len() && lines[i].starts_with("    `") {
+                i += 1;
+            }
+            continue;
+        }
         let status = line
             .trim_start()
             .split_once(' ')
             .is_some_and(|(verb, _)| line.starts_with(' ') && CARGO_STATUS_VERBS.contains(&verb));
-        if !status && !line.starts_with("error: could not compile `") {
+        if !status && !line.starts_with("error: could not compile `") && !quotes_repository_text(line) {
             own.push_str(&line.to_lowercase());
             own.push('\n');
         }
@@ -292,6 +325,40 @@ error: could not compile `checksum-tool` (lib) due to 1 previous error\n";
         assert!(!cargo_preparation_failure(compile_error));
         let macro_error = "error: cannot find macro `permission_denied` in this scope\n --> src/lib.rs:2:5\n  |\n2 |     permission_denied!();\n  |     ^^^^^^^^^^^^^^^^^\n\n";
         assert!(!cargo_preparation_failure(macro_error));
+    }
+
+    #[test]
+    fn cargo_lines_quoting_names_or_build_script_text_are_ordinary_check_failures() {
+        // Real cargo 1.89 and 1.97 stderr (paths shortened to /w). Each is a
+        // failed test or build script the planner can fix, not a missing
+        // preparation.
+        for stderr in [
+            // A test target named `checksum`.
+            "     Running tests/checksum.rs (/w/target/debug/deps/checksum-8a64cdff760b36d2)\n\
+error: test failed, to rerun pass `--test checksum`\n",
+            // A workspace package named `checksum-tool`, then --no-fail-fast's list.
+            "error: test failed, to rerun pass `-p checksum-tool --lib`\n   \
+Doc-tests other\nerror: doctest failed, to rerun pass `-p other --doc`\n\
+error: 2 targets failed:\n    `-p checksum-tool --lib`\n    `-p other --doc`\n",
+            // Its compiler-warning summary (1.97 adds the `cargo fix` hint).
+            "warning: `checksum-tool` (lib) generated 1 warning (run `cargo fix --lib -p checksum-tool` to apply 1 suggestion)\n\
+warning: `checksum-tool` (lib test) generated 1 warning (1 duplicate)\n\
+error: test failed, to rerun pass `--lib`\n",
+            // Text a build script printed through cargo:warning= and cargo::error=.
+            "warning: demo2@0.1.0: failed to get git revision; using unknown\n\
+error: test failed, to rerun pass `--lib`\n",
+            "   Compiling demo5 v0.1.0 (/w/e)\n\
+error: demo5@0.1.0: checksum mismatch in generated table\nerror: build script logged errors\n",
+        ] {
+            assert!(!cargo_preparation_failure(stderr), "{stderr}");
+        }
+        // Cargo's own preparation error on the next line still aborts.
+        for stderr in [
+            "warning: demo2@0.1.0: using unknown revision\nerror: no matching package named `serde` found\n",
+            "error: 2 targets failed:\n    `--lib`\nerror: could not execute process `rustc -vV` (never executed)\n",
+        ] {
+            assert!(cargo_preparation_failure(stderr), "{stderr}");
+        }
     }
 
     #[test]
