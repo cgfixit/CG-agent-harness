@@ -740,7 +740,7 @@ all targets with provider keys blanked and deterministic model fixtures. Set
 | [Bundle](../.github/workflows/bundle.yml) | Pushes to `main` only: packages `linux-x86_64` (glibc 2.39+) and `macos-arm64` CLIs beside desktop, re-verifies checksums, tests loopback binding and exit-3 missing configuration. |
 | [Netconnect CI](../.github/workflows/netconnect.yml) | Path-filtered flag, scope and collector tests, plus a Linux `strace` proof that default `netconnect status` opens no packet socket. |
 | [Release](../.github/workflows/release.yml) | Twice daily; publishes only when `main` differs and its SHA has a successful Bundle ([release controls](RELEASING.md)). |
-| Source checks | CodeQL, DevSkim, Gitleaks, PR-template and base-branch checks, the advisory review gate and a daily RustSec scan; workflow edits trigger actionlint and zizmor. |
+| Source checks | CodeQL, DevSkim, Gitleaks, PR-template and base-branch checks, the advisory review gate, the telemetry contract and a daily RustSec scan; workflow edits trigger actionlint and zizmor. |
 
 Passing CI does not prove real-model quality, native GUI behavior or notarized
 distribution. Windows release legs remain parked.
