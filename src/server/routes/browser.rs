@@ -177,6 +177,24 @@ pub async fn run(
         ));
     }
     let report = serde_json::from_str::<Value>(stdout.trim()).ok();
+    // #901: composed navigations refused and typed text held, by origin and
+    // count only. The child reports origins, never a refused URL's path or query.
+    if let Some(report) = &report {
+        let typed_held = report["for_operator"].as_array().map_or(0, |rows| {
+            rows.iter()
+                .filter(|row| row["reason"] == crate::common::browser::TYPED_TEXT_HOLD)
+                .count()
+        });
+        let refused = report["refused_composed"].as_array().filter(|rows| !rows.is_empty());
+        if refused.is_some() || typed_held > 0 {
+            state.audit.log(json!({
+                "event": "browser.provenance",
+                "owner": owner,
+                "refused_composed": refused,
+                "typed_held": typed_held,
+            }));
+        }
+    }
     let mut body = json!({"finished": code == 0, "exit_code": code, "report": report});
     if body["report"].is_null() {
         // Only the child's own `cgagentharness:` lines; Node and page output stay out.
