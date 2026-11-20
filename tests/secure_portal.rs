@@ -807,11 +807,11 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
         // so a check that let a task through would answer BROWSER_BUSY), and a
         // stored report is withheld on every read while the policy covers it.
         let admin_id = server.state.auth.as_ref().unwrap().get_user("admin").unwrap().user_id;
-        let job_id = "fedcba9876543210fedcba9876543210";
+        let job_id = "fedcba9876543210".repeat(2);
         let job_path = format!("/api/browser/jobs/{job_id}");
         let (input, _child_input) = std::sync::mpsc::channel();
         server.state.browser_jobs.insert(
-            job_id,
+            &job_id,
             &admin_id,
             &["https://example.com".to_string()],
             cgagentharness::server::browser_jobs::CancelHandle {
@@ -820,7 +820,7 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             },
         );
         server.state.browser_jobs.finish(
-            job_id,
+            &job_id,
             cgagentharness::server::browser_jobs::Outcome::Report(json!({"answer":"stored"})),
         );
         let stored = |blocked: bool| {
