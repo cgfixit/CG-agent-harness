@@ -121,9 +121,9 @@ facts, allow, hand-off or refuse. Only the driver behind
 **Chosen driver: Kimi Computer Use.** It
 (`/Applications/KimiCU.app`, `kimi-cu mcp`, tools checked at 0.7.6) reads the
 Accessibility tree and acts without moving the pointer.
-`src/common/computer.rs` maps the wire ops to `get_app_state`, `click`,
-`type_text`, `press_key` and `scroll` for one granted app and window and
-refuses `debug_tap`, `paste`, `launch_app`, `activate_window` and drags. Still
+`src/common/computer.rs` maps `observe`, `click` and `scroll` to `get_app_state`,
+`click` and `scroll` for one granted app window; it refuses typing, Enter,
+`debug_tap`, `paste`, `launch_app`, `activate_window` and drags. Still
 to build: the MCP transport through `common/mcp.rs`, launching the signed
 binary (the plugin's wrapper script is world-writable), turning
 `get_app_state` into element facts, and a `computer.enabled` gate. Qwen stays
