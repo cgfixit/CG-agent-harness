@@ -16,10 +16,10 @@ Loopback fixture model: [60-second demo](docs/screenshots/demo/CG-Agent-Harness-
 | Capability | What it provides | Fresh-home state |
 |---|---|---|
 | **Web research** | Search, permitted fetches and crawls, `/web research` jobs with checked quotes, local PDF text. | On, allowlist mode, one seeded Google rule. |
-| **Goal loops** | `/goal` and `/loop` continue a long piece in a run that outlives the tab. | 50 turns, 200,000 tokens, two failed turns; cloud refuses loops. |
+| **Goal loops** | `/goal` and `/loop` continue a long piece after the tab closes. | 50 turns, 200,000 tokens, two failed turns; cloud refuses loops. |
 | **Memory** | Pinned and [uploaded notes](docs/CONSOLE.md#text-file-attachments-and-prompt-preview), account-private facts; repeated suggestions are skipped. | On; proposals need review. |
-| **Local chat** | Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles. | Ollama on loopback. |
-| **Browser tasks** | `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Block rules apply to every request and redirect; password fields and anything but GET or HEAD are held, ending the task. | On for administrators; refused without accounts; [setup](#3-sign-in-and-research). |
+| **Local chat** | Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles; looping replies stop. | Ollama on loopback. |
+| **Browser tasks** | `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Block rules cover every request and redirect; navigation stays on task or page URLs; password fields and non-GET/HEAD requests are held, ending the task. | On for administrators; refused without accounts; [setup](#3-sign-in-and-research). |
 | **Analytics, diagnostics** | Token and run history, **Estimate draft**, `/diag` redacted logs. | On; `/diag` admin or auditor. |
 | **Cloud chat** | Optional Grok or Claude; only the new message leaves. | Needs a provider key. |
 | **Off by default** | Reviewed coding in isolated clones, MCP tools and memory gateway, Netconnect LAN observation, Firecrawl fallback reads. | Each needs configuration. |
@@ -105,7 +105,7 @@ Open `https://127.0.0.1:8790/` and trust the [local certificate](docs/SECURE_RES
 
 ### 3. Sign in and research
 
-1. A fresh home opens **Set your password**: enter the setup code (app: **Setup and recovery**; terminal: `<home>/setup-code`) and a password of 12 or more characters.
+1. A fresh home opens **Set your password**: enter the setup code (app: **Setup and recovery**; terminal: `<home>/setup-code`) and a 12+ character password.
 2. `/model list`, then `/model use <tag>`; `/help` shows the rest.
 3. `/web allow https://example.org/*`, then `/web research <question>`. For a longer piece, `/goal <question>` and `/loop 3` ([loops](docs/CONSOLE.md#71-sessions-and-bounded-chat-continuation)).
 4. Browser tasks: install Google Chrome, run `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci` in `browser/` once, then `/browse docs.python.org what does zipfile.Path do?` ([browser use](docs/Browser-Use.md)).

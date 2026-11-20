@@ -48,9 +48,9 @@ server -> browser child -> Playwright sidecar -> Chrome (granted origins only)
 | Changing | Read first / trap |
 |----------|-------------------|
 | Accounts, TLS, ownership, auditor role | [Secure portal](docs/SECURE_RESEARCH.md#accounts-and-roles), [native trust](docs/DESKTOP.md#ownership-ports-and-security-boundaries) |
-| Chat search/fetch, providers, goal web routing | [Search permissions](docs/SECURE_RESEARCH.md#google-search), [router](docs/WEB_DECISION_ROUTER.md): `auto` prefers a saved Tavily key, then SerpAPI. Listings grant admin-turn exact-URL reads (`web.search.result_reads`); a listed arXiv abstract also grants its PDF (`arxiv_pdf`). |
+| Chat search/fetch, providers, goal web routing | [Search permissions](docs/SECURE_RESEARCH.md#google-search), [router](docs/WEB_DECISION_ROUTER.md): `auto` prefers a saved Tavily key, then SerpAPI. Listings grant admin-turn exact-URL reads (`web.search.result_reads`); a listed arXiv abstract also grants its PDF (`arxiv_pdf`). A model-composed wildcard-rule URL needs Approve in a live admin turn, else is refused (`web.fetch_provenance`). |
 | PDF text | [PDF text](docs/CONSOLE.md#pdf-text): parsed only in the hidden `pdf-text-worker` child; only a textless, over-limit or malformed PDF may escalate to Firecrawl. |
-| Browser tasks (`/browse`) | [Browser use](docs/Browser-Use.md), [I6 process edges](INVARIANTS.md#i6--process-isolation-between-the-console-and-the-agentic-pipeline): origins come only from the request; requests but GET/HEAD are held; the host judges every request URL against the block list (`Policy::blocks_request`), never the sidecar. |
+| Browser tasks (`/browse`) | [Browser use](docs/Browser-Use.md), [I6 process edges](INVARIANTS.md#i6--process-isolation-between-the-console-and-the-agentic-pipeline): origins come only from the request; `navigate` takes only task, grant or page URLs; requests but GET/HEAD are held; the host judges every request URL against the block list (`Policy::blocks_request`), never the sidecar. |
 | Exact fetch fallback | [Firecrawl](docs/SECURE_RESEARCH.md#fetch-discovery-and-research): opt-in, sends URLs off-machine; same-URL results only, never discovery/crawl/research. |
 | Web research/jobs | [Research](docs/SECURE_RESEARCH.md#fetch-discovery-and-research), [job contract](INVARIANTS.md#a-detached-run-cannot-outlive-its-gates): local model, separate discovery/synthesis deadlines; owner-bound jobs survive tabs, not restart. |
 | Provider keys | [Credential storage](docs/INSTALL.md#supported-managed-keys): inherited environment (even empty) wins; saved SerpAPI/Tavily/Firecrawl keys apply next search/read. |
@@ -101,8 +101,11 @@ server -> browser child -> Playwright sidecar -> Chrome (granted origins only)
   `cargo test` isolates it so later write gates are what fail. Never flip
   `EXECUTION_ENABLED` to false (or OR the kill switch) to make tests green.
 - Server audit appends go to one bounded writer thread
-  (`logging.audit_queue_lines`; 0 appends inline); SQLite work stays off async
-  workers. Audit queue overflow drops lines; explicit flushes can wait.
+  (`logging.audit_queue_lines`; 0 appends inline). Audit queue overflow drops
+  lines; explicit flushes can wait.
+- SQLite, file and fsync work stays off async workers, lock included
+  (`routes::structured_memory::off_worker`). Publish a live setting only after
+  its save (`panels::commit_setting`); refuse before changing state.
 - scrypt at n=2^17 is slow unoptimized; `[profile.dev.package."*"] opt-level=3`
   is load-bearing for test time.
 - Reload policy after any wait and before a send or stored delivery;
@@ -131,6 +134,9 @@ server -> browser child -> Playwright sidecar -> Chrome (granted origins only)
   needed; for docs, run
   `cargo test --test invariant_guard markdown_stays_on_the_docs_budget`.
   Leave full suites to CI. Lint workflow edits with `scripts/lint-workflows.sh`.
+- A green PR is not Windows or desktop evidence: the full Windows leg runs
+  on `main`; `desktop/` compiles only on macOS, when `desktop-check.yml`'s
+  path regex matches the diff.
 - Changing a shipped default, refusal order or exit code: `rg` the tests for
   it and run every matching target.
 - New routes: add to `src/server/routes/mod.rs::REGISTERED_PATHS` (and

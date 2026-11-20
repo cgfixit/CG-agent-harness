@@ -9,10 +9,10 @@ This manual is static text bundled with the build and indexed at startup. It is 
 ## readme: capability overview
 
 - Web research: Search, permitted fetches and crawls, `/web research` jobs with checked quotes, local PDF text. Starts: On, allowlist mode, one seeded Google rule.
-- Goal loops: `/goal` and `/loop` continue a long piece in a run that outlives the tab. Starts: 50 turns, 200,000 tokens, two failed turns; cloud refuses loops.
+- Goal loops: `/goal` and `/loop` continue a long piece after the tab closes. Starts: 50 turns, 200,000 tokens, two failed turns; cloud refuses loops.
 - Memory: Pinned and uploaded notes, account-private facts; repeated suggestions are skipped. Starts: On; proposals need review.
-- Local chat: Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles. Starts: Ollama on loopback.
-- Browser tasks: `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Block rules apply to every request and redirect; password… Starts: On for administrators; refused without accounts; setup.
+- Local chat: Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles; looping replies stop. Starts: Ollama on loopback.
+- Browser tasks: `/browse <site> <task>`: the local model drives a sandboxed Chrome on those sites only. Block rules cover every request and redirect; navigation… Starts: On for administrators; refused without accounts; setup.
 - Analytics, diagnostics: Token and run history, **Estimate draft**, `/diag` redacted logs. Starts: On; `/diag` admin or auditor.
 - Cloud chat: Optional Grok or Claude; only the new message leaves. Starts: Needs a provider key.
 
