@@ -704,7 +704,11 @@ async fn unpin_preserves_blobs_and_refuses_inflight_repin() {
     let r = s.req(reqwest::Method::DELETE, &path).send().await.unwrap();
     assert_eq!(r.status(), 200);
     assert_eq!(r.json::<serde_json::Value>().await.unwrap()["removed"], 1);
-    assert!(s.state.attachments.owned_blob("local", id).is_some());
+    assert!(s
+        .state
+        .attachments
+        .owned_blobs("local", &[id.to_string()])
+        .contains_key(id));
     assert!(s
         .state
         .store

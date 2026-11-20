@@ -10,7 +10,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::common::errors::{HarnessError, Result};
 
-pub const DEFAULT_CHAT_TIMEOUT_SEC: f64 = 720.0;
 pub const LLM_ERROR_CODE: &str = "HARNESS_LLM_ERROR";
 
 #[derive(Debug, Clone)]

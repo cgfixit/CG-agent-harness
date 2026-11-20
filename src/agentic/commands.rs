@@ -1032,14 +1032,9 @@ fn cmd_real_repo_run_discard(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     let runs_dir = ctx.runs_dir();
     let mut record = load_run(&runs_dir, &run_id)?;
     super::run_store::reconcile_run(&runs_dir, &mut record)?;
-    // A running legacy record has no reliable ownership evidence. A current
-    // worker holds its lease, so neither can be discarded as stale by a guess.
-    if record.status == "running" {
-        return Err(HarnessError::agentic(
-            "run is live or ownership is unknown; discard refused",
-        ));
-    }
     // reconcile_run released its own lease; check the settled record under ours.
+    // A record still running is refused there: a legacy one has no reliable
+    // ownership evidence and a current worker holds its lease.
     let (_lease, mut record) = lease_settled_run(&runs_dir, &run_id)?;
     if record.status == PENDING_DECISION {
         err(&format!(

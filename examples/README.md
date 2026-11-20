@@ -3,6 +3,8 @@
 Cargo examples: `cargo run --locked --example <name> -- <arguments>`. They use
 disposable fixture state, not the operator's home; no cloud LLM is called.
 
+- [`browser_policy.rs`](browser_policy.rs): prints the browser session's
+  decisions for a fixed script; no Chrome ([Browser use](../docs/Browser-Use.md)).
 - [`structured_memory_eval.rs`](structured_memory_eval.rs): phase 7 memory
   evaluation on `tests/fixtures/structured_memory/phase7/corpus.json`; requires
   `OUTPUT.json` ([STRUCTURED_MEMORY.md](../docs/STRUCTURED_MEMORY.md)).

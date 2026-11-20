@@ -908,7 +908,6 @@ fn limit_rows_agree_with_the_constants_they_mirror() {
         cgagentharness::server::prompts::SOUL_CHARS_HARD_CAP
     );
     let chat = float("models.local_llm.timeout_sec");
-    assert_eq!(chat.default, cgagentharness::llm::openai_chat::DEFAULT_CHAT_TIMEOUT_SEC);
     assert_eq!(chat.max, cgagentharness::server::model_limits::MAX_TIMEOUT_SEC as f64);
     for row in [timeout, tokens] {
         assert_eq!(row.out_of_range, OutOfRange::Refuse, "{}", row.key);
@@ -2304,7 +2303,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // each is its size plus about 10%, rounded up to the next 10.
     // why: operator-approved (2026-10-14) install-macos.sh and start-macos.sh lines, then the operator-requested
     // Terminal-walkthrough, user-guide and init.sh lines; 564 words plus about 2%, rounded up to the next 10.
-    ("scripts/README.md", Guide, 780),
+    ("scripts/README.md", Guide, 770),
     // why: operator-approved (2026-10-30) three-run bakeoff10 matrix beside the script; 1782 words, rounded up to the next 100.
     ("scripts/bakeoff/report.md", Guide, 1800),
     ("src/agentic/README.md", Guide, 550),

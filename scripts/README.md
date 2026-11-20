@@ -66,7 +66,6 @@ New Mac: run `init.sh` ([one command](../docs/INSTALL.md#one-command-initsh)) or
 ## Hooks, fixtures and probes
 
 - [`ensure-githooks.sh`](ensure-githooks.sh): idempotent setup preserving existing hook managers; called by SessionStart, Copilot and `init.sh` ([GITHOOKS.md](../docs/GITHOOKS.md)).
-- [`install-githooks.sh`](install-githooks.sh): older once-per-clone installer; nothing automated runs it.
 - [`browser-fixture.py`](browser-fixture.py): serves a disposable arithmetic repo fixture; no real GitHub writes.
 - [`mcp-fixture.py`](mcp-fixture.py): disposable stdio and SSE MCP server for the MCP and process-lifecycle tests.
 - [`mcp-windows-fixture.py`](mcp-windows-fixture.py): Windows Job Object fixture for `tests/mcp_windows.rs`.

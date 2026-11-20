@@ -277,10 +277,6 @@ impl AttachmentStore {
         Ok(whole_file_fence(&verified, MAX_WEB_CHARS, SourceKind::Attachment))
     }
 
-    pub fn owned_blob(&self, owner: &str, id: &str) -> Option<AttachmentBlob> {
-        self.owned_blobs(owner, &[id.to_string()]).remove(id)
-    }
-
     /// Snapshot metadata once per operation; content reads still verify bytes
     /// and recheck the current manifest in `verified_texts`.
     pub fn owned_blobs(&self, owner: &str, ids: &[String]) -> std::collections::BTreeMap<String, AttachmentBlob> {

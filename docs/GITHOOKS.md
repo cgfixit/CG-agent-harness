@@ -17,7 +17,7 @@ git config --get core.hooksPath         # verify the effective path
 
 The setup script preserves an existing hook manager, honors
 `GITHOOKS_SKIP_INSTALL=1` and exits successfully even if installation fails, so
-read its output. `install-githooks.sh` replaces the local hook path instead.
+read its output.
 Optional tools: `gitleaks` (entropy detection of unprefixed secrets) and
 `exiftool` (media metadata). Without them the gate runs its own checks and says
 what it skipped.
