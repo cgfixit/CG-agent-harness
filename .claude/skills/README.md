@@ -18,7 +18,7 @@ and procedures can differ. Claude-only entries are marked.
   Rust, desktop, runtime and CI improvements as focused draft PRs.
 - [`cgagentharness-otel-hardening/`](cgagentharness-otel-hardening/SKILL.md):
   **operator-only, Claude-only.** Telemetry-kill audit; ships `check_otel.py`
-  and `verify.sh`, which no workflow runs.
+  and `verify.sh`, which `telemetry-contract.yml` runs.
 - [`cgagentharness-project-guidance/`](cgagentharness-project-guidance/SKILL.md):
   read order and skill routing; load first.
 - [`cgagentharness-runtime-invariant-check/`](cgagentharness-runtime-invariant-check/SKILL.md):

@@ -199,9 +199,9 @@ not runtime `/api/skills` plugins.
 
 - **Symptom:** `check_otel.py --strict` had 7 failures on a green `main`:
   unclassified dependencies and spawn files.
-- **Right fix:** The otel oracle is in no workflow. After a network-crate bump,
-  a new direct dependency or a new `Command::new(` file, ask the operator to
-  run `/cgagentharness-otel-hardening`; its pins need a changelog read.
+- **Right fix:** `telemetry-contract.yml` runs the otel oracle. After a
+  network-crate bump, new direct dependency or new `Command::new(` file, ask the
+  operator to run `/cgagentharness-otel-hardening`; its pins need a changelog read.
 - **Evidence:** 2026-11-20 skills sync.
 
 ## Related skills
