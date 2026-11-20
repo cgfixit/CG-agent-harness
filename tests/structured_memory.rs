@@ -2057,3 +2057,57 @@ async fn overlay_auto_consolidate_starts_the_worker() {
     );
     assert_eq!(s.get_json("/api/structured-memory/facts").await.1["count"], 0);
 }
+
+/// A gate whose save fails must not take effect: the route answers 502 and the
+/// live gate, which `status` reads, keeps its earlier value.
+#[tokio::test]
+async fn a_failed_gate_save_leaves_the_live_gate_unchanged() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        enabled().with("structured_memory.retrieval", "false"),
+    )
+    .await;
+    let before = s.get_json("/api/structured-memory").await.1;
+    assert_eq!(before["retrieval"], false, "{before}");
+    let gates = s.home.join("memory").join("structured_gates.json");
+    let _ = std::fs::remove_file(&gates);
+    std::fs::create_dir_all(&gates).unwrap();
+    let (status, body) = s
+        .post_json(
+            "/api/structured-memory/gates",
+            json!({"gate": "retrieval", "enabled": true}),
+        )
+        .await;
+    assert_eq!(status, 502, "{body}");
+    let after = s.get_json("/api/structured-memory").await.1;
+    assert_eq!(after["retrieval"], false, "a failed save published the gate: {after}");
+    assert_eq!(after["operator_gates"], before["operator_gates"]);
+    std::fs::remove_dir(&gates).unwrap();
+    let (status, body) = s
+        .post_json(
+            "/api/structured-memory/gates",
+            json!({"gate": "retrieval", "enabled": true}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["retrieval"], true);
+}
+
+/// Fact listing and search refuse an unknown query key instead of dropping it
+/// and answering with the unfiltered list.
+#[tokio::test]
+async fn fact_queries_refuse_unknown_keys() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), retrieval()).await;
+    add_fact(&s, "Prefer metric units in examples.", "pref").await;
+    for path in [
+        "/api/structured-memory/facts?query=metric",
+        "/api/structured-memory/search?qq=metric",
+    ] {
+        let (status, body) = s.get_json(path).await;
+        assert_eq!(status, 400, "{path}: {body}");
+    }
+    let (status, body) = s.get_json("/api/structured-memory/facts?q=metric").await;
+    assert_eq!(status, 200, "{body}");
+}

@@ -96,23 +96,27 @@ pub async fn catalog(
     Query(query): Query<StyleQuery>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
-    let session = match query.session_id.as_deref().filter(|id| !id.is_empty()) {
-        Some(id) => Some(
-            state
-                .store
-                .for_owner(&owner)
-                .get(id)
-                .map_err(|e| ApiError::from_err(session_status(&e), &e))?,
-        ),
-        None => None,
-    };
-    let style = session.as_ref().and_then(|s| s.style.clone());
-    Ok(Json(payload(
-        &state,
-        session.as_ref().map(|s| s.session_id.as_str()),
-        style.as_deref(),
-        "read-only catalog; POST /api/style to select",
-    )))
+    // The session read and the catalog and style files block, as in `select`.
+    super::structured_memory::off_worker(move || {
+        let session = match query.session_id.as_deref().filter(|id| !id.is_empty()) {
+            Some(id) => Some(
+                state
+                    .store
+                    .for_owner(&owner)
+                    .get(id)
+                    .map_err(|e| ApiError::from_err(session_status(&e), &e))?,
+            ),
+            None => None,
+        };
+        let style = session.as_ref().and_then(|s| s.style.clone());
+        Ok(Json(payload(
+            &state,
+            session.as_ref().map(|s| s.session_id.as_str()),
+            style.as_deref(),
+            "read-only catalog; POST /api/style to select",
+        )))
+    })
+    .await
 }
 
 pub async fn select(
