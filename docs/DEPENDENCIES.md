@@ -125,15 +125,15 @@ point-in-time advisory/license/source check, not proof of vulnerability absence.
 Workflow action pins live in `.github/workflows/` and move with those files,
 not with the lockfiles.
 
-## Last synchronization (2026-11-17)
+## Last synchronization (2026-11-20)
 
-Cooldown refresh, lockfiles only. Both locks: `crc32fast` 1.5.5, `flate2`
-1.1.11, `itoa` 1.0.19, `mime` 0.3.18, `smallvec` 1.16.5 and `winnow` 1.0.5.
-Desktop also: `brotli-decompressor` 6.3.1 and lock-only `toml_writer` 1.2.0.
-Each moved alone; no other package or edge changed. `cc` 1.11.1, `uuid`
-1.29.2, `syn` 3.0.10, `zip` 9.3.0 and the `toml_edit` family stay with
-Dependabot: each re-resolved unrelated `syn`, `getrandom` or `windows-sys`
-edges under Cargo 1.89/1.90. Every other compatible candidate was younger
-than the cooldown. The Tauri family waits on the `tauri` pin and `rmcp` 3.10
-on its own. Dated results describe that pass only; rerun the checks above
-before trusting them.
+Cooldown refresh, lockfiles only. Both locks: `const-oid` 0.10.3. Backend
+also: `rustls-pki-types` 1.16.0 and `webpki-root-certs` 1.0.12. Each moved
+alone; no other package or edge changed. `errno` 0.3.15, `mio` 1.2.5,
+`rustls-webpki` 0.103.17, `cc`, `uuid`, `syn` 3.0.10, `zip` and the
+`toml_edit` family stay with Dependabot, as do desktop `rustls-pki-types`
+and `webpki-root-certs`: each re-resolved unrelated `syn`, `getrandom` or
+`windows-sys` edges under Cargo 1.89/1.90. Every other compatible candidate
+was younger than the cooldown. The Tauri family waits on the `tauri` pin and
+`rmcp` 3.10 on its own. Dated results describe that pass only; rerun the
+checks above before trusting them.
