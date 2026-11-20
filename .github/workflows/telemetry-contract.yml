@@ -13,6 +13,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The job is a required status check in .github/rulesets/main-protection.json:
+  # it must report on the merge queue's commit too, or the queue waits out its
+  # timeout. Keep both triggers free of path filters for the same reason.
+  merge_group:
   schedule:
     - cron: "37 10 * * 2"
   workflow_dispatch:
