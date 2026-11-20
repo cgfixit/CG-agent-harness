@@ -14,20 +14,30 @@ scanned as its own ad-hoc shard.
 ## 1. Scan (read-only)
 
 Run `git fetch origin main && git status -sb` and report the tree state. Launch
-one read-only Explore-type subagent per shard, in parallel (with no subagent
-tool, scan serially from the same briefs). Shards marked `opt` and server files
-in no shard (state, transport, schemas, session_*) are not scanned by default;
+one read-only Explore-type subagent per shard, in parallel. More than 2
+subagents on one task needs the operator's yes first (`CLAUDE.md`); without it,
+or with no subagent tool, scan serially from the same briefs. Shards marked
+`opt` and server files in no shard (state, transport, schemas, config_reload,
+live_state, self_manual, diag_reader, model_limits) are not scanned by default;
 the report says so.
 
 | Shard | Scan | Read first (INVARIANTS.md) | Look for |
 |---|---|---|---|
 | agentic | `src/agentic` | The clone jail; Nothing lands before it is judged; Approval is bound | writer gates, jail, sandbox, digest binding, gh client, dead paths |
-| edge | `src/shim`; `src/server/{guards,headers,agent_policy,agent_jobs,agent_schedules}.rs`; `src/server/routes/{mod,agent}.rs`; compare `src/agentic/commands.rs` | I6; Account, transport; The browser never supplies a command | guard order, `ACTIONS` vs dispatch, argv, shim budget vs child bounds, route drift, run/jobs/schedule lockstep |
-| io-build | `src/{llm,common,netconnect}`, `desktop/src`, `scripts/` | Secrets never reach; Native Ollama pull; Netconnect | loopback validators, timeouts, secret echo, bounded capture, packaging order and atomicity |
+| edge | `src/shim`; `src/server/{guards,headers,agent_policy,agent_jobs,agent_schedules}.rs`; `src/server/routes/{mod,agent}.rs`; compare `src/agentic/commands.rs` | I6; Account, transport; The browser never supplies a command; A detached run; Scheduled agentic runs | guard order, `ACTIONS` vs dispatch, argv, shim budget vs child bounds, route drift, run/jobs/schedule lockstep through `prepare_run` |
+| io-build | `src/{llm,common,netconnect}`, `desktop/src`, `browser/`, `scripts/` | Secrets never reach; Provider keys live; Native Ollama pull; Netconnect | loopback validators, timeouts, secret echo, bounded capture, child env (`pdf-text-worker`, Playwright sidecar), credential-store fallbacks, packaging order and atomicity, bundled-helper byte checks |
 | ci-tests | `.github/workflows`, `tests/` | Signals weaker than their name | coverage gaps (hostile argv, exit 4, jail, shipped gates), assertions that pass for the wrong reason |
-| data `opt` | `src/server/{structured_memory*,memory_notes,notes_corpus,retrieval*,passage_index,compaction}.rs` | Account, transport | owner isolation, SQLite off async workers, bounded reads |
-| web `opt` | `src/server/{web_*,chat_web,attachment*,mcp*}.rs` | Public web evidence; Private MCP | permission gates, pinned DNS, no proxy/redirect/retry, bounded fetch |
-| chat `opt` | `src/server/{sessions,slash,prompts,notification*}.rs`, `routes/{core,panels,auth}.rs` | Session export; Completion notifications | request limits, audit coverage, local-only export and search |
+| data `opt` | `src/server/{structured_memory*,memory_notes,notes_corpus,retrieval*,passage_index,compaction}.rs`, `routes/{structured_memory,notes_corpus}.rs` | Account, transport; Local chat compaction | owner isolation, SQLite off async workers, bounded reads, save-then-publish on gates |
+| web `opt` | `src/server/{web_*,chat_web*,fetch_confirm,attachment*,docx,mcp*}.rs`, `routes/browser.rs` | Public web evidence; Private MCP; I6 (browser edges) | permission gates, pinned DNS, no proxy/redirect/retry, bounded fetch, provider order (Tavily, SerpAPI, public Google), `result_reads` grants, Firecrawl same-URL only, `/browse` origin and held-request rules |
+| chat `opt` | `src/server/{sessions,session_*,slash,prompts,notification*,loop_runner,style}.rs`, `routes/{core,panels,auth,persona,goals,loop_runner,skills,style,session_io,diag,notifications}.rs` | Session export; Completion notifications; Self-knowledge; /diag | request limits, audit coverage, local-only export and search, `/loop` attaches no MCP tool |
+
+Cross-shard patterns that produced merged fixes (PRs #969-#987), worth one
+targeted pass per server shard: blocking file, SQLite or fsync work on an async
+worker (the fix routes it through `routes::structured_memory::off_worker`,
+lock included); a live setting assigned before its save succeeds (clone,
+mutate, save, then assign: `panels::commit_setting`); a request body or query
+struct without `#[serde(deny_unknown_fields)]`; a state change (`set_goal`)
+made before the refusal that should have prevented it.
 
 Explore and Plan agents do not load `CLAUDE.md`, so each brief carries everything:
 
@@ -57,7 +67,8 @@ reportable**: quote both sides.
 - Style, file size, a newer dependency, a speculative speedup.
 - CI hardening already done: SHA-pinned actions, permissions, concurrency,
   `timeout-minutes`, `persist-credentials: false`, zizmor/actionlint/shellcheck,
-  `cargo deny` on both crates, `--locked`, Dependabot. A path outside the
+  `cargo deny` on both crates, the daily advisory workflow (RustSec, `npm audit`),
+  `desktop-check.yml`'s classify-then-compile gate, `--locked`, Dependabot. A path outside the
   mechanism (another Cargo manifest, scripts outside `scripts/`) is a gap: show
   it with `git ls-files`.
 
@@ -123,8 +134,12 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 
 Then **run the changed code** against an owned temp `CGAGENTHARNESS_HOME` and a
 unique port. `desktop/` is a separate crate on its own toolchain: run the same
-from `desktop/`, and `cargo deny` as `desktop.yml` runs it. Workflow edits:
-actionlint and zizmor. Script edits: the matching contract test in
+from `desktop/`, and `cargo deny` as `desktop.yml` runs it. A Linux
+host cannot compile `desktop/` (objc2): verify the logic in a standalone repro
+and say the compile is `desktop-check.yml`'s. Windows-only behaviour: cross-check
+with `--target x86_64-pc-windows-gnu` and a `CARGO_TARGET_DIR` outside the repo;
+PR CI runs only the focused Windows MCP and credential job, not the full Windows test leg. Workflow edits:
+`scripts/lint-workflows.sh`. Script edits: the matching contract test in
 `scripts/verify-local.sh`.
 
 If `verify_with` is a test it is the one targeted test: `GROK_API_KEY=
@@ -133,7 +148,8 @@ cargo test --locked --test <target>` (it may prompt; ask). `verify-local.sh`
 runs the full suite and is CI's job: leave the PR's quality-bar row unchecked
 and name the skip and head SHA under Risks. Run `cargo deny check` if installed;
 its absence is not a pass. Performance claims need before/after numbers with
-conditions. After a `.md` edit check its `DOCS_BUDGET` cap.
+conditions. After a `.md` edit check its `DOCS_BUDGET` cap; after editing a
+`scripts/build-self-manual.py::INPUTS` file regenerate `assets/self/MANUAL.md`.
 
 When approved to publish: draft PR from `.github/PULL_REQUEST_TEMPLATE.md`,
 `scripts/check-pr-template.sh <body-file>`, then read the advisory review gate.

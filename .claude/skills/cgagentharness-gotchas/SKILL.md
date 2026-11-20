@@ -79,8 +79,8 @@ not runtime `/api/skills` plugins.
   `github.paginate(github.rest.issues.listComments, ...)` resolves to the **array
   itself**. When switching to `paginate`, change the consumer too —
   `comments.find(...)`, not `comments.data.find(...)`. Audit every
-  `await github.paginate` call site in `.github/workflows/` at once; there are
-  four, and they must all read the array directly.
+  `await github.paginate` call site in `.github/workflows/` at once
+  (`pr-template-check.yml`, `review-gate*.yml`); all must read the array directly.
 - **How to check before pushing:** the `github-script` block can be extracted
   from the YAML and run under stubs (`github`, `context`, `core` are just
   arguments), with `listComments` honouring the 30-per-page default and a marker
@@ -130,9 +130,6 @@ not runtime `/api/skills` plugins.
   the **Reviewed commit** SHA matches your head. A superseded run can be reported
   as `cancelled` by `cancel-in-progress` concurrency; that is not a failure, but
   it is also not a verdict.
-- **Why it matters here:** fixes to review findings are exactly the diffs most
-  worth a second pass — they are written fast, under the assumption the problem
-  is already understood.
 - **Evidence:** the Codex "About Codex in GitHub" block on any PR in this repo.
 
 ## 9. The docs audit agent can cite lines that do not exist
@@ -175,6 +172,37 @@ not runtime `/api/skills` plugins.
   SHA is a hard precondition for `schedule`/`workflow_dispatch` releases.
 - **Evidence:** 2026-09-16, `v0.1.14` tag push started run 26 while the docs
   PR was being drafted; dispatch run 27 queued behind it.
+
+## 12. PR CI is not main CI
+
+- **Symptom:** A green PR turns `main` red on `test (windows-latest)` or the
+  next bundle.
+- **Right fix:** A PR's green run is not Windows or desktop evidence. On
+  `pull_request` the matrix is Ubuntu and macOS plus one focused Windows job;
+  the full Windows leg runs on `main` pushes and the merge queue. A
+  Unix-sandbox test carries `#[cfg(unix)]`; cross-check with `--target
+  x86_64-pc-windows-gnu` and a `CARGO_TARGET_DIR` outside the repo. `desktop/`
+  compiles only on macOS, and only when `desktop-check.yml`'s classify regex
+  matches: a new `include_bytes!` or `#[path]` input must join it.
+- **Evidence:** PR #985 (`tests/real_repo_loop.rs`); PR #968 (`prepare-cargo.py`).
+
+## 13. A fixture that is kinder than the real peer
+
+- **Symptom:** MCP SSE tests pass; a real Python-SDK server times out.
+- **Right fix:** The fixture answered JSON-RPC in the POST body; the SDK answers
+  `202 Accepted` and replies on the open GET stream. Run a protocol client once
+  against the reference server, then teach the fixture that shape
+  (`PostReply::OverStream`, `tests/mcp_client.rs`).
+- **Evidence:** PR #976.
+
+## 14. A checker nobody runs rots green
+
+- **Symptom:** `check_otel.py --strict` had 7 failures on a green `main`:
+  unclassified dependencies and spawn files.
+- **Right fix:** The otel oracle is in no workflow. After a network-crate bump,
+  a new direct dependency or a new `Command::new(` file, ask the operator to
+  run `/cgagentharness-otel-hardening`; its pins need a changelog read.
+- **Evidence:** 2026-11-20 skills sync.
 
 ## Related skills
 
