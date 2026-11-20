@@ -2151,8 +2151,12 @@ mod tests {
         assert!(!report.to_string().contains("private-memo-text"), "{report}");
         assert!(!report.to_string().contains("/collect"), "{report}");
         // A link the page showed, a URL the task names and the granted root still go.
-        let (_, ops) = run_batch(&[("navigate", "https://example.com/next#part")]);
+        let (_, ops) = run_batch(&[("navigate", "https://example.com/next")]);
         assert_eq!(ops, ["navigate", "navigate"]);
+        // A fragment the page never showed is composed: page scripts can read it.
+        let (report, ops) = run_batch(&[("navigate", "https://example.com/next#leak=private-memo-text")]);
+        assert_eq!(ops, ["navigate"]);
+        assert!(!report.to_string().contains("private-memo-text"), "{report}");
         let (report, ops) = run_batch_with(
             &[("navigate", "https://example.com/docs/a?b=1")],
             "Read https://example.com/docs/a?b=1, then summarize.",

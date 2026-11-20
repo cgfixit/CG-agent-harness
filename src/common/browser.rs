@@ -639,13 +639,14 @@ enum WireAction {
     Click { ref_id: String },
 }
 
-/// The form two URLs compare in: parsed, fragment dropped (it never leaves the browser).
+/// The form two URLs compare in: parsed, fragment kept. A fragment never
+/// reaches the server, but the page's scripts read it, so a composed one can
+/// carry data out as surely as a query (Codex review on #982).
 fn url_key(raw: &str) -> Option<String> {
-    let mut url = Url::parse(raw.trim()).ok()?;
+    let url = Url::parse(raw.trim()).ok()?;
     if url.scheme() != "https" && url.scheme() != "http" {
         return None;
     }
-    url.set_fragment(None);
     Some(url.to_string())
 }
 
@@ -655,12 +656,18 @@ fn remember_url(urls: &mut BTreeSet<String>, raw: &str) {
     }
 }
 
-/// The http(s) URLs written in an operator's task, without trailing punctuation.
+/// The http(s) URLs written in an operator's task: each as typed and, when
+/// it ends in punctuation, also without it. Both are the operator's own
+/// text, so `Function_(mathematics)` and `?q=hello!` keep their last
+/// character while `(https://a/b).` still yields `https://a/b`.
 fn task_urls(task: &str) -> impl Iterator<Item = &str> {
-    task.split_whitespace().filter_map(|word| {
-        let start = word.find("https://").or_else(|| word.find("http://"))?;
-        let url = word[start..].trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', '\'']);
-        (!url.is_empty()).then_some(url)
+    task.split_whitespace().flat_map(|word| {
+        let start = word.find("https://").or_else(|| word.find("http://"));
+        let typed = start.map(|start| &word[start..]);
+        let trimmed =
+            typed.map(|url| url.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', '\'']));
+        let trimmed = trimmed.filter(|url| Some(*url) != typed);
+        typed.into_iter().chain(trimmed).filter(|url| !url.is_empty())
     })
 }
 
@@ -1008,9 +1015,26 @@ mod tests {
             "named in the task"
         );
         assert!(
-            navigate(&session, "https://example.com/b#frag").is_allow(),
-            "fragment ignored, punctuation trimmed"
+            navigate(&session, "https://example.com/b").is_allow(),
+            "punctuation around the URL trimmed"
         );
+        // A fragment is page-readable data: a composed one is refused (Codex review on #982).
+        for composed in ["https://example.com/b#frag", "https://example.com/#leak=secret123"] {
+            assert!(!navigate(&session, composed).is_allow(), "{composed}");
+        }
+        // A URL that ends in valid URL punctuation keeps it as typed.
+        session.bind_task(
+            "Read https://example.com/wiki/Function_(mathematics) and https://example.com/s?q=hello! then https://example.com/f#part",
+        );
+        for typed in [
+            "https://example.com/wiki/Function_(mathematics)",
+            "https://example.com/s?q=hello!",
+            "https://example.com/f#part",
+        ] {
+            assert!(navigate(&session, typed).is_allow(), "{typed}");
+        }
+        assert!(!navigate(&session, "https://example.com/f#other").is_allow());
+        session.bind_task("Open https://example.com/start?x=1. then compare with (https://example.com/b).");
         for composed in [
             "https://example.com/start?x=2",
             "https://example.com/?d=secret",
