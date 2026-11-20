@@ -1,4 +1,4 @@
-name: Copilot Setup Steps
+name: Copilot - Setup steps
 
 # Copilot's coding agent runs the `copilot-setup-steps` job before it starts.
 # The only setup it needs from this repo: point git at the tracked .githooks/
