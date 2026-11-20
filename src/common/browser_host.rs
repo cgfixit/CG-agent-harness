@@ -856,7 +856,9 @@ pub fn run_task(
     } else {
         RequestPolicy::shared()
     };
-    let mut sidecar = Sidecar::start(script, &session, headless, allow_private, policy)?;
+    // Only a job started with a wait has someone to ask (#995).
+    let takeover = JOB_TAKEOVER.get().cloned();
+    let mut sidecar = Sidecar::start_with(script, &session, headless, allow_private, policy, takeover)?;
     let tools = browser_tools();
     let mut chat = |messages: &[Value]| {
         ollama_chat(api, model, messages, &tools, call_timeout(deadline))
@@ -891,19 +893,88 @@ static JOB_MODE: AtomicBool = AtomicBool::new(false);
 static JOB_CANCELLED: AtomicBool = AtomicBool::new(false);
 static JOB_TURNS: AtomicUsize = AtomicUsize::new(0);
 
+/// Set by `browser run --job --takeover-wait-sec=N`: the job's server decides
+/// held requests, through this process's stdout and stdin.
+static JOB_TAKEOVER: std::sync::OnceLock<Takeover> = std::sync::OnceLock::new();
+
+/// One line of a job's stdin: stop, or the operator's answer to the request
+/// with this id. Anything else is ignored.
+#[derive(Debug, PartialEq)]
+enum JobInput {
+    Cancel,
+    Verdict { id: u64, allow: bool },
+}
+
+fn job_input(line: &str) -> Option<JobInput> {
+    let line = line.trim();
+    if line == "cancel" {
+        return Some(JobInput::Cancel);
+    }
+    let message: Value = serde_json::from_str(line).ok()?;
+    let allow = match message["verdict"].as_str()? {
+        "approve" => true,
+        "deny" => false,
+        _ => return None,
+    };
+    Some(JobInput::Verdict {
+        id: message["id"].as_u64()?,
+        allow,
+    })
+}
+
 /// Job mode for this process: read stdin on a thread until a `cancel` line
 /// or end of input. Either ends the task before its next model turn, so a
-/// task whose server is gone does not keep driving Chrome.
-fn watch_job_input() {
+/// task whose server is gone does not keep driving Chrome. With `wait`, a
+/// request held as the operator's step is announced on stdout and waits that
+/// long for a verdict line; cancel, end of input and silence all mean no.
+fn watch_job_input(wait: Option<Duration>) {
     JOB_MODE.store(true, Ordering::Release);
-    std::thread::spawn(|| {
-        let _ = std::io::stdin()
-            .lock()
-            .lines()
-            .map_while(Result::ok)
-            .find(|line| line.trim() == "cancel");
+    let (verdicts, answers) = mpsc::channel::<(u64, bool)>();
+    if let Some(wait) = wait {
+        let answers = std::sync::Mutex::new(answers);
+        let approver: Approver = std::sync::Arc::new(move |question: &Value| {
+            let Some(id) = question["approve"].as_u64() else {
+                return false;
+            };
+            job_event(json!({"event": "waiting", "wait_sec": wait.as_secs(), "question": question}));
+            let until = Instant::now() + wait;
+            let answers = answers.lock().unwrap_or_else(|p| p.into_inner());
+            let decision = loop {
+                match answers.recv_timeout(until.saturating_duration_since(Instant::now())) {
+                    // An answer to an earlier question is not this one's.
+                    Ok((answered, _)) if answered != id => continue,
+                    Ok((_, true)) => break "approved",
+                    Ok((_, false)) => break "denied",
+                    Err(RecvTimeoutError::Timeout) => break "expired",
+                    Err(RecvTimeoutError::Disconnected) => break "cancelled",
+                }
+            };
+            job_event(json!({"event": "resumed", "id": id, "decision": decision}));
+            decision == "approved"
+        });
+        let _ = JOB_TAKEOVER.set(Takeover { wait, approver });
+    }
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+            match job_input(&line) {
+                Some(JobInput::Cancel) => break,
+                Some(JobInput::Verdict { id, allow }) => {
+                    let _ = verdicts.send((id, allow));
+                }
+                None => {}
+            }
+        }
         JOB_CANCELLED.store(true, Ordering::Release);
+        // Dropping the sender tells a waiting approver the answer is no.
     });
+}
+
+/// One line for the job's server. A server that went away closes this pipe;
+/// the cancel flag then ends the task.
+fn job_event(event: Value) {
+    let mut out = std::io::stdout();
+    let _ = writeln!(out, "{event}");
+    let _ = out.flush();
 }
 
 /// Before each model turn of a job: stop if cancelled, else print one
@@ -916,10 +987,7 @@ fn job_turn() -> Option<String> {
         return Some(JOB_CANCELLED_REASON.to_string());
     }
     let turn = JOB_TURNS.fetch_add(1, Ordering::AcqRel) + 1;
-    // A server that went away closes this pipe; the cancel flag then ends the task.
-    let mut out = std::io::stdout();
-    let _ = writeln!(out, "{}", json!({"event": "turn", "turn": turn}));
-    let _ = out.flush();
+    job_event(json!({"event": "turn", "turn": turn}));
     None
 }
 
@@ -2198,6 +2266,8 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
     let mut origins = Vec::new();
     let mut max_turns = 12usize;
     let mut job = false;
+    let mut takeover_wait = None;
+    let mut allow_private = false;
     let started = Instant::now();
     let mut deadline = None;
     for raw in args {
@@ -2207,6 +2277,12 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
             ("--headed", None) => headless = false,
             // The server's job runner: progress lines out, `cancel` in.
             ("--job", None) => job = true,
+            // Fixture runs only: the server passes it for a loopback origin.
+            ("--allow-private", None) if cfg!(feature = "test-support") => allow_private = true,
+            // How long a held request waits for the job's server to decide.
+            ("--takeover-wait-sec", Some(v)) if v.parse::<u64>().is_ok_and(|n| (1..=600).contains(&n)) => {
+                takeover_wait = v.parse().ok().map(Duration::from_secs)
+            }
             // Only general browsing runs model tasks; browser-verify keeps PR grants.
             ("qwen" | "enter" | "reach" | "guards" | "takeover" | "run", None) if browse && mode.is_none() => {
                 mode = Some(key.to_string())
@@ -2242,6 +2318,10 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
         eprintln!("cgagentharness: --job is for browser run only");
         return 3;
     }
+    if takeover_wait.is_some() && !job {
+        eprintln!("cgagentharness: --takeover-wait-sec needs --job");
+        return 3;
+    }
     let local = |model| match local_model(model) {
         Ok(pair) => Ok(pair),
         Err(err) => {
@@ -2260,7 +2340,7 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
                 Err(code) => return code,
             };
             if job {
-                watch_job_input();
+                watch_job_input(takeover_wait);
             }
             match run_task(
                 &sidecar,
@@ -2269,7 +2349,7 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
                 &task,
                 &origins,
                 max_turns,
-                false,
+                allow_private,
             ) {
                 Ok(report) => {
                     println!("{report}");
@@ -2685,6 +2765,30 @@ mod tests {
             json!([{"verdict": 2, "allow": false}, {"verdict": 1, "allow": true}])
         );
         assert_eq!(calls.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn a_job_reads_only_cancel_and_well_formed_verdict_lines() {
+        assert_eq!(job_input(" cancel \n"), Some(JobInput::Cancel));
+        assert_eq!(
+            job_input(r#"{"verdict":"approve","id":7}"#),
+            Some(JobInput::Verdict { id: 7, allow: true })
+        );
+        assert_eq!(
+            job_input(r#"{"id":7,"verdict":"deny"}"#),
+            Some(JobInput::Verdict { id: 7, allow: false })
+        );
+        for line in [
+            "",
+            "approve",
+            r#"{"verdict":"approve"}"#,
+            r#"{"verdict":"yes","id":7}"#,
+            r#"{"verdict":true,"id":7}"#,
+            r#"{"verdict":"approve","id":"7"}"#,
+            r#"{"verdict":"approve","id":-1}"#,
+        ] {
+            assert_eq!(job_input(line), None, "{line}");
+        }
     }
 
     #[test]

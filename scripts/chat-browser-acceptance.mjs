@@ -36,6 +36,8 @@ let automationFixture=null; // null keeps the unknown-path {} reply for the head
 let loopFixture=null;
 const headerState='["openAnalytics","openDeliveries","openSchedules"].filter(id=>!document.getElementById(id).hidden).join()';
 const sessions = new Map(); const requests=[]; let sequence=0, mode='normal', tokens=2;
+let browseJob=null,browseJobsUnsupported=false;
+const BROWSE_SHA='0c660580e53fdf0cfad3d0c05fb1b250813afb0c574f412ebe6c41c5c7790b3b';
 let memoryEnabled=false, structuredOpen=true;
 let suggestionRun=null;
 let automaticSuggestions=null, memoryOwnerFixture=null, holdMemoryHistory=false, memoryHistoryHeld=null, rejectHeldMemoryHistory=null;
@@ -111,6 +113,29 @@ const server=createServer(async(req,res)=>{
   const apiSet=body.line.trim().match(/^\/api\s+set\s+(\S+)/i);
   if(apiSet){reply({kind:'dispatch',dispatch:true,canonical:'/api set '+apiSet[1],command:'api',sub:'set',rest:apiSet[1]});return;}
   reply({kind:'dispatch',dispatch:true,canonical:body.line});return;
+ }
+ // Browser jobs (#995). A task that says "place the order" pauses one request
+ // until it is approved or denied; every other task finishes at once.
+ if(path==='/api/browser/jobs'&&req.method==='POST'){
+  if(browseJobsUnsupported){reply({detail:{code:'BROWSER_JOBS_UNSUPPORTED',message:'Browser jobs run on macOS and Linux only.'}},409);return;}
+  const waits=String(body.task||'').includes('place the order');
+  browseJob={id:(waits?'b':'a').repeat(32),waits,decided:''};
+  reply({job_id:browseJob.id,status:'running',takeover:true},202);return;
+ }
+ if(path.startsWith('/api/browser/jobs/')){
+  const [,id,verb]=path.match(/^\/api\/browser\/jobs\/([0-9a-f]{32})(?:\/(approve|deny|cancel))?$/)||[];
+  if(!browseJob||id!==browseJob.id){reply({detail:{code:'BROWSER_JOB_NOT_FOUND',message:'no such browser job'}},404);return;}
+  // The server refuses a reason that is only invisible characters (is_visibly_blank).
+  if(verb==='approve'&&!String(body.reason||'').replace(/[\u200b\s]/g,'')){reply({detail:{code:'VALIDATION_ERROR',message:'request body failed validation: reason',details:{fields:['reason']}}},422);return;}
+  if(verb==='approve'||verb==='deny'){browseJob.decided=verb;reply({job_id:id,decision:verb==='approve'?'approved':'denied',request:body.request});return;}
+  if(verb==='cancel'){browseJob.decided='cancel';reply({job_id:id,status:'cancelling'});return;}
+  if(browseJob.waits&&!browseJob.decided){
+   reply({job_id:id,status:'waiting',turns:2,pending:{request:7,method:'POST',url:'https://shop.example/api/order?ref=1',content_type:'application/x-www-form-urlencoded',size:31,sha256:BROWSE_SHA,preview:'item=tea&note=<img src=x onerror=window.BROWSE_INJECTED=1>',asked_at:Date.now()/1000,expires_at:Date.now()/1000+120}});return;
+  }
+  const rows=browseJob.decided==='approve'?[{approved:'POST https://shop.example/api/order?ref=1'}]
+   :browseJob.decided==='deny'?[{held:'POST https://shop.example/api/order?ref=1'}]
+   :[{held_background:'POST https://docs.python.org/autosave'},{held:'POST https://docs.python.org/save'}];
+  reply({job_id:id,status:browseJob.decided==='cancel'?'cancelled':'finished',turns:3,result:{finished:true,report:{answer:'BROWSE_FIXTURE_ANSWER',stopped:'answered',for_operator:rows}}});return;
  }
  if(path==='/api/browser/run'){reply({finished:true,report:{answer:'BROWSE_FIXTURE_ANSWER',stopped:'answered',for_operator:[{held_background:'POST https://docs.python.org/autosave'},{held:'POST https://docs.python.org/save'}]}});return;}
  if(path==='/api/auth/whoami'){if(whoamiDrop){req.socket.destroy();return;}reply(authFixture&&signedIn?{username:authUsername,role:authRole,user_id:userIds[authUsername],must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
@@ -589,7 +614,7 @@ try {
 
  // #945: a file-like bare first site is shown, not granted, until the same line is sent again.
  {
-  const browseRuns=()=>requests.filter(r=>r[1]==='/api/browser/run');
+  const browseRuns=()=>requests.filter(r=>r[0]==='POST'&&r[1]==='/api/browser/jobs');
   const before=browseRuns().length;
   await send('/browse setup.py explain this file');
   await until('document.getElementById("stream").innerText.includes("looks like a file name")');
@@ -611,6 +636,43 @@ try {
   await send('/browse https://setup.py read it');
   for(let i=0;i<100&&browseRuns().length<before+3;i++)await pause(50);
   assert.deepEqual(browseRuns().at(-1)[2],{task:'read it',origins:['https://setup.py']},'an explicit https:// site needs no confirmation');
+
+  // #995: a request the task's own action caused waits for a decision here.
+  const text=()=>'document.getElementById("stream").innerText';
+  const card='[...document.querySelectorAll(".fetch-confirm")].at(-1)';
+  const posted=verb=>requests.filter(r=>r[0]==='POST'&&r[1].endsWith('/'+verb));
+  await send('/browse https://shop.example place the order for tea');
+  await until(text()+'.includes("It is paused, not sent")');
+  const shown=await evaluate(card+'.innerText');
+  for(const part of ['POST https://shop.example/api/order?ref=1','31 bytes','SHA-256 '+BROWSE_SHA,'item=tea&note=<img src=x onerror=window.BROWSE_INJECTED=1>'])assert.ok(shown.includes(part),'the card shows '+part);
+  assert.equal(await evaluate(card+'.querySelectorAll("img").length'),0,'page-written body text is never markup');
+  assert.equal(await evaluate('window.BROWSE_INJECTED===undefined'),true,'and none of it ran');
+  assert.equal(await evaluate(card+'.querySelectorAll("button")[0].disabled'),true,'approve needs a reason first');
+  assert.equal(posted('approve').length,0,'nothing is approved by showing the card');
+  // A refused reason leaves the card usable: the request is still waiting.
+  await evaluate('(()=>{const box='+card+'.querySelector("input");box.value="\\u200b";box.dispatchEvent(new Event("input"));'+card+'.querySelectorAll("button")[0].click();})()');
+  await until(card+'.innerText.includes("VALIDATION_ERROR")');
+  assert.deepEqual(await evaluate('[...'+card+'.querySelectorAll("button,input")].map(el=>el.disabled)'),[false,false,false],'a refused approval can be corrected or held');
+  await evaluate('(()=>{const box='+card+'.querySelector("input");box.value="the order I asked for";box.dispatchEvent(new Event("input"));'+card+'.querySelectorAll("button")[0].click();})()');
+  await until(text()+'.includes("Sent with your approval: POST https://shop.example/api/order?ref=1")');
+  assert.deepEqual(posted('approve').at(-1)[2],{request:7,sha256:BROWSE_SHA,confirm:true,reason:'the order I asked for'},'the yes names the request shown, its hash, confirm and the reason');
+  assert.equal(await evaluate('[...document.querySelectorAll(".fetch-confirm")].filter(c=>c.innerText.includes("paused, not sent")).length'),1,'one card per paused request');
+  // Hold it: nothing is approved, and the task reports the request as held.
+  await send('/browse https://shop.example place the order for tea again');
+  await until('[...document.querySelectorAll(".fetch-confirm")].filter(c=>c.innerText.includes("paused, not sent")).length===2');
+  const approvals=posted('approve').length;
+  await evaluate(card+'.querySelectorAll("button")[1].click()');
+  await until(text()+'.includes("Held, not sent: POST https://shop.example/api/order?ref=1")');
+  assert.deepEqual(posted('deny').at(-1)[2],{request:7});
+  assert.equal(posted('approve').length,approvals,'a hold approves nothing');
+  // Where jobs are not offered the task runs as one request, as before.
+  browseJobsUnsupported=true;
+  const syncRuns=()=>requests.filter(r=>r[1]==='/api/browser/run').length;
+  const ranBefore=syncRuns();
+  await send('/browse docs.python.org read the page');
+  for(let i=0;i<100&&syncRuns()===ranBefore;i++)await pause(50);
+  assert.equal(syncRuns(),ranBefore+1,'without jobs /browse falls back to the synchronous route');
+  browseJobsUnsupported=false;
  }
 
  mode='stream';const streamed=send('stream fixture');
