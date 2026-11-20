@@ -209,39 +209,44 @@ pub async fn document(
     State(state): State<Arc<AppState>>,
     Query(query): Query<DocumentQuery>,
 ) -> ApiResult<Json<Value>> {
-    let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    recover_apply(&state)?;
-    let (content, rev) = if let Some(id) = query.version {
-        if !valid_id(&id) {
-            return Err(error("SOUL_VERSION", "Invalid version"));
-        }
-        let text =
-            read(&records(&state)?, &format!("{id}.md"))?.ok_or_else(|| error("SOUL_VERSION", "No such version"))?;
-        (text, id)
-    } else {
-        current(&state)?
-    };
-    let versions: Vec<String> = if home_dir(&state)?.symlink_metadata("soul-history").is_ok() {
-        records(&state)?
-            .entries()
-            .map_err(|_| io_error())?
-            .flatten()
-            .filter_map(|entry| {
-                entry
-                    .file_name()
-                    .to_str()
-                    .and_then(|n| n.strip_suffix(".md"))
-                    .filter(|n| valid_id(n))
-                    .map(str::to_string)
-            })
-            .take(MAX_RECORDS)
-            .collect()
-    } else {
-        Vec::new()
-    };
-    Ok(Json(
-        json!({"content":content,"revision":rev,"max_chars":max_chars(&state),"versions":versions,"scope":"chat persona only; fixed contracts and coding planner are separate"}),
-    ))
+    // Every persona operation reads, fsyncs and renames files under
+    // EDIT_LOCK: run it off the async workers, lock included.
+    super::structured_memory::off_worker(move || {
+        let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        recover_apply(&state)?;
+        let (content, rev) = if let Some(id) = query.version {
+            if !valid_id(&id) {
+                return Err(error("SOUL_VERSION", "Invalid version"));
+            }
+            let text =
+                read(&records(&state)?, &format!("{id}.md"))?.ok_or_else(|| error("SOUL_VERSION", "No such version"))?;
+            (text, id)
+        } else {
+            current(&state)?
+        };
+        let versions: Vec<String> = if home_dir(&state)?.symlink_metadata("soul-history").is_ok() {
+            records(&state)?
+                .entries()
+                .map_err(|_| io_error())?
+                .flatten()
+                .filter_map(|entry| {
+                    entry
+                        .file_name()
+                        .to_str()
+                        .and_then(|n| n.strip_suffix(".md"))
+                        .filter(|n| valid_id(n))
+                        .map(str::to_string)
+                })
+                .take(MAX_RECORDS)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Ok(Json(
+            json!({"content":content,"revision":rev,"max_chars":max_chars(&state),"versions":versions,"scope":"chat persona only; fixed contracts and coding planner are separate"}),
+        ))
+    })
+    .await
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -272,11 +277,14 @@ pub async fn edit(
     if !req.confirm {
         return Err(error("SOUL_CONFIRM", "Explicit confirmation is required"));
     }
-    let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    recover_apply(&state)?;
-    let rev = save(&state, &req.content, &req.base_revision)?;
-    state.audit.log(json!({"event":"soul_human_edit","revision":rev}));
-    Ok(Json(json!({"revision":rev,"saved":true})))
+    super::structured_memory::off_worker(move || {
+        let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        recover_apply(&state)?;
+        let rev = save(&state, &req.content, &req.base_revision)?;
+        state.audit.log(json!({"event":"soul_human_edit","revision":rev}));
+        Ok(Json(json!({"revision":rev,"saved":true})))
+    })
+    .await
 }
 
 #[derive(Deserialize, Default)]
@@ -580,25 +588,28 @@ pub async fn propose(
     State(state): State<Arc<AppState>>,
     ValidJson(req): ValidJson<EditRequest>,
 ) -> ApiResult<Json<Value>> {
-    let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    recover_apply(&state)?;
-    validate_content(&state, &req.content)?;
-    if current(&state)?.1 != req.base_revision {
-        return Err(error("SOUL_CHANGED", "Reload current persona before proposing"));
-    }
-    let dir = records(&state)?;
-    if dir.entries().map_err(|_| io_error())?.count() >= MAX_RECORDS {
-        return Err(error("SOUL_HISTORY_FULL", "History limit reached"));
-    }
-    let id = crate::common::random_hex(32);
-    let proposal = json!({"id":id,"content":req.content,"base_revision":req.base_revision,"revision":sha256_hex(&req.content),"status":"pending","origin":"operator-submitted proposal; may contain model-authored text"});
-    write(
-        &dir,
-        &format!("{id}.json"),
-        serde_json::to_string_pretty(&proposal).unwrap().as_bytes(),
-    )
-    .map_err(|_| io_error())?;
-    Ok(Json(proposal))
+    super::structured_memory::off_worker(move || {
+        let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        recover_apply(&state)?;
+        validate_content(&state, &req.content)?;
+        if current(&state)?.1 != req.base_revision {
+            return Err(error("SOUL_CHANGED", "Reload current persona before proposing"));
+        }
+        let dir = records(&state)?;
+        if dir.entries().map_err(|_| io_error())?.count() >= MAX_RECORDS {
+            return Err(error("SOUL_HISTORY_FULL", "History limit reached"));
+        }
+        let id = crate::common::random_hex(32);
+        let proposal = json!({"id":id,"content":req.content,"base_revision":req.base_revision,"revision":sha256_hex(&req.content),"status":"pending","origin":"operator-submitted proposal; may contain model-authored text"});
+        write(
+            &dir,
+            &format!("{id}.json"),
+            serde_json::to_string_pretty(&proposal).unwrap().as_bytes(),
+        )
+        .map_err(|_| io_error())?;
+        Ok(Json(proposal))
+    })
+    .await
 }
 fn proposal(state: &AppState, id: &str) -> ApiResult<Value> {
     if !valid_id(id) {
@@ -610,9 +621,12 @@ fn proposal(state: &AppState, id: &str) -> ApiResult<Value> {
     .map_err(|_| io_error())
 }
 pub async fn review(State(state): State<Arc<AppState>>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
-    let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    recover_apply(&state)?;
-    Ok(Json(proposal(&state, &id)?))
+    super::structured_memory::off_worker(move || {
+        let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        recover_apply(&state)?;
+        Ok(Json(proposal(&state, &id)?))
+    })
+    .await
 }
 fn persist_proposal(state: &AppState, id: &str, record: &Value) -> ApiResult<()> {
     write(
@@ -647,38 +661,41 @@ pub async fn decide(
     if !req.confirm {
         return Err(error("SOUL_CONFIRM", "Explicit confirmation is required"));
     }
-    let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-    recover_apply(&state)?;
-    let mut record = proposal(&state, &id)?;
-    let content = record["content"].as_str().ok_or_else(io_error)?;
-    if record["status"] != "pending"
-        || record["id"] != id
-        || record["revision"] != req.revision
-        || sha256_hex(content) != req.revision
-    {
-        return Err(error(
-            "SOUL_PROPOSAL_CHANGED",
-            "Proposal is no longer the reviewed pending revision",
-        ));
-    }
-    if req.apply {
-        validate_save(&state, content, record["base_revision"].as_str().ok_or_else(io_error)?)?;
-        // Persist intent before replacing the document. No recovery path applies text.
-        let marker = json!({"id":id,"base_revision":record["base_revision"],"revision":req.revision});
-        write(
-            &home_dir(&state)?,
-            APPLY_MARKER,
-            serde_json::to_string(&marker).unwrap().as_bytes(),
-        )?;
-        save(&state, content, record["base_revision"].as_str().ok_or_else(io_error)?)?;
-    }
-    record["status"] = json!(if req.apply { "applied" } else { "rejected" });
-    persist_proposal(&state, &id, &record)?;
-    if req.apply {
-        home_dir(&state)?.remove_file(APPLY_MARKER).map_err(|_| io_error())?;
-    }
-    state
-        .audit
-        .log(json!({"event":"soul_proposal_decision","id":id,"status":record["status"]}));
-    Ok(Json(record))
+    super::structured_memory::off_worker(move || {
+        let _guard = EDIT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        recover_apply(&state)?;
+        let mut record = proposal(&state, &id)?;
+        let content = record["content"].as_str().ok_or_else(io_error)?;
+        if record["status"] != "pending"
+            || record["id"] != id
+            || record["revision"] != req.revision
+            || sha256_hex(content) != req.revision
+        {
+            return Err(error(
+                "SOUL_PROPOSAL_CHANGED",
+                "Proposal is no longer the reviewed pending revision",
+            ));
+        }
+        if req.apply {
+            validate_save(&state, content, record["base_revision"].as_str().ok_or_else(io_error)?)?;
+            // Persist intent before replacing the document. No recovery path applies text.
+            let marker = json!({"id":id,"base_revision":record["base_revision"],"revision":req.revision});
+            write(
+                &home_dir(&state)?,
+                APPLY_MARKER,
+                serde_json::to_string(&marker).unwrap().as_bytes(),
+            )?;
+            save(&state, content, record["base_revision"].as_str().ok_or_else(io_error)?)?;
+        }
+        record["status"] = json!(if req.apply { "applied" } else { "rejected" });
+        persist_proposal(&state, &id, &record)?;
+        if req.apply {
+            home_dir(&state)?.remove_file(APPLY_MARKER).map_err(|_| io_error())?;
+        }
+        state
+            .audit
+            .log(json!({"event":"soul_proposal_decision","id":id,"status":record["status"]}));
+        Ok(Json(record))
+    })
+    .await
 }
