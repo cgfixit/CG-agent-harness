@@ -18,15 +18,15 @@ and procedures can differ. Claude-only entries are marked.
   Rust, desktop, runtime and CI improvements as focused draft PRs.
 - [`cgagentharness-otel-hardening/`](cgagentharness-otel-hardening/SKILL.md):
   **operator-only, Claude-only.** Telemetry-kill audit; ships `check_otel.py`
-  and `verify.sh`.
+  and `verify.sh`, which no workflow runs.
 - [`cgagentharness-project-guidance/`](cgagentharness-project-guidance/SKILL.md):
   read order and skill routing; load first.
 - [`cgagentharness-runtime-invariant-check/`](cgagentharness-runtime-invariant-check/SKILL.md):
   Claude-only, report-only walkthrough of I6, guard chain, CSRF and write gates.
 - [`cgagentharness-write-policy-redteam/`](cgagentharness-write-policy-redteam/SKILL.md):
   attack write gates, `confirm`+`reason`, clone jail and shim argv.
-- [`dep-sync/`](dep-sync/SKILL.md): Claude-only. Fixes dependency, toolchain,
-  deny and CI drift against `origin/main`.
+- [`dep-sync/`](dep-sync/SKILL.md): Claude-only. Fixes Cargo, npm sidecar,
+  toolchain, deny and CI drift against `origin/main`.
 - [`doc-sync/`](doc-sync/SKILL.md): **operator-only, Claude-only.** Rewrites
   stale doc sections to match the code; edit-only.
 - [`fable-protocol/`](fable-protocol/SKILL.md): evidence-first reasoning before

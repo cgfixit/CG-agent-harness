@@ -27,7 +27,8 @@ one.
 | gh builder | `src/agentic/gh_client.rs` `gh_env()` | Git allowlist without provider keys + `GIT_TERMINAL_PROMPT=0` + `Gh` arm; every `RunSpec` in `gh_client.rs`/`writer.rs` passes `env: Some(&gh_env())` |
 | verifier builder | `src/agentic/executor/runner.rs` `scrubbed_env()` | `ALLOWED_ENV_VARS` (6) + `NO_PROXY=*`, `PIP_NO_INDEX`, `PIP_DISABLE_PIP_VERSION_CHECK`, `CARGO_NET_OFFLINE` + `VerificationCheck` arm |
 | MCP stdio | `src/common/mcp.rs` `spawn()` + `mcp_worker.rs` | `env_clear()`, operator `env` through `filter_env()` (`SECRET_ENV` + `HIJACK_ENV` dropped), then `McpServer` arm (operator `env` cannot override it), fixed PATH/locale, scratch HOME |
-| desktop | `desktop/src/backend.rs` `start()`, `main.rs` `prepare_cargo()`/`external_link()` | sidecar + python helper carry `RUSTUP_AUTO_INSTALL=0`; the opener runs `env_clear()` with a fixed PATH |
+| desktop | `desktop/src/backend.rs` `start()`, `main.rs` `prepare_cargo()`/`external_link()`, `web_launcher.rs` `open()` | sidecar + python helper carry `RUSTUP_AUTO_INSTALL=0`; the opener and the Terminal web launcher run `/usr/bin/open` under `env_clear()` with a fixed PATH |
+| in-process children | `src/common/pdf_text.rs`, `browser_host.rs` | `pdf-text-worker` gets an empty env; the Playwright sidecar a cleared one + `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` |
 | lock graphs | `Cargo.lock`, `desktop/Cargo.lock` | no `opentelemetry*`, `sentry*`, `posthog*`, `*telemetry*`, `*analytics*` crate |
 | oracle + inventory | `check_otel.py` | the independent second copy of every pair, allowlist and strip list, plus the category 1–5 row for every crate, binary, launcher and provider |
 
@@ -46,14 +47,14 @@ it actually calls, and an arm's names are never re-pinned at a site.
    calls (missing / extra / flipped / unrouted all FAIL) · T3 allowlists and
    strip lists exact · T4 inventory
    staleness (120d) · T5 lock-graph telemetry-crate denylist, both crates · T6
-   verified-pin drift (reqwest, rmcp, axum, rustls, hyper, keyring, tantivy,
-   tracing-subscriber, tauri; `DEFAULT_MIN_GH`) · T7 every `Command::new(` file
+   verified-pin drift (reqwest, rmcp, axum, rustls, hyper, keyring-core, tantivy,
+   lopdf, tracing-subscriber, tauri; `DEFAULT_MIN_GH`) · T7 every `Command::new(` file
    is listed and `src/server` has none · T8 no literal re-enable, `remove_var`
    or `set_var` of a kill name · T9 every gh/git `RunSpec` routes through its
    builder; the three external-binary sites carry `DO_NOT_TRACK=1` +
    `GH_TELEMETRY=false` · T10 every direct dependency, external binary and
    finetune requirement classified; dynamic launcher markers present · T11 MCP
-   spawn/worker clear, opener clears, sidecar pins its home · T12 sandbox
+   spawn/worker clear, opener and web launcher clear, sidecar pins its home · T12 sandbox
    network-denial literals present: `--unshare-net`, `--net`, deny-default
    Seatbelt with `(allow network*)` only under `Unrestricted`.
 
@@ -73,10 +74,10 @@ it actually calls, and an arm's names are never re-pinned at a site.
 
    | Vendor | Re-verify |
    |---|---|
-   | gh (floor 2.40.0) | `gh help environment` still documents `GH_TELEMETRY` true/false/log and `GH_NO_UPDATE_NOTIFIER`? The names were inherited from CyClaw's 2026-08-27 read, not re-read at port time. Is `GH_NO_EXTENSION_UPDATE_NOTIFIER` still separate? |
+   | gh (floor 2.40.0) | `gh help environment` still documents `GH_TELEMETRY` (`false`/`0` off, `log`; it outranks `DO_NOT_TRACK`), `GH_NO_UPDATE_NOTIFIER` and the separate `GH_NO_EXTENSION_UPDATE_NOTIFIER`? Last re-read 2026-11-20. |
    | rustup | `RUSTUP_AUTO_INSTALL=0` still the auto-install switch? |
    | cargo / pip | `CARGO_NET_OFFLINE`, `PIP_NO_INDEX`, `PIP_DISABLE_PIP_VERSION_CHECK` unchanged? |
-   | reqwest / rmcp / tauri | changelog since the verified pin: any new default egress (update checks, crash reporting, a telemetry feature flag)? |
+   | reqwest / rmcp / tauri / tantivy / lopdf / keyring-core + stores | changelog since the verified pin: any new default egress (update checks, crash reporting, a telemetry feature flag)? When a changelog will not load, grep the pinned source under `~/.cargo/registry/src` for sockets and HTTP clients and say which you did. |
    | huggingface_hub / chromadb | still the names a verified Python repo reads (CyClaw's rows are the reference) |
 
 4. **Close a real gap** (additive, low-risk): change the Rust site AND
@@ -117,7 +118,8 @@ it actually calls, and an arm's names are never re-pinned at a site.
 - **`Command::new(` is the sweep marker.** `Command::new` inside a string (the
   governance regex) or `use tokio::process::Command;` does not match; a spawn
   built another way (`posix_spawn` via libc) would not either — add a marker.
-- **The bypass sweep strips from the first `#[cfg(test)]` to end of file.**
+- **The bypass sweep strips from the first `#[cfg(test)]` or
+  `#[cfg(all(test, ...))]` to end of file.**
   A test-only item placed mid-file hides the production code after it from
   T7/T8 (false negative, never a false positive). Keep tests last.
 - **`ANONYMIZED_TELEMETRY` is lower-case `false` here, `False` in CyClaw.**
@@ -130,5 +132,10 @@ it actually calls, and an arm's names are never re-pinned at a site.
 - **`cargo deny` bans exact names; T5 matches patterns.** A telemetry crate
   under a name neither `deny.toml` lists passes CI until both list it; T5
   still catches it. Verify a name on crates.io before adding it.
-- The desktop lock resolves two `reqwest` majors (0.12 via the harness, 0.13
-  via tauri); duplicate versions are warn-only policy, reported as INFO.
+- **reqwest 0.13 verifies public TLS through the OS** (`rustls-platform-verifier`).
+  On macOS and Windows the trust evaluator may fetch revocation or intermediate
+  data itself: OS egress with no env control, recorded on the cloud-provider
+  row, not a kill pair to invent. Loopback clients pin a certificate
+  (`use_preconfigured_tls`) and skip it.
+- Both locks resolve one `reqwest` (0.13); a second major would be reported as
+  INFO under the warn-only duplicate-version policy.
