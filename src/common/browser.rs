@@ -13,6 +13,12 @@ use url::Url;
 const MAX_WAIT_MS: u32 = 5_000;
 const MAX_TYPE_CHARS: usize = 2_000;
 const MAX_GRANT_ORIGINS: usize = 32;
+/// Actions an operator may approve for one native session.
+const MAX_DESKTOP_ACTIONS: usize = 32;
+/// Why a native action the operator did not list is not run.
+pub const DESKTOP_HANDOFF: &str = "native action stays with the operator: it is not on this session's approved list";
+/// Why nothing is typed or chosen in a native session.
+pub const DESKTOP_INPUT_OFF: &str = "typing, Enter and selection are off in a native session";
 /// An observation is one page of 40 elements and 4,000 characters.
 const MAX_OBSERVE_PAGE: u32 = 50;
 const MAX_FIND_CHARS: usize = 80;
@@ -51,9 +57,14 @@ impl Decision {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PolicyError {
     BadOrigin(String),
-    Ambiguous { role: String, name: String },
+    Ambiguous {
+        role: String,
+        name: String,
+    },
     Suspended,
     TooManyOrigins,
+    /// A native session's approved list is over its limit or has a blank entry.
+    BadDesktopActions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,6 +178,12 @@ enum Profile {
         owned: OriginKey,
         dependencies: BTreeSet<OriginKey>,
     },
+    /// A native app window (#996). There is no network layer under a native
+    /// control to hold what it sends, so nothing is activated unless the
+    /// operator listed its role and exact name; nothing is typed or chosen.
+    Desktop {
+        approved: BTreeSet<(String, String)>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -228,6 +245,31 @@ impl Session {
             owned,
             dependencies: deps,
         }))
+    }
+
+    /// A native session. `approved` lists the only elements that may be
+    /// activated, each as a role and the element's exact accessible name; the
+    /// operator supplies it, never the model. An empty list is a read-only
+    /// session. It has no origins: every URL is refused.
+    pub fn desktop<I, R, N>(approved: I) -> Result<Self, PolicyError>
+    where
+        I: IntoIterator<Item = (R, N)>,
+        R: AsRef<str>,
+        N: AsRef<str>,
+    {
+        let mut set = BTreeSet::new();
+        for (role, name) in approved {
+            let (role, name) = (role.as_ref().trim().to_ascii_lowercase(), name.as_ref().to_string());
+            if role.is_empty() || name.trim().is_empty() || set.len() >= MAX_DESKTOP_ACTIONS {
+                return Err(PolicyError::BadDesktopActions);
+            }
+            set.insert((role, name));
+        }
+        Ok(Self::new(Profile::Desktop { approved: set }))
+    }
+
+    fn is_desktop(&self) -> bool {
+        matches!(self.profile, Profile::Desktop { .. })
     }
 
     fn new(profile: Profile) -> Self {
@@ -432,6 +474,36 @@ impl Session {
             Ok(action) => action,
             Err(reason) => return Decision::Refuse { reason },
         };
+        if self.is_desktop() {
+            // A native window has no pages or tabs to go to, and input is off.
+            // A ref is still checked first, so a stale one reads as stale.
+            match &action {
+                WireAction::Navigate { .. } => {
+                    return Decision::Refuse {
+                        reason: "a native session has no page to navigate".into(),
+                    }
+                }
+                WireAction::SelectTab { .. } => {
+                    return Decision::Handoff {
+                        reason: DESKTOP_HANDOFF.into(),
+                    }
+                }
+                WireAction::Type { ref_id, .. }
+                | WireAction::PressEnter { ref_id }
+                | WireAction::Select { ref_id, .. } => {
+                    return match self.live_fact(ref_id) {
+                        Err(reason) => Decision::Refuse { reason },
+                        Ok(fact) if fact.input == InputKind::Secret => Decision::Handoff {
+                            reason: "secret field stays with the operator".into(),
+                        },
+                        Ok(_) => Decision::Handoff {
+                            reason: DESKTOP_INPUT_OFF.into(),
+                        },
+                    };
+                }
+                _ => {}
+            }
+        }
         match action {
             WireAction::Navigate { url } => match self.authorize_url(&url) {
                 Decision::Allow if !self.given_url(&url) => Decision::Refuse {
@@ -496,6 +568,16 @@ impl Session {
             };
         }
         let role = fact.role.to_ascii_lowercase();
+        if let Profile::Desktop { approved } = &self.profile {
+            // No role is safe by default here: a native button can send, pay or delete.
+            return if approved.contains(&(role, fact.name.clone())) {
+                Decision::Allow
+            } else {
+                Decision::Handoff {
+                    reason: DESKTOP_HANDOFF.into(),
+                }
+            };
+        }
         if role == "tab" {
             return if self.tabs.iter().any(|name| name == &fact.name) {
                 Decision::Allow
@@ -601,6 +683,7 @@ impl Session {
         let keys: Vec<&OriginKey> = match &self.profile {
             Profile::General { origins } => origins.iter().collect(),
             Profile::Pr { owned, dependencies } => std::iter::once(owned).chain(dependencies.iter()).collect(),
+            Profile::Desktop { .. } => Vec::new(),
         };
         keys.iter().map(|key| key.display()).collect()
     }
@@ -620,6 +703,7 @@ impl Session {
         match &self.profile {
             Profile::General { origins } => origins.contains(origin),
             Profile::Pr { owned, dependencies } => origin == owned || dependencies.contains(origin),
+            Profile::Desktop { .. } => false,
         }
     }
 }
@@ -834,6 +918,121 @@ mod tests {
         assert!(session.authorize_url("https://example.test/fixture").is_allow());
         assert!(!session.authorize_url("https://example.com/").is_allow());
         assert!(!session.authorize_url("http://127.0.0.1:8790/").is_allow());
+    }
+
+    fn native_window(session: &mut Session) -> Observation {
+        let draft = |role: &str, name: &str, input| ElementDraft {
+            role: role.into(),
+            name: name.into(),
+            href: None,
+            input,
+            snapshot_ref: Some("snap-1:0".into()),
+        };
+        session
+            .mint(
+                vec!["General".into()],
+                vec![
+                    draft("AXButton", "Refresh", InputKind::None),
+                    draft("AXButton", "Delete all", InputKind::None),
+                    draft("AXTextField", "Search", InputKind::Text),
+                    draft("AXSecureTextField", "Password", InputKind::Secret),
+                    draft("AXLink", "Help", InputKind::None),
+                ],
+            )
+            .unwrap()
+    }
+
+    /// #996: a native control has no network layer under it, so only what the
+    /// operator listed runs; everything else is handed off, and nothing is typed.
+    #[test]
+    fn a_native_session_activates_only_listed_actions_and_types_nothing() {
+        let mut session = Session::desktop([("AXButton", "Refresh")]).unwrap();
+        let seen = native_window(&mut session);
+        let id = |name: &str| seen.elements.iter().find(|el| el.name == name).unwrap().ref_id.clone();
+        let click = |session: &Session, name: &str| session.decide(&json!({"action":"click","ref_id": id(name)}));
+        assert_eq!(click(&session, "Refresh"), Decision::Allow);
+        for name in ["Delete all", "Search", "Help"] {
+            assert_eq!(
+                click(&session, name),
+                Decision::Handoff {
+                    reason: DESKTOP_HANDOFF.into()
+                },
+                "{name}"
+            );
+        }
+        assert!(matches!(click(&session, "Password"), Decision::Handoff { reason } if reason.contains("secret")));
+        // The same name on another role is not the listed action.
+        assert_ne!(
+            Session::desktop([("AXLink", "Refresh")]).map(|mut other| {
+                let seen = native_window(&mut other);
+                let id = seen
+                    .elements
+                    .iter()
+                    .find(|el| el.name == "Refresh")
+                    .unwrap()
+                    .ref_id
+                    .clone();
+                other.decide(&json!({"action":"click","ref_id": id}))
+            }),
+            Ok(Decision::Allow)
+        );
+        let off = Decision::Handoff {
+            reason: DESKTOP_INPUT_OFF.into(),
+        };
+        for wire in [
+            json!({"action":"type","ref_id": id("Search"),"text":"x"}),
+            json!({"action":"press_enter","ref_id": id("Search")}),
+            json!({"action":"select","ref_id": id("Search"),"value":"x"}),
+        ] {
+            assert_eq!(session.decide(&wire), off, "{wire}");
+        }
+        assert!(matches!(
+            session.decide(&json!({"action":"type","ref_id": id("Password"),"text":"x"})),
+            Decision::Handoff { reason } if reason.contains("secret")
+        ));
+        assert!(matches!(
+            session.decide(&json!({"action":"select_tab","tab":"General"})),
+            Decision::Handoff { .. }
+        ));
+        for url in ["https://example.com/", "file:///etc/passwd"] {
+            assert!(matches!(
+                session.decide(&json!({"action":"navigate","url": url})),
+                Decision::Refuse { .. }
+            ));
+            assert!(matches!(session.authorize_url(url), Decision::Refuse { .. }));
+        }
+        assert!(session.grant_strings().is_empty());
+        // Reading stays open; a stale ref is still stale.
+        assert_eq!(session.decide(&json!({"action":"observe"})), Decision::Allow);
+        assert_eq!(session.decide(&json!({"action":"scroll","dy": 400})), Decision::Allow);
+        let old = id("Refresh");
+        native_window(&mut session);
+        assert!(matches!(
+            session.decide(&json!({"action":"click","ref_id": old})),
+            Decision::Refuse { reason } if reason.contains("stale")
+        ));
+    }
+
+    #[test]
+    fn a_native_approved_list_is_bounded_and_an_empty_one_is_read_only() {
+        let mut read_only = Session::desktop(Vec::<(&str, &str)>::new()).unwrap();
+        let seen = native_window(&mut read_only);
+        for el in &seen.elements {
+            assert!(
+                !read_only
+                    .decide(&json!({"action":"click","ref_id": el.ref_id}))
+                    .is_allow(),
+                "{}",
+                el.name
+            );
+        }
+        for bad in [vec![("", "Refresh")], vec![("AXButton", "  ")]] {
+            assert_eq!(Session::desktop(bad).err(), Some(PolicyError::BadDesktopActions));
+        }
+        let many: Vec<(String, String)> = (0..=MAX_DESKTOP_ACTIONS)
+            .map(|n| ("AXButton".to_string(), format!("Button {n}")))
+            .collect();
+        assert_eq!(Session::desktop(many).err(), Some(PolicyError::BadDesktopActions));
     }
 
     #[test]
