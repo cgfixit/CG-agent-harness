@@ -359,12 +359,15 @@ fn retire_disabled_owner(state: &AppState, owner: &str) -> ApiResult<()> {
     keys
 }
 
-/// Audit accounts see only this fixed projection of request events. Model
-/// content, paths in the filesystem, account records and keys are never read.
-pub async fn audit_events(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
+/// How much of the audit file's end the audit view reads.
+const AUDIT_TAIL_BYTES: u64 = 65536;
+
+/// The last `AUDIT_TAIL_BYTES` of the audit file, or `None` when there is no
+/// file yet. Bytes, not text: the window starts at an arbitrary offset, which
+/// can fall inside a multibyte character, and audit lines carry non-ASCII text
+/// unescaped. Read as text, such a window failed and the view answered 503.
+fn audit_tail(path: &std::path::Path) -> std::io::Result<Option<Vec<u8>>> {
     use std::io::{Read, Seek, SeekFrom};
-    // Lines from earlier requests may still be queued for the writer thread.
-    state.audit.flush_async().await;
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -372,27 +375,26 @@ pub async fn audit_events(State(state): State<Arc<AppState>>) -> ApiResult<Json<
         use std::os::unix::fs::OpenOptionsExt;
         options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
     }
-    let unavailable = |_: std::io::Error| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "AUDIT_UNAVAILABLE",
-            "audit unavailable",
-        )
-    };
-    let mut file = match options.open(state.audit.path()) {
+    let mut file = match options.open(path) {
         Ok(file) => file,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Json(json!({"events": []}))),
-        Err(e) => return Err(unavailable(e)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
     };
-    let size = file.metadata().map_err(unavailable)?.len();
-    file.seek(SeekFrom::Start(size.saturating_sub(65536)))
-        .map_err(unavailable)?;
-    let mut text = String::new();
-    file.take(65536).read_to_string(&mut text).map_err(unavailable)?;
-    let events: Vec<Value> = text
-        .lines()
+    let size = file.metadata()?.len();
+    file.seek(SeekFrom::Start(size.saturating_sub(AUDIT_TAIL_BYTES)))?;
+    let mut tail = Vec::new();
+    file.take(AUDIT_TAIL_BYTES).read_to_end(&mut tail)?;
+    Ok(Some(tail))
+}
+
+/// The newest 100 request events in `tail`, newest first, as the fixed
+/// projection audit accounts see. Model content, paths in the filesystem,
+/// account records and keys are never read. A line the window cut, or one that
+/// is not JSON, is skipped.
+fn portal_events(tail: &[u8]) -> Vec<Value> {
+    tail.split(|byte| *byte == b'\n')
         .rev()
-        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter_map(|line| serde_json::from_slice::<Value>(line).ok())
         .filter(|v| v["event"] == "portal.request")
         .take(100)
         .map(|v| {
@@ -404,8 +406,29 @@ pub async fn audit_events(State(state): State<Arc<AppState>>) -> ApiResult<Json<
                 "status": v["status"],
             })
         })
-        .collect();
-    Ok(Json(json!({"events": events, "bounded": true})))
+        .collect()
+}
+
+pub async fn audit_events(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
+    // Lines from earlier requests may still be queued for the writer thread.
+    state.audit.flush_async().await;
+    let path = state.audit.path().to_path_buf();
+    // The open, seek and read block: off the async workers.
+    let events = super::structured_memory::off_worker(move || {
+        audit_tail(&path).map(|tail| tail.map(|tail| portal_events(&tail)))
+    })
+    .await
+    .map_err(|_| {
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "AUDIT_UNAVAILABLE",
+            "audit unavailable",
+        )
+    })?;
+    Ok(Json(match events {
+        None => json!({"events": []}),
+        Some(events) => json!({"events": events, "bounded": true}),
+    }))
 }
 
 pub async fn list_users(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Json<Value>> {
@@ -615,6 +638,33 @@ mod tests {
         mgr.create_user("second-admin", &password, ROLE_ADMIN).unwrap();
         // A new account under the same name is not the one that was checked.
         assert_eq!(require_current_admin(&mgr, &checked).unwrap_err().code, PERM_DENIED);
+    }
+
+    #[test]
+    fn the_audit_view_reads_a_tail_that_starts_inside_a_character() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.jsonl");
+        assert!(audit_tail(&path).unwrap().is_none(), "no file yet is not an error");
+        let request = |n: usize| {
+            format!("{{\"event\":\"portal.request\",\"actor\":\"auditor\",\"method\":\"GET\",\"route\":\"/r{n}\",\"status\":200,\"timestamp\":{n},\"secret\":\"never shown\"}}\n")
+        };
+        let lines: String = (0..200).map(request).collect();
+        // Audit lines carry non-ASCII text unescaped. Size the line before the
+        // request lines so the 64 KiB window starts on the second byte of its "é".
+        let filler = AUDIT_TAIL_BYTES as usize - 2 - lines.len();
+        let text = format!(
+            "{{\"event\":\"model_switched\",\"model\":\"mod\u{e9}{}\n{lines}",
+            "l".repeat(filler)
+        );
+        std::fs::write(&path, &text).unwrap();
+        let tail = audit_tail(&path).unwrap().expect("the file exists");
+        assert_eq!(tail.len() as u64, AUDIT_TAIL_BYTES);
+        assert!(std::str::from_utf8(&tail).is_err(), "the window starts mid-character");
+        let events = portal_events(&tail);
+        assert_eq!(events.len(), 100, "the newest hundred, the cut line skipped");
+        assert_eq!(events[0]["route"], "/r199");
+        assert_eq!(events[99]["route"], "/r100");
+        assert_eq!(events[0].as_object().unwrap().len(), 5, "the fixed projection only");
     }
 
     #[test]
