@@ -101,7 +101,7 @@ async fn prepare(
         ));
     }
     // shortcut: only origin-level block rules are enforced; a path-level rule needs the proxy to see it.
-    if blocked_origin(&current_policy(state)?, &session).is_some() {
+    if policy_blocks(state, &session).await? {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "BROWSER_ORIGIN_BLOCKED",
@@ -196,7 +196,7 @@ type ChildResult = Result<(i32, String, String), ShimError>;
 /// Audit the run, recheck the block list, and turn the child's output into
 /// the response body. A job's stdout has progress lines before the report, so
 /// the report is the last line.
-fn deliver(state: &AppState, asked: &Asked, result: ChildResult) -> ApiResult<Value> {
+async fn deliver(state: &Arc<AppState>, asked: &Asked, result: ChildResult) -> ApiResult<Value> {
     let exit = result.as_ref().map(|(code, _, _)| *code).ok();
     state.audit.log(json!({
         "event": "browser.run",
@@ -221,7 +221,7 @@ fn deliver(state: &AppState, asked: &Asked, result: ChildResult) -> ApiResult<Va
     })?;
     // Permission checked at launch is stale after the run; deliver nothing if
     // the block list now covers a granted origin.
-    if policy_now_blocks(state, &asked.session) {
+    if policy_now_blocks(state, &asked.session).await {
         return Err(policy_changed());
     }
     let report = stdout
@@ -261,8 +261,20 @@ fn deliver(state: &AppState, asked: &Asked, result: ChildResult) -> ApiResult<Va
     Ok(body)
 }
 
-fn policy_now_blocks(state: &AppState, session: &Session) -> bool {
-    current_policy(state).map_or(true, |policy| blocked_origin(&policy, session).is_some())
+/// Whether the shared block list covers a granted origin. The policy file is
+/// read and matched on the blocking pool, never on an async worker; an
+/// unreadable file is the `WEB_POLICY_UNAVAILABLE` refusal.
+async fn policy_blocks(state: &Arc<AppState>, session: &Session) -> ApiResult<bool> {
+    let (state, session) = (state.clone(), session.clone());
+    super::structured_memory::off_worker(move || {
+        current_policy(&state).map(|policy| blocked_origin(&policy, &session).is_some())
+    })
+    .await
+}
+
+/// The recheck after a run: an unreadable policy counts as blocked.
+async fn policy_now_blocks(state: &Arc<AppState>, session: &Session) -> bool {
+    policy_blocks(state, session).await.unwrap_or(true)
 }
 
 fn policy_changed() -> ApiError {
@@ -300,7 +312,7 @@ pub async fn run(
         task_sha256,
         job: None,
     };
-    deliver(&state, &asked, result).map(Json)
+    deliver(&state, &asked, result).await.map(Json)
 }
 
 /// How long a cancelled job's child gets to stop by itself (it stops before
@@ -394,7 +406,7 @@ pub async fn job_start(
                 }));
                 Outcome::Killed
             }
-            Some(result) => match deliver(&state, &asked, result) {
+            Some(result) => match deliver(&state, &asked, result).await {
                 Ok(body) => Outcome::Report(body),
                 Err(err) => Outcome::Failed {
                     code: err.code,
@@ -445,7 +457,10 @@ pub async fn job_get(
     let mut job = state.browser_jobs.get(&owner, &job_id).ok_or_else(no_such_job)?;
     if job.get("result").is_some() {
         let origins: Vec<String> = serde_json::from_value(job["origins"].clone()).unwrap_or_default();
-        let blocked = Session::general(&origins).map_or(true, |session| policy_now_blocks(&state, &session));
+        let blocked = match Session::general(&origins) {
+            Ok(session) => policy_now_blocks(&state, &session).await,
+            Err(_) => true,
+        };
         if blocked {
             let changed = policy_changed();
             if let Some(fields) = job.as_object_mut() {
