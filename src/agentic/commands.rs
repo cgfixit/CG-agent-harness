@@ -414,6 +414,13 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     if let Some(code) = refuse_if_injected(ctx, &instruction, "instruction", "run") {
         return Ok(code);
     }
+    // A denied `--read-file` is decided by the selector alone: refuse it here,
+    // before the context fetch, the clone and the run record, not in the loop.
+    let read_paths = opts.all("read-file");
+    if let Err(e) = super::real_repo_loop::refuse_sensitive_read_paths(ctx, &read_paths) {
+        err(&e.message);
+        return Ok(exit_code_for(&e));
+    }
     // Only PR/issue text feeds the planner (`bundle_context_text`); a repo
     // bundle would cost gh reads and refuse on titles the model never sees.
     let context_text = if opts.get("pr").is_some() || opts.get("issue").is_some() {
@@ -551,7 +558,6 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     } else {
         None
     };
-    let read_paths = opts.all("read-file");
     let outcome = run_real_repo_loop(
         ctx,
         &tools,
