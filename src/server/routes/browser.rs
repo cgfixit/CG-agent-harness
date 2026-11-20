@@ -604,15 +604,22 @@ pub async fn job_approve(
     let owner = super::auth::context_owner(user);
     let pending = state.browser_jobs.pending(&owner, &job_id).map_err(verdict_refused)?;
     // Reload policy after the wait and before the send (AGENTS.md).
-    let url = pending["url"].as_str().unwrap_or("");
+    // The policy file is read on the blocking pool, never on an async worker.
+    // The verdict below names the request again, so one that was decided or
+    // replaced while the file was read is refused there.
+    let url = pending["url"].as_str().unwrap_or("").to_string();
+    let reader = state.clone();
     let blocked = !fixture_origins()
-        && current_policy(&state).map_or(true, |policy| {
-            policy.blocks_request(url)
-                || url::Url::parse(url).map_or(true, |parsed| {
-                    Session::general([parsed.origin().ascii_serialization()])
-                        .map_or(true, |session| blocked_origin(&policy, &session).is_some())
-                })
-        });
+        && super::structured_memory::off_worker(move || {
+            current_policy(&reader).map_or(true, |policy| {
+                policy.blocks_request(&url)
+                    || url::Url::parse(&url).map_or(true, |parsed| {
+                        Session::general([parsed.origin().ascii_serialization()])
+                            .map_or(true, |session| blocked_origin(&policy, &session).is_some())
+                    })
+            })
+        })
+        .await;
     if blocked {
         // The owner's no, so the child stops waiting and the request is held.
         if let Ok(shown) = state.browser_jobs.verdict(&owner, &job_id, (req.request, None), false) {
