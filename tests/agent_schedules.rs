@@ -275,3 +275,61 @@ async fn a_persisted_request_that_no_longer_validates_is_refused_at_fire_time() 
         "each refused occurrence is audited once: {audit}"
     );
 }
+
+#[tokio::test]
+async fn preview_and_create_refuse_a_session_with_a_live_pin_like_the_job_route() {
+    // Every firing runs `start_job`, which refuses a goal session that still
+    // pins an attachment; creating such a schedule would only queue refusals.
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let boundary = "----ScheduleAttachTest";
+    let body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"note.md\"\r\n\r\npinned-body\r\n--{boundary}--\r\n"
+    );
+    let resp = s
+        .req(reqwest::Method::POST, "/api/chat/attachments")
+        .header("content-type", format!("multipart/form-data; boundary={boundary}"))
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 200);
+    let stored: serde_json::Value = resp.json().await.unwrap();
+    let attachment = stored["attachments"][0]["id"].as_str().unwrap().to_string();
+    let (status, local) = s
+        .post_json(
+            "/api/chat",
+            json!({"message": "pin locally", "attachment_ids": [attachment]}),
+        )
+        .await;
+    assert_eq!(status, 200, "{local}");
+    let sid = local["session_id"].as_str().unwrap().to_string();
+    s.post_json(
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal": "Review the arithmetic"}),
+    )
+    .await;
+    let (status, stage) = s
+        .post_json(
+            &format!("/api/sessions/{sid}/goal-stage"),
+            json!({"branch": "codex/goal-fixture"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{stage}");
+    let mut req = stage["request"].clone();
+    req["reason"] = json!("Scheduled fixture");
+    req["confirm"] = json!(true);
+
+    let (status, job) = s.post_json("/api/agent/jobs", req.clone()).await;
+    assert_eq!(status, 400, "{job}");
+    assert_eq!(code(&job), "ATTACHMENT_SURFACE_FORBIDDEN");
+    for route in ["/api/agent/schedules/preview", "/api/agent/schedules"] {
+        let (status, resp) = s
+            .post_json(route, json!({"interval_secs": 60, "request": req.clone()}))
+            .await;
+        assert_eq!(status, 400, "{route}: {resp}");
+        assert_eq!(code(&resp), "ATTACHMENT_SURFACE_FORBIDDEN", "{route}");
+    }
+    assert!(s.state.schedules.list("local").is_empty());
+    assert!(!s.audit_log().contains("agent_schedule_created"));
+}
