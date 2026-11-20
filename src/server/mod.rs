@@ -254,6 +254,7 @@ pub async fn build_app_with_sources(
         &backend.api_key,
         backend.reasoning_effort.clone(),
     )?;
+    chat.set_repeat_limit(usize::try_from(cfg.limit("models.local_llm.repeat_abort_lines")).unwrap_or(usize::MAX));
     let spend_file = crate::llm::spend::spend_path(&home.root, &cfg);
     #[cfg(feature = "test-support")]
     if cloud_chat.test_fixture_mode() {
