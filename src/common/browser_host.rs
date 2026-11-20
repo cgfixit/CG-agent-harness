@@ -6,6 +6,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -771,7 +772,9 @@ pub fn run_task(
         &mut sidecar,
         &mut chat,
         &|session: &Session| {
-            out_of_time(deadline).or_else(|| (!allow_private).then(|| policy_refusal_now(session)).flatten())
+            job_turn()
+                .or_else(|| out_of_time(deadline))
+                .or_else(|| (!allow_private).then(|| policy_refusal_now(session)).flatten())
         },
         task,
         &grants,
@@ -781,6 +784,48 @@ pub fn run_task(
     let mut report = report?;
     report["model"] = json!(model);
     Ok(report)
+}
+
+/// Why a job's task stopped once its server asked it to, or went away.
+pub const JOB_CANCELLED_REASON: &str = "cancelled by the operator";
+
+/// True in a `browser run --job` child: a server holds its stdin and reads
+/// its stdout line by line.
+static JOB_MODE: AtomicBool = AtomicBool::new(false);
+/// Set once that server sent `cancel` or closed the pipe.
+static JOB_CANCELLED: AtomicBool = AtomicBool::new(false);
+static JOB_TURNS: AtomicUsize = AtomicUsize::new(0);
+
+/// Job mode for this process: read stdin on a thread until a `cancel` line
+/// or end of input. Either ends the task before its next model turn, so a
+/// task whose server is gone does not keep driving Chrome.
+fn watch_job_input() {
+    JOB_MODE.store(true, Ordering::Release);
+    std::thread::spawn(|| {
+        let _ = std::io::stdin()
+            .lock()
+            .lines()
+            .map_while(Result::ok)
+            .find(|line| line.trim() == "cancel");
+        JOB_CANCELLED.store(true, Ordering::Release);
+    });
+}
+
+/// Before each model turn of a job: stop if cancelled, else print one
+/// `{"event":"turn"}` line so the server can show progress. `None` outside a job.
+fn job_turn() -> Option<String> {
+    if !JOB_MODE.load(Ordering::Acquire) {
+        return None;
+    }
+    if JOB_CANCELLED.load(Ordering::Acquire) {
+        return Some(JOB_CANCELLED_REASON.to_string());
+    }
+    let turn = JOB_TURNS.fetch_add(1, Ordering::AcqRel) + 1;
+    // A server that went away closes this pipe; the cancel flag then ends the task.
+    let mut out = std::io::stdout();
+    let _ = writeln!(out, "{}", json!({"event": "turn", "turn": turn}));
+    let _ = out.flush();
+    None
 }
 
 /// The model turns of one task. `chat` answers one turn; `recheck` refuses a
@@ -1766,6 +1811,7 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
     let mut task = None;
     let mut origins = Vec::new();
     let mut max_turns = 12usize;
+    let mut job = false;
     let started = Instant::now();
     let mut deadline = None;
     for raw in args {
@@ -1773,6 +1819,8 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
         let (key, value) = arg.split_once('=').map_or((arg.as_ref(), None), |(k, v)| (k, Some(v)));
         match (key, value) {
             ("--headed", None) => headless = false,
+            // The server's job runner: progress lines out, `cancel` in.
+            ("--job", None) => job = true,
             // Only general browsing runs model tasks; browser-verify keeps PR grants.
             ("qwen" | "enter" | "reach" | "guards" | "run", None) if browse && mode.is_none() => {
                 mode = Some(key.to_string())
@@ -1804,6 +1852,10 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
             }
         }
     }
+    if job && mode.as_deref() != Some("run") {
+        eprintln!("cgagentharness: --job is for browser run only");
+        return 3;
+    }
     let local = |model| match local_model(model) {
         Ok(pair) => Ok(pair),
         Err(err) => {
@@ -1821,6 +1873,9 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
                 Ok(pair) => pair,
                 Err(code) => return code,
             };
+            if job {
+                watch_job_input();
+            }
             match run_task(
                 &sidecar,
                 headless,

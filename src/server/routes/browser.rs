@@ -23,6 +23,7 @@ use serde_json::{json, Value};
 
 use crate::common::browser::Session;
 use crate::common::browser_host::{blocked_origin, child_environment, MAX_TASK_CHARS, TASK_PROMPT_TOKENS};
+use crate::server::browser_jobs::{CancelHandle, Outcome, JOB_RUNNING};
 use crate::server::errors::{ApiError, ApiResult};
 use crate::server::schemas::{ValidJson, Validate};
 use crate::server::state::AppState;
@@ -48,11 +49,29 @@ impl Validate for BrowserRunRequest {
     }
 }
 
-pub async fn run(
-    State(state): State<Arc<AppState>>,
+/// One checked request, ready to start: every refusal has been made, the
+/// model gate is held and the child's argv is built. `/api/browser/run` and
+/// `/api/browser/jobs` both start from here, so neither skips a check.
+struct Prepared {
+    session: Session,
+    grants: Vec<String>,
+    model: Option<String>,
+    owner: String,
+    task_sha256: String,
+    argv: Vec<String>,
+    cwd: std::path::PathBuf,
+    timeout: Duration,
+    /// The task text (0600), removed when this is dropped.
+    task_file: tempfile::NamedTempFile,
+    /// Held until this is dropped: one model operation at a time.
+    gate: crate::server::generation_gate::GateGuard,
+}
+
+async fn prepare(
+    state: &Arc<AppState>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
-    ValidJson(req): ValidJson<BrowserRunRequest>,
-) -> ApiResult<Json<Value>> {
+    req: &BrowserRunRequest,
+) -> ApiResult<Prepared> {
     let cfg = state.cfg.clone();
     if !cfg.flag_is_true("browser.enabled") {
         return Err(ApiError::new(
@@ -82,7 +101,7 @@ pub async fn run(
         ));
     }
     // shortcut: only origin-level block rules are enforced; a path-level rule needs the proxy to see it.
-    if blocked_origin(&current_policy(&state)?, &session).is_some() {
+    if blocked_origin(&current_policy(state)?, &session).is_some() {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "BROWSER_ORIGIN_BLOCKED",
@@ -91,7 +110,7 @@ pub async fn run(
     }
     // One model operation at a time: browser tasks share the local backend.
     // Refused at once, never queued; the refusal says what holds the model.
-    let _gate = state.generation_gate.claim_or_busy_owner("browser").map_err(|holder| {
+    let gate = state.generation_gate.claim_or_busy_owner("browser").map_err(|holder| {
         ApiError::new(
             StatusCode::CONFLICT,
             "BROWSER_BUSY",
@@ -129,8 +148,8 @@ pub async fn run(
             "working directory unreadable",
         )
     })?;
-    // The task goes in a private temporary file (0600, removed when this
-    // handler returns), not in argv, which other local accounts can list.
+    // The task goes in a private temporary file (0600, removed with `Prepared`),
+    // not in argv, which other local accounts can list.
     let task_file = write_task_file(&req.task)?;
     // Canonical origins only: a requested URL's path or query (a token, say)
     // never reaches argv, the audit log or the report.
@@ -147,16 +166,45 @@ pub async fn run(
     argv.push(format!("--deadline-sec={}", child_deadline_sec(timeout_sec)));
     argv.extend(model.iter().map(|model| format!("--model={model}")));
     argv.extend(grants.iter().map(|origin| format!("--origin={origin}")));
-    let timeout = Duration::from_secs(timeout_sec);
-    let result = crate::shim::run_argv_with_env(&argv, &cwd, timeout, child_environment()).await;
-    drop(task_file);
+    Ok(Prepared {
+        session,
+        grants,
+        model,
+        owner,
+        task_sha256: crate::common::sha256_hex(&req.task),
+        argv,
+        cwd,
+        timeout: Duration::from_secs(timeout_sec),
+        task_file,
+        gate,
+    })
+}
+
+/// What the task was allowed and who asked: all `deliver` needs once the
+/// child is gone.
+struct Asked {
+    session: Session,
+    grants: Vec<String>,
+    model: Option<String>,
+    owner: String,
+    task_sha256: String,
+    job: Option<String>,
+}
+
+type ChildResult = Result<(i32, String, String), ShimError>;
+
+/// Audit the run, recheck the block list, and turn the child's output into
+/// the response body. A job's stdout has progress lines before the report, so
+/// the report is the last line.
+fn deliver(state: &AppState, asked: &Asked, result: ChildResult) -> ApiResult<Value> {
     let exit = result.as_ref().map(|(code, _, _)| *code).ok();
     state.audit.log(json!({
         "event": "browser.run",
-        "owner": owner,
-        "origins": grants,
-        "model": model,
-        "task_sha256": crate::common::sha256_hex(&req.task),
+        "owner": asked.owner,
+        "origins": asked.grants,
+        "model": asked.model,
+        "task_sha256": asked.task_sha256,
+        "job": asked.job,
         "exit": exit,
     }));
     let (code, stdout, stderr) = result.map_err(|err| match err {
@@ -173,14 +221,15 @@ pub async fn run(
     })?;
     // Permission checked at launch is stale after the run; deliver nothing if
     // the block list now covers a granted origin.
-    if current_policy(&state).map_or(true, |policy| blocked_origin(&policy, &session).is_some()) {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "WEB_POLICY_CHANGED",
-            "The URL policy changed during this browser task; nothing was delivered.",
-        ));
+    if policy_now_blocks(state, &asked.session) {
+        return Err(policy_changed());
     }
-    let report = serde_json::from_str::<Value>(stdout.trim()).ok();
+    let report = stdout
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .and_then(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|report| report.get("event").is_none());
     // #901: composed navigations refused and typed text held, by origin and
     // count only. The child reports origins, never a refused URL's path or query.
     if let Some(report) = &report {
@@ -193,7 +242,7 @@ pub async fn run(
         if refused.is_some() || typed_held > 0 {
             state.audit.log(json!({
                 "event": "browser.provenance",
-                "owner": owner,
+                "owner": asked.owner,
                 "refused_composed": refused,
                 "typed_held": typed_held,
             }));
@@ -209,7 +258,226 @@ pub async fn run(
             .unwrap_or("the browser child printed no report");
         body["reason"] = json!(reason.chars().take(300).collect::<String>());
     }
-    Ok(Json(body))
+    Ok(body)
+}
+
+fn policy_now_blocks(state: &AppState, session: &Session) -> bool {
+    current_policy(state).map_or(true, |policy| blocked_origin(&policy, session).is_some())
+}
+
+fn policy_changed() -> ApiError {
+    ApiError::new(
+        StatusCode::CONFLICT,
+        "WEB_POLICY_CHANGED",
+        "The URL policy changed during this browser task; nothing was delivered.",
+    )
+}
+
+pub async fn run(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    ValidJson(req): ValidJson<BrowserRunRequest>,
+) -> ApiResult<Json<Value>> {
+    let Prepared {
+        session,
+        grants,
+        model,
+        owner,
+        task_sha256,
+        argv,
+        cwd,
+        timeout,
+        task_file,
+        gate: _gate,
+    } = prepare(&state, user, &req).await?;
+    let result = crate::shim::run_argv_with_env(&argv, &cwd, timeout, child_environment()).await;
+    drop(task_file);
+    let asked = Asked {
+        session,
+        grants,
+        model,
+        owner,
+        task_sha256,
+        job: None,
+    };
+    deliver(&state, &asked, result).map(Json)
+}
+
+/// How long a cancelled job's child gets to stop by itself (it stops before
+/// its next model turn) before its process tree is killed.
+const CANCEL_GRACE: Duration = Duration::from_secs(10);
+
+/// `POST /api/browser/jobs`: the same checked request as `/api/browser/run`,
+/// detached. Every refusal is still synchronous; 202 means the task holds the
+/// model gate and its child is starting. The job's task owns the gate, the
+/// task file and the child, so a closed tab ends none of them.
+pub async fn job_start(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    ValidJson(req): ValidJson<BrowserRunRequest>,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    if cfg!(not(unix)) {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "BROWSER_JOBS_UNSUPPORTED",
+            "Browser jobs run on macOS and Linux only; /browse without a job still works.",
+        ));
+    }
+    let Prepared {
+        session,
+        grants,
+        model,
+        owner,
+        task_sha256,
+        mut argv,
+        cwd,
+        timeout,
+        task_file,
+        gate,
+    } = prepare(&state, user, &req).await?;
+    argv.push("--job".into());
+    let job_id = crate::common::random_hex(16);
+    let (lines, mut printed) = tokio::sync::mpsc::unbounded_channel();
+    let (input, child_input) = std::sync::mpsc::channel();
+    let token = tokio_util::sync::CancellationToken::new();
+    state.browser_jobs.insert(
+        &job_id,
+        &owner,
+        &grants,
+        CancelHandle {
+            input,
+            token: token.clone(),
+        },
+    );
+    let asked = Asked {
+        session,
+        grants,
+        model,
+        owner,
+        task_sha256,
+        job: Some(job_id.clone()),
+    };
+    let (id, task_state) = (job_id.clone(), state.clone());
+    let work = tokio::spawn(async move {
+        let state = task_state;
+        // Held by this task until it ends, however it ends.
+        let (_gate, _task_file) = (gate, task_file);
+        let channel = crate::shim::ChildChannel {
+            lines,
+            input: child_input,
+        };
+        let child = crate::shim::run_argv_streaming(&argv, &cwd, timeout, child_environment(), channel);
+        let overdue = async {
+            token.cancelled().await;
+            tokio::time::sleep(CANCEL_GRACE).await;
+        };
+        tokio::pin!(child, overdue);
+        let result = loop {
+            tokio::select! {
+                result = &mut child => break Some(result),
+                Some(line) = printed.recv() => state.browser_jobs.note_line(&id, &line),
+                // Leaving this scope drops the child future, which kills its process tree.
+                () = &mut overdue => break None,
+            }
+        };
+        match result {
+            None => {
+                state.audit.log(json!({
+                    "event": "browser.run",
+                    "owner": asked.owner,
+                    "origins": asked.grants,
+                    "model": asked.model,
+                    "task_sha256": asked.task_sha256,
+                    "job": asked.job,
+                    "exit": Value::Null,
+                    "killed_after_cancel": true,
+                }));
+                Outcome::Killed
+            }
+            Some(result) => match deliver(&state, &asked, result) {
+                Ok(body) => Outcome::Report(body),
+                Err(err) => Outcome::Failed {
+                    code: err.code,
+                    message: err.message,
+                },
+            },
+        }
+    });
+    // A supervising task records the end even if the job's own task panics.
+    let (id, jobs) = (job_id.clone(), state.browser_jobs.clone());
+    tokio::spawn(async move {
+        let outcome = work.await.unwrap_or_else(|_| Outcome::Failed {
+            code: "BROWSER_FAILED".into(),
+            message: "the browser job ended unexpectedly".into(),
+        });
+        jobs.finish(&id, outcome);
+    });
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(json!({"job_id": job_id, "status": JOB_RUNNING})),
+    ))
+}
+
+fn checked_job_id(job_id: &str) -> ApiResult<()> {
+    if crate::common::is_lower_hex(job_id, 32) {
+        return Ok(());
+    }
+    Err(ApiError::bad_request(
+        "INVALID_JOB_ID",
+        "job_id must be 32 lowercase hex characters",
+    ))
+}
+
+fn no_such_job() -> ApiError {
+    ApiError::new(StatusCode::NOT_FOUND, "BROWSER_JOB_NOT_FOUND", "no such browser job")
+}
+
+/// `GET /api/browser/jobs/{job_id}`: one of the caller's jobs. A stored report
+/// is rechecked against the block list on every read, as the synchronous
+/// route does before it delivers; a blocked origin withholds the report.
+pub async fn job_get(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    axum::extract::Path(job_id): axum::extract::Path<String>,
+) -> ApiResult<Json<Value>> {
+    checked_job_id(&job_id)?;
+    let owner = super::auth::context_owner(user);
+    let mut job = state.browser_jobs.get(&owner, &job_id).ok_or_else(no_such_job)?;
+    if job.get("result").is_some() {
+        let origins: Vec<String> = serde_json::from_value(job["origins"].clone()).unwrap_or_default();
+        let blocked = Session::general(&origins).map_or(true, |session| policy_now_blocks(&state, &session));
+        if blocked {
+            let changed = policy_changed();
+            if let Some(fields) = job.as_object_mut() {
+                fields.remove("result");
+                fields.insert(
+                    "error".into(),
+                    json!({"code": changed.code, "message": changed.message}),
+                );
+            }
+        }
+    }
+    Ok(Json(job))
+}
+
+/// `POST /api/browser/jobs/{job_id}/cancel`: ask the caller's job to stop. The
+/// child stops before its next model turn and reports what it did; one that
+/// has not stopped after `CANCEL_GRACE` is killed with its process tree.
+pub async fn job_cancel(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    axum::extract::Path(job_id): axum::extract::Path<String>,
+) -> ApiResult<Json<Value>> {
+    checked_job_id(&job_id)?;
+    let owner = super::auth::context_owner(user);
+    let job = state.browser_jobs.cancel(&owner, &job_id).ok_or_else(no_such_job)?;
+    state.audit.log(json!({
+        "event": "browser.job_cancel",
+        "owner": owner,
+        "job": job_id,
+        "status": job["status"],
+    }));
+    Ok(Json(job))
 }
 
 /// The model tag the child is told to use: chat's `/model use` selection when

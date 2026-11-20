@@ -60,6 +60,21 @@ fn guarded_routes() -> Vec<(Method, &'static str, serde_json::Value)> {
         ),
         (
             Method::POST,
+            "/api/browser/jobs",
+            json!({"task": "read the page", "origins": ["https://example.com"]}),
+        ),
+        (
+            Method::GET,
+            "/api/browser/jobs/0123456789abcdef0123456789abcdef",
+            json!(null),
+        ),
+        (
+            Method::POST,
+            "/api/browser/jobs/0123456789abcdef0123456789abcdef/cancel",
+            json!(null),
+        ),
+        (
+            Method::POST,
             "/api/agent/run",
             json!({"instruction": "x", "branch": "claude/x", "commit_message": "m", "reason": "r"}),
         ),
@@ -465,8 +480,11 @@ async fn only_explicit_auth_opt_out_allows_login_free_operations() {
                 if path == "/api/agent/run" {
                     assert_eq!(status, 409, "write gates must still refuse: {result}");
                 }
-                if path == "/api/browser/run" {
+                if path == "/api/browser/run" || path == "/api/browser/jobs" {
                     assert_eq!(status, 409, "browser.enabled: false refuses: {result}");
+                }
+                if path.starts_with("/api/browser/jobs/") {
+                    assert_eq!(status, 404, "no job was ever started: {result}");
                 }
                 if path == "/api/agent/jobs" && method == Method::POST {
                     assert_eq!(status, 202, "{result}");
@@ -615,14 +633,16 @@ async fn browser_tasks_refuse_without_accounts_even_when_enabled() {
         ServerOptions::default().with("browser.enabled", "true"),
     )
     .await;
-    let (status, body) = s
-        .post_json(
-            "/api/browser/run",
-            json!({"task": "read the page", "origins": ["https://example.com"]}),
-        )
-        .await;
-    assert_eq!(status, 409, "{body}");
-    assert_eq!(body["detail"]["code"], "BROWSER_AUTH_REQUIRED", "{body}");
+    for path in ["/api/browser/run", "/api/browser/jobs"] {
+        let (status, body) = s
+            .post_json(
+                path,
+                json!({"task": "read the page", "origins": ["https://example.com"]}),
+            )
+            .await;
+        assert_eq!(status, 409, "{path}: {body}");
+        assert_eq!(body["detail"]["code"], "BROWSER_AUTH_REQUIRED", "{path}: {body}");
+    }
     assert!(
         model.requests.lock().unwrap().is_empty(),
         "no model call before the refusal"

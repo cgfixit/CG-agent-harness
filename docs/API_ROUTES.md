@@ -142,6 +142,9 @@ The `cgagentharness web` CLI drives these routes.
 | Method | Path | Purpose |
 |---|---|---|
 | POST | `/api/browser/run` | Administrator `/browse` task: `{task, origins}`; literal `browser.enabled` and `auth.enabled`, one task at a time, runs the hidden `browser run` child ([browser use](Browser-Use.md)) |
+| POST | `/api/browser/jobs` | The same request, detached (macOS and Linux): 202 `{job_id, status}` once the job holds the model; refusals as above |
+| GET | `/api/browser/jobs/{job_id}` | Your job: `status` (`running`, `cancelling`, `finished`, `failed`, `cancelled`), `turns`, then `result` or `error`; memory only |
+| POST | `/api/browser/jobs/{job_id}/cancel` | Stop before the next model turn; killed after ten seconds |
 
 ## MCP
 
