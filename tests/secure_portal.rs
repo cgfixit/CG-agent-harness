@@ -1284,9 +1284,10 @@ async fn a_retired_role_is_migrated_and_audited_once_at_boot() {
     // Minted per run: no literal reaches the password hasher.
     let secret = cgagentharness::common::random_urlsafe(24);
     let hash = cgagentharness::common::authn::hash_password(&secret).unwrap();
+    let reader_id = cgagentharness::common::random_hex(16);
     let legacy = json!({"users": {
         "admin": {"password_hash": hash, "created_ts": 123.0, "role": "admin"},
-        "retired-reader": {"password_hash": hash, "created_ts": 123.0, "role": "audit"},
+        "retired-reader": {"user_id": reader_id, "password_hash": hash, "created_ts": 123.0, "role": "audit"},
     }, "sessions": {}});
     cgagentharness::common::atomic::write_atomic(
         &prepared.home_dir.join("auth.json"),
@@ -1294,6 +1295,27 @@ async fn a_retired_role_is_migrated_and_audited_once_at_boot() {
         Some(0o600),
     )
     .unwrap();
+    // A machine key minted for the account before the upgrade: the fold that
+    // disables the account must retire it, as the admin disable route does.
+    let home = cgagentharness::common::home::Home::at(prepared.home_dir.clone());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&home.root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let keys = cgagentharness::server::mcp_keys::KeyStore::open(&home, 8).unwrap();
+    let owners = [reader_id.clone()];
+    let (_, token) = keys
+        .mint(
+            &reader_id,
+            "pre-upgrade",
+            cgagentharness::server::mcp_keys::OwnerCheck::EnabledOwners(&owners),
+        )
+        .unwrap();
+    assert!(
+        keys.authenticate(&token).is_ok(),
+        "the pre-upgrade key works before boot"
+    );
     let (router, state) = cgagentharness::server::build_app(prepared.app_opts).await.unwrap();
     let server = start_test_server(prepared.tmp, prepared.home_dir, prepared.api_key, router, state).await;
 
@@ -1310,10 +1332,13 @@ async fn a_retired_role_is_migrated_and_audited_once_at_boot() {
         rows[0]["disabled"], true,
         "the row records that the fold disabled the account"
     );
-    let user_id = rows[0]["user_id"].as_str().unwrap();
     assert!(
-        !user_id.is_empty() && user_id.chars().all(|c| c.is_ascii_hexdigit()),
+        rows[0]["user_id"].as_str() == Some(reader_id.as_str()),
         "the row names the account by its hex user id"
+    );
+    assert!(
+        keys.authenticate(&token).is_err(),
+        "the fold retired the disabled account's machine key"
     );
     assert!(
         !log.contains("retired-reader"),
