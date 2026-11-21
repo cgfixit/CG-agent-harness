@@ -195,20 +195,28 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
                 Ok(account) => account,
                 Err(e) => return e.into_response(),
             };
-            let own = matches!(
-                path.as_str(),
-                "/api/auth/whoami" | "/api/auth/password" | "/api/auth/logout"
-            );
-            let admin = path.starts_with("/api/auth/users")
-                || path == "/api/config/reload"
-                || path == "/api/keys"
-                || path == "/api/structured-memory/gates"
-                || path.starts_with("/api/browser/")
-                || matches!(
-                    path.as_str(),
-                    "/api/web/allow" | "/api/web/deny" | "/api/web/mode" | "/api/web/block" | "/api/web/unblock"
-                )
-                || (path == "/api/web" && req.method() != axum::http::Method::GET);
+            // The capability table decides: the request's matched route
+            // template and method resolve to exactly one capability, and the
+            // stored role parses once. HEAD rides the GET entry, matching
+            // axum's automatic HEAD handling. A registered template with no
+            // exact entry is a method mismatch: it keeps the router's 405
+            // only where `wrong_method_passthrough` says the legacy gate did.
+            // Anything else — an unlisted route, an unknown stored role, an
+            // unmatched path — fails closed, so a new route is never
+            // operator-accessible by default (#965).
+            let template = req
+                .extensions()
+                .get::<axum::extract::MatchedPath>()
+                .map(|p| p.as_str().to_string());
+            let method = if req.method() == axum::http::Method::HEAD {
+                &axum::http::Method::GET
+            } else {
+                req.method()
+            };
+            let capability = template
+                .as_deref()
+                .and_then(|t| super::routes::route_capability(method, t));
+            let own = template.as_deref().is_some_and(super::routes::template_is_own_account);
             if account.must_change_password && !own {
                 return ApiError::new(
                     StatusCode::FORBIDDEN,
@@ -217,12 +225,16 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
                 )
                 .into_response();
             }
-            if (!own && account.role == "audit" && !(path == "/api/audit" && req.method() == axum::http::Method::GET))
-                || (!own
-                    && account.role == crate::common::authn::PORTAL_AUDITOR_ROLE
-                    && !portal_auditor_may(req.method(), &path))
-                || (admin && account.role != "admin")
-            {
+            let granted = match crate::common::authz::Role::parse(&account.role) {
+                Some(role) => match capability {
+                    Some(cap) => crate::common::authz::grants(role, cap),
+                    None => template
+                        .as_deref()
+                        .is_some_and(|t| super::routes::wrong_method_passthrough(role, t)),
+                },
+                None => false,
+            };
+            if !granted {
                 return ApiError::new(StatusCode::FORBIDDEN, "AUTH_PERMISSION_DENIED", "denied").into_response();
             }
             actor_name = account.username.clone();
@@ -244,27 +256,6 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
     let response = next.run(req).await;
     state.audit.log(json!({"event":"portal.request","actor":actor_name,"method":method,"route":route,"status":response.status().as_u16()}));
     response
-}
-
-/// The whole `portal_auditor` surface: local chat in its own sessions, the
-/// redacted audit read and `/diag`. Everything else, including memory,
-/// attachments, keys, deletion, web policy, models, persona, MCP and coding,
-/// is denied here before any handler runs; handlers add the chat limits.
-pub fn portal_auditor_may(method: &axum::http::Method, path: &str) -> bool {
-    use axum::http::Method;
-    let get = method == Method::GET;
-    let post = method == Method::POST;
-    match path {
-        "/api/audit" | "/api/diag" | "/api/diag/read" => get,
-        "/api/diag/inject" | "/api/diag/forget" | "/api/chat" | "/api/chat/cancel" => post,
-        "/api/prompt/preview" | "/api/slash/parse" => post,
-        "/api/sessions" => get || post,
-        _ => {
-            get && path
-                .strip_prefix("/api/sessions/")
-                .is_some_and(|id| !id.is_empty() && !id.contains('/') && !matches!(id, "search" | "legacy" | "clear"))
-        }
-    }
 }
 
 pub fn enforce_csrf(state: &AppState, req: &Request<Body>) -> Result<(), ApiError> {
@@ -306,51 +297,76 @@ mod tests {
         b.body(Body::empty()).unwrap()
     }
 
-    #[test]
-    fn portal_auditor_reaches_only_chat_audit_and_diag() {
+    /// The pre-#965 gate logic, kept as the test oracle: the capability table
+    /// must reproduce these exact decisions for every registered
+    /// `(method, route)` pair before any operator narrowing lands.
+    fn legacy_portal_auditor_may(method: &axum::http::Method, path: &str) -> bool {
         use axum::http::Method;
-        let allowed = [
-            (Method::GET, "/api/audit"),
-            (Method::GET, "/api/diag"),
-            (Method::GET, "/api/diag/read"),
-            (Method::POST, "/api/diag/inject"),
-            (Method::POST, "/api/diag/forget"),
-            (Method::POST, "/api/chat"),
-            (Method::POST, "/api/chat/cancel"),
-            (Method::POST, "/api/prompt/preview"),
-            (Method::POST, "/api/slash/parse"),
-            (Method::GET, "/api/sessions"),
-            (Method::POST, "/api/sessions"),
-            (Method::GET, "/api/sessions/abc123"),
-        ];
-        for (method, path) in &allowed {
-            assert!(portal_auditor_may(method, path), "{method} {path}");
+        let get = method == Method::GET;
+        let post = method == Method::POST;
+        match path {
+            "/api/audit" | "/api/diag" | "/api/diag/read" => get,
+            "/api/diag/inject" | "/api/diag/forget" | "/api/chat" | "/api/chat/cancel" => post,
+            "/api/prompt/preview" | "/api/slash/parse" => post,
+            "/api/sessions" => get || post,
+            _ => {
+                get && path.strip_prefix("/api/sessions/").is_some_and(|id| {
+                    !id.is_empty() && !id.contains('/') && !matches!(id, "search" | "legacy" | "clear")
+                })
+            }
         }
-        let denied = [
-            (Method::DELETE, "/api/sessions/abc123"),
-            (Method::POST, "/api/sessions/clear"),
-            (Method::GET, "/api/sessions/search"),
-            (Method::GET, "/api/sessions/legacy"),
-            (Method::GET, "/api/sessions/abc123/export"),
-            (Method::POST, "/api/sessions/abc123/rename"),
-            (Method::POST, "/api/chat/attachments"),
-            (Method::GET, "/api/memory"),
-            (Method::POST, "/api/memory/add"),
-            (Method::GET, "/api/structured-memory"),
-            (Method::GET, "/api/keys"),
-            (Method::POST, "/api/model"),
-            (Method::POST, "/api/web/inject"),
-            (Method::GET, "/api/web"),
-            (Method::POST, "/api/agent/run"),
-            (Method::POST, "/api/mcp/call"),
-            (Method::GET, "/api/notes-corpus"),
-            (Method::POST, "/api/soul/document"),
-            (Method::POST, "/api/diag/read"),
-            (Method::GET, "/api/diag/inject"),
-            (Method::GET, "/api/auth/users"),
+    }
+
+    fn legacy_gate_allows(method: &axum::http::Method, path: &str, role: &str) -> bool {
+        use axum::http::Method;
+        let own = matches!(path, "/api/auth/whoami" | "/api/auth/password" | "/api/auth/logout");
+        let admin = path.starts_with("/api/auth/users")
+            || path == "/api/config/reload"
+            || path == "/api/keys"
+            || path == "/api/structured-memory/gates"
+            || path.starts_with("/api/browser/")
+            || matches!(
+                path,
+                "/api/web/allow" | "/api/web/deny" | "/api/web/mode" | "/api/web/block" | "/api/web/unblock"
+            )
+            || (path == "/api/web" && method != Method::GET);
+        if !own && role == "audit" && !(path == "/api/audit" && method == Method::GET) {
+            return false;
+        }
+        if !own && role == crate::common::authn::PORTAL_AUDITOR_ROLE && !legacy_portal_auditor_may(method, path) {
+            return false;
+        }
+        if admin && role != "admin" {
+            return false;
+        }
+        true
+    }
+
+    #[test]
+    fn capability_matrix_reproduces_the_legacy_gate() {
+        use crate::common::authz::{grants, Capability, Role};
+        let roles = [
+            ("admin", Role::Admin),
+            ("operator", Role::Operator),
+            ("audit", Role::Audit),
+            (crate::common::authn::PORTAL_AUDITOR_ROLE, Role::PortalAuditor),
         ];
-        for (method, path) in &denied {
-            assert!(!portal_auditor_may(method, path), "{method} {path}");
+        for (path, method, cap) in super::super::routes::ROUTE_CAPS {
+            // Public routes skip account resolution entirely, so the legacy
+            // gate never made a role decision for them.
+            if *cap == Capability::Public {
+                for (_, role) in &roles {
+                    assert!(grants(*role, *cap), "Public must hold for {role:?}");
+                }
+                continue;
+            }
+            for (stored, role) in &roles {
+                assert_eq!(
+                    grants(*role, *cap),
+                    legacy_gate_allows(method, path, stored),
+                    "{method} {path} {stored}"
+                );
+            }
         }
     }
 

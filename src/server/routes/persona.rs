@@ -334,17 +334,12 @@ pub async fn preview(
     ValidJson(req): ValidJson<PreviewRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
-    // portal_auditor previews the prompt its chat would get: no persona,
-    // memory, attachments, skills or web context.
-    let portal_auditor = user
-        .as_ref()
-        .is_some_and(|u| u.role == crate::common::authn::PORTAL_AUDITOR_ROLE);
-    if portal_auditor
-        && (req.soul_content.is_some()
-            || !req.attachment_ids.is_empty()
-            || req.retrieve
-            || req.retrieve_query.is_some()
-            || req.selected_facts.is_some())
+    // A restricted chat policy (`portal_auditor`) previews the prompt its
+    // chat would get: no persona, memory, attachments, skills or web context.
+    let chat_policy = crate::common::authz::ChatPolicy::for_user(user.as_ref().map(|u| &u.0));
+    if (!chat_policy.persona && req.soul_content.is_some())
+        || (!chat_policy.attachments && !req.attachment_ids.is_empty())
+        || (!chat_policy.memory && (req.retrieve || req.retrieve_query.is_some() || req.selected_facts.is_some()))
     {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
@@ -366,12 +361,12 @@ pub async fn preview(
     let web_enabled = session.as_ref().map_or(settings.web_enabled, |s| {
         s.chat_web_mode(settings.web_enabled).enabled()
     });
-    let web = if portal_auditor {
+    let web = if !chat_policy.web {
         String::new()
     } else {
         state.web_snapshot().context_text(web_enabled, &owner)
     };
-    let selections = if portal_auditor {
+    let selections = if !chat_policy.memory {
         Vec::new()
     } else {
         req.selected_facts
@@ -383,13 +378,13 @@ pub async fn preview(
     let (pinned, facts, memory_budget, recalled, retrieval_error) = {
         let (state, owner, selections) = (state.clone(), owner.clone(), selections.clone());
         let (force, query) = (req.retrieve, req.retrieve_query.clone());
-        let memory_enabled = settings.memory_enabled && !portal_auditor;
+        let memory_enabled = settings.memory_enabled && chat_policy.memory;
         super::structured_memory::off_worker(move || {
             super::structured_memory::prompt_memory(
                 &state,
                 &owner,
                 memory_enabled,
-                portal_auditor,
+                !chat_policy.memory,
                 &selections,
                 crate::server::structured_memory::RetrievalIntent {
                     force,
@@ -402,7 +397,7 @@ pub async fn preview(
     };
     let assembled = crate::server::prompts::assemble_memory_sections(&pinned, &facts, memory_budget);
     let soul_path = state.home.soul_path();
-    let selected = if portal_auditor {
+    let selected = if !chat_policy.skills {
         Vec::new()
     } else {
         // Each selected skill is a file read: off the async worker.
@@ -410,7 +405,7 @@ pub async fn preview(
         let ids = session.as_ref().map(|s| s.selected_skills.clone()).unwrap_or_default();
         super::structured_memory::off_worker(move || super::skills::resolve(&state, &ids)).await?
     };
-    let pinned_ids = if portal_auditor {
+    let pinned_ids = if !chat_policy.attachments {
         Vec::new()
     } else {
         session.as_ref().map(|s| s.pinned_ids_for(&owner)).unwrap_or_default()
@@ -423,7 +418,7 @@ pub async fn preview(
     .map_err(|e| crate::server::attachments::upload_error(&e))?;
     let live_pins = super::core::live_pins(&state, &owner, pinned_ids.clone()).await;
     let ids = crate::server::retrieval::attachment_ids_for_prompt(&live_pins, &req.attachment_ids);
-    let attachment_fence = if portal_auditor {
+    let attachment_fence = if !chat_policy.attachments {
         String::new()
     } else {
         // Blocking: verified rereads hash every blob and may run PDF extraction.
@@ -454,15 +449,16 @@ pub async fn preview(
             .map_err(|e| super::diag::diag_error(&e))?,
         None => None,
     };
-    let chat_web_mode = if portal_auditor {
+    let chat_web_mode = if !chat_policy.web {
         crate::server::sessions::GoalWebMode::Off
     } else {
         session
             .as_ref()
             .map_or(settings.web_enabled.into(), |s| s.chat_web_mode(settings.web_enabled))
     };
-    // portal_auditor gets the manual but not live state (home path, soul state).
-    let live_block = if portal_auditor {
+    // A restricted policy gets the manual but not live state (home path, soul
+    // state).
+    let live_block = if !chat_policy.live_state {
         None
     } else {
         state.live_state_block(
@@ -491,7 +487,7 @@ pub async fn preview(
     });
     let inputs = PromptInputs {
         selected_skills: &selected,
-        soul_enabled: settings.soul_enabled && !portal_auditor,
+        soul_enabled: settings.soul_enabled && chat_policy.persona,
         soul_path: &soul_path,
         soul_max_chars: max_chars(&state),
         soul_override: req.soul_content.as_deref(),
@@ -501,13 +497,13 @@ pub async fn preview(
         memory_context: Some(&pinned),
         selected_facts_context: Some(&facts),
         memory_budget,
-        memory_enabled: settings.memory_enabled && !portal_auditor,
-        auto_suggest_chat: !portal_auditor
+        memory_enabled: settings.memory_enabled && chat_policy.memory,
+        auto_suggest_chat: chat_policy.memory
             && crate::server::structured_memory_suggest::available(
                 &state,
                 crate::server::structured_memory_suggest::Source::Chat,
             ),
-        auto_suggest_coding: !portal_auditor
+        auto_suggest_coding: chat_policy.memory
             && crate::server::structured_memory_suggest::available(
                 &state,
                 crate::server::structured_memory_suggest::Source::Coding,

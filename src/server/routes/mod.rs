@@ -21,12 +21,14 @@ pub mod style;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use axum::http::Method;
 use axum::middleware;
 use axum::routing::{delete, get, post};
 use axum::Router;
 
 use super::guards;
 use super::state::AppState;
+use crate::common::authz::{Capability, Role};
 
 /// Every path the router registers (axum template syntax).
 pub const REGISTERED_PATHS: [&str; 125] = [
@@ -195,6 +197,286 @@ pub fn registered_paths() -> BTreeSet<String> {
         set.insert(extra.to_string());
     }
     set
+}
+
+/// The capability every registered `(method, route template)` requires (#965).
+/// `guards::account_gate` resolves a request to one entry here and refuses
+/// authenticated requests with no entry, so a new route is denied until this
+/// table names it. Entries mirror `build_router` exactly; the coverage tests
+/// below prove both directions.
+pub const ROUTE_CAPS: &[(&str, Method, Capability)] = &[
+    ("/", Method::GET, Capability::Public),
+    ("/preview/html", Method::GET, Capability::Public),
+    ("/static/{name}", Method::GET, Capability::Public),
+    ("/api/status", Method::GET, Capability::Public),
+    ("/api/auth/setup-status", Method::GET, Capability::Public),
+    ("/api/auth/login", Method::POST, Capability::Public),
+    ("/api/auth/whoami", Method::GET, Capability::OwnAccount),
+    ("/api/auth/password", Method::POST, Capability::OwnAccount),
+    ("/api/auth/logout", Method::POST, Capability::OwnAccount),
+    ("/api/auth/users", Method::GET, Capability::ManageAccounts),
+    ("/api/auth/users", Method::POST, Capability::ManageAccounts),
+    ("/api/auth/users/{username}", Method::DELETE, Capability::ManageAccounts),
+    (
+        "/api/auth/users/{username}/disabled",
+        Method::POST,
+        Capability::ManageAccounts,
+    ),
+    (
+        "/api/auth/users/{username}/password",
+        Method::POST,
+        Capability::ManageAccounts,
+    ),
+    (
+        "/api/auth/users/{username}/role",
+        Method::POST,
+        Capability::ManageAccounts,
+    ),
+    ("/api/config/reload", Method::POST, Capability::ManageConfig),
+    ("/api/structured-memory/gates", Method::POST, Capability::ManageConfig),
+    ("/api/keys", Method::GET, Capability::ManageCredentials),
+    ("/api/keys", Method::POST, Capability::ManageCredentials),
+    ("/api/browser/run", Method::POST, Capability::BrowserUse),
+    ("/api/browser/jobs", Method::POST, Capability::BrowserUse),
+    ("/api/browser/jobs/{job_id}", Method::GET, Capability::BrowserUse),
+    (
+        "/api/browser/jobs/{job_id}/cancel",
+        Method::POST,
+        Capability::BrowserUse,
+    ),
+    (
+        "/api/browser/jobs/{job_id}/approve",
+        Method::POST,
+        Capability::BrowserUse,
+    ),
+    ("/api/browser/jobs/{job_id}/deny", Method::POST, Capability::BrowserUse),
+    ("/api/web", Method::POST, Capability::ManageWebPolicy),
+    ("/api/web/allow", Method::POST, Capability::ManageWebPolicy),
+    ("/api/web/deny", Method::POST, Capability::ManageWebPolicy),
+    ("/api/web/mode", Method::POST, Capability::ManageWebPolicy),
+    ("/api/web/block", Method::POST, Capability::ManageWebPolicy),
+    ("/api/web/unblock", Method::POST, Capability::ManageWebPolicy),
+    ("/api/audit", Method::GET, Capability::ReadAudit),
+    ("/api/diag", Method::GET, Capability::ReadLogs),
+    ("/api/diag/read", Method::GET, Capability::ReadLogs),
+    ("/api/diag/inject", Method::POST, Capability::ReadLogs),
+    ("/api/diag/forget", Method::POST, Capability::ReadLogs),
+    ("/api/chat", Method::POST, Capability::Chat),
+    ("/api/chat/cancel", Method::POST, Capability::Chat),
+    ("/api/prompt/preview", Method::POST, Capability::Chat),
+    ("/api/slash/parse", Method::POST, Capability::Chat),
+    ("/api/chat/attachments", Method::POST, Capability::ChatAttachments),
+    ("/api/sessions", Method::GET, Capability::OwnSessions),
+    ("/api/sessions", Method::POST, Capability::OwnSessions),
+    ("/api/sessions/{session_id}", Method::GET, Capability::OwnSessions),
+    ("/api/sessions/search", Method::POST, Capability::OwnData),
+    ("/api/sessions/legacy", Method::GET, Capability::OwnData),
+    ("/api/sessions/clear", Method::POST, Capability::OwnData),
+    ("/api/sessions/{session_id}/adopt", Method::POST, Capability::OwnData),
+    (
+        "/api/sessions/{session_id}/attachment-pins",
+        Method::DELETE,
+        Capability::OwnData,
+    ),
+    ("/api/sessions/{session_id}/export", Method::GET, Capability::OwnData),
+    ("/api/sessions/{session_id}/rename", Method::POST, Capability::OwnData),
+    (
+        "/api/sessions/{session_id}/prompt-history",
+        Method::POST,
+        Capability::OwnData,
+    ),
+    ("/api/sessions/{session_id}/goal", Method::POST, Capability::OwnData),
+    (
+        "/api/sessions/{session_id}/goal-stage",
+        Method::GET,
+        Capability::OwnData,
+    ),
+    (
+        "/api/sessions/{session_id}/goal-stage",
+        Method::POST,
+        Capability::OwnData,
+    ),
+    ("/api/sessions/{session_id}/skills", Method::GET, Capability::OwnData),
+    ("/api/sessions/{session_id}/skills", Method::POST, Capability::OwnData),
+    (
+        "/api/sessions/{session_id}/structured-facts",
+        Method::GET,
+        Capability::OwnData,
+    ),
+    (
+        "/api/sessions/{session_id}/structured-facts",
+        Method::POST,
+        Capability::OwnData,
+    ),
+    ("/api/structured-memory", Method::GET, Capability::OwnData),
+    ("/api/structured-memory/search", Method::GET, Capability::OwnData),
+    ("/api/structured-memory/facts", Method::GET, Capability::OwnData),
+    ("/api/structured-memory/facts", Method::POST, Capability::OwnData),
+    ("/api/structured-memory/facts/{id}", Method::GET, Capability::OwnData),
+    (
+        "/api/structured-memory/facts/{id}/deactivate",
+        Method::POST,
+        Capability::OwnData,
+    ),
+    ("/api/structured-memory/proposals", Method::GET, Capability::OwnData),
+    ("/api/structured-memory/proposals", Method::POST, Capability::OwnData),
+    (
+        "/api/structured-memory/proposals/{id}",
+        Method::GET,
+        Capability::OwnData,
+    ),
+    (
+        "/api/structured-memory/proposals/{id}",
+        Method::POST,
+        Capability::OwnData,
+    ),
+    ("/api/structured-memory/episodes", Method::GET, Capability::OwnData),
+    (
+        "/api/structured-memory/episodes/purge",
+        Method::POST,
+        Capability::OwnData,
+    ),
+    ("/api/structured-memory/episodes/{id}", Method::GET, Capability::OwnData),
+    (
+        "/api/structured-memory/episodes/{id}/summary",
+        Method::POST,
+        Capability::OwnData,
+    ),
+    (
+        "/api/structured-memory/episodes/{id}/delete",
+        Method::POST,
+        Capability::OwnData,
+    ),
+    ("/api/structured-memory/export", Method::GET, Capability::OwnData),
+    ("/api/structured-memory/purge", Method::POST, Capability::OwnData),
+    ("/api/structured-memory/consolidation", Method::GET, Capability::OwnData),
+    (
+        "/api/structured-memory/consolidation",
+        Method::POST,
+        Capability::OwnData,
+    ),
+    (
+        "/api/structured-memory/consolidation/{id}",
+        Method::GET,
+        Capability::OwnData,
+    ),
+    (
+        "/api/structured-memory/consolidation/{id}/cancel",
+        Method::POST,
+        Capability::OwnData,
+    ),
+    ("/api/notes-corpus", Method::GET, Capability::OwnData),
+    ("/api/notes-corpus", Method::POST, Capability::OwnData),
+    ("/api/notes-corpus/{id}", Method::DELETE, Capability::OwnData),
+    ("/api/spend/summary", Method::GET, Capability::OwnData),
+    ("/api/analytics/summary", Method::GET, Capability::OwnData),
+    ("/api/spend/predict", Method::POST, Capability::OwnData),
+    ("/api/loop/start", Method::POST, Capability::OwnData),
+    ("/api/loop/stop", Method::POST, Capability::OwnData),
+    ("/api/loop/status", Method::GET, Capability::OwnData),
+    ("/api/loop/events/{run_id}", Method::GET, Capability::OwnData),
+    ("/api/notifications", Method::GET, Capability::OwnData),
+    (
+        "/api/notifications/{delivery_id}/replay",
+        Method::POST,
+        Capability::OwnData,
+    ),
+    ("/api/web/research/jobs", Method::GET, Capability::OwnData),
+    ("/api/web/research/jobs", Method::POST, Capability::OwnData),
+    ("/api/web/research/jobs/{job_id}", Method::GET, Capability::OwnData),
+    ("/api/web", Method::GET, Capability::WebUse),
+    ("/api/web/fetch", Method::POST, Capability::WebUse),
+    ("/api/web/check", Method::POST, Capability::WebUse),
+    ("/api/web/search", Method::POST, Capability::WebUse),
+    ("/api/web/research", Method::POST, Capability::WebUse),
+    ("/api/web/research/cancel", Method::POST, Capability::WebUse),
+    ("/api/web/inject", Method::POST, Capability::WebUse),
+    ("/api/web/forget", Method::POST, Capability::WebUse),
+    ("/api/chat/fetch-confirm", Method::POST, Capability::WebUse),
+    ("/api/mcp", Method::GET, Capability::UseMcp),
+    ("/api/mcp/call", Method::POST, Capability::UseMcp),
+    ("/api/soul", Method::GET, Capability::ManageSharedContent),
+    ("/api/soul", Method::POST, Capability::ManageSharedContent),
+    ("/api/soul/document", Method::GET, Capability::ManageSharedContent),
+    ("/api/soul/document", Method::POST, Capability::ManageSharedContent),
+    ("/api/soul/proposals", Method::POST, Capability::ManageSharedContent),
+    ("/api/soul/proposals/{id}", Method::GET, Capability::ManageSharedContent),
+    (
+        "/api/soul/proposals/{id}",
+        Method::POST,
+        Capability::ManageSharedContent,
+    ),
+    ("/api/style", Method::GET, Capability::ManageSharedContent),
+    ("/api/style", Method::POST, Capability::ManageSharedContent),
+    ("/api/memory", Method::GET, Capability::ManageSharedContent),
+    ("/api/memory", Method::POST, Capability::ManageSharedContent),
+    ("/api/memory/add", Method::POST, Capability::ManageSharedContent),
+    ("/api/memory/forget", Method::POST, Capability::ManageSharedContent),
+    ("/api/memory/clear", Method::POST, Capability::ManageSharedContent),
+    ("/api/model", Method::POST, Capability::ManageModels),
+    ("/api/ollama/inventory", Method::GET, Capability::ManageModels),
+    ("/api/ollama/profile", Method::GET, Capability::ManageModels),
+    ("/api/ollama/pull", Method::POST, Capability::ManageModels),
+    ("/api/ollama/pull/cancel", Method::POST, Capability::ManageModels),
+    ("/api/registry", Method::GET, Capability::ReadPanels),
+    ("/api/tools", Method::GET, Capability::ReadPanels),
+    ("/api/skills", Method::GET, Capability::ReadPanels),
+    ("/api/skills/check", Method::POST, Capability::ReadPanels),
+    ("/api/netconnect", Method::GET, Capability::ReadPanels),
+    ("/api/netconnect/diag", Method::GET, Capability::ReadPanels),
+    ("/api/github/status", Method::GET, Capability::RunCoding),
+    ("/api/agent/checks", Method::GET, Capability::RunCoding),
+    ("/api/agent/run", Method::POST, Capability::RunCoding),
+    ("/api/agent/runs", Method::GET, Capability::RunCoding),
+    ("/api/agent/runs/{run_id}", Method::GET, Capability::RunCoding),
+    ("/api/agent/runs/{run_id}/decision", Method::POST, Capability::RunCoding),
+    ("/api/agent/runs/{run_id}/push", Method::POST, Capability::RunCoding),
+    ("/api/agent/runs/{run_id}/publish", Method::POST, Capability::RunCoding),
+    ("/api/agent/runs/{run_id}/discard", Method::POST, Capability::RunCoding),
+    ("/api/agent/jobs", Method::GET, Capability::RunCoding),
+    ("/api/agent/jobs", Method::POST, Capability::RunCoding),
+    ("/api/agent/jobs/{job_id}", Method::GET, Capability::RunCoding),
+    ("/api/agent/jobs/{job_id}/cancel", Method::POST, Capability::RunCoding),
+    ("/api/agent/schedules", Method::GET, Capability::RunCoding),
+    ("/api/agent/schedules", Method::POST, Capability::RunCoding),
+    ("/api/agent/schedules/preview", Method::POST, Capability::RunCoding),
+    ("/api/agent/schedules/{schedule_id}", Method::GET, Capability::RunCoding),
+    (
+        "/api/agent/schedules/{schedule_id}/cancel",
+        Method::POST,
+        Capability::RunCoding,
+    ),
+    ("/api/harness/runs", Method::GET, Capability::RunCoding),
+];
+
+/// The capability a `(method, route template)` requires, or `None` when the
+/// pair is unlisted (the gate refuses those by default).
+pub fn route_capability(method: &Method, template: &str) -> Option<Capability> {
+    ROUTE_CAPS
+        .iter()
+        .find(|(path, m, _)| *path == template && m == method)
+        .map(|(_, _, cap)| *cap)
+}
+
+/// True when a wrong-method request on a listed template keeps the router's
+/// 405 instead of the gate's 403: the template is the own-account surface
+/// (reachable under a bootstrap password), or the role's surface is not
+/// method-exact (`authz::denies_wrong_method`) and the role holds every
+/// capability the template lists. Anything else fails closed.
+pub fn wrong_method_passthrough(role: Role, template: &str) -> bool {
+    let mut rows = ROUTE_CAPS.iter().filter(|(path, _, _)| *path == template).peekable();
+    rows.peek().is_some()
+        && (template_is_own_account(template)
+            || (!crate::common::authz::denies_wrong_method(role)
+                && rows.all(|(_, _, cap)| crate::common::authz::grants(role, *cap))))
+}
+
+/// True when every entry on the template is `OwnAccount` (whoami, own
+/// password, logout), the only surface reachable before a bootstrap password
+/// is replaced.
+pub fn template_is_own_account(template: &str) -> bool {
+    let mut rows = ROUTE_CAPS.iter().filter(|(path, _, _)| *path == template).peekable();
+    rows.peek().is_some() && rows.all(|(_, _, cap)| *cap == Capability::OwnAccount)
 }
 
 pub fn build_router(state: Arc<AppState>) -> Router {
@@ -507,5 +789,110 @@ mod tests {
                 "{path} is listed in registered_paths() but not routed in build_router"
             );
         }
+    }
+
+    /// `(path, method)` pairs parsed from each `.route(...)` call in
+    /// `build_router`, the same source-scan approach as `router_route_paths`
+    /// plus the method constructors in each call's handler expression.
+    fn router_route_methods() -> BTreeSet<(String, String)> {
+        let src = include_str!("mod.rs");
+        let start = src.find("pub fn build_router").expect("build_router must exist");
+        let body = src[start..]
+            .split("#[cfg(test)]")
+            .next()
+            .expect("build_router precedes the test module");
+        let mut routes = BTreeSet::new();
+        let mut rest = body;
+        while let Some(idx) = rest.find(".route(") {
+            rest = &rest[idx + ".route(".len()..];
+            // `.route_layer(` also contains the `.route(` prefix.
+            if rest.trim_start().starts_with("layer") {
+                continue;
+            }
+            let next = rest.find(".route(").unwrap_or(rest.len());
+            let segment = &rest[..next];
+            rest = &rest[next..];
+            let Some(q) = segment.find('"') else { continue };
+            let after = &segment[q + 1..];
+            let Some(end) = after.find('"') else { continue };
+            let path = after[..end].to_string();
+            for (token, method) in [
+                ("get(", "GET"),
+                ("post(", "POST"),
+                ("delete(", "DELETE"),
+                ("put(", "PUT"),
+                ("patch(", "PATCH"),
+            ] {
+                if segment.contains(token) {
+                    routes.insert((path.clone(), method.to_string()));
+                }
+            }
+        }
+        routes
+    }
+
+    #[test]
+    fn route_caps_cover_every_router_method_and_path() {
+        let routed = router_route_methods();
+        assert!(routed.len() > 100, "parser found only {} route methods", routed.len());
+        let table: BTreeSet<(String, String)> = ROUTE_CAPS
+            .iter()
+            .map(|(path, method, _)| (path.to_string(), method.to_string()))
+            .collect();
+        assert_eq!(
+            table.len(),
+            ROUTE_CAPS.len(),
+            "duplicate (path, method) rows in ROUTE_CAPS"
+        );
+        for (path, method) in &routed {
+            assert!(
+                table.contains(&(path.clone(), method.clone())),
+                "{method} {path} is routed in build_router but missing from ROUTE_CAPS"
+            );
+        }
+        for (path, method) in &table {
+            assert!(
+                routed.contains(&(path.clone(), method.clone())),
+                "{method} {path} is listed in ROUTE_CAPS but not routed in build_router"
+            );
+        }
+    }
+
+    #[test]
+    fn route_caps_rows_are_registered_paths() {
+        let all = registered_paths();
+        for (path, _, _) in ROUTE_CAPS {
+            assert!(
+                all.contains(*path),
+                "{path} is listed in ROUTE_CAPS but missing from registered_paths()"
+            );
+        }
+        for path in &all {
+            assert!(
+                ROUTE_CAPS.iter().any(|(p, _, _)| p == path),
+                "{path} is registered but has no ROUTE_CAPS row"
+            );
+        }
+    }
+
+    #[test]
+    fn route_capability_denies_unlisted_pairs() {
+        assert_eq!(route_capability(&Method::POST, "/api/chat"), Some(Capability::Chat));
+        // A registered template with an unlisted method resolves to nothing.
+        assert_eq!(route_capability(&Method::POST, "/api/diag/read"), None);
+        assert_eq!(route_capability(&Method::DELETE, "/api/chat"), None);
+        // Unknown templates resolve to nothing: the gate refuses them.
+        assert_eq!(route_capability(&Method::GET, "/api/not-a-route"), None);
+        assert!(template_is_own_account("/api/auth/whoami"));
+        assert!(!template_is_own_account("/api/chat"));
+        assert!(!template_is_own_account("/api/not-a-route"));
+        // Wrong-method passthrough keeps the 405 for roles a template fully
+        // serves, and refuses the method-exact roles and unheld templates.
+        assert!(wrong_method_passthrough(Role::Admin, "/api/diag/read"));
+        assert!(wrong_method_passthrough(Role::Operator, "/api/sessions/clear"));
+        assert!(!wrong_method_passthrough(Role::PortalAuditor, "/api/diag/read"));
+        assert!(!wrong_method_passthrough(Role::Operator, "/api/keys"));
+        assert!(wrong_method_passthrough(Role::Audit, "/api/auth/whoami"));
+        assert!(!wrong_method_passthrough(Role::Admin, "/api/not-a-route"));
     }
 }

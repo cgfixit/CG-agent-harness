@@ -677,3 +677,55 @@ async fn browser_tasks_refuse_without_accounts_even_when_enabled() {
         "{body}"
     );
 }
+
+/// #965: an authenticated request whose route template and method are not in
+/// the capability table is denied by default at the gate, whatever the role;
+/// with accounts off the same unknown path keeps its 404.
+#[tokio::test]
+async fn unlisted_routes_deny_authenticated_callers_by_default() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default().with("auth.enabled", "true")).await;
+    let mgr = s.state.auth.clone().unwrap();
+    let password = cgagentharness::common::random_hex(24);
+    mgr.create_user("boss", &password, "admin").unwrap();
+    mgr.create_user("worker", &password, "operator").unwrap();
+    // Clear the first-sign-in flag so the capability check, not the
+    // password-change permit, decides.
+    mgr.set_password("boss", &password).unwrap();
+    mgr.set_password("worker", &password).unwrap();
+    for name in ["boss", "worker"] {
+        let login = s
+            .client
+            .post(s.url("/api/auth/login"))
+            .json(&json!({"username": name, "password": password}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(login.status(), 200);
+        let cookie = login.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+        let response = s
+            .client
+            .get(s.url("/api/definitely-not-a-route"))
+            .header("cookie", &cookie)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status().as_u16();
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(
+            (status, code(&body).as_str()),
+            (403, "AUTH_PERMISSION_DENIED"),
+            "{name}: {body}"
+        );
+    }
+    // Accounts off: the gate adds no authority and the unknown path is a 404.
+    let open = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, _) = open.open_get("/api/definitely-not-a-route").await;
+    assert_eq!(status, 404);
+}
