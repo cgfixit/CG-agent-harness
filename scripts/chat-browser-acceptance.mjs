@@ -31,9 +31,9 @@ let authFixture=false, signedIn=false, logoutStatus=200, whoamiDrop=false, mustC
 // Mirrors authz::Capability::name + grants() (src/common/authz.rs): the console
 // hides controls by these names, never by role strings.
 const CAPS={
- admin:['public','own_account','own_sessions','own_data','chat','chat_attachments','web_use','use_mcp','propose_persona','notification_replay','run_coding','manage_models','manage_shared_content','manage_web_policy','manage_credentials','manage_accounts','manage_config','browser_use','read_audit','read_logs','read_panels'],
+ admin:['public','own_account','own_sessions','own_data','chat','chat_attachments','web_use','use_mcp','propose_persona','notification_replay','run_coding','manage_models','manage_shared_content','manage_web_policy','manage_credentials','manage_accounts','manage_config','browser_use','read_audit','read_logs','investigate_logs','read_panels'],
  operator:['public','own_account','own_sessions','own_data','chat','chat_attachments','web_use','use_mcp','propose_persona','run_coding','read_panels'],
- auditor:['public','own_account','own_sessions','chat','read_audit','read_logs'],
+ auditor:['public','own_account','own_sessions','chat','read_audit','read_logs','investigate_logs'],
 };
 const visibleKeys=['SERPAPI_API_KEY','TAVILY_API_KEY','FIRECRAWL_API_KEY','GH_TOKEN','GROK_API_KEY','ANTHROPIC_API_KEY','CGAGENTHARNESS_WEBHOOK_TOKEN'];
 const hiddenKeys=['CGAGENTHARNESS_API_KEY','DEEPAGENT_API_KEY'];
