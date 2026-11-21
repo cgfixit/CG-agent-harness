@@ -1302,13 +1302,13 @@ async fn a_retired_role_is_migrated_and_audited_once_at_boot() {
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .filter(|row| row["event"] == "auth.role_migrated")
         .collect();
-    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows.len(), 1, "exactly one auth.role_migrated row");
     assert_eq!(rows[0]["from"], "audit");
     assert_eq!(rows[0]["to"], "auditor");
     let user_id = rows[0]["user_id"].as_str().unwrap();
     assert!(
         !user_id.is_empty() && user_id.chars().all(|c| c.is_ascii_hexdigit()),
-        "{user_id}"
+        "the row names the account by its hex user id"
     );
     assert!(
         !log.contains("retired-reader"),
@@ -1321,5 +1321,5 @@ async fn a_retired_role_is_migrated_and_audited_once_at_boot() {
         .json()
         .await
         .unwrap();
-    assert_eq!(whoami["role"], "auditor", "{whoami}");
+    assert_eq!(whoami["role"], "auditor", "the migrated account signs in as auditor");
 }
