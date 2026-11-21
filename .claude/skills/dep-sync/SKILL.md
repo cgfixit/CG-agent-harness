@@ -49,9 +49,10 @@ For each file in the diff, extract the semantic change, not just the text:
 - `deny.toml` / `desktop/deny.toml` — ignores, license allowlist, bans (same
   telemetry-SDK bans in both; desktop evaluates Apple targets only, ignores empty)
 - `browser/package.json` + `package-lock.json` — the sidecar's exact Playwright
-  pin, also named in `docs/Browser-Use.md` and the `playwright browser sidecar`
-  row of `check_otel.py` (`versions`, `reviewed`): `rg` the old version, move all
-  together. Chrome is not a repo dependency: the sidecar drives the runner's
+  pin, also named in `docs/Browser-Use.md` and `NPM_VERIFIED_PINS` in
+  `check_otel.py`; move all together and refresh the sidecar row's `reviewed`
+  after re-reading the changelog. Oracle check T6 warns when they disagree, so
+  `telemetry-contract.yml` fails until they match. Chrome is not a repo dependency: the sidecar drives the runner's
   installed Google Chrome (`channel: "chrome"`; `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`
   is contractual). Never add `playwright install` or a browser download; Chrome
   moves with the runner image (`ubuntu-26.04` in `ci.yml`), not a repo file
@@ -126,8 +127,8 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --test <tar
 cd desktop && cargo build --all-targets --locked && cd ..
 ```
 
-A network crate that moved (reqwest, rmcp, rustls, hyper, tauri, a new direct
-dependency) also drifts the telemetry oracle (`telemetry-contract.yml`): ask
+A network crate that moved (reqwest, rmcp, rustls, hyper, tauri, Playwright, a new
+direct dependency) also drifts the telemetry oracle (`telemetry-contract.yml`): ask
 the operator to run `/cgagentharness-otel-hardening` (operator-only).
 
 Never pipe a pass/fail command into grep or suppress its exit status. A missing
