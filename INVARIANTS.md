@@ -162,9 +162,9 @@ refused without reaching a handler. Handler-level role checks call
 `common::authz` helpers (`grants_stored`, `is_role`); the invariant guard
 rejects a new ad-hoc comparison until its PR pins it. Storing `auditor` first moves a
 version 1 or 2 account database to schema 3, which older binaries refuse;
-retired `audit` (left disabled) and `portal_auditor` roles fold into `auditor` at open,
+retired `audit` (left disabled) and `portal_auditor` fold into `auditor` at open,
 revoking their sessions and logging one `auth.role_migrated` event per
-account by user id; the store keeps each report until that row is written. A fresh
+account (user id); the store keeps each report until that row is written. A fresh
 `admin` signs in with a one-time code in the owner-only `<home>/setup-code`
 (never shipped, never page content); older `admin`/`admin` and pending-password
 homes rotate to one at startup. Until replaced, any client (console, HTTP, CLI)
