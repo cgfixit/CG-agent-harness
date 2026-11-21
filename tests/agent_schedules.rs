@@ -247,7 +247,10 @@ async fn a_persisted_request_that_no_longer_validates_is_refused_at_fire_time() 
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
     let staged = staged_request(&s).await;
-    let t0 = 1_700_000_000.0;
+    // A day ahead of the wall clock: `build_app` runs a real ticker on `now_ts()`,
+    // and a fixed past time would be overdue to it, so it could consume the row
+    // before the explicit fake-clock tick below does.
+    let t0 = cgagentharness::common::now_ts() + 86_400.0;
     let mut escape = staged.clone();
     escape["read_files"] = json!(["../outside.rs"]);
     let mut zero = staged.clone();
