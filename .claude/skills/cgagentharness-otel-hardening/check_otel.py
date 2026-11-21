@@ -331,6 +331,9 @@ DESKTOP_VERIFIED_CRATE_PINS: dict[str, str] = {"tauri": "2.12.4", "reqwest": "0.
 # sidecar inventory row below is built from it: T6 requires every copy to agree
 # with this one, so a bump that misses a file WARNs instead of going stale.
 NPM_VERIFIED_PINS: dict[str, str] = {"playwright": "1.65.1", "playwright-core": "1.65.1"}
+# Locked but not declared in package.json (playwright depends on it). Every other
+# pinned name must stay a direct, exact dependency of the sidecar.
+NPM_TRANSITIVE_PINS: frozenset[str] = frozenset({"playwright-core"})
 
 # gh floor the agentic layer enforces (src/agentic/gh_client.rs DEFAULT_MIN_GH).
 EXPECTED_MIN_GH = (2, 40, 0)
@@ -1049,8 +1052,10 @@ def check_npm_pins(root: Path) -> None:
             warn("T6", f"{lock_rel}: {name} is {have or 'absent'}, last verified {want}: re-read its "
                        "changelog for new network behavior, then update NPM_VERIFIED_PINS")
             drift += 1
-        if name in direct and direct[name] != want:
-            warn("T6", f"{pkg_rel}: {name} is {direct[name]!r}, expected the exact pin {want}")
+        got = direct.get(name)
+        if name not in NPM_TRANSITIVE_PINS and got != want:
+            shown = repr(got) if got else "absent"
+            warn("T6", f"{pkg_rel}: {name} is {shown}, expected the exact pin {want}")
             drift += 1
     for name in sorted(set(direct) - set(NPM_VERIFIED_PINS)):
         warn("T6", f"{pkg_rel}: unclassified npm dependency {name}: pin it in NPM_VERIFIED_PINS and "

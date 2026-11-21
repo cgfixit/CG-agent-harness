@@ -231,28 +231,50 @@ text, n = re.subn(r"name = \"reqwest\"\nversion = \"[0-9.]+\"", "name = \"reqwes
 assert n == 1'
 _expect "T6 crate-pin-drift mutation" 0 "WARN  \[T6\] Cargo.lock: reqwest"
 
+# T6: the sidecar's npm pin. Every input below comes from the oracle's own pin
+# and every output is a deliberately different version, so a correct Playwright
+# bump (lock, package.json, docs and NPM_VERIFIED_PINS together) cannot turn
+# these into silent no-ops. -B: importing the oracle must not leave bytecode.
+NPM_PIN="$(python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import check_otel; print(check_otel.NPM_VERIFIED_PINS["playwright"])' "$here")"
+export NPM_PIN
+if [ -z "$NPM_PIN" ]; then echo "could not read NPM_VERIFIED_PINS from the oracle" >&2; exit 1; fi
+
 # T6: the sidecar's lock moves without the oracle pin.
 a="$(_mktree)"
 _mutate "$a/browser/package-lock.json" '
-text = text.replace("\"version\": \"1.65.1\"", "\"version\": \"1.65.2\"", 1)'
-_expect "T6 npm lock drift mutation" 0 "WARN  \[T6\] browser/package-lock.json: playwright is 1.65.2"
+import os
+pin = os.environ["NPM_PIN"]
+text = text.replace(f"\"version\": \"{pin}\"", "\"version\": \"0.0.0-mutated\"", 1)'
+_expect "T6 npm lock drift mutation" 0 "WARN  \[T6\] browser/package-lock.json: playwright is 0.0.0-mutated"
 
 # T6: package.json loosens the exact pin to a range.
 a="$(_mktree)"
 _mutate "$a/browser/package.json" '
-text = text.replace("\"playwright\": \"1.65.1\"", "\"playwright\": \"^1.65.1\"")'
+import os
+pin = os.environ["NPM_PIN"]
+text = text.replace(f"\"playwright\": \"{pin}\"", f"\"playwright\": \"^{pin}\"")'
 _expect "T6 npm range-pin mutation" 0 "WARN  \[T6\] browser/package.json: playwright is"
 
-# T6: Browser-Use.md names an older Playwright than the lock.
+# T6: package.json stops declaring playwright while the lock still carries it.
+a="$(_mktree)"
+_mutate "$a/browser/package.json" '
+text = "{\"name\": \"x\", \"private\": true, \"dependencies\": {}}\n"'
+_expect "T6 npm dependency-removed mutation" 0 "WARN  \[T6\] browser/package.json: playwright is absent"
+
+# T6: Browser-Use.md names a different Playwright than the lock.
 a="$(_mktree)"
 _mutate "$a/docs/Browser-Use.md" '
-text = text.replace("Playwright 1.65.1", "Playwright 1.65.0")'
+import os
+pin = os.environ["NPM_PIN"]
+text = text.replace(f"Playwright {pin}", "Playwright 0.0.0")'
 _expect "T6 npm docs-drift mutation" 0 "WARN  \[T6\] docs/Browser-Use.md names Playwright"
 
 # T6: an unclassified npm dependency joins the sidecar.
 a="$(_mktree)"
 _mutate "$a/browser/package.json" '
-text = text.replace("\"playwright\": \"1.65.1\"", "\"playwright\": \"1.65.1\",\n    \"zz-unknown\": \"1.0.0\"")'
+import os
+pin = os.environ["NPM_PIN"]
+text = text.replace(f"\"playwright\": \"{pin}\"", f"\"playwright\": \"{pin}\",\n    \"zz-unknown\": \"1.0.0\"")'
 _expect "T6 unclassified npm dependency mutation" 0 "WARN  \[T6\] browser/package.json: unclassified npm dependency zz-unknown"
 
 # T7: a spawn appears in an unlisted file (prepended: the test tail is stripped).
