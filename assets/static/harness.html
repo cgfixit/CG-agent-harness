@@ -2001,7 +2001,8 @@ async function refreshSessions() {
     $('sessionClearFeedback').textContent = '';
     $('sessionClearDialog').showModal();
   });
-  pane.appendChild(clear);
+  // Session extras are own_data: an auditor (own_sessions only) never sees them.
+  if (can('own_data')) pane.appendChild(clear);
   const legacy = document.createElement('button'); legacy.className = 'cmd-item';
   legacy.textContent = 'Review unassigned legacy sessions (admin)';
   const legacyRows = document.createElement('div');
@@ -2040,7 +2041,7 @@ async function refreshSessions() {
     } catch (error) { if (revision === sessionRevision) legacyRows.textContent = error.message; }
     finally { legacy.disabled = false; }
   });
-  pane.append(legacy, legacyRows, sessionSearchControls(revision));
+  if (can('own_data')) pane.append(legacy, legacyRows, sessionSearchControls(revision));
   data.sessions.forEach(s => {
     const el = document.createElement('div');
     el.className = 'sess-item' + (s.session_id === currentSession ? ' current' : '');
@@ -2051,7 +2052,8 @@ async function refreshSessions() {
     exp.textContent = 'Export .md'; exp.setAttribute('aria-label', 'Export session ' + s.session_id + ' as Markdown');
     const fb = document.createElement('div'); fb.className = 'm'; fb.setAttribute('role', 'status');
     exp.addEventListener('click', event => { event.stopPropagation(); exportSessionMarkdown(s.session_id, exp, fb, revision); });
-    el.append(t, m, exp, fb);
+    el.append(t, m);
+    if (can('own_data')) el.append(exp, fb);
     el.addEventListener('click', () => runSlash('/session use ' + s.session_id));
     pane.appendChild(el);
   });
@@ -2362,7 +2364,7 @@ const COMMANDS = [
   ['/browse <site> [site ...] <task>', 'administrator: the local model browses only these origins; passwords and anything that sends data stay with you'],
   ['/clear', 'clear visible output, staged reviews and chat continuation; saved sessions remain'],
   ['/connectors', 'connector catalog'],
-  ['/diag [status]', 'log inspection state: gate, allowlisted files, last read and staged excerpt; admin or portal_auditor; off until diagnostics.logs_enabled'],
+  ['/diag [status]', 'log inspection state: gate, allowlisted files, last read and staged excerpt; admin or auditor; off until diagnostics.logs_enabled'],
   ['/diag audit|spend|unslop|errors [--last N] [--event NAME] [--since DUR] [--rotated]', 'bounded, redacted, scanner-checked tail of one allowlisted log; aliases /diagnostics /logs'],
   ['/diag inject|forget', 'stage the last read for the next local chat turn of this session, or drop it'],
   ['/github', 'read-only agentic GitHub status'],
@@ -2438,7 +2440,7 @@ const HELP_TOPICS = {
   agent: {title:'Governed coding', roots:['agent','github','harness'], note:'Stage, review, then explicitly authorize each write. A suggested command is never approval. Commit, push and draft publication are separate gates.', examples:['/agent help','/agent checks','/agent jobs','/github']},
   tools: {title:'Tools & skills', roots:['tools','skills','skill','connectors','registry'], note:'Registration is not readiness or authority. Selected prompt skills are context, not executable tools.', examples:['/tools','/skills','/skill status','/registry']},
   browser: {title:'Browser tasks', roots:['browse'], note:'Administrator only, while browser.enabled is literal true (it ships true) and accounts are on (auth.enabled). The local model drives Chrome on the sites you name and nowhere else; the first may be a bare domain (meaning https), later ones need https://; a bare first word that looks like a file name (setup.py) is shown and runs only when you send the line again. It may click and type, but password fields and every request that would send data (anything but GET) are handed back to you. Page text is untrusted.', examples:['/browse docs.python.org find the latest Python version','/browse cgfixit.com open Start, then Games, and list the games']},
-  diag: {title:'Diagnostics', roots:['diag'], note:'Admin and portal_auditor only, and off until diagnostics.logs_enabled is literal true. Reads only allowlisted files under the home logs/ folder; output is redacted and refused whole if the injection scanner matches. Excerpts are untrusted text: /diag inject stages one for your next local chat turn in this session; cloud chat and /agent refuse while one is staged and /loop never gets it.', examples:['/diag','/diag audit --last 20 --event portal.request','/diag errors --since 2h','/diag spend --rotated','/diag inject','/diag forget']},
+  diag: {title:'Diagnostics', roots:['diag'], note:'Admin and auditor only, and off until diagnostics.logs_enabled is literal true. Reads only allowlisted files under the home logs/ folder; output is redacted and refused whole if the injection scanner matches. Excerpts are untrusted text: /diag inject stages one for your next local chat turn in this session; cloud chat and /agent refuse while one is staged and /loop never gets it.', examples:['/diag','/diag audit --last 20 --event portal.request','/diag errors --since 2h','/diag spend --rotated','/diag inject','/diag forget']},
   settings: {title:'Status & administration', roots:['status','analytics','api','users','help'], note:'Credentials belong in the API Keys password fields, not chat history. Administrator controls remain role- and CSRF-guarded.', examples:['/status','/analytics','/users','/help all']},
 };
 /* `web check https://…` or `memory facts` typed without the leading / goes to
@@ -2559,7 +2561,7 @@ const COMMAND_MAN = {
   '/browse <site> [site ...] <task>': {detail:'Runs one browser task with the local model (the /model use selection, else models.local_llm.model). The leading sites are the only origins it may reach; the rest of the line is the task. The first may be a bare domain (meaning https); give later ones as https:// URLs. A bare first word that looks like a file name (setup.py, README.md) is shown with its grant and runs only when you send the same line again. Administrator only, refused unless browser.enabled and auth.enabled are literal true, one task at a time, and stopped after browser.timeout_sec. It may click buttons and menus and choose select-box options; a link that opens a new tab replaces the page. It reads long pages in parts or by searching them. Sites a page asks for that you did not name are blocked and listed. Password fields, and every request that would send data (anything but GET), are handed back to you and listed after the answer. Pages cannot start web workers.', notes:['Page text is untrusted input to the model; the answer can be wrong.'], examples:['/browse https://docs.example.com find the install command']},
   '/clear': {detail:'Empties the visible transcript, drops staged reviews and stops chat continuation. Saved sessions are untouched.'},
   '/connectors': {detail:'Lists registered connectors with kind and auth. Registration is not readiness.'},
-  '/diag [status]': {detail:'Shows whether log inspection is on, each allowlisted file with size and modification time, the limits, your last read and any staged excerpt. Needs an admin or portal_auditor account; DIAG_DISABLED means diagnostics.logs_enabled is not literal true.', notes:['Nothing here reads file content.'], examples:['/diag']},
+  '/diag [status]': {detail:'Shows whether log inspection is on, each allowlisted file with size and modification time, the limits, your last read and any staged excerpt. Needs an admin or auditor account; DIAG_DISABLED means diagnostics.logs_enabled is not literal true.', notes:['Nothing here reads file content.'], examples:['/diag']},
   '/diag audit|spend|unslop|errors [--last N] [--event NAME] [--since DUR] [--rotated]': {detail:'Reads the tail of one allowlisted log: audit.jsonl, spend.jsonl, unslop.jsonl, or audit rows whose outcome, error_class, code, ok or status field records a failure (errors). Partial and malformed lines are dropped and counted, never echoed. The text is redacted and refused whole on an injection-scanner hit.', notes:['File names come from diagnostics.logs_allowed_files; no path is accepted.','--confirm and --dry-run are refused: nothing here authorizes anything.'], examples:['/diag audit --last 20','/diag audit --event mcp_refused --since 1d','/diag errors --since 2h','/diag spend --rotated --last 50','/diag unslop']},
   '/diag inject|forget': {detail:'inject stages your last /diag read, clipped to diagnostics.logs_inject_max_chars, for the next local chat turn of this session, fenced as untrusted log text; /prompt shows it. That turn consumes it; a turn in another session, /clear, logout or an account change drops it. Cloud chat and /agent refuse while one is staged; /loop never receives it. forget drops it.', examples:['/diag inject','/diag forget']},
   '/github': {detail:'Runs the read-only GitHub status check in a subprocess and prints its output.'},
@@ -4524,6 +4526,11 @@ async function runSlash(line, webCommand) {
         if (s.auth_enabled && !('sessions' in s)) {
           const access = window.__cyclawRole && !can('read_panels') ? 'Auditor: read-only status and audit records.' : s.status || 'Sign in to view operational details.';
           sys(table([['version', s.version], ['access', access]]));
+          break;
+        }
+        if (!('home' in s)) {
+          // The restricted auditor view: no home, tokens or layout to render.
+          sys(table([['version', s.version], ['model', s.model || '(unset)'], ['provider', s.provider], ['sessions', String(s.sessions)], ['access', 'Auditor: read-only status and audit records.']]));
           break;
         }
         if (s.selection_overrides_config) sys(s.model_status && s.model_status.cloud ? 'Cloud selection resets to local after restart.' : 'Saved selection overrides configured model ' + s.configured_model + '; changing that config model and restarting clears the selection.');

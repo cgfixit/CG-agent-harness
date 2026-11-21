@@ -145,7 +145,7 @@ Every API request passes rate limiting, exact same-origin and direct loopback
 checks. Operational reads and writes also need an enabled account and its
 server-side role. Mutations need the CSRF header/token; only
 status/static/login/setup-status are public, and none sets a password.
-`portal_auditor` reaches only local chat in its own sessions, prompt preview,
+`auditor` reaches only local chat in its own sessions, prompt preview,
 `/api/audit` and `/diag` (the capability table below); its chat and preview
 withhold persona, memory, attachments, notes, skills, web tools, cloud,
 loops and model choice, including earlier-role data;
@@ -159,8 +159,11 @@ template or method is unlisted is denied by default: a new route has no role
 access until the table names it. Roles are parsed once at the gate; unknown
 stored roles fail closed. A method no row lists for the matched template is
 refused without reaching a handler. Handler-level role string comparisons
-remain as legacy surface, pinned by the invariant guard pending consolidation. Storing that role first moves the
-account database to schema 2, which older binaries refuse. A fresh
+remain as legacy surface, pinned by the invariant guard pending consolidation. Storing `auditor` first moves a
+version 1 or 2 account database to schema 3, which older binaries refuse;
+retired `audit` and `portal_auditor` roles fold into `auditor` at open,
+revoking their sessions and logging one `auth.role_migrated` event per
+account by user id. A fresh
 `admin` signs in with a one-time code in the owner-only `<home>/setup-code`
 (never shipped, never page content); older `admin`/`admin` and pending-password
 homes rotate to one at startup. Until replaced, any client (console, HTTP, CLI)
@@ -689,7 +692,7 @@ goal; a turn needing compaction continues automatically.
 browser; the session stores each as a short label (`Loop turn N of M.`), not the
 goal reminder sent with it. Each turn goes through `chat_inner` (`loop_turn: true`) after re-reading
 the starting account: deleted, disabled, password-pending, or no longer
-operator/admin ends the run `failed`. `portal_auditor` cannot start one. Start,
+operator/admin ends the run `failed`. `auditor` cannot start one. Start,
 stop, status and events are bound to the starting owner; a foreign run reads as
 `LOOP_RUN_NOT_FOUND`. A session holds one live run (`LOOP_IN_FLIGHT`). A run ends
 on stop, a changed or cleared session goal (`LOOP_GOAL_CHANGED`), `loop.max_turns`,
@@ -1027,7 +1030,7 @@ never keys, masked tails, the sandbox backend or allowlist URLs. Both enter only
 local chat turns and `/prompt`, fenced as untrusted and counted as prompt
 tokens (the live block in the system prompt, excerpts with the new message);
 a message of only stopwords selects no excerpt. Cloud chat, `/loop` and `/agent`
-never receive them, nor does `portal_auditor` receive the live block. Audits hold chunk
+never receive them, nor does `auditor` receive the live block. Audits hold chunk
 ids, counts and the manual hash, never text. Chat still exposes exactly two
 model tools.
 
@@ -1040,7 +1043,7 @@ model tools.
 is restart-only. A missing or quoted value stays off. Merging a new seed does
 not rewrite an existing home `config.yaml`. `diagnostics.self_knowledge` and
 `diagnostics.live_state` do not open this route. Routes need it and an `admin`
-or `portal_auditor` account: `DIAG_DISABLED` or `DIAG_REFUSED`, never empty
+or `auditor` account: `DIAG_DISABLED` or `DIAG_REFUSED`, never empty
 success. A request names a `logs_allowed_files` entry
 byte for byte (bare names, distinct after case folding, checked at boot); the
 server joins that entry to `<home>/logs/`. Reads refuse linked or non-private

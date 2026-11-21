@@ -33,8 +33,7 @@ let authFixture=false, signedIn=false, logoutStatus=200, whoamiDrop=false, mustC
 const CAPS={
  admin:['public','own_account','own_sessions','own_data','chat','chat_attachments','web_use','use_mcp','propose_persona','notification_replay','run_coding','manage_models','manage_shared_content','manage_web_policy','manage_credentials','manage_accounts','manage_config','browser_use','read_audit','read_logs','read_panels'],
  operator:['public','own_account','own_sessions','own_data','chat','chat_attachments','web_use','use_mcp','propose_persona','run_coding','read_panels'],
- audit:['public','own_account','read_audit'],
- portal_auditor:['public','own_account','own_sessions','chat','read_audit','read_logs'],
+ auditor:['public','own_account','own_sessions','chat','read_audit','read_logs'],
 };
 const visibleKeys=['SERPAPI_API_KEY','TAVILY_API_KEY','FIRECRAWL_API_KEY','GH_TOKEN','GROK_API_KEY','ANTHROPIC_API_KEY','CGAGENTHARNESS_WEBHOOK_TOKEN'];
 const hiddenKeys=['CGAGENTHARNESS_API_KEY','DEEPAGENT_API_KEY'];
@@ -82,11 +81,18 @@ const server=createServer(async(req,res)=>{
  if(path==='/'){res.setHeader('Content-Security-Policy',consoleCsp);res.end(html.replaceAll('__CYCLAW_CSRF_TOKEN__','fixture').replaceAll('__CYCLAW_CSP_NONCE__','fixture'));return;}
  if(path.startsWith('/preview/html')){res.setHeader('Content-Security-Policy',previewCsp);res.setHeader('X-Frame-Options','SAMEORIGIN');res.setHeader('Content-Type','text/html; charset=utf-8');res.end(previewHtml);return;}
  if(path.startsWith('/static/')){res.end('');return;}
- // Mirrors account_gate (src/server/guards.rs): an audit account reaches only the public
- // routes, its own whoami/password/logout and GET /api/audit.
+ // Mirrors account_gate (src/server/guards.rs): an auditor reaches the public
+ // routes, its own whoami/password/logout, its own sessions, local chat and
+ // slash parse, GET /api/audit and /api/diag; everything else is refused.
  const route=path.split('?')[0];
  if(authFixture&&signedIn&&mustChange&&route.startsWith('/api/')&&!['/api/status','/api/auth/setup-status','/api/auth/login','/api/auth/whoami','/api/auth/password','/api/auth/logout'].includes(route)){reply({detail:{code:'AUTH_PASSWORD_CHANGE_REQUIRED',message:'replace the bootstrap password before using the harness'}},403);return;}
- if(authFixture&&signedIn&&authRole==='audit'&&route.startsWith('/api/')&&!['/api/status','/api/auth/setup-status','/api/auth/login','/api/auth/whoami','/api/auth/password','/api/auth/logout'].includes(route)&&!(route==='/api/audit'&&req.method==='GET')){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
+ if(authFixture&&signedIn&&authRole==='auditor'&&route.startsWith('/api/')){
+  const allowed=['/api/status','/api/auth/setup-status','/api/auth/login','/api/auth/whoami','/api/auth/password','/api/auth/logout','/api/sessions','/api/chat','/api/slash/parse'].includes(route)
+   ||(route==='/api/audit'&&req.method==='GET')
+   ||route.startsWith('/api/diag')
+   ||/^\/api\/sessions\/\d{12}$/.test(route);
+  if(!allowed){reply({detail:{code:'AUTH_PERMISSION_DENIED',message:'denied'}},403);return;}
+ }
  if(path==='/api/notes-corpus' && req.method==='GET'){
   const notes = fixtureNotes.slice();
   if(delayedNotesList) await delayedNotesList();
@@ -152,7 +158,7 @@ const server=createServer(async(req,res)=>{
   const auditor=body.username==='audit-fixture'&&body.password==='browser-auditor-password';
   const secondOwner=body.username==='memory-second'&&body.password==='browser-memory-password';
   signedIn=auditor||secondOwner||(body.username==='admin'&&body.password===adminPassword);
-  authUsername=auditor?'audit-fixture':secondOwner?'memory-second':'admin';authRole=auditor?'audit':'admin';
+  authUsername=auditor?'audit-fixture':secondOwner?'memory-second':'admin';authRole=auditor?'auditor':'admin';
   if(auditor)mustChange=false;
   reply({username:authUsername,role:authRole,user_id:userIds[authUsername],must_change_password:mustChange,capabilities:CAPS[authRole]},signedIn?200:401);return;
  }
@@ -174,7 +180,8 @@ const server=createServer(async(req,res)=>{
   });
   reply({written:Object.keys(body.keys??{}),path:'fixture-store',keys});return;
  }
- if(path==='/api/status'&&authFixture&&(!signedIn||mustChange||authRole==='audit')){reply({version:'fixture',auth_enabled:true});return;}
+ if(path==='/api/status'&&authFixture&&(!signedIn||mustChange)){reply({version:'fixture',auth_enabled:true});return;}
+ if(path==='/api/status'&&authFixture&&authRole==='auditor'){reply({version:'fixture',auth_enabled:true,model:'mock',provider:'mock',chat_mode:'conversation',soul_enabled:false,memory_enabled:false,chat_tools_available:false,sessions:sessions.size});return;}
  if(path==='/api/status'){reply({model:'mock',provider:'mock',home:'/fixture',soul_enabled:true,soul:{loaded:false,unavailable_reason:'missing'},total_tokens:987654,loop:loopFixture});return;}
  if(path==='/api/soul/document'){
   if(req.method==='POST'){if(!body.confirm){reply({detail:{code:'SOUL_CONFIRM',message:'Confirmation required'}},400);return;}persona=body.content;reply({saved:true,revision:'1'.repeat(64)});return;}
@@ -1301,20 +1308,25 @@ try {
  assert.equal(await evaluate('prBodyTarget'),'');
  assert.equal(await evaluate('document.getElementById("passwordDialog").open'),false,'setup stays closed after logout');
  assert.equal(await evaluate('document.getElementById("signInScreen").hidden'),false,'logout returns to the sign-in card');
- // Authentication succeeds for an auditor even though the server denies operational sessions.
+ // An auditor signs in to a working but narrowed console (#965): its own
+ // sessions and local chat, with every control its capabilities do not cover
+ // hidden instead of visibly refused.
  await evaluate('document.getElementById("hAuthUser").value="audit-fixture";document.getElementById("hAuthPass").value="browser-auditor-password";document.getElementById("hAuthLogin").click()');
- await until('document.getElementById("pane-sessions").textContent.includes("AUTH_PERMISSION_DENIED: denied")');
- assert.equal(await evaluate('document.getElementById("hAuthWho").textContent'),'audit-fixture · audit · '+userIds['audit-fixture'],'a session permission denial must not turn successful login into a network error');
+ await until('[...document.querySelectorAll("#pane-sessions button")].some(b=>b.textContent.includes("new session"))');
+ assert.equal(await evaluate('document.getElementById("pane-sessions").textContent.includes("AUTH_PERMISSION_DENIED")'),false,'an auditor reads its own sessions');
+ assert.equal(await evaluate('document.getElementById("hAuthWho").textContent'),'audit-fixture · auditor · '+userIds['audit-fixture'],'an auditor login reports its role');
+ assert.equal(await evaluate('document.getElementById("clearSessionHistory")'),null,'Clear History is own_data and stays hidden');
+ assert.equal(await evaluate('document.getElementById("sessionSearch")'),null,'transcript search is own_data and stays hidden');
+ assert.equal(await evaluate('document.querySelectorAll("#pane-sessions .sess-export").length'),0,'per-session export is own_data and stays hidden');
  assert.equal(await evaluate('document.getElementById("sStyle").disabled'),true,'auditors cannot select a session style');
  assert.equal(await evaluate('document.getElementById("tab-users").hidden'),true,'auditors cannot see the users tab');
  assert.equal(await evaluate('document.getElementById("tab-api-keys").hidden'),true,'auditors cannot see the API keys tab');
  assert.equal(await evaluate('document.getElementById("sMemory").disabled'),true,'auditors cannot toggle shared memory');
  assert.equal(await evaluate('document.getElementById("reloadLimits").hidden'),true,'auditors cannot see reload limits');
- assert.equal(await evaluate('document.querySelectorAll("#pane-sessions button").length'),0,'auditors must not see New Session or Clear History controls');
  assert.equal(await evaluate('refreshHeaderFeatures(true).then(()=>["openDeliveries","openSchedules"].every(id=>document.getElementById(id).hidden))'),true,'refused (403) probes keep automation hidden');
  assert.equal(await evaluate('document.getElementById("passwordDialog").open'),false);
- // account_gate denies an auditor /api/slash/parse, so a typed /status is refused unsent;
- // drive the reduced status view through the dispatcher instead.
+ // An auditor's /status is the restricted server view; the console renders it
+ // without the full table's home, token or layout rows.
  await evaluate('document.getElementById("stream").replaceChildren()');await evaluate('runSlash("/status")');
  const auditorStatus=await evaluate('document.getElementById("stream").innerText');
  assert.equal(auditorStatus.includes('undefined'),false,'redacted status must not render missing fields');
@@ -1325,7 +1337,7 @@ try {
  assert.equal(await evaluate('document.getElementById("passwordDialog").open'),false);
  assert.equal(await evaluate('document.getElementById("sProvider").textContent'),'sign in');
  assert.equal(pageErrors.length,0,'page must not throw: '+pageErrors.join('; '));
- console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','direct first-run password setup without implicit login; protected replacement and lock/reopen','API Keys catalog save/clear/masked status','auditor login with denied sessions and redacted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','unset persona diagnostics','first session','goal set/show/clear','manual continuation','unbounded /status and /loop notices clear when finite; warning never blocks','goal text in /loop','auto start after a 5 s countdown and its cancellation','auto cooldown stop','generation cancellation','session switch','Sessions-pane transcript search (text-only, stale-safe) and clicked-row Markdown export','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','/browse file-like first site shown and run only on the repeated line','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout resets the transcript, Memory pane and active session like a successful logout, even when the follow-up probe fails','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics','exfiltration-shaped reply, inserted markup and preview HTML reach no collector under the shipped CSPs']}));
+ console.log(JSON.stringify({passed:true,coverage:['complete alphabetical command menu and matching help; staging without execution','folded command families and per-command manual that only inserts','parser refusal and outage never dispatch raw commands; exact cancellation remains available','incremental SSE with split UTF-8 and provisional-text cleanup','Google and page search routing','web tool sources and failures','SerpAPI key masked save and clear','minimal anonymous status','direct first-run password setup without implicit login; protected replacement and lock/reopen','API Keys catalog save/clear/masked status','auditor login with narrowed sessions pane and restricted status','logout clears UI','fresh transcript','full session restore without duplication','last 50 prompt recall, draft restoration and per-session isolation','late reply session isolation','staged approval reset','goal coding staging','refresh recovery','no implicit confirmation','prompt skill selection/clear','fixed check staging/refusal','persona editor','preview without write','explicit save confirmation','prompt viewer','unset persona diagnostics','first session','goal set/show/clear','manual continuation','unbounded /status and /loop notices clear when finite; warning never blocks','goal text in /loop','auto start after a 5 s countdown and its cancellation','auto cooldown stop','generation cancellation','session switch','Sessions-pane transcript search (text-only, stale-safe) and clicked-row Markdown export','repeat stop','GOAL_DONE advisory','aggregate budget','rate limit','model failures','no agent execution','/browse file-like first site shown and run only on the repeated line','all memory gate slash mappings on and off','memory remember confirmation and reason','memory pending proposal Apply/Reject with reason and revision','memory store-closed refusal','memory facts listing, status alias and owner counts; Apply names the fact store','rejected logout resets the transcript, Memory pane and active session like a successful logout, even when the follow-up probe fails','memory search candidates only','memory retrieve force-include','header buttons follow account state and feature probes','Estimate draft inside Analytics','exfiltration-shaped reply, inserted markup and preview HTML reach no collector under the shipped CSPs']}));
  }
 } finally {
  if(ws)ws.close();chrome.kill('SIGTERM');await new Promise(r=>{chrome.once('exit',r);setTimeout(r,2000);});server.closeAllConnections();server.close();collector.closeAllConnections();collector.close();await rm(profile,{recursive:true,force:true,maxRetries:10,retryDelay:200});

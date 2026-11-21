@@ -22,7 +22,7 @@ run IDs, never commands.
 | GET | `/api/netconnect/diag` | Budgeted TCP probe of configured targets; 409 unless the tier may run ([diagnostics](netconnect.md#diagnostics)) |
 | GET | `/api/registry` | Skill/tool/connector catalog |
 | GET | `/api/audit` | Audit events (any role) |
-| GET | `/api/diag` | `/diag` gate, allowlisted logs, last read and staged excerpt (admin or `portal_auditor`; 409 `DIAG_DISABLED` while off) |
+| GET | `/api/diag` | `/diag` gate, allowlisted logs, last read and staged excerpt (admin or `auditor`; 409 `DIAG_DISABLED` while off) |
 | GET | `/api/diag/read` | Bounded, redacted tail of one allowlisted log: `file`, optional `last`, `event`, `since`, `errors` |
 | POST | `/api/diag/inject`, `/api/diag/forget` | Stage the last read for `session_id`'s next local chat turn, or drop it |
 | GET | `/api/harness/runs` | Retained harness-optimizer runs (`/harness`) |

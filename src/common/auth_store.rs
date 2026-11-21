@@ -125,6 +125,9 @@ pub struct AuthManager {
     restricted_absolute_timeout_sec: f64,
     state: Mutex<(rusqlite::Connection, AuthDb)>,
     fresh_bootstrap: std::sync::atomic::AtomicBool,
+    /// `(user_id, old_role)` pairs folded into `auditor` when this store was
+    /// opened (#965 schema 3). Reported once by the server as audit events.
+    role_migrations: Vec<(String, String)>,
     clock: Box<dyn Fn() -> f64 + Send + Sync>,
 }
 
@@ -161,7 +164,7 @@ impl AuthManager {
                 SESSION_TIMEOUT_RANGE_SEC,
             )?
             .min(absolute_timeout_sec);
-        let (mut connection, mut db, fresh) = sqlite::open(path)?;
+        let (mut connection, mut db, fresh, role_migrations) = sqlite::open(path)?;
         // Two older first-run states move to a setup code. Homes created before
         // setup codes shipped `admin` / `admin`: while that account still must
         // replace its password and its username still verifies, anyone on this
@@ -198,6 +201,7 @@ impl AuthManager {
             restricted_absolute_timeout_sec,
             state: Mutex::new((connection, db)),
             fresh_bootstrap: std::sync::atomic::AtomicBool::new(fresh),
+            role_migrations,
             clock: Box::new(super::now_ts),
         };
         // Warm the timing-equalization dummy before any login can arrive.
@@ -259,6 +263,13 @@ impl AuthManager {
     /// existing database. Retained for callers that report first-run status.
     pub fn bootstrap_if_empty(&self) -> Result<bool> {
         Ok(self.fresh_bootstrap.swap(false, std::sync::atomic::Ordering::SeqCst))
+    }
+
+    /// `(user_id, old_role)` pairs folded into `auditor` when this store was
+    /// opened (#965): non-empty exactly once per migrated account, on the first
+    /// open that performs the migration.
+    pub fn role_migrations(&self) -> &[(String, String)] {
+        &self.role_migrations
     }
 
     /// True while the enabled `admin` account still signs in with its setup
@@ -693,7 +704,7 @@ mod tests {
         let mut count = seen;
         let next = crate::common::random_hex(24);
         let changes: [(&str, &dyn Fn()); 4] = [
-            ("role", &|| auth.set_role("alice", "portal_auditor").unwrap()),
+            ("role", &|| auth.set_role("alice", "auditor").unwrap()),
             ("password reset", &|| auth.set_password("alice", &next).unwrap()),
             ("password change", &|| {
                 auth.change_password("alice", &next, &password).unwrap();

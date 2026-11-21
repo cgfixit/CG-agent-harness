@@ -132,7 +132,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 ## invariant: /diag log inspection never widens authority
 
-`diagnostics.logs_enabled` ships as the literal boolean true for a new home and is restart-only. A missing or quoted value stays off. Merging a new seed does not rewrite an existing home `config.yaml`. `diagnostics.self_knowledge` and `diagnostics.live_state` do not open this route. Routes need it and an `admin` or `portal_auditor` account: `DIAG_DISABLED` or `DIAG_REFUSED`, never empty success. A request names a `logs_allowed_files` entry byte for byte (bare names, distinct after case folding, checked at boot);…
+`diagnostics.logs_enabled` ships as the literal boolean true for a new home and is restart-only. A missing or quoted value stays off. Merging a new seed does not rewrite an existing home `config.yaml`. `diagnostics.self_knowledge` and `diagnostics.live_state` do not open this route. Routes need it and an `admin` or `auditor` account: `DIAG_DISABLED` or `DIAG_REFUSED`, never empty success. A request names a `logs_allowed_files` entry byte for byte (bare names, distinct after case folding, checked at boot); the…
 
 ## invariant: Netconnect is fail-closed and LAN-scoped
 
@@ -210,7 +210,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET `/api/netconnect/diag`: Budgeted TCP probe of configured targets; 409 unless the tier may run (diagnostics)
 - GET `/api/registry`: Skill/tool/connector catalog
 - GET `/api/audit`: Audit events (any role)
-- GET `/api/diag`: `/diag` gate, allowlisted logs, last read and staged excerpt (admin or `portal_auditor`;…
+- GET `/api/diag`: `/diag` gate, allowlisted logs, last read and staged excerpt (admin or `auditor`; 409…
 - GET `/api/diag/read`: Bounded, redacted tail of one allowlisted log: `file`, optional `last`, `event`,…
 - POST `/api/diag/inject`, `/api/diag/forget`: Stage the last read for `session_id`'s next local chat turn, or drop it
 - GET `/api/harness/runs`: Retained harness-optimizer runs (`/harness`)
@@ -395,7 +395,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 ## troubleshooting: symptom to fix (part 6)
 
-- `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` → Use an admin or `portal_auditor` account
+- `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` → Use an admin or `auditor` account
 - A read or `/diag inject` says `DIAG_SCANNER_REFUSED` → Narrow with `--event`, `--since` or `--last`; nothing from it is shown or staged
 - Chat says `DIAG_SURFACE_FORBIDDEN` → Send a local turn first, or `/diag forget`
 - `/diag unslop` says `DIAG_NOT_FOUND` → `/diag` reads only `<home>/logs/unslop.jsonl`
@@ -583,7 +583,7 @@ Future remote exposure requires a separate reviewed change: There is no remote m
 - unslop
   - unslop.enabled: opt-in planner probe: counts fixed filler phrases, may nudge the next iteration; never rewrites or gates
   - unslop.metrics_path
-- diagnostics: Read-only /diag log inspection. New homes ship logs_enabled as literal true (quoted "true" is off); only admin and portal_auditor accounts may read. An existing home config.yaml is not rewritten.…
+- diagnostics: Read-only /diag log inspection. New homes ship logs_enabled as literal true (quoted "true" is off); only admin and auditor accounts may read. An existing home config.yaml is not rewritten. Reads…
   - diagnostics.logs_enabled
   - diagnostics.logs_max_lines: 1–1000 per read
   - diagnostics.logs_max_bytes: 4096–262144 per read
