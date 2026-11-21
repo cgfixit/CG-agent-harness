@@ -379,7 +379,7 @@ pub const ROUTE_CAPS: &[(&str, Method, Capability)] = &[
     (
         "/api/notifications/{delivery_id}/replay",
         Method::POST,
-        Capability::OwnData,
+        Capability::NotificationReplay,
     ),
     ("/api/web/research/jobs", Method::GET, Capability::OwnData),
     ("/api/web/research/jobs", Method::POST, Capability::OwnData),
@@ -399,15 +399,17 @@ pub const ROUTE_CAPS: &[(&str, Method, Capability)] = &[
     ("/api/soul", Method::POST, Capability::ManageSharedContent),
     ("/api/soul/document", Method::GET, Capability::ManageSharedContent),
     ("/api/soul/document", Method::POST, Capability::ManageSharedContent),
-    ("/api/soul/proposals", Method::POST, Capability::ManageSharedContent),
+    ("/api/soul/proposals", Method::POST, Capability::ProposePersona),
     ("/api/soul/proposals/{id}", Method::GET, Capability::ManageSharedContent),
     (
         "/api/soul/proposals/{id}",
         Method::POST,
         Capability::ManageSharedContent,
     ),
-    ("/api/style", Method::GET, Capability::ManageSharedContent),
-    ("/api/style", Method::POST, Capability::ManageSharedContent),
+    ("/api/style", Method::GET, Capability::ReadPanels),
+    // Style selection is per-owner per-session (`style::select` stores through
+    // `store.for_owner`), not shared state, so it is own-data, not admin.
+    ("/api/style", Method::POST, Capability::OwnData),
     ("/api/memory", Method::GET, Capability::ManageSharedContent),
     ("/api/memory", Method::POST, Capability::ManageSharedContent),
     ("/api/memory/add", Method::POST, Capability::ManageSharedContent),

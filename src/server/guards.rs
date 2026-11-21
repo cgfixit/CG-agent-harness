@@ -225,7 +225,8 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
                 )
                 .into_response();
             }
-            let granted = match crate::common::authz::Role::parse(&account.role) {
+            let role = crate::common::authz::Role::parse(&account.role);
+            let granted = match role {
                 Some(role) => match capability {
                     Some(cap) => crate::common::authz::grants(role, cap),
                     None => template
@@ -238,6 +239,12 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
                 return ApiError::new(StatusCode::FORBIDDEN, "AUTH_PERMISSION_DENIED", "denied").into_response();
             }
             actor_name = account.username.clone();
+            // Hand the parsed role to handlers that authorize below the route
+            // table (per-server MCP authority): the gate stays the single
+            // parse site.
+            if let Some(role) = role {
+                req.extensions_mut().insert(role);
+            }
             req.extensions_mut().insert(account);
         } else if let Ok(account) = account {
             actor_name = account.username.clone();
@@ -297,76 +304,49 @@ mod tests {
         b.body(Body::empty()).unwrap()
     }
 
-    /// The pre-#965 gate logic, kept as the test oracle: the capability table
-    /// must reproduce these exact decisions for every registered
-    /// `(method, route)` pair before any operator narrowing lands.
-    fn legacy_portal_auditor_may(method: &axum::http::Method, path: &str) -> bool {
-        use axum::http::Method;
-        let get = method == Method::GET;
-        let post = method == Method::POST;
-        match path {
-            "/api/audit" | "/api/diag" | "/api/diag/read" => get,
-            "/api/diag/inject" | "/api/diag/forget" | "/api/chat" | "/api/chat/cancel" => post,
-            "/api/prompt/preview" | "/api/slash/parse" => post,
-            "/api/sessions" => get || post,
-            _ => {
-                get && path.strip_prefix("/api/sessions/").is_some_and(|id| {
-                    !id.is_empty() && !id.contains('/') && !matches!(id, "search" | "legacy" | "clear")
-                })
-            }
-        }
-    }
-
-    fn legacy_gate_allows(method: &axum::http::Method, path: &str, role: &str) -> bool {
-        use axum::http::Method;
-        let own = matches!(path, "/api/auth/whoami" | "/api/auth/password" | "/api/auth/logout");
-        let admin = path.starts_with("/api/auth/users")
-            || path == "/api/config/reload"
-            || path == "/api/keys"
-            || path == "/api/structured-memory/gates"
-            || path.starts_with("/api/browser/")
-            || matches!(
-                path,
-                "/api/web/allow" | "/api/web/deny" | "/api/web/mode" | "/api/web/block" | "/api/web/unblock"
-            )
-            || (path == "/api/web" && method != Method::GET);
-        if !own && role == "audit" && !(path == "/api/audit" && method == Method::GET) {
-            return false;
-        }
-        if !own && role == crate::common::authn::PORTAL_AUDITOR_ROLE && !legacy_portal_auditor_may(method, path) {
-            return false;
-        }
-        if admin && role != "admin" {
-            return false;
-        }
-        true
-    }
-
+    /// The #965 PR 2 narrowing, asserted at the table: operator loses
+    /// shared-state, model, audit/log and replay authority, and keeps
+    /// proposing persona edits, per-session style, owner-scoped corpus
+    /// deletion and the MCP gate capability.
     #[test]
-    fn capability_matrix_reproduces_the_legacy_gate() {
-        use crate::common::authz::{grants, Capability, Role};
-        let roles = [
-            ("admin", Role::Admin),
-            ("operator", Role::Operator),
-            ("audit", Role::Audit),
-            (crate::common::authn::PORTAL_AUDITOR_ROLE, Role::PortalAuditor),
+    fn route_matrix_matches_the_narrowed_target_table() {
+        use crate::common::authz::{grants, Role};
+        use axum::http::Method;
+        let denied = [
+            (Method::POST, "/api/model"),
+            (Method::POST, "/api/memory"),
+            (Method::POST, "/api/memory/add"),
+            (Method::POST, "/api/memory/forget"),
+            (Method::POST, "/api/memory/clear"),
+            (Method::POST, "/api/soul"),
+            (Method::POST, "/api/soul/document"),
+            (Method::GET, "/api/soul/proposals/{id}"),
+            (Method::POST, "/api/soul/proposals/{id}"),
+            (Method::POST, "/api/ollama/pull"),
+            (Method::POST, "/api/ollama/pull/cancel"),
+            (Method::GET, "/api/ollama/inventory"),
+            (Method::GET, "/api/ollama/profile"),
+            (Method::GET, "/api/audit"),
+            (Method::GET, "/api/diag"),
+            (Method::POST, "/api/notifications/{delivery_id}/replay"),
         ];
-        for (path, method, cap) in super::super::routes::ROUTE_CAPS {
-            // Public routes skip account resolution entirely, so the legacy
-            // gate never made a role decision for them.
-            if *cap == Capability::Public {
-                for (_, role) in &roles {
-                    assert!(grants(*role, *cap), "Public must hold for {role:?}");
-                }
-                continue;
-            }
-            for (stored, role) in &roles {
-                assert_eq!(
-                    grants(*role, *cap),
-                    legacy_gate_allows(method, path, stored),
-                    "{method} {path} {stored}"
-                );
-            }
+        for (method, path) in denied {
+            let cap = super::super::routes::route_capability(&method, path)
+                .unwrap_or_else(|| panic!("{method} {path} has no capability row"));
+            assert!(!grants(Role::Operator, cap), "operator must not hold {method} {path}");
+            assert!(grants(Role::Admin, cap), "admin keeps {method} {path}");
+        }
+        let kept = [
+            (Method::POST, "/api/soul/proposals"),
+            (Method::GET, "/api/style"),
+            (Method::POST, "/api/style"),
+            (Method::POST, "/api/mcp/call"),
+            (Method::DELETE, "/api/notes-corpus/{id}"),
+        ];
+        for (method, path) in kept {
+            let cap = super::super::routes::route_capability(&method, path)
+                .unwrap_or_else(|| panic!("{method} {path} has no capability row"));
+            assert!(grants(Role::Operator, cap), "operator keeps {method} {path}");
         }
     }
 

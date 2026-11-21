@@ -26,6 +26,15 @@ A call needs an authenticated operator or administrator, CSRF, a declared
 namespaced tool in the broker allowlist and literal `confirm: true`. Discovery,
 models and repositories cannot expand declarations.
 
+Each declared server carries an authority derived from its declaration: a stdio
+server with no `write_roots`, `network: deny` and non-`job_object` containment
+is read-only; every other server, including every SSE server, is privileged.
+Only an administrator calls a privileged server. Literal `operator_allowed: true`
+on a server — restart-only, like every MCP key — widens that one server to
+operators. A refusal is `MCP_ROLE_REFUSED`, audited, and names the server, never
+the arguments. `/api/mcp` reports each server's `authority` and
+`operator_allowed`, and whether the caller may call it.
+
 ## Migrate a stdio declaration
 
 A stdio declaration without `capabilities` refuses startup; an upgrade grants
