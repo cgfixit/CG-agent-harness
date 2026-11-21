@@ -21,7 +21,74 @@ const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 /// `(user_id, username, old_role)` for one account folded into `auditor` (#965).
 type RoleMigration = (String, String, String);
 /// The audit-facing part of a [`RoleMigration`]: `(user_id, old_role)`.
-type RoleMigrationReport = (String, String);
+pub(super) type RoleMigrationReport = (String, String);
+
+/// The outbox for #965 role folds. Each fold's report is written in the same
+/// transaction as the fold and stays until the server confirms its
+/// `auth.role_migrated` audit row reached the log, so a crash between the two
+/// re-reports it on the next boot instead of losing it (at least once). No
+/// foreign key: schema 3 recreates `users` in the same transaction.
+const ROLE_MIGRATIONS: &str = "
+CREATE TABLE IF NOT EXISTS role_migrations (
+ user_id TEXT PRIMARY KEY NOT NULL,
+ old_role TEXT NOT NULL CHECK(old_role IN('audit','portal_auditor'))
+) STRICT;";
+
+/// Record the folds in the outbox, inside the caller's transaction.
+fn record_migrations(conn: &Connection, migrated: &[RoleMigration]) -> rusqlite::Result<()> {
+    if migrated.is_empty() {
+        return Ok(());
+    }
+    conn.execute_batch(ROLE_MIGRATIONS)?;
+    let mut row = conn.prepare("INSERT OR REPLACE INTO role_migrations VALUES (?1,?2)")?;
+    for (user_id, _, old_role) in migrated {
+        row.execute(params![user_id, old_role])?;
+    }
+    Ok(())
+}
+
+fn has_outbox(conn: &Connection) -> Result<bool> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='role_migrations'",
+        [],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n == 1)
+    .map_err(sql)
+}
+
+/// Folds not yet acknowledged as audited, in a stable order. A malformed row
+/// fails closed: the store refuses rather than reports or drops it.
+pub(super) fn pending_role_migrations(conn: &Connection) -> Result<Vec<RoleMigrationReport>> {
+    if !has_outbox(conn)? {
+        return Ok(Vec::new());
+    }
+    let mut statement = conn
+        .prepare("SELECT user_id, old_role FROM role_migrations ORDER BY user_id LIMIT 129")
+        .map_err(sql)?;
+    let rows = statement
+        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .map_err(sql)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(sql)?;
+    if rows.iter().any(|(user_id, old_role)| {
+        user_id.len() != 32
+            || !user_id.bytes().all(|b| b.is_ascii_hexdigit())
+            || !authn::RETIRED_ROLES.contains(&old_role.as_str())
+    }) {
+        return Err(invalid("invalid role migration record in the account database"));
+    }
+    Ok(rows)
+}
+
+/// The fold for `user_id` is audited: drop it from the outbox.
+pub(super) fn acknowledge_role_migration(conn: &Connection, user_id: &str) -> Result<()> {
+    if has_outbox(conn)? {
+        conn.execute("DELETE FROM role_migrations WHERE user_id=?1", params![user_id])
+            .map_err(sql)?;
+    }
+    Ok(())
+}
 
 fn private_file(path: &Path) -> Result<std::fs::File> {
     private_sqlite::private_file(path, MAX_FILE_BYTES, "account", invalid)
@@ -167,10 +234,10 @@ fn insert(conn: &Connection, db: &AuthDb) -> rusqlite::Result<()> {
 }
 
 /// Reads the store, folding retired roles into `auditor` before validation
-/// (#965). Returns the database and the `(user_id, username, old_role)`
-/// migrations applied; a non-empty list means the store was already rewritten
-/// at the current schema with the migrated accounts' sessions removed.
-fn load(conn: &mut Connection) -> Result<(AuthDb, Vec<RoleMigration>)> {
+/// (#965). A fold rewrites the store at schema 3 with the migrated accounts'
+/// sessions removed and their reports in the `role_migrations` outbox, all in
+/// one transaction.
+fn load(conn: &mut Connection) -> Result<AuthDb> {
     if !matches!(schema_version(conn).map_err(sql)?, 1..=3)
         || conn
             .query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))
@@ -237,33 +304,26 @@ fn load(conn: &mut Connection) -> Result<(AuthDb, Vec<RoleMigration>)> {
         // foreign key before `persist` replaces the users table.
         let names: std::collections::BTreeSet<&str> = migrated.iter().map(|(_, name, _)| name.as_str()).collect();
         db.sessions.retain(|_, s| !names.contains(s.username.as_str()));
-        validate(&db)?;
-        persist(conn, &db)?;
-        return Ok((db, migrated));
+        persist_with(conn, &db, &migrated)?;
+        return Ok(db);
     }
     validate(&db)?;
-    Ok((db, migrated))
+    Ok(db)
 }
 
 /// `legacy` remains an immutable private recovery source. A durable marker
 /// distinguishes a genuinely fresh store from a deleted initialized database.
-/// The last tuple element is the `(user_id, old_role)` pairs folded into
-/// `auditor` by this open, so the server can audit each migration once.
-pub(super) fn open(legacy: &Path) -> Result<(Connection, AuthDb, bool, Vec<RoleMigrationReport>)> {
+/// Role folds (#965) are reported through [`pending_role_migrations`].
+pub(super) fn open(legacy: &Path) -> Result<(Connection, AuthDb, bool)> {
     let path = legacy.with_extension("sqlite3");
     let marker = legacy.with_extension("initialized");
     if present(&path)? {
         let mut conn = connect(&path)?;
-        let (db, migrated) = load(&mut conn)?;
+        let db = load(&mut conn)?;
         if !present(&marker)? {
             write_atomic(&marker, b"sqlite3-v1\n", Some(0o600))?;
         }
-        return Ok((
-            conn,
-            db,
-            false,
-            migrated.into_iter().map(|(user_id, _, old)| (user_id, old)).collect(),
-        ));
+        return Ok((conn, db, false));
     }
     if present(&marker)? {
         return Err(invalid(
@@ -272,7 +332,7 @@ pub(super) fn open(legacy: &Path) -> Result<(Connection, AuthDb, bool, Vec<RoleM
     }
     let fresh = !present(legacy)?;
     let parent = path.parent().ok_or_else(|| invalid("missing account directory"))?;
-    let mut role_migrations: Vec<RoleMigrationReport> = Vec::new();
+    let mut migrated: Vec<RoleMigration> = Vec::new();
     let db = if fresh {
         // The code reaches disk before the database that accepts it, so a
         // crash between the two never leaves an admin with an unknown password.
@@ -312,10 +372,7 @@ pub(super) fn open(legacy: &Path) -> Result<(Connection, AuthDb, bool, Vec<RoleM
         }
         // Fold retired roles before validation rejects them; the legacy
         // sessions are cleared below either way.
-        role_migrations = migrate_legacy_roles(&mut db)
-            .into_iter()
-            .map(|(user_id, _, old)| (user_id, old))
-            .collect();
+        migrated = migrate_legacy_roles(&mut db);
         validate(&db)?;
         let backup = legacy.with_extension("json.pre-sqlite");
         if present(&backup)? {
@@ -340,6 +397,7 @@ pub(super) fn open(legacy: &Path) -> Result<(Connection, AuthDb, bool, Vec<RoleM
     tx.execute_batch(SCHEMA).map_err(sql)?;
     widen_roles_if_needed(&tx, &db).map_err(sql)?;
     insert(&tx, &db).map_err(sql)?;
+    record_migrations(&tx, &migrated).map_err(sql)?;
     tx.commit().map_err(sql)?;
     load(&mut conn)?;
     conn.close().map_err(|(_, e)| sql(e))?;
@@ -348,10 +406,15 @@ pub(super) fn open(legacy: &Path) -> Result<(Connection, AuthDb, bool, Vec<RoleM
         .persist_noclobber(&path)
         .map_err(|e| invalid(format!("cannot install account database: {}", e.error)))?;
     write_atomic(&marker, b"sqlite3-v1\n", Some(0o600))?;
-    Ok((connect(&path)?, db, fresh, role_migrations))
+    Ok((connect(&path)?, db, fresh))
 }
 
 pub(super) fn persist(conn: &mut Connection, db: &AuthDb) -> Result<()> {
+    persist_with(conn, db, &[])
+}
+
+/// [`persist`], plus the outbox rows for `migrated` in the same transaction.
+fn persist_with(conn: &mut Connection, db: &AuthDb, migrated: &[RoleMigration]) -> Result<()> {
     validate(db)?;
     // ponytail: <=128 users / 4096 live sessions, one transaction per mutation.
     // Use row-level updates if measured local account traffic warrants it.
@@ -362,6 +425,7 @@ pub(super) fn persist(conn: &mut Connection, db: &AuthDb) -> Result<()> {
         .map_err(sql)?;
     widen_roles_if_needed(&tx, db).map_err(sql)?;
     insert(&tx, db).map_err(sql)?;
+    record_migrations(&tx, migrated).map_err(sql)?;
     tx.commit().map_err(sql)
 }
 
@@ -401,6 +465,13 @@ mod tests {
         assert!(!mgr.bootstrap_if_empty().unwrap());
         assert_eq!(mgr.get_user("admin").unwrap().failed_count, 7);
         assert!(mgr.get_user("reader").unwrap().disabled);
+        // The legacy file's retired `audit` role folds through the same outbox.
+        let reader_id = mgr.get_user("reader").unwrap().user_id;
+        assert_eq!(mgr.get_user("reader").unwrap().role, "auditor");
+        assert_eq!(
+            mgr.pending_role_migrations().unwrap(),
+            [(reader_id, "audit".to_string())]
+        );
         assert_eq!(std::fs::read(legacy.with_extension("json.pre-sqlite")).unwrap(), raw);
         let database = legacy.with_extension("sqlite3");
         let conn = connect(&database).unwrap();
@@ -471,7 +542,7 @@ mod tests {
         );
         assert!(reopened.login("reader", &password).is_ok());
         assert!(reopened.create_user("other", &password, "audit").is_err());
-        assert!(reopened.role_migrations().is_empty());
+        assert!(reopened.pending_role_migrations().unwrap().is_empty());
     }
 
     /// A version 2 store holding the retired `audit` and `portal_auditor`
@@ -546,23 +617,38 @@ PRAGMA user_version=2;";
                 "the migrated account's session row is deleted, not just expired"
             );
         }
-        let mut migrated = mgr.role_migrations().to_vec();
-        migrated.sort();
-        let mut expected = [
+        let mut expected = vec![
             (portal_id.clone(), "portal_auditor".to_string()),
             (reader_id.clone(), "audit".to_string()),
         ];
         expected.sort();
         assert_eq!(
-            migrated, expected,
-            "each migrated account is reported once with its old role"
+            mgr.pending_role_migrations().unwrap(),
+            expected,
+            "each migrated account is reported with its old role"
         );
         // A migrated account keeps its password and signs in as auditor.
         mgr.login("reader", password).unwrap();
+        // A crash before the audit write (no acknowledgement) keeps every
+        // report for the next boot: at least once, never lost.
         drop(mgr);
         let reopened = AuthManager::open(&path, &cfg).unwrap();
-        assert!(reopened.role_migrations().is_empty(), "migration happens once");
+        assert_eq!(reopened.pending_role_migrations().unwrap(), expected);
         assert_eq!(reopened.get_user("portal").unwrap().role, "auditor");
+        // Acknowledged reports are gone, durably; the fold itself is not redone.
+        reopened.acknowledge_role_migration(&reader_id).unwrap();
+        drop(reopened);
+        let reopened = AuthManager::open(&path, &cfg).unwrap();
+        assert_eq!(
+            reopened.pending_role_migrations().unwrap(),
+            [(portal_id.clone(), "portal_auditor".to_string())]
+        );
+        reopened.acknowledge_role_migration(&portal_id).unwrap();
+        assert!(reopened.pending_role_migrations().unwrap().is_empty());
+        drop(reopened);
+        let reopened = AuthManager::open(&path, &cfg).unwrap();
+        assert!(reopened.pending_role_migrations().unwrap().is_empty());
+        assert_eq!(reopened.get_user("reader").unwrap().role, "auditor");
     }
 
     #[test]

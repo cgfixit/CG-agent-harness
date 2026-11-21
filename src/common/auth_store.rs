@@ -126,9 +126,6 @@ pub struct AuthManager {
     restricted_absolute_timeout_sec: f64,
     state: Mutex<(rusqlite::Connection, AuthDb)>,
     fresh_bootstrap: std::sync::atomic::AtomicBool,
-    /// `(user_id, old_role)` pairs folded into `auditor` when this store was
-    /// opened (#965 schema 3). Reported once by the server as audit events.
-    role_migrations: Vec<(String, String)>,
     clock: Box<dyn Fn() -> f64 + Send + Sync>,
 }
 
@@ -165,7 +162,7 @@ impl AuthManager {
                 SESSION_TIMEOUT_RANGE_SEC,
             )?
             .min(absolute_timeout_sec);
-        let (mut connection, mut db, fresh, role_migrations) = sqlite::open(path)?;
+        let (mut connection, mut db, fresh) = sqlite::open(path)?;
         // Two older first-run states move to a setup code. Homes created before
         // setup codes shipped `admin` / `admin`: while that account still must
         // replace its password and its username still verifies, anyone on this
@@ -202,7 +199,6 @@ impl AuthManager {
             restricted_absolute_timeout_sec,
             state: Mutex::new((connection, db)),
             fresh_bootstrap: std::sync::atomic::AtomicBool::new(fresh),
-            role_migrations,
             clock: Box::new(super::now_ts),
         };
         // Warm the timing-equalization dummy before any login can arrive.
@@ -266,11 +262,19 @@ impl AuthManager {
         Ok(self.fresh_bootstrap.swap(false, std::sync::atomic::Ordering::SeqCst))
     }
 
-    /// `(user_id, old_role)` pairs folded into `auditor` when this store was
-    /// opened (#965): non-empty exactly once per migrated account, on the first
-    /// open that performs the migration.
-    pub fn role_migrations(&self) -> &[(String, String)] {
-        &self.role_migrations
+    /// `(user_id, old_role)` for each account folded into `auditor` (#965)
+    /// whose `auth.role_migrated` audit row is not yet confirmed. The fold and
+    /// this report commit together, so a crash before the audit write leaves
+    /// the report here for the next boot: reported at least once, never lost.
+    pub fn pending_role_migrations(&self) -> Result<Vec<(String, String)>> {
+        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        sqlite::pending_role_migrations(&stored.0)
+    }
+
+    /// The fold for `user_id` is in the audit log: drop its pending report.
+    pub fn acknowledge_role_migration(&self, user_id: &str) -> Result<()> {
+        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        sqlite::acknowledge_role_migration(&stored.0, user_id)
     }
 
     /// True while the enabled `admin` account still signs in with its setup
