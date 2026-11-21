@@ -8,7 +8,7 @@ description: |
   state, after a security advisory lands on main, or whenever asked to "sync
   deps" / "fix dependency drift".
 compatibility: |
-  Requires: cargo, rustup, cargo-deny, git; node >=20 and npm only for the browser lock
+  Requires: cargo, rustup, cargo-deny 0.20+ (0.18 rejects deny.toml), git; node >=20 and npm only for the browser lock
   Context: Independent backend (root, Rust 1.89) and desktop (desktop/, Rust
   1.90, macOS-only) Rust crates, each with its own Cargo.lock and deny policy,
   plus the npm lock of the /browse Playwright sidecar (browser/)
@@ -31,11 +31,10 @@ git diff --stat HEAD..."$BASE" -- Cargo.toml Cargo.lock rust-toolchain.toml \
   .github/workflows/ .github/dependabot.yml scripts/package-desktop.sh
 ```
 
-The base is always `origin/main`: a branch's own upstream would make the diff
-falsely empty. `HEAD...$BASE` lists what the base changed since the merge-base,
-which is what this branch is missing. If the diff is empty, the branch is
-current on dependency/build/deploy files: say so and stop; do not manufacture an
-update. If behind, merge the base first (never rebase someone else's branch).
+Always compare `origin/main` (a branch's own upstream makes the diff falsely
+empty); `HEAD...$BASE` is what this branch is missing. An empty diff means
+current: say so and stop; never manufacture an update. If behind, merge the
+base first (never rebase someone else's branch).
 
 ## 2. Identify what origin/main changed that this branch hasn't picked up
 
@@ -70,8 +69,8 @@ For each file in the diff, extract the semantic change, not just the text:
 
 ## 3. Apply the sync
 
-Backend and desktop are independent: a toolchain change in one never leaks into
-the other (separate locks; `desktop/` is not a workspace member).
+Never let one crate's toolchain change leak into the other (`desktop/` is not
+a workspace member).
 `.cargo/config.toml` sets `resolver.incompatible-rust-versions = "fallback"`,
 so a plain `cargo update` stays inside each MSRV.
 
@@ -82,7 +81,10 @@ cargo update --dry-run --locked --verbose
 # after reviewing the dry run against origin/main's diff, one package at a
 # time (no --locked: a real update would fail on it):
 cargo update -p <crate>
-cargo deny check
+cargo deny --all-features check
+# Seatbelt fixture lock, root policy; ci.yml skips licenses here:
+cargo deny --manifest-path tests/fixtures/cargo-sandbox/Cargo.toml \
+  --config deny.toml check advisories bans sources
 
 # Desktop (resolves anywhere; compiles only on macOS)
 cd desktop
@@ -121,7 +123,7 @@ Inspect new Cargo features and each new `unsafe` block's safety argument.
 cargo build --all-targets --locked
 cargo fmt --all -- --check
 cargo clippy --all-targets --all-features -- -D warnings
-cargo deny check
+# the three cargo deny commands from step 3
 # Targeted only; CI runs the suite:
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --test <target>
 # macOS only; on Linux the desktop compile is CI's `desktop compile (macos-latest)`:

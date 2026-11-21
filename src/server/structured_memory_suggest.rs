@@ -674,6 +674,10 @@ fn finish(state: &AppState, job: &Job, run_id: &str, reply_text: &str, reply_mod
     if let Some(reason) = refusal(state, job.source, &job.model) {
         return Err(HarnessError::new(reason, "suggestion disabled"));
     }
+    // `pick` checked the account before the model wait; it may have changed since.
+    if !crate::server::structured_memory_auto::owner_active(state, &job.owner) {
+        return Err(HarnessError::new("owner_retired", "suggestion owner retired"));
+    }
     let ids = [job.episode.clone()];
     let mut parsed = parse_consolidator_output(reply_text, store.limits().max_consolidation_candidates)?;
     let count = parsed.candidates.len();
