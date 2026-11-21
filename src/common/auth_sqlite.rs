@@ -18,6 +18,11 @@ fn sql(error: rusqlite::Error) -> HarnessError {
 
 const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
+/// `(user_id, username, old_role)` for one account folded into `auditor` (#965).
+type RoleMigration = (String, String, String);
+/// The audit-facing part of a [`RoleMigration`]: `(user_id, old_role)`.
+type RoleMigrationReport = (String, String);
+
 fn private_file(path: &Path) -> Result<std::fs::File> {
     private_sqlite::private_file(path, MAX_FILE_BYTES, "account", invalid)
 }
@@ -82,30 +87,48 @@ CREATE TABLE sessions (
 ) STRICT;
 PRAGMA user_version=1;";
 
-/// Version 2 only widens the role check for `portal_auditor`. It is installed
-/// by the first commit that stores that role, on an emptied users table inside
-/// the same transaction, so a home that never assigns it stays on version 1
-/// and an older binary can still open it. Older binaries refuse version 2.
-const USERS_V2: &str = "
+/// Version 3 narrows the role check to the current set: `auditor` replaces
+/// the retired `audit` and `portal_auditor` (#965). It is installed by the
+/// first commit that stores `auditor` on a version 1 or 2 home — including
+/// the load-time role migration — so a home without one stays on its version
+/// and an older binary can still open it. Older binaries refuse version 3.
+const USERS_V3: &str = "
 DROP TABLE users;
 CREATE TABLE users (
  username TEXT PRIMARY KEY NOT NULL, password_hash TEXT NOT NULL,
  created_ts REAL NOT NULL, disabled INTEGER NOT NULL CHECK(disabled IN(0,1)),
  last_login_ts REAL, failed_count INTEGER NOT NULL CHECK(failed_count>=0), locked_until_ts REAL,
- role TEXT NOT NULL CHECK(role IN('admin','operator','audit','portal_auditor')),
+ role TEXT NOT NULL CHECK(role IN('admin','operator','auditor')),
  must_change_password INTEGER NOT NULL CHECK(must_change_password IN(0,1)),
  user_id TEXT UNIQUE NOT NULL
 ) STRICT;
-PRAGMA user_version=2;";
+PRAGMA user_version=3;";
 
 fn schema_version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
 }
 
+/// Retired role strings fold into `auditor` (#965): the account keeps its
+/// password and history fields. Returns `(user_id, username, old_role)` per
+/// migrated account; the caller revokes the account's sessions (a role change
+/// does) and rewrites the store.
+fn migrate_legacy_roles(db: &mut AuthDb) -> Vec<RoleMigration> {
+    let mut migrated = Vec::new();
+    for (name, user) in &mut db.users {
+        if authn::RETIRED_ROLES.contains(&user.role.as_str()) {
+            let old = std::mem::replace(&mut user.role, authn::AUDITOR_ROLE.to_string());
+            migrated.push((user.user_id.clone(), name.clone(), old));
+        }
+    }
+    // Deterministic order: the audit log replays the same events every boot.
+    migrated.sort();
+    migrated
+}
+
 /// Call with sessions and users already emptied: the drop then cascades nothing.
 fn widen_roles_if_needed(conn: &Connection, db: &AuthDb) -> rusqlite::Result<()> {
-    if schema_version(conn)? == 1 && db.users.values().any(|u| u.role == authn::PORTAL_AUDITOR_ROLE) {
-        conn.execute_batch(USERS_V2)?;
+    if matches!(schema_version(conn)?, 1 | 2) && db.users.values().any(|u| u.role == authn::AUDITOR_ROLE) {
+        conn.execute_batch(USERS_V3)?;
     }
     Ok(())
 }
@@ -141,8 +164,12 @@ fn insert(conn: &Connection, db: &AuthDb) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn load(conn: &Connection) -> Result<AuthDb> {
-    if !matches!(schema_version(conn).map_err(sql)?, 1 | 2)
+/// Reads the store, folding retired roles into `auditor` before validation
+/// (#965). Returns the database and the `(user_id, username, old_role)`
+/// migrations applied; a non-empty list means the store was already rewritten
+/// at the current schema with the migrated accounts' sessions removed.
+fn load(conn: &mut Connection) -> Result<(AuthDb, Vec<RoleMigration>)> {
+    if !matches!(schema_version(conn).map_err(sql)?, 1..=3)
         || conn
             .query_row("PRAGMA quick_check", [], |r| r.get::<_, String>(0))
             .map_err(sql)?
@@ -151,69 +178,90 @@ fn load(conn: &Connection) -> Result<AuthDb> {
         return Err(invalid("unsupported or corrupt account database"));
     }
     let mut db = AuthDb::default();
-    let mut statement = conn.prepare("SELECT username,password_hash,created_ts,disabled,last_login_ts,failed_count,locked_until_ts,role,must_change_password,user_id FROM users LIMIT 129").map_err(sql)?;
-    for row in statement
-        .query_map([], |r| {
-            Ok((
-                r.get(0)?,
-                UserRow {
-                    password_hash: r.get(1)?,
-                    created_ts: r.get(2)?,
-                    disabled: r.get(3)?,
-                    last_login_ts: r.get(4)?,
-                    failed_count: r.get(5)?,
-                    locked_until_ts: r.get(6)?,
-                    role: r.get(7)?,
-                    must_change_password: r.get(8)?,
-                    user_id: r.get(9)?,
-                },
-            ))
-        })
-        .map_err(sql)?
     {
-        let (name, user) = row.map_err(sql)?;
-        db.users.insert(name, user);
+        let mut statement = conn.prepare("SELECT username,password_hash,created_ts,disabled,last_login_ts,failed_count,locked_until_ts,role,must_change_password,user_id FROM users LIMIT 129").map_err(sql)?;
+        for row in statement
+            .query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    UserRow {
+                        password_hash: r.get(1)?,
+                        created_ts: r.get(2)?,
+                        disabled: r.get(3)?,
+                        last_login_ts: r.get(4)?,
+                        failed_count: r.get(5)?,
+                        locked_until_ts: r.get(6)?,
+                        role: r.get(7)?,
+                        must_change_password: r.get(8)?,
+                        user_id: r.get(9)?,
+                    },
+                ))
+            })
+            .map_err(sql)?
+        {
+            let (name, user) = row.map_err(sql)?;
+            db.users.insert(name, user);
+        }
     }
-    let mut statement = conn
-        .prepare(
-            "SELECT token_hash,username,csrf_hash,created_ts,last_seen_ts,expires_ts,revoked FROM sessions LIMIT 4097",
-        )
-        .map_err(sql)?;
-    for row in statement
-        .query_map([], |r| {
-            Ok((
-                r.get(0)?,
-                SessionRow {
-                    username: r.get(1)?,
-                    csrf_hash: r.get(2)?,
-                    created_ts: r.get(3)?,
-                    last_seen_ts: r.get(4)?,
-                    expires_ts: r.get(5)?,
-                    revoked: r.get(6)?,
-                },
-            ))
-        })
-        .map_err(sql)?
     {
-        let (id, session) = row.map_err(sql)?;
-        db.sessions.insert(id, session);
+        let mut statement = conn
+            .prepare(
+                "SELECT token_hash,username,csrf_hash,created_ts,last_seen_ts,expires_ts,revoked FROM sessions LIMIT 4097",
+            )
+            .map_err(sql)?;
+        for row in statement
+            .query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    SessionRow {
+                        username: r.get(1)?,
+                        csrf_hash: r.get(2)?,
+                        created_ts: r.get(3)?,
+                        last_seen_ts: r.get(4)?,
+                        expires_ts: r.get(5)?,
+                        revoked: r.get(6)?,
+                    },
+                ))
+            })
+            .map_err(sql)?
+        {
+            let (id, session) = row.map_err(sql)?;
+            db.sessions.insert(id, session);
+        }
+    }
+    let migrated = migrate_legacy_roles(&mut db);
+    if !migrated.is_empty() {
+        // Role changes revoke sessions; deleting them first also frees the
+        // foreign key before `persist` replaces the users table.
+        let names: std::collections::BTreeSet<&str> = migrated.iter().map(|(_, name, _)| name.as_str()).collect();
+        db.sessions.retain(|_, s| !names.contains(s.username.as_str()));
+        validate(&db)?;
+        persist(conn, &db)?;
+        return Ok((db, migrated));
     }
     validate(&db)?;
-    Ok(db)
+    Ok((db, migrated))
 }
 
 /// `legacy` remains an immutable private recovery source. A durable marker
 /// distinguishes a genuinely fresh store from a deleted initialized database.
-pub(super) fn open(legacy: &Path) -> Result<(Connection, AuthDb, bool)> {
+/// The last tuple element is the `(user_id, old_role)` pairs folded into
+/// `auditor` by this open, so the server can audit each migration once.
+pub(super) fn open(legacy: &Path) -> Result<(Connection, AuthDb, bool, Vec<RoleMigrationReport>)> {
     let path = legacy.with_extension("sqlite3");
     let marker = legacy.with_extension("initialized");
     if present(&path)? {
-        let conn = connect(&path)?;
-        let db = load(&conn)?;
+        let mut conn = connect(&path)?;
+        let (db, migrated) = load(&mut conn)?;
         if !present(&marker)? {
             write_atomic(&marker, b"sqlite3-v1\n", Some(0o600))?;
         }
-        return Ok((conn, db, false));
+        return Ok((
+            conn,
+            db,
+            false,
+            migrated.into_iter().map(|(user_id, _, old)| (user_id, old)).collect(),
+        ));
     }
     if present(&marker)? {
         return Err(invalid(
@@ -222,6 +270,7 @@ pub(super) fn open(legacy: &Path) -> Result<(Connection, AuthDb, bool)> {
     }
     let fresh = !present(legacy)?;
     let parent = path.parent().ok_or_else(|| invalid("missing account directory"))?;
+    let mut role_migrations: Vec<RoleMigrationReport> = Vec::new();
     let db = if fresh {
         // The code reaches disk before the database that accepts it, so a
         // crash between the two never leaves an admin with an unknown password.
@@ -259,6 +308,12 @@ pub(super) fn open(legacy: &Path) -> Result<(Connection, AuthDb, bool)> {
                 user.user_id = crate::common::random_hex(16);
             }
         }
+        // Fold retired roles before validation rejects them; the legacy
+        // sessions are cleared below either way.
+        role_migrations = migrate_legacy_roles(&mut db)
+            .into_iter()
+            .map(|(user_id, _, old)| (user_id, old))
+            .collect();
         validate(&db)?;
         let backup = legacy.with_extension("json.pre-sqlite");
         if present(&backup)? {
@@ -284,14 +339,14 @@ pub(super) fn open(legacy: &Path) -> Result<(Connection, AuthDb, bool)> {
     widen_roles_if_needed(&tx, &db).map_err(sql)?;
     insert(&tx, &db).map_err(sql)?;
     tx.commit().map_err(sql)?;
-    load(&conn)?;
+    load(&mut conn)?;
     conn.close().map_err(|(_, e)| sql(e))?;
     staged.as_file().sync_all()?;
     staged
         .persist_noclobber(&path)
         .map_err(|e| invalid(format!("cannot install account database: {}", e.error)))?;
     write_atomic(&marker, b"sqlite3-v1\n", Some(0o600))?;
-    Ok((connect(&path)?, db, fresh))
+    Ok((connect(&path)?, db, fresh, role_migrations))
 }
 
 pub(super) fn persist(conn: &mut Connection, db: &AuthDb) -> Result<()> {
@@ -392,7 +447,7 @@ mod tests {
     }
 
     #[test]
-    fn portal_auditor_widens_the_schema_only_when_first_stored() {
+    fn auditor_widens_the_schema_only_when_first_stored() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("auth.json");
         let cfg = AppConfig::from_str(AppConfig::embedded_default(), &dir.path().join("config.yaml")).unwrap();
@@ -403,17 +458,106 @@ mod tests {
         mgr.create_user("reader", &password, "operator").unwrap();
         assert_eq!(version(), 1, "a home that never stores the role stays downgradeable");
         let session = mgr.login("reader", &password).unwrap();
-        mgr.set_role("reader", "portal_auditor").unwrap();
-        assert_eq!(version(), 2);
+        mgr.set_role("reader", "auditor").unwrap();
+        assert_eq!(version(), 3);
         drop(mgr);
         let reopened = AuthManager::open(&path, &cfg).unwrap();
-        assert_eq!(reopened.get_user("reader").unwrap().role, "portal_auditor");
+        assert_eq!(reopened.get_user("reader").unwrap().role, "auditor");
         assert!(
             reopened.validate_session(&session.session_id).is_none(),
             "role change revokes sessions"
         );
         assert!(reopened.login("reader", &password).is_ok());
-        assert!(reopened.create_user("other", &password, "auditor").is_err());
+        assert!(reopened.create_user("other", &password, "audit").is_err());
+        assert!(reopened.role_migrations().is_empty());
+    }
+
+    /// A version 2 store holding the retired `audit` and `portal_auditor`
+    /// roles opens as version 3 with both accounts folded into `auditor`,
+    /// their sessions revoked and the migrations reported once (#965).
+    #[test]
+    fn legacy_roles_migrate_to_auditor_on_open() {
+        /// The historical version 2 schema, pinned so the test can still build
+        /// a store that holds retired roles.
+        const USERS_V2: &str = "
+DROP TABLE users;
+CREATE TABLE users (
+ username TEXT PRIMARY KEY NOT NULL, password_hash TEXT NOT NULL,
+ created_ts REAL NOT NULL, disabled INTEGER NOT NULL CHECK(disabled IN(0,1)),
+ last_login_ts REAL, failed_count INTEGER NOT NULL CHECK(failed_count>=0), locked_until_ts REAL,
+ role TEXT NOT NULL CHECK(role IN('admin','operator','audit','portal_auditor')),
+ must_change_password INTEGER NOT NULL CHECK(must_change_password IN(0,1)),
+ user_id TEXT UNIQUE NOT NULL
+) STRICT;
+PRAGMA user_version=2;";
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("auth.json");
+        let database = path.with_extension("sqlite3");
+        let password = "migrated-reader-password";
+        let hash = authn::hash_password(password).unwrap();
+        let session_id = authn::new_session_id();
+        let (reader_id, portal_id) = (crate::common::random_hex(16), crate::common::random_hex(16));
+        {
+            write_atomic(&database, b"", Some(0o600)).unwrap();
+            let conn = connect(&database).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            conn.execute_batch(USERS_V2).unwrap();
+            for (name, role, user_id) in [
+                ("admin", "admin", crate::common::random_hex(16)),
+                ("reader", "audit", reader_id.clone()),
+                ("portal", "portal_auditor", portal_id.clone()),
+            ] {
+                conn.execute(
+                    "INSERT INTO users VALUES (?1,?2,123.0,0,NULL,0,NULL,?3,0,?4)",
+                    params![name, hash, role, user_id],
+                )
+                .unwrap();
+            }
+            conn.execute(
+                "INSERT INTO sessions VALUES (?1,'reader',?2,123.0,123.0,999999999.0,0)",
+                params![authn::hash_token(&session_id), authn::hash_token("csrf")],
+            )
+            .unwrap();
+        }
+        let cfg = AppConfig::from_str(AppConfig::embedded_default(), &dir.path().join("config.yaml")).unwrap();
+        let mgr = AuthManager::open(&path, &cfg).unwrap();
+        assert_eq!(mgr.get_user("reader").unwrap().role, "auditor");
+        assert_eq!(mgr.get_user("portal").unwrap().role, "auditor");
+        assert!(
+            mgr.validate_session(&session_id).is_none(),
+            "a migrated account's sessions are revoked"
+        );
+        {
+            let conn = connect(&database).unwrap();
+            assert_eq!(
+                schema_version(&conn).unwrap(),
+                3,
+                "the rewrite installs the narrowed role check"
+            );
+            assert_eq!(
+                conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get::<_, i64>(0))
+                    .unwrap(),
+                0,
+                "the migrated account's session row is deleted, not just expired"
+            );
+        }
+        let mut migrated = mgr.role_migrations().to_vec();
+        migrated.sort();
+        let mut expected = [
+            (portal_id.clone(), "portal_auditor".to_string()),
+            (reader_id.clone(), "audit".to_string()),
+        ];
+        expected.sort();
+        assert_eq!(
+            migrated, expected,
+            "each migrated account is reported once with its old role"
+        );
+        // A migrated account keeps its password and signs in as auditor.
+        mgr.login("reader", password).unwrap();
+        drop(mgr);
+        let reopened = AuthManager::open(&path, &cfg).unwrap();
+        assert!(reopened.role_migrations().is_empty(), "migration happens once");
+        assert_eq!(reopened.get_user("portal").unwrap().role, "auditor");
     }
 
     #[test]

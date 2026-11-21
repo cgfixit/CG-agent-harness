@@ -246,6 +246,16 @@ pub async fn build_app_with_sources(
     cfg.flag_missing_on("web.fetch_provenance")?;
     let auth = if cfg.flag_is_true("auth.enabled") {
         let mgr = AuthManager::open(&home.auth_path(), &cfg)?;
+        // One event per account whose retired role was folded into `auditor`
+        // while opening the store (#965): user_id and roles, never a username.
+        for (user_id, old_role) in mgr.role_migrations() {
+            audit.log(serde_json::json!({
+                "event": "auth.role_migrated",
+                "user_id": user_id,
+                "from": old_role,
+                "to": crate::common::authn::AUDITOR_ROLE,
+            }));
+        }
         mgr.bootstrap_if_empty()?;
         Some(Arc::new(mgr))
     } else {

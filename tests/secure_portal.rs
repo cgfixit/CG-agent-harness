@@ -101,7 +101,7 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
     .await;
     assert_eq!(changed.status(), 200);
     let admin = cookie(&changed);
-    for role in ["operator", "audit"] {
+    for role in ["operator", "auditor"] {
         assert_eq!(
             request(
                 &server,
@@ -119,7 +119,7 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
             request(&server, &user, Method::GET, "/api/analytics/summary", json!({}))
                 .await
                 .status(),
-            if role == "audit" { 403 } else { 200 }
+            if role == "auditor" { 403 } else { 200 }
         );
         assert_eq!(
             request(&server, &user, Method::POST, "/api/config/reload", json!({}))
@@ -644,7 +644,7 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             .status(),
         401
     );
-    for (name, role) in [("op", "operator"), ("reader", "audit")] {
+    for (name, role) in [("op", "operator"), ("reader", "auditor")] {
         assert_eq!(
             request(
                 &server,
@@ -724,17 +724,19 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
         .await
         .unwrap();
     assert!(status.get("home").is_none());
+    // An auditor chats (local-only), where the retired `audit` role was
+    // refused outright (#965); the withheld surfaces are covered in diag_routes.
     assert_eq!(
         request(
             &server,
             &audit,
             Method::POST,
             "/api/chat",
-            json!({"message":"refuse this"})
+            json!({"message":"say hello"})
         )
         .await
         .status(),
-        403
+        200
     );
     assert_eq!(
         request(&server, &op, Method::POST, "/api/chat", json!({"message":"hello"}))
@@ -1067,7 +1069,7 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             &admin,
             Method::POST,
             "/api/auth/users/op/role",
-            json!({"role":"audit"})
+            json!({"role":"auditor"})
         )
         .await
         .status(),
@@ -1114,7 +1116,7 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
         .collect();
     assert_eq!(disabled, [json!(true), json!(false)]);
     assert_eq!(changed("account.role_set").len(), 1);
-    assert_eq!(changed("account.role_set")[0]["role"], "audit");
+    assert_eq!(changed("account.role_set")[0]["role"], "auditor");
     // The three refused changes to the last admin left no account event.
     assert!(!log
         .iter()

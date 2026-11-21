@@ -56,14 +56,14 @@ prose cannot supply. Roots overlapping the harness home are refused
 ## Diagnostics
 
 `/diag` reads allowlisted logs under `<home>/logs/` for an admin or
-`portal_auditor` account once `diagnostics.logs_enabled` is literal `true`.
+`auditor` account once `diagnostics.logs_enabled` is literal `true`.
 Output is redacted, or refused whole on an injection-scanner hit; `/diag
 inject` stages it as untrusted text for one local turn ([contract](../INVARIANTS.md)).
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `/diag` says `DIAG_DISABLED` | `diagnostics.logs_enabled` is missing, quoted or false (new homes seed `true`) | Set literal `true`, then restart |
-| `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` | The account is `operator` or `audit` | Use an admin or `portal_auditor` account |
+| `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` | The account is `operator` | Use an admin or `auditor` account |
 | A read or `/diag inject` says `DIAG_SCANNER_REFUSED` | The redacted excerpt matched the injection scanner | Narrow with `--event`, `--since` or `--last`; nothing from it is shown or staged |
 | Chat says `DIAG_SURFACE_FORBIDDEN` | An excerpt is staged and the turn is cloud chat or `/agent` | Send a local turn first, or `/diag forget` |
 | `/diag unslop` says `DIAG_NOT_FOUND` | Nothing written yet, or `unslop.metrics_path` is outside `logs/` | `/diag` reads only `<home>/logs/unslop.jsonl` |

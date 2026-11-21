@@ -248,6 +248,12 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
             req.extensions_mut().insert(account);
         } else if let Ok(account) = account {
             actor_name = account.username.clone();
+            // Public routes authorize below the table too (/api/status shows
+            // a restricted view to auditor accounts): parse the role at the
+            // same single site.
+            if let Some(role) = crate::common::authz::Role::parse(&account.role) {
+                req.extensions_mut().insert(role);
+            }
             req.extensions_mut().insert(account);
         } else {
             actor_name = "anonymous".into();

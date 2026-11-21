@@ -558,7 +558,7 @@ unslop:
   metrics_path: "logs/unslop.jsonl"
 
 # Read-only /diag log inspection. New homes ship logs_enabled as literal true
-# (quoted "true" is off); only admin and portal_auditor accounts may read.
+# (quoted "true" is off); only admin and auditor accounts may read.
 # An existing home config.yaml is not rewritten. Reads only the exact names
 # below from <home>/logs/: no globs, paths
 # or folding, no symlinks, at most logs_max_bytes from the tail. Output is
@@ -573,7 +573,7 @@ unslop:
 # scripts/build-self-manual.py) as untrusted background; it reads nothing from
 # the home. live_state adds one fixed status block from in-memory state (model,
 # gates, style, session, home path; never keys or the sandbox backend, and never
-# for portal_auditor accounts). Neither grants a tool: chat keeps only
+# for auditor accounts). Neither grants a tool: chat keeps only
 # web_search and web_fetch. These two switches are not flag_is_true gates: a
 # missing key means on, literal true/false is used as written, and any other
 # value fails boot. Ranges are hard. Restart-only.

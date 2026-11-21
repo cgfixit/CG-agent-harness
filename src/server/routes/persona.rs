@@ -334,7 +334,7 @@ pub async fn preview(
     ValidJson(req): ValidJson<PreviewRequest>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
-    // A restricted chat policy (`portal_auditor`) previews the prompt its
+    // A restricted chat policy (`auditor`) previews the prompt its
     // chat would get: no persona, memory, attachments, skills or web context.
     let chat_policy = crate::common::authz::ChatPolicy::for_user(user.as_ref().map(|u| &u.0));
     if (!chat_policy.persona && req.soul_content.is_some())
@@ -344,7 +344,7 @@ pub async fn preview(
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "AUTH_PERMISSION_DENIED",
-            "portal_auditor previews only its own local chat prompt",
+            "auditor previews only its own local chat prompt",
         ));
     }
     // The session read blocks, as in `get_session`: off the async worker.
