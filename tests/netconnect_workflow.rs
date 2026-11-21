@@ -122,6 +122,25 @@ fn assert_syscall_proof_cannot_skip(syscall: &Value) {
 #[test]
 fn path_filters_cover_both_events_and_actions_are_pinned_shas() {
     let text = workflow();
+    // Read each event's parsed `paths` list: a raw text count also matches a
+    // run step or comment that names a file, and hides a dropped filter.
+    let doc: Value = serde_yaml_ng::from_str(&text).expect("workflow yaml");
+    let triggers = doc
+        .get("on")
+        .or_else(|| doc.get(Value::Bool(true)))
+        .expect("workflow triggers");
+    let paths = |event: &str| -> Vec<String> {
+        triggers
+            .get(event)
+            .and_then(|e| e.get("paths"))
+            .and_then(Value::as_sequence)
+            .unwrap_or_else(|| panic!("{event} paths"))
+            .iter()
+            .map(|p| p.as_str().expect("path filter string").to_string())
+            .collect()
+    };
+    let (pull_request, push) = (paths("pull_request"), paths("push"));
+    assert_eq!(pull_request, push, "pull_request and push must filter the same paths");
     for needle in [
         "src/netconnect/**",
         "tests/netconnect*",
@@ -141,7 +160,7 @@ fn path_filters_cover_both_events_and_actions_are_pinned_shas() {
         "Cargo.lock",
     ] {
         assert!(
-            text.matches(needle).count() >= 2,
+            pull_request.iter().any(|p| p == needle),
             "{needle} must be on both pull_request and push"
         );
     }
