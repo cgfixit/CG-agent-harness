@@ -51,11 +51,12 @@ For each file in the diff, extract the semantic change, not just the text:
 - `browser/package.json` + `package-lock.json` — the sidecar's exact Playwright
   pin, also named in `docs/Browser-Use.md` and `NPM_VERIFIED_PINS` in
   `check_otel.py`; move all together and refresh the sidecar row's `reviewed`
-  after re-reading the changelog. Oracle check T6 warns when they disagree, so
-  `telemetry-contract.yml` fails until they match. Chrome is not a repo dependency: the sidecar drives the runner's
+  after re-reading the changelog. Oracle check T6 warns on disagreement and
+  fails `telemetry-contract.yml`; `rg` the old version for any other copy.
+  Chrome is not a repo dependency: the sidecar drives the runner's
   installed Google Chrome (`channel: "chrome"`; `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`
   is contractual). Never add `playwright install` or a browser download; Chrome
-  moves with the runner image (`ubuntu-26.04` in `ci.yml`), not a repo file
+  moves with the runner image (`ubuntu-26.04`), not a repo file
 - `tests/fixtures/cargo-sandbox` — a third lock CI checks with the root policy
 - `.github/workflows/*.yml` (list the directory; the dependency-bearing ones
   are `ci.yml`, `clippy-sarif.yml`, `dependency-advisories.yml`, `desktop.yml`,
@@ -127,8 +128,8 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" cargo test --test <tar
 cd desktop && cargo build --all-targets --locked && cd ..
 ```
 
-A network crate that moved (reqwest, rmcp, rustls, hyper, tauri, Playwright, a new
-direct dependency) also drifts the telemetry oracle (`telemetry-contract.yml`): ask
+A network dependency that moved (reqwest, rmcp, rustls, hyper, tauri, Playwright, a
+new direct dependency) also drifts the telemetry oracle (`telemetry-contract.yml`): ask
 the operator to run `/cgagentharness-otel-hardening` (operator-only).
 
 Never pipe a pass/fail command into grep or suppress its exit status. A missing
