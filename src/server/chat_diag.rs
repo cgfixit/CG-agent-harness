@@ -140,11 +140,19 @@ fn authorize_turn(state: &AppState, owner: &str, sign_in: SignIn<'_>) -> Result<
 /// The audit row holds the filter shape and row count, never log text.
 fn dispatch(state: &AppState, owner: &str, name: &str, args: &str) -> Result<Value> {
     let logs = state.home.logs_dir();
+    // The file the call names, only when it is an allowlist entry: a refused
+    // name is model text and never reaches the audit log.
+    let file = serde_json::from_str::<Value>(args).ok().and_then(|value| {
+        value["file"]
+            .as_str()
+            .and_then(|f| state.diag.config.allowed(f))
+            .map(str::to_owned)
+    });
     let audit = |filter: Value, outcome: &str, rows: usize| {
-        state
-            .audit
-            .log(json!({"event":"diag_tool_call","owner_id":owner,"tool":name,
-            "filter":filter,"rows":rows,"outcome":outcome}));
+        state.audit.log(
+            json!({"event":"diag_tool_call","owner_id":owner,"tool":name,"file":file,
+            "filter":filter,"rows":rows,"outcome":outcome}),
+        );
     };
     match name {
         "logs_list" => {
@@ -237,8 +245,11 @@ fn dispatch(state: &AppState, owner: &str, name: &str, args: &str) -> Result<Val
         "logs_stats" => {
             let args: StatsArgs =
                 serde_json::from_str(args).map_err(|_| error("DIAG_TOOL_ARGUMENTS", "invalid logs_stats arguments"))?;
-            let filter = json!({"group_by":args.group_by,"since":args.since.is_some()});
-            if !STAT_GROUP_FIELDS.contains(&args.group_by.as_str()) {
+            // `group_by` is model text until checked: only a fixed field name
+            // is audited, never the rejected value.
+            let group_by = STAT_GROUP_FIELDS.iter().find(|field| **field == args.group_by);
+            let filter = json!({"group_by":group_by,"since":args.since.is_some()});
+            if group_by.is_none() {
                 audit(filter, "DIAG_TOOL_ARGUMENTS", 0);
                 return Err(error(
                     "DIAG_TOOL_ARGUMENTS",

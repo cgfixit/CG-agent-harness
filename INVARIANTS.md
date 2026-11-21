@@ -1054,12 +1054,13 @@ turn of that session, fenced as untrusted; cloud chat and `/agent` refuse while
 staged (`DIAG_SURFACE_FORBIDDEN`), `/loop` never receives it, and clear, logout
 or account changes drop it. Audits hold names, counts, hashes and codes, never
 log text. With `diagnostics.model_tool` the literal boolean true (ships false,
-restart-only), an `admin`/`auditor` local chat turn may instead offer the model
-four read-only log tools (`logs_list`, `logs_read`, `logs_search`,
-`logs_stats`): the same allowlist, redaction and scanner refusal, byte-offset
-paging, filter shape in audits, the untrusted header in results, and a live
-grant re-check before every batch. Cloud chat, `/loop`, `/agent`, web-tool
-turns and every other role never see them.
+restart-only), an `admin`/`auditor` account's local chat turn may instead
+offer the model four read-only log tools (`logs_list`, `logs_read`,
+`logs_search`, `logs_stats`): the same allowlist, redaction and scanner
+refusal, byte-offset paging, the allowlisted file and filter shape (never
+model text) in audits, the untrusted header in results, and a live grant
+re-check before every batch. Cloud chat, `/loop`, `/agent`, web-tool turns,
+accounts-off homes and every other role never see them.
 
 - Locked by: `server::diag_reader`, `server::chat_diag` and `server::slash`
   tests, `tests/diag_routes.rs`,

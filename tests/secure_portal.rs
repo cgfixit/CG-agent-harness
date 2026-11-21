@@ -1271,3 +1271,55 @@ async fn cli_bootstrap_session_can_only_replace_the_password_and_gets_no_machine
     let result = cli(&server, &["account", "--url", &server.base, "logout"], "").await;
     assert!(result.status.success());
 }
+
+/// #965 schema 3 at boot: a home whose legacy account file still holds the
+/// retired `audit` role starts with that account folded into `auditor`,
+/// writes exactly one `auth.role_migrated` row naming the user id and both
+/// roles (never the username), and the account still signs in.
+#[tokio::test]
+async fn a_retired_role_is_migrated_and_audited_once_at_boot() {
+    let model = start_mock_model().await;
+    let prepared = prepare_server(&model.base_url(), ServerOptions::default().with("auth.enabled", "true")).await;
+    // Minted per run: no literal reaches the password hasher.
+    let secret = cgagentharness::common::random_urlsafe(24);
+    let hash = cgagentharness::common::authn::hash_password(&secret).unwrap();
+    let legacy = json!({"users": {
+        "admin": {"password_hash": hash, "created_ts": 123.0, "role": "admin"},
+        "retired-reader": {"password_hash": hash, "created_ts": 123.0, "role": "audit"},
+    }, "sessions": {}});
+    cgagentharness::common::atomic::write_atomic(
+        &prepared.home_dir.join("auth.json"),
+        &serde_json::to_vec(&legacy).unwrap(),
+        Some(0o600),
+    )
+    .unwrap();
+    let (router, state) = cgagentharness::server::build_app(prepared.app_opts).await.unwrap();
+    let server = start_test_server(prepared.tmp, prepared.home_dir, prepared.api_key, router, state).await;
+
+    let log = server.audit_log();
+    let rows: Vec<Value> = log
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|row| row["event"] == "auth.role_migrated")
+        .collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0]["from"], "audit");
+    assert_eq!(rows[0]["to"], "auditor");
+    let user_id = rows[0]["user_id"].as_str().unwrap();
+    assert!(
+        !user_id.is_empty() && user_id.chars().all(|c| c.is_ascii_hexdigit()),
+        "{user_id}"
+    );
+    assert!(
+        !log.contains("retired-reader"),
+        "the migration row never names the account"
+    );
+
+    let session = login(&server, "retired-reader", &secret).await;
+    let whoami: Value = request(&server, &session, Method::GET, "/api/auth/whoami", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(whoami["role"], "auditor", "{whoami}");
+}

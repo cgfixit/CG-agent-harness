@@ -658,10 +658,70 @@ async fn auditor_turn_reads_logs_through_bounded_tools() {
     assert!(tool_message["content"].as_str().unwrap().contains("DIAG_BAD_FILE"));
     let calls = audit_rows(&s, "diag_tool_call");
     assert_eq!(calls.last().unwrap()["outcome"], "DIAG_BAD_FILE");
+    assert!(calls.last().unwrap()["file"].is_null(), "{calls:?}");
     assert!(
         !s.audit_log().contains("../config.yaml"),
         "audit must not record the file argument"
     );
+
+    // An allowlisted file is audited by name; a rejected group_by is model
+    // text and never reaches the audit log (#965: filter shape, not content).
+    model.set_reply(json!([
+        json!({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+            "tool_calls":[
+                {"id":"call_stats_1","type":"function","function":{"name":"logs_stats",
+                    "arguments":"{\"file\":\"audit.jsonl\",\"group_by\":\"UNCHECKED-GROUP-TEXT\"}"}},
+                {"id":"call_stats_2","type":"function","function":{"name":"logs_stats",
+                    "arguments":"{\"file\":\"audit.jsonl\",\"group_by\":\"event\"}"}}]}}],
+            "usage":{"prompt_tokens":10,"completion_tokens":2}}),
+        ok_reply("Counted.", 20, 4),
+    ]));
+    let (status, body) = json_call(
+        &s,
+        &portal,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"session_id": sid, "message": "count events"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let calls = audit_rows(&s, "diag_tool_call");
+    let stats = &calls[calls.len() - 2..];
+    assert_eq!(stats[0]["outcome"], "DIAG_TOOL_ARGUMENTS", "{stats:?}");
+    assert!(stats[0]["filter"]["group_by"].is_null(), "{stats:?}");
+    assert_eq!(stats[1]["filter"]["group_by"], "event", "{stats:?}");
+    for row in stats {
+        assert_eq!(row["file"], "audit.jsonl", "{row}");
+    }
+    assert!(
+        !s.audit_log().contains("UNCHECKED-GROUP-TEXT"),
+        "audit must not record a rejected group_by"
+    );
+}
+
+#[tokio::test]
+async fn accounts_off_never_offers_log_tools() {
+    // `/diag` refuses without accounts (DIAG_REFUSED), so its chat tools must
+    // not open a log read path there either.
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("diagnostics.logs_enabled", "true")
+            .with("diagnostics.model_tool", "true"),
+    )
+    .await;
+    s.state.settings.lock().unwrap().web_enabled = false;
+    let (status, body) = json_call(&s, "", Method::GET, "/api/diag", None).await;
+    assert_eq!(status, 403, "{body}");
+    let (status, body) = json_call(&s, "", Method::POST, "/api/chat", Some(json!({"message": "hello"}))).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(model
+        .last_request()
+        .unwrap()
+        .get("tools")
+        .is_none_or(|t| t.as_array().is_some_and(|a| a.is_empty())));
+    assert!(audit_rows(&s, "diag_tool_call").is_empty());
 }
 
 #[tokio::test]

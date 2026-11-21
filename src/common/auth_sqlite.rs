@@ -495,7 +495,10 @@ PRAGMA user_version=2;";
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("auth.json");
         let database = path.with_extension("sqlite3");
-        let password = "migrated-reader-password";
+        // Minted per run so no literal reaches the password hasher (CodeQL
+        // rust/hard-coded-cryptographic-value, alert #1093 on this test).
+        let password = crate::common::random_urlsafe(24);
+        let password = password.as_str();
         let hash = authn::hash_password(password).unwrap();
         let session_id = authn::new_session_id();
         let (reader_id, portal_id) = (crate::common::random_hex(16), crate::common::random_hex(16));
