@@ -176,14 +176,21 @@ fn schema_version(conn: &Connection) -> rusqlite::Result<i64> {
 }
 
 /// Retired role strings fold into `auditor` (#965): the account keeps its
-/// password and history fields. Returns `(user_id, username, old_role)` per
-/// migrated account; the caller revokes the account's sessions (a role change
-/// does) and rewrites the store.
+/// password and history fields. A former `audit` account is also disabled:
+/// `auditor` adds sessions, chat and `/diag` that `audit` never held, and an
+/// account narrowed to `audit` may own transcripts from an earlier role, so
+/// the wider authority waits for an admin to re-enable it. `portal_auditor`
+/// held the same grants as `auditor` and stays as it was. Returns
+/// `(user_id, username, old_role)` per migrated account; the caller revokes
+/// the account's sessions (a role change does) and rewrites the store.
 fn migrate_legacy_roles(db: &mut AuthDb) -> Vec<RoleMigration> {
     let mut migrated = Vec::new();
     for (name, user) in &mut db.users {
         if authn::RETIRED_ROLES.contains(&user.role.as_str()) {
             let old = std::mem::replace(&mut user.role, authn::AUDITOR_ROLE.to_string());
+            if old == authn::RETIRED_AUDIT_ROLE {
+                user.disabled = true;
+            }
             migrated.push((user.user_id.clone(), name.clone(), old));
         }
     }
@@ -598,6 +605,14 @@ PRAGMA user_version=2;";
         assert_eq!(mgr.get_user("reader").unwrap().role, "auditor");
         assert_eq!(mgr.get_user("portal").unwrap().role, "auditor");
         assert!(
+            mgr.get_user("reader").unwrap().disabled,
+            "a former audit account waits for an admin before gaining auditor authority"
+        );
+        assert!(
+            !mgr.get_user("portal").unwrap().disabled,
+            "a former portal_auditor account keeps its unchanged authority"
+        );
+        assert!(
             mgr.validate_session(&session_id).is_none(),
             "a migrated account's sessions are revoked"
         );
@@ -625,7 +640,10 @@ PRAGMA user_version=2;";
             expected,
             "each migrated account is reported with its old role"
         );
-        // A migrated account keeps its password and signs in as auditor.
+        // A migrated account keeps its password; the former audit account
+        // signs in as auditor only once an admin re-enables it.
+        assert!(mgr.login("reader", password).is_err());
+        mgr.enable_user("reader").unwrap();
         mgr.login("reader", password).unwrap();
         // A crash before the audit write (no acknowledgement) keeps every
         // report for the next boot: at least once, never lost.

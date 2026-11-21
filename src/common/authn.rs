@@ -29,7 +29,9 @@ pub const ROLES: [&str; 3] = ["admin", "operator", AUDITOR_ROLE];
 pub const AUDITOR_ROLE: &str = "auditor";
 /// Retired stored roles that fold into `auditor` when an account store is
 /// opened (#965 schema 3). Validation rejects them for new writes.
-pub const RETIRED_ROLES: [&str; 2] = ["audit", "portal_auditor"];
+/// The retired role whose accounts fold into `auditor` disabled (#965).
+pub const RETIRED_AUDIT_ROLE: &str = "audit";
+pub const RETIRED_ROLES: [&str; 2] = [RETIRED_AUDIT_ROLE, "portal_auditor"];
 pub const DEFAULT_ROLE: &str = "operator";
 pub const MIN_PASSWORD_LEN: usize = 12;
 pub const MAX_PASSWORD_LEN: usize = 1024;
