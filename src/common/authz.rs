@@ -10,8 +10,7 @@
 pub enum Role {
     Admin,
     Operator,
-    Audit,
-    PortalAuditor,
+    Auditor,
 }
 
 impl Role {
@@ -19,8 +18,7 @@ impl Role {
         match stored {
             "admin" => Some(Self::Admin),
             "operator" => Some(Self::Operator),
-            "audit" => Some(Self::Audit),
-            super::authn::PORTAL_AUDITOR_ROLE => Some(Self::PortalAuditor),
+            super::authn::AUDITOR_ROLE => Some(Self::Auditor),
             _ => None,
         }
     }
@@ -36,14 +34,14 @@ pub enum Capability {
     /// Every authenticated role: whoami, own password change, logout.
     OwnAccount,
     /// Session list, create and single-session read, the surface the
-    /// `portal_auditor` chat is allowed to see.
+    /// `auditor` chat is allowed to see.
     OwnSessions,
     /// Everything else owner-scoped: session extras, structured memory,
     /// notes corpus, spend, loops, jobs and notifications.
     OwnData,
     /// Local chat turns, cancel, prompt preview and slash parse.
     Chat,
-    /// Attachment upload, withheld from `portal_auditor`.
+    /// Attachment upload, withheld from `auditor`.
     ChatAttachments,
     /// Web fetch, search, research and inject within the shared URL policy.
     WebUse,
@@ -157,12 +155,12 @@ pub fn capabilities_for_stored(stored: &str) -> Vec<&'static str> {
     Role::parse(stored).map(capabilities_for).unwrap_or_default()
 }
 
-/// Whether the role's surface is method-exact. The restricted roles (`audit`,
-/// `portal_auditor`) are refused on any unlisted `(method, route)` pair,
+/// Whether the role's surface is method-exact. The restricted role
+/// (`auditor`) is refused on any unlisted `(method, route)` pair,
 /// while admin and operator keep the router's 405 on a template they fully
 /// hold — the legacy gate made the same distinction.
 pub fn denies_wrong_method(role: Role) -> bool {
-    matches!(role, Role::Audit | Role::PortalAuditor)
+    matches!(role, Role::Auditor)
 }
 
 /// The chat context a role's turns may include, decided once per request from
@@ -221,9 +219,7 @@ impl ChatPolicy {
     pub fn for_role(role: Role) -> Self {
         match role {
             Role::Admin | Role::Operator => Self::FULL,
-            // `audit` never reaches chat (the gate refuses it); if it somehow
-            // did, it gets the same withheld surface as `portal_auditor`.
-            Role::Audit | Role::PortalAuditor => Self::LOCAL_ONLY,
+            Role::Auditor => Self::LOCAL_ONLY,
         }
     }
 
@@ -255,13 +251,7 @@ pub fn grants(role: Role, capability: Capability) -> bool {
             ManageModels | ManageSharedContent | ManageWebPolicy | ManageCredentials | ManageAccounts
             | ManageConfig | BrowserUse | ReadAudit | ReadLogs | NotificationReplay => false,
         },
-        Role::Audit => match capability {
-            Public | OwnAccount | ReadAudit => true,
-            OwnSessions | OwnData | Chat | ChatAttachments | WebUse | UseMcp | RunCoding | ManageModels
-            | ManageSharedContent | ManageWebPolicy | ManageCredentials | ManageAccounts | ManageConfig
-            | BrowserUse | ReadLogs | ReadPanels | ProposePersona | NotificationReplay => false,
-        },
-        Role::PortalAuditor => match capability {
+        Role::Auditor => match capability {
             Public | OwnAccount | OwnSessions | Chat | ReadAudit | ReadLogs => true,
             OwnData | ChatAttachments | WebUse | UseMcp | RunCoding | ManageModels | ManageSharedContent
             | ManageWebPolicy | ManageCredentials | ManageAccounts | ManageConfig | BrowserUse | ReadPanels
@@ -287,7 +277,7 @@ pub fn mcp_server_allowed(role: Role, authority: McpAuthority, operator_allowed:
     match role {
         Role::Admin => true,
         Role::Operator => authority == McpAuthority::ReadOnly || operator_allowed,
-        Role::Audit | Role::PortalAuditor => false,
+        Role::Auditor => false,
     }
 }
 
@@ -296,17 +286,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_accepts_the_four_stored_roles_and_fails_closed() {
+    fn parse_accepts_the_three_stored_roles_and_fails_closed() {
         assert_eq!(Role::parse("admin"), Some(Role::Admin));
         assert_eq!(Role::parse("operator"), Some(Role::Operator));
-        assert_eq!(Role::parse("audit"), Some(Role::Audit));
-        assert_eq!(
-            Role::parse(super::super::authn::PORTAL_AUDITOR_ROLE),
-            Some(Role::PortalAuditor)
-        );
-        // Stored roles are canonical lowercase; anything else is corrupt or
-        // forged and must not widen into operator-style access.
-        for stored in ["", "Admin", "OPERATOR", "root", "portal-auditor", "auditor"] {
+        assert_eq!(Role::parse("auditor"), Some(Role::Auditor));
+        // Stored roles are canonical lowercase; the retired `audit` and
+        // `portal_auditor` are migrated on open and must never parse, and
+        // anything else is corrupt or forged and must not widen into
+        // operator-style access.
+        for stored in [
+            "",
+            "Admin",
+            "OPERATOR",
+            "root",
+            "portal-auditor",
+            "audit",
+            "portal_auditor",
+        ] {
             assert_eq!(Role::parse(stored), None, "{stored}");
         }
     }
@@ -324,7 +320,7 @@ mod tests {
             Capability::NotificationReplay,
         ] {
             assert!(grants(Role::Admin, cap));
-            for role in [Role::Operator, Role::Audit, Role::PortalAuditor] {
+            for role in [Role::Operator, Role::Auditor] {
                 assert!(!grants(role, cap), "{role:?} must not hold {cap:?}");
             }
         }
@@ -358,7 +354,7 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), total, "capability names must be unique");
-        for role in [Role::Admin, Role::Operator, Role::Audit, Role::PortalAuditor] {
+        for role in [Role::Admin, Role::Operator, Role::Auditor] {
             let reported = capabilities_for(role);
             assert!(!reported.is_empty(), "a known role holds some capabilities");
             for cap in Capability::ALL {
@@ -366,9 +362,9 @@ mod tests {
             }
         }
         assert!(capabilities_for_stored("forged").is_empty());
-        assert_eq!(
-            capabilities_for_stored("portal_auditor"),
-            capabilities_for(Role::PortalAuditor)
+        assert!(
+            capabilities_for_stored("portal_auditor").is_empty(),
+            "a retired role fails closed like any unparseable value"
         );
     }
 
@@ -380,9 +376,7 @@ mod tests {
         assert!(mcp_server_allowed(Role::Operator, ReadOnly, false));
         assert!(!mcp_server_allowed(Role::Operator, Privileged, false));
         assert!(mcp_server_allowed(Role::Operator, Privileged, true));
-        for role in [Role::Audit, Role::PortalAuditor] {
-            assert!(!mcp_server_allowed(role, ReadOnly, false));
-            assert!(!mcp_server_allowed(role, Privileged, true));
-        }
+        assert!(!mcp_server_allowed(Role::Auditor, ReadOnly, false));
+        assert!(!mcp_server_allowed(Role::Auditor, Privileged, true));
     }
 }

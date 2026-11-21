@@ -1420,7 +1420,7 @@ fn account_role_comparisons_stay_pinned_to_authz() {
     /// (file, needle) pairs, each consumed once: a leftover pin is stale and
     /// a hit without a pin is a new ad-hoc role check.
     const PINNED: &[(&str, &str)] = &[
-        ("common/auth_sqlite.rs", "u.role == authn::PORTAL_AUDITOR_ROLE"),
+        ("common/auth_sqlite.rs", "u.role == authn::AUDITOR_ROLE"),
         (
             "common/auth_store.rs",
             "Some(u) if u.role == \"admin\" && !u.disabled => count_enabled_admins",
@@ -1453,19 +1453,6 @@ fn account_role_comparisons_stay_pinned_to_authz() {
         ("server/routes/auth.rs", "account.role == ROLE_ADMIN"),
         ("server/routes/auth.rs", "account.role != ROLE_ADMIN"),
         ("server/routes/core.rs", "user.role != \"admin\""),
-        ("server/routes/core.rs", "u.role == \"audit\""),
-        (
-            "server/routes/core.rs",
-            "u.role == crate::common::authn::PORTAL_AUDITOR_ROLE",
-        ),
-        (
-            "server/routes/diag.rs",
-            "matches!(account.role.as_str(), \"admin\" | PORTAL_AUDITOR_ROLE)",
-        ),
-        (
-            "server/routes/loop_runner.rs",
-            "u.role == crate::common::authn::PORTAL_AUDITOR_ROLE",
-        ),
         ("server/routes/session_io.rs", "u.role != \"admin\""),
     ];
     /// A line is an account-role comparison when it has a comparison shape and
@@ -1474,9 +1461,8 @@ fn account_role_comparisons_stay_pinned_to_authz() {
     const TOKENS: &[&str] = &[
         "\"admin\"",
         "\"operator\"",
-        "\"audit\"",
-        "\"portal_auditor\"",
-        "PORTAL_AUDITOR_ROLE",
+        "\"auditor\"",
+        "AUDITOR_ROLE",
         "ROLE_ADMIN",
         "ROLE_OPERATOR",
     ];

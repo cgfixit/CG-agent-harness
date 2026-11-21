@@ -96,16 +96,6 @@ fn start_blocking(
         .for_owner(&owner)
         .get(&req.session_id)
         .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
-    let portal_auditor = user
-        .as_ref()
-        .is_some_and(|u| u.role == crate::common::authn::PORTAL_AUDITOR_ROLE);
-    if portal_auditor {
-        return Err(ApiError::new(
-            StatusCode::FORBIDDEN,
-            "AUTH_PERMISSION_DENIED",
-            "portal_auditor cannot start loop runs",
-        ));
-    }
     let web_mode = match req.web_mode.as_deref() {
         None => None,
         Some("off") => Some(GoalWebMode::Off),

@@ -21,7 +21,7 @@
     const userIn = el("input", { id: "authNewUser", type: "text", placeholder: "username" });
     const passIn = el("input", { id: "authNewPass", type: "password", placeholder: "password" });
     const roleIn = el("select", { id: "authNewRole" });
-    const roles = actorRole === "admin" ? ["operator", "audit", "portal_auditor", "admin"] : ["operator", "audit", "portal_auditor"];
+    const roles = actorRole === "admin" ? ["operator", "auditor", "admin"] : ["operator", "auditor"];
     roles.forEach(function (r) { roleIn.appendChild(el("option", { value: r }, r)); });
     const createBtn = el("button", { id: "authCreateUserBtn", type: "button", class: "toolbar-btn" }, "Create user");
     form.appendChild(userIn);
@@ -108,7 +108,7 @@
         row.appendChild(el("span", null, u.username + " · " + u.role + (u.user_id ? " · " + u.user_id : "") + (u.disabled ? " · disabled" : "")));
         if (actorRole === "admin") {
           const roleSel = el("select");
-          ["admin", "operator", "audit", "portal_auditor"].forEach(function (r) {
+          ["admin", "operator", "auditor"].forEach(function (r) {
             const opt = el("option", { value: r }, r);
             if (r === u.role) opt.selected = true;
             roleSel.appendChild(opt);

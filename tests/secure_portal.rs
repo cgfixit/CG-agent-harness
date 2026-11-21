@@ -101,7 +101,7 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
     .await;
     assert_eq!(changed.status(), 200);
     let admin = cookie(&changed);
-    for role in ["operator", "audit"] {
+    for role in ["operator", "auditor"] {
         assert_eq!(
             request(
                 &server,
@@ -119,7 +119,7 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
             request(&server, &user, Method::GET, "/api/analytics/summary", json!({}))
                 .await
                 .status(),
-            if role == "audit" { 403 } else { 200 }
+            if role == "auditor" { 403 } else { 200 }
         );
         assert_eq!(
             request(&server, &user, Method::POST, "/api/config/reload", json!({}))
@@ -644,7 +644,7 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             .status(),
         401
     );
-    for (name, role) in [("op", "operator"), ("reader", "audit")] {
+    for (name, role) in [("op", "operator"), ("reader", "auditor")] {
         assert_eq!(
             request(
                 &server,
@@ -724,17 +724,19 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
         .await
         .unwrap();
     assert!(status.get("home").is_none());
+    // An auditor chats (local-only), where the retired `audit` role was
+    // refused outright (#965); the withheld surfaces are covered in diag_routes.
     assert_eq!(
         request(
             &server,
             &audit,
             Method::POST,
             "/api/chat",
-            json!({"message":"refuse this"})
+            json!({"message":"say hello"})
         )
         .await
         .status(),
-        403
+        200
     );
     assert_eq!(
         request(&server, &op, Method::POST, "/api/chat", json!({"message":"hello"}))
@@ -1067,7 +1069,7 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             &admin,
             Method::POST,
             "/api/auth/users/op/role",
-            json!({"role":"audit"})
+            json!({"role":"auditor"})
         )
         .await
         .status(),
@@ -1114,7 +1116,7 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
         .collect();
     assert_eq!(disabled, [json!(true), json!(false)]);
     assert_eq!(changed("account.role_set").len(), 1);
-    assert_eq!(changed("account.role_set")[0]["role"], "audit");
+    assert_eq!(changed("account.role_set")[0]["role"], "auditor");
     // The three refused changes to the last admin left no account event.
     assert!(!log
         .iter()
@@ -1268,4 +1270,73 @@ async fn cli_bootstrap_session_can_only_replace_the_password_and_gets_no_machine
     assert!(minted.status.success(), "{}", stderr(&minted));
     let result = cli(&server, &["account", "--url", &server.base, "logout"], "").await;
     assert!(result.status.success());
+}
+
+/// #965 schema 3 at boot: a home whose legacy account file still holds the
+/// retired `audit` role starts with that account folded into `auditor`,
+/// writes exactly one `auth.role_migrated` row naming the user id and both
+/// roles (never the username), and holds the account disabled: it signs in as
+/// auditor only after an admin re-enables it.
+#[tokio::test]
+async fn a_retired_role_is_migrated_and_audited_once_at_boot() {
+    let model = start_mock_model().await;
+    let prepared = prepare_server(&model.base_url(), ServerOptions::default().with("auth.enabled", "true")).await;
+    // Minted per run: no literal reaches the password hasher.
+    let secret = cgagentharness::common::random_urlsafe(24);
+    let hash = cgagentharness::common::authn::hash_password(&secret).unwrap();
+    let legacy = json!({"users": {
+        "admin": {"password_hash": hash, "created_ts": 123.0, "role": "admin"},
+        "retired-reader": {"password_hash": hash, "created_ts": 123.0, "role": "audit"},
+    }, "sessions": {}});
+    cgagentharness::common::atomic::write_atomic(
+        &prepared.home_dir.join("auth.json"),
+        &serde_json::to_vec(&legacy).unwrap(),
+        Some(0o600),
+    )
+    .unwrap();
+    let (router, state) = cgagentharness::server::build_app(prepared.app_opts).await.unwrap();
+    let server = start_test_server(prepared.tmp, prepared.home_dir, prepared.api_key, router, state).await;
+
+    let log = server.audit_log();
+    let rows: Vec<Value> = log
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|row| row["event"] == "auth.role_migrated")
+        .collect();
+    assert_eq!(rows.len(), 1, "exactly one auth.role_migrated row");
+    assert_eq!(rows[0]["from"], "audit");
+    assert_eq!(rows[0]["to"], "auditor");
+    assert_eq!(
+        rows[0]["disabled"], true,
+        "the row records that the fold disabled the account"
+    );
+    let user_id = rows[0]["user_id"].as_str().unwrap();
+    assert!(
+        !user_id.is_empty() && user_id.chars().all(|c| c.is_ascii_hexdigit()),
+        "the row names the account by its hex user id"
+    );
+    assert!(
+        !log.contains("retired-reader"),
+        "the migration row never names the account"
+    );
+    // Confirmed in the log, so the store's pending report was acknowledged.
+    let auth = server.state.auth.as_ref().unwrap();
+    assert!(auth.pending_role_migrations().unwrap().is_empty());
+
+    let refused = server
+        .client
+        .post(server.url("/api/auth/login"))
+        .json(&json!({"username": "retired-reader", "password": secret}))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(refused.status(), 200, "a former audit account waits for an admin");
+    auth.enable_user("retired-reader").unwrap();
+    let session = login(&server, "retired-reader", &secret).await;
+    let whoami: Value = request(&server, &session, Method::GET, "/api/auth/whoami", json!({}))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(whoami["role"], "auditor", "the migrated account signs in as auditor");
 }

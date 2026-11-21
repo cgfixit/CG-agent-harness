@@ -261,6 +261,21 @@ impl AuthManager {
         Ok(self.fresh_bootstrap.swap(false, std::sync::atomic::Ordering::SeqCst))
     }
 
+    /// `(user_id, old_role)` for each account folded into `auditor` (#965)
+    /// whose `auth.role_migrated` audit row is not yet confirmed. The fold and
+    /// this report commit together, so a crash before the audit write leaves
+    /// the report here for the next boot: reported at least once, never lost.
+    pub fn pending_role_migrations(&self) -> Result<Vec<(String, String)>> {
+        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        sqlite::pending_role_migrations(&stored.0)
+    }
+
+    /// The fold for `user_id` is in the audit log: drop its pending report.
+    pub fn acknowledge_role_migration(&self, user_id: &str) -> Result<()> {
+        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        sqlite::acknowledge_role_migration(&stored.0, user_id)
+    }
+
     /// True while the enabled `admin` account still signs in with its setup
     /// code: it must replace its password and the private code file exists.
     /// The sign-in screen then names the code, never shows it. Answers without
@@ -693,7 +708,7 @@ mod tests {
         let mut count = seen;
         let next = crate::common::random_hex(24);
         let changes: [(&str, &dyn Fn()); 4] = [
-            ("role", &|| auth.set_role("alice", "portal_auditor").unwrap()),
+            ("role", &|| auth.set_role("alice", "auditor").unwrap()),
             ("password reset", &|| auth.set_password("alice", &next).unwrap()),
             ("password change", &|| {
                 auth.change_password("alice", &next, &password).unwrap();

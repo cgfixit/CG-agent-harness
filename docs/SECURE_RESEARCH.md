@@ -50,13 +50,13 @@ change was rejected; refresh before retrying.
 |---|---|---|
 | Administrator (`admin`) | Normal harness work; users, roles, disable/reset; global credentials; web enablement and URL policy | Every operation lacking existing repository/write/approval/publication authorization |
 | Portal operator (`operator`) | Chat; permitted fetch/search/research; own sessions/jobs/schedules/notes/style; persona edit proposals; coding workflows; read-only MCP servers; password/logout | Users/roles, keys, web/provider security, model pulls/selection, shared persona/memory, audit/log reads, privileged MCP servers |
-| Auditor (`audit`) | Minimal status, designated redacted `/api/audit`, own password/logout | Chat/research/jobs, shared operational data, keys, user administration, other mutations |
-| Portal auditor (`portal_auditor`) | Local chat in own sessions, prompt preview, `/api/audit`, `/diag` when enabled | Memory, attachments, web tools, cloud, loops, model choice, deletion, keys, administration |
+| Auditor (`auditor`) | Local chat in own sessions, prompt preview, `/api/audit`, `/diag` when enabled | Memory, attachments, web tools, cloud, loops, model choice, shared data, keys, administration |
 
-The account bar shows the signed-in role; an Auditor gets a refusal
-in **Sessions** and a minimal `/status`. Audit records name
-the actor and route, never passwords, session tokens, query bodies or
-keys.
+Schema 3 folds retired roles into `auditor`: `portal_auditor`
+accounts sign in again, `audit` accounts once an admin enables them. The account bar
+shows the signed-in role; an auditor gets its own sessions and a restricted
+`/status`. Audit records name the actor and route, never passwords, session
+tokens, query bodies or keys.
 
 ### API Keys
 

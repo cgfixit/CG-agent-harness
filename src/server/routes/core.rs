@@ -58,24 +58,18 @@ pub async fn reload_config(
 pub async fn status(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    role: Option<axum::Extension<crate::common::authz::Role>>,
 ) -> Json<Value> {
     let owner = super::auth::context_owner(user.clone());
-    if state.auth.is_some()
-        && user
-            .as_ref()
-            .is_none_or(|u| u.role == "audit" || u.must_change_password)
-    {
+    if state.auth.is_some() && user.as_ref().is_none_or(|u| u.must_change_password) {
         return Json(
             json!({"version":crate::VERSION,"auth_enabled":true,"api_key_optional":true,"status":"login required for operational details"}),
         );
     }
     super::structured_memory::off_worker(move || {
-        // portal_auditor learns which model it chats with, not paths, backend URL,
+        // An auditor learns which model it chats with, not paths, backend URL,
         // persona or memory state.
-        if user
-            .as_ref()
-            .is_some_and(|u| u.role == crate::common::authn::PORTAL_AUDITOR_ROLE)
-        {
+        if matches!(role, Some(axum::Extension(crate::common::authz::Role::Auditor))) {
             let model = state.current_model();
             let sessions = state.store.for_owner(&owner).list();
             return Json(json!({
@@ -908,7 +902,7 @@ pub async fn chat(
 }
 
 /// A restricted chat policy (`ChatPolicy::LOCAL_ONLY`, today the
-/// `portal_auditor` surface) chats with the selected local model only: no
+/// `auditor` surface) chats with the selected local model only: no
 /// cloud, loop, model override, attachments or memory selection. Context the
 /// account owned under an earlier role is withheld in `chat_inner`, not
 /// merely unreachable.
@@ -931,7 +925,7 @@ fn refuse_restricted_chat_extras(
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "AUTH_PERMISSION_DENIED",
-            "portal_auditor chat is local-only, without loops, model selection, attachments or memory",
+            "auditor chat is local-only, without loops, model selection, attachments or memory",
         ));
     }
     Ok(())
@@ -2035,7 +2029,7 @@ pub(crate) async fn chat_inner(
         }
     };
     let episode = if !chat_policy.memory {
-        json!({"available": false, "staged": false, "reason": "portal_auditor"})
+        json!({"available": false, "staged": false, "reason": "local_only"})
     } else {
         let (state, owner, model) = (state.clone(), owner.clone(), reply.model.clone());
         let (user_chars, assistant_chars) = (req.message.chars().count(), reply.body_text.chars().count());
@@ -2049,7 +2043,7 @@ pub(crate) async fn chat_inner(
     let memory_suggestion = if req.loop_turn && !reply_has_goal_done(&reply.body_text) {
         json!({"queued": false, "reason": "loop_turn"})
     } else if !chat_policy.memory {
-        json!({"queued": false, "reason": "portal_auditor"})
+        json!({"queued": false, "reason": "local_only"})
     } else {
         // Queuing reads and writes the memory store, so it leaves the async worker too.
         let (state, owner, model) = (state.clone(), owner.clone(), model.clone());

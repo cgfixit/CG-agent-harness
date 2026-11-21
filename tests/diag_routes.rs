@@ -1,4 +1,4 @@
-//! `/diag` routes and the `portal_auditor` role over real accounts: gates and
+//! `/diag` routes and the `auditor` role over real accounts: gates and
 //! roles refuse with codes, never empty success; the file parameter names an
 //! allowlist entry or is refused; audit rows carry no content; a staged excerpt
 //! reaches exactly one local chat turn of its session.
@@ -83,21 +83,23 @@ async fn a_closed_gate_and_wrong_roles_refuse_with_codes() {
     let s = server(&model, true).await;
     let operator = account(&s, "ops-operator", "operator").await;
     let (status, body) = json_call(&s, &operator, Method::GET, "/api/diag", None).await;
-    // The capability gate narrows diag reads to admin/portal_auditor before the
+    // The capability gate narrows diag reads to admin/auditor before the
     // handler's own role check runs (#965).
     assert_eq!(
         (status, code(&body).as_str()),
         (403, "AUTH_PERMISSION_DENIED"),
         "{body}"
     );
-    let auditor = account(&s, "ops-audit", "audit").await;
-    let (status, body) = json_call(&s, &auditor, Method::GET, "/api/diag", None).await;
-    assert_eq!(
-        (status, code(&body).as_str()),
-        (403, "AUTH_PERMISSION_DENIED"),
-        "{body}"
-    );
-    for (role, name) in [("admin", "ops-admin"), ("portal_auditor", "ops-portal")] {
+    // The retired `audit` role cannot be created at all (#965): no account
+    // without log authority can reach the handler.
+    assert!(s
+        .state
+        .auth
+        .as_ref()
+        .unwrap()
+        .create_user("ops-legacy", &cgagentharness::common::random_hex(24), "audit")
+        .is_err());
+    for (role, name) in [("admin", "ops-admin"), ("auditor", "ops-portal")] {
         let cookie = account(&s, name, role).await;
         let (status, body) = json_call(&s, &cookie, Method::GET, "/api/diag", None).await;
         assert_eq!(status, 200, "{role}: {body}");
@@ -128,7 +130,7 @@ async fn a_closed_gate_and_wrong_roles_refuse_with_codes() {
 async fn reads_name_an_allowlist_entry_and_audit_no_content() {
     let model = start_mock_model().await;
     let s = server(&model, true).await;
-    let portal = account(&s, "ops-portal", "portal_auditor").await;
+    let portal = account(&s, "ops-portal", "auditor").await;
     let (status, body) = json_call(&s, &portal, Method::GET, "/api/diag/read?file=audit.jsonl&last=5", None).await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["source"], "diag");
@@ -427,7 +429,7 @@ async fn a_staged_excerpt_reaches_one_local_turn_and_is_refused_elsewhere() {
 }
 
 #[tokio::test]
-async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
+async fn auditor_chats_locally_without_memory_or_other_surfaces() {
     let model = start_mock_model().await;
     // Live state on, so its absence below is the role's doing, not the fixture's.
     let s = spawn_server(
@@ -438,7 +440,7 @@ async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
             .with("diagnostics.live_state", "true"),
     )
     .await;
-    let portal = account(&s, "ops-portal", "portal_auditor").await;
+    let portal = account(&s, "ops-portal", "auditor").await;
     let (status, session) = json_call(&s, &portal, Method::POST, "/api/sessions", Some(json!({"title":"p"}))).await;
     assert_eq!(status, 201, "{session}");
     let sid = session["session_id"].as_str().unwrap().to_string();
@@ -457,7 +459,7 @@ async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
     )
     .await;
     assert_eq!(status, 200, "{body}");
-    assert_eq!(body["memory_suggestion"]["reason"], "portal_auditor");
+    assert_eq!(body["memory_suggestion"]["reason"], "local_only");
     let request = model.last_request().unwrap();
     assert!(!request["messages"][0]["content"]
         .as_str()

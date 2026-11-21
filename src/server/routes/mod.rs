@@ -892,9 +892,9 @@ mod tests {
         // serves, and refuses the method-exact roles and unheld templates.
         assert!(wrong_method_passthrough(Role::Admin, "/api/diag/read"));
         assert!(wrong_method_passthrough(Role::Operator, "/api/sessions/clear"));
-        assert!(!wrong_method_passthrough(Role::PortalAuditor, "/api/diag/read"));
+        assert!(!wrong_method_passthrough(Role::Auditor, "/api/diag/read"));
         assert!(!wrong_method_passthrough(Role::Operator, "/api/keys"));
-        assert!(wrong_method_passthrough(Role::Audit, "/api/auth/whoami"));
+        assert!(wrong_method_passthrough(Role::Auditor, "/api/auth/whoami"));
         assert!(!wrong_method_passthrough(Role::Admin, "/api/not-a-route"));
     }
 }

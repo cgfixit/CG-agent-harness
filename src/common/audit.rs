@@ -436,11 +436,51 @@ impl Audit {
 
     /// Append one redacted, timestamped record. Never fails.
     pub fn log(&self, event: Value) {
+        let Some(line) = self.line(event) else {
+            return;
+        };
+        // Deadline is stamped at submission, before any in-process wait, so
+        // callers that pile up behind a busy sink share one bound.
+        let deadline = Instant::now() + self.sink.retention.lease_wait;
+        let Some(queue) = self.queue() else {
+            return self.sink.append_logged(&self.path, &line, deadline);
+        };
+        match queue.try_send(Job::Line {
+            path: self.path.clone(),
+            line,
+            deadline,
+        }) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => tracing::warn!("audit queue full; record dropped"),
+            // The writer thread is gone (it never panics on I/O): append inline.
+            Err(TrySendError::Disconnected(Job::Line { path, line, deadline })) => {
+                self.sink.append_logged(&path, &line, deadline)
+            }
+            Err(TrySendError::Disconnected(_)) => {}
+        }
+    }
+
+    /// [`Audit::log`] for a record whose loss must be detectable: written
+    /// inline after every line queued before it, and `true` only once it is
+    /// in the file. A caller that needs the record keeps its own copy until
+    /// then (the #965 role-migration outbox does).
+    pub fn log_confirmed(&self, event: Value) -> bool {
+        let Some(line) = self.line(event) else {
+            return false;
+        };
+        self.flush();
+        let deadline = Instant::now() + self.sink.retention.lease_wait;
+        self.sink.append(&self.path, &line, deadline).is_ok()
+    }
+
+    /// The redacted, timestamped JSON line for one event; `None` when the
+    /// event is not an object or cannot be serialized.
+    fn line(&self, event: Value) -> Option<String> {
         let mut record = match event {
             Value::Object(map) => map,
             _ => {
                 tracing::warn!("audit_log called with a non-object event");
-                return;
+                return None;
             }
         };
         if let Some(query) = record.remove("query") {
@@ -461,31 +501,12 @@ impl Audit {
             }
         }
         record.insert("timestamp".to_string(), Value::String(super::iso_now()));
-        let line = match serde_json::to_string(&Value::Object(record)) {
-            Ok(s) => s,
+        match serde_json::to_string(&Value::Object(record)) {
+            Ok(line) => Some(line),
             Err(e) => {
                 tracing::warn!("audit_log failed to serialize event: {e}");
-                return;
+                None
             }
-        };
-        // Deadline is stamped at submission, before any in-process wait, so
-        // callers that pile up behind a busy sink share one bound.
-        let deadline = Instant::now() + self.sink.retention.lease_wait;
-        let Some(queue) = self.queue() else {
-            return self.sink.append_logged(&self.path, &line, deadline);
-        };
-        match queue.try_send(Job::Line {
-            path: self.path.clone(),
-            line,
-            deadline,
-        }) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) => tracing::warn!("audit queue full; record dropped"),
-            // The writer thread is gone (it never panics on I/O): append inline.
-            Err(TrySendError::Disconnected(Job::Line { path, line, deadline })) => {
-                self.sink.append_logged(&path, &line, deadline)
-            }
-            Err(TrySendError::Disconnected(_)) => {}
         }
     }
 
@@ -900,5 +921,21 @@ mod tests {
         assert!(inline.writer.is_none());
         inline.log(json!({"event":"inline"}));
         assert_eq!(written(inline.path())[0]["event"], "inline");
+    }
+
+    #[test]
+    fn a_confirmed_line_lands_after_queued_lines_or_reports_that_it_did_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let queued = audit(dir.path(), "logging: {}\n").with_writer_thread();
+        queued.log(json!({"event":"queued"}));
+        assert!(queued.log_confirmed(json!({"event":"confirmed"})));
+        let events: Vec<Value> = written(queued.path()).iter().map(|row| row["event"].clone()).collect();
+        assert_eq!(events, [json!("queued"), json!("confirmed")]);
+        // A log directory that is a file refuses the write: `false`, so the
+        // caller keeps what it has not yet recorded.
+        let blocked = tempfile::tempdir().unwrap();
+        std::fs::write(blocked.path().join("logs"), b"not a directory").unwrap();
+        assert!(!audit(blocked.path(), "logging: {}\n").log_confirmed(json!({"event":"refused"})));
+        assert!(!queued.log_confirmed(json!("not an object")));
     }
 }

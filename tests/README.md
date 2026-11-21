@@ -22,7 +22,7 @@ Docs-only classification can skip compile jobs. CI expectations: [docs/INSTALL.m
 - [`secure_portal.rs`](secure_portal.rs): real HTTPS/HTTP account boundary, config reload (admin, CSRF, SIGHUP), shutdown.
 - [`owner_isolation.rs`](owner_isolation.rs): two accounts cannot read, mutate, export or schedule each other's sessions.
 - [`panels.rs`](panels.rs): `/api/keys`, `/web`, `/memory`, views, `/api/auth/*` and `/net` panel routes.
-- [`diag_routes.rs`](diag_routes.rs): log allowlist, roles, CSRF, private reads and session-bound staging; restricted `portal_auditor` chat.
+- [`diag_routes.rs`](diag_routes.rs): log allowlist, roles, CSRF, private reads and session-bound staging; restricted `auditor` chat.
 - [`persona_controls.rs`](persona_controls.rs): `/api/soul` document, proposals and prompt preview; confirm, backups, interrupted apply.
 - [`style_presets.rs`](style_presets.rs), [`runtime_skills.rs`](runtime_skills.rs): `/api/style` presets and per-session skill selection; neither executes anything.
 - [`analytics.rs`](analytics.rs), [`spend_ledger.rs`](spend_ledger.rs): analytics summary composition and the spend ledger on the chat path; shim failure reads unavailable, never empty.
