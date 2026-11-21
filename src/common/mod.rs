@@ -7,6 +7,7 @@ pub mod atomic;
 pub mod audit;
 pub mod auth_store;
 pub mod authn;
+pub mod authz;
 pub mod bounded_log;
 pub mod browser;
 pub mod browser_host;

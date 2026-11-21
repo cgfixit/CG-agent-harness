@@ -1405,6 +1405,136 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
     }
 }
 
+/// Account-role authority lives in exactly two places: `common/authz.rs` owns
+/// the parse and the capability matrix, and the gate (`server/guards.rs`)
+/// resolves the parsed role against `routes::ROUTE_CAPS`. The role string
+/// constants stay in `common/authn.rs`. Every other stored-role comparison is
+/// legacy surface pinned below until the follow-up consolidation; a new
+/// comparison outside the pins means a handler grew its own role authority
+/// instead of consulting the capability table.
+#[test]
+fn account_role_comparisons_stay_pinned_to_authz() {
+    /// Files that may name account roles freely: the string constants and the
+    /// parser/matrix.
+    const ROLE_OWNERS: &[&str] = &["common/authn.rs", "common/authz.rs"];
+    /// (file, needle) pairs, each consumed once: a leftover pin is stale and
+    /// a hit without a pin is a new ad-hoc role check.
+    const PINNED: &[(&str, &str)] = &[
+        ("common/auth_sqlite.rs", "u.role == authn::PORTAL_AUDITOR_ROLE"),
+        (
+            "common/auth_store.rs",
+            "Some(u) if u.role == \"admin\" && !u.disabled => count_enabled_admins",
+        ),
+        ("common/auth_store.rs", "canonical_role != \"admin\""),
+        (
+            "common/auth_store.rs",
+            "filter(|u| u.role == \"admin\" && !u.disabled).count()",
+        ),
+        (
+            "server/loop_runner.rs",
+            "matches!(current.role.as_str(), \"operator\" | \"admin\")",
+        ),
+        (
+            "server/notifications.rs",
+            "matches!(u.role.as_str(), \"admin\" | \"operator\")",
+        ),
+        (
+            "server/structured_memory_auto.rs",
+            "matches!(user.role.as_str(), \"admin\" | \"operator\")",
+        ),
+        (
+            "server/web_research.rs",
+            "matches!(u.role.as_str(), \"admin\" | \"operator\")",
+        ),
+        (
+            "server/routes/agent.rs",
+            "matches!(user.role.as_str(), \"admin\" | \"operator\")",
+        ),
+        ("server/routes/auth.rs", "account.role == ROLE_ADMIN"),
+        ("server/routes/auth.rs", "account.role != ROLE_ADMIN"),
+        ("server/routes/core.rs", "user.role != \"admin\""),
+        ("server/routes/core.rs", "u.role == \"audit\""),
+        (
+            "server/routes/core.rs",
+            "u.role == crate::common::authn::PORTAL_AUDITOR_ROLE",
+        ),
+        (
+            "server/routes/diag.rs",
+            "matches!(account.role.as_str(), \"admin\" | PORTAL_AUDITOR_ROLE)",
+        ),
+        (
+            "server/routes/loop_runner.rs",
+            "u.role == crate::common::authn::PORTAL_AUDITOR_ROLE",
+        ),
+        ("server/routes/session_io.rs", "u.role != \"admin\""),
+        // The guards.rs test oracle deliberately reimplements the legacy gate
+        // so the matrix can be proven equivalent to it; the pins go when the
+        // oracle does.
+        (
+            "server/guards.rs",
+            "if !own && role == \"audit\" && !(path == \"/api/audit\" && method == Method::GET)",
+        ),
+        (
+            "server/guards.rs",
+            "if !own && role == crate::common::authn::PORTAL_AUDITOR_ROLE && !legacy_portal_auditor_may(method, path)",
+        ),
+        ("server/guards.rs", "if admin && role != \"admin\""),
+    ];
+    /// A line is an account-role comparison when it has a comparison shape and
+    /// names an account role. Message roles ("user"/"assistant") never match.
+    const SHAPES: &[&str] = &["role == ", "role != ", "role.as_str()"];
+    const TOKENS: &[&str] = &[
+        "\"admin\"",
+        "\"operator\"",
+        "\"audit\"",
+        "\"portal_auditor\"",
+        "PORTAL_AUDITOR_ROLE",
+        "ROLE_ADMIN",
+        "ROLE_OPERATOR",
+    ];
+    let mut pins: Vec<(&str, &str)> = PINNED.to_vec();
+    for (path, text) in read_tree(&root()) {
+        let rel = path.replace('\\', "/");
+        if ROLE_OWNERS.iter().any(|owner| rel.ends_with(owner)) {
+            continue;
+        }
+        for line in text.lines() {
+            if !SHAPES.iter().any(|shape| line.contains(shape)) || !TOKENS.iter().any(|token| line.contains(token)) {
+                continue;
+            }
+            let hit = pins
+                .iter()
+                .position(|(file, needle)| rel.ends_with(file) && line.contains(needle));
+            match hit {
+                Some(index) => {
+                    pins.swap_remove(index);
+                }
+                None => panic!(
+                    "{rel}: `{}` is an unpinned account-role comparison. Role authority belongs \
+                     in common/authz.rs and routes::ROUTE_CAPS; consolidating a pinned site means \
+                     deleting its pin, and a genuinely new comparison needs the pin list updated \
+                     with the PR",
+                    line.trim()
+                ),
+            }
+        }
+    }
+    assert!(pins.is_empty(), "stale role-comparison pins (site removed?): {pins:?}");
+    // The parse itself runs once, at the gate: no other production code turns a
+    // stored role string into a `Role`.
+    for (path, text) in read_tree(&root()) {
+        let rel = path.replace('\\', "/");
+        if rel.ends_with("common/authz.rs") || rel.ends_with("server/guards.rs") {
+            continue;
+        }
+        let code = &text[..text.find("#[cfg(test)]").unwrap_or(text.len())];
+        assert!(
+            !code.contains("Role::parse"),
+            "{rel} parses account roles outside the gate; the gate is the single parse site"
+        );
+    }
+}
+
 /// `security.api_key_optional` is an inert compatibility key (INVARIANTS.md,
 /// "Signals weaker than their name"): account login and the direct-loopback
 /// check never consult it. Its only allowed mention is the JSON compatibility
@@ -2208,7 +2338,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
     // why: operator-set (2026-10-23) standing allowance of 10,000, not a measured count: the file was 7,099 words; the
     // Root group cap below is the binding limit, so new contracts fit without trimming gate text.
-    ("INVARIANTS.md", Root, 10_000),
+    // why: operator-approved (2026-11-20) +200 for the #965 route capability table contract.
+    ("INVARIANTS.md", Root, 10_200),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     // why: dependency refresh removed five stale Linux prerequisite words; keep the cut.
