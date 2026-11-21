@@ -57,6 +57,7 @@ prose cannot supply. Roots overlapping the harness home are refused
 
 `/diag` reads allowlisted logs under `<home>/logs/` for an admin or
 `auditor` account once `diagnostics.logs_enabled` is literal `true`.
+`diagnostics.model_tool: true` adds read-only log tools to plain local chat turns.
 Output is redacted, or refused whole on an injection-scanner hit; `/diag
 inject` stages it as untrusted text for one local turn ([contract](../INVARIANTS.md)).
 

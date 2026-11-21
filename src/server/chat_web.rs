@@ -88,7 +88,7 @@ fn narrow_tools(definitions: &[Value], route: &StickyRoute) -> Vec<Value> {
         .collect()
 }
 
-fn response_has_calls(response: &Value) -> bool {
+pub(crate) fn response_has_calls(response: &Value) -> bool {
     match response["choices"][0]["message"].get("tool_calls") {
         None | Some(Value::Null) => false,
         Some(Value::Array(calls)) => !calls.is_empty(),
@@ -240,13 +240,13 @@ fn effective_refresh(sent: Option<bool>, loop_turn: bool, delivered: bool, refre
 }
 
 /// Estimated tokens of a model call: UTF-8 bytes / 4 of what is sent, calibrated.
-fn prompt_estimate(bytes: usize, token_ratio: f64) -> u64 {
+pub(crate) fn prompt_estimate(bytes: usize, token_ratio: f64) -> u64 {
     super::compaction::calibrated_tokens((bytes as u64).div_ceil(4), token_ratio)
 }
 
 /// Tokens of the messages a web turn appended to the history, counted the way
 /// the chat route projects history: each content plus a batch's calls.
-fn appended_tokens(messages: &[Value]) -> u64 {
+pub(crate) fn appended_tokens(messages: &[Value]) -> u64 {
     let estimate = super::compaction::estimate_tokens;
     messages
         .iter()
@@ -261,7 +261,7 @@ fn appended_tokens(messages: &[Value]) -> u64 {
 
 /// Room kept for one minimal tool result, calibrated like the estimate that
 /// later charges it.
-fn min_result_tokens(token_ratio: f64) -> u64 {
+pub(crate) fn min_result_tokens(token_ratio: f64) -> u64 {
     super::compaction::calibrated_tokens(MIN_EVIDENCE_TOKENS, token_ratio)
 }
 
@@ -277,7 +277,7 @@ const FETCH_NOTICE: &str = "Untrusted fetched page text; excerpt may be truncate
 /// The smallest form `fit_result` can cut a call's result to, from what is known
 /// before the read: a page keeps its URL, which is never cut, and one character
 /// of text; a listing keeps its query and search URL, and no results.
-fn minimal_result(name: &str, args: &str) -> Value {
+pub(crate) fn minimal_result(name: &str, args: &str) -> Value {
     if name == "web_fetch" {
         let url = serde_json::from_str::<FetchArgs>(args)
             .map(|a| a.url)
@@ -297,7 +297,7 @@ fn minimal_result(name: &str, args: &str) -> Value {
         "omitted_results":10,"notice":super::web_google::SEARCH_NOTICE,"complete":false})
 }
 
-fn tool_message(id: &str, result: &Value) -> Result<Value> {
+pub(crate) fn tool_message(id: &str, result: &Value) -> Result<Value> {
     Ok(json!({"role":"tool","tool_call_id":id,"content":serde_json::to_string(result)?}))
 }
 
@@ -396,7 +396,7 @@ const GRANTED_SEARCH_NOTICE: &str =
 /// model: the same request answered 0 of 5 times without this note and 5 of 5
 /// with it (issue #772). It lives in this turn's request only, never in the
 /// session.
-const ANSWER_NOW: &str = "Harness note, not a new user turn: no web tools are available for the rest of this turn. Answer the question above now in plain text, from the tool results above and your own knowledge. Cite only URLs that appear in those results, and say plainly what could not be read.";
+pub(crate) const ANSWER_NOW: &str = "Harness note, not a new user turn: no web tools are available for the rest of this turn. Answer the question above now in plain text, from the tool results above and your own knowledge. Cite only URLs that appear in those results, and say plainly what could not be read.";
 
 /// The reply the harness writes when the model returned no text on a call
 /// that offered no tools, after the one retry. It lists what the turn's web

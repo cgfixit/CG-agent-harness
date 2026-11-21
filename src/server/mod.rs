@@ -12,6 +12,7 @@ pub mod agent_schedules;
 pub mod attachment_index;
 pub mod attachments;
 pub mod browser_jobs;
+mod chat_diag;
 mod chat_web;
 pub mod client;
 pub mod compaction;

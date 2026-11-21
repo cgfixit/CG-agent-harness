@@ -554,3 +554,398 @@ async fn auditor_chats_locally_without_memory_or_other_surfaces() {
         "{body}"
     );
 }
+
+// Windows builds refuse every read (`DIAG_UNSUPPORTED`); see the windows test above.
+#[cfg(unix)]
+#[tokio::test]
+async fn auditor_turn_reads_logs_through_bounded_tools() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("diagnostics.logs_enabled", "true")
+            .with("diagnostics.model_tool", "true"),
+    )
+    .await;
+    let portal = account(&s, "ops-portal", "auditor").await;
+    let (_, session) = json_call(
+        &s,
+        &portal,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({"title":"diag-tools"})),
+    )
+    .await;
+    let sid = session["session_id"].as_str().unwrap().to_string();
+    model.set_reply(json!([
+        json!({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+            "tool_calls":[{"id":"call_list_1","type":"function","function":{"name":"logs_list","arguments":"{}"}}]}}],
+            "usage":{"prompt_tokens":10,"completion_tokens":2}}),
+        ok_reply("The audit log is available.", 20, 4),
+    ]));
+    let (status, body) = json_call(
+        &s,
+        &portal,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"session_id": sid, "message": "what logs can you see?"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"].as_str().unwrap_or(""), "The audit log is available.");
+
+    let requests = model.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 2, "{requests:?}");
+    let offered: Vec<&str> = requests[0]["tools"]
+        .as_array()
+        .expect("the first request offers the log tools")
+        .iter()
+        .map(|tool| tool["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(offered, ["logs_list", "logs_read", "logs_search", "logs_stats"]);
+    // The follow-up resends the batch and one tool message carrying the
+    // untrusted header, never silent authority over log text.
+    let second = requests[1]["messages"].as_array().unwrap();
+    let tool_message = second
+        .iter()
+        .find(|message| message["role"] == "tool")
+        .expect("the follow-up carries the tool result");
+    assert_eq!(tool_message["tool_call_id"], "call_list_1");
+    let content = tool_message["content"].as_str().unwrap();
+    assert!(content.contains("UNTRUSTED LOG EXCERPT"), "{content}");
+    assert!(content.contains("audit.jsonl"), "{content}");
+
+    // The audit row holds the filter shape and the row count, never log text.
+    let calls = audit_rows(&s, "diag_tool_call");
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    let row = &calls[0];
+    assert_eq!(row["tool"], "logs_list");
+    assert_eq!(row["outcome"], "ok");
+    assert!(row["rows"].as_u64().unwrap() >= 1, "{row}");
+    for content_key in ["text", "content", "lines", "sha256"] {
+        assert!(
+            row.get(content_key).is_none(),
+            "audit must not carry {content_key}: {row}"
+        );
+    }
+
+    // A refused read ends as that call's tool result; the turn answers anyway.
+    model.set_reply(json!([
+        json!({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+            "tool_calls":[{"id":"call_bad_1","type":"function","function":{"name":"logs_read",
+                "arguments":"{\"file\":\"../config.yaml\"}"}}]}}],
+            "usage":{"prompt_tokens":10,"completion_tokens":2}}),
+        ok_reply("I could not read that file.", 20, 4),
+    ]));
+    let (status, body) = json_call(
+        &s,
+        &portal,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"session_id": sid, "message": "read ../config.yaml"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let requests = model.requests.lock().unwrap().clone();
+    let tool_message = requests.last().unwrap()["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["role"] == "tool")
+        .cloned()
+        .expect("the refused read still produces a tool result");
+    assert!(tool_message["content"].as_str().unwrap().contains("DIAG_BAD_FILE"));
+    let calls = audit_rows(&s, "diag_tool_call");
+    assert_eq!(calls.last().unwrap()["outcome"], "DIAG_BAD_FILE");
+    assert!(
+        calls.last().unwrap()["file"].is_null(),
+        "a refused file name is not audited"
+    );
+    assert!(
+        !s.audit_log().contains("../config.yaml"),
+        "audit must not record the file argument"
+    );
+
+    // An allowlisted file is audited by name; a rejected group_by is model
+    // text and never reaches the audit log (#965: filter shape, not content).
+    model.set_reply(json!([
+        json!({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+            "tool_calls":[
+                {"id":"call_stats_1","type":"function","function":{"name":"logs_stats",
+                    "arguments":"{\"file\":\"audit.jsonl\",\"group_by\":\"UNCHECKED-GROUP-TEXT\"}"}},
+                {"id":"call_stats_2","type":"function","function":{"name":"logs_stats",
+                    "arguments":"{\"file\":\"audit.jsonl\",\"group_by\":\"event\"}"}}]}}],
+            "usage":{"prompt_tokens":10,"completion_tokens":2}}),
+        ok_reply("Counted.", 20, 4),
+    ]));
+    let (status, body) = json_call(
+        &s,
+        &portal,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"session_id": sid, "message": "count events"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let calls = audit_rows(&s, "diag_tool_call");
+    let stats = &calls[calls.len() - 2..];
+    assert_eq!(
+        stats[0]["outcome"], "DIAG_TOOL_ARGUMENTS",
+        "an invalid group_by is refused"
+    );
+    assert!(
+        stats[0]["filter"]["group_by"].is_null(),
+        "a rejected group_by is not audited"
+    );
+    assert_eq!(stats[1]["filter"]["group_by"], "event", "a fixed group_by is audited");
+    for row in stats {
+        assert_eq!(row["file"], "audit.jsonl", "the allowlisted file is audited");
+    }
+    assert!(
+        !s.audit_log().contains("UNCHECKED-GROUP-TEXT"),
+        "audit must not record a rejected group_by"
+    );
+
+    // A limit that is not a positive whole number refuses only its own call:
+    // the numeric string "3" reads, the junk one is that call's
+    // DIAG_TOOL_ARGUMENTS result, and the turn still answers (#1035 review).
+    model.set_reply(json!([
+        json!({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+            "tool_calls":[
+                {"id":"call_limit_1","type":"function","function":{"name":"logs_read",
+                    "arguments":"{\"file\":\"audit.jsonl\",\"limit\":\"UNCHECKED-LIMIT-TEXT\"}"}},
+                {"id":"call_limit_2","type":"function","function":{"name":"logs_search",
+                    "arguments":"{\"file\":\"audit.jsonl\",\"limit\":\"3\"}"}}]}}],
+            "usage":{"prompt_tokens":10,"completion_tokens":2}}),
+        ok_reply("Read what I could.", 20, 4),
+    ]));
+    let (status, body) = json_call(
+        &s,
+        &portal,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"session_id": sid, "message": "read a few rows"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"].as_str().unwrap_or(""), "Read what I could.");
+    let calls = audit_rows(&s, "diag_tool_call");
+    let limited = &calls[calls.len() - 2..];
+    assert_eq!(limited[0]["outcome"], "DIAG_TOOL_ARGUMENTS", "a junk limit is refused");
+    assert!(
+        limited[0]["filter"]["limit"].is_null(),
+        "a refused limit is not audited"
+    );
+    assert_eq!(limited[1]["filter"]["limit"], 3, "a numeric-string limit is parsed");
+    assert_ne!(
+        limited[1]["outcome"], "DIAG_TOOL_ARGUMENTS",
+        "a numeric-string limit is accepted"
+    );
+    let refused = model.requests.lock().unwrap().last().unwrap()["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["tool_call_id"] == "call_limit_1")
+        .cloned()
+        .expect("the refused call still gets a tool result");
+    assert!(refused["content"].as_str().unwrap().contains("DIAG_TOOL_ARGUMENTS"));
+    assert!(
+        !s.audit_log().contains("UNCHECKED-LIMIT-TEXT"),
+        "audit must not record a refused limit"
+    );
+}
+
+#[tokio::test]
+async fn accounts_off_never_offers_log_tools() {
+    // `/diag` refuses without accounts (DIAG_REFUSED), so its chat tools must
+    // not open a log read path there either.
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("diagnostics.logs_enabled", "true")
+            .with("diagnostics.model_tool", "true"),
+    )
+    .await;
+    s.state.settings.lock().unwrap().web_enabled = false;
+    let (status, body) = json_call(&s, "", Method::GET, "/api/diag", None).await;
+    assert_eq!(status, 403, "{body}");
+    let (status, body) = json_call(&s, "", Method::POST, "/api/chat", Some(json!({"message": "hello"}))).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(model
+        .last_request()
+        .unwrap()
+        .get("tools")
+        .is_none_or(|t| t.as_array().is_some_and(|a| a.is_empty())));
+    assert!(audit_rows(&s, "diag_tool_call").is_empty());
+}
+
+#[tokio::test]
+async fn an_operator_turn_a_disabled_flag_and_a_loop_turn_never_offer_log_tools() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("diagnostics.logs_enabled", "true")
+            .with("diagnostics.model_tool", "true"),
+    )
+    .await;
+    // Web tools would mask the check: with web on an operator turn is a web
+    // turn. With it off the operator's turn must be plain, never a diag turn.
+    s.state.settings.lock().unwrap().web_enabled = false;
+    // An operator has no InvestigateLogs grant (#965): plain turn, no tools.
+    let operator = account(&s, "ops-operator", "operator").await;
+    let (status, body) = json_call(
+        &s,
+        &operator,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"message": "hello"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(model
+        .last_request()
+        .unwrap()
+        .get("tools")
+        .is_none_or(|t| t.as_array().is_some_and(|a| a.is_empty())));
+    // Even the auditor's /loop request is refused before any tools exist; an
+    // admin loop turn (InvestigateLogs held) never offers them either.
+    let admin = account(&s, "ops-admin", "admin").await;
+    let (_, session) = json_call(&s, &admin, Method::POST, "/api/sessions", Some(json!({"title":"loop"}))).await;
+    let sid = session["session_id"].as_str().unwrap().to_string();
+    let (status, _) = json_call(
+        &s,
+        &admin,
+        Method::POST,
+        &format!("/api/sessions/{sid}/goal"),
+        Some(json!({"goal":"g"})),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let (status, body) = json_call(
+        &s,
+        &admin,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"session_id": sid, "message": "loop turn", "loop": true})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(model
+        .last_request()
+        .unwrap()
+        .get("tools")
+        .is_none_or(|t| t.as_array().is_some_and(|a| a.is_empty())));
+
+    // The flag is the operator's opt-in: with it unset the same auditor turn
+    // is a plain chat turn.
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("diagnostics.logs_enabled", "true"),
+    )
+    .await;
+    let portal = account(&s, "ops-portal", "auditor").await;
+    let (status, body) = json_call(
+        &s,
+        &portal,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"message": "hello"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(model
+        .last_request()
+        .unwrap()
+        .get("tools")
+        .is_none_or(|t| t.as_array().is_some_and(|a| a.is_empty())));
+}
+
+/// Diagnostic turns run under `web.total_tokens`, so compaction must plan for
+/// that budget as it does for web chat (#1036 review). Before, a session that
+/// outgrew the web budget but not the plain-chat trigger reached the tool loop
+/// uncompacted and failed with `DIAG_TOKEN_BUDGET`; now it is compacted and
+/// keeps its log tools.
+#[tokio::test]
+async fn a_long_diag_session_is_compacted_to_the_web_budget_and_keeps_its_tools() {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::Arc;
+    let last_prompt = Arc::new(AtomicU64::new(0));
+    let offered = Arc::new(AtomicBool::new(false));
+    let (prompt_seen, tools_seen) = (last_prompt.clone(), offered.clone());
+    let router = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+            let (prompt_seen, tools_seen) = (prompt_seen.clone(), tools_seen.clone());
+            async move {
+                let prompt = (body["messages"].to_string().len()
+                    + body.get("tools").map_or(0, |tools| tools.to_string().len())) as u64
+                    / 4;
+                let last = body["messages"].as_array().unwrap().last().unwrap().clone();
+                if last["content"].as_str().is_some_and(|c| c.starts_with("seed ")) {
+                    prompt_seen.store(prompt, Ordering::SeqCst);
+                    tools_seen.store(
+                        body.get("tools")
+                            .is_some_and(|t| t.as_array().is_some_and(|t| !t.is_empty())),
+                        Ordering::SeqCst,
+                    );
+                }
+                // Every call answers plainly; a compaction summary is "Noted." too.
+                axum::Json(ok_reply("Noted.", prompt, 20))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mock = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let s = spawn_server(
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because the mock model listens only on loopback.
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("diagnostics.logs_enabled", "true")
+            .with("diagnostics.model_tool", "true")
+            .with("models.local_llm.max_tokens", "2048")
+            .with("web.total_tokens", "9000"),
+    )
+    .await;
+    let portal = account(&s, "ops-portal", "auditor").await;
+    let (_, session) = json_call(
+        &s,
+        &portal,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({"title":"long"})),
+    )
+    .await;
+    let sid = session["session_id"].as_str().unwrap().to_string();
+    let (mut previous, mut peak, mut compactions) = (0u64, 0u64, 0usize);
+    for turn in 0..30 {
+        let (status, body) = json_call(
+            &s,
+            &portal,
+            Method::POST,
+            "/api/chat",
+            Some(json!({"session_id": sid, "message": format!("seed {turn} {}", "x".repeat(2000))})),
+        )
+        .await;
+        assert_eq!(status, 200, "turn {turn} fails instead of compacting: {body}");
+        assert!(offered.load(Ordering::SeqCst), "turn {turn} keeps its log tools");
+        // Each seed adds about 500 fixture tokens; a smaller prompt than the
+        // last one means the history was compacted.
+        let now = last_prompt.load(Ordering::SeqCst);
+        compactions += usize::from(now < previous);
+        (previous, peak) = (now, peak.max(now));
+    }
+    assert!(
+        compactions >= 2,
+        "the session is compacted again as it regrows: {compactions}"
+    );
+    assert!(peak <= 9000, "no diagnostic prompt outgrew the web budget: {peak}");
+    mock.abort();
+}
