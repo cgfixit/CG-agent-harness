@@ -28,6 +28,14 @@ let adminPassword=FIXTURE_SETUP_CODE;
 const userIds={admin:'1'.repeat(32),'audit-fixture':'2'.repeat(32),'memory-second':'3'.repeat(32)}; // random_hex(16) owner ids
 let persona=''; let clearFails=false, slashMode='dispatch';
 let authFixture=false, signedIn=false, logoutStatus=200, whoamiDrop=false, mustChange=true, authRole='admin', authUsername='admin';
+// Mirrors authz::Capability::name + grants() (src/common/authz.rs): the console
+// hides controls by these names, never by role strings.
+const CAPS={
+ admin:['public','own_account','own_sessions','own_data','chat','chat_attachments','web_use','use_mcp','propose_persona','notification_replay','run_coding','manage_models','manage_shared_content','manage_web_policy','manage_credentials','manage_accounts','manage_config','browser_use','read_audit','read_logs','read_panels'],
+ operator:['public','own_account','own_sessions','own_data','chat','chat_attachments','web_use','use_mcp','propose_persona','run_coding','read_panels'],
+ audit:['public','own_account','read_audit'],
+ portal_auditor:['public','own_account','own_sessions','chat','read_audit','read_logs'],
+};
 const visibleKeys=['SERPAPI_API_KEY','TAVILY_API_KEY','FIRECRAWL_API_KEY','GH_TOKEN','GROK_API_KEY','ANTHROPIC_API_KEY','CGAGENTHARNESS_WEBHOOK_TOKEN'];
 const hiddenKeys=['CGAGENTHARNESS_API_KEY','DEEPAGENT_API_KEY'];
 const savedKeys=new Map(hiddenKeys.map(name=>[name,'fixture-existing-key-9012']));
@@ -138,7 +146,7 @@ const server=createServer(async(req,res)=>{
   reply({job_id:id,status:browseJob.decided==='cancel'?'cancelled':'finished',turns:3,result:{finished:true,report:{answer:'BROWSE_FIXTURE_ANSWER',stopped:'answered',for_operator:rows}}});return;
  }
  if(path==='/api/browser/run'){reply({finished:true,report:{answer:'BROWSE_FIXTURE_ANSWER',stopped:'answered',for_operator:[{held_background:'POST https://docs.python.org/autosave'},{held:'POST https://docs.python.org/save'}]}});return;}
- if(path==='/api/auth/whoami'){if(whoamiDrop){req.socket.destroy();return;}reply(authFixture&&signedIn?{username:authUsername,role:authRole,user_id:userIds[authUsername],must_change_password:mustChange}:{},authFixture?(signedIn?200:401):503);return;}
+ if(path==='/api/auth/whoami'){if(whoamiDrop){req.socket.destroy();return;}reply(authFixture&&signedIn?{username:authUsername,role:authRole,user_id:userIds[authUsername],must_change_password:mustChange,capabilities:CAPS[authRole]}:{},authFixture?(signedIn?200:401):503);return;}
  if(path==='/api/auth/setup-status'){reply({enabled:true,default_password:false,setup_code:authFixture&&adminPassword===FIXTURE_SETUP_CODE});return;}
  if(path==='/api/auth/login'){
   const auditor=body.username==='audit-fixture'&&body.password==='browser-auditor-password';
@@ -146,7 +154,7 @@ const server=createServer(async(req,res)=>{
   signedIn=auditor||secondOwner||(body.username==='admin'&&body.password===adminPassword);
   authUsername=auditor?'audit-fixture':secondOwner?'memory-second':'admin';authRole=auditor?'audit':'admin';
   if(auditor)mustChange=false;
-  reply({username:authUsername,role:authRole,user_id:userIds[authUsername],must_change_password:mustChange},signedIn?200:401);return;
+  reply({username:authUsername,role:authRole,user_id:userIds[authUsername],must_change_password:mustChange,capabilities:CAPS[authRole]},signedIn?200:401);return;
  }
  if(path==='/api/auth/password'){assert.equal(body.current_password,adminPassword);assert.ok(body.password.length>=12);adminPassword=body.password;mustChange=false;reply({ok:true,must_change_password:false});return;}
  if(path==='/api/auth/logout'){if(logoutStatus!==200){reply({detail:{code:'AUTH_REQUIRED',message:'session expired'}},logoutStatus);return;}signedIn=false;reply({ok:true});return;}
@@ -519,6 +527,11 @@ try {
  await until('[...document.getElementById("sStyle").options].some(option=>option.value==="concise")');
  assert.equal(await evaluate('currentSession'),null);
  assert.equal(await evaluate('document.getElementById("sStyle").disabled'),false,'style menu opens before the first session');
+ // whoami capabilities drive the console: with accounts off the single local
+ // user holds everything, so the admin tabs and shared-state toggles show.
+ assert.equal(await evaluate('document.getElementById("tab-users").hidden'),false,'accounts-off sees the users tab');
+ assert.equal(await evaluate('document.getElementById("tab-api-keys").hidden'),false,'accounts-off sees the API keys tab');
+ assert.equal(await evaluate('document.getElementById("sMemory").disabled'),false,'accounts-off can toggle shared memory');
  await evaluate('document.getElementById("sStyle").value="concise";document.getElementById("sStyle").dispatchEvent(new Event("change",{bubbles:true}))');
  await until('currentSession && document.getElementById("sStyle").value==="concise"');
  assert.equal(sessions.size,1,'choosing a style creates one session');
@@ -1188,6 +1201,8 @@ try {
   ['/api/auth/password',{current_password:FIXTURE_SETUP_CODE,password:'browser-fixture-password'}]
  ],'one explicit save performs the restricted login and protected password replacement');
  await until(headerState+'==="openAnalytics,openDeliveries,openSchedules"');
+ assert.equal(await evaluate('document.getElementById("reloadLimits").hidden'),false,'admin sees reload limits');
+ assert.equal(await evaluate('document.getElementById("webModeToggle").hidden'),false,'admin sees the web policy toggle');
  assert.match(await evaluate('document.getElementById("openDeliveries").title'),/metadata-only.*coding job finishes/);
  await evaluate('document.querySelector("[data-pane=api-keys]").click()');
  const keyField=name=>`document.getElementById(${JSON.stringify('saved-'+name)})`;
@@ -1291,6 +1306,10 @@ try {
  await until('document.getElementById("pane-sessions").textContent.includes("AUTH_PERMISSION_DENIED: denied")');
  assert.equal(await evaluate('document.getElementById("hAuthWho").textContent'),'audit-fixture · audit · '+userIds['audit-fixture'],'a session permission denial must not turn successful login into a network error');
  assert.equal(await evaluate('document.getElementById("sStyle").disabled'),true,'auditors cannot select a session style');
+ assert.equal(await evaluate('document.getElementById("tab-users").hidden'),true,'auditors cannot see the users tab');
+ assert.equal(await evaluate('document.getElementById("tab-api-keys").hidden'),true,'auditors cannot see the API keys tab');
+ assert.equal(await evaluate('document.getElementById("sMemory").disabled'),true,'auditors cannot toggle shared memory');
+ assert.equal(await evaluate('document.getElementById("reloadLimits").hidden'),true,'auditors cannot see reload limits');
  assert.equal(await evaluate('document.querySelectorAll("#pane-sessions button").length'),0,'auditors must not see New Session or Clear History controls');
  assert.equal(await evaluate('refreshHeaderFeatures(true).then(()=>["openDeliveries","openSchedules"].every(id=>document.getElementById(id).hidden))'),true,'refused (403) probes keep automation hidden');
  assert.equal(await evaluate('document.getElementById("passwordDialog").open'),false);

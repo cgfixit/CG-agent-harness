@@ -225,7 +225,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET `/api/auth/setup-status`: `setup_code` while the one-time code works; public
 - POST `/api/auth/login`: Login; public with early guards
 - POST `/api/auth/logout`: Revoke the current session
-- GET `/api/auth/whoami`: Current account, role and `user_id`
+- GET `/api/auth/whoami`: Current account, role, `user_id`, capabilities
 - POST `/api/auth/password`: Change own password; revokes other sessions
 - GET, POST `/api/auth/users`: Administrator list/create, with each `user_id` (`/users`)
 - DELETE `/api/auth/users/{username}`: Administrator delete
@@ -235,10 +235,10 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/chat/cancel`: Cancel the active turn (`/loop stop`)
 - POST `/api/chat/attachments`: Upload up to 3 txt/md/json/csv/log/docx/pdf files; 503 past…
 - GET, POST `/api/notes-corpus`: List owned note metadata and upload limits, or ingest a `.md`/`.txt`/`.pdf` batch for…
-- DELETE `/api/notes-corpus/{id}`: Unlink one owned note
 
 ## api: registered routes (part 3)
 
+- DELETE `/api/notes-corpus/{id}`: Unlink one owned note
 - POST `/api/loop/start`: Start an owner-bound server-side `/loop` run: `session_id`, optional `goal`/`web_mode`,…
 - POST `/api/loop/stop`: Stop by `run_id`
 - GET `/api/loop/status`: One run (`?run_id=`) or a session's run (`?session_id=`)

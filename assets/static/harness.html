@@ -1332,7 +1332,7 @@ function renderMcpCapabilities(status) {
   const lines = ['EXTERNAL MCP — ' + (status.enabled ? 'enabled' : 'disabled'),
     'Declared policy; protection is checked again before each call.'];
   for (const server of status.servers || []) {
-    lines.push('', server.name + ' · ' + server.transport,
+    lines.push('', server.name + ' · ' + server.transport + (server.allowed === false ? ' · not callable by this account (' + server.authority + ' server)' : ''),
       'Tools: ' + (server.tools || []).join(', '));
     const cap = server.capabilities;
     if (!cap) { lines.push('Remote SSE: DNS-pinned URL policy'); continue; }
@@ -1837,7 +1837,7 @@ async function refreshStatus() {
     lastStatus = s;
     applyLoopConfig(s);
     $('hModel').textContent = s.model || (s.provider ? '(unset)' : '—');
-    $('sProvider').textContent = s.provider || (window.__cyclawRole === 'audit' ? 'read-only' : 'sign in');
+    $('sProvider').textContent = s.provider || (window.__cyclawRole && !can('read_panels') ? 'read-only' : 'sign in');
     if (apiKeyInput) {
       apiKeyInput.placeholder = 'optional metadata key';
       apiKeyInput.title = 'Optional compatibility metadata; account login is required. Held in page memory only.';
@@ -1963,7 +1963,7 @@ function styleIssueText(issue) {
 function paintStyle() {
   const sel = $('sStyle');
   if (!sel) return;
-  sel.disabled = sessionClearing || styleSessionStarting || window.__cyclawRole === 'audit';
+  sel.disabled = sessionClearing || styleSessionStarting || !can('own_data');
   const value = currentStyle || 'off';
   let opt = [...sel.options].find(o => o.value === value);
   if (!opt) {
@@ -4522,7 +4522,7 @@ async function runSlash(line, webCommand) {
       case 'status': {
         const s = await api('/api/status');
         if (s.auth_enabled && !('sessions' in s)) {
-          const access = window.__cyclawRole === 'audit' ? 'Auditor: read-only status and audit records.' : s.status || 'Sign in to view operational details.';
+          const access = window.__cyclawRole && !can('read_panels') ? 'Auditor: read-only status and audit records.' : s.status || 'Sign in to view operational details.';
           sys(table([['version', s.version], ['access', access]]));
           break;
         }
@@ -5740,7 +5740,7 @@ async function refreshDeliveries(message = '') {
       const ids=document.createElement('p');ids.textContent='Job '+delivery.job_id+' · Delivery '+delivery.delivery_id;
       row.append(title);row.append(ids);
       if(delivery.last_code){const error=document.createElement('p');error.textContent='Last result: '+delivery.last_code;row.append(error);}
-      if(['failed','delivered'].includes(delivery.state)) {
+      if(can('notification_replay') && ['failed','delivered'].includes(delivery.state)) {
         const reasonLabel=document.createElement('label');reasonLabel.textContent='Replay reason ';const reason=document.createElement('input');reason.maxLength=1000;reason.placeholder='Why resend this notification?';reasonLabel.append(reason);
         const confirmLabel=document.createElement('label');const confirm=document.createElement('input');confirm.type='checkbox';confirmLabel.append(confirm);confirmLabel.append(document.createTextNode(' I authorize resending this metadata with its existing delivery ID.'));
         const button=document.createElement('button');button.type='button';button.textContent='Replay delivery';
@@ -6217,8 +6217,8 @@ const hAuthLogout = document.getElementById('hAuthLogout');
 function setHarnessLogoutVisible(on) {
   if (hAuthLogout) hAuthLogout.hidden = !on;
   document.getElementById('hAuthPassword').hidden = !on;
-  $('reloadLimits').hidden = !on || window.__cyclawRole !== 'admin' || passwordRequired;
-  $('webModeToggle').hidden = $('reloadLimits').hidden;
+  $('reloadLimits').hidden = !on || !can('manage_config') || passwordRequired;
+  $('webModeToggle').hidden = !on || !can('manage_web_policy') || passwordRequired;
 }
 /* True while the account must choose its own password. The server
    allows such a session only password, whoami and logout, so the lock card
@@ -6388,6 +6388,30 @@ async function refreshHeaderFeatures(usable) {
 function accountLabel(data) {
   return data.username + ' · ' + data.role + (data.user_id ? ' · ' + data.user_id : '');
 }
+/* Capability-driven presentation (#965): whoami/login report the caller's
+   capability names (authz::Capability); the console hides or disables the
+   controls a role would only see refused. The gate stays authoritative.
+   null = accounts off (the single local user holds everything); a Set = the
+   signed-in account's grant; undefined = not yet probed, hide gated controls. */
+function can(name) {
+  const caps = window.__cyclawCaps;
+  if (caps === null) return true;
+  if (caps instanceof Set) return caps.has(name);
+  return false;
+}
+function setCaps(list) {
+  window.__cyclawCaps = new Set(Array.isArray(list) ? list : []);
+  applyCapabilityUI();
+}
+function applyCapabilityUI() {
+  $('tab-users').hidden = !can('manage_accounts');
+  $('tab-api-keys').hidden = !can('manage_credentials');
+  // Shared-state toggles keep their readout but lose the affordance.
+  $('sSoul').disabled = !can('manage_shared_content');
+  $('sMemory').disabled = !can('manage_shared_content');
+  $('soulPropose').hidden = !can('propose_persona');
+  paintStyle();
+}
 /* Both probes are bounded, matching terminal.js's refreshAuthUi. The catch
    below deliberately keeps the last-known UI on failure, but a bare fetch
    against a gateway that accepted the socket and then stalled never settles,
@@ -6399,6 +6423,8 @@ async function refreshHarnessAuth() {
   try {
     const me = await fetchWithTimeout('/api/auth/whoami', {}, 5000);
     if (me.status === 503) {
+      window.__cyclawCaps = null;
+      applyCapabilityUI();
       showSignIn(null);
       setPasswordRequired(false);
       setHarnessLogoutVisible(false);
@@ -6409,6 +6435,7 @@ async function refreshHarnessAuth() {
     if (me.ok) {
       const data = await me.json();
       window.__cyclawRole = data.role;
+      setCaps(data.capabilities);
       let initialPassword = false;
       if (data.username === 'admin' && data.must_change_password) {
         const setup = await fetchWithTimeout('/api/auth/setup-status', {}, 5000);
@@ -6420,8 +6447,8 @@ async function refreshHarnessAuth() {
       setPasswordRequired(data.must_change_password === true);
       setHarnessLogoutVisible(true);
       refreshHeaderFeatures(!data.must_change_password);
-      $('reloadLimits').hidden = data.role !== 'admin' || data.must_change_password;
-      $('webModeToggle').hidden = $('reloadLimits').hidden;
+      $('reloadLimits').hidden = !can('manage_config') || data.must_change_password;
+      $('webModeToggle').hidden = !can('manage_web_policy') || data.must_change_password;
       if (who) who.textContent = accountLabel(data);
       if (data.must_change_password) openPasswordChange(true);
       if (completedElsewhere) {
@@ -6435,6 +6462,7 @@ async function refreshHarnessAuth() {
     const setup = await fetchWithTimeout('/api/auth/setup-status', {}, 5000);
     const status = setup.ok ? await setup.json() : {};
     window.__cyclawRole = null;
+    setCaps([]);
     if (who) who.textContent = '';
     setHarnessLogoutVisible(false);
     showSignIn(status.setup_code === true ? 'setup' : 'login', status.setup_code);
@@ -6475,6 +6503,7 @@ if (hAuthLogin) {
       const data = await r.json();
       clearPendingAttachments();
       window.__cyclawRole = data.role;
+      setCaps(data.capabilities);
       if (who) who.textContent = accountLabel(data);
       if (hAuthLoginBox) hAuthLoginBox.hidden = true;
       setPasswordRequired(data.must_change_password === true);
@@ -6534,7 +6563,7 @@ if (hAuthLogout) {
       }
     } catch (e) { /* best-effort; refresh below paints whatever session remains */ }
     resetAccountView();
-    window.__cyclawRole = null; await refreshStatus();
+    window.__cyclawRole = null; setCaps([]); await refreshStatus();
     await refreshHarnessAuth();
     sendBtn.disabled = false;
   });
@@ -6586,6 +6615,7 @@ $('passwordForm').addEventListener('submit', async event => {
         return;
       }
       window.__cyclawRole = data.role;
+      setCaps(data.capabilities);
       $('hAuthWho').textContent = accountLabel(data);
       setPasswordRequired(true);
       setHarnessLogoutVisible(true);
@@ -6949,7 +6979,7 @@ async function openSoulEditor(proposalOnly) {
   $('soulContent').value = soulDocument.content;
   $('soulContent').maxLength = soulDocument.max_chars;
   $('soulReason').value = ''; $('soulConfirm').checked = false;
-  $('soulSave').hidden = proposalOnly;
+  $('soulSave').hidden = proposalOnly || !can('manage_shared_content');
   $('soulPropose').classList.toggle('primary', proposalOnly);
   $('soulFeedback').textContent = 'revision: ' + (soulDocument.revision === 'missing' ? 'unset' : soulDocument.revision) + '\nMaximum ' + soulDocument.max_chars + ' characters. Preview before saving.';
   $('soulEditor').showModal(); $('soulContent').focus();
@@ -6986,6 +7016,7 @@ $('sStyle').addEventListener('change', async () => {
 });
 
 buildCommands();
+applyCapabilityUI(); // fail closed until whoami reports the caller's grants
 refreshStatus();
 refreshSessions().catch(() => {});
 resumeResearchJob().catch(() => {});
