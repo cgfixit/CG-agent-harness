@@ -52,7 +52,7 @@ change was rejected; refresh before retrying.
 | Portal operator (`operator`) | Chat; permitted fetch/search/research; own sessions/jobs/schedules/notes/style; persona edit proposals; coding workflows; read-only MCP servers; password/logout | Users/roles, keys, web/provider security, model pulls/selection, shared persona/memory, audit/log reads, privileged MCP servers |
 | Auditor (`auditor`) | Local chat in own sessions, prompt preview, `/api/audit`, `/diag` when enabled | Memory, attachments, web tools, cloud, loops, model choice, shared data, keys, administration |
 
-Schema 3 folds retired roles into `auditor` at open: `portal_auditor`
+Schema 3 folds retired roles into `auditor`: `portal_auditor`
 accounts sign in again; `audit` accounts stay disabled until an admin enables them. The account bar
 shows the signed-in role; an auditor gets its own sessions and a restricted
 `/status`. Audit records name the actor and route, never passwords, session
