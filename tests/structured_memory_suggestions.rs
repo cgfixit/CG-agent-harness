@@ -731,6 +731,35 @@ async fn a_job_queued_by_an_account_that_is_then_disabled_never_reaches_the_mode
     drop(gate);
 }
 
+/// An account disabled while its suggestion waits on the model stores nothing:
+/// the owner is checked again after the reply, not only when the job is picked.
+#[tokio::test]
+async fn an_account_disabled_during_the_model_wait_stores_no_proposals() {
+    let model = model().await;
+    model.delay.store(1_000, Ordering::SeqCst);
+    let s = spawn_server(&model.base, options("both").with("auth.enabled", "true")).await;
+    let auth = s.state.auth.as_ref().unwrap();
+    auth.create_user("alice", &cgagentharness::common::random_hex(24), "operator")
+        .unwrap();
+    let alice = auth.get_user("alice").unwrap().user_id;
+    let store = s.state.structured_memory.as_ref().unwrap();
+    let id = stage(store, &alice);
+    let queued = suggest::enqueue(&s.state, &alice, Source::Chat, Some(&id), "metric", "reply");
+    assert_eq!(queued["queued"], true, "{queued}");
+    requested(&model, 1).await;
+    auth.disable_user("alice").unwrap();
+    settled(&s, &alice).await;
+    assert_eq!(*model.order.lock().unwrap(), ["request", "reply"]);
+    let run = store
+        .get_consolidation_run(&alice, queued["run_id"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(
+        (run.state.as_str(), run.error_class.as_deref()),
+        ("failed", Some("owner_retired"))
+    );
+    assert!(store.list_proposals(&alice).unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn skipped_attempt_metadata_is_bounded_by_owner_and_never_contains_input() {
     let model = model().await;
