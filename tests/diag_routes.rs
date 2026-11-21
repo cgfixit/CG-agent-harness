@@ -658,7 +658,10 @@ async fn auditor_turn_reads_logs_through_bounded_tools() {
     assert!(tool_message["content"].as_str().unwrap().contains("DIAG_BAD_FILE"));
     let calls = audit_rows(&s, "diag_tool_call");
     assert_eq!(calls.last().unwrap()["outcome"], "DIAG_BAD_FILE");
-    assert!(calls.last().unwrap()["file"].is_null(), "{calls:?}");
+    assert!(
+        calls.last().unwrap()["file"].is_null(),
+        "a refused file name is not audited"
+    );
     assert!(
         !s.audit_log().contains("../config.yaml"),
         "audit must not record the file argument"
@@ -687,11 +690,17 @@ async fn auditor_turn_reads_logs_through_bounded_tools() {
     assert_eq!(status, 200, "{body}");
     let calls = audit_rows(&s, "diag_tool_call");
     let stats = &calls[calls.len() - 2..];
-    assert_eq!(stats[0]["outcome"], "DIAG_TOOL_ARGUMENTS", "{stats:?}");
-    assert!(stats[0]["filter"]["group_by"].is_null(), "{stats:?}");
-    assert_eq!(stats[1]["filter"]["group_by"], "event", "{stats:?}");
+    assert_eq!(
+        stats[0]["outcome"], "DIAG_TOOL_ARGUMENTS",
+        "an invalid group_by is refused"
+    );
+    assert!(
+        stats[0]["filter"]["group_by"].is_null(),
+        "a rejected group_by is not audited"
+    );
+    assert_eq!(stats[1]["filter"]["group_by"], "event", "a fixed group_by is audited");
     for row in stats {
-        assert_eq!(row["file"], "audit.jsonl", "{row}");
+        assert_eq!(row["file"], "audit.jsonl", "the allowlisted file is audited");
     }
     assert!(
         !s.audit_log().contains("UNCHECKED-GROUP-TEXT"),
