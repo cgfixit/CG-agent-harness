@@ -13,8 +13,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::chat_web::{
-    self, appended_tokens, fit_result, min_result_tokens, minimal_result, prompt_estimate, response_has_calls,
-    tool_message, ModelCall, SignIn, UsageSnapshot, ANSWER_NOW,
+    self, appended_tokens, min_result_tokens, minimal_result, prompt_estimate, response_has_calls, tool_message,
+    ModelCall, SignIn, UsageSnapshot, ANSWER_NOW,
 };
 use super::diag_reader::{SearchFilter, STAT_GROUP_FIELDS};
 use super::state::AppState;
@@ -315,6 +315,62 @@ fn dispatch(state: &AppState, owner: &str, name: &str, args: &str) -> Result<Val
     }
 }
 
+/// The byte offset a `logs_read`/`logs_search` line starts with (`@<offset> `).
+fn line_offset(line: &Value) -> Option<u64> {
+    line.as_str()?.strip_prefix('@')?.split_once(' ')?.0.parse().ok()
+}
+
+/// Fit a log tool result to the room the follow-up leaves. Log results carry
+/// `lines` or `counts`, not the page text `chat_web::fit_result` cuts, so this
+/// keeps whole rows only and marks the result `truncated`: `logs_read` keeps
+/// its first rows and resumes `next_cursor` at the first dropped line, so
+/// paging still visits every row; `logs_search` keeps its newest rows;
+/// `logs_stats` keeps its largest counts. The kept rows are a contiguous run of
+/// the redacted, scanner-checked result. `None` when not even one row fits, or
+/// for `logs_list`, whose metadata is not cut.
+fn fit_diag_result(name: &str, result: Value, mut fits: impl FnMut(&Value) -> Result<bool>) -> Result<Option<Value>> {
+    if fits(&result)? {
+        return Ok(Some(result));
+    }
+    let field = match name {
+        "logs_read" | "logs_search" => "lines",
+        "logs_stats" => "counts",
+        _ => return Ok(None),
+    };
+    let Some(rows) = result.get(field).and_then(Value::as_array).cloned() else {
+        return Ok(None);
+    };
+    let shaped = |kept: usize| -> Option<Value> {
+        let mut out = result.clone();
+        let rows_kept = if name == "logs_search" {
+            rows[rows.len() - kept..].to_vec()
+        } else {
+            rows[..kept].to_vec()
+        };
+        out[field] = Value::Array(rows_kept);
+        out["truncated"] = json!(true);
+        if field == "lines" {
+            out["lines_returned"] = json!(kept);
+        }
+        if name == "logs_read" {
+            // Never skip a row: resume at the first one this page dropped.
+            out["next_cursor"] = json!(line_offset(&rows[kept])?);
+        }
+        Some(out)
+    };
+    // Fewer rows are never larger, so search the largest count that fits.
+    let (mut fit, mut over) = (0usize, rows.len());
+    while over - fit > 1 {
+        let mid = fit + (over - fit) / 2;
+        match shaped(mid) {
+            Some(candidate) if fits(&candidate)? => fit = mid,
+            Some(_) => over = mid,
+            None => return Ok(None),
+        }
+    }
+    Ok(if fit == 0 { None } else { shaped(fit) })
+}
+
 /// Run one local chat turn with the log-investigation tools. `total_tokens`
 /// and `max_calls` are the turn's window-shaped budget and tool ceiling (the
 /// same `/loop`-era constants web chat derives from the model window).
@@ -387,6 +443,10 @@ pub async fn run(
             initial_prompt_tools = round_fits;
             initial_extra = appended_tokens(&messages[history.len()..]);
         }
+        // Streamed text is log-derived: the grant is re-read before every
+        // chunk reaches the client, not only before the request (#1035 review),
+        // as web chat's evidence check does.
+        let validate = || authorize_turn(state, owner, sign_in);
         let extra = appended_tokens(&messages[history.len()..]) + if available.is_empty() { 0 } else { offered_tokens };
         peak_extra = peak_extra.max(extra);
         let response = state
@@ -400,7 +460,7 @@ pub async fn run(
                 available,
                 output.map(|sender| crate::llm::openai_stream::Output {
                     sender,
-                    validate: &|| Ok(()),
+                    validate: &validate,
                 }),
             )
             .await;
@@ -608,7 +668,7 @@ pub async fn run(
             let sent = system.len() + serde_json::to_vec(&messages)?.len();
             let later = reserves[index + 1..].iter().sum::<u64>();
             let result = match result {
-                Ok(value) => fit_result(value, |candidate| {
+                Ok(value) => fit_diag_result(name, value, |candidate| {
                     let bytes = sent + 1 + serde_json::to_vec(&tool_message(id, candidate)?)?.len();
                     Ok(prompt_estimate(bytes, token_ratio)
                         .saturating_add(reservation)
@@ -660,6 +720,60 @@ mod tests {
             assert_eq!(tool["type"], json!("function"));
         }
         assert_eq!(callable_names().len(), 4);
+    }
+
+    #[test]
+    fn oversized_results_keep_whole_rows_and_never_skip_one() {
+        let lines = |n: usize| -> Vec<Value> {
+            (0..n)
+                .map(|i| json!(format!("@{} {{\"event\":\"e{i}\"}}", i * 20)))
+                .collect()
+        };
+        let size = |v: &Value| serde_json::to_vec(v).unwrap().len();
+        let page =
+            json!({"file":"audit.jsonl","lines":lines(10),"lines_returned":10,"truncated":false,"next_cursor":200});
+        let full = size(&page);
+        // Room for about half: a read keeps its first rows and resumes at the
+        // first dropped one.
+        let fitted = fit_diag_result("logs_read", page.clone(), |c| Ok(size(c) <= full / 2 + 40))
+            .unwrap()
+            .unwrap();
+        let kept = fitted["lines"].as_array().unwrap();
+        assert!(!kept.is_empty() && kept.len() < 10);
+        assert_eq!(fitted["lines_returned"], kept.len());
+        assert_eq!(fitted["truncated"], true);
+        assert_eq!(fitted["next_cursor"], json!(kept.len() as u64 * 20));
+        assert_eq!(kept[0], page["lines"][0]);
+        // A search keeps its newest rows.
+        let found = fit_diag_result("logs_search", page.clone(), |c| Ok(size(c) <= full / 2 + 40))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            found["lines"].as_array().unwrap().last(),
+            page["lines"].as_array().unwrap().last()
+        );
+        // Stats keep the largest counts (already sorted first).
+        let counts =
+            json!({"counts":[{"key":"a","count":9},{"key":"b","count":5},{"key":"c","count":1}],"truncated":false});
+        let small = size(&json!({"counts":[{"key":"a","count":9}],"truncated":true}));
+        let top = fit_diag_result("logs_stats", counts, |c| Ok(size(c) <= small))
+            .unwrap()
+            .unwrap();
+        assert_eq!(top["counts"], json!([{"key":"a","count":9}]));
+        // No room for one row, or a listing: no partial result.
+        assert!(fit_diag_result("logs_read", page.clone(), |_| Ok(false))
+            .unwrap()
+            .is_none());
+        assert!(fit_diag_result("logs_list", json!({"files":[]}), |_| Ok(false))
+            .unwrap()
+            .is_none());
+        // A result that fits is returned unchanged.
+        assert_eq!(
+            fit_diag_result("logs_read", page.clone(), |_| Ok(true))
+                .unwrap()
+                .unwrap(),
+            page
+        );
     }
 
     #[test]

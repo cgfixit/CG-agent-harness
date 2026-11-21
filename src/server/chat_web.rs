@@ -307,7 +307,7 @@ pub(crate) fn tool_message(id: &str, result: &Value) -> Result<Value> {
 /// listing drops trailing results, then cuts the last one's snippet and title,
 /// then drops it too and says how many results it left out. URLs and the query
 /// are never cut. `None` when even that does not fit.
-pub(crate) fn fit_result(mut result: Value, mut fits: impl FnMut(&Value) -> Result<bool>) -> Result<Option<Value>> {
+fn fit_result(mut result: Value, mut fits: impl FnMut(&Value) -> Result<bool>) -> Result<Option<Value>> {
     if fits(&result)? {
         return Ok(Some(result));
     }
