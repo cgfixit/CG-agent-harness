@@ -1036,14 +1036,15 @@ pub(crate) async fn chat_inner(
     // The read-only log-investigation tools attach to the plain local-chat
     // arm only: never a cloud, /loop or web-tool turn, and only for a role
     // holding InvestigateLogs while the operator opted in with the literal
-    // `diagnostics.model_tool: true` (#965). With accounts off the one local
-    // user has the full surface, mirroring ChatPolicy::for_user.
+    // `diagnostics.model_tool: true` (#965). Like the `/diag` routes, the
+    // tools need an account: with accounts off `/diag` refuses
+    // (`DIAG_REFUSED`), so its tools are not offered either.
     let diag_tools = !cloud_selected
         && !req.loop_turn
         && !chat_tools
         && state.diag.config.logs_enabled
         && state.diag.config.model_tool
-        && user.as_ref().is_none_or(|u| {
+        && user.as_ref().is_some_and(|u| {
             crate::common::authz::grants_stored(&u.0.role, crate::common::authz::Capability::InvestigateLogs)
         });
     // Decided from the account on this request: a server-run loop reloads it
