@@ -49,13 +49,13 @@ change was rejected; refresh before retrying.
 | Role | Allowed | Refused |
 |---|---|---|
 | Administrator (`admin`) | Normal harness work; users, roles, disable/reset; global credentials; web enablement and URL policy | Every operation lacking existing repository/write/approval/publication authorization |
-| Portal operator (`operator`) | Chat; enabled permitted fetch/search/research; own sessions/jobs/schedules, shared notes/persona and authorized coding workflows; own password/logout | Users/roles, global keys, web enablement/allowlist changes, provider security configuration |
+| Portal operator (`operator`) | Chat; permitted fetch/search/research; own sessions/jobs/schedules/notes/style; persona edit proposals; coding workflows; read-only MCP servers; password/logout | Users/roles, keys, web/provider security, model pulls/selection, shared persona/memory, audit/log reads, privileged MCP servers |
 | Auditor (`audit`) | Minimal status, designated redacted `/api/audit`, own password/logout | Chat/research/jobs, shared operational data, keys, user administration, other mutations |
 | Portal auditor (`portal_auditor`) | Local chat in own sessions, prompt preview, `/api/audit`, `/diag` when enabled | Memory, attachments, web tools, cloud, loops, model choice, deletion, keys, administration |
 
-The account bar shows the signed-in role; an Auditor gets a permission refusal
-in **Sessions** and a minimal read-only `/status`. Audit request records name
-the actor and matched route, never passwords, session tokens, query bodies or
+The account bar shows the signed-in role; an Auditor gets a refusal
+in **Sessions** and a minimal `/status`. Audit records name
+the actor and route, never passwords, session tokens, query bodies or
 keys.
 
 ### API Keys

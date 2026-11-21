@@ -11,10 +11,11 @@ use serde_json::{json, Value};
 use url::Url;
 
 use crate::common::audit::Audit;
+use crate::common::authz::McpAuthority;
 use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 use crate::common::mcp::{call_stdio, mcp_err, namespaced, validate_server_name, validate_tool_name};
-use crate::common::mcp_policy::StdioCapabilities;
+use crate::common::mcp_policy::{Containment, NetworkPolicy, StdioCapabilities};
 use crate::common::tool_broker::assert_allowed;
 use crate::llm::backend::LOOPBACK_HOSTS;
 
@@ -37,6 +38,14 @@ pub struct DeclaredServer {
     pub tools: BTreeSet<String>,
     pub env: BTreeMap<String, String>,
     pub capabilities: Option<StdioCapabilities>,
+    /// Derived once at load from the declaration (#965): read-only means no
+    /// write roots, `network: deny` and non-`job_object` containment on a
+    /// stdio server; every SSE server is privileged (it cannot be confined
+    /// locally). Anything unparseable already failed closed at load.
+    pub authority: McpAuthority,
+    /// Literal `operator_allowed: true` widens a privileged server to
+    /// operator accounts; every other value is off.
+    pub operator_allowed: bool,
 }
 
 impl std::fmt::Debug for DeclaredServer {
@@ -119,7 +128,7 @@ impl McpRuntime {
             .collect()
     }
 
-    pub fn status(&self) -> Value {
+    pub fn status(&self, role: crate::common::authz::Role) -> Value {
         json!({
             "enabled": self.enabled,
             "sse_allow_loopback": self.sse_allow_loopback,
@@ -131,6 +140,12 @@ impl McpRuntime {
                 },
                 "tools": server.tools.iter().map(|tool| namespaced(&server.name, tool)).collect::<Vec<_>>(),
                 "capabilities": server.capabilities,
+                "authority": match server.authority {
+                    McpAuthority::ReadOnly => "read_only",
+                    McpAuthority::Privileged => "privileged",
+                },
+                "operator_allowed": server.operator_allowed,
+                "allowed": crate::common::authz::mcp_server_allowed(role, server.authority, server.operator_allowed),
             })).collect::<Vec<_>>(),
         })
     }
@@ -138,6 +153,7 @@ impl McpRuntime {
     #[allow(clippy::too_many_arguments)]
     pub async fn call(
         &self,
+        role: crate::common::authz::Role,
         server: &str,
         tool: &str,
         arguments: Value,
@@ -169,6 +185,12 @@ impl McpRuntime {
             Some(item) => item,
             None => return refuse("MCP_UNKNOWN_SERVER", format!("mcp server '{server}' is not declared")),
         };
+        if !crate::common::authz::mcp_server_allowed(role, declared.authority, declared.operator_allowed) {
+            return refuse(
+                "MCP_ROLE_REFUSED",
+                format!("mcp server '{server}' is privileged; an admin or an explicit operator_allowed declaration is required"),
+            );
+        }
         if !declared.tools.contains(tool) {
             return refuse(
                 "MCP_UNKNOWN_TOOL",
@@ -308,6 +330,23 @@ fn parse_servers(cfg: &AppConfig) -> Result<Vec<DeclaredServer>> {
     }
 }
 
+/// The authority a declaration carries (#965): read-only only when a stdio
+/// server declares no write roots, `network: deny` and non-`job_object`
+/// containment. SSE servers cannot be confined locally and are privileged, as
+/// is any stdio server with broader grants.
+fn declared_authority(transport: Transport, capabilities: Option<&StdioCapabilities>) -> McpAuthority {
+    match (transport, capabilities) {
+        (Transport::Stdio, Some(caps))
+            if caps.write_roots.is_empty()
+                && caps.network == NetworkPolicy::Deny
+                && caps.containment != Containment::JobObject =>
+        {
+            McpAuthority::ReadOnly
+        }
+        _ => McpAuthority::Privileged,
+    }
+}
+
 fn parse_server(value: &serde_yaml_ng::Value) -> Result<DeclaredServer> {
     let map = value
         .as_mapping()
@@ -323,6 +362,8 @@ fn parse_server(value: &serde_yaml_ng::Value) -> Result<DeclaredServer> {
             )))
         }
     };
+    // Same literal-boolean semantics as `flag_is_true`: only YAML `true` is on.
+    let operator_allowed = matches!(get("operator_allowed"), Some(serde_yaml_ng::Value::Bool(true)));
     let tools = match get("tools") {
         Some(serde_yaml_ng::Value::Sequence(items)) => {
             let mut set = BTreeSet::new();
@@ -410,6 +451,8 @@ fn parse_server(value: &serde_yaml_ng::Value) -> Result<DeclaredServer> {
                 url: None,
                 tools,
                 env,
+                authority: declared_authority(transport, Some(&capabilities)),
+                operator_allowed,
                 capabilities: Some(capabilities),
             })
         }
@@ -426,6 +469,8 @@ fn parse_server(value: &serde_yaml_ng::Value) -> Result<DeclaredServer> {
                 url: Some(url),
                 tools,
                 env,
+                authority: declared_authority(transport, None),
+                operator_allowed,
                 capabilities: None,
             })
         }
@@ -1050,5 +1095,52 @@ mod config_tests {
         let valid = "capabilities: {version: 1, network: deny, containment: process_group}";
         let input = serde_yaml_ng::from_str(&format!("{base}{valid}")).unwrap();
         assert!(parse_server(&input).is_ok());
+    }
+
+    #[test]
+    fn server_authority_comes_from_the_declaration_and_operator_allowed_is_literal() {
+        use crate::common::authz::McpAuthority;
+        let command = serde_json::to_string(&std::env::current_exe().unwrap()).unwrap();
+        let base = format!("name: fixture\ntransport: stdio\ncommand: [{command}]\ntools: [echo]\n");
+        // Read-only: no write roots, network deny, non-job_object containment.
+        let read_only = serde_yaml_ng::from_str(&format!(
+            "{base}capabilities: {{version: 1, network: deny, containment: process_group, read_roots: [/tmp]}}\n"
+        ))
+        .unwrap();
+        let server = parse_server(&read_only).unwrap();
+        assert_eq!(server.authority, McpAuthority::ReadOnly);
+        assert!(!server.operator_allowed);
+        // Write roots, unrestricted network or job_object containment are privileged.
+        for caps in [
+            "capabilities: {version: 1, network: deny, containment: process_group, write_roots: [/tmp]}",
+            "capabilities: {version: 1, network: unrestricted, containment: process_group}",
+            "capabilities: {version: 1, network: unrestricted, containment: job_object, filesystem: unrestricted, limits: {processes: 8, memory_mb: 256}}",
+        ] {
+            let input = serde_yaml_ng::from_str(&format!("{base}{caps}\n")).unwrap();
+            assert_eq!(parse_server(&input).unwrap().authority, McpAuthority::Privileged, "{caps}");
+        }
+        // SSE cannot be confined locally: privileged.
+        let sse = serde_yaml_ng::from_str("name: fixture\ntransport: sse\nurl: http://127.0.0.1:9/m\n").unwrap(); // DevSkim: ignore DS137138 because this parse fixture never dials.
+        assert_eq!(parse_server(&sse).unwrap().authority, McpAuthority::Privileged);
+        // Only literal YAML true widens a privileged server to operators.
+        for (suffix, expected) in [
+            ("operator_allowed: true", true),
+            ("operator_allowed: \"true\"", false),
+            ("operator_allowed: 1", false),
+            ("operator_allowed: yes", false),
+        ] {
+            let input = serde_yaml_ng::from_str(&format!(
+                "{base}capabilities: {{version: 1, network: deny, containment: process_group, write_roots: [/tmp]}}\n{suffix}\n"
+            ))
+            .unwrap();
+            assert_eq!(parse_server(&input).unwrap().operator_allowed, expected, "{suffix}");
+        }
+        // MCP authority is restart-only: no mcp key is reloadable.
+        assert!(
+            !crate::server::config_reload::RELOADABLE
+                .iter()
+                .any(|key| key.starts_with("mcp")),
+            "mcp authority settings must stay restart-only"
+        );
     }
 }

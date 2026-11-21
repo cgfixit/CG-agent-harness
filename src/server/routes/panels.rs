@@ -436,16 +436,26 @@ pub async fn web_inject(
         .map_err(|e| web_err(&e))
 }
 
-pub async fn mcp_status(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let mut status = state.mcp.status();
+pub async fn mcp_status(
+    State(state): State<Arc<AppState>>,
+    role: Option<axum::Extension<crate::common::authz::Role>>,
+) -> Json<Value> {
+    // The account gate parses the stored role once and hands it over as an
+    // extension. Accounts off: the single local user holds full authority.
+    let role = role.map(|r| r.0).unwrap_or(crate::common::authz::Role::Admin);
+    let mut status = state.mcp.status(role);
     status["memory_gateway"] = super::super::mcp_server::configuration_status(&state.cfg);
     Json(status)
 }
 
 pub async fn mcp_call(
     State(state): State<Arc<AppState>>,
+    role: Option<axum::Extension<crate::common::authz::Role>>,
     ValidJson(req): ValidJson<McpCallRequest>,
 ) -> ApiResult<Json<Value>> {
+    // The gate already refused an unparseable stored role; a missing extension
+    // means accounts are off and the single local user holds full authority.
+    let role = role.map(|r| r.0).unwrap_or(crate::common::authz::Role::Admin);
     let arguments = if req.arguments.is_null() {
         json!({})
     } else {
@@ -454,6 +464,7 @@ pub async fn mcp_call(
     let result = state
         .mcp
         .call(
+            role,
             &req.server,
             &req.tool,
             arguments,
@@ -473,6 +484,7 @@ pub async fn mcp_call(
                 | "MCP_DISABLED"
                 | "MCP_SSRF_DENIED"
                 | "MCP_HOME_REFUSED"
+                | "MCP_ROLE_REFUSED"
                 | "MCP_CAPABILITY_REFUSED"
                 | "MCP_CONTAINMENT_UNAVAILABLE" => StatusCode::FORBIDDEN,
                 "VALIDATION_ERROR" | "CONFIG_ERROR" => StatusCode::BAD_REQUEST,

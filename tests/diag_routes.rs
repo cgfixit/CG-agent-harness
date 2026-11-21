@@ -83,7 +83,13 @@ async fn a_closed_gate_and_wrong_roles_refuse_with_codes() {
     let s = server(&model, true).await;
     let operator = account(&s, "ops-operator", "operator").await;
     let (status, body) = json_call(&s, &operator, Method::GET, "/api/diag", None).await;
-    assert_eq!((status, code(&body).as_str()), (403, "DIAG_REFUSED"), "{body}");
+    // The capability gate narrows diag reads to admin/portal_auditor before the
+    // handler's own role check runs (#965).
+    assert_eq!(
+        (status, code(&body).as_str()),
+        (403, "AUTH_PERMISSION_DENIED"),
+        "{body}"
+    );
     let auditor = account(&s, "ops-audit", "audit").await;
     let (status, body) = json_call(&s, &auditor, Method::GET, "/api/diag", None).await;
     assert_eq!(

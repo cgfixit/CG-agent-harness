@@ -1467,18 +1467,6 @@ fn account_role_comparisons_stay_pinned_to_authz() {
             "u.role == crate::common::authn::PORTAL_AUDITOR_ROLE",
         ),
         ("server/routes/session_io.rs", "u.role != \"admin\""),
-        // The guards.rs test oracle deliberately reimplements the legacy gate
-        // so the matrix can be proven equivalent to it; the pins go when the
-        // oracle does.
-        (
-            "server/guards.rs",
-            "if !own && role == \"audit\" && !(path == \"/api/audit\" && method == Method::GET)",
-        ),
-        (
-            "server/guards.rs",
-            "if !own && role == crate::common::authn::PORTAL_AUDITOR_ROLE && !legacy_portal_auditor_may(method, path)",
-        ),
-        ("server/guards.rs", "if admin && role != \"admin\""),
     ];
     /// A line is an account-role comparison when it has a comparison shape and
     /// names an account role. Message roles ("user"/"assistant") never match.

@@ -194,6 +194,63 @@ impl McpServer {
         self.state.audit.flush();
         answer
     }
+
+    /// Create an account and return its session cookie (auth-enabled boots).
+    async fn account(&self, name: &str, role: &str) -> String {
+        let auth = self.state.auth.as_ref().unwrap();
+        let password = cgagentharness::common::random_hex(24);
+        auth.create_user(name, &password, role).unwrap();
+        let resp = self
+            .client
+            .post(format!("{}/api/auth/login", self.base))
+            .json(&json!({"username": name, "password": password}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 200);
+        resp.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string()
+    }
+
+    async fn get_as(&self, path: &str, cookie: &str) -> (u16, Value) {
+        let resp = self
+            .client
+            .get(format!("{}{path}", self.base))
+            .header("cookie", cookie)
+            .header(CSRF_HEADER, &self.csrf)
+            .send()
+            .await
+            .unwrap();
+        let answer = (
+            resp.status().as_u16(),
+            resp.json::<Value>().await.unwrap_or(Value::Null),
+        );
+        self.state.audit.flush();
+        answer
+    }
+
+    async fn call_as(&self, cookie: &str, body: Value) -> (u16, Value) {
+        let resp = self
+            .client
+            .post(format!("{}/api/mcp/call", self.base))
+            .header("cookie", cookie)
+            .header(CSRF_HEADER, &self.csrf)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        let answer = (
+            resp.status().as_u16(),
+            resp.json::<Value>().await.unwrap_or(Value::Null),
+        );
+        self.state.audit.flush();
+        answer
+    }
 }
 
 fn start_sse_fixture() -> (u16, std::process::Child) {
@@ -1166,5 +1223,90 @@ async fn sse_post_body_over_the_cap_is_refused_while_streaming() {
             started.elapsed() < std::time::Duration::from_secs(5),
             "{label}: refusal must not wait for the stalled body to finish"
         );
+    }
+}
+
+/// #965: per-server authority comes from the declaration. An operator reaches
+/// only read-only servers unless one declares literal `operator_allowed: true`;
+/// a refusal names the server, never the arguments, and is audited.
+#[tokio::test]
+async fn per_server_authority_gates_operator_calls_and_is_reported_in_status() {
+    let mut writer_caps = fixture_capabilities();
+    writer_caps.write_roots = vec![PathBuf::from("/tmp")];
+    let fixture_yaml = stdio_yaml();
+    let writer_yaml = fixture_yaml.replacen("name: fixture", "name: writer", 1).replace(
+        &serde_json::to_string(&fixture_capabilities()).unwrap(),
+        &serde_json::to_string(&writer_caps).unwrap(),
+    );
+    let widened_yaml = writer_yaml.replacen("name: writer", "name: widened", 1) + "      operator_allowed: true\n";
+    let server = McpServer::boot(
+        &format!("{fixture_yaml}{writer_yaml}{widened_yaml}"),
+        &[("auth.enabled", "true")],
+    )
+    .await;
+    let operator = server.account("mcp-operator", "operator").await;
+    let admin = server.account("mcp-admin", "admin").await;
+
+    // Status reports each server's authority and the caller's allowance.
+    let (status, body) = server.get_as("/api/mcp", &operator).await;
+    assert_eq!(status, 200, "{body}");
+    let servers = body["servers"].as_array().unwrap().clone();
+    let by_name = |name: &str| servers.iter().find(|s| s["name"] == name).unwrap().clone();
+    assert_eq!(by_name("fixture")["authority"], "read_only");
+    assert_eq!(by_name("fixture")["allowed"], true);
+    assert_eq!(by_name("writer")["authority"], "privileged");
+    assert_eq!(by_name("writer")["allowed"], false);
+    assert_eq!(by_name("widened")["authority"], "privileged");
+    assert_eq!(by_name("widened")["operator_allowed"], true);
+    assert_eq!(by_name("widened")["allowed"], true);
+    let (status, body) = server.get_as("/api/mcp", &admin).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body["servers"].as_array().unwrap().iter().all(|s| s["allowed"] == true));
+
+    // Operator + read-only server proceeds.
+    let (status, body) = server
+        .call_as(
+            &operator,
+            json!({"server":"fixture","tool":"echo","arguments":{"x":1},"confirm":true}),
+        )
+        .await;
+    if stdio_executed(status, &body) {
+        assert_eq!(status, 200, "{body}");
+    }
+
+    // Operator + privileged server is refused before any spawn; the refusal
+    // names the server, not the arguments, and is audited.
+    let (status, body) = server
+        .call_as(
+            &operator,
+            json!({"server":"writer","tool":"echo","arguments":{"secret":"argument-probe"},"confirm":true}),
+        )
+        .await;
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(code(&body), "MCP_ROLE_REFUSED", "{body}");
+    assert!(body.to_string().contains("writer"), "{body}");
+    assert!(!body.to_string().contains("argument-probe"), "{body}");
+    let audit = std::fs::read_to_string(server.state.audit.path()).unwrap();
+    let refusal = audit
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|row| row["code"] == "MCP_ROLE_REFUSED")
+        .expect("MCP_ROLE_REFUSED audited");
+    assert_eq!(refusal["server"], "writer");
+
+    // Literal operator_allowed: true widens that one privileged server.
+    let (status, body) = server
+        .call_as(&operator, json!({"server":"widened","tool":"echo","confirm":true}))
+        .await;
+    if stdio_executed(status, &body) {
+        assert_eq!(status, 200, "{body}");
+    }
+
+    // Admin calls the privileged server directly.
+    let (status, body) = server
+        .call_as(&admin, json!({"server":"writer","tool":"echo","confirm":true}))
+        .await;
+    if stdio_executed(status, &body) {
+        assert_eq!(status, 200, "{body}");
     }
 }

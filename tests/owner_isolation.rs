@@ -346,6 +346,7 @@ async fn foreign_cancel_and_clear_cannot_stop_an_active_generation() {
     let s = spawn_server(&model.base_url(), ServerOptions::default().with("auth.enabled", "true")).await;
     let (_, alice) = account(&s, "alice", "operator").await;
     let (_, bob) = account(&s, "bob", "operator").await;
+    let (_, carol) = account(&s, "carol", "admin").await;
     model.set_delay_ms(5000);
     let chat = json_request(
         &s,
@@ -369,7 +370,14 @@ async fn foreign_cancel_and_clear_cannot_stop_an_active_generation() {
         let stop: Value = stop.json().await.unwrap();
         assert_eq!(stop["detail"]["code"], "CHAT_OTHER_ACCOUNT", "{stop}");
         assert!(!stop.to_string().contains("research"), "{stop}");
+        // Model switching is admin-only (#965): an operator is refused at the
+        // capability gate before the chat lock is consulted.
         let switch = request(&s, &bob, Method::POST, "/api/model", json!({"model":"local"})).await;
+        assert_eq!(switch.status(), 403);
+        let switch: Value = switch.json().await.unwrap();
+        assert_eq!(switch["detail"]["code"], "AUTH_PERMISSION_DENIED", "{switch}");
+        // An admin reaches the chat lock and gets the foreign-generation refusal.
+        let switch = request(&s, &carol, Method::POST, "/api/model", json!({"model":"local"})).await;
         assert_eq!(switch.status(), 409);
         let switch: Value = switch.json().await.unwrap();
         assert_eq!(switch["detail"]["code"], "CHAT_OTHER_ACCOUNT", "{switch}");

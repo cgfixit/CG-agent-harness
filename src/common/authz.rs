@@ -47,8 +47,16 @@ pub enum Capability {
     ChatAttachments,
     /// Web fetch, search, research and inject within the shared URL policy.
     WebUse,
-    /// Declared MCP status and tool calls (per-server authority is #965 PR 2).
+    /// Declared MCP status and tool calls; a call additionally needs the
+    /// per-server authority check (`mcp_server_allowed`) once the server name
+    /// resolves in the handler.
     UseMcp,
+    /// Propose a persona (soul) edit; only admin applies one
+    /// (`persona::decide`).
+    ProposePersona,
+    /// Re-send an owner-scoped notification delivery: an outbound effect, so
+    /// admin-only despite the owner scoping (#965 target table).
+    NotificationReplay,
     /// Agent runs, decisions, push/publish, jobs, schedules and checks.
     RunCoding,
     /// Global model selection, Ollama inventory, profile and pulls.
@@ -169,20 +177,43 @@ pub fn grants(role: Role, capability: Capability) -> bool {
         Role::Admin => true,
         Role::Operator => match capability {
             Public | OwnAccount | OwnSessions | OwnData | Chat | ChatAttachments | WebUse | UseMcp | RunCoding
-            | ManageModels | ManageSharedContent | ReadAudit | ReadLogs | ReadPanels => true,
-            ManageWebPolicy | ManageCredentials | ManageAccounts | ManageConfig | BrowserUse => false,
+            | ProposePersona | ReadPanels => true,
+            ManageModels | ManageSharedContent | ManageWebPolicy | ManageCredentials | ManageAccounts
+            | ManageConfig | BrowserUse | ReadAudit | ReadLogs | NotificationReplay => false,
         },
         Role::Audit => match capability {
             Public | OwnAccount | ReadAudit => true,
             OwnSessions | OwnData | Chat | ChatAttachments | WebUse | UseMcp | RunCoding | ManageModels
             | ManageSharedContent | ManageWebPolicy | ManageCredentials | ManageAccounts | ManageConfig
-            | BrowserUse | ReadLogs | ReadPanels => false,
+            | BrowserUse | ReadLogs | ReadPanels | ProposePersona | NotificationReplay => false,
         },
         Role::PortalAuditor => match capability {
             Public | OwnAccount | OwnSessions | Chat | ReadAudit | ReadLogs => true,
             OwnData | ChatAttachments | WebUse | UseMcp | RunCoding | ManageModels | ManageSharedContent
-            | ManageWebPolicy | ManageCredentials | ManageAccounts | ManageConfig | BrowserUse | ReadPanels => false,
+            | ManageWebPolicy | ManageCredentials | ManageAccounts | ManageConfig | BrowserUse | ReadPanels
+            | ProposePersona | NotificationReplay => false,
         },
+    }
+}
+
+/// MCP server authority derived once from the declaration: a stdio server is
+/// read-only when it declares no write roots, `network: deny` and
+/// non-`job_object` containment; anything else — and every SSE server, which
+/// cannot be confined locally — is privileged (#965).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum McpAuthority {
+    ReadOnly,
+    Privileged,
+}
+
+/// Whether `role` may call a server of `authority`. An `operator_allowed:
+/// true` declaration widens a privileged server to operators; auditors never
+/// call MCP tools and already lack `UseMcp` at the gate.
+pub fn mcp_server_allowed(role: Role, authority: McpAuthority, operator_allowed: bool) -> bool {
+    match role {
+        Role::Admin => true,
+        Role::Operator => authority == McpAuthority::ReadOnly || operator_allowed,
+        Role::Audit | Role::PortalAuditor => false,
     }
 }
 
@@ -209,16 +240,54 @@ mod tests {
     #[test]
     fn admin_only_capabilities_are_refused_to_every_other_role() {
         for cap in [
+            Capability::ManageModels,
+            Capability::ManageSharedContent,
             Capability::ManageWebPolicy,
             Capability::ManageCredentials,
             Capability::ManageAccounts,
             Capability::ManageConfig,
             Capability::BrowserUse,
+            Capability::NotificationReplay,
         ] {
             assert!(grants(Role::Admin, cap));
             for role in [Role::Operator, Role::Audit, Role::PortalAuditor] {
                 assert!(!grants(role, cap), "{role:?} must not hold {cap:?}");
             }
+        }
+    }
+
+    /// The #965 target table: operator keeps day-to-day own-data work and may
+    /// propose persona edits, but holds no shared-state, credential, account,
+    /// config, browser, model, audit or log authority.
+    #[test]
+    fn operator_is_narrowed_to_the_target_table() {
+        for cap in [
+            Capability::OwnAccount,
+            Capability::OwnSessions,
+            Capability::OwnData,
+            Capability::Chat,
+            Capability::ChatAttachments,
+            Capability::WebUse,
+            Capability::UseMcp,
+            Capability::RunCoding,
+            Capability::ProposePersona,
+            Capability::ReadPanels,
+        ] {
+            assert!(grants(Role::Operator, cap), "operator keeps {cap:?}");
+        }
+    }
+
+    #[test]
+    fn mcp_authority_is_admin_only_unless_read_only_or_widened() {
+        use McpAuthority::*;
+        assert!(mcp_server_allowed(Role::Admin, ReadOnly, false));
+        assert!(mcp_server_allowed(Role::Admin, Privileged, false));
+        assert!(mcp_server_allowed(Role::Operator, ReadOnly, false));
+        assert!(!mcp_server_allowed(Role::Operator, Privileged, false));
+        assert!(mcp_server_allowed(Role::Operator, Privileged, true));
+        for role in [Role::Audit, Role::PortalAuditor] {
+            assert!(!mcp_server_allowed(role, ReadOnly, false));
+            assert!(!mcp_server_allowed(role, Privileged, true));
         }
     }
 }
