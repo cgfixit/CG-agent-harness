@@ -1275,7 +1275,8 @@ async fn cli_bootstrap_session_can_only_replace_the_password_and_gets_no_machine
 /// #965 schema 3 at boot: a home whose legacy account file still holds the
 /// retired `audit` role starts with that account folded into `auditor`,
 /// writes exactly one `auth.role_migrated` row naming the user id and both
-/// roles (never the username), and the account still signs in.
+/// roles (never the username), and holds the account disabled: it signs in as
+/// auditor only after an admin re-enables it.
 #[tokio::test]
 async fn a_retired_role_is_migrated_and_audited_once_at_boot() {
     let model = start_mock_model().await;
@@ -1305,6 +1306,10 @@ async fn a_retired_role_is_migrated_and_audited_once_at_boot() {
     assert_eq!(rows.len(), 1, "exactly one auth.role_migrated row");
     assert_eq!(rows[0]["from"], "audit");
     assert_eq!(rows[0]["to"], "auditor");
+    assert_eq!(
+        rows[0]["disabled"], true,
+        "the row records that the fold disabled the account"
+    );
     let user_id = rows[0]["user_id"].as_str().unwrap();
     assert!(
         !user_id.is_empty() && user_id.chars().all(|c| c.is_ascii_hexdigit()),
@@ -1318,6 +1323,15 @@ async fn a_retired_role_is_migrated_and_audited_once_at_boot() {
     let auth = server.state.auth.as_ref().unwrap();
     assert!(auth.pending_role_migrations().unwrap().is_empty());
 
+    let refused = server
+        .client
+        .post(server.url("/api/auth/login"))
+        .json(&json!({"username": "retired-reader", "password": secret}))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(refused.status(), 200, "a former audit account waits for an admin");
+    auth.enable_user("retired-reader").unwrap();
     let session = login(&server, "retired-reader", &secret).await;
     let whoami: Value = request(&server, &session, Method::GET, "/api/auth/whoami", json!({}))
         .await

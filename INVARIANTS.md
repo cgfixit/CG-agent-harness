@@ -161,7 +161,7 @@ stored roles fail closed. A method no row lists for the matched template is
 refused without reaching a handler. Handler-level role string comparisons
 remain as legacy surface, pinned by the invariant guard pending consolidation. Storing `auditor` first moves a
 version 1 or 2 account database to schema 3, which older binaries refuse;
-retired `audit` and `portal_auditor` roles fold into `auditor` at open,
+retired `audit` (left disabled) and `portal_auditor` roles fold into `auditor` at open,
 revoking their sessions and logging one `auth.role_migrated` event per
 account by user id; the store keeps each report until that row is written. A fresh
 `admin` signs in with a one-time code in the owner-only `<home>/setup-code`

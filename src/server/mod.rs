@@ -247,7 +247,8 @@ pub async fn build_app_with_sources(
     let auth = if cfg.flag_is_true("auth.enabled") {
         let mgr = AuthManager::open(&home.auth_path(), &cfg)?;
         // One event per account whose retired role was folded into `auditor`
-        // (#965): user_id and roles, never a username. The store keeps each
+        // (#965): user_id, roles and whether the fold disabled the account
+        // (a former `audit` account waits for an admin), never a username. The store keeps each
         // report until its row is confirmed in the audit log, so a crash or a
         // refused write re-reports it at the next boot rather than losing it.
         for (user_id, old_role) in mgr.pending_role_migrations()? {
@@ -256,6 +257,7 @@ pub async fn build_app_with_sources(
                 "user_id": user_id,
                 "from": old_role,
                 "to": crate::common::authn::AUDITOR_ROLE,
+                "disabled": old_role == crate::common::authn::RETIRED_AUDIT_ROLE,
             }));
             if written {
                 mgr.acknowledge_role_migration(&user_id)?;
