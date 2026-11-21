@@ -866,3 +866,86 @@ async fn an_operator_turn_a_disabled_flag_and_a_loop_turn_never_offer_log_tools(
         .get("tools")
         .is_none_or(|t| t.as_array().is_some_and(|a| a.is_empty())));
 }
+
+/// Diagnostic turns run under `web.total_tokens`, so compaction must plan for
+/// that budget as it does for web chat (#1036 review). Before, a session that
+/// outgrew the web budget but not the plain-chat trigger reached the tool loop
+/// uncompacted and failed with `DIAG_TOKEN_BUDGET`; now it is compacted and
+/// keeps its log tools.
+#[tokio::test]
+async fn a_long_diag_session_is_compacted_to_the_web_budget_and_keeps_its_tools() {
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::sync::Arc;
+    let last_prompt = Arc::new(AtomicU64::new(0));
+    let offered = Arc::new(AtomicBool::new(false));
+    let (prompt_seen, tools_seen) = (last_prompt.clone(), offered.clone());
+    let router = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+            let (prompt_seen, tools_seen) = (prompt_seen.clone(), tools_seen.clone());
+            async move {
+                let prompt = (body["messages"].to_string().len()
+                    + body.get("tools").map_or(0, |tools| tools.to_string().len())) as u64
+                    / 4;
+                let last = body["messages"].as_array().unwrap().last().unwrap().clone();
+                if last["content"].as_str().is_some_and(|c| c.starts_with("seed ")) {
+                    prompt_seen.store(prompt, Ordering::SeqCst);
+                    tools_seen.store(
+                        body.get("tools")
+                            .is_some_and(|t| t.as_array().is_some_and(|t| !t.is_empty())),
+                        Ordering::SeqCst,
+                    );
+                }
+                // Every call answers plainly; a compaction summary is "Noted." too.
+                axum::Json(ok_reply("Noted.", prompt, 20))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let mock = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let s = spawn_server(
+        &format!("http://{address}/v1"), // DevSkim: ignore DS137138 because the mock model listens only on loopback.
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("diagnostics.logs_enabled", "true")
+            .with("diagnostics.model_tool", "true")
+            .with("models.local_llm.max_tokens", "2048")
+            .with("web.total_tokens", "9000"),
+    )
+    .await;
+    let portal = account(&s, "ops-portal", "auditor").await;
+    let (_, session) = json_call(
+        &s,
+        &portal,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({"title":"long"})),
+    )
+    .await;
+    let sid = session["session_id"].as_str().unwrap().to_string();
+    let (mut previous, mut peak, mut compactions) = (0u64, 0u64, 0usize);
+    for turn in 0..30 {
+        let (status, body) = json_call(
+            &s,
+            &portal,
+            Method::POST,
+            "/api/chat",
+            Some(json!({"session_id": sid, "message": format!("seed {turn} {}", "x".repeat(2000))})),
+        )
+        .await;
+        assert_eq!(status, 200, "turn {turn} fails instead of compacting: {body}");
+        assert!(offered.load(Ordering::SeqCst), "turn {turn} keeps its log tools");
+        // Each seed adds about 500 fixture tokens; a smaller prompt than the
+        // last one means the history was compacted.
+        let now = last_prompt.load(Ordering::SeqCst);
+        compactions += usize::from(now < previous);
+        (previous, peak) = (now, peak.max(now));
+    }
+    assert!(
+        compactions >= 2,
+        "the session is compacted again as it regrows: {compactions}"
+    );
+    assert!(peak <= 9000, "no diagnostic prompt outgrew the web budget: {peak}");
+    mock.abort();
+}

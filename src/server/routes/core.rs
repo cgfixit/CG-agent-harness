@@ -1402,6 +1402,8 @@ pub(crate) async fn chat_inner(
         crate::server::compaction::token_ratio(session.token_calibration.as_ref(), &state.chat.base_url, &model);
     let tool_tokens = if !cloud_selected && chat_tools {
         crate::server::compaction::estimate_tokens(&serde_json::to_string(&crate::server::chat_web::tools_for(chat_web_mode)).unwrap())
+    } else if diag_tools {
+        crate::server::compaction::estimate_tokens(&serde_json::to_string(&crate::server::chat_diag::tools()).unwrap())
     } else {
         0
     };
@@ -1429,7 +1431,9 @@ pub(crate) async fn chat_inner(
         } else {
             "models.local_llm.max_tokens"
         };
-        let web_chat = chat_tools;
+        // A diagnostic turn runs under the same web budget (`chat_diag::run`),
+        // so it is planned and compacted against it too (#1036 review).
+        let web_chat = chat_tools || diag_tools;
         // The trigger's floor counts one reply, like its projection below.
         let (threshold, limit_source) = crate::server::compaction::turn_prompt_limit(
             configured_threshold,
@@ -1670,7 +1674,7 @@ pub(crate) async fn chat_inner(
     // Compaction can take a while: the window must still allow what this turn
     // was sized for before the reply is requested, even if tuning was cleared.
     if !cloud_selected {
-        let web_total = if chat_tools { web.limits.total_tokens } else { 0 };
+        let web_total = if chat_tools || diag_tools { web.limits.total_tokens } else { 0 };
         state
             .ensure_window_allows(&model, turn_prompt_limit, web_total, sized_tuned)
             .await
