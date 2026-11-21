@@ -719,7 +719,10 @@ impl DiagState {
         redactors: &Redactors,
     ) -> Result<LogLines> {
         let name = self.allowed_name(name)?;
-        let (bytes, window_start) = open_log_at(logs_dir, name, cursor, self.config.max_bytes)?;
+        // No cursor is the file's first byte, as `logs_read` promises, never
+        // the tail window `search` and `stats` read (#1035 review).
+        let start = cursor.unwrap_or(0);
+        let (bytes, window_start) = open_log_at(logs_dir, name, Some(start), self.config.max_bytes)?;
         let at_eof = (bytes.len() as u64) < self.config.max_bytes;
         // A cursor this reader issued starts at a line start; a forged one
         // counts its first garbage segment as malformed, never a partial.
@@ -1419,6 +1422,11 @@ mod tests {
         state.config.max_bytes = 40;
         let page = state.read_page(&logs, "audit.jsonl", None, None, &red).unwrap();
         assert!(page.next_cursor.is_some());
+        // With no cursor a file larger than the window pages from byte 0, not
+        // from the tail window (#1035 review).
+        assert!(page.lines[0].starts_with("@0 "), "{:?}", page.lines);
+        assert!(page.lines[0].contains("e00"));
+        assert_eq!(page.malformed, 0);
     }
 
     #[cfg(unix)]

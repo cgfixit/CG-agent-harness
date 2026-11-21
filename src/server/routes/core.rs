@@ -1047,6 +1047,9 @@ pub(crate) async fn chat_inner(
         && !chat_tools
         && state.diag.config.logs_enabled
         && state.diag.config.model_tool
+        // A model auto_tune found declares no tools gets a plain turn, as the
+        // web-tool arm above does (#1035 review).
+        && !state.chat_tools_unsupported(&model)
         && user.as_ref().is_some_and(|u| {
             crate::common::authz::grants_stored(&u.0.role, crate::common::authz::Capability::InvestigateLogs)
         });
