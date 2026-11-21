@@ -287,6 +287,7 @@ fn error_class(err: &HarnessError) -> &'static str {
         "STRUCTURED_MEMORY_INJECTION" => "injection",
         "STRUCTURED_MEMORY_CONTENT" => "invalid_content",
         "STRUCTURED_MEMORY_NOT_FOUND" => "not_found",
+        "owner_retired" => "owner_retired",
         crate::llm::openai_chat::LLM_ERROR_CODE => {
             if err.message.contains("unreachable") || err.message.contains("HTTP") {
                 "model_unavailable"
@@ -403,7 +404,12 @@ async fn generate_and_finish(
     }
     let parsed = parse_consolidator_output(&reply.body_text, store.limits().max_consolidation_candidates)?;
     let (owner, run_id, episode_ids) = (owner.to_string(), run.id.clone(), run.episode_ids.clone());
+    let st = state.clone();
     on_store(state, move |store| {
+        // The account was checked before the model wait; it may have changed since.
+        if !crate::server::structured_memory_auto::owner_active(&st, &owner) {
+            return Err(HarnessError::new("owner_retired", "consolidation owner retired"));
+        }
         let facts = store.list_facts(&owner)?;
         let (bound, rejected) = bind_candidates(
             &parsed,
