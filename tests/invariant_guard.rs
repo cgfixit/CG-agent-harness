@@ -2265,7 +2265,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
         Agent,
         1000,
     ),
-    (".claude/skills/dep-sync/SKILL.md", Agent, 970),
+    // why: operator decision (2026-11-21): +130 words so dep-sync can name every cargo deny
+    // command CI runs (all features, the cargo-sandbox fixture lock, the cargo-deny floor).
+    (".claude/skills/dep-sync/SKILL.md", Agent, 1100),
     (".claude/skills/doc-sync/SKILL.md", Agent, 800),
     (".claude/skills/fable-protocol/SKILL.md", Agent, 990),
     (".claude/skills/run-cg-agent-harness/SKILL.md", Agent, 500),
