@@ -252,12 +252,24 @@ pub async fn build_app_with_sources(
         // report until its row is confirmed in the audit log, so a crash or a
         // refused write re-reports it at the next boot rather than losing it.
         for (user_id, old_role) in mgr.pending_role_migrations()? {
+            let disabled = old_role == crate::common::authn::RETIRED_AUDIT_ROLE;
+            // A disabled fold retires the owner's machine keys before the report
+            // is acknowledged, as the admin disable route does: MCP
+            // authentication reads only the key row, so a pre-upgrade key would
+            // outlive the disable. A key store that cannot be read also refuses
+            // every token, so boot goes on and the report waits for the next boot.
+            if disabled && mcp_keys::KeyStore::disable_owner_if_initialized(&home, &user_id).is_err() {
+                tracing::warn!(
+                    "a migrated account's machine keys could not be disabled; the report is kept for the next boot"
+                );
+                continue;
+            }
             let written = audit.log_confirmed(serde_json::json!({
                 "event": "auth.role_migrated",
                 "user_id": user_id,
                 "from": old_role,
                 "to": crate::common::authn::AUDITOR_ROLE,
-                "disabled": old_role == crate::common::authn::RETIRED_AUDIT_ROLE,
+                "disabled": disabled,
             }));
             if written {
                 mgr.acknowledge_role_migration(&user_id)?;
