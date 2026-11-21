@@ -480,7 +480,7 @@ async fn auditor_chats_locally_without_memory_or_other_surfaces() {
     for body in [
         json!({"message": "x", "retrieve": true}),
         json!({"message": "x", "model": "other-local-model"}),
-        json!({"message": "x", "attachment_ids": ["0123456789abcdef0123456789abcdef"]}),
+        json!({"message": "x", "attachment_ids": ["0123456789abcdef0123456789abcdef"]}), // DevSkim: ignore DS173237 because this is a 32-hex attachment-id fixture, not a credential.
     ] {
         let (status, reply) = json_call(&s, &portal, Method::POST, "/api/chat", Some(body.clone())).await;
         assert_eq!(
