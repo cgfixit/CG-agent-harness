@@ -53,7 +53,7 @@ change was rejected; refresh before retrying.
 | Auditor (`auditor`) | Local chat in own sessions, prompt preview, `/api/audit`, `/diag` when enabled | Memory, attachments, web tools, cloud, loops, model choice, shared data, keys, administration |
 
 Schema 3 folds retired roles into `auditor`: `portal_auditor`
-accounts sign in again; `audit` accounts stay disabled until an admin enables them. The account bar
+accounts sign in again, `audit` accounts once an admin enables them. The account bar
 shows the signed-in role; an auditor gets its own sessions and a restricted
 `/status`. Audit records name the actor and route, never passwords, session
 tokens, query bodies or keys.
