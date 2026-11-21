@@ -601,7 +601,7 @@ async fn an_account_disabled_during_a_turn_keeps_the_exchange_but_not_the_reply(
 /// disable does. A turn in flight keeps its exchange but not its reply.
 #[tokio::test]
 async fn sign_ins_revoked_during_a_turn_keep_the_exchange_but_not_the_reply() {
-    reply_is_withheld_after("role change", |auth| auth.set_role("alice", "portal_auditor").unwrap()).await;
+    reply_is_withheld_after("role change", |auth| auth.set_role("alice", "auditor").unwrap()).await;
     reply_is_withheld_after("password reset", |auth| {
         auth.set_password("alice", &cgagentharness::common::random_hex(24))
             .unwrap()

@@ -58,24 +58,18 @@ pub async fn reload_config(
 pub async fn status(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+    role: Option<axum::Extension<crate::common::authz::Role>>,
 ) -> Json<Value> {
     let owner = super::auth::context_owner(user.clone());
-    if state.auth.is_some()
-        && user
-            .as_ref()
-            .is_none_or(|u| u.role == "audit" || u.must_change_password)
-    {
+    if state.auth.is_some() && user.as_ref().is_none_or(|u| u.must_change_password) {
         return Json(
             json!({"version":crate::VERSION,"auth_enabled":true,"api_key_optional":true,"status":"login required for operational details"}),
         );
     }
     super::structured_memory::off_worker(move || {
-        // portal_auditor learns which model it chats with, not paths, backend URL,
+        // An auditor learns which model it chats with, not paths, backend URL,
         // persona or memory state.
-        if user
-            .as_ref()
-            .is_some_and(|u| u.role == crate::common::authn::PORTAL_AUDITOR_ROLE)
-        {
+        if matches!(role, Some(axum::Extension(crate::common::authz::Role::Auditor))) {
             let model = state.current_model();
             let sessions = state.store.for_owner(&owner).list();
             return Json(json!({
@@ -908,7 +902,7 @@ pub async fn chat(
 }
 
 /// A restricted chat policy (`ChatPolicy::LOCAL_ONLY`, today the
-/// `portal_auditor` surface) chats with the selected local model only: no
+/// `auditor` surface) chats with the selected local model only: no
 /// cloud, loop, model override, attachments or memory selection. Context the
 /// account owned under an earlier role is withheld in `chat_inner`, not
 /// merely unreachable.
@@ -931,7 +925,7 @@ fn refuse_restricted_chat_extras(
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "AUTH_PERMISSION_DENIED",
-            "portal_auditor chat is local-only, without loops, model selection, attachments or memory",
+            "auditor chat is local-only, without loops, model selection, attachments or memory",
         ));
     }
     Ok(())
@@ -1039,6 +1033,19 @@ pub(crate) async fn chat_inner(
         session.chat_web_mode(settings.web_enabled && !state.chat_tools_unsupported(&model))
     };
     let chat_tools = chat_web_mode.enabled();
+    // The read-only log-investigation tools attach to the plain local-chat
+    // arm only: never a cloud, /loop or web-tool turn, and only for a role
+    // holding InvestigateLogs while the operator opted in with the literal
+    // `diagnostics.model_tool: true` (#965). With accounts off the one local
+    // user has the full surface, mirroring ChatPolicy::for_user.
+    let diag_tools = !cloud_selected
+        && !req.loop_turn
+        && !chat_tools
+        && state.diag.config.logs_enabled
+        && state.diag.config.model_tool
+        && user.as_ref().is_none_or(|u| {
+            crate::common::authz::grants_stored(&u.0.role, crate::common::authz::Capability::InvestigateLogs)
+        });
     // Decided from the account on this request: a server-run loop reloads it
     // before every turn, so a demoted account loses the grant on its next turn.
     let result_reads = super::auth::may_read_search_results(&state, user.as_deref());
@@ -1734,6 +1741,24 @@ pub(crate) async fn chat_inner(
         )
         .await
         .map_err(local_failure)?
+    } else if diag_tools {
+        crate::server::chat_diag::run(
+            &state,
+            &owner,
+            user.as_ref().zip(sign_ins).map(|(user, seen)| (&user.0, seen)),
+            &system_prompt,
+            &history,
+            &model,
+            max_tokens,
+            temperature,
+            ratio,
+            web.limits.total_tokens,
+            web.limits.chat_tool_calls,
+            output,
+            &local_usage,
+        )
+        .await
+        .map_err(local_failure)?
     } else {
         let result = state
             .chat
@@ -1780,9 +1805,13 @@ pub(crate) async fn chat_inner(
 
     // Ground against the tools the answering request offered: web chat withholds
     // them when no tool round fits, and withdraws them after a refused batch.
-    let inventory = crate::server::tool_inventory::chat_callable_names(
-        if !cloud_selected && reply.final_prompt_tools { chat_web_mode } else { crate::server::sessions::GoalWebMode::Off },
-    );
+    let inventory = if diag_tools && reply.final_prompt_tools {
+        crate::server::chat_diag::callable_names()
+    } else {
+        crate::server::tool_inventory::chat_callable_names(
+            if !cloud_selected && reply.final_prompt_tools { chat_web_mode } else { crate::server::sessions::GoalWebMode::Off },
+        )
+    };
     reply.body_text = crate::server::tool_inventory::ground_assistant_text(&reply.body_text, &inventory);
 
     if !cloud_selected {
@@ -2035,7 +2064,7 @@ pub(crate) async fn chat_inner(
         }
     };
     let episode = if !chat_policy.memory {
-        json!({"available": false, "staged": false, "reason": "portal_auditor"})
+        json!({"available": false, "staged": false, "reason": "local_only"})
     } else {
         let (state, owner, model) = (state.clone(), owner.clone(), reply.model.clone());
         let (user_chars, assistant_chars) = (req.message.chars().count(), reply.body_text.chars().count());
@@ -2049,7 +2078,7 @@ pub(crate) async fn chat_inner(
     let memory_suggestion = if req.loop_turn && !reply_has_goal_done(&reply.body_text) {
         json!({"queued": false, "reason": "loop_turn"})
     } else if !chat_policy.memory {
-        json!({"queued": false, "reason": "portal_auditor"})
+        json!({"queued": false, "reason": "local_only"})
     } else {
         // Queuing reads and writes the memory store, so it leaves the async worker too.
         let (state, owner, model) = (state.clone(), owner.clone(), model.clone());

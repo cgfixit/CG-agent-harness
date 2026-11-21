@@ -1,4 +1,4 @@
-//! `/diag` routes and the `portal_auditor` role over real accounts: gates and
+//! `/diag` routes and the `auditor` role over real accounts: gates and
 //! roles refuse with codes, never empty success; the file parameter names an
 //! allowlist entry or is refused; audit rows carry no content; a staged excerpt
 //! reaches exactly one local chat turn of its session.
@@ -83,21 +83,23 @@ async fn a_closed_gate_and_wrong_roles_refuse_with_codes() {
     let s = server(&model, true).await;
     let operator = account(&s, "ops-operator", "operator").await;
     let (status, body) = json_call(&s, &operator, Method::GET, "/api/diag", None).await;
-    // The capability gate narrows diag reads to admin/portal_auditor before the
+    // The capability gate narrows diag reads to admin/auditor before the
     // handler's own role check runs (#965).
     assert_eq!(
         (status, code(&body).as_str()),
         (403, "AUTH_PERMISSION_DENIED"),
         "{body}"
     );
-    let auditor = account(&s, "ops-audit", "audit").await;
-    let (status, body) = json_call(&s, &auditor, Method::GET, "/api/diag", None).await;
-    assert_eq!(
-        (status, code(&body).as_str()),
-        (403, "AUTH_PERMISSION_DENIED"),
-        "{body}"
-    );
-    for (role, name) in [("admin", "ops-admin"), ("portal_auditor", "ops-portal")] {
+    // The retired `audit` role cannot be created at all (#965): no account
+    // without log authority can reach the handler.
+    assert!(s
+        .state
+        .auth
+        .as_ref()
+        .unwrap()
+        .create_user("ops-legacy", &cgagentharness::common::random_hex(24), "audit")
+        .is_err());
+    for (role, name) in [("admin", "ops-admin"), ("auditor", "ops-portal")] {
         let cookie = account(&s, name, role).await;
         let (status, body) = json_call(&s, &cookie, Method::GET, "/api/diag", None).await;
         assert_eq!(status, 200, "{role}: {body}");
@@ -128,7 +130,7 @@ async fn a_closed_gate_and_wrong_roles_refuse_with_codes() {
 async fn reads_name_an_allowlist_entry_and_audit_no_content() {
     let model = start_mock_model().await;
     let s = server(&model, true).await;
-    let portal = account(&s, "ops-portal", "portal_auditor").await;
+    let portal = account(&s, "ops-portal", "auditor").await;
     let (status, body) = json_call(&s, &portal, Method::GET, "/api/diag/read?file=audit.jsonl&last=5", None).await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["source"], "diag");
@@ -427,7 +429,7 @@ async fn a_staged_excerpt_reaches_one_local_turn_and_is_refused_elsewhere() {
 }
 
 #[tokio::test]
-async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
+async fn auditor_chats_locally_without_memory_or_other_surfaces() {
     let model = start_mock_model().await;
     // Live state on, so its absence below is the role's doing, not the fixture's.
     let s = spawn_server(
@@ -438,7 +440,7 @@ async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
             .with("diagnostics.live_state", "true"),
     )
     .await;
-    let portal = account(&s, "ops-portal", "portal_auditor").await;
+    let portal = account(&s, "ops-portal", "auditor").await;
     let (status, session) = json_call(&s, &portal, Method::POST, "/api/sessions", Some(json!({"title":"p"}))).await;
     assert_eq!(status, 201, "{session}");
     let sid = session["session_id"].as_str().unwrap().to_string();
@@ -457,7 +459,7 @@ async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
     )
     .await;
     assert_eq!(status, 200, "{body}");
-    assert_eq!(body["memory_suggestion"]["reason"], "portal_auditor");
+    assert_eq!(body["memory_suggestion"]["reason"], "local_only");
     let request = model.last_request().unwrap();
     assert!(!request["messages"][0]["content"]
         .as_str()
@@ -551,4 +553,199 @@ async fn portal_auditor_chats_locally_without_memory_or_other_surfaces() {
         (403, "AUTH_PERMISSION_DENIED"),
         "{body}"
     );
+}
+
+// Windows builds refuse every read (`DIAG_UNSUPPORTED`); see the windows test above.
+#[cfg(unix)]
+#[tokio::test]
+async fn auditor_turn_reads_logs_through_bounded_tools() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("diagnostics.logs_enabled", "true")
+            .with("diagnostics.model_tool", "true"),
+    )
+    .await;
+    let portal = account(&s, "ops-portal", "auditor").await;
+    let (_, session) = json_call(
+        &s,
+        &portal,
+        Method::POST,
+        "/api/sessions",
+        Some(json!({"title":"diag-tools"})),
+    )
+    .await;
+    let sid = session["session_id"].as_str().unwrap().to_string();
+    model.set_reply(json!([
+        json!({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+            "tool_calls":[{"id":"call_list_1","type":"function","function":{"name":"logs_list","arguments":"{}"}}]}}],
+            "usage":{"prompt_tokens":10,"completion_tokens":2}}),
+        ok_reply("The audit log is available.", 20, 4),
+    ]));
+    let (status, body) = json_call(
+        &s,
+        &portal,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"session_id": sid, "message": "what logs can you see?"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"].as_str().unwrap_or(""), "The audit log is available.");
+
+    let requests = model.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 2, "{requests:?}");
+    let offered: Vec<&str> = requests[0]["tools"]
+        .as_array()
+        .expect("the first request offers the log tools")
+        .iter()
+        .map(|tool| tool["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(offered, ["logs_list", "logs_read", "logs_search", "logs_stats"]);
+    // The follow-up resends the batch and one tool message carrying the
+    // untrusted header, never silent authority over log text.
+    let second = requests[1]["messages"].as_array().unwrap();
+    let tool_message = second
+        .iter()
+        .find(|message| message["role"] == "tool")
+        .expect("the follow-up carries the tool result");
+    assert_eq!(tool_message["tool_call_id"], "call_list_1");
+    let content = tool_message["content"].as_str().unwrap();
+    assert!(content.contains("UNTRUSTED LOG EXCERPT"), "{content}");
+    assert!(content.contains("audit.jsonl"), "{content}");
+
+    // The audit row holds the filter shape and the row count, never log text.
+    let calls = audit_rows(&s, "diag_tool_call");
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    let row = &calls[0];
+    assert_eq!(row["tool"], "logs_list");
+    assert_eq!(row["outcome"], "ok");
+    assert!(row["rows"].as_u64().unwrap() >= 1, "{row}");
+    for content_key in ["text", "content", "lines", "sha256"] {
+        assert!(
+            row.get(content_key).is_none(),
+            "audit must not carry {content_key}: {row}"
+        );
+    }
+
+    // A refused read ends as that call's tool result; the turn answers anyway.
+    model.set_reply(json!([
+        json!({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+            "tool_calls":[{"id":"call_bad_1","type":"function","function":{"name":"logs_read",
+                "arguments":"{\"file\":\"../config.yaml\"}"}}]}}],
+            "usage":{"prompt_tokens":10,"completion_tokens":2}}),
+        ok_reply("I could not read that file.", 20, 4),
+    ]));
+    let (status, body) = json_call(
+        &s,
+        &portal,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"session_id": sid, "message": "read ../config.yaml"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    let requests = model.requests.lock().unwrap().clone();
+    let tool_message = requests.last().unwrap()["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["role"] == "tool")
+        .cloned()
+        .expect("the refused read still produces a tool result");
+    assert!(tool_message["content"].as_str().unwrap().contains("DIAG_BAD_FILE"));
+    let calls = audit_rows(&s, "diag_tool_call");
+    assert_eq!(calls.last().unwrap()["outcome"], "DIAG_BAD_FILE");
+    assert!(
+        !s.audit_log().contains("../config.yaml"),
+        "audit must not record the file argument"
+    );
+}
+
+#[tokio::test]
+async fn an_operator_turn_a_disabled_flag_and_a_loop_turn_never_offer_log_tools() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("diagnostics.logs_enabled", "true")
+            .with("diagnostics.model_tool", "true"),
+    )
+    .await;
+    // Web tools would mask the check: with web on an operator turn is a web
+    // turn. With it off the operator's turn must be plain, never a diag turn.
+    s.state.settings.lock().unwrap().web_enabled = false;
+    // An operator has no InvestigateLogs grant (#965): plain turn, no tools.
+    let operator = account(&s, "ops-operator", "operator").await;
+    let (status, body) = json_call(
+        &s,
+        &operator,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"message": "hello"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(model
+        .last_request()
+        .unwrap()
+        .get("tools")
+        .is_none_or(|t| t.as_array().is_some_and(|a| a.is_empty())));
+    // Even the auditor's /loop request is refused before any tools exist; an
+    // admin loop turn (InvestigateLogs held) never offers them either.
+    let admin = account(&s, "ops-admin", "admin").await;
+    let (_, session) = json_call(&s, &admin, Method::POST, "/api/sessions", Some(json!({"title":"loop"}))).await;
+    let sid = session["session_id"].as_str().unwrap().to_string();
+    let (status, _) = json_call(
+        &s,
+        &admin,
+        Method::POST,
+        &format!("/api/sessions/{sid}/goal"),
+        Some(json!({"goal":"g"})),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let (status, body) = json_call(
+        &s,
+        &admin,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"session_id": sid, "message": "loop turn", "loop": true})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(model
+        .last_request()
+        .unwrap()
+        .get("tools")
+        .is_none_or(|t| t.as_array().is_some_and(|a| a.is_empty())));
+
+    // The flag is the operator's opt-in: with it unset the same auditor turn
+    // is a plain chat turn.
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("diagnostics.logs_enabled", "true"),
+    )
+    .await;
+    let portal = account(&s, "ops-portal", "auditor").await;
+    let (status, body) = json_call(
+        &s,
+        &portal,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"message": "hello"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(model
+        .last_request()
+        .unwrap()
+        .get("tools")
+        .is_none_or(|t| t.as_array().is_some_and(|a| a.is_empty())));
 }

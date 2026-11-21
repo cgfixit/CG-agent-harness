@@ -590,7 +590,7 @@ async fn account_changes_recheck_the_acting_admin_when_they_run() {
     let denied = Some("AUTH_PERMISSION_DENIED".to_string());
 
     // Control: the same calls with a current admin succeed.
-    let role = auth::set_role(state(), target(), req("POST", Some(json!({"role": "audit"})), &seen)).await;
+    let role = auth::set_role(state(), target(), req("POST", Some(json!({"role": "auditor"})), &seen)).await;
     assert_eq!(refused(role), None);
     mgr.set_role("target", "operator").unwrap();
 
@@ -601,7 +601,7 @@ async fn account_changes_recheck_the_acting_admin_when_they_run() {
             mgr.set_role("boss", "admin").unwrap();
             mgr.disable_user("boss").unwrap();
         }
-        let role = auth::set_role(state(), target(), req("POST", Some(json!({"role": "audit"})), &seen)).await;
+        let role = auth::set_role(state(), target(), req("POST", Some(json!({"role": "auditor"})), &seen)).await;
         assert_eq!(refused(role), denied, "{stale_by}: role");
         let off = auth::set_disabled(state(), target(), req("POST", Some(json!({"disabled": true})), &seen)).await;
         assert_eq!(refused(off), denied, "{stale_by}: disable");

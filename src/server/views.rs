@@ -148,7 +148,7 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 84] = [
         "/diag",
         "GET",
         "/api/diag/read",
-        "bounded redacted reads of allowlisted home logs; admin or portal_auditor; off until diagnostics.logs_enabled",
+        "bounded redacted reads of allowlisted home logs; admin or auditor; off until diagnostics.logs_enabled",
     ),
     (
         "soul-document",

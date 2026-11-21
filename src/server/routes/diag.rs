@@ -1,6 +1,6 @@
 //! `/diag` routes: status, bounded log reads, and staging one excerpt for the
 //! owner's next local chat turn. Every route needs an `admin` or
-//! `portal_auditor` account and the literal `diagnostics.logs_enabled` gate.
+//! `auditor` account and the literal `diagnostics.logs_enabled` gate.
 //! The browser names an allowlisted file and fixed filters, never a path.
 use std::sync::Arc;
 
@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::common::auth_store::UserSummary;
-use crate::common::authn::PORTAL_AUDITOR_ROLE;
+use crate::common::authz::{self, Capability, Role};
 use crate::common::errors::HarnessError;
 use crate::server::diag_reader::{self, ReadFilter};
 use crate::server::errors::{session_status, ApiError, ApiResult};
@@ -40,10 +40,15 @@ fn refuse(state: &AppState, code: &str, message: &str) -> ApiError {
 }
 
 /// Role first, then the gate, so a role that may never read logs learns nothing.
-fn authorize(state: &AppState, user: &Option<axum::Extension<UserSummary>>) -> ApiResult<String> {
-    let account = match user {
-        Some(account)
-            if matches!(account.role.as_str(), "admin" | PORTAL_AUDITOR_ROLE) && !account.must_change_password =>
+/// The gate parsed the role already; this reads its request extension.
+fn authorize(
+    state: &AppState,
+    user: &Option<axum::Extension<UserSummary>>,
+    role: &Option<axum::Extension<Role>>,
+) -> ApiResult<String> {
+    let account = match (user, role) {
+        (Some(account), Some(axum::Extension(role)))
+            if authz::grants(*role, Capability::ReadLogs) && !account.must_change_password =>
         {
             account
         }
@@ -51,7 +56,7 @@ fn authorize(state: &AppState, user: &Option<axum::Extension<UserSummary>>) -> A
             return Err(refuse(
                 state,
                 "DIAG_REFUSED",
-                "/diag needs an enabled admin or portal_auditor account",
+                "/diag needs an enabled admin or auditor account",
             ))
         }
     };
@@ -68,8 +73,9 @@ fn authorize(state: &AppState, user: &Option<axum::Extension<UserSummary>>) -> A
 pub async fn status(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
+    role: Option<axum::Extension<Role>>,
 ) -> ApiResult<Json<Value>> {
-    let owner = authorize(&state, &user)?;
+    let owner = authorize(&state, &user, &role)?;
     let cfg = &state.diag.config;
     let logs = state.home.logs_dir();
     // One metadata read per allowlisted file: off the async workers.
@@ -84,7 +90,7 @@ pub async fn status(
     });
     Ok(Json(json!({
         "logs_enabled": true,
-        "model_tool": false,
+        "model_tool": cfg.model_tool,
         "limits": {"max_lines": cfg.max_lines, "max_bytes": cfg.max_bytes, "inject_max_chars": cfg.inject_max_chars},
         "files": files,
         "last": last,
@@ -146,9 +152,10 @@ fn parse_read_query(state: &AppState, pairs: &[(String, String)]) -> ApiResult<(
 pub async fn read(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
+    role: Option<axum::Extension<Role>>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> ApiResult<Json<Value>> {
-    let owner = authorize(&state, &user)?;
+    let owner = authorize(&state, &user, &role)?;
     let (name, filter) = parse_read_query(&state, &pairs)?;
     // Lines from earlier requests may still be queued for the writer thread.
     state.audit.flush_async().await;
@@ -207,9 +214,10 @@ impl Validate for DiagInjectRequest {
 pub async fn inject(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
+    role: Option<axum::Extension<Role>>,
     ValidJson(req): ValidJson<DiagInjectRequest>,
 ) -> ApiResult<Json<Value>> {
-    let owner = authorize(&state, &user)?;
+    let owner = authorize(&state, &user, &role)?;
     // The session read blocks: off the async workers.
     {
         let (state, owner, session_id) = (state.clone(), owner.clone(), req.session_id.clone());
@@ -231,7 +239,8 @@ pub async fn inject(
 pub async fn forget(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
+    role: Option<axum::Extension<Role>>,
 ) -> ApiResult<Json<Value>> {
-    let owner = authorize(&state, &user)?;
+    let owner = authorize(&state, &user, &role)?;
     Ok(Json(json!({"cleared": state.diag.forget(&owner)})))
 }

@@ -558,7 +558,7 @@ unslop:
   metrics_path: "logs/unslop.jsonl"
 
 # Read-only /diag log inspection. New homes ship logs_enabled as literal true
-# (quoted "true" is off); only admin and portal_auditor accounts may read.
+# (quoted "true" is off); only admin and auditor accounts may read.
 # An existing home config.yaml is not rewritten. Reads only the exact names
 # below from <home>/logs/: no globs, paths
 # or folding, no symlinks, at most logs_max_bytes from the tail. Output is
@@ -573,10 +573,9 @@ unslop:
 # scripts/build-self-manual.py) as untrusted background; it reads nothing from
 # the home. live_state adds one fixed status block from in-memory state (model,
 # gates, style, session, home path; never keys or the sandbox backend, and never
-# for portal_auditor accounts). Neither grants a tool: chat keeps only
-# web_search and web_fetch. These two switches are not flag_is_true gates: a
-# missing key means on, literal true/false is used as written, and any other
-# value fails boot. Ranges are hard. Restart-only.
+# for auditor accounts). Neither grants a tool itself. These two switches are
+# not flag_is_true gates: a missing key means on, literal true/false is used as
+# written, and any other value fails boot. Ranges are hard. Restart-only.
 diagnostics:
   logs_enabled: true
   logs_max_lines: 500 # 1–1000 per read
@@ -588,8 +587,11 @@ diagnostics:
     - spend.jsonl
     - spend.jsonl.1
     - unslop.jsonl
-  # Reserved. No model-callable diagnostics tool exists in this build; chat
-  # still exposes only web_search and web_fetch. Literal true only warns.
+  # Operator opt-in (ships off, restart-only): on a plain local chat turn an
+  # account whose role may investigate logs (admin, auditor) may be offered the
+  # read-only logs_list/logs_read/logs_search/logs_stats tools over the same
+  # allowlisted, redacted, scanner-refused reads. Never cloud chat, /loop,
+  # /agent, web-tool turns or other roles. Literal true only; quoted is off.
   model_tool: false
   self_knowledge: true
   self_manual_max_chunks: 4 # 1–8 chunks per turn

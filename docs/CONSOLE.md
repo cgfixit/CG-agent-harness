@@ -313,7 +313,7 @@ read the file `agentic.registry_path` names.
 | GitHub coding | A separate governed child-process workflow behind `agentic.repo` and its gates; `/github` reports status, and a chat reply runs no Git command ([coding pipeline](CODING_PIPELINE.md)) |
 | Local file context for coding | `/agent read <repo-relative-path[#Lx-Ly]>` before confirmation: bounded reads from the governed clone, no general filesystem mount |
 | `netconnect` | Gates ship false. Read-only LAN panel with no scan button; `/net diag` runs the budgeted probe, and an empty scope refuses armed tiers ([netconnect](netconnect.md)) |
-| Log diagnostics | `/diag` (admin or `portal_auditor`; `diagnostics.logs_enabled` ships true): bounded, redacted tails of allowlisted `<home>/logs/` files, one excerpt staged for the next local turn ([diagnostics](TROUBLESHOOTING.md#diagnostics)) |
+| Log diagnostics | `/diag` (admin or `auditor`; `diagnostics.logs_enabled` ships true): bounded, redacted tails of allowlisted `<home>/logs/` files, one excerpt staged for the next local turn ([diagnostics](TROUBLESHOOTING.md#diagnostics)) |
 | `fsconnect`, `sqlconnect` | Not implemented: no slash command, datasource picker, filesystem indexing, database connection or YAML switch |
 | `github-public`, `openai-compatible` catalog entries | Inventory only; neither is a connector or an activation control |
 
