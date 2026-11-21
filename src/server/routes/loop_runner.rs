@@ -22,6 +22,7 @@ use crate::server::sessions::GoalWebMode;
 use crate::server::state::AppState;
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StartLoopRequest {
     pub session_id: String,
     #[serde(default)]
@@ -49,6 +50,7 @@ impl crate::server::schemas::Validate for StartLoopRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct StopLoopRequest {
     pub run_id: String,
 }
@@ -283,5 +285,24 @@ pub async fn events(
 impl LoopRunState {
     fn terminal_str(s: &str) -> bool {
         matches!(s, "stopped" | "failed" | "done")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{StartLoopRequest, StopLoopRequest};
+
+    #[test]
+    fn loop_bodies_refuse_unknown_fields() {
+        // A mistyped limit (`max_turn`) must not start a run on the default limits.
+        assert!(serde_json::from_str::<StartLoopRequest>(r#"{"session_id":"s","max_turn":1}"#).is_err());
+        assert!(serde_json::from_str::<StopLoopRequest>(r#"{"run_id":"r","force":true}"#).is_err());
+        let start: StartLoopRequest = serde_json::from_str(
+            r#"{"session_id":"s","goal":"g","web_mode":"off","max_turns":1,
+                "max_total_completion_tokens":2,"max_failures":3,"cooldown_ms":4}"#,
+        )
+        .unwrap();
+        assert_eq!(start.max_turns, Some(1));
+        assert!(serde_json::from_str::<StopLoopRequest>(r#"{"run_id":"r"}"#).is_ok());
     }
 }

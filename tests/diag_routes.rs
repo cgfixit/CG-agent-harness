@@ -474,6 +474,23 @@ async fn auditor_chats_locally_without_memory_or_other_surfaces() {
         .is_none_or(|t| t.as_array().is_some_and(|a| a.is_empty())));
     let (status, _) = json_call(&s, &portal, Method::GET, &format!("/api/sessions/{sid}"), None).await;
     assert_eq!(status, 200);
+    // Refused before a session is created: a session-less refused turn leaves
+    // the owner's session list as it was.
+    let (_, before) = json_call(&s, &portal, Method::GET, "/api/sessions", None).await;
+    for body in [
+        json!({"message": "x", "retrieve": true}),
+        json!({"message": "x", "model": "other-local-model"}),
+        json!({"message": "x", "attachment_ids": ["0123456789abcdef0123456789abcdef"]}),
+    ] {
+        let (status, reply) = json_call(&s, &portal, Method::POST, "/api/chat", Some(body.clone())).await;
+        assert_eq!(
+            (status, code(&reply).as_str()),
+            (403, "AUTH_PERMISSION_DENIED"),
+            "{body}: {reply}"
+        );
+    }
+    let (_, after) = json_call(&s, &portal, Method::GET, "/api/sessions", None).await;
+    assert_eq!(after, before, "a refused turn created a session");
     for body in [
         json!({"session_id": sid, "message": "x", "model": "grok"}),
         json!({"session_id": sid, "message": "x", "model": "other-local-model"}),

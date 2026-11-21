@@ -988,6 +988,16 @@ pub(crate) async fn chat_inner(
             "loop turns require an existing session",
         ));
     }
+    // The role's refusal reads only the request, so it runs before a session
+    // is created: a refused turn leaves no file behind.
+    let model = req
+        .model
+        .clone()
+        .filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| state.current_model());
+    let cloud_selected = state.cloud_chat.is_cloud_selection(&model);
+    let chat_policy = crate::common::authz::ChatPolicy::for_user(user.as_ref().map(|u| &u.0));
+    refuse_restricted_chat_extras(&req, &state.current_model(), cloud_selected, &chat_policy)?;
     // Reading or creating the session file stays off the async worker.
     let session = {
         let (state, owner) = (state.clone(), owner.clone());
@@ -1013,14 +1023,6 @@ pub(crate) async fn chat_inner(
             "session goal changed; start a new loop for the current goal",
         ));
     }
-    let model = req
-        .model
-        .clone()
-        .filter(|m| !m.trim().is_empty())
-        .unwrap_or_else(|| state.current_model());
-    let cloud_selected = state.cloud_chat.is_cloud_selection(&model);
-    let chat_policy = crate::common::authz::ChatPolicy::for_user(user.as_ref().map(|u| &u.0));
-    refuse_restricted_chat_extras(&req, &state.current_model(), cloud_selected, &chat_policy)?;
     if cloud_selected && req.loop_turn {
         return Err(loop_error(
             "CLOUD_CHAT_LOOP",
