@@ -158,8 +158,9 @@ maps each role to the capabilities it grants. An authenticated request whose
 template or method is unlisted is denied by default: a new route has no role
 access until the table names it. Roles are parsed once at the gate; unknown
 stored roles fail closed. A method no row lists for the matched template is
-refused without reaching a handler. Handler-level role string comparisons
-remain as legacy surface, pinned by the invariant guard pending consolidation. Storing `auditor` first moves a
+refused without reaching a handler. Handler-level role checks call
+`common::authz` helpers (`grants_stored`, `is_role`); the invariant guard
+rejects a new ad-hoc comparison until its PR pins it. Storing `auditor` first moves a
 version 1 or 2 account database to schema 3, which older binaries refuse;
 retired `audit` (left disabled) and `portal_auditor` fold into `auditor` at open,
 revoking their sessions and logging one `auth.role_migrated` event per

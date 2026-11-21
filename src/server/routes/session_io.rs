@@ -9,6 +9,7 @@ use axum::response::Response;
 use axum::Json;
 use serde_json::{json, Value};
 
+use crate::common::authz;
 use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::schemas::{SessionSearchRequest, ValidJson};
 use crate::server::session_export::{self, write_export, ExportAttachmentPin};
@@ -19,7 +20,7 @@ fn legacy_owner(state: &AppState, user: Caller) -> ApiResult<String> {
     if state.auth.is_some()
         && user
             .as_ref()
-            .is_none_or(|u| u.role != "admin" || u.must_change_password)
+            .is_none_or(|u| !authz::is_role(&u.role, authz::Role::Admin) || u.must_change_password)
     {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,

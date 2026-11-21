@@ -21,6 +21,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
+use crate::common::authz::{self, Capability};
 use crate::common::errors::{HarnessError, Result};
 use crate::server::config_reload::LoopLimits;
 use crate::server::routes::core::chat_inner;
@@ -425,7 +426,9 @@ fn current_authority(
     if current.must_change_password {
         return Err("the account that started this loop must change its password".into());
     }
-    if !matches!(current.role.as_str(), "operator" | "admin") {
+    // Loop turns continue the full local surface; the auditor role holds no
+    // own-data grant, so the capability check is the role check (#965).
+    if !authz::grants_stored(&current.role, Capability::OwnData) {
         return Err(format!(
             "the account that started this loop now has role {} and cannot run loop turns",
             current.role
