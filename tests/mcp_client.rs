@@ -1232,7 +1232,10 @@ async fn sse_post_body_over_the_cap_is_refused_while_streaming() {
 #[tokio::test]
 async fn per_server_authority_gates_operator_calls_and_is_reported_in_status() {
     let mut writer_caps = fixture_capabilities();
-    writer_caps.write_roots = vec![PathBuf::from("/tmp")];
+    // A scratch dir beside the harness home, never `/tmp` itself: with TMPDIR=/tmp
+    // (CI Linux) `/tmp` contains the home and `refuse_home_overlap` rightly refuses it.
+    let writer_root = tempfile::tempdir().unwrap();
+    writer_caps.write_roots = vec![writer_root.path().to_path_buf()];
     let fixture_yaml = stdio_yaml();
     let writer_yaml = fixture_yaml.replacen("name: fixture", "name: writer", 1).replace(
         &serde_json::to_string(&fixture_capabilities()).unwrap(),
