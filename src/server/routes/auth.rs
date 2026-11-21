@@ -185,13 +185,16 @@ fn user_payload(u: &UserSummary) -> Value {
 }
 
 /// The caller's own account identity. `user_id` is the stable owner namespace,
-/// not a credential. This is not the administrator directory.
+/// not a credential. This is not the administrator directory. `capabilities`
+/// lets the console hide controls the role would only see refused (#965);
+/// the gate stays authoritative.
 fn account_identity(account: &UserSummary) -> Value {
     json!({
         "username": account.username,
         "role": account.role,
         "user_id": account.user_id,
         "must_change_password": account.must_change_password,
+        "capabilities": crate::common::authz::capabilities_for_stored(&account.role),
     })
 }
 
@@ -231,6 +234,7 @@ pub async fn login(
         "role": role,
         "user_id": user_id,
         "must_change_password": must_change_password,
+        "capabilities": crate::common::authz::capabilities_for_stored(&role),
     }))
     .into_response();
     set_cookie(&mut resp, &result.session_id, scheme.is_some_and(|s| s.0 .0 == "https"));

@@ -36,7 +36,7 @@ run IDs, never commands.
 | GET | `/api/auth/setup-status` | `setup_code` while the one-time code works; public |
 | POST | `/api/auth/login` | Login; public with early guards |
 | POST | `/api/auth/logout` | Revoke the current session |
-| GET | `/api/auth/whoami` | Current account, role and `user_id` |
+| GET | `/api/auth/whoami` | Current account, role, `user_id`, capabilities |
 | POST | `/api/auth/password` | Change own password; revokes other sessions |
 | GET, POST | `/api/auth/users` | Administrator list/create, with each `user_id` (`/users`) |
 | DELETE | `/api/auth/users/{username}` | Administrator delete |

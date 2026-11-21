@@ -961,6 +961,14 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
     assert_eq!(resp.status().as_u16(), 200);
     let who = resp.json::<serde_json::Value>().await.unwrap();
     assert_eq!(who["username"], "admin");
+    // whoami reports the capability names the console hides controls by (#965).
+    let admin_caps: Vec<&str> = who["capabilities"]
+        .as_array()
+        .expect("whoami publishes capabilities")
+        .iter()
+        .filter_map(|c| c.as_str())
+        .collect();
+    assert!(admin_caps.contains(&"manage_accounts") && admin_caps.contains(&"chat"));
     let admin_id = who["user_id"].as_str().expect("whoami publishes user_id").to_string();
     assert!(
         admin_id.len() == 32 && admin_id.chars().all(|c| c.is_ascii_hexdigit()),
@@ -1052,6 +1060,16 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
     let op_who = op_who.json::<serde_json::Value>().await.unwrap();
     assert_eq!(op_who["user_id"], op_id);
     assert_eq!(op_who["role"], "operator");
+    let op_caps: Vec<&str> = op_who["capabilities"]
+        .as_array()
+        .expect("whoami publishes capabilities")
+        .iter()
+        .filter_map(|c| c.as_str())
+        .collect();
+    assert!(op_caps.contains(&"chat") && op_caps.contains(&"propose_persona"));
+    for admin_only in ["manage_models", "manage_shared_content", "manage_accounts", "read_logs"] {
+        assert!(!op_caps.contains(&admin_only), "operator must not report {admin_only}");
+    }
     let op_users = s
         .client
         .get(s.url("/api/auth/users"))

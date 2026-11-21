@@ -83,6 +83,80 @@ pub enum Capability {
     ReadPanels,
 }
 
+impl Capability {
+    /// Every capability in declaration order: the iteration domain for
+    /// [`capabilities_for`]. Adding a variant fails compilation in `grants`
+    /// and here until both are decided.
+    pub const ALL: [Capability; 21] = [
+        Capability::Public,
+        Capability::OwnAccount,
+        Capability::OwnSessions,
+        Capability::OwnData,
+        Capability::Chat,
+        Capability::ChatAttachments,
+        Capability::WebUse,
+        Capability::UseMcp,
+        Capability::ProposePersona,
+        Capability::NotificationReplay,
+        Capability::RunCoding,
+        Capability::ManageModels,
+        Capability::ManageSharedContent,
+        Capability::ManageWebPolicy,
+        Capability::ManageCredentials,
+        Capability::ManageAccounts,
+        Capability::ManageConfig,
+        Capability::BrowserUse,
+        Capability::ReadAudit,
+        Capability::ReadLogs,
+        Capability::ReadPanels,
+    ];
+
+    /// The wire name the console keys on, so it can hide controls without
+    /// hard-coding role names (#965). Stable: tests pin every name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Capability::Public => "public",
+            Capability::OwnAccount => "own_account",
+            Capability::OwnSessions => "own_sessions",
+            Capability::OwnData => "own_data",
+            Capability::Chat => "chat",
+            Capability::ChatAttachments => "chat_attachments",
+            Capability::WebUse => "web_use",
+            Capability::UseMcp => "use_mcp",
+            Capability::ProposePersona => "propose_persona",
+            Capability::NotificationReplay => "notification_replay",
+            Capability::RunCoding => "run_coding",
+            Capability::ManageModels => "manage_models",
+            Capability::ManageSharedContent => "manage_shared_content",
+            Capability::ManageWebPolicy => "manage_web_policy",
+            Capability::ManageCredentials => "manage_credentials",
+            Capability::ManageAccounts => "manage_accounts",
+            Capability::ManageConfig => "manage_config",
+            Capability::BrowserUse => "browser_use",
+            Capability::ReadAudit => "read_audit",
+            Capability::ReadLogs => "read_logs",
+            Capability::ReadPanels => "read_panels",
+        }
+    }
+}
+
+/// The capability names `role` holds, reported by whoami/login so the console
+/// hides controls the caller would only see refused (#965). The server stays
+/// authoritative; this is presentation, derived from the same `grants` matrix.
+pub fn capabilities_for(role: Role) -> Vec<&'static str> {
+    Capability::ALL
+        .into_iter()
+        .filter(|cap| grants(role, *cap))
+        .map(Capability::name)
+        .collect()
+}
+
+/// [`capabilities_for`] for a stored role string; an unparseable value fails
+/// closed to no capabilities, matching the gate's refusal of the same string.
+pub fn capabilities_for_stored(stored: &str) -> Vec<&'static str> {
+    Role::parse(stored).map(capabilities_for).unwrap_or_default()
+}
+
 /// Whether the role's surface is method-exact. The restricted roles (`audit`,
 /// `portal_auditor`) are refused on any unlisted `(method, route)` pair,
 /// while admin and operator keep the router's 405 on a template they fully
@@ -275,6 +349,27 @@ mod tests {
         ] {
             assert!(grants(Role::Operator, cap), "operator keeps {cap:?}");
         }
+    }
+
+    #[test]
+    fn capability_names_are_unique_and_match_the_grants_matrix() {
+        let mut names: Vec<&str> = Capability::ALL.iter().map(|c| c.name()).collect();
+        let total = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), total, "capability names must be unique");
+        for role in [Role::Admin, Role::Operator, Role::Audit, Role::PortalAuditor] {
+            let reported = capabilities_for(role);
+            assert!(!reported.is_empty(), "a known role holds some capabilities");
+            for cap in Capability::ALL {
+                assert_eq!(reported.contains(&cap.name()), grants(role, cap), "{role:?} {cap:?}");
+            }
+        }
+        assert!(capabilities_for_stored("forged").is_empty());
+        assert_eq!(
+            capabilities_for_stored("portal_auditor"),
+            capabilities_for(Role::PortalAuditor)
+        );
     }
 
     #[test]
