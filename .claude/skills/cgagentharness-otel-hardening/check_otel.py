@@ -326,6 +326,15 @@ LAST_VERIFIED_CRATE_PINS: dict[str, str] = {
 }
 DESKTOP_VERIFIED_CRATE_PINS: dict[str, str] = {"tauri": "2.12.4", "reqwest": "0.13.5"}
 
+# The /browse sidecar's npm pins (browser/package-lock.json). The same version
+# is written by hand in browser/package.json and docs/Browser-Use.md, and the
+# sidecar inventory row below is built from it: T6 requires every copy to agree
+# with this one, so a bump that misses a file WARNs instead of going stale.
+NPM_VERIFIED_PINS: dict[str, str] = {"playwright": "1.65.1", "playwright-core": "1.65.1"}
+# Locked but not declared in package.json (playwright depends on it). Every other
+# pinned name must stay a direct, exact dependency of the sidecar.
+NPM_TRANSITIVE_PINS: frozenset[str] = frozenset({"playwright-core"})
+
 # gh floor the agentic layer enforces (src/agentic/gh_client.rs DEFAULT_MIN_GH).
 EXPECTED_MIN_GH = (2, 40, 0)
 
@@ -602,7 +611,8 @@ INVENTORY: tuple[dict[str, object], ...] = (
     {
         "name": "playwright browser sidecar (node)", "category": 4, "controls": {},
         "url": "docs/Browser-Use.md",
-        "versions": "playwright 1.65.1 (browser/package-lock.json), installed Google Chrome channel",
+        "versions": f"playwright {NPM_VERIFIED_PINS['playwright']} (browser/package-lock.json), "
+                    "installed Google Chrome channel",
         "enforcement": "env_clear() + browser_host::child_environment allowlist; "
                        "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1; loopback proxy refuses ungranted and non-public "
                        "destinations; Chrome sandbox on; gate browser.enabled ships true, admin only",
@@ -1020,6 +1030,47 @@ def check_pin_drift(root: Path, locks: dict[str, dict[str, list[str]]]) -> None:
         ok("T6", f"gh floor {'.'.join(map(str, EXPECTED_MIN_GH))} unchanged")
 
 
+def check_npm_pins(root: Path) -> None:
+    lock_rel, pkg_rel, doc_rel = "browser/package-lock.json", "browser/package.json", "docs/Browser-Use.md"
+    parsed: dict[str, dict] = {}
+    for rel in (lock_rel, pkg_rel):
+        text = _read(root, rel)
+        if text is None:
+            warn("T6", f"{rel} is missing; retire NPM_VERIFIED_PINS and the sidecar inventory row")
+            return
+        try:
+            parsed[rel] = json.loads(text)
+        except json.JSONDecodeError as exc:
+            fail("T6", f"{rel}: unparseable: {exc.msg}")
+            return
+    packages = parsed[lock_rel].get("packages", {})
+    direct = parsed[pkg_rel].get("dependencies", {})
+    drift = 0
+    for name, want in NPM_VERIFIED_PINS.items():
+        have = packages.get(f"node_modules/{name}", {}).get("version")
+        if have != want:
+            warn("T6", f"{lock_rel}: {name} is {have or 'absent'}, last verified {want}: re-read its "
+                       "changelog for new network behavior, then update NPM_VERIFIED_PINS")
+            drift += 1
+        got = direct.get(name)
+        if name not in NPM_TRANSITIVE_PINS and got != want:
+            shown = repr(got) if got else "absent"
+            warn("T6", f"{pkg_rel}: {name} is {shown}, expected the exact pin {want}")
+            drift += 1
+    for name in sorted(set(direct) - set(NPM_VERIFIED_PINS)):
+        warn("T6", f"{pkg_rel}: unclassified npm dependency {name}: pin it in NPM_VERIFIED_PINS and "
+                   "add an inventory row")
+        drift += 1
+    want = NPM_VERIFIED_PINS["playwright"]
+    named = set(re.findall(r"Playwright (\d+\.\d+\.\d+)", _read(root, doc_rel) or ""))
+    if named != {want}:
+        warn("T6", f"{doc_rel} names Playwright {sorted(named) or 'nowhere'}, the pin is {want}: "
+                   "move the sentence with the lock")
+        drift += 1
+    if not drift:
+        ok("T6", f"npm pins unchanged across {lock_rel}, {pkg_rel} and {doc_rel}")
+
+
 def _rust_sources(root: Path) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for base in ("src", "desktop/src"):
@@ -1280,6 +1331,7 @@ def main(argv: list[str] | None = None) -> int:
     check_staleness(today)
     locks = check_lock_graph(root)
     check_pin_drift(root, locks)
+    check_npm_pins(root)
     sources = _rust_sources(root)
     check_spawn_sites(sources, strict=args.strict)
     check_bypasses(sources)
