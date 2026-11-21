@@ -907,21 +907,26 @@ pub async fn chat(
     super::sse_from_channel(receiver, task)
 }
 
-/// `portal_auditor` chats with the selected local model only: no cloud, loop,
-/// model override, attachments or memory selection. Context the account owned
-/// under an earlier role is withheld in `chat_inner`, not merely unreachable.
-fn refuse_portal_auditor_extras(req: &ChatRequest, current_model: &str, cloud_selected: bool) -> ApiResult<()> {
+/// A restricted chat policy (`ChatPolicy::LOCAL_ONLY`, today the
+/// `portal_auditor` surface) chats with the selected local model only: no
+/// cloud, loop, model override, attachments or memory selection. Context the
+/// account owned under an earlier role is withheld in `chat_inner`, not
+/// merely unreachable.
+fn refuse_restricted_chat_extras(
+    req: &ChatRequest,
+    current_model: &str,
+    cloud_selected: bool,
+    policy: &crate::common::authz::ChatPolicy,
+) -> ApiResult<()> {
     let model_override = req
         .model
         .as_deref()
         .is_some_and(|m| !m.trim().is_empty() && m != current_model);
-    if cloud_selected
-        || req.loop_turn
-        || model_override
-        || !req.attachment_ids.is_empty()
-        || req.retrieve
-        || req.retrieve_query.is_some()
-        || req.selected_facts.is_some()
+    if (!policy.cloud && cloud_selected)
+        || (!policy.loops && req.loop_turn)
+        || (!policy.model_choice && model_override)
+        || (!policy.attachments && !req.attachment_ids.is_empty())
+        || (!policy.memory && (req.retrieve || req.retrieve_query.is_some() || req.selected_facts.is_some()))
     {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
@@ -1017,12 +1022,8 @@ pub(crate) async fn chat_inner(
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| state.current_model());
     let cloud_selected = state.cloud_chat.is_cloud_selection(&model);
-    let portal_auditor = user
-        .as_ref()
-        .is_some_and(|u| u.role == crate::common::authn::PORTAL_AUDITOR_ROLE);
-    if portal_auditor {
-        refuse_portal_auditor_extras(&req, &state.current_model(), cloud_selected)?;
-    }
+    let chat_policy = crate::common::authz::ChatPolicy::for_user(user.as_ref().map(|u| &u.0));
+    refuse_restricted_chat_extras(&req, &state.current_model(), cloud_selected, &chat_policy)?;
     if cloud_selected && req.loop_turn {
         return Err(loop_error(
             "CLOUD_CHAT_LOOP",
@@ -1032,7 +1033,7 @@ pub(crate) async fn chat_inner(
     let settings = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
     // Web tools need web on and a model that can take them (auto_tune may have
     // found it declares none, or that no web-chat prompt fits its window).
-    let chat_web_mode = if portal_auditor {
+    let chat_web_mode = if !chat_policy.web {
         crate::server::sessions::GoalWebMode::Off
     } else {
         session.chat_web_mode(settings.web_enabled && !state.chat_tools_unsupported(&model))
@@ -1041,7 +1042,7 @@ pub(crate) async fn chat_inner(
     // Decided from the account on this request: a server-run loop reloads it
     // before every turn, so a demoted account loses the grant on its next turn.
     let result_reads = super::auth::may_read_search_results(&state, user.as_deref());
-    let selected_skills = if cloud_selected || portal_auditor {
+    let selected_skills = if cloud_selected || !chat_policy.skills {
         Vec::new()
     } else {
         // Each selected skill is a file read: off the async worker.
@@ -1209,7 +1210,7 @@ pub(crate) async fn chat_inner(
     } else {
         crate::server::retrieval::RetrievalSurface::LocalChat
     };
-    let live_pins: Vec<String> = if portal_auditor {
+    let live_pins: Vec<String> = if !chat_policy.attachments {
         Vec::new()
     } else {
         live_pins(&state, &owner, session.pinned_ids_for(&owner)).await
@@ -1227,12 +1228,12 @@ pub(crate) async fn chat_inner(
         .diag
         .for_turn(&owner, &session.session_id, diag_surface)
         .map_err(|e| super::diag::diag_error(&e))?;
-    let web_context = if cloud_selected || portal_auditor {
+    let web_context = if cloud_selected || !chat_policy.web {
         String::new()
     } else {
         web.context_text(session.chat_web_mode(settings.web_enabled).enabled(), &owner)
     };
-    let selections = if portal_auditor {
+    let selections = if !chat_policy.memory {
         Vec::new()
     } else {
         req.selected_facts
@@ -1247,9 +1248,9 @@ pub(crate) async fn chat_inner(
     } else {
         req.message.clone()
     };
-    // portal_auditor gets no attachment or notes-corpus bytes, including any it
-    // owned under an earlier role.
-    let attachment_fence = if portal_auditor {
+    // A restricted chat policy gets no attachment or notes-corpus bytes,
+    // including any the account owned under an earlier role.
+    let attachment_fence = if !chat_policy.attachments {
         String::new()
     } else {
         // Blocking: verified rereads hash every blob and may run PDF extraction.
@@ -1269,10 +1270,11 @@ pub(crate) async fn chat_inner(
         .map_err(|e| attachments::upload_error(&e))?
     };
     // The bundled manual and live state reach local chat turns only: never
-    // cloud chat (which sends only the new message) and never /loop.
-    // portal_auditor gets the manual but not live state (home path, soul state).
+    // cloud chat (which sends only the new message) and never /loop. A
+    // restricted policy gets the manual but not live state (home path, soul
+    // state).
     let local_turn = !cloud_selected && !req.loop_turn;
-    let live_block = (local_turn && !portal_auditor)
+    let live_block = (local_turn && chat_policy.live_state)
         .then(|| {
             state.live_state_block(
                 &model,
@@ -1304,14 +1306,15 @@ pub(crate) async fn chat_inner(
             req.message.clone()
         };
         let (force, query) = (req.retrieve, req.retrieve_query.clone());
-        let memory_enabled = settings.memory_enabled && !portal_auditor;
+        let memory_enabled = settings.memory_enabled && chat_policy.memory;
         super::structured_memory::off_worker(move || {
             super::structured_memory::prompt_memory(
                 &state,
                 &owner,
                 memory_enabled,
-                // Withheld context, as for cloud: portal_auditor reads no memory.
-                cloud_selected || portal_auditor,
+                // Withheld context, as for cloud: a restricted policy reads no
+                // memory.
+                cloud_selected || !chat_policy.memory,
                 &selections,
                 crate::server::structured_memory::RetrievalIntent {
                     force,
@@ -1337,7 +1340,7 @@ pub(crate) async fn chat_inner(
     } else {
         let inputs = PromptInputs {
             selected_skills: &selected_skills,
-            soul_enabled: settings.soul_enabled && !portal_auditor,
+            soul_enabled: settings.soul_enabled && chat_policy.persona,
             soul_override: None,
             soul_path: &state.home.soul_path(),
             soul_max_chars: crate::server::prompts::effective_soul_max_chars(&state.cfg),
@@ -1347,9 +1350,9 @@ pub(crate) async fn chat_inner(
             memory_context: Some(&pinned),
             selected_facts_context: Some(&facts),
             memory_budget,
-            memory_enabled: settings.memory_enabled && !portal_auditor,
-            auto_suggest_chat: !portal_auditor && crate::server::structured_memory_suggest::available(&state, crate::server::structured_memory_suggest::Source::Chat),
-            auto_suggest_coding: !portal_auditor && crate::server::structured_memory_suggest::available(&state, crate::server::structured_memory_suggest::Source::Coding),
+            memory_enabled: settings.memory_enabled && chat_policy.memory,
+            auto_suggest_chat: chat_policy.memory && crate::server::structured_memory_suggest::available(&state, crate::server::structured_memory_suggest::Source::Chat),
+            auto_suggest_coding: chat_policy.memory && crate::server::structured_memory_suggest::available(&state, crate::server::structured_memory_suggest::Source::Coding),
             chat_web_mode,
             web_enabled: settings.web_enabled,
             attachment_fence: Some(attachment_fence.as_str()),
@@ -2031,7 +2034,7 @@ pub(crate) async fn chat_inner(
             "normal"
         }
     };
-    let episode = if portal_auditor {
+    let episode = if !chat_policy.memory {
         json!({"available": false, "staged": false, "reason": "portal_auditor"})
     } else {
         let (state, owner, model) = (state.clone(), owner.clone(), reply.model.clone());
@@ -2045,7 +2048,7 @@ pub(crate) async fn chat_inner(
     // supplies completion evidence, paired with the human goal, never that framing.
     let memory_suggestion = if req.loop_turn && !reply_has_goal_done(&reply.body_text) {
         json!({"queued": false, "reason": "loop_turn"})
-    } else if portal_auditor {
+    } else if !chat_policy.memory {
         json!({"queued": false, "reason": "portal_auditor"})
     } else {
         // Queuing reads and writes the memory store, so it leaves the async worker too.

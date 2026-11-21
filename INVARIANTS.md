@@ -146,10 +146,20 @@ checks. Operational reads and writes also need an enabled account and its
 server-side role. Mutations need the CSRF header/token; only
 status/static/login/setup-status are public, and none sets a password.
 `portal_auditor` reaches only local chat in its own sessions, prompt preview,
-`/api/audit` and `/diag` (`guards::portal_auditor_may`); its chat and preview
+`/api/audit` and `/diag` (the capability table below); its chat and preview
 withhold persona, memory, attachments, notes, skills, web tools, cloud,
 loops and model choice, including earlier-role data;
-`/api/status` names only the model. Storing that role first moves the
+`/api/status` names only the model.
+
+The gate resolves each authenticated request to its matched route template
+and looks the (method, template) pair up in `routes::ROUTE_CAPS`, the
+exhaustive capability table covering every registered route; `common::authz`
+maps each role to the capabilities it grants. An authenticated request whose
+template or method is unlisted is denied by default: a new route has no role
+access until the table names it. Roles are parsed once at the gate; unknown
+stored roles fail closed. A method no row lists for the matched template is
+refused without reaching a handler. Handler-level role string comparisons
+remain as legacy surface, pinned by the invariant guard pending consolidation. Storing that role first moves the
 account database to schema 2, which older binaries refuse. A fresh
 `admin` signs in with a one-time code in the owner-only `<home>/setup-code`
 (never shipped, never page content); older `admin`/`admin` and pending-password
