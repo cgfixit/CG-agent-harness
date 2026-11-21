@@ -735,11 +735,26 @@ pub(crate) async fn run_argv_with_env(
     Ok((code, stdout, stderr))
 }
 
+/// `build_argv` stages the checks, plan and body temp files (directory create,
+/// write, flush), so it runs on the blocking pool, not on the caller's async
+/// worker. If the caller is dropped, the finished task's `TempPath`s drop with
+/// its unread output and the files are removed.
+async fn build_argv_off_worker(ctx: &ShimContext, req: &OpsRequest) -> Result<(Vec<String>, Vec<TempPath>), ShimError> {
+    let (ctx, req) = (ctx.clone(), req.clone());
+    match tokio::task::spawn_blocking(move || build_argv(&ctx, &req)).await {
+        Ok(built) => built,
+        Err(failed) => match failed.try_into_panic() {
+            Ok(panic) => std::panic::resume_unwind(panic),
+            Err(cancelled) => Err(ShimError::Io(format!("argv staging did not finish: {cancelled}"))),
+        },
+    }
+}
+
 /// The shim entry point: validate, build argv, spawn, label. Temp files are
 /// removed on every path (the `TempPath` values drop at the end of this scope).
 pub async fn run_agentic_op(ctx: &ShimContext, req: &OpsRequest) -> Result<OpsResult, ShimError> {
     let _active = ActiveOperation::new();
-    let (argv, _temps) = build_argv(ctx, req)?;
+    let (argv, _temps) = build_argv_off_worker(ctx, req).await?;
     let timeout = timeout_for(ctx, req);
     let (code, stdout, stderr) = run_argv_with_env(&argv, &ctx.cwd, timeout, child_environment(&req.action))
         .await
