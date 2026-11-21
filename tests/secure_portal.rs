@@ -1314,6 +1314,9 @@ async fn a_retired_role_is_migrated_and_audited_once_at_boot() {
         !log.contains("retired-reader"),
         "the migration row never names the account"
     );
+    // Confirmed in the log, so the store's pending report was acknowledged.
+    let auth = server.state.auth.as_ref().unwrap();
+    assert!(auth.pending_role_migrations().unwrap().is_empty());
 
     let session = login(&server, "retired-reader", &secret).await;
     let whoami: Value = request(&server, &session, Method::GET, "/api/auth/whoami", json!({}))
