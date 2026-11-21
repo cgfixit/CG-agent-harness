@@ -147,6 +147,24 @@ class RuleTests(unittest.TestCase):
         ]:
             self.assertEqual(module.weak_hashes(line, **syntax), [], line)
 
+    def test_password_literals_follow_the_codeql_alert(self):
+        # The #1093 shape: a literal bound to a password name, then hashed.
+        for line in [
+            '        let password = "migrated-reader-password";',
+            '    let mut old_password: &str = "x";',
+            '    let hash = authn::hash_password("preserved-admin-password").unwrap();',
+            '    authn::verify_password("literal", &record);',
+        ]:
+            self.assertTrue(module.password_literals(line), line)
+        for line in [
+            "        let password = crate::common::random_urlsafe(24);",
+            '    let hash = authn::hash_password(&password).unwrap();',
+            '    // let password = "only in a comment";',
+            '    let password_hash: String = row.get(1)?;',
+            '    assert!(body.contains("password"));',
+        ]:
+            self.assertEqual(module.password_literals(line), [], line)
+
     def test_owner_exempt_paths_are_read_from_the_guard(self):
         guard = 'const DOCS_BUDGET_OWNER_EXEMPT: &[(&str, &str)] = &[\n    ("docs/a.md", "why"),\n    // ("docs/b.md", "old"),\n];\n'
         self.assertEqual(module.owner_exempt_paths(guard), {"docs/a.md"})

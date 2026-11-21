@@ -18,6 +18,10 @@ index snapshot, so unstaged edits neither hide nor cause a finding.
                  failed #766, #778 and main)
   CG006 warning  added weak-hash name without a same-line DevSkim DS126858
                  suppression (alerted after push twice on #885)
+  CG010 warning  added Rust string literal passed to a password hasher or
+                 bound to a password-named variable (CodeQL
+                 rust/hard-coded-cryptographic-value alerted after push on
+                 #1034 and #1035; mint test passwords per run instead)
   CG008 error    deleted Markdown file still in DOCS_BUDGET_OWNER_EXEMPT
                  (invariant_guard fails; #881 broke main and the branches
                  that merged it until #888) or in the self-manual INPUTS
@@ -65,6 +69,13 @@ LANGUAGES = {".rs": ("//", '"'), ".py": ("#", "\"'")}
 # JavaScript; CG001 keeps its two languages.
 DIGEST_LANGUAGES = {**LANGUAGES, ".sh": ("#", "\"'"), ".mjs": ("//", "\"'`"), ".js": ("//", "\"'`")}
 WEAK_HASH = re.compile(r"\b(?:sha-?1|md5)\b", re.IGNORECASE)  # DevSkim: ignore DS126858 because this is that rule's own pattern.
+# CG010: the sinks CodeQL's hard-coded-cryptographic-value query followed from a
+# test literal here (#1034's alert #1093), and the binding that fed one.
+PASSWORD_LITERAL = re.compile(
+    r'\b(?:hash_password(?:_with_salt)?|hash_bootstrap_password|verify_password)\(\s*"'
+    r'|\blet\s+(?:mut\s+)?\w*(?:password|passwd|passphrase)\w*\s*(?::\s*&(?:\'static\s+)?str\s*)?=\s*"',
+    re.IGNORECASE,
+)
 # DevSkim's own suppression pattern (Suppression.cs). It reads only the first one on a line.
 SUPPRESSION = re.compile(r"DevSkim:\s+ignore\s([a-zA-Z\d,:]+)", re.IGNORECASE)
 # One table entry. rustfmt breaks a row wider than max_width over several lines
@@ -249,6 +260,25 @@ def check_weak_hashes(report, added):
                     f"`{found}` is what DevSkim {WEAK_HASH_RULE} alerts on after push. If it names a protocol "
                     f"label or item ID, not integrity hashing, end this same line with "
                     f"`{marker} DevSkim: ignore {WEAK_HASH_RULE} because <reason>`; otherwise use SHA-256.",
+                )
+
+
+def password_literals(line):
+    """CG010 matches on one Rust line: code and strings, not comments."""
+    return [m.group(0) for m in PASSWORD_LITERAL.finditer(code_part(line))]
+
+
+def check_password_literals(report, added):
+    for path, lines in sorted(added.items()):
+        if not path.endswith(".rs"):
+            continue
+        for number, text in sorted(lines.items()):
+            if password_literals(text):
+                report.add(
+                    "warning", "CG010", path, number,
+                    "a string literal reaches a password hasher or password binding; CodeQL "
+                    "rust/hard-coded-cryptographic-value alerts on it after push. Mint it per run "
+                    "(`crate::common::random_urlsafe(24)` or `authn::new_session_id()`).",
                 )
 
 
@@ -604,6 +634,7 @@ def main():
             check_shipped_claims(report, values, documents, keys=moved)
         check_timing(report, added)
         check_weak_hashes(report, added)
+        check_password_literals(report, added)
         grep_scope = ["--cached"] if args.staged else []
 
         def references(needle):
