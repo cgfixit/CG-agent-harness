@@ -706,6 +706,54 @@ async fn auditor_turn_reads_logs_through_bounded_tools() {
         !s.audit_log().contains("UNCHECKED-GROUP-TEXT"),
         "audit must not record a rejected group_by"
     );
+
+    // A limit that is not a positive whole number refuses only its own call:
+    // the numeric string "3" reads, the junk one is that call's
+    // DIAG_TOOL_ARGUMENTS result, and the turn still answers (#1035 review).
+    model.set_reply(json!([
+        json!({"choices":[{"finish_reason":"tool_calls","message":{"role":"assistant","content":null,
+            "tool_calls":[
+                {"id":"call_limit_1","type":"function","function":{"name":"logs_read",
+                    "arguments":"{\"file\":\"audit.jsonl\",\"limit\":\"UNCHECKED-LIMIT-TEXT\"}"}},
+                {"id":"call_limit_2","type":"function","function":{"name":"logs_search",
+                    "arguments":"{\"file\":\"audit.jsonl\",\"limit\":\"3\"}"}}]}}],
+            "usage":{"prompt_tokens":10,"completion_tokens":2}}),
+        ok_reply("Read what I could.", 20, 4),
+    ]));
+    let (status, body) = json_call(
+        &s,
+        &portal,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"session_id": sid, "message": "read a few rows"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["reply"].as_str().unwrap_or(""), "Read what I could.");
+    let calls = audit_rows(&s, "diag_tool_call");
+    let limited = &calls[calls.len() - 2..];
+    assert_eq!(limited[0]["outcome"], "DIAG_TOOL_ARGUMENTS", "a junk limit is refused");
+    assert!(
+        limited[0]["filter"]["limit"].is_null(),
+        "a refused limit is not audited"
+    );
+    assert_eq!(limited[1]["filter"]["limit"], 3, "a numeric-string limit is parsed");
+    assert_ne!(
+        limited[1]["outcome"], "DIAG_TOOL_ARGUMENTS",
+        "a numeric-string limit is accepted"
+    );
+    let refused = model.requests.lock().unwrap().last().unwrap()["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|message| message["tool_call_id"] == "call_limit_1")
+        .cloned()
+        .expect("the refused call still gets a tool result");
+    assert!(refused["content"].as_str().unwrap().contains("DIAG_TOOL_ARGUMENTS"));
+    assert!(
+        !s.audit_log().contains("UNCHECKED-LIMIT-TEXT"),
+        "audit must not record a refused limit"
+    );
 }
 
 #[tokio::test]

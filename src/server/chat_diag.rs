@@ -47,8 +47,9 @@ struct ReadArgs {
     file: String,
     #[serde(default)]
     cursor: Option<u64>,
-    #[serde(default, deserialize_with = "lenient_limit")]
-    limit: Option<usize>,
+    /// As sent; [`parse_limit`] decides at dispatch (see there).
+    #[serde(default)]
+    limit: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -64,8 +65,9 @@ struct SearchArgs {
     since: Option<String>,
     #[serde(default)]
     until: Option<String>,
-    #[serde(default, deserialize_with = "lenient_limit")]
-    limit: Option<usize>,
+    /// As sent; [`parse_limit`] decides at dispatch (see there).
+    #[serde(default)]
+    limit: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -76,16 +78,29 @@ struct StatsArgs {
     since: Option<String>,
 }
 
-/// Small local models sometimes write a number as a string ("50") or null.
-/// Only ever narrows what is read: an unparseable limit is no limit, which
-/// `diag_reader` clamps to `logs_max_lines` either way.
-fn lenient_limit<'de, D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Option<usize>, D::Error> {
-    match Option::<Value>::deserialize(deserializer)? {
-        Some(Value::Number(n)) => Ok(n.as_u64().map(|n| n as usize)),
-        Some(Value::String(s)) => Ok(s.trim().parse::<usize>().ok()),
-        _ => Ok(None),
+/// A call's `limit`: absent or `null` is no limit (`diag_reader` uses
+/// `logs_max_lines`); a positive whole number, or one written as a string
+/// ("25", which small local models send), is that limit; anything else (0, a
+/// negative or fractional number, other text, a bool, an object) is `Err`.
+/// Operator decision (#1035 review, 2026-11-21): accept numeric strings, refuse
+/// the rest. It is parsed here at dispatch, not in the batch's protocol check,
+/// so a bad value refuses only that call (`DIAG_TOOL_ARGUMENTS` as its tool
+/// result) instead of ending the turn. Either way `diag_reader` clamps the
+/// limit to `logs_max_lines`.
+fn parse_limit(raw: &Option<Value>) -> std::result::Result<Option<usize>, ()> {
+    let whole = match raw {
+        None | Some(Value::Null) => return Ok(None),
+        Some(Value::Number(n)) => n.as_u64(),
+        Some(Value::String(s)) => s.trim().parse::<u64>().ok(),
+        Some(_) => None,
+    };
+    match whole {
+        Some(n) if n > 0 => Ok(Some(usize::try_from(n).unwrap_or(usize::MAX))),
+        _ => Err(()),
     }
 }
+
+const LIMIT_REFUSED: &str = "limit must be a positive whole number, like 25";
 
 /// `15m/2h/1d` style (at most 30d) or an RFC3339 timestamp, as seconds.
 fn parse_since_arg(text: &str) -> Option<u64> {
@@ -163,10 +178,16 @@ fn dispatch(state: &AppState, owner: &str, name: &str, args: &str) -> Result<Val
         "logs_read" => {
             let args: ReadArgs =
                 serde_json::from_str(args).map_err(|_| error("DIAG_TOOL_ARGUMENTS", "invalid logs_read arguments"))?;
-            let filter = json!({"cursor":args.cursor.is_some(),"limit":args.limit});
+            // Only a parsed limit is audited, never the text the model sent.
+            let limit = parse_limit(&args.limit);
+            let filter = json!({"cursor":args.cursor.is_some(),"limit":limit.ok().flatten()});
+            let Ok(limit) = limit else {
+                audit(filter, "DIAG_TOOL_ARGUMENTS", 0);
+                return Err(error("DIAG_TOOL_ARGUMENTS", LIMIT_REFUSED));
+            };
             match state
                 .diag
-                .read_page(&logs, &args.file, args.cursor, args.limit, state.audit.redactors())
+                .read_page(&logs, &args.file, args.cursor, limit, state.audit.redactors())
             {
                 Ok(page) => {
                     audit(filter, "ok", page.lines_returned);
@@ -183,10 +204,15 @@ fn dispatch(state: &AppState, owner: &str, name: &str, args: &str) -> Result<Val
         "logs_search" => {
             let args: SearchArgs = serde_json::from_str(args)
                 .map_err(|_| error("DIAG_TOOL_ARGUMENTS", "invalid logs_search arguments"))?;
+            let limit = parse_limit(&args.limit);
             let filter = json!({"event":args.event.is_some(),"code":args.code.is_some(),
                 "actor":args.actor.is_some(),"since":args.since.is_some(),
-                "until":args.until.is_some(),"limit":args.limit});
+                "until":args.until.is_some(),"limit":limit.ok().flatten()});
             let bad = |message: &str| error("DIAG_TOOL_ARGUMENTS", message);
+            let Ok(limit) = limit else {
+                audit(filter, "DIAG_TOOL_ARGUMENTS", 0);
+                return Err(bad(LIMIT_REFUSED));
+            };
             if let Some(event) = &args.event {
                 if !super::diag_reader::valid_event_name(event) {
                     audit(filter, "DIAG_TOOL_ARGUMENTS", 0);
@@ -227,7 +253,7 @@ fn dispatch(state: &AppState, owner: &str, name: &str, args: &str) -> Result<Val
                 actor: args.actor,
                 since_secs,
                 until_ts,
-                limit: args.limit,
+                limit,
             };
             match state.diag.search(&logs, &args.file, &search, state.audit.redactors()) {
                 Ok(result) => {
@@ -652,12 +678,34 @@ mod tests {
     }
 
     #[test]
-    fn lenient_limits_take_numbers_and_numeric_strings() {
-        let args: SearchArgs = serde_json::from_str(r#"{"file":"audit.jsonl","limit":"25"}"#).unwrap();
-        assert_eq!(args.limit, Some(25));
-        let args: SearchArgs = serde_json::from_str(r#"{"file":"audit.jsonl","limit":null}"#).unwrap();
-        assert_eq!(args.limit, None);
-        let args: ReadArgs = serde_json::from_str(r#"{"file":"audit.jsonl","limit":7}"#).unwrap();
-        assert_eq!(args.limit, Some(7));
+    fn limits_take_whole_numbers_and_numeric_strings_and_refuse_the_rest() {
+        for (raw, parsed) in [
+            (json!(7), Some(7)),
+            (json!("25"), Some(25)),
+            (json!(" 25 "), Some(25)),
+            (Value::Null, None),
+        ] {
+            assert_eq!(parse_limit(&Some(raw.clone())), Ok(parsed), "{raw}");
+        }
+        assert_eq!(parse_limit(&None), Ok(None));
+        for raw in [
+            json!(0),
+            json!(-3),
+            json!(2.5),
+            json!("0"),
+            json!("five"),
+            json!("25 lines"),
+            json!(true),
+            json!({"n": 5}),
+            json!([5]),
+        ] {
+            assert_eq!(parse_limit(&Some(raw.clone())), Err(()), "{raw}");
+        }
+        // The batch's protocol check still accepts any `limit`, so a bad one
+        // refuses only that call at dispatch.
+        let args: SearchArgs = serde_json::from_str(r#"{"file":"audit.jsonl","limit":"five"}"#).unwrap();
+        assert_eq!(args.limit, Some(json!("five")));
+        let args: ReadArgs = serde_json::from_str(r#"{"file":"audit.jsonl","limit":2.5}"#).unwrap();
+        assert!(parse_limit(&args.limit).is_err());
     }
 }
