@@ -48,7 +48,8 @@ it actually calls, and an arm's names are never re-pinned at a site.
    strip lists exact · T4 inventory
    staleness (120d) · T5 lock-graph telemetry-crate denylist, both crates · T6
    verified-pin drift (reqwest, rmcp, axum, rustls, hyper, keyring-core, tantivy,
-   lopdf, tracing-subscriber, tauri; `DEFAULT_MIN_GH`) · T7 every `Command::new(` file
+   lopdf, tracing-subscriber, tauri; the sidecar's npm pins across the lock,
+   `package.json` and `Browser-Use.md`; `DEFAULT_MIN_GH`) · T7 every `Command::new(` file
    is listed and `src/server` has none · T8 no literal re-enable, `remove_var`
    or `set_var` of a kill name · T9 every gh/git `RunSpec` routes through its
    builder; the three external-binary sites carry `DO_NOT_TRACK=1` +

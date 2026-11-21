@@ -76,6 +76,8 @@ server -> browser child -> Playwright sidecar -> Chrome (granted origins only)
   `agent_policy` vs agentic `run_store`), the planner/check timeout and
   setup-budget constants (shim/server vs agentic), the iteration default, the
   console's `MAX_GOAL_CHARS`. Never deduplicate them.
+- Under operator review (2026-11-20): shim actions `test`, `context`,
+  `propose-skill`, `apply-skill` lack a server caller; keep them.
 - Config is strict by type. Gates read through `flag_is_true`: only literal
   YAML `true` is on; quoted `"true"` and a missing key are off. A missing key
   is not the shipped value: several gates ship `true` (structured memory,
@@ -150,8 +152,8 @@ server -> browser child -> Playwright sidecar -> Chrome (granted origins only)
 - MCP tools never attach to `/loop`; permitted read-only web tools can.
 - Prefer a `#[cfg(test)] mod tests` unit test beside a pure parser or matcher
   over another integration test.
-- PRs are draft, one concern, on a driver-prefixed branch (`claude/`, `codex/`,
-  `grok/`, `kimi/`, `cyclaw/`, `agent/` when unknown), **based on `main`**, title
+- PRs are draft, one concern, on a driver-prefixed branch (see
+  template), **based on `main`**, title
   `[prefix] - Sentence`, body from `.github/PULL_REQUEST_TEMPLATE.md` with `McLuhan tetrad` and
   `ELI5` filled (run `scripts/check-pr-template.sh`). Core-path changes need an
   invariant statement.
@@ -179,7 +181,7 @@ indexes and packaging scripts; search its basename with `rg` first
 (`lint-diff.py` CG008 checks exempt entries, rows and names).
 
 Sync, then trim. For multi-module PRs or a sync older than weeks, use `doc-sync`
-(operator-typed in Claude) and `dep-sync`, or perform their work manually:
+and `dep-sync`, or perform their work manually:
 recheck described code, pins, locks and `deny.toml` against `origin/main`;
 remove stale/duplicate guidance, dead links and retired dependency watches.
 Lower each trimmed file's `DOCS_BUDGET` cap. Weekly, `cgfixit` reviews
@@ -198,8 +200,7 @@ expands publication, merge or release authority.
 - Codex: [.codex/skills/README.md](.codex/skills/README.md) indexes contract/config
   guards, write-policy probes, verification, optimization and macOS release work.
 - Claude: [.claude/skills/README.md](.claude/skills/README.md) includes its separate
-  invocation policies and Claude-only procedures. Preserve operator-only skills;
-  `doc-sync` remains operator-typed in Claude.
+  invocation policies and Claude-only procedures. Preserve operator-only skills.
 - Copilot: [.github/skills/README.md](.github/skills/README.md) owns its inventory.
 
 Keep operating rules here, contracts in `INVARIANTS.md`, mechanics in skills.
