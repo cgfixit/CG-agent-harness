@@ -7,7 +7,7 @@ const nodes=new Map();let serial=0, calls=[], waitRefresh;
 const node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,disabled:false,open:true,textContent:'',children:[],
  addEventListener(e,f){this[e]=f;},append(x){this.children.push(x);},replaceChildren(){this.children=[];},close(){this.open=false;},showModal(){this.open=true;}});return nodes.get(id);};
 const data={enabled:true,destinations:[],deliveries:[{destination_id:'owned',state:'failed',job_status:'finished',attempts:3,replays:0,job_id:'job',delivery_id:'delivery'}]};
-const context=vm.createContext({$:node,document:{createElement:()=>node('element'+serial++),createTextNode:s=>s},sessionRevision:1,encodeURIComponent,
+const context=vm.createContext({can:()=>true,$:node,document:{createElement:()=>node('element'+serial++),createTextNode:s=>s},sessionRevision:1,encodeURIComponent,
  api:async(path,method,body)=>{calls.push({path,method,body});if(method==='POST')return {};if(waitRefresh)return new Promise(r=>waitRefresh=r);return data;}});
 const start=html.indexOf('/* ── owner-scoped delivery status and explicit replay ── */'),end=html.indexOf('/* ── owned schedule preview and activation ── */',start);
 vm.runInContext(html.slice(start,end),context);

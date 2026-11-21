@@ -17,6 +17,7 @@ const node = id => {
 };
 const context = vm.createContext({
   document:{getElementById:node}, $:node, window:{}, TextEncoder,
+  can:()=>true, setCaps(){},
   stream:node('stream'), hAuthLogout:node('logout'), CSRF_TOKEN:'fixture',
   reviewRevision:0, sessionRevision:1, netconnectRevision:0, sessionClearing:false, agentWatchGeneration:0,
   clearTimeout:timer=>clearedTimers.push(timer), memoryRefreshTimer:'pending-memory-poll', memoryViewRevision:0, memoryRefreshBusy:true,
