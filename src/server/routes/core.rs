@@ -1238,10 +1238,13 @@ pub(crate) async fn chat_inner(
         crate::server::retrieval::RetrievalSurface::Loop => crate::server::diag_reader::Surface::Loop,
         _ => crate::server::diag_reader::Surface::LocalChat,
     };
-    let diag = state
-        .diag
-        .for_turn(&owner, &session.session_id, diag_surface)
-        .map_err(|e| super::diag::diag_error(&e))?;
+    let diag = super::diag::excerpt_for_turn(
+        &state,
+        user.as_ref().map(|u| &u.0),
+        &owner,
+        &session.session_id,
+        diag_surface,
+    )?;
     let web_context = if cloud_selected || !chat_policy.web {
         String::new()
     } else {

@@ -132,7 +132,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 ## invariant: /diag log inspection never widens authority
 
-`diagnostics.logs_enabled` ships as the literal boolean true for a new home and is restart-only. A missing or quoted value stays off. Merging a new seed does not rewrite an existing home `config.yaml`. `diagnostics.self_knowledge` and `diagnostics.live_state` do not open this route. Routes need it and an `admin` or `auditor` account: `DIAG_DISABLED` or `DIAG_REFUSED`, never empty success. A request names a `logs_allowed_files` entry byte for byte (bare names, distinct after case folding, checked at boot); the…
+`diagnostics.logs_enabled` ships the literal boolean true for a new home and is restart-only. A missing or quoted value stays off. A new seed never rewrites an existing home `config.yaml`. `diagnostics.self_knowledge` and `diagnostics.live_state` do not open this route. Routes need it and an `admin` or `auditor` account: `DIAG_DISABLED` or `DIAG_REFUSED`, never empty success. A request names a `logs_allowed_files` entry byte for byte (bare names, distinct after case folding, checked at boot); the server joins…
 
 ## invariant: Netconnect is fail-closed and LAN-scoped
 
