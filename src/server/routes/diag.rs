@@ -90,7 +90,7 @@ pub async fn status(
     });
     Ok(Json(json!({
         "logs_enabled": true,
-        "model_tool": false,
+        "model_tool": cfg.model_tool,
         "limits": {"max_lines": cfg.max_lines, "max_bytes": cfg.max_bytes, "inject_max_chars": cfg.inject_max_chars},
         "files": files,
         "last": last,

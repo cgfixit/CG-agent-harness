@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
+use crate::common::authz::{self, Capability};
 use crate::server::routes::structured_memory::off_worker;
 use crate::server::state::AppState;
 use crate::server::structured_memory::{auto_consolidation_available, current_gates, ConsolidationRun};
@@ -71,7 +72,7 @@ pub(crate) fn owner_active(state: &AppState, owner: &str) -> bool {
             user.user_id == owner
                 && !user.disabled
                 && !user.must_change_password
-                && matches!(user.role.as_str(), "admin" | "operator")
+                && authz::grants_stored(&user.role, Capability::OwnData)
         })
     })
 }

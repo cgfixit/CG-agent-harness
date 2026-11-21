@@ -14,13 +14,13 @@ use serde_json::{json, Value};
 
 use crate::common::auth_store::{AuthManager, UserSummary};
 use crate::common::authn::validate_role;
+use crate::common::authz;
 use crate::common::errors::HarnessError;
 use crate::server::errors::{ApiError, ApiResult};
 use crate::server::schemas::*;
 use crate::server::state::AppState;
 
 pub const SESSION_COOKIE: &str = "cgagentharness_session";
-const ROLE_ADMIN: &str = "admin";
 const ROLE_OPERATOR: &str = "operator";
 const PERM_DENIED: &str = "AUTH_PERMISSION_DENIED";
 
@@ -145,7 +145,7 @@ pub(super) fn context_owner(user: Option<Extension<UserSummary>>) -> String {
 /// A home without accounts has one local user, who owns the policy file.
 pub(crate) fn may_read_search_results(state: &AppState, user: Option<&UserSummary>) -> bool {
     match user {
-        Some(account) => account.role == ROLE_ADMIN,
+        Some(account) => authz::is_role(&account.role, authz::Role::Admin),
         None => state.auth.is_none(),
     }
 }
@@ -155,7 +155,7 @@ fn denied() -> ApiError {
 }
 
 fn require_user_admin(account: &UserSummary) -> ApiResult<()> {
-    if account.role != ROLE_ADMIN || account.must_change_password {
+    if !authz::is_role(&account.role, authz::Role::Admin) || account.must_change_password {
         return Err(denied());
     }
     Ok(())
@@ -619,6 +619,8 @@ use axum::extract::FromRequest;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const ROLE_ADMIN: &str = "admin";
 
     #[test]
     fn an_admin_demoted_or_disabled_after_the_route_check_cannot_change_accounts() {

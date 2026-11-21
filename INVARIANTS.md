@@ -158,8 +158,9 @@ maps each role to the capabilities it grants. An authenticated request whose
 template or method is unlisted is denied by default: a new route has no role
 access until the table names it. Roles are parsed once at the gate; unknown
 stored roles fail closed. A method no row lists for the matched template is
-refused without reaching a handler. Handler-level role string comparisons
-remain as legacy surface, pinned by the invariant guard pending consolidation. Storing `auditor` first moves a
+refused without reaching a handler. Handler-level role checks call
+`common::authz` helpers (`grants_stored`, `is_role`); the invariant guard
+rejects a new ad-hoc comparison until its PR pins it. Storing `auditor` first moves a
 version 1 or 2 account database to schema 3, which older binaries refuse;
 retired `audit` (left disabled) and `portal_auditor` fold into `auditor` at open,
 revoking their sessions and logging one `auth.role_migrated` event per
@@ -1031,8 +1032,7 @@ local chat turns and `/prompt`, fenced as untrusted and counted as prompt
 tokens (the live block in the system prompt, excerpts with the new message);
 a message of only stopwords selects no excerpt. Cloud chat, `/loop` and `/agent`
 never receive them, nor does `auditor` receive the live block. Audits hold chunk
-ids, counts and the manual hash, never text. Chat still exposes exactly two
-model tools.
+ids, counts and the manual hash, never text. Neither is a model tool.
 
 - Locked by: `server::self_manual` and `server::live_state` tests,
   `tests/self_manual.rs`, `invariant_guard::self_knowledge_reads_no_file_and_never_reaches_agent_runs`.
@@ -1053,11 +1053,17 @@ refuses. `/diag inject` stages the last read in memory for the next local chat
 turn of that session, fenced as untrusted; cloud chat and `/agent` refuse while
 staged (`DIAG_SURFACE_FORBIDDEN`), `/loop` never receives it, and clear, logout
 or account changes drop it. Audits hold names, counts, hashes and codes, never
-log text. Chat still exposes exactly two model tools (`web_search` and
-`web_fetch`); `diagnostics.model_tool` registers nothing and does not enable
-`/diag`. Literal true only warns.
+log text. With `diagnostics.model_tool` the literal boolean true (ships false,
+restart-only), an `admin`/`auditor` account's local chat turn may instead
+offer the model four read-only log tools (`logs_list`, `logs_read`,
+`logs_search`, `logs_stats`): the same allowlist, redaction and scanner
+refusal, byte-offset paging, the allowlisted file and filter shape (never
+model text) in audits, the untrusted header in results, and a live grant
+re-check before every batch. Cloud chat, `/loop`, `/agent`, web-tool turns,
+accounts-off homes and every other role never see them.
 
-- Locked by: `server::diag_reader` and `server::slash` tests, `tests/diag_routes.rs`,
+- Locked by: `server::diag_reader`, `server::chat_diag` and `server::slash`
+  tests, `tests/diag_routes.rs`,
   `invariant_guard::diag_reads_only_named_files_under_home_logs` and
   `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`.
 

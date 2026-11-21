@@ -77,6 +77,10 @@ pub enum Capability {
     ReadAudit,
     /// `/diag` status, bounded reads and excerpt staging.
     ReadLogs,
+    /// The read-only log-investigation tools in local chat (`chat_diag`), on
+    /// top of `ReadLogs` and only when `diagnostics.model_tool` is literal
+    /// true. No route maps here; the tool loop checks it per batch (#965).
+    InvestigateLogs,
     /// Panel and inventory reads: registry, tools, skills, netconnect.
     ReadPanels,
 }
@@ -85,7 +89,7 @@ impl Capability {
     /// Every capability in declaration order: the iteration domain for
     /// [`capabilities_for`]. Adding a variant fails compilation in `grants`
     /// and here until both are decided.
-    pub const ALL: [Capability; 21] = [
+    pub const ALL: [Capability; 22] = [
         Capability::Public,
         Capability::OwnAccount,
         Capability::OwnSessions,
@@ -106,6 +110,7 @@ impl Capability {
         Capability::BrowserUse,
         Capability::ReadAudit,
         Capability::ReadLogs,
+        Capability::InvestigateLogs,
         Capability::ReadPanels,
     ];
 
@@ -133,6 +138,7 @@ impl Capability {
             Capability::BrowserUse => "browser_use",
             Capability::ReadAudit => "read_audit",
             Capability::ReadLogs => "read_logs",
+            Capability::InvestigateLogs => "investigate_logs",
             Capability::ReadPanels => "read_panels",
         }
     }
@@ -153,6 +159,20 @@ pub fn capabilities_for(role: Role) -> Vec<&'static str> {
 /// closed to no capabilities, matching the gate's refusal of the same string.
 pub fn capabilities_for_stored(stored: &str) -> Vec<&'static str> {
     Role::parse(stored).map(capabilities_for).unwrap_or_default()
+}
+
+/// [`grants`] for a stored role string, for the mid-turn re-checks that read
+/// a fresh account record (chat_diag): an unparseable value fails closed.
+pub fn grants_stored(stored: &str, capability: Capability) -> bool {
+    Role::parse(stored).is_some_and(|role| grants(role, capability))
+}
+
+/// Whether a stored role string is exactly `role`, for checks that are about
+/// role identity rather than a granted capability (the last-admin fold, the
+/// schema 3 widening probe): an unparseable value fails closed. Keeping the
+/// comparison here leaves `Role::parse` behind the gate (#965).
+pub fn is_role(stored: &str, role: Role) -> bool {
+    Role::parse(stored) == Some(role)
 }
 
 /// Whether the role's surface is method-exact. The restricted role
@@ -249,10 +269,10 @@ pub fn grants(role: Role, capability: Capability) -> bool {
             Public | OwnAccount | OwnSessions | OwnData | Chat | ChatAttachments | WebUse | UseMcp | RunCoding
             | ProposePersona | ReadPanels => true,
             ManageModels | ManageSharedContent | ManageWebPolicy | ManageCredentials | ManageAccounts
-            | ManageConfig | BrowserUse | ReadAudit | ReadLogs | NotificationReplay => false,
+            | ManageConfig | BrowserUse | ReadAudit | ReadLogs | InvestigateLogs | NotificationReplay => false,
         },
         Role::Auditor => match capability {
-            Public | OwnAccount | OwnSessions | Chat | ReadAudit | ReadLogs => true,
+            Public | OwnAccount | OwnSessions | Chat | ReadAudit | ReadLogs | InvestigateLogs => true,
             OwnData | ChatAttachments | WebUse | UseMcp | RunCoding | ManageModels | ManageSharedContent
             | ManageWebPolicy | ManageCredentials | ManageAccounts | ManageConfig | BrowserUse | ReadPanels
             | ProposePersona | NotificationReplay => false,
@@ -304,6 +324,17 @@ mod tests {
             "portal_auditor",
         ] {
             assert_eq!(Role::parse(stored), None, "{stored}");
+        }
+    }
+
+    #[test]
+    fn is_role_matches_exactly_and_fails_closed() {
+        assert!(is_role("admin", Role::Admin));
+        assert!(!is_role("admin", Role::Operator));
+        assert!(is_role("auditor", Role::Auditor));
+        for stored in ["", "Admin", "root", "portal_auditor"] {
+            assert!(!is_role(stored, Role::Admin), "{stored}");
+            assert!(!is_role(stored, Role::Auditor), "{stored}");
         }
     }
 

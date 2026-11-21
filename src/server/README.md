@@ -17,7 +17,7 @@ The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs) and
 - [`config_reload.rs`](config_reload.rs): hot reload of the `RELOADABLE` allowlist into `RuntimeLimits`; SIGHUP installer.
 - [`console.rs`](console.rs): `GET /` and `/static/{name}`; inserts response CSP nonces after `mod.rs` substitutes the CSRF token.
 - [`desktop.rs`](desktop.rs): Unix-only parent/sidecar stdio protocol; carries ownership, no API authority.
-- [`diag_reader.rs`](diag_reader.rs): allowlisted private log tails, bounded reads, redaction and injection scanning.
+- [`diag_reader.rs`](diag_reader.rs), [`chat_diag.rs`](chat_diag.rs): allowlisted log reads, redaction, injection scanning; opt-in chat tools.
 - [`docx.rs`](docx.rs): bounded DOCX main-document text extraction; no relationships, macros or disk.
 - [`env_keys.rs`](env_keys.rs): `MANAGED_KEYS` allowlist for `/api/keys`: masked status, credential-store writes.
 - [`errors.rs`](errors.rs): `ApiError` JSON `detail` envelope the console's `api()` helper reads.
