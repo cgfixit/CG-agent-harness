@@ -13,6 +13,7 @@ use super::compaction::estimate_tokens;
 use super::state::AppState;
 use super::web_index::{Coverage, Passage};
 use super::web_policy::{error, valid_group};
+use crate::common::authz::{self, Capability};
 use crate::common::errors::Result;
 use crate::llm::openai_chat::ChatMessage;
 
@@ -584,7 +585,7 @@ pub(super) fn authorize_owner(state: &AppState, owner: &str) -> Result<()> {
             u.user_id == owner
                 && !u.disabled
                 && !u.must_change_password
-                && matches!(u.role.as_str(), "admin" | "operator")
+                && authz::grants_stored(&u.role, Capability::WebUse)
         })
     }) {
         return Err(error("WEB_PERMISSION_DENIED", "account no longer permits research"));

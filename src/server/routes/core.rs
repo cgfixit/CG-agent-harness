@@ -42,7 +42,10 @@ pub async fn reload_config(
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(_req): ValidJson<ConfigReloadRequest>,
 ) -> ApiResult<Json<Value>> {
-    if user.is_none_or(|user| user.role != "admin" || user.must_change_password) {
+    if user.is_none_or(|user| {
+        !crate::common::authz::grants_stored(&user.role, crate::common::authz::Capability::ManageConfig)
+            || user.must_change_password
+    }) {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "AUTH_PERMISSION_DENIED",

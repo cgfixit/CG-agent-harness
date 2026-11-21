@@ -10,6 +10,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde_json::{json, Value};
 
+use crate::common::authz::{self, Capability};
 use crate::common::tool_broker::assert_allowed;
 use crate::server::agent_policy::{available_profiles, resolve_check_profiles, run_id_re};
 use crate::server::errors::{session_status, ApiError, ApiResult};
@@ -590,7 +591,7 @@ fn schedule_owner_authorized(state: &AppState, owner: &str) -> bool {
             user.user_id == owner
                 && !user.disabled
                 && !user.must_change_password
-                && matches!(user.role.as_str(), "admin" | "operator")
+                && authz::grants_stored(&user.role, Capability::RunCoding)
         }),
         None => owner == "local",
     }

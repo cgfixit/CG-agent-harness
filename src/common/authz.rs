@@ -167,6 +167,14 @@ pub fn grants_stored(stored: &str, capability: Capability) -> bool {
     Role::parse(stored).is_some_and(|role| grants(role, capability))
 }
 
+/// Whether a stored role string is exactly `role`, for checks that are about
+/// role identity rather than a granted capability (the last-admin fold, the
+/// schema 3 widening probe): an unparseable value fails closed. Keeping the
+/// comparison here leaves `Role::parse` behind the gate (#965).
+pub fn is_role(stored: &str, role: Role) -> bool {
+    Role::parse(stored) == Some(role)
+}
+
 /// Whether the role's surface is method-exact. The restricted role
 /// (`auditor`) is refused on any unlisted `(method, route)` pair,
 /// while admin and operator keep the router's 405 on a template they fully
@@ -316,6 +324,17 @@ mod tests {
             "portal_auditor",
         ] {
             assert_eq!(Role::parse(stored), None, "{stored}");
+        }
+    }
+
+    #[test]
+    fn is_role_matches_exactly_and_fails_closed() {
+        assert!(is_role("admin", Role::Admin));
+        assert!(!is_role("admin", Role::Operator));
+        assert!(is_role("auditor", Role::Auditor));
+        for stored in ["", "Admin", "root", "portal_auditor"] {
+            assert!(!is_role(stored, Role::Admin), "{stored}");
+            assert!(!is_role(stored, Role::Auditor), "{stored}");
         }
     }
 

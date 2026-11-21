@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 #[path = "auth_sqlite.rs"]
 mod sqlite;
 use super::authn;
+use super::authz;
 use super::config::AppConfig;
 use super::errors::{HarnessError, Result};
 
@@ -385,7 +386,7 @@ impl AuthManager {
 
     fn is_last_enabled_admin(db: &AuthDb, username: &str) -> bool {
         match db.users.get(username) {
-            Some(u) if u.role == "admin" && !u.disabled => count_enabled_admins(db) <= 1,
+            Some(u) if authz::is_role(&u.role, authz::Role::Admin) && !u.disabled => count_enabled_admins(db) <= 1,
             _ => false,
         }
     }
@@ -398,7 +399,7 @@ impl AuthManager {
         if !db.users.contains_key(&canonical) {
             return Err(HarnessError::auth_user_not_found(&canonical));
         }
-        if canonical_role != "admin" && Self::is_last_enabled_admin(&db, &canonical) {
+        if !authz::is_role(&canonical_role, authz::Role::Admin) && Self::is_last_enabled_admin(&db, &canonical) {
             return Err(HarnessError::auth_last_admin());
         }
         if let Some(u) = db.users.get_mut(&canonical) {
@@ -666,7 +667,10 @@ fn setup_code_path(store: &Path) -> PathBuf {
 }
 
 fn count_enabled_admins(db: &AuthDb) -> usize {
-    db.users.values().filter(|u| u.role == "admin" && !u.disabled).count()
+    db.users
+        .values()
+        .filter(|u| authz::is_role(&u.role, authz::Role::Admin) && !u.disabled)
+        .count()
 }
 
 fn revoke_sessions_for(db: &mut AuthDb, username: &str) {

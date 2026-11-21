@@ -1,6 +1,6 @@
 //! Versioned authoritative account storage. The owner process serializes writes;
 //! every mutation is committed before its in-memory snapshot becomes visible.
-use super::{authn, AuthDb, SessionRow, UserRow};
+use super::{authn, authz, AuthDb, SessionRow, UserRow};
 use crate::common::{
     atomic::write_atomic,
     errors::{HarnessError, Result},
@@ -127,7 +127,9 @@ fn migrate_legacy_roles(db: &mut AuthDb) -> Vec<RoleMigration> {
 
 /// Call with sessions and users already emptied: the drop then cascades nothing.
 fn widen_roles_if_needed(conn: &Connection, db: &AuthDb) -> rusqlite::Result<()> {
-    if matches!(schema_version(conn)?, 1 | 2) && db.users.values().any(|u| u.role == authn::AUDITOR_ROLE) {
+    if matches!(schema_version(conn)?, 1 | 2)
+        && db.users.values().any(|u| authz::is_role(&u.role, authz::Role::Auditor))
+    {
         conn.execute_batch(USERS_V3)?;
     }
     Ok(())

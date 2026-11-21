@@ -1418,43 +1418,11 @@ fn account_role_comparisons_stay_pinned_to_authz() {
     /// parser/matrix.
     const ROLE_OWNERS: &[&str] = &["common/authn.rs", "common/authz.rs"];
     /// (file, needle) pairs, each consumed once: a leftover pin is stale and
-    /// a hit without a pin is a new ad-hoc role check.
-    const PINNED: &[(&str, &str)] = &[
-        ("common/auth_sqlite.rs", "u.role == authn::AUDITOR_ROLE"),
-        (
-            "common/auth_store.rs",
-            "Some(u) if u.role == \"admin\" && !u.disabled => count_enabled_admins",
-        ),
-        ("common/auth_store.rs", "canonical_role != \"admin\""),
-        (
-            "common/auth_store.rs",
-            "filter(|u| u.role == \"admin\" && !u.disabled).count()",
-        ),
-        (
-            "server/loop_runner.rs",
-            "matches!(current.role.as_str(), \"operator\" | \"admin\")",
-        ),
-        (
-            "server/notifications.rs",
-            "matches!(u.role.as_str(), \"admin\" | \"operator\")",
-        ),
-        (
-            "server/structured_memory_auto.rs",
-            "matches!(user.role.as_str(), \"admin\" | \"operator\")",
-        ),
-        (
-            "server/web_research.rs",
-            "matches!(u.role.as_str(), \"admin\" | \"operator\")",
-        ),
-        (
-            "server/routes/agent.rs",
-            "matches!(user.role.as_str(), \"admin\" | \"operator\")",
-        ),
-        ("server/routes/auth.rs", "account.role == ROLE_ADMIN"),
-        ("server/routes/auth.rs", "account.role != ROLE_ADMIN"),
-        ("server/routes/core.rs", "user.role != \"admin\""),
-        ("server/routes/session_io.rs", "u.role != \"admin\""),
-    ];
+    /// a hit without a pin is a new ad-hoc role check. Empty since #965's
+    /// consolidation moved every site onto `authz` (`grants_stored`/`is_role`);
+    /// the scan stays so the next comparison fails the build until it is
+    /// pinned here with its PR.
+    const PINNED: &[(&str, &str)] = &[];
     /// A line is an account-role comparison when it has a comparison shape and
     /// names an account role. Message roles ("user"/"assistant") never match.
     const SHAPES: &[&str] = &["role == ", "role != ", "role.as_str()"];
