@@ -48,9 +48,12 @@ const LEDGER_FILE: &str = "web_units.sqlite";
 /// Written once the ledger first holds its schema: a later missing ledger file
 /// then refuses instead of starting again from zero.
 const MARKER_FILE: &str = "web_units.established";
-const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024;
-/// UTC days of rows kept; older rows are pruned on each reservation.
-const KEEP_DAYS: i64 = 40;
+/// Open limit. With two days kept and SQLite reusing freed pages, even the
+/// highest ceilings (100,000 units a day each) stay well under it.
+const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
+/// UTC days of rows kept besides today; older rows are pruned on each
+/// reservation. Only today's rows are ever read.
+const KEEP_DAYS: i64 = 1;
 const SECONDS_PER_DAY: u64 = 86_400;
 /// Bounds every `*_units_per_day` key accepts.
 const CEILING_RANGE: std::ops::RangeInclusive<u64> = 1..=100_000;
@@ -185,7 +188,37 @@ impl Ledger {
                 Err(e) => return Err(refused(e)),
             }
         }
-        let conn = private_sqlite::connect(&path, MAX_FILE_BYTES, "provider-unit ledger", unavailable)?;
+        // Every failure to open, including a generic I/O error from the private-file
+        // checks, is the ledger's own refusal, so a search still falls through.
+        let conn =
+            private_sqlite::connect(&path, MAX_FILE_BYTES, "provider-unit ledger", unavailable).map_err(|e| {
+                if e.code == UNITS_UNAVAILABLE {
+                    e
+                } else {
+                    unavailable("the provider-unit ledger could not be opened")
+                }
+            })?;
+        let established =
+            private_sqlite::present(&marker).map_err(|_| unavailable("the provider-unit ledger could not be read"))?;
+        if established {
+            // An established ledger emptied or truncated has no table: SQLite would
+            // accept it as a new database, so creating the schema now would reset
+            // the day's spending to zero.
+            let tables: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'units'",
+                    [],
+                    |row| row.get(0),
+                )
+                .map_err(sql)?;
+            if tables != 1 {
+                return Err(unavailable(
+                    "the established provider-unit ledger has lost its records; paid web providers stay refused \
+                     until it is restored or its web_units.established marker is removed",
+                ));
+            }
+            return Ok(conn);
+        }
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS units (
                 id INTEGER PRIMARY KEY,
@@ -197,10 +230,8 @@ impl Ledger {
             CREATE INDEX IF NOT EXISTS units_by_day ON units (provider, day);",
         )
         .map_err(sql)?;
-        if !private_sqlite::present(&marker).map_err(|_| unavailable("the provider-unit ledger could not be read"))? {
-            crate::common::atomic::write_atomic(&marker, b"provider-unit ledger established\n", Some(0o600))
-                .map_err(|_| unavailable("the provider-unit ledger could not be written"))?;
-        }
+        crate::common::atomic::write_atomic(&marker, b"provider-unit ledger established\n", Some(0o600))
+            .map_err(|_| unavailable("the provider-unit ledger could not be written"))?;
         Ok(conn)
     }
 
@@ -273,12 +304,71 @@ impl Ledger {
     }
 }
 
+/// Units held for one outbound request. Dropped without [`Self::mark_sent`],
+/// it gives them back: a refusal before the send, or the request future
+/// being dropped by an outer deadline or a cancelled turn before it sent
+/// anything, never keeps units. Marked sent, the units stay reserved.
+pub struct UnitGuard {
+    ledger: Arc<Ledger>,
+    reservation: Option<Reservation>,
+    sent: std::sync::atomic::AtomicBool,
+}
+
+impl UnitGuard {
+    /// Set just before the request leaves: from here an outcome is ambiguous.
+    pub fn mark_sent(&self) {
+        self.sent.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The flag [`Self::mark_sent`] sets, for code that marks the send itself.
+    pub fn sent_flag(&self) -> &std::sync::atomic::AtomicBool {
+        &self.sent
+    }
+}
+
+impl Drop for UnitGuard {
+    fn drop(&mut self) {
+        if self.sent.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        let Some(reservation) = self.reservation.take() else {
+            return;
+        };
+        let ledger = Arc::clone(&self.ledger);
+        let release = move || {
+            if ledger.release(&reservation).is_err() {
+                tracing::warn!(
+                    "an unsent paid web request's units could not be released; they stay reserved for today"
+                );
+            }
+        };
+        // SQLite and fsync stay off the async worker that drops the guard.
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn_blocking(release);
+            }
+            Err(_) => release(),
+        }
+    }
+}
+
 impl WebTool {
     /// Reserve units for one paid request, on the blocking pool. A refusal is
     /// audited with the provider, code and counts, never a query, URL or key.
-    pub(super) async fn reserve_units(&self, provider: Paid, units: u64, audit: &Audit) -> Result<Reservation> {
+    /// The reservation is handed over through a oneshot: if this future is
+    /// dropped while the blocking task runs, the send fails and the task gives
+    /// the units back itself, so a cancelled reservation never leaks.
+    pub(super) async fn reserve_units(&self, provider: Paid, units: u64, audit: &Audit) -> Result<UnitGuard> {
         let ledger = Arc::clone(&self.units);
-        let outcome = tokio::task::spawn_blocking(move || ledger.reserve(provider, units, unix_now()))
+        let (handoff, received) = tokio::sync::oneshot::channel();
+        let task_ledger = Arc::clone(&ledger);
+        tokio::task::spawn_blocking(move || {
+            let outcome = task_ledger.reserve(provider, units, unix_now());
+            if let Err(Ok(orphaned)) = handoff.send(outcome) {
+                let _ = task_ledger.release(&orphaned);
+            }
+        });
+        let outcome = received
             .await
             .unwrap_or_else(|_| Err(unavailable("the provider-unit ledger task stopped")));
         if let Err(refusal) = &outcome {
@@ -291,21 +381,11 @@ impl WebTool {
                 "units_ceiling": refusal.details.get("units_ceiling"),
             }));
         }
-        outcome
-    }
-
-    /// Release a reservation when its request was never sent; keep it when
-    /// the send started (`sent`). A failed release keeps the units reserved,
-    /// which only ever errs toward spending less.
-    pub(super) async fn release_unsent(&self, reservation: Reservation, sent: bool) {
-        if sent {
-            return;
-        }
-        let ledger = Arc::clone(&self.units);
-        let released = tokio::task::spawn_blocking(move || ledger.release(&reservation)).await;
-        if !matches!(released, Ok(Ok(()))) {
-            tracing::warn!("an unsent paid web request's units could not be released; they stay reserved for today");
-        }
+        outcome.map(|reservation| UnitGuard {
+            ledger,
+            reservation: Some(reservation),
+            sent: std::sync::atomic::AtomicBool::new(false),
+        })
     }
 }
 
@@ -453,6 +533,80 @@ mod tests {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
             assert_eq!(units.reserve(Paid::Tavily, 1, DAY).unwrap_err().code, UNITS_UNAVAILABLE);
         }
+    }
+
+    /// Codex review on #1077: an established ledger truncated to zero bytes is
+    /// a valid empty SQLite file, and recreating its table would reset the
+    /// day's spending. It is refused instead, and a ledger path that cannot be
+    /// opened at all (here a symlink, refused by O_NOFOLLOW) reports the
+    /// ledger's own code, so a search still falls through.
+    #[test]
+    fn a_truncated_or_unopenable_established_ledger_is_refused_not_reset() {
+        let dir = private_dir();
+        let units = ledger(dir.path(), 2, 8, 30);
+        units.reserve(Paid::Tavily, 2, DAY).unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(dir.path().join(LEDGER_FILE))
+            .unwrap();
+        assert_eq!(units.reserve(Paid::Tavily, 1, DAY).unwrap_err().code, UNITS_UNAVAILABLE);
+        assert_eq!(units.used(Paid::Tavily, DAY).unwrap_err().code, UNITS_UNAVAILABLE);
+
+        #[cfg(unix)]
+        {
+            let dir = private_dir();
+            let target = dir.path().join("elsewhere.sqlite");
+            std::fs::write(&target, b"").unwrap();
+            std::os::unix::fs::symlink(&target, dir.path().join(LEDGER_FILE)).unwrap();
+            let refused = ledger(dir.path(), 2, 8, 30).reserve(Paid::Tavily, 1, DAY).unwrap_err();
+            assert_eq!(refused.code, UNITS_UNAVAILABLE, "{}", refused.message);
+        }
+    }
+
+    async fn wait_for_used(units: &Ledger, provider: Paid, now: u64, want: u64) {
+        for _ in 0..200 {
+            if units.used(provider, now).unwrap() == want {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(units.used(provider, now).unwrap(), want);
+    }
+
+    /// Codex review on #1077: units must come back when the request future is
+    /// dropped before it sends, by an outer hop deadline or a cancelled turn,
+    /// and also when the reservation itself is still being written as its
+    /// caller goes away. A guard marked sent keeps its units.
+    #[tokio::test]
+    async fn a_dropped_or_abandoned_unsent_reservation_gives_its_units_back() {
+        let dir = private_dir();
+        let cfg = AppConfig::from_str("{}", Path::new("config.yaml")).unwrap();
+        let web = WebTool::new(dir.path(), &cfg).unwrap();
+        let audit = Audit::new(dir.path().join("audit.jsonl"), &cfg);
+        let now = unix_now();
+
+        let unsent = web.reserve_units(Paid::Tavily, 1, &audit).await.unwrap();
+        assert_eq!(web.units.used(Paid::Tavily, now).unwrap(), 1);
+        drop(unsent);
+        wait_for_used(&web.units, Paid::Tavily, now, 0).await;
+
+        let sent = web.reserve_units(Paid::Tavily, 1, &audit).await.unwrap();
+        sent.mark_sent();
+        drop(sent);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(
+            web.units.used(Paid::Tavily, now).unwrap(),
+            1,
+            "a sent request keeps its units"
+        );
+
+        // The awaiting future is dropped after its first poll, while the blocking
+        // task is still reserving: the task hands nothing over and gives it back.
+        let abandoned =
+            tokio::time::timeout(std::time::Duration::ZERO, web.reserve_units(Paid::Serpapi, 1, &audit)).await;
+        assert!(abandoned.is_err(), "the reservation was still in flight");
+        wait_for_used(&web.units, Paid::Serpapi, now, 0).await;
     }
 
     #[test]

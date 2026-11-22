@@ -853,16 +853,12 @@ impl WebTool {
             .and_then(|rows| rows)
         } else {
             // One SerpAPI search, reserved durably before anything leaves (#772
-            // D10); released only if it was never sent. A spent ceiling returns
-            // here, before the cooldown below, and falls through to the next hop.
-            let reservation = self.reserve_units(super::web_units::Paid::Serpapi, 1, audit).await?;
-            let sent = std::sync::atomic::AtomicBool::new(false);
-            let listing = self.api_search(endpoint, query, count, key.trim(), &sent).await;
-            if listing.is_err() {
-                self.release_unsent(reservation, sent.load(std::sync::atomic::Ordering::SeqCst))
-                    .await;
-            }
-            listing
+            // D10). The guard gives it back unless the send started, including
+            // when the hop deadline drops this future first. A spent ceiling
+            // returns here, before the cooldown below, and falls through.
+            let units = self.reserve_units(super::web_units::Paid::Serpapi, 1, audit).await?;
+            self.api_search(endpoint, query, count, key.trim(), units.sent_flag())
+                .await
         };
         let (rows, extras) = match fetched {
             Ok(listing) => listing,

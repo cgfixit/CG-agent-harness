@@ -57,25 +57,27 @@ impl FirecrawlConfig {
 pub(crate) struct HourlyCap(std::sync::Mutex<(u64, u64)>);
 
 impl HourlyCap {
-    /// Take one read when fewer than `max` were taken this clock hour.
-    pub(super) fn take(&self, now_unix: u64, max: u64) -> bool {
+    /// Take one read when fewer than `max` were taken this clock hour, and
+    /// return the hour it was charged to.
+    pub(super) fn take(&self, now_unix: u64, max: u64) -> Option<u64> {
         let hour = now_unix - now_unix % 3600;
         let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
         if state.0 != hour {
             *state = (hour, 0);
         }
         if state.1 >= max {
-            return false;
+            return None;
         }
         state.1 += 1;
-        true
+        Some(hour)
     }
 
-    /// Give back a read taken this clock hour whose request was never sent, so
-    /// a refusal before the send (a changed key or policy, a disabled web, a
-    /// failed lookup) does not spend the hour's allowance.
-    pub(super) fn give_back(&self, now_unix: u64) {
-        let hour = now_unix - now_unix % 3600;
+    /// Give back a read whose request was never sent, so a refusal before the
+    /// send (a changed key or policy, a disabled web, a failed lookup) does not
+    /// spend the hour's allowance. Only to the hour `take` charged: once that
+    /// hour has ended the slot is not returned, so a later hour's reads keep
+    /// their own count.
+    pub(super) fn give_back(&self, hour: u64) {
         let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
         if state.0 == hour {
             state.1 = state.1.saturating_sub(1);
@@ -292,21 +294,21 @@ impl WebTool {
         }
         let policy = self.policy()?;
         let target = policy.authorize_read(raw, group)?;
-        if !self.firecrawl_spent.take(unix_now(), self.firecrawl.max_per_hour) {
+        let Some(hour) = self.firecrawl_spent.take(unix_now(), self.firecrawl.max_per_hour) else {
             return Err(
                 error("WEB_FALLBACK_CAP", "web.firecrawl.max_per_hour is spent for this hour")
                     .detail("limit", "hourly"),
             );
-        }
+        };
         // The durable daily units (#772 D10) after the hourly slot; a refusal
         // gives that slot back, since nothing was sent.
-        let reservation = match self
+        let reserved = match self
             .reserve_units(super::web_units::Paid::Firecrawl, units, audit)
             .await
         {
-            Ok(reservation) => reservation,
+            Ok(reserved) => reserved,
             Err(refusal) => {
-                self.firecrawl_spent.give_back(unix_now());
+                self.firecrawl_spent.give_back(hour);
                 return Err(refusal);
             }
         };
@@ -349,6 +351,7 @@ impl WebTool {
                 ));
             }
             charged.store(self.limits.response_bytes, Ordering::SeqCst);
+            reserved.mark_sent();
             let response = client
                 .post(endpoint)
                 // The pinned client stops at `web.request_seconds`; this request
@@ -389,11 +392,9 @@ impl WebTool {
             Ok(read) => read,
             Err(failure) => {
                 // `charged` is set just before the send: zero proves nothing left.
-                let sent = charged.load(Ordering::SeqCst) > 0;
-                if !sent {
-                    self.firecrawl_spent.give_back(unix_now());
+                if charged.load(Ordering::SeqCst) == 0 {
+                    self.firecrawl_spent.give_back(hour);
                 }
-                self.release_unsent(reservation, sent).await;
                 if let Some(until) =
                     self.search_cooldown
                         .start(PROVIDER, &failure.code, &self.limits, Instant::now(), unix_now())
@@ -1344,10 +1345,15 @@ mod tests {
     fn the_hourly_cap_counts_per_clock_hour() {
         let cap = HourlyCap::default();
         let hour = 500_000 * 3600;
-        assert!(cap.take(hour + 1, 2));
-        assert!(cap.take(hour + 2, 2));
-        assert!(!cap.take(hour + 3, 2), "the third read in the hour is refused");
-        assert!(cap.take(hour + 3600, 2), "a new hour starts empty");
+        assert_eq!(cap.take(hour + 1, 2), Some(hour));
+        assert_eq!(cap.take(hour + 2, 2), Some(hour));
+        assert_eq!(cap.take(hour + 3, 2), None, "the third read in the hour is refused");
+        assert_eq!(cap.take(hour + 3600, 2), Some(hour + 3600), "a new hour starts empty");
+        // A slot taken in the old hour and given back after the hour changed
+        // does not refund the new hour's read.
+        cap.give_back(hour);
+        assert_eq!(cap.take(hour + 3601, 2), Some(hour + 3600));
+        assert_eq!(cap.take(hour + 3602, 2), None, "the new hour still holds two reads");
     }
 
     #[test]
