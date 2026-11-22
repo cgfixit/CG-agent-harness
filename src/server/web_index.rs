@@ -342,7 +342,12 @@ impl WebTool {
                 // Pages the operator already fetched under it are known-good
                 // starts; without any, the rule still cannot seed a crawl.
                 if cached.is_none() {
-                    cached = Some(self.cached_pages(group)?.0);
+                    // Reading and hashing the cache blocks: off the async worker.
+                    let (tool, selected) = (self.clone(), group.map(str::to_string));
+                    let pages = tokio::task::spawn_blocking(move || tool.cached_pages(selected.as_deref()))
+                        .await
+                        .map_err(|_| error("WEB_INDEX_FAILED", "discovery failed"))??;
+                    cached = Some(pages.0);
                 }
                 seeds = cached
                     .as_ref()
@@ -535,7 +540,15 @@ impl WebTool {
         *count += 1;
         coverage.requests += 1;
         last.insert(origin, Instant::now());
-        let cached = self.read_page(&self.cache_path(url), group).ok();
+        // One cache entry: a file read, a parse, a hash and a policy load, so
+        // off the async worker. A failed read is no cache entry, as before.
+        let cached = {
+            let (tool, path, selected) = (self.clone(), self.cache_path(url), group.map(str::to_string));
+            tokio::task::spawn_blocking(move || tool.read_page(&path, selected.as_deref()).ok())
+                .await
+                .ok()
+                .flatten()
+        };
         // Only exact batch reads (`fetch_many`) may use the Firecrawl fallback; discovery never does.
         // It may spend what the run has left, so a second read cannot overrun `web.run_bytes`.
         let left = self.limits.run_bytes.saturating_sub(coverage.charged_bytes);

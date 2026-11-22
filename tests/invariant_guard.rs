@@ -2443,7 +2443,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 525 words net of the post-#834 additions; measured 3371, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 3380, within a few words of the file.
-    ("docs/SECURE_RESEARCH.md", Guide, 3580),
+    // why: the 2026-11-22 trim-and-update pass (#772 batch and digest contract) measured 3427; rounded up to the next 10 so the cut stays cut.
+    ("docs/SECURE_RESEARCH.md", Guide, 3430),
     // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here; 2157 words, cap set to 2750 for room to grow.
     // why: the 2026-11-11 trim-and-refresh pass cut 308 words net (now 1747); the cap drops by the same amount, rounded up to the next 10, keeping its earlier headroom.
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2450),
