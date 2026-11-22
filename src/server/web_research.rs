@@ -13,7 +13,7 @@ use super::compaction::estimate_tokens;
 use super::state::AppState;
 use super::web_index::{Coverage, Passage};
 use super::web_policy::{error, valid_group};
-use crate::common::authz::{self, Capability};
+use crate::common::authz::Capability;
 use crate::common::errors::Result;
 use crate::llm::openai_chat::ChatMessage;
 
@@ -588,14 +588,11 @@ pub(super) fn authorize_owner(state: &AppState, owner: &str) -> Result<()> {
     {
         return Err(error("WEB_DISABLED", "web disabled during research"));
     }
-    if state.auth.as_ref().is_some_and(|auth| {
-        !auth.list_users().iter().any(|u| {
-            u.user_id == owner
-                && !u.disabled
-                && !u.must_change_password
-                && authz::grants_stored(&u.role, Capability::WebUse)
-        })
-    }) {
+    if state
+        .auth
+        .as_ref()
+        .is_some_and(|auth| !auth.owner_permits(owner, Capability::WebUse))
+    {
         return Err(error("WEB_PERMISSION_DENIED", "account no longer permits research"));
     }
     Ok(())

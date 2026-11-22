@@ -1089,3 +1089,182 @@ async fn runs_are_owner_bound_and_end_when_the_account_is_disabled() {
     }
     panic!("a disabled account's loop kept running");
 }
+
+/// The last user message of a recorded chat-completions request: the framed
+/// loop prompt (history carries only the short stored labels).
+fn framed_prompt(body: &Value) -> String {
+    body["messages"]
+        .as_array()
+        .and_then(|messages| messages.last())
+        .and_then(|message| message["content"].as_str())
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// A failed turn is tried again under the same number, as the console's loop
+/// does: the budget counts completed turns, so the last completed turn is the
+/// one asked for the best answer, and no stored label reads "4 of 3". Before
+/// the fix the attempt counter ran ahead after a failure: attempt 3 got the
+/// final-answer prompt and the real last turn, attempt 4, asked for the next step.
+#[tokio::test]
+async fn a_failed_turn_keeps_its_number_so_the_last_counted_turn_asks_for_the_answer() {
+    use std::sync::{Arc, Mutex};
+    let replies = [
+        ok_reply("first finding", 10, 5),
+        ok_reply("", 10, 5),
+        ok_reply("second finding, a different one", 10, 5),
+        ok_reply("the final answer to the goal", 10, 5),
+    ];
+    let bodies: Arc<Mutex<Vec<Value>>> = Arc::default();
+    let seen = bodies.clone();
+    let app = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+            let reply = {
+                let mut seen = seen.lock().unwrap();
+                seen.push(body);
+                replies[(seen.len() - 1).min(replies.len() - 1)].clone()
+            };
+            async move { axum::Json(reply) }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+    let addr = listener.local_addr().unwrap();
+    let mock = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let s = spawn_server(&format!("http://{addr}/v1"), ServerOptions::default()).await; // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+    let sid = session_with_goal(&s).await;
+    let (status, body) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id": sid, "max_turns": 3, "max_failures": 2, "cooldown_ms": 0}),
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    let run_id = body["run"]["run_id"].as_str().unwrap();
+    let run = wait_for(&s, run_id, "the turn budget", |run| run["state"] == "done").await;
+    assert_eq!(run["stats"]["turns_completed"], 3, "{run}");
+    assert!(
+        run["reason"].as_str().unwrap().contains("loop budget exhausted"),
+        "{run}"
+    );
+
+    let prompts: Vec<String> = bodies.lock().unwrap().iter().map(framed_prompt).collect();
+    assert_eq!(prompts.len(), 4, "three turns and one retried failure: {prompts:#?}");
+    for (prompt, label) in prompts.iter().zip([
+        "Loop turn 1 of 3.",
+        "Loop turn 2 of 3.",
+        "Loop turn 2 of 3.",
+        "Loop turn 3 of 3.",
+    ]) {
+        assert!(prompt.starts_with(label), "expected {label}: {prompt}");
+    }
+    let finals: Vec<bool> = prompts
+        .iter()
+        .map(|prompt| prompt.contains(cgagentharness::server::loop_runner::LOOP_FINAL_STEP))
+        .collect();
+    assert_eq!(
+        finals,
+        [false, false, false, true],
+        "only the last counted turn asks for the answer"
+    );
+
+    let (_, session) = s.get_json(&format!("/api/sessions/{sid}")).await;
+    let stored: Vec<&str> = session["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "user")
+        .filter_map(|message| message["content"].as_str())
+        .collect();
+    assert_eq!(stored, ["Loop turn 1 of 3.", "Loop turn 2 of 3.", "Loop turn 3 of 3."]);
+    mock.abort();
+}
+
+/// A plain (web off) loop turn built its reply under the authority the run
+/// had when the turn began. A role change while the model is answering
+/// revokes the account's sign-ins, so the turn's write withholds the reply as
+/// a chat turn's does: nothing is counted, `chat_reply_withheld` is audited,
+/// and the next turn's authority check ends the run. Before the fix a server
+/// loop turn passed no revocation count, so only a disable or deletion was
+/// noticed and the demoted account's reply was delivered and counted.
+#[tokio::test]
+async fn a_plain_loop_turn_withholds_its_reply_when_the_account_is_demoted_mid_turn() {
+    use reqwest::Method;
+    use std::sync::Arc;
+    let (arrived, release) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    let (arrived_tx, release_rx) = (arrived.clone(), release.clone());
+    let app = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(move || {
+            let (arrived_tx, release_rx) = (arrived_tx.clone(), release_rx.clone());
+            async move {
+                arrived_tx.notify_one();
+                release_rx.notified().await;
+                axum::Json(ok_reply("a reply built under the old role", 10, 5))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
+    let addr = listener.local_addr().unwrap();
+    let mock = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let s = spawn_server(
+        &format!("http://{addr}/v1"), // DevSkim: ignore DS137138 because this test-only model has no credentials and binds only to loopback.
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("loop.cooldown_ms", "0"),
+    )
+    .await;
+    let (alice_id, alice) = account(&s, "alice", "operator").await;
+    let (status, created) = as_account(&s, &alice, Method::POST, "/api/sessions", json!({"title": "loop"})).await;
+    assert_eq!(status, 201);
+    let sid = created["session_id"].as_str().unwrap().to_string();
+    let (status, _) = as_account(
+        &s,
+        &alice,
+        Method::POST,
+        &format!("/api/sessions/{sid}/goal"),
+        json!({"goal": "ship it", "web_mode": "off"}),
+    )
+    .await;
+    assert_eq!(status, 200, "setting the goal with web off");
+    let (status, started) = as_account(
+        &s,
+        &alice,
+        Method::POST,
+        "/api/loop/start",
+        json!({"session_id": sid, "max_turns": 1}),
+    )
+    .await;
+    assert_eq!(status, 200, "starting the loop");
+    let run_id = started["run"]["run_id"].as_str().unwrap().to_string();
+    tokio::time::timeout(std::time::Duration::from_secs(10), arrived.notified())
+        .await
+        .expect("the turn reached the model");
+    s.state.auth.as_ref().unwrap().set_role("alice", "auditor").unwrap();
+    release.notify_one();
+    let mut run = s.state.loops.get(&alice_id, &run_id).unwrap();
+    for _ in 0..200 {
+        run = s.state.loops.get(&alice_id, &run_id).unwrap();
+        if run.state.terminal() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert_eq!(run.state.as_str(), "failed", "{}", run.reason);
+    assert!(run.reason.contains("auditor"), "{}", run.reason);
+    assert_eq!(
+        run.stats.turns_completed, 0,
+        "the withheld reply is not a completed turn"
+    );
+    let withheld = s
+        .audit_log()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|line| line["event"] == "chat_reply_withheld")
+        .count();
+    assert_eq!(withheld, 1, "the demoted turn's reply is withheld and audited");
+    mock.abort();
+}

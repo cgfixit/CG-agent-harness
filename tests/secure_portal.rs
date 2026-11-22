@@ -1665,3 +1665,99 @@ async fn a_browser_report_is_withheld_once_the_asking_account_changes() {
         .unwrap_err();
     assert_eq!(refused.code, "AUTH_REQUIRED");
 }
+
+/// A browser task's account is read before `prepare`'s waits, not after. A
+/// tuned model Ollama reports not loaded is loaded under the gate first; an
+/// admin demoted while that load runs gets no task: 401 AUTH_REQUIRED,
+/// audited `browser.withheld`, and the model load is the last thing that ran.
+/// Before the fix the revocation count was read after the load, so it already
+/// included the demotion and every later check passed (#1057's promise).
+#[tokio::test]
+async fn a_browser_task_asked_by_an_account_demoted_while_the_model_loads_never_starts() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let (arrived, release) = (
+        Arc::new(tokio::sync::Notify::new()),
+        Arc::new(tokio::sync::Notify::new()),
+    );
+    let loaded = Arc::new(AtomicBool::new(false));
+    let (arrived_tx, release_rx, loaded_ps, loaded_gen) =
+        (arrived.clone(), release.clone(), loaded.clone(), loaded.clone());
+    let app = axum::Router::new()
+        .route(
+            "/api/ps",
+            axum::routing::get(move || {
+                let rows = if loaded_ps.load(Ordering::SeqCst) {
+                    json!([{"name": "mock-model", "model": "mock-model", "context_length": 32768}])
+                } else {
+                    json!([])
+                };
+                async move { axum::Json(json!({"models": rows})) }
+            }),
+        )
+        .route(
+            "/api/generate",
+            axum::routing::post(move || {
+                let (arrived_tx, release_rx, loaded_gen) = (arrived_tx.clone(), release_rx.clone(), loaded_gen.clone());
+                async move {
+                    arrived_tx.notify_one();
+                    release_rx.notified().await;
+                    loaded_gen.store(true, Ordering::SeqCst);
+                    axum::Json(json!({"done": true}))
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture binds only an ephemeral loopback port.
+    let addr = listener.local_addr().unwrap();
+    let mock = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let server = spawn_server(
+        &format!("http://{addr}/v1"), // DevSkim: ignore DS137138 because this synthetic model uses no credentials and binds only to loopback.
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("browser.enabled", "true")
+            .with("models.local_llm.model", "mock-model"),
+    )
+    .await;
+    server
+        .state
+        .set_tuning(Some(cgagentharness::server::model_limits::Tuning {
+            model: "mock-model".into(),
+            window: 32768,
+            state: "tuned".into(),
+            tools_off: false,
+            max_tokens: 4096,
+            compact_prompt_tokens: 20_000,
+            web: None,
+            timeout_sec: None,
+            synthesis_seconds: None,
+            research_seconds: None,
+            planner_timeout_sec: None,
+            speed: None,
+            notes: Vec::new(),
+        }));
+    let auth = server.state.auth.as_ref().unwrap();
+    let secret = cgagentharness::common::random_urlsafe(24);
+    auth.create_user("ops", &secret, "admin").unwrap();
+    auth.create_user("keeper", &cgagentharness::common::random_urlsafe(24), "admin")
+        .unwrap();
+    let session = login(&server, "ops", &secret).await;
+    let body = json!({"task": "read the page title", "origins": ["https://example.com"]});
+    let ask = request(&server, &session, Method::POST, "/api/browser/run", body);
+    let demote = async {
+        tokio::time::timeout(std::time::Duration::from_secs(10), arrived.notified())
+            .await
+            .expect("the task loaded the model");
+        auth.set_role("ops", "operator").unwrap();
+        release.notify_one();
+    };
+    let (response, ()) = tokio::join!(ask, demote);
+    assert_eq!(response.status(), 401, "the demoted account's task is refused");
+    let reply: Value = response.json().await.unwrap();
+    assert_eq!(reply["detail"]["code"], "AUTH_REQUIRED");
+    assert!(server.audit_log().contains("\"browser.withheld\""));
+    assert!(
+        !server.audit_log().contains("\"browser.run\""),
+        "no browser child ran for the demoted account"
+    );
+    mock.abort();
+}

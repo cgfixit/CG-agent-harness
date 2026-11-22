@@ -10,7 +10,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde_json::{json, Value};
 
-use crate::common::authz::{self, Capability};
+use crate::common::authz::Capability;
 use crate::common::tool_broker::assert_allowed;
 use crate::server::agent_policy::{available_profiles, resolve_check_profiles, run_id_re};
 use crate::server::errors::{session_status, ApiError, ApiResult};
@@ -692,12 +692,7 @@ pub fn start_job_for_owner(
 /// occurrence, including legacy rows, and by every job once it is registered.
 fn schedule_owner_authorized(state: &AppState, owner: &str) -> bool {
     match &state.auth {
-        Some(auth) => auth.list_users().iter().any(|user| {
-            user.user_id == owner
-                && !user.disabled
-                && !user.must_change_password
-                && authz::grants_stored(&user.role, Capability::RunCoding)
-        }),
+        Some(auth) => auth.owner_permits(owner, Capability::RunCoding),
         None => owner == "local",
     }
 }
