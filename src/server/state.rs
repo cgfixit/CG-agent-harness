@@ -612,7 +612,10 @@ impl AppState {
 
     /// Memory generation stays on the local client even when chat selects cloud.
     pub fn local_memory_model_for(&self, selected: &str) -> String {
-        if selected.trim().is_empty() || self.cloud_chat.is_cloud_selection(selected) {
+        if selected.trim().is_empty()
+            || self.cloud_chat.is_cloud_selection(selected)
+            || crate::llm::ollama::cloud_tag(selected)
+        {
             self.backend.model.clone()
         } else {
             selected.to_string()
