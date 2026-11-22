@@ -1943,7 +1943,10 @@ impl StructuredMemoryStore {
 
     /// Unexpired, human-summarized episodes only. Skips running owners and
     /// episodes whose current consolidator failed or was cancelled. Those
-    /// episodes remain available for an explicit manual retry.
+    /// episodes remain available for an explicit manual retry. A run stopped
+    /// because its account was disabled, deleted or demoted during the model
+    /// call (`owner_retired`) is not a summarizer failure: its episodes are
+    /// picked again once the account returns.
     pub fn next_auto_consolidation_batch(&self) -> Result<Option<(String, Vec<String>)>> {
         self.next_auto_consolidation_batch_for(&|_| true)
     }
@@ -1971,6 +1974,7 @@ impl StructuredMemoryStore {
                      SELECT 1 FROM consolidation_runs r
                      WHERE r.owner_id=e.owner_id AND r.summarizer_version=?2
                        AND r.state IN ('failed','cancelled')
+                       AND COALESCE(r.error_class,'') <> 'owner_retired'
                        AND instr(r.episode_ids, e.public_id) > 0
                    )
                  GROUP BY e.owner_id
@@ -1994,6 +1998,7 @@ impl StructuredMemoryStore {
                      SELECT 1 FROM consolidation_runs r
                      WHERE r.owner_id=e.owner_id AND r.summarizer_version=?4
                        AND r.state IN ('failed','cancelled')
+                       AND COALESCE(r.error_class,'') <> 'owner_retired'
                        AND instr(r.episode_ids, e.public_id) > 0
                    )
                  ORDER BY e.created_ts ASC, e.public_id ASC
