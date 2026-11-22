@@ -577,9 +577,8 @@ pub(in crate::server) mod tests {
     }
 
     /// Codex review on #1077: units must come back when the request future is
-    /// dropped before it sends, by an outer hop deadline or a cancelled turn,
-    /// and also when the reservation itself is still being written as its
-    /// caller goes away. A guard marked sent keeps its units.
+    /// dropped before it sends, by an outer hop deadline or a cancelled turn.
+    /// A guard marked sent keeps its units.
     #[tokio::test]
     async fn a_dropped_or_abandoned_unsent_reservation_gives_its_units_back() {
         let dir = private_dir();
@@ -602,13 +601,44 @@ pub(in crate::server) mod tests {
             1,
             "a sent request keeps its units"
         );
+    }
 
-        // The awaiting future is dropped after its first poll, while the blocking
-        // task is still reserving: the task hands nothing over and gives it back.
-        let abandoned =
-            tokio::time::timeout(std::time::Duration::ZERO, web.reserve_units(Paid::Serpapi, 1, &audit)).await;
+    /// The awaiting future is dropped while the blocking task is still
+    /// reserving: the task hands nothing over and gives the units back. A
+    /// second connection holds the write lock, so the reservation is in flight
+    /// when the timeout drops it on every machine, and dropping the runtime
+    /// waits for the blocking task, so the check reads its final state.
+    #[test]
+    fn a_reservation_abandoned_in_flight_gives_its_units_back() {
+        let dir = private_dir();
+        let cfg = AppConfig::from_str("{}", Path::new("config.yaml")).unwrap();
+        let web = WebTool::new(dir.path(), &cfg).unwrap();
+        let audit = Audit::new(dir.path().join("audit.jsonl"), &cfg);
+        let now = unix_now();
+        let first = web.units.reserve(Paid::Tavily, 1, now).unwrap();
+        web.units.release(&first).unwrap();
+
+        let holder = rusqlite::Connection::open(dir.path().join(LEDGER_FILE)).unwrap();
+        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        let abandoned = runtime.block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_millis(200),
+                web.reserve_units(Paid::Serpapi, 1, &audit),
+            )
+            .await
+        });
         assert!(abandoned.is_err(), "the reservation was still in flight");
-        wait_for_used(&web.units, Paid::Serpapi, now, 0).await;
+        holder.execute_batch("COMMIT").unwrap();
+        drop(runtime);
+        assert_eq!(
+            web.units.used(Paid::Serpapi, now).unwrap(),
+            0,
+            "the abandoned reservation was given back"
+        );
     }
 
     #[test]
