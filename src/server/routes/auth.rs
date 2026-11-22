@@ -454,12 +454,31 @@ fn disable_machine_keys(state: &AppState, owner: &str) -> ApiResult<()> {
     Ok(())
 }
 
-/// Account disable/delete retires both owner-scoped automation and that owner's
-/// machine keys. Each side runs even when the other fails; the first error is
-/// returned so a partial retirement stays visible.
+/// Work the owner already started keeps no authority the account lost: its
+/// running coding jobs are aborted (child and gates dropped) and, when asked,
+/// its research run is cancelled. Audited only when something stopped.
+fn stop_owner_work(state: &AppState, owner: &str, coding: bool, research: bool) {
+    let jobs = if coding { state.jobs.cancel_owner(owner) } else { 0 };
+    // Err means another account holds the research lease: nothing of ours runs.
+    let research = research && state.web_snapshot().research.cancel(owner).unwrap_or(false);
+    if jobs > 0 || research {
+        state.audit.log(json!({
+            "event": "account.work_stopped",
+            "owner": owner,
+            "coding_jobs": jobs,
+            "research": research,
+        }));
+    }
+}
+
+/// Account disable/delete retires owner-scoped automation, that owner's
+/// machine keys and its running work. Each side runs even when another fails;
+/// the first error is returned so a partial retirement stays visible. Work
+/// stops after notifications are disabled, so a cancelled job sends none.
 fn retire_disabled_owner(state: &AppState, owner: &str) -> ApiResult<()> {
     let automation = revoke_owner_automation(state, owner);
     let keys = disable_machine_keys(state, owner);
+    stop_owner_work(state, owner, true, true);
     automation?;
     keys
 }
@@ -637,6 +656,15 @@ pub async fn set_role(
             // the key row, so a role that holds no memory read keeps no key.
             // After the audit line, as disable does: a failed retirement is
             // returned, with the role change already on record.
+            // A running coding job or research run started under the old
+            // role stops when the new one could not have started it.
+            use crate::common::authz::{grants_stored, Capability};
+            stop_owner_work(
+                &state,
+                &user.user_id,
+                !grants_stored(&user.role, Capability::RunCoding),
+                !(grants_stored(&user.role, Capability::WebUse) && grants_stored(&user.role, Capability::OwnData)),
+            );
             if !crate::server::mcp_keys::owner_may_hold_keys(&user.role) {
                 disable_machine_keys(&state, &user.user_id)?;
             }

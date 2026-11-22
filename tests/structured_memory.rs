@@ -1705,6 +1705,48 @@ async fn a_busy_store_does_not_stall_other_requests_behind_a_consolidation_start
     holder.join().unwrap();
 }
 
+/// The console gives up on a request after 15 s, and a local summary can take
+/// longer. A client that leaves mid-generation must not strand the run in
+/// `running`, which would refuse that owner's next consolidation as busy.
+#[tokio::test]
+async fn a_consolidation_whose_client_leaves_still_finishes_its_run() {
+    use std::time::Duration;
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), consolidation()).await;
+    let episode_id = stage_store_episode(&s, "local");
+    model.set_reply(consolidator_reply(&episode_id, "Prefer metric units"));
+    model.set_delay_ms(800);
+    let start = s.post_json(
+        "/api/structured-memory/consolidation",
+        json!({"episode_ids": [episode_id]}),
+    );
+    // The client leaves while the model is still answering.
+    assert!(tokio::time::timeout(Duration::from_millis(250), start).await.is_err());
+    let mut runs = json!(null);
+    for _ in 0..60 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        runs = s.get_json("/api/structured-memory/consolidation").await.1;
+        if runs["runs"][0]["state"] != "running" {
+            break;
+        }
+    }
+    assert_eq!(runs["count"], 1, "{runs}");
+    assert_eq!(
+        (&runs["runs"][0]["state"], &runs["runs"][0]["proposal_count"]),
+        (&json!("done"), &json!(1)),
+        "{runs}"
+    );
+    assert_eq!(s.get_json("/api/structured-memory/proposals").await.1["count"], 1);
+    model.set_delay_ms(0);
+    let other = stage_store_episode(&s, "local");
+    model.set_reply(consolidator_reply(&other, "Prefer short examples"));
+    let (status, run) = s
+        .post_json("/api/structured-memory/consolidation", json!({"episode_ids": [other]}))
+        .await;
+    assert_eq!(status, 200, "a later run is not refused as busy: {run}");
+    assert_eq!(run["state"], "done", "{run}");
+}
+
 fn auto_consolidation() -> ServerOptions {
     consolidation()
         .with("structured_memory.auto_consolidation", "true")

@@ -412,6 +412,25 @@ impl JobStore {
         Some(value)
     }
 
+    /// Abort every running job `owner` holds and return how many stopped.
+    /// Account disable, deletion and a role change that drops `RunCoding`
+    /// call it: a detached run never keeps acting for an account that lost
+    /// that authority. Blocking, as `cancel` is.
+    pub fn cancel_owner(&self, owner: &str) -> usize {
+        let running: Vec<String> = self
+            .inner
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .values()
+            .filter(|j| j.status == RUNNING && j.owner.as_deref() == Some(owner))
+            .map(|j| j.job_id.clone())
+            .collect();
+        running
+            .iter()
+            .filter(|id| self.cancel(owner, id).is_some_and(|job| job["status"] == CANCELLED))
+            .count()
+    }
+
     // The native sidecar and its shutdown owner exist only on Unix.
     #[cfg(unix)]
     pub(crate) fn cancel_all_for_shutdown(&self) {
@@ -569,6 +588,29 @@ mod tests {
         assert_eq!(store.get("local", "c").unwrap()["status"], CANCELLED);
         assert!(store.cancel("local", "nope").is_none());
         assert_eq!(store.list("local").len(), 3);
+    }
+
+    #[tokio::test]
+    async fn cancel_owner_stops_only_that_owners_running_jobs() {
+        let store = JobStore::new();
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let held = tokio::spawn(async move {
+            let _tx = tx;
+            std::future::pending::<()>().await;
+        });
+        store.insert_running("user_a", "a1", "real-repo-run", held);
+        store.insert_running("user_a", "a2", "real-repo-run", idle_handle());
+        store.finish("a2", Ok(json!({"ok": true})));
+        store.insert_running("user_b", "b1", "real-repo-run", tokio::spawn(std::future::pending()));
+
+        assert_eq!(store.cancel_owner("user_a"), 1, "only the running job stops");
+        assert_eq!(store.get("user_a", "a1").unwrap()["status"], CANCELLED);
+        assert_eq!(store.get("user_a", "a2").unwrap()["status"], FINISHED);
+        assert_eq!(store.get("user_b", "b1").unwrap()["status"], RUNNING);
+        // The task was aborted: its end of the channel was dropped.
+        assert!(rx.await.is_err());
+        assert_eq!(store.cancel_owner("user_a"), 0);
+        assert_eq!(store.cancel_owner("nobody"), 0);
     }
 
     #[tokio::test]
