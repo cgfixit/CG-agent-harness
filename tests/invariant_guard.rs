@@ -1041,6 +1041,32 @@ fn duplicated_constants_still_agree() {
         protocol("src/server/desktop.rs", r"pub const PROTOCOL: u32 = (\d+);"),
         "desktop/src/backend.rs PROTOCOL drifted from src/server/desktop.rs"
     );
+    // `/loop` keeps private Rust mirrors of three console limits; nothing else
+    // pinned them, so a changed console value left the server stalling on a
+    // different threshold than the page that shows it.
+    let loop_runner =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/server/loop_runner.rs")).unwrap();
+    for name in [
+        "LOOP_GOAL_REMINDER_CHARS",
+        "LOOP_STALL_SIMILARITY",
+        "LOOP_STALL_MAX_WORDS",
+    ] {
+        let value = |text: &str, pattern: String| {
+            regex::Regex::new(&pattern)
+                .unwrap()
+                .captures(text)
+                .map(|c| c[1].to_string())
+                .unwrap_or_else(|| panic!("no `{name}` matched {pattern}"))
+        };
+        assert_eq!(
+            value(&loop_runner, format!(r"const {name}: \w+ = ([0-9.]+);")),
+            value(
+                cgagentharness::server::console::HARNESS_HTML,
+                format!(r"const {name} = ([0-9.]+);")
+            ),
+            "console {name} drifted from src/server/loop_runner.rs"
+        );
+    }
     // The shim whitelist is exactly the CLI's dispatch table (no deepagent-plan, no __sleep),
     // in both directions: an arm missing from ACTIONS would be unreachable through the shim.
     let commands = std::fs::read_to_string(root().join("agentic").join("commands.rs")).unwrap();
