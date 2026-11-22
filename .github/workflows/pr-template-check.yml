@@ -180,6 +180,7 @@ jobs:
               owner: context.repo.owner, repo: context.repo.repo, pull_number: context.payload.pull_request.number,
             });
             const corePaths = [/^src\/shim\//, /^src\/server\/guards\.rs$/, /^src\/server\/headers\.rs$/, /^src\/agentic\/writer\.rs$/,
+                          /^src\/server\/routes\/mod\.rs$/, /^src\/common\/authz\.rs$/,
                           /^src\/agentic\/executor\/sandbox\.rs$/, /^src\/agentic\/workspace\.rs$/, /^assets\/config\.default\.yaml$/];
             // A renamed file reports its source as previous_filename; a core file
             // moved elsewhere still counts as touching that core path.
