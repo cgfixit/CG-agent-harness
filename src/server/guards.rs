@@ -353,6 +353,7 @@ mod tests {
         }
         let kept = [
             (Method::POST, "/api/soul/proposals"),
+            (Method::GET, "/api/soul/document"),
             (Method::GET, "/api/style"),
             (Method::POST, "/api/style"),
             (Method::POST, "/api/mcp/call"),

@@ -373,12 +373,16 @@ pub async fn change_password(State(state): State<Arc<AppState>>, req: Request<Bo
     let ValidJson(body) = ValidJson::<AuthChangePasswordRequest>::from_request(req, &()).await?;
     let st = state.clone();
     let username = account.username.clone();
+    let owner_id = account.user_id.clone();
     let result = run_password_operation(state.auth_operation_permits.clone(), move || {
         manager(&st)?
             .change_password(&account.username, &body.current_password, &body.password)
             .map_err(|e| map_auth_error(&e))
     })
     .await?;
+    // A password change revokes the account's other sign-ins: what one of
+    // them staged with /diag goes with them, as on logout or a role change.
+    state.diag.forget_owner(&owner_id);
     audit_account(&state, "account.password_changed", &username, &username, json!({}));
     let mut response = Json(json!({"ok":true,"must_change_password":false})).into_response();
     set_cookie(&mut response, &result.session_id, secure);
@@ -578,8 +582,7 @@ pub async fn set_password(
     require_user_admin(&account)?;
     let target = manager(&state)?
         .get_user(&username)
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "AUTH_USER_NOT_FOUND", "unknown user"))?
-        .username;
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "AUTH_USER_NOT_FOUND", "unknown user"))?;
     let ValidJson(body) = ValidJson::<AuthSetPasswordRequest>::from_request(req, &()).await?;
     let st = state.clone();
     let checked = account.clone();
@@ -591,7 +594,16 @@ pub async fn set_password(
         })
     })
     .await?;
-    audit_account(&state, "account.password_reset", &account.username, &target, json!({}));
+    // A reset revokes every sign-in of the account, so /diag state one of them
+    // staged is dropped too, as on disable, a role change or deletion.
+    state.diag.forget_owner(&target.user_id);
+    audit_account(
+        &state,
+        "account.password_reset",
+        &account.username,
+        &target.username,
+        json!({}),
+    );
     Ok(Json(json!({"ok": true})))
 }
 

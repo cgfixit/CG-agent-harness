@@ -1,9 +1,10 @@
 # AGENTS.md — CGagentHarness operating manual
 
 Every coding agent follows this file. Exceptions to "never" require explicit
-operator approval. Read [INVARIANTS.md](INVARIANTS.md) before touching a core path:
-`src/shim/`, `src/server/{guards,headers}.rs`, `src/agentic/{writer,workspace}.rs`,
-`src/agentic/executor/sandbox.rs`, `assets/config.default.yaml`.
+operator approval. Read [INVARIANTS.md](INVARIANTS.md) before touching core paths:
+`src/shim/`, `src/server/{guards,headers,routes/mod}.rs`, `src/common/authz.rs`,
+`src/agentic/{writer,workspace}.rs`, `src/agentic/executor/sandbox.rs`,
+`assets/config.default.yaml`.
 
 Reading scope: never open `docs/learning/*` unless the operator asks. Open other
 `docs/*` files only when a root file links the page and the task needs it.

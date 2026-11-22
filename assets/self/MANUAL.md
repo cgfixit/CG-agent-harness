@@ -88,7 +88,7 @@ Managed keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`, `SERPAPI
 
 ## invariant: A detached run cannot outlive its gates
 
-`POST /api/agent/jobs` runs the identical validated request as `POST /api/agent/run` in a tokio task, but the run gate and (when the local model is also the planner) the chat gate are held by the TASK via `GateGuard`'s `Drop`, not by the HTTP request. A closed tab or dead client cannot leave the gate stuck: cancelling (`POST /api/agent/jobs/{job_id}/cancel`) aborts the task, dropping the guards and the child (`kill_on_drop`). A job's terminal state is set exactly once (`JobStore::finish` is a no-op after…
+`POST /api/agent/jobs` runs the identical validated request as `POST /api/agent/run` in a tokio task, but the run gate and (when the local model is also the planner) the chat gate are held by the TASK via `GateGuard`'s `Drop`, not by the HTTP request. A closed tab or dead client cannot strand the gate: cancelling (`POST /api/agent/jobs/{job_id}/cancel`) aborts the task, dropping guards and child (`kill_on_drop`). A job's terminal state is set exactly once (`JobStore::finish` is a no-op after cancellation), so a…
 
 ## invariant: Local chat compaction preserves goal and the first user turn
 
@@ -269,7 +269,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET, POST `/api/sessions/{session_id}/structured-facts`: Structured-memory facts explicitly included in the session
 - POST `/api/sessions/{session_id}/prompt-history`: Owner-scoped composer line (`{text}`) for ArrowUp recall; last 50, `/api` values dropped
 - DELETE `/api/sessions/{session_id}/attachment-pins`: Owner-scoped unpin; keeps blobs; refused during generation
-- GET, POST `/api/soul`, `/api/soul/document`: Persona state and on/off toggle; read or edit the persona document
+- GET, POST `/api/soul`, `/api/soul/document`: Persona state, toggle; read (operators: current only) or edit the document
 - POST `/api/soul/proposals`: Propose a persona change
 - GET, POST `/api/soul/proposals/{id}`: Review or decide a proposal
 - GET, POST `/api/style`: Output-style catalog and session select (`/style <name>`, `/style off`)

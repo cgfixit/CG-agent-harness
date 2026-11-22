@@ -59,6 +59,12 @@ The PDF text worker (`cgagentharness pdf-text-worker`, run by
 runner children it limits itself: CPU time, a zero file-size limit, a 768 MiB
 heap and, on Linux, a 1 GiB address space
 ([contract](../INVARIANTS.md#i6--process-isolation-between-the-console-and-the-agentic-pipeline)).
+Past either, the worker's allocator writes one fixed stderr line before the
+abort. Only a SIGABRT with that line is `PDF_LIMIT`; a bug, double panic or
+stack overflow aborts the same way and is `PDF_WORKER_FAILED`, which never
+reaches Firecrawl (#772). `process::run` feeds stdin in 64 KiB writes and
+pauses only when the pipe is full, so a 15 MiB PDF arrives well inside its
+5 s deadline.
 
 One more child carries no request data: on macOS `process::KeepAwake` runs
 `/usr/bin/caffeinate -i -w <pid>` with a fixed argv and an empty environment

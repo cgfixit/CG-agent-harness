@@ -200,7 +200,7 @@ fi
 # `CGAGENTHARNESS_PR_FILES`, when set, is the changed-file list in place of
 # `git diff`. It does not skip the template comparison: that comparison runs
 # below whether or not the variable is set.
-core_pattern='^(src/shim/|src/server/guards\.rs$|src/server/headers\.rs$|src/agentic/writer\.rs$|src/agentic/executor/sandbox\.rs$|src/agentic/workspace\.rs$|assets/config\.default\.yaml$)'
+core_pattern='^(src/shim/|src/server/guards\.rs$|src/server/headers\.rs$|src/server/routes/mod\.rs$|src/common/authz\.rs$|src/agentic/writer\.rs$|src/agentic/executor/sandbox\.rs$|src/agentic/workspace\.rs$|assets/config\.default\.yaml$)'
 base="${CGAGENTHARNESS_PR_BASE:-origin/main}"
 merge_base="$(git -C "$repo_root" merge-base "$base" HEAD 2>/dev/null || true)"
 changed=""

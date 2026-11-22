@@ -787,10 +787,12 @@ async fn run_inner(
                 }
             }
             if !selected.is_empty() {
-                check_evidence(state, web, owner, sign_in, &sources)?;
+                // The window check can load the model: authority is read after
+                // that wait, immediately before the passages are sent.
                 state
                     .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
                     .await?;
+                check_evidence(state, web, owner, sign_in, &sources)?;
                 let digest = state
                     .chat
                     .chat_json(
@@ -918,9 +920,12 @@ async fn run_inner(
         peak_extra = peak_extra.max(extra);
         let validate = || check_evidence(state, web, owner, sign_in, &sources);
         // A tool round may run long: the window must still allow this budget.
+        // That check can load the model, so authority is read again after it,
+        // before the request carries the conversation and any passages.
         state
             .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
             .await?;
+        validate()?;
         // The model may answer on a hop that offers tools, so every hop is
         // sampled as an answer: the answer cap (an answer is generated once,
         // never cut at a smaller planning cap and started again) and the
@@ -1130,7 +1135,11 @@ async fn run_inner(
                         .map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid search arguments"))?;
                 }
                 "web_fetch" => {
-                    fetch_args(args)?;
+                    // Structure only (a `url` string, typed fields): a query
+                    // outside its 1–200 bound fails that call alone when it
+                    // runs, as an overlong search query does (#772).
+                    serde_json::from_str::<FetchArgs>(args)
+                        .map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid fetch arguments"))?;
                 }
                 _ => return Err(error("WEB_TOOL_DENIED", "model requested an unavailable tool")),
             }
@@ -1255,58 +1264,62 @@ async fn run_inner(
                             listing
                         })
                     }
-                    "web_fetch" => {
-                        let args = fetch_args(args)?;
-                        if let Err(failure) = confirm_provenance(
-                            state,
-                            web,
-                            owner,
-                            sign_in,
-                            &args.url,
-                            &mut given,
-                            interactive_admin,
-                            loop_turn,
-                            output,
-                        )
-                        .await
-                        {
-                            Err(failure)
-                        } else {
-                            let canonical = super::web_policy::canonical_url(&args.url)
-                                .ok()
-                                .map(|url| url.to_string());
-                            let (refresh, refresh_reused) = effective_refresh(
-                                args.refresh,
+                    // The batch's structure was checked before any call ran; a
+                    // bound one call's arguments break is that call's result.
+                    "web_fetch" => match fetch_args(args) {
+                        Err(failure) => Err(failure),
+                        Ok(args) => {
+                            if let Err(failure) = confirm_provenance(
+                                state,
+                                web,
+                                owner,
+                                sign_in,
+                                &args.url,
+                                &mut given,
+                                interactive_admin,
                                 loop_turn,
-                                canonical
-                                    .as_ref()
-                                    .is_some_and(|url| passages.iter().any(|p| &p.url == url)),
-                                canonical.as_ref().is_some_and(|url| refreshed.contains(url)),
-                            );
-                            let query = args.query.unwrap_or_else(|| crate::common::clip_chars(question, 200));
-                            // Readable only because one of this turn's searches
-                            // listed it: marked on the result and audited.
-                            let by_grant = web.read_by_search_grant(&args.url);
-                            evidence::read(web, &args.url, &query, refresh, refresh_reused, &state.audit, owner)
-                                .await
-                                .map(|(mut result, found)| {
-                                    selected = found;
-                                    if refresh {
-                                        refreshed.extend(canonical);
-                                    }
-                                    if refresh_reused {
-                                        result["refresh_reused"] = json!(true);
-                                    }
-                                    if by_grant {
-                                        result["granted_by"] = json!("search_result");
-                                        state.audit.log(
+                                output,
+                            )
+                            .await
+                            {
+                                Err(failure)
+                            } else {
+                                let canonical = super::web_policy::canonical_url(&args.url)
+                                    .ok()
+                                    .map(|url| url.to_string());
+                                let (refresh, refresh_reused) = effective_refresh(
+                                    args.refresh,
+                                    loop_turn,
+                                    canonical
+                                        .as_ref()
+                                        .is_some_and(|url| passages.iter().any(|p| &p.url == url)),
+                                    canonical.as_ref().is_some_and(|url| refreshed.contains(url)),
+                                );
+                                let query = args.query.unwrap_or_else(|| crate::common::clip_chars(question, 200));
+                                // Readable only because one of this turn's searches
+                                // listed it: marked on the result and audited.
+                                let by_grant = web.read_by_search_grant(&args.url);
+                                evidence::read(web, &args.url, &query, refresh, refresh_reused, &state.audit, owner)
+                                    .await
+                                    .map(|(mut result, found)| {
+                                        selected = found;
+                                        if refresh {
+                                            refreshed.extend(canonical);
+                                        }
+                                        if refresh_reused {
+                                            result["refresh_reused"] = json!(true);
+                                        }
+                                        if by_grant {
+                                            result["granted_by"] = json!("search_result");
+                                            state.audit.log(
                                         json!({"event":"web_result_read","url":result["url"],"loop_turn":loop_turn}),
                                     );
-                                    }
-                                    result
-                                })
+                                        }
+                                        result
+                                    })
+                            }
                         }
-                    }
+                    },
                     _ => return Err(error("WEB_TOOL_DENIED", "model requested an unavailable tool")),
                 }
             };
