@@ -138,8 +138,8 @@ what stop cross-site use; the CSRF token provides no account isolation.
 
 Fresh configuration requires `auth.enabled: true` and `tls.enabled: true`;
 existing explicit values are kept. Invalid auth/TLS switch types fail closed.
-The optional harness key grants no account, provider or coding authority;
-legacy key-required mode is deprecated and ignored. Forwarded requests are refused.
+The optional harness key grants no authority; legacy key-required mode is
+ignored. Forwarded requests are refused.
 
 Every API request passes rate limiting, exact same-origin and direct loopback
 checks. Operational reads and writes also need an enabled account and its
@@ -157,8 +157,8 @@ exhaustive capability table covering every registered route; `common::authz`
 maps each role to the capabilities it grants. An authenticated request whose
 template or method is unlisted is denied by default: a new route has no role
 access until the table names it. Roles are parsed once at the gate; unknown
-stored roles fail closed. A method no row lists for the matched template is
-refused without reaching a handler. Handler-level role checks call
+stored roles fail closed. A body that arrives after the gate
+rereads the session and role before use (`auth::SessionRecheck`). Handler-level role checks call
 `common::authz` helpers (`grants_stored`, `is_role`); the invariant guard
 rejects a new ad-hoc comparison until its PR pins it. Storing `auditor` first moves a
 version 1 or 2 account database to schema 3, which older binaries refuse;
@@ -166,7 +166,7 @@ retired `audit` (left disabled) and `portal_auditor` fold into `auditor` at open
 revoking their sessions and logging one `auth.role_migrated` event per
 account (user id); the store keeps each report until that row is written. A fresh
 `admin` signs in with a one-time code in the owner-only `<home>/setup-code`
-(never shipped, never page content); older `admin`/`admin` and pending-password
+(never shipped or rendered); older `admin`/`admin` and pending-password
 homes rotate to one at startup. Until replaced, any client (console, HTTP, CLI)
 may only change the password, read whoami or log out, under shorter session
 limits. Each `auth.session` timeout outside 60 s–30 days (NIST SP 800-63B-4's
@@ -253,7 +253,7 @@ target and pattern with unreserved escapes decoded and `/` runs merged
 `//private/` stay covered; path case is kept. Private
 addresses stay refused, with no exception for any search provider. Existing choices persist; absent/invalid legacy
 `web_enabled` stays off. `tools/web_allowlist.json` is versioned and bounded by
-restart-only `web.max_rules` (default 64); over-cap, malformed, missing,
+restart-only `web.max_rules` (default 256); over-cap, malformed, missing,
 unreadable or partially invalid policy refuses access.
 Exact HTTP(S) rules retain scheme, port, path and query identity.
 Only explicit `*.host` and `/path/*` rules broaden scope. Path wildcards include
@@ -703,7 +703,7 @@ consecutive failed turns or failed web rounds, unverified `GOAL_DONE`, a
 near-repeat reply, or a web refusal every later turn would repeat. A turn waits
 (stoppable, at most two hours) while another generation holds the model
 instead of counting a failure. Both budgets
-ship finite, 50 turns and 200,000 completion tokens (#675); `0` is an explicit
+ship finite, 200 turns and 200,000 completion tokens (#675); `0` is an explicit
 opt-in to unlimited, and a home whose file lacks the key keeps the code fallback
 `0`. With both budgets zero, startup and transitions into unbounded on reload
 warn and audit `loop_budgets_unlimited`; unchanged or finite reloads do not.

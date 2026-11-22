@@ -235,10 +235,12 @@ pub async fn spend_predict(
         .chat_owner
         .start(&owner)
         .map_err(|e| ApiError::from_err(StatusCode::CONFLICT, &e))?;
+    // Counted as it would be sent: the same redaction as the cloud turn.
+    let outbound = state.audit.redactors().redact(&req.message).into_owned();
     let prediction = tokio::select! {
         biased;
         _ = lease.token.cancelled() => return Err(ApiError::new(StatusCode::BAD_GATEWAY,"WEB_CANCELLED","prediction cancelled")),
-        result = state.cloud_chat.predict(&model, &req.message) => result.map_err(|e| ApiError::from_err(llm_status(&e), &e))?,
+        result = state.cloud_chat.predict(&model, &outbound) => result.map_err(|e| ApiError::from_err(llm_status(&e), &e))?,
     };
     state.audit.log(
         json!({"event":"cloud_chat_prediction", "owner":super::auth::context_owner(user),
@@ -285,6 +287,7 @@ pub async fn upload_attachments(
         }
     }
     let limit = attachments::MAX_REQUEST_BYTES as usize;
+    let recheck = req.extensions().get::<super::auth::SessionRecheck>().cloned();
     // The body read is bounded so a client that trickles or never finishes
     // its upload cannot hold the permit indefinitely.
     let bytes = tokio::time::timeout(
@@ -304,6 +307,9 @@ pub async fn upload_attachments(
             "request body exceeds the attachment request limit",
         ))
     })?;
+    if let Some(recheck) = recheck {
+        recheck.verify().await?;
+    }
     attachments::check_content_length(declared, bytes.len() as u64).map_err(|e| attachments::upload_error(&e))?;
     let boundary = attachments::multipart_boundary(&content_type).map_err(|e| attachments::upload_error(&e))?;
     // Parsing, hashing, blob writes and fsync are synchronous and run under
@@ -1724,10 +1730,19 @@ pub(crate) async fn chat_inner(
     };
     let (mut reply, web_tools) = if cloud_selected {
         require_cloud_consent(&state, &owner, &model)?;
+        // The message leaves this machine: secrets, emails, IPs and financial
+        // numbers are redacted first (`policy.privacy`). The session keeps the
+        // text as typed; the audit line says only that something was redacted.
+        let outbound = state.audit.redactors().redact(&req.message).into_owned();
+        if outbound != req.message {
+            state
+                .audit
+                .log(json!({"event":"cloud_chat_redacted", "owner":owner, "model":model}));
+        }
         (
             state
                 .cloud_chat
-                .chat_with_source(&model, &req.message, spend_source)
+                .chat_with_source(&model, &outbound, spend_source)
                 .await
                 .map_err(|e| {
                     if e.code == "CLOUD_CHAT_BUDGET" {
@@ -1947,18 +1962,18 @@ pub(crate) async fn chat_inner(
         // The cancellable window read finished. Consume only the pending row:
         // later cancellation still needs the known subtotal for loop budgets.
         let tokens = local_usage.lock().unwrap().pending.take().expect("completed local usage");
-        crate::llm::spend::record(
-            &state.audit,
-            &state.spend_file,
-            crate::llm::spend::SpendEvent {
-                provider: "local",
-                model: &reply.model,
-                served_model: None,
-                source: spend_source,
-                tokens,
-                outcome: None,
-            },
-        );
+        // The sink waits on the ledger's file lease: blocking pool, awaited so
+        // the row is written before the reply returns.
+        let row = crate::llm::spend::row_from_event(&crate::llm::spend::SpendEvent {
+            provider: "local",
+            model: &reply.model,
+            served_model: None,
+            source: spend_source,
+            tokens,
+            outcome: None,
+        });
+        let ledger = state.clone();
+        super::structured_memory::off_worker(move || ledger.audit.append_spend(&ledger.spend_file, &row)).await;
     }
     // Counts only, never bodies: the audit and the response say what this
     // turn's compaction kept, summarized and repaired.

@@ -51,6 +51,115 @@ const BUILTIN_SECRET_PATTERNS: [&str; 9] = [
 ];
 
 const SECRET_LABEL: &str = "[REDACTED_SECRET]";
+const PII_LABEL: &str = "[REDACTED_PII]";
+
+/// `policy.privacy.redact_financial`: personal and financial numbers, each
+/// confirmed by its own check so ordinary numbers stay. Best effort, not a
+/// complete PII detector. A rule with a capture group redacts only the group,
+/// so a label such as "routing number" stays readable. These rules never make
+/// [`Redactors::contains_secret`] true: they redact, they do not refuse input.
+/// A match check for one checked redaction rule.
+type Check = fn(&str) -> bool;
+/// A checked rule: pattern, label, check.
+type CheckedRule = (Regex, &'static str, Check);
+
+const FINANCIAL_PATTERNS: [(&str, Check); 5] = [
+    // Payment card numbers: 13–19 digits, optional single spaces or dashes, Luhn-valid.
+    (r"\b(?:\d[ -]?){12,18}\d\b", card_number_valid),
+    // IBANs: country code, check digits, 11–30 more characters, mod-97 valid.
+    (
+        r"\b[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?\b",
+        iban_valid,
+    ),
+    // US ABA routing numbers only beside their label, checksum-valid.
+    (
+        r"(?i)\b(?:routing|aba|rtn)\b[^0-9\n]{0,24}(\d{9})\b",
+        routing_number_valid,
+    ),
+    // Bank account numbers only beside their label.
+    (
+        r"(?i)\b(?:account|acct)\b(?:\s*(?:number|num|no\.?|#))?\s*[:#]?\s*(\d{6,17})\b",
+        any_match,
+    ),
+    // US Social Security numbers in their dashed form, valid area/group/serial.
+    (r"\b\d{3}-\d{2}-\d{4}\b", ssn_valid),
+];
+
+fn any_match(_: &str) -> bool {
+    true
+}
+
+fn digits(text: &str) -> Vec<u32> {
+    text.chars().filter_map(|c| c.to_digit(10)).collect()
+}
+
+fn card_number_valid(text: &str) -> bool {
+    let digits = digits(text);
+    if !(13..=19).contains(&digits.len()) {
+        return false;
+    }
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, &d)| {
+            if i % 2 == 1 {
+                if d * 2 > 9 {
+                    d * 2 - 9
+                } else {
+                    d * 2
+                }
+            } else {
+                d
+            }
+        })
+        .sum();
+    sum % 10 == 0
+}
+
+fn iban_valid(text: &str) -> bool {
+    let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    if !(15..=34).contains(&compact.len()) {
+        return false;
+    }
+    let (head, tail) = compact.split_at(4);
+    let mut remainder: u32 = 0;
+    for c in tail.chars().chain(head.chars()) {
+        let value = match c.to_digit(36) {
+            Some(v) => v,
+            None => return false,
+        };
+        for digit in value.to_string().chars().filter_map(|d| d.to_digit(10)) {
+            remainder = (remainder * 10 + digit) % 97;
+        }
+    }
+    remainder == 1
+}
+
+fn routing_number_valid(text: &str) -> bool {
+    let d = digits(text);
+    d.len() == 9 && (3 * (d[0] + d[3] + d[6]) + 7 * (d[1] + d[4] + d[7]) + d[2] + d[5] + d[8]) % 10 == 0
+}
+
+fn ssn_valid(text: &str) -> bool {
+    let d = digits(text);
+    if d.len() != 9 {
+        return false;
+    }
+    let area = d[0] * 100 + d[1] * 10 + d[2];
+    area != 0 && area != 666 && area < 900 && (d[3], d[4]) != (0, 0) && d[5..] != [0, 0, 0, 0]
+}
+
+/// IPv6 candidates for `redact_ips` (group 1), set apart from identifiers so
+/// a path such as `std::net` never yields one, and kept only when they parse
+/// as an address, so clock times such as `12:30:45` stay.
+const IPV6_CANDIDATE: &str = r"(?:^|[^0-9A-Za-z_:.])([0-9A-Fa-f]{0,4}(?::[0-9A-Fa-f]{0,4}){2,7})(?:$|[^0-9A-Za-z_:.])";
+
+fn ipv6_valid(text: &str) -> bool {
+    (text.contains("::") || text.matches(':').count() == 7)
+        && text.chars().any(|c| c.is_ascii_hexdigit())
+        && text.parse::<std::net::Ipv6Addr>().is_ok()
+}
 
 /// Credential values this process knows: every [`super::mcp::SECRET_ENV`]
 /// variable set in its environment, plus the configured local-model keys
@@ -98,12 +207,18 @@ const MIN_LITERAL_SECRET_CHARS: usize = 12;
 #[derive(Clone, Default)]
 pub struct Redactors {
     rules: Vec<(Regex, &'static str)>,
+    /// Rules whose match must also pass a check (`FINANCIAL_PATTERNS`, IPv6);
+    /// a capture group, when present, is the redacted span.
+    checked: Vec<CheckedRule>,
 }
 
 // Literal rules embed credential values; Debug must never print a pattern.
 impl std::fmt::Debug for Redactors {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Redactors").field("rules", &self.rules.len()).finish()
+        f.debug_struct("Redactors")
+            .field("rules", &self.rules.len())
+            .field("checked", &self.checked.len())
+            .finish()
     }
 }
 
@@ -119,11 +234,24 @@ impl Redactors {
                 "[REDACTED_EMAIL]",
             ));
         }
+        let mut checked: Vec<CheckedRule> = Vec::new();
         if cfg.flag_is_true("policy.privacy.redact_ips") {
             rules.push((
                 Regex::new(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b").expect("static regex"),
                 "[REDACTED_IP]",
             ));
+            checked.push((
+                Regex::new(IPV6_CANDIDATE).expect("static regex"),
+                "[REDACTED_IP]",
+                ipv6_valid,
+            ));
+        }
+        if cfg.flag_is_true("policy.privacy.redact_financial") {
+            checked.extend(
+                FINANCIAL_PATTERNS
+                    .iter()
+                    .map(|(pattern, check)| (Regex::new(pattern).expect("static regex"), PII_LABEL, *check)),
+            );
         }
         for (idx, pattern) in cfg.str_list("policy.privacy.redact_secrets_like").iter().enumerate() {
             if BUILTIN_SECRET_PATTERNS.contains(&pattern.as_str()) {
@@ -135,7 +263,7 @@ impl Redactors {
                 Err(_) => tracing::warn!("privacy redaction pattern #{idx} failed to compile; skipped"),
             }
         }
-        Self { rules }
+        Self { rules, checked }
     }
 
     /// Also redact these exact credential values. Values shorter than
@@ -192,6 +320,16 @@ impl Redactors {
                     .filter(|m| !m.is_empty())
                     .map(|m| (m.start(), m.end(), *replacement)),
             );
+        }
+        for (re, replacement, check) in &self.checked {
+            for caps in re.captures_iter(text) {
+                let span = caps.get(1).or_else(|| caps.get(0));
+                if let Some(m) = span.filter(|m| !m.is_empty() && check(m.as_str())) {
+                    // A whole-match rule (cards, IBANs) checks the whole match;
+                    // a labeled rule checks the number it captured.
+                    spans.push((m.start(), m.end(), *replacement));
+                }
+            }
         }
         if spans.is_empty() {
             return Cow::Borrowed(text);
@@ -578,6 +716,41 @@ impl Sink {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn financial_numbers_and_ipv6_redact_only_when_their_check_passes() {
+        let cfg = AppConfig::from_str(AppConfig::embedded_default(), Path::new("config.yaml")).unwrap();
+        let r = Redactors::from_config(&cfg);
+        for (text, kept, gone) in [
+            // Test card numbers (Luhn-valid), spaced and dashed.
+            ("card 4111 1111 1111 1111 ok", "card ", "4111"),
+            ("card 5500-0000-0000-0004.", "card ", "5500"),
+            ("iban GB82 WEST 1234 5698 7654 32 end", "iban ", "WEST"),
+            ("routing number: 021000021 here", "routing number: ", "021000021"),
+            ("acct # 12345678901 thanks", "acct # ", "12345678901"),
+            ("ssn 123-45-6789", "ssn ", "6789"),
+            ("peer 2001:db8::1 and fe80::1ff:fe23:4567:890a", "peer ", "2001:db8"),
+        ] {
+            let out = r.redact(text);
+            assert!(out.contains(kept) && !out.contains(gone), "{text} -> {out}");
+            assert!(!r.contains_secret(text), "PII redacts, it never refuses input: {text}");
+        }
+        for text in [
+            "order 4111 1111 1111 1112",       // Luhn fails
+            "GB82 WEST 1234 5698 7654 33",     // mod-97 fails
+            "routing 123456789",               // ABA checksum fails
+            "id 021000021",                    // valid routing digits, no label
+            "ssn 000-12-3456 and 666-12-3456", // invalid areas
+            "use std::net::Ipv6Addr at 12:30:45",
+            "ratio 3:2:1 and a :: b",
+        ] {
+            assert_eq!(r.redact(text), text, "kept as is");
+        }
+        let off = Redactors::from_config(
+            &AppConfig::from_str("policy: {privacy: {redact_financial: false}}", Path::new("c.yaml")).unwrap(),
+        );
+        assert_eq!(off.redact("card 4111 1111 1111 1111"), "card 4111 1111 1111 1111");
+    }
 
     #[test]
     fn secret_presence_checks_decoded_json_without_treating_ip_addresses_as_credentials() {

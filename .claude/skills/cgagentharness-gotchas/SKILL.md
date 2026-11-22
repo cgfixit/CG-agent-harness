@@ -27,14 +27,12 @@ not runtime `/api/skills` plugins.
 - **Right fix:** Treat as known flake class (issue **#43** — Start Chrome
   reliably). Retry/quarantine with tracking; fix the starter, don't hollow the
   test.
-- **Also seen:** a *non*-startup flake in the `chat-browser-acceptance.mjs`
-  assertion that the `saved-DEEPAGENT_API_KEY` input is empty after saving: it
-  still held the typed value after a refresh.
-  Observed once in eleven local runs; the same commit then passed ten straight,
-  so do not attribute it to your diff on n=1. Mechanism unconfirmed. The one
-  candidate worth checking first: the script launches Chrome without
-  `--password-store=basic` or any autofill-disabling flag, and the field is
-  `type="password"`. Confirm before "fixing" it.
+- **Also seen:** a *non*-startup flake where a saved key's `type="password"`
+  input in `chat-browser-acceptance.mjs` still held the typed value after a
+  refresh (once in eleven runs; the same commit then passed ten straight). It
+  now checks `visibleKeys` only.
+  First suspect: Chrome launched without `--password-store=basic` or any
+  autofill-disabling flag. Confirm before "fixing" it.
 - **Evidence:** CI gotcha / #43.
 
 ## 3. Desktop packaging: lipo / sign / embed-SHA256 order
@@ -86,8 +84,9 @@ not runtime `/api/skills` plugins.
   arguments), with `listComments` honouring the 30-per-page default and a marker
   planted on page 2. Cheaper than a CI round trip, and it reproduces both the
   original duplicate-comment bug and the `TypeError`.
-- **Evidence:** `.github/workflows/pr-template-check.yml` — its two jobs
-  disagreed on this for a while; the `base-branch` job was always correct.
+- **Evidence:** `.github/workflows/pr-template-check.yml` — its comment jobs
+  (`comment-base`, `comment-template`) paginate `listComments`; an unpaginated
+  read missed a marker on page 2.
 
 ## 7. Ephemeral port handed to a child, and `serve` exits **0** when it is taken
 
@@ -203,6 +202,10 @@ not runtime `/api/skills` plugins.
   network-crate bump, new direct dependency or new `Command::new(` file, ask the
   operator to run `/cgagentharness-otel-hardening`; its pins need a changelog read.
 - **Evidence:** 2026-11-20 skills sync.
+
+## 15. Sidecar fixtures refuse root
+- Cloud containers run as root; `browser guards` keeps Chrome's sandbox on.
+  Run it as a throwaway user; never add `--no-sandbox`.
 
 ## Related skills
 

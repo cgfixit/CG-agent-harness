@@ -535,7 +535,8 @@ impl CloudChat {
         } else {
             None
         };
-        self.record_cloud_spend(config, &body, tokens.clone(), source, outcome);
+        self.record_cloud_spend_off_worker(config, &body, tokens.clone(), source, outcome)
+            .await;
         let body_text = text?;
         Ok(ChatResult {
             body_text,
@@ -558,6 +559,40 @@ impl CloudChat {
         })
     }
 
+    /// [`Self::record_cloud_spend`] for a reply: the ledger append waits on
+    /// a file lease and syncs the file, so it runs on the blocking pool, and
+    /// it is awaited so the row is in the ledger before the reply returns.
+    async fn record_cloud_spend_off_worker(
+        &self,
+        config: &ProviderConfig,
+        body: &Value,
+        tokens: UsageTokens,
+        source: &str,
+        outcome: Option<&str>,
+    ) {
+        let Some(path) = self.spend_file.clone() else {
+            return;
+        };
+        let row = spend::row_from_event(&spend::SpendEvent {
+            provider: config.provider.name(),
+            model: &config.model,
+            served_model: body.get("model").and_then(Value::as_str),
+            source,
+            tokens,
+            outcome,
+        });
+        let max_bytes = self.spend_max_bytes;
+        if tokio::task::spawn_blocking(move || spend::append_row(&path, &row, max_bytes))
+            .await
+            .is_err()
+        {
+            tracing::warn!("spend ledger append did not finish");
+        }
+    }
+
+    /// Inline: the only caller is `UnparsedBill::drop`, which cannot await.
+    /// That path is a cancelled or unparsed 2xx; the append is bounded by
+    /// `spend::append_row`'s 50 ms lease deadline.
     fn record_cloud_spend(
         &self,
         config: &ProviderConfig,

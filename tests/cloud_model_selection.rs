@@ -250,12 +250,25 @@ async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secr
         !s.audit_log().contains("loop_run_started"),
         "a refused start registered a run"
     );
+    // The message leaves the machine redacted (policy.privacy); no extra call,
+    // the fixture profile allows two per minute.
     let (code_status, body) = s
-        .post_json("/api/chat", json!({"message":"PRIVATE_PROMPT_CANARY"}))
+        .post_json(
+            "/api/chat",
+            json!({"message":"PRIVATE_PROMPT_CANARY mail pii.canary@example.com card 4111 1111 1111 1111"}),
+        )
         .await;
     assert_eq!(code_status, 200, "{body}");
     no_secret(&body);
     let sent = requests.lock().unwrap().last().unwrap().clone();
+    let outbound = sent.to_string();
+    assert!(
+        !outbound.contains("pii.canary@example.com") && !outbound.contains("4111 1111 1111 1111"),
+        "an email and a card number reached the cloud provider"
+    );
+    assert!(outbound.contains("[REDACTED_EMAIL]") && outbound.contains("[REDACTED_PII]"));
+    s.state.audit.flush_async().await;
+    assert!(s.audit_log().contains("\"cloud_chat_redacted\""));
     assert_eq!(sent["model"], grok_model);
     assert_eq!(sent["max_output_tokens"], 16);
     assert_eq!(sent["temperature"].as_f64(), Some(1.0));

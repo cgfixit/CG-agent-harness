@@ -43,6 +43,12 @@ pub async fn ingest_notes(
     req: axum::extract::Request,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
+    if !state.notes_corpus.limits().enabled {
+        return Err(notes_corpus::ingest_error(&crate::common::errors::HarnessError::new(
+            "NOTES_DISABLED",
+            "the notes corpus is off (notes_corpus.enabled); existing notes can still be listed and deleted",
+        )));
+    }
     let Ok(permit) = state.notes_ingest_permits.clone().try_acquire_owned() else {
         return Err(notes_corpus::ingest_error(&crate::common::errors::HarnessError::new(
             "NOTES_BUSY",
@@ -58,14 +64,29 @@ pub async fn ingest_notes(
     let limits = state.notes_corpus.limits();
     let limit = limits.max_request_bytes();
     let max_files = limits.max_files_per_request;
-    let bytes = axum::body::to_bytes(req.into_body(), limit.saturating_add(1))
-        .await
-        .map_err(|_| {
-            notes_corpus::ingest_error(&crate::common::errors::HarnessError::new(
-                "NOTES_TOO_LARGE",
-                "request body exceeds the notes request limit",
-            ))
-        })?;
+    let recheck = req.extensions().get::<super::auth::SessionRecheck>().cloned();
+    // Bounded like the attachment upload: a client that trickles or never
+    // finishes its body cannot hold the ingest permit indefinitely.
+    let bytes = tokio::time::timeout(
+        state.upload_body_timeout,
+        axum::body::to_bytes(req.into_body(), limit.saturating_add(1)),
+    )
+    .await
+    .map_err(|_| {
+        notes_corpus::ingest_error(&crate::common::errors::HarnessError::new(
+            "NOTES_TIMEOUT",
+            "request body was not received within the upload deadline",
+        ))
+    })?
+    .map_err(|_| {
+        notes_corpus::ingest_error(&crate::common::errors::HarnessError::new(
+            "NOTES_TOO_LARGE",
+            "request body exceeds the notes request limit",
+        ))
+    })?;
+    if let Some(recheck) = recheck {
+        recheck.verify().await?;
+    }
     let boundary = attachments::multipart_boundary(&content_type).map_err(|e| notes_corpus::ingest_error(&e))?;
     let st = state.clone();
     let task_owner = owner.clone();
