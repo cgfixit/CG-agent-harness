@@ -628,9 +628,9 @@ and rejects references to reserved source names, including in SSE URLs.
 `POST /api/agent/run` in a tokio task, but the run gate and (when the local
 model is also the planner) the chat gate are held by the TASK via
 `GateGuard`'s `Drop`, not by the HTTP request. A closed tab or dead client
-cannot leave the gate stuck: cancelling
-(`POST /api/agent/jobs/{job_id}/cancel`) aborts the task, dropping the guards and
-the child (`kill_on_drop`). A job's terminal state is set exactly once
+cannot strand the gate: cancelling
+(`POST /api/agent/jobs/{job_id}/cancel`) aborts the task, dropping guards and
+child (`kill_on_drop`). A job's terminal state is set exactly once
 (`JobStore::finish` is a no-op after cancellation), so a slow child cannot
 resurrect a job the operator killed.
 
@@ -643,8 +643,8 @@ Its task takes the research lease, the search gate and the generation gate, and
 the route answers 202 only once they are held, so validation, policy and busy
 refusals stay synchronous. `POST /api/web/research/cancel` reaches it through the
 owner's lease. Jobs are owner-bound (another account's read is
-`WEB_JOB_NOT_FOUND`), kept in process memory only (at most eight; finished ones
-evicted oldest first) and never written to disk; a restart ends them. Every read
+`WEB_JOB_NOT_FOUND`), memory-only (at most eight; finished ones
+evicted oldest first), never on disk; a restart ends them. Every read
 of a finished job reloads current account and URL policy, as the synchronous route
 does before delivery; a revoked or unproven source withholds the passages and the
 answer (`WEB_POLICY_CHANGED`). On macOS the run holds an idle-sleep assertion until
@@ -658,14 +658,15 @@ way (macOS and Linux). Both start from one `prepare`, so refusals stay synchrono
 202 means the job's task holds the generation gate, the task file and the child.
 Jobs are administrator-only, owner-bound (`BROWSER_JOB_NOT_FOUND`), memory-only (at
 most eight) and ended by a restart. Cancel sends one `cancel` line: the child stops
-before its next model turn and its report is kept; one still running ten seconds
-later is killed with its tree. A closed stdin is a cancel. The terminal state is set once; every read of
+before its next model turn, keeping its report, or ten seconds
+later is killed with its tree. A closed stdin is a cancel. A change to the asking account kills
+the child and withholds its report (`AUTH_REQUIRED`). The terminal state is set once; every read of
 a stored report rechecks the block list.
 
 An administrator can let one held request of their own job be sent (takeover,
 #995), behind literal `browser.takeover.enabled` (ships `true`; restart-only).
 Only a job asks; `/api/browser/run` holds every request. The page route pauses a request held as the operator's step; the job
-reads `waiting` and shows method, whole URL, content type, size, body SHA-256 and
+reads `waiting`, showing method, whole URL, content type, size, body SHA-256 and
 a text preview for at most `browser.takeover.wait_sec`.
 `POST /api/browser/jobs/{job_id}/approve` needs that request's id and hash,
 `confirm: true` and a `reason` (no defaults); it rechecks both gates, the block

@@ -1481,3 +1481,37 @@ async fn boot_retires_a_machine_key_an_auditor_account_still_holds() {
     assert!(keys.authenticate(&watcher).is_err(), "boot retired the auditor's key");
     assert!(keys.authenticate(&worker).is_ok(), "an operator's key is untouched");
 }
+
+/// A browser task's report reaches only an account unchanged since it asked:
+/// a password reset or a disable during the run withholds it (401
+/// AUTH_REQUIRED, audited `browser.withheld`), as chat withholds a reply.
+#[tokio::test]
+async fn a_browser_report_is_withheld_once_the_asking_account_changes() {
+    use cgagentharness::server::routes::browser::deliver_exited_child_as;
+    let model = start_mock_model().await;
+    let server = spawn_server(&model.base_url(), ServerOptions::default().with("auth.enabled", "true")).await;
+    let auth = server.state.auth.as_ref().unwrap();
+    auth.create_user("ops", &cgagentharness::common::random_hex(24), "admin")
+        .unwrap();
+    let origins = ["https://example.com".to_string()];
+    let report = "{\"answer\":\"fresh\"}\n";
+    let user = auth.get_user("ops").unwrap();
+    let seen = auth.sign_in_revocations("ops");
+    let body = deliver_exited_child_as(&server.state, user.clone(), seen, &origins, report)
+        .await
+        .unwrap_or_else(|err| panic!("refused: {}", err.code));
+    assert_eq!(body["report"]["answer"], "fresh", "{body}");
+    auth.set_password("ops", &cgagentharness::common::random_hex(24))
+        .unwrap();
+    let refused = deliver_exited_child_as(&server.state, user.clone(), seen, &origins, report)
+        .await
+        .unwrap_err();
+    assert_eq!((refused.status.as_u16(), refused.code.as_str()), (401, "AUTH_REQUIRED"));
+    assert!(server.audit_log().contains("\"browser.withheld\""));
+    let seen = auth.sign_in_revocations("ops");
+    auth.disable_user("ops").unwrap();
+    let refused = deliver_exited_child_as(&server.state, user, seen, &origins, report)
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code, "AUTH_REQUIRED");
+}
