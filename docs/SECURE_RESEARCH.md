@@ -1,10 +1,10 @@
 # Accounts, HTTPS and permitted web research
 
 Fresh homes enable HTTPS, role authentication and web operations. Web content
-needs an explicit URL grant; the allowlist starts with one seeded rule,
-`https://www.google.com/*`, for public Google search.
-Upgrades preserve `config.yaml`; missing legacy auth or TLS switches remain off.
-To adopt the defaults, merge these literal values and restart the server:
+needs an explicit URL grant; the allowlist is seeded with
+`https://www.google.com/*` for public Google search. Upgrades keep
+`config.yaml`, where missing legacy auth or TLS switches stay off; to adopt the
+defaults, merge these literal values and restart:
 
 ```yaml
 auth:
@@ -60,29 +60,26 @@ tokens, query bodies or keys.
 
 ### API Keys
 
-The **API Keys** tab lists `env_keys::MANAGED_KEYS`, except the harness and
-planner keys, which `/api` manages; [supported managed
-keys](INSTALL.md#supported-managed-keys) explains saved/active masks, restarts
-and environment precedence. Administrators save, replace or clear values;
-responses contain only masks and status. Save and clear use the OS credential
-store and fail closed when it is unavailable, unless literal
+The **API Keys** tab lists `env_keys::MANAGED_KEYS` except the harness and
+planner keys (`/api` manages those; [managed
+keys](INSTALL.md#supported-managed-keys) covers masks, restarts and precedence).
+Administrators save, replace or clear values and see only masks and status.
+Both use the OS credential store and fail closed without it, unless literal
 `security.allow_plaintext_key_file: true` keeps the
-[private legacy file](INSTALL.md#8-persistence-optional-keys-and-recovery).
-A missing provider credential affects only that provider. Leave `GH_TOKEN`
-unset to use existing `gh auth login`. Completion webhook bearers are
-configured separately
-([webhook guide](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook)).
+[private legacy file](INSTALL.md#8-persistence-optional-keys-and-recovery). A
+missing credential affects only its provider; leave `GH_TOKEN` unset to use
+`gh auth login`. Webhook bearers are
+[configured separately](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook).
 
 ### Account storage and recovery
 
 Versioned `auth.sqlite3` stores accounts and hashed session tokens
-transactionally. Private `auth.initialized` prevents a missing database
-from becoming a fresh default-password bootstrap. A valid legacy `auth.json`
-migrates once (`auth.json.pre-sqlite` keeps the private recovery copy; legacy
-sessions log in again). Corrupt, empty, unsafe or unsupported initialized
-stores refuse startup; nothing resets automatically. Stop the server before a
-backup or recovery, keep the database and marker together, and do not delete
-them to recreate `admin`.
+transactionally; private `auth.initialized` stops a missing database from
+becoming a default-password bootstrap. A valid legacy `auth.json` migrates once
+(`auth.json.pre-sqlite` keeps a private copy; its sessions log in again).
+Corrupt, empty, unsafe or unsupported stores refuse startup and never reset.
+Stop the server before a backup or recovery, keep database and marker
+together, and never delete them to recreate `admin`.
 
 Each scrypt derivation uses about 128 MiB, so `auth.max_concurrent_operations`
 (default 1, range 1–4) bounds login and password work; extra attempts wait.
@@ -95,19 +92,18 @@ with mode 0600 because history can carry pasted secrets;
 
 ### Session ownership and legacy adoption
 
-New sessions carry the account's random `user_id`; listing, loading, search,
-export, chat, prompt preview, goals, skills and style enforce that owner.
-Administrators do not inherit other accounts' sessions. Auth-disabled
-homes use owner `local`; enabling auth does not reassign that data.
+New sessions carry the account's random `user_id`, which listing, loading,
+search, export, chat, prompt preview, goals, skills and style enforce;
+administrators inherit no other account's sessions. Auth-disabled homes use
+owner `local`, and enabling auth does not reassign it.
 
 Sessions without an owner are unassigned legacy data: kept on disk, hidden
-from ordinary reads/search/export, and untouched by **Clear my session
-history**. In **Sessions**, an administrator can open **Review unassigned legacy
-sessions (admin)**, enter a reason, confirm authorization and choose **Adopt
-into my account**. Adoption preserves the transcript and old blob
-pin owners but clears the prior goal-stage coding approval, so coding work must
-be staged and reviewed again. Unknown-schema, unreadable and interrupted staged
-files remain for manual recovery.
+from ordinary reads, search and export, and untouched by **Clear my session
+history**. An administrator adopts one from **Sessions → Review unassigned
+legacy sessions (admin)** with a reason and confirmation. Adoption keeps the
+transcript and old blob pin owners but clears the goal-stage coding approval,
+so coding work is staged and reviewed again. Unknown-schema, unreadable and
+interrupted files stay for manual recovery.
 
 Detached job and schedule management uses the same owner boundary
 ([contract](../INVARIANTS.md#session-export-and-transcript-search-stay-on-the-machine));
@@ -116,21 +112,20 @@ occurrences.
 
 ## HTTPS and native trust
 
-`serve` and the desktop sidecar share one transport setup. Generated material
-is a unique P-256 key and certificate in private `tls/server.pem` (0600,
-directory 0700) with SANs for `localhost`, `127.0.0.1` and `::1`, reused across
-restarts and checked for name, validity and key consistency. Invalid or expired
-material refuses startup; there is no HTTP fallback. Explicit
-`tls.enabled: false` is the legacy HTTP choice. The loopback listener accepts
-TLS 1.3 only.
+`serve` and the desktop sidecar share one transport setup: a unique P-256 key
+and certificate in private `tls/server.pem` (0600, directory 0700), SANs
+`localhost`, `127.0.0.1` and `::1`, reused across restarts and checked for name,
+validity and key consistency. Invalid or expired material refuses startup, with
+no HTTP fallback; explicit `tls.enabled: false` is the legacy HTTP choice. The
+listener accepts TLS 1.3 only.
 
-The desktop app pins that exact leaf for its own WKWebView and changes no global
-trust ([native trust](DESKTOP.md#ownership-ports-and-security-boundaries)).
-The server checks origin, HTTP/2 `:authority` and HTTP/1 Host. HTTPS cookies
-are Secure, HttpOnly and SameSite=Strict. Browsers do not isolate cookies by
-port, and an IP address is one site, so any other service on the same loopback
-address receives the session cookie when the browser visits it; on a shared
-host, another account's loopback server could replay it.
+The desktop app pins that leaf for its own WKWebView and changes no global
+trust ([native trust](DESKTOP.md#ownership-ports-and-security-boundaries)). The
+server checks origin, HTTP/2 `:authority` and HTTP/1 Host; HTTPS cookies are
+Secure, HttpOnly and SameSite=Strict. Browsers do not isolate cookies by port,
+so any other service on the same loopback address receives the session cookie
+when the browser visits it; on a shared host, another account's loopback
+server could replay it.
 
 Print the public certificate, or renew generated material:
 
@@ -140,32 +135,27 @@ Print the public certificate, or renew generated material:
 ./target/release/cgagentharness tls renew
 ```
 
-Renewal preserves operator-supplied paths. For an operator certificate, set
-both `tls.cert_file` and `tls.key_file` to absolute or home-relative paths,
-with a valid chain, key and loopback SANs; the operator renews it.
-Certificate-bound CLI sessions log in again after a renewal.
+Renewal preserves operator-supplied paths: an operator certificate sets both
+`tls.cert_file` and `tls.key_file` (absolute or home-relative; valid chain, key
+and loopback SANs) and is renewed by the operator. CLI sessions log in again
+after a renewal.
 
-Browsers, including private windows, need separate trust. Native **Setup → Export
-public browser certificate** saves the owned leaf and shows its SHA-256.
-Safari and Chrome/Chromium on macOS use operator-managed Keychain SSL trust;
-Firefox may need its own exception or a browser-trusted operator certificate.
-Review trust again after a renewal, and never disable validation.
+Browsers, private windows included, need separate trust: **Setup → Export
+public browser certificate** saves the leaf and shows its SHA-256. Safari and
+Chrome on macOS use operator-managed Keychain SSL trust; Firefox may need its
+own exception. Review trust after a renewal; never disable validation.
 
 ## Terminal access
 
-`account` and `web` use the running home's authenticated API; no offline policy
-mutation exists. Set absolute `CGAGENTHARNESS_HOME` when needed. Pass a desktop
-or custom-port origin with `--url` after `account` or `web`.
+`account` and `web` use the running home's authenticated API (no offline
+policy mutation); set an absolute `CGAGENTHARNESS_HOME` if needed and pass a
+desktop or custom-port origin with `--url`.
 
 ```bash
 ./target/release/cgagentharness account --url https://127.0.0.1:8790 login admin
-./target/release/cgagentharness account --url https://127.0.0.1:8790 password
 ./target/release/cgagentharness web status
 ./target/release/cgagentharness web allow 'https://example.com/docs/*' --group docs --seed https://example.com/docs/
-./target/release/cgagentharness web fetch https://example.com/docs/start
-./target/release/cgagentharness web search 'veeam software cve' --count 5
 ./target/release/cgagentharness web research 'How does widget_open fail?' --group docs
-./target/release/cgagentharness web deny 'https://example.com/docs/*'
 ./target/release/cgagentharness account logout
 ```
 
@@ -177,11 +167,11 @@ substitution before sending credentials.
 
 ## Web permissions
 
-Web settings persist; absent/invalid legacy `web_enabled` stays off.
-`/web on|off` (also terminal `web on|off`) controls future reads and injection.
+Web settings persist (absent or invalid legacy `web_enabled` stays off);
+`/web on|off`, console or terminal, controls future reads and injection.
 Enablement and policy are **shared-home**; selections are account-private.
-Allowlist mode is the default and requires URL grants. An administrator can
-confirm `/web mode denylist` to permit unblocked public URLs. `/web block` and
+Default allowlist mode requires URL grants; an administrator can confirm
+`/web mode denylist` to permit unblocked public URLs. `/web block` and
 `/web unblock` manage blocks, which win in both modes and across HTTP/HTTPS; a
 host without a path blocks its subdomains too. Switching modes preserves both
 lists, and named groups still restrict reads to their allow rules.
@@ -220,15 +210,14 @@ restart-only) bounds parser state; excessive nesting returns
 `WEB_HTML_COMPLEXITY` without saving partial evidence.
 
 Each rule belongs to one source group, `default` unless `--group NAME` names
-another. Repeatable `--seed URL` records starting pages; each seed must fit a
-pattern in the same grant. `--group` on `check`, `fetch`, `pages`, `search`
-or `research` limits that request to the group's allow rules. `/web deny` removes
-an allow rule ID or matching pattern across groups; it does not add a block.
+another; repeatable `--seed URL` records starting pages that must fit a pattern
+in the same grant. `--group` on `check`, `fetch`, `pages`, `search` or
+`research` limits that request to the group's allow rules. `/web deny` removes
+an allow rule ID or matching pattern across groups; it adds no block.
 
-Legacy rows migrate as exact URLs (add a wildcard to permit discovery); one
-invalid row fails the whole migration. Legacy `web_context.txt`/`web_last.json`
-are never injected; selections live in
-`tools/web_<account-hash>_{last,context}.json`.
+Legacy rows migrate as exact URLs (add a wildcard for discovery); one invalid
+row fails the migration. Legacy `web_context.txt`/`web_last.json` are never
+injected; selections live in `tools/web_<account-hash>_{last,context}.json`.
 
 ## Search, fetch and research
 
@@ -239,22 +228,14 @@ allowlist mode, an administrator first grants the example page:
 /web allow https://doc.rust-lang.org/book/ch01-01-installation.html
 ```
 
-Now ask in ordinary chat:
-
-```text
-Search Google for the top 5 results for "veeam software cve".
-Read https://doc.rust-lang.org/book/ch01-01-installation.html and tell me which command checks the installed Rust compiler version.
-```
-
-Direct commands:
+Then ask in ordinary chat, for example "Read that page and tell me which
+command checks the installed Rust version", or use direct commands:
 
 ```text
 /web search --count 3 veeam software cve
 /web fetch https://doc.rust-lang.org/book/ch01-01-installation.html
 /web allow https://www.veeam.com/* https://example.org/* --group vendors
-/web check https://www.veeam.com/ https://example.org/ --group vendors
 /web research --group vendors Compare the backup approaches
-/web research --url https://www.veeam.com/ Summarize products and permitted internal links
 /web pages --group vendors backup retention
 ```
 
@@ -265,51 +246,53 @@ flags (`/web search -- --help`), or single-quote it
 ### Chat web tools
 
 Local chat and `/loop` offer only `web_search` (configured-provider listings)
-and `web_fetch` (an exact permitted URL); listings grant admin-turn exact-URL
-reads (`web.search.result_reads.enabled`, on unless literal `false`, even in a
-home whose config predates the key). A listed `https://arxiv.org/abs/<id>` also
+and `web_fetch` (an exact permitted URL); no repository, shell, policy,
+account, key or mutation tool is exposed, and `web.chat_tool_calls` bounds all
+rounds (1–30, default 30). Listings grant admin-turn exact-URL reads
+(`web.search.result_reads.enabled`, on unless literal `false`, even in a home
+whose config predates the key). A listed `https://arxiv.org/abs/<id>` also
 grants exactly `https://arxiv.org/pdf/<id>`, its `full_text_url`, within
 `max_urls` (`result_reads.arxiv_pdf`, literal `true` only); a PDF past that cap
 is not offered. A URL only a `/*`, `*.` rule or denylist permits, unlisted and
 not named in the message, pauses a live admin turn for Approve; elsewhere it is
-refused (`WEB_FETCH_COMPOSED`, `web.fetch_provenance`). No
-repository, shell, policy, account, key or mutation tool is exposed. Batches validate before sequential
-reads; `web.chat_tool_calls` bounds all rounds (1–30, default 30).
+refused (`WEB_FETCH_COMPOSED`, `web.fetch_provenance`).
 
-Each call fits prompt, definitions, one reply and
-minimal results inside `web.total_tokens`; a batch without room runs no reads,
-and results shrink to the remaining calibrated room. `WEB_TOKEN_BUDGET`
-reports refusal; `WEB_TOOLS_WITHHELD` reserves an answer after evidence.
-A failed read returns its own `ok: false` outcome. A batch that fails entirely,
-including a turn's first, ends the tool rounds: the model is asked once more,
-without tools, to answer. An empty answer is retried once, then
-harness-written (`WEB_FINAL_EMPTY`, or "Web operation failed: CODE" if all
-failed). Usage includes completed model calls; missing upstream counts remain
-unknown. Cancellation aborts the whole turn.
+Before any call runs, a bad identifier or call type, an unoffered tool,
+unparsable arguments or too many calls refuse the whole batch; a bound one
+call's arguments break (a `query` over 200 characters) fails that call alone,
+like a refused URL, as its own `ok: false` outcome (#772). Each call fits
+prompt, definitions, one reply and minimal results inside `web.total_tokens`; a
+batch without room runs no reads, and results shrink to the calibrated room
+left (`WEB_TOKEN_BUDGET`; `WEB_TOOLS_WITHHELD` reserves an answer after
+evidence). A batch that fails entirely ends the tool rounds: the model answers
+once without tools; an empty answer is retried once, then harness-written
+(`WEB_FINAL_EMPTY`, or "Web operation failed: CODE"). Usage counts completed
+model calls; missing upstream counts stay unknown. Cancellation aborts the turn.
 
-`web_fetch` selects up to three BM25 passages from the page it read, using
-`query` (1–200 characters); lookups that rank several pages keep at most two
-per page. Only whole delivered passages get receipt IDs and offsets. Omitted `refresh`
-reuses fresh evidence already read for this goal; other reads default fresh.
-`refresh:false` allows permitted cache within `web.stale_seconds`; `true` forces
-a fresh read, including current facts, once per page per turn: a repeat
-re-selects passages from that read (`refresh_reused`).
+`web_fetch` selects up to three BM25 passages from its page by `query`
+(1–200 characters); multi-page lookups keep at most two per page, and only whole
+delivered passages get receipt IDs and offsets. Omitted `refresh` reuses fresh
+evidence already read for this goal, other reads default fresh;
+`refresh:false` allows permitted cache within `web.stale_seconds`, and `true`
+forces one fresh read per page per turn (a repeat re-selects from it,
+`refresh_reused`).
 
 Before further tools, new useful passages get a bounded digest (≤1,024 output
 tokens) with validated quotes and source IDs: provenance, not logical support;
-the answer stays unvalidated.
-Server-managed goal runs retain at most nine URL/hash receipts, three passage
-IDs per URL and sixteen queries, plus the digest. Reuse rechecks age, hashes
-and permissions. References survive compaction, not completion, cancellation
-or restart.
+the answer stays unvalidated. The prompt asks for quotes near 120 characters
+that keep their qualifiers; one over 160 (`QUOTE_MAX_CHARS`) drops its claim
+(`quote_too_long`) and is never trimmed. Server-managed goal runs retain at
+most nine URL/hash receipts, three passage IDs per URL and sixteen queries,
+plus the digest. Reuse rechecks age, hashes and permissions. References survive
+compaction, not completion, cancellation or restart.
 
 `POST /api/chat` returns `web_tools`, reply and usage; the console shows each
 outcome separately. Each entry records its call's `query` and `refresh`, or
-`count`; a digest entry lists one `drop_reasons` code per dropped claim. Session `web_sources` is a bounded metadata ledger,
-never a second page store. `web.carry_forward_sources` ships 5: permitted earlier URLs/queries (no
-page text), cited when used.
-Design: [router](WEB_DECISION_ROUTER.md); summary:
-[README](../README.md#how-the-research-loop-decides).
+`count`; a digest entry lists one `drop_reasons` code per dropped claim. Session
+`web_sources` is a bounded metadata ledger, never a second page store.
+`web.carry_forward_sources` ships 5: permitted earlier URLs/queries (no page
+text), cited when used. Design: [router](WEB_DECISION_ROUTER.md);
+summary: [README](../README.md#how-the-research-loop-decides).
 
 ### Google search
 
@@ -382,77 +365,65 @@ run's remaining `web.run_bytes` if less) is read locally as
 A `fetch` batch validates all targets before any request and shares page, byte,
 time and per-site limits. Partial reads report coverage and failures.
 
-`/web off` takes effect for running reads at the next dispatch, storage or
-delivery check. Queued and paced requests recheck enablement before sending,
-including search providers and Firecrawl fallback. A response arriving while web
-is off is discarded with `WEB_DISABLED`; earlier cached pages remain on disk.
-Re-enable web to start a fresh read.
+`/web off` stops running reads at their next dispatch, storage or delivery
+check; queued and paced requests, search providers and the Firecrawl fallback
+recheck it before sending. A response arriving while web is off is discarded
+(`WEB_DISABLED`); cached pages stay on disk.
 
 Every content request is DNS-pinned to checked public addresses with TLS hostname
 validation and no reuse, retries, proxies, redirects, compression or cookies
 ([contract](../INVARIANTS.md#public-web-evidence-requires-current-content-permission)).
 
 Opt-in `web.firecrawl.enabled` (ships off; needs **Firecrawl page reader** in API
-Keys) is the one exception, for exact reads only: `fetch`, chat `web_fetch` and
-batches, never discovery, crawl or search. When the pinned read gets a 403,
-429 or 503, a script shell (scripted HTML whose text is under 200
-characters and under 5% of the markup), an oversized body or a PDF that local
-[text extraction](CONSOLE.md#pdf-text) refuses as textless, over a limit or
-malformed (10 pages at most; a busy, timed-out, failed or encrypted read stays
-local), the authorized URL leaves the machine once, to the fixed `https://api.firecrawl.dev/v2/scrape`: basic proxy,
-markdown only, `storeInCache: false`. An answer naming another final URL is
-refused as a redirect, and no links are kept. The page carries
-`via: firecrawl`. `web.firecrawl.max_per_hour` (default 20) caps reads, and
-batches charge both reads to `web.run_bytes`; HTTP 402 or 429 pauses Firecrawl
-like a search quota. A failed fallback keeps the original result, with its
-code in `details.fallback`.
+Keys) is the one exception, for exact reads only (`fetch`, chat `web_fetch`,
+batches; never discovery, crawl or search). After a pinned 403, 429 or 503, a
+script shell (scripted HTML whose text is under 200 characters and 5% of the
+markup), an oversized body, or a PDF local [text extraction](CONSOLE.md#pdf-text)
+refuses as textless, over a limit or malformed (10 pages at most; a busy,
+timed-out, failed or encrypted read stays local), the authorized URL leaves the
+machine once, to the fixed `https://api.firecrawl.dev/v2/scrape`: basic proxy,
+markdown only, `storeInCache: false`. Another final URL is refused as a
+redirect; no links are kept; the page carries `via: firecrawl`.
+`web.firecrawl.max_per_hour` (default 20) caps reads, batches charge both reads
+to `web.run_bytes`, and HTTP 402 or 429 pauses it like a search quota. A failed
+fallback keeps the original result, its code in `details.fallback`.
 
-The HTML parser drops executable, hidden and navigation content. Extracts keep
+The HTML parser drops scripts, styles, navigation, headers, footers, forms and
+`hidden` or `aria-hidden` elements; text hidden only by CSS stays. Extracts keep
 canonical URLs, hashes, fetch age, validators, extraction version and passage
 offsets.
 
-The shipped YAML lists every `web.*` limit with its range; a home missing
-those keys gets smaller code defaults.
-[Reloadable limits](INSTALL.md#reload-limits-without-a-restart) names the ones
-that change without a restart. Failed requests can charge the full response
-allowance.
+The shipped YAML lists every `web.*` limit and range; a home missing those keys
+gets smaller code defaults ([reloadable](INSTALL.md#reload-limits-without-a-restart)).
+A failed request can charge the full response allowance.
 
-For `research`, repeat `--url` for permitted starts; starts narrow one run but
-grant nothing. Otherwise traversal uses group seeds and permitted literal prefixes
-such as `/docs/`. A host wildcard without seeds can use up to four matching,
-currently permitted cached pages; without either, it reports `WEB_SEED_REQUIRED`.
-Origin `/robots.txt` is readable when an allow rule covers that origin, even if
+For `research`, repeat `--url` for permitted starts, which narrow one run but
+grant nothing; otherwise traversal uses group seeds and permitted literal
+prefixes such as `/docs/`. A host wildcard without seeds uses up to four
+matching, currently permitted cached pages, else reports `WEB_SEED_REQUIRED`.
+Origin `/robots.txt` is readable when an allow rule covers that origin, even
 path-restricted, or in ungrouped denylist mode; blocks still win. Unreadable
-robots leaves seeds readable but stops link traversal; robots consumes requests
-but supplies no evidence. Links are deduplicated, paced and policy-checked.
-There is no sitemap discovery, provider key or cloud fallback.
+robots stops link traversal, not seeds; robots costs requests and supplies no
+evidence. Links are deduplicated, paced and policy-checked; there is no sitemap
+discovery, provider key or cloud fallback.
 
-Tantivy rebuilds a bounded in-memory BM25 index from permitted cached extracts,
-with exact phrase and identifier matching (`a_b`, `a::b`; when no passage
-holds the identifier, as PDFs print `d_model` as `d model`, term ranking
-alone), title and heading
-boosts, and deduplication. Derived cache corruption grants nothing.
-Validators reduce bytes, not requests.
+Tantivy rebuilds a bounded in-memory BM25 index from permitted cached extracts:
+exact phrase and identifier matching (`a_b`, `a::b`; term ranking alone when no
+passage holds the identifier, as PDFs print `d_model` as `d model`), title and
+heading boosts, deduplication. Derived cache corruption grants nothing;
+validators reduce bytes, not requests.
 
-```mermaid
-flowchart LR
-    Q["/web research question"] --> S[Starts: --url, group seeds, permitted prefixes]
-    S --> C[One bounded crawl: robots, pacing, policy per link]
-    C --> I[Tantivy BM25 index over permitted cached extracts]
-    I --> P[Local model: at most 3 subqueries in 2 rounds]
-    P --> A[Synthesis within evidence_tokens]
-    A --> V{Citation IDs and quotes found in passages?}
-    V -->|no| D[Claim dropped: WEB_CITATION_DROPPED]
-    V -->|yes| R[Answer: support, conflicts, inference, missing or stale]
-```
+The local model plans at most `web.subqueries` subqueries (ships 3) in
+`web.rounds` rounds (ships 2); synthesis cites passage IDs with exact quotes,
+and a claim whose ID or quote is not in its passage is dropped
+(`WEB_CITATION_DROPPED`).
 
 Shipped budgets are 1200s for discovery including cold load, then 1800s
-answering (300s each if the keys are absent); cancellation includes loading.
-Token budgets and smaller windows:
-[MODELS.md](MODELS.md#4-select-an-installed-model-and-check-ollama). Provider
-usage wins; otherwise bytes/4 plus overhead is estimated. Synthesis drops
-unfitting low-ranked passages (`WEB_EVIDENCE_TRIMMED`). Retrieval interleaves
-the question and subqueries without embeddings or reranking. Console research
+answering (300s each if the keys are absent); cancellation includes loading
+([token budgets](MODELS.md#4-select-an-installed-model-and-check-ollama)).
+Provider usage wins, else bytes/4 plus overhead is estimated. Synthesis drops
+unfitting low-ranked passages (`WEB_EVIDENCE_TRIMMED`); retrieval interleaves
+question and subqueries without embeddings or reranking. Console research
 (`/web job`, `/web jobs`) outlives the tab; `/web cancel` stops it.
 
 Citation IDs and quotes are checked against passages, but semantic support still
@@ -460,18 +431,18 @@ needs judgment. Rank is not truth, and fetch age is not publication date.
 
 ### Saved web selection
 
-`/web inject` selects the last fetched or page-search extract, or the first
-successful batch page, for local chat, as a bounded excerpt, not a summary.
-`/prompt` previews it; `/web forget` clears it without altering old chats.
-Google listings never enter the page cache or selection, and `/web research`
-does not replace the selection, although its fetched pages reuse the cache.
+`/web inject` selects the last fetched or page-search extract, or a batch's
+first successful page, as a bounded excerpt for local chat; `/prompt` previews
+it and `/web forget` clears it without altering old chats. Listings never enter
+the cache or selection; `/web research` reuses the cache but never replaces the
+selection.
 
 ## Security boundaries
 
-When auth is enabled, all operational API reads and writes require an account.
-Public endpoints are static login assets, minimal status, setup status and login.
-Mutation CSRF remains `X-CyClaw-CSRF`. Forwarding headers are refused, and
-reverse proxies are unsupported. The dedicated
+With auth on, every operational API read and write needs an account; public
+endpoints are static login assets, minimal status, setup status and login.
+Mutation CSRF is `X-CyClaw-CSRF`; forwarding headers are refused and reverse
+proxies unsupported. The dedicated
 [machine gateway](MCP.md#private-read-only-memory-gateway) does not inherit console authority.
 
 Ownership follows [session ownership](#session-ownership-and-legacy-adoption)
