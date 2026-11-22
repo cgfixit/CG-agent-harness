@@ -191,7 +191,7 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
     let public = PUBLIC_API_PATHS.contains(&path.as_str());
     let mut actor_name = "local".to_string();
     if state.auth.is_some() {
-        let account = super::routes::auth::actor(&state, &req);
+        let account = super::routes::auth::session_account(&state, &req).await;
         if !public {
             let account = match account {
                 Ok(account) => account,
@@ -241,6 +241,11 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
                 return ApiError::new(StatusCode::FORBIDDEN, "AUTH_PERMISSION_DENIED", "denied").into_response();
             }
             actor_name = account.username.clone();
+            // A body that arrives after this check rereads the session and
+            // role before it is used (`auth::SessionRecheck`).
+            if let Some(recheck) = super::routes::auth::SessionRecheck::new(&state, &req, &account, capability) {
+                req.extensions_mut().insert(recheck);
+            }
             // Hand the parsed role to handlers that authorize below the route
             // table (per-server MCP authority): the gate stays the single
             // parse site.

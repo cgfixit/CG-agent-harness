@@ -729,3 +729,106 @@ async fn unlisted_routes_deny_authenticated_callers_by_default() {
     let (status, _) = open.open_get("/api/definitely-not-a-route").await;
     assert_eq!(status, 404);
 }
+
+/// Sends `POST path` over raw TCP: the headers and the first half of `body`,
+/// then runs `between`, then the rest. Returns the status code and the text.
+async fn post_in_two_halves(
+    s: &TestServer,
+    cookie: &str,
+    path: &str,
+    body: &str,
+    between: impl FnOnce(),
+) -> (u16, String) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(s.addr).await.unwrap();
+    let head = format!(
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\n\
+         Content-Length: {len}\r\nCookie: {cookie}\r\nX-CyClaw-CSRF: {csrf}\r\nConnection: close\r\n\r\n",
+        port = s.addr.port(),
+        len = body.len(),
+        csrf = s.csrf,
+    );
+    let (first, rest) = body.split_at(body.len() / 2);
+    stream.write_all(head.as_bytes()).await.unwrap();
+    stream.write_all(first.as_bytes()).await.unwrap();
+    stream.flush().await.unwrap();
+    // Let the gate run on the headers before the account changes.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    between();
+    stream.write_all(rest.as_bytes()).await.unwrap();
+    let mut response = String::new();
+    tokio::time::timeout(std::time::Duration::from_secs(20), stream.read_to_string(&mut response))
+        .await
+        .unwrap()
+        .unwrap();
+    let status = response
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse().ok())
+        .unwrap();
+    (status, response)
+}
+
+/// The gate authorizes on the headers; a body may arrive any time later. An
+/// admin disabled or demoted while its body is in flight must not complete
+/// the shared-state write it was authorized for.
+#[tokio::test]
+async fn an_admin_write_whose_account_changes_mid_body_is_refused() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("api.rate_limit.max_requests", "1000"),
+    )
+    .await;
+    let mgr = s.state.auth.clone().unwrap();
+    let password = cgagentharness::common::random_hex(24);
+    mgr.create_user("boss", &password, "admin").unwrap();
+    mgr.set_password("boss", &password).unwrap();
+    let login = |s: &TestServer| {
+        let request = s
+            .client
+            .post(s.url("/api/auth/login"))
+            .json(&json!({"username": "boss", "password": password}));
+        async move {
+            let response = request.send().await.unwrap();
+            assert_eq!(response.status(), 200);
+            response.headers()["set-cookie"]
+                .to_str()
+                .unwrap()
+                .split(';')
+                .next()
+                .unwrap()
+                .to_string()
+        }
+    };
+    let body = json!({"mode": "denylist", "confirm": true}).to_string();
+    let changes = |s: &TestServer| s.audit_log().matches("\"web.policy_mode\"").count();
+
+    // Control: the same slow body with no account change completes.
+    let cookie = login(&s).await;
+    let (status, text) = post_in_two_halves(&s, &cookie, "/api/web/mode", &body, || {}).await;
+    assert_eq!(status, 200, "control: {}", text.lines().next().unwrap_or(""));
+    assert_eq!(changes(&s), 1);
+
+    for change in ["disabled", "demoted"] {
+        let cookie = login(&s).await;
+        let (status, text) = post_in_two_halves(&s, &cookie, "/api/web/mode", &body, || {
+            if change == "disabled" {
+                mgr.disable_user("boss").unwrap();
+            } else {
+                mgr.set_role("boss", "operator").unwrap();
+            }
+        })
+        .await;
+        assert!(
+            status == 401 || status == 403,
+            "{change}: {}",
+            text.lines().next().unwrap_or("")
+        );
+        assert_eq!(changes(&s), 1, "{change}: the mode change ran");
+        mgr.enable_user("boss").ok();
+        mgr.set_role("boss", "admin").unwrap();
+    }
+}

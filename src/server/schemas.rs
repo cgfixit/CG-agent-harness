@@ -1225,10 +1225,15 @@ where
     type Rejection = ApiError;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+        let recheck = req.extensions().get::<super::routes::auth::SessionRecheck>().cloned();
         let bytes = match Bytes::from_request(req, state).await {
             Ok(b) => b,
             Err(_) => return Err(validation_error(vec!["body".into()])),
         };
+        // The gate authorized this request before its body arrived.
+        if let Some(recheck) = recheck {
+            recheck.verify().await?;
+        }
         if bytes.len() > MAX_BODY_BYTES {
             return Err(validation_error(vec!["body".into()]));
         }

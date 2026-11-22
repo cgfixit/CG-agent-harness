@@ -487,7 +487,7 @@ pub fn ingest_error(err: &HarnessError) -> crate::server::errors::ApiError {
     let status = match err.code.as_str() {
         "NOTES_TOO_LARGE" | "NOTES_QUOTA" | "PDF_LIMIT" => axum::http::StatusCode::PAYLOAD_TOO_LARGE,
         "NOTES_BUSY" | "PDF_BUSY" => axum::http::StatusCode::SERVICE_UNAVAILABLE,
-        "PDF_TIMEOUT" => axum::http::StatusCode::REQUEST_TIMEOUT,
+        "NOTES_TIMEOUT" | "PDF_TIMEOUT" => axum::http::StatusCode::REQUEST_TIMEOUT,
         "PDF_WORKER_FAILED" => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
         "NOTES_NOT_FOUND" => axum::http::StatusCode::NOT_FOUND,
         "IO_ERROR" => axum::http::StatusCode::INTERNAL_SERVER_ERROR,

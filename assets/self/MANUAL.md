@@ -48,7 +48,7 @@ The HTTP console (`src/server`, `src/shim`, `src/llm`, `src/common`, `src/netcon
 
 ## invariant: Account, transport and request boundaries
 
-Fresh configuration requires `auth.enabled: true` and `tls.enabled: true`; existing explicit values are kept. Invalid auth/TLS switch types fail closed. The optional harness key grants no account, provider or coding authority; legacy key-required mode is deprecated and ignored. Forwarded requests are refused.
+Fresh configuration requires `auth.enabled: true` and `tls.enabled: true`; existing explicit values are kept. Invalid auth/TLS switch types fail closed. The optional harness key grants no authority; legacy key-required mode is ignored. Forwarded requests are refused.
 
 ## invariant: Public web evidence requires current content permission
 
