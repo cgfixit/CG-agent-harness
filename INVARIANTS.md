@@ -1014,8 +1014,8 @@ reason by filesystem authority, never for a missing, disabled,
 `auditor` or setup-code owner. Table/rate/concurrency/body/result/time
 ceilings are finite; revocation is rechecked before reads. In-flight reads may
 finish. Disabling or deleting an account disables its machine keys and retires
-its schedules, completion notifications and running coding jobs; `auditor`
-demotion retires keys and jobs.
+its schedules, completion notifications and running coding jobs (one registered
+later refuses to start); `auditor` demotion retires keys and jobs.
 Key rows stay until a key-id revoke.
 Audits contain recognized tools, public IDs and coarse outcomes, never content.
 All gateway settings remain restart-only, outside `RELOADABLE`.
