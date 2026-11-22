@@ -1039,9 +1039,9 @@ ids, counts and the manual hash, never text. Neither is a model tool.
 
 ## /diag log inspection never widens authority
 
-`diagnostics.logs_enabled` ships as the literal boolean true for a new home and
-is restart-only. A missing or quoted value stays off. Merging a new seed does
-not rewrite an existing home `config.yaml`. `diagnostics.self_knowledge` and
+`diagnostics.logs_enabled` ships the literal boolean true for a new home and
+is restart-only. A missing or quoted value stays off. A new seed never
+rewrites an existing home `config.yaml`. `diagnostics.self_knowledge` and
 `diagnostics.live_state` do not open this route. Routes need it and an `admin`
 or `auditor` account: `DIAG_DISABLED` or `DIAG_REFUSED`, never empty
 success. A request names a `logs_allowed_files` entry
@@ -1049,12 +1049,12 @@ byte for byte (bare names, distinct after case folding, checked at boot); the
 server joins that entry to `<home>/logs/`. Reads refuse linked or non-private
 leaves, stay within `logs_max_bytes` of the tail, drop partial lines, count
 malformed ones, redact, then refuse the whole result on a scanner hit. Windows
-refuses. `/diag inject` stages the last read in memory for the next local chat
-turn of that session, fenced as untrusted; cloud chat and `/agent` refuse while
-staged (`DIAG_SURFACE_FORBIDDEN`), `/loop` never receives it, and clear, logout
-or account changes drop it. Audits hold names, counts, hashes and codes, never
-log text. With `diagnostics.model_tool` the literal boolean true (ships false,
-restart-only), an `admin`/`auditor` account's local chat turn may instead
+refuses. `/diag inject` stages the last read in memory for that session's next
+local chat turn, fenced as untrusted; cloud chat and `/agent` refuse while
+staged (`DIAG_SURFACE_FORBIDDEN`), `/loop` never receives it, and clear, logout,
+account changes or a turn lacking log reads drop it. Audits hold names,
+counts, hashes and codes, never log text. With `diagnostics.model_tool` the
+literal boolean true (ships false, restart-only), an `admin`/`auditor` account's local chat turn may instead
 offer the model four read-only log tools (`logs_list`, `logs_read`,
 `logs_search`, `logs_stats`): the same allowlist, redaction and scanner
 refusal, byte-offset paging, the allowlisted file and filter shape (never

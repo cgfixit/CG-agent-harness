@@ -132,7 +132,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 ## invariant: /diag log inspection never widens authority
 
-`diagnostics.logs_enabled` ships as the literal boolean true for a new home and is restart-only. A missing or quoted value stays off. Merging a new seed does not rewrite an existing home `config.yaml`. `diagnostics.self_knowledge` and `diagnostics.live_state` do not open this route. Routes need it and an `admin` or `auditor` account: `DIAG_DISABLED` or `DIAG_REFUSED`, never empty success. A request names a `logs_allowed_files` entry byte for byte (bare names, distinct after case folding, checked at boot); the…
+`diagnostics.logs_enabled` ships the literal boolean true for a new home and is restart-only. A missing or quoted value stays off. A new seed never rewrites an existing home `config.yaml`. `diagnostics.self_knowledge` and `diagnostics.live_state` do not open this route. Routes need it and an `admin` or `auditor` account: `DIAG_DISABLED` or `DIAG_REFUSED`, never empty success. A request names a `logs_allowed_files` entry byte for byte (bare names, distinct after case folding, checked at boot); the server joins…
 
 ## invariant: Netconnect is fail-closed and LAN-scoped
 
@@ -209,16 +209,16 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET `/api/netconnect`: Read-only LAN panel, query ignored (netconnect.md)
 - GET `/api/netconnect/diag`: Budgeted TCP probe of configured targets; 409 unless the tier may run (diagnostics)
 - GET `/api/registry`: Skill/tool/connector catalog
-- GET `/api/audit`: Audit events (any role)
+- GET `/api/audit`: Audit events (admin or `auditor`)
 - GET `/api/diag`: `/diag` gate, allowlisted logs, last read and staged excerpt (admin or `auditor`; 409…
 - GET `/api/diag/read`: Bounded, redacted tail of one allowlisted log: `file`, optional `last`, `event`,…
 - POST `/api/diag/inject`, `/api/diag/forget`: Stage the last read for `session_id`'s next local chat turn, or drop it
 - GET `/api/harness/runs`: Retained harness-optimizer runs (`/harness`)
 - GET `/api/analytics/summary`: Owned sessions plus shared spend and coding analytics (details)
-- POST `/api/config/reload`: Administrator reload of the limits allowlist
 
 ## api: registered routes (part 2)
 
+- POST `/api/config/reload`: Administrator reload of the limits allowlist
 - GET `/api/auth/setup-status`: `setup_code` while the one-time code works; public
 - POST `/api/auth/login`: Login; public with early guards
 - POST `/api/auth/logout`: Revoke the current session
@@ -231,10 +231,10 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/chat`: One turn; streams SSE when `Accept: text/event-stream`
 - POST `/api/chat/cancel`: Cancel the active turn (`/loop stop`)
 - POST `/api/chat/attachments`: Upload up to 3 txt/md/json/csv/log/docx/pdf files; 503 past…
-- GET, POST `/api/notes-corpus`: List owned note metadata and upload limits, or ingest a `.md`/`.txt`/`.pdf` batch for…
 
 ## api: registered routes (part 3)
 
+- GET, POST `/api/notes-corpus`: List owned note metadata and upload limits, or ingest a `.md`/`.txt`/`.pdf` batch for…
 - DELETE `/api/notes-corpus/{id}`: Unlink one owned note
 - POST `/api/loop/start`: Start an owner-bound server-side `/loop` run: `session_id`, optional `goal`/`web_mode`,…
 - POST `/api/loop/stop`: Stop by `run_id`
@@ -243,15 +243,15 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/model`: Select the local model, `grok` or `claude` (`/model use`)
 - GET `/api/ollama/inventory`: Live loopback tags (`/model list`) plus configured-model readiness
 - GET `/api/ollama/profile`: Selected-model facts (`/model profile`)
-- POST `/api/ollama/pull`, `/api/ollama/pull/cancel`: Operator/admin pull (SSE when `Accept: text/event-stream`), or abort it
+- POST `/api/ollama/pull`, `/api/ollama/pull/cancel`: Administrator pull (SSE when `Accept: text/event-stream`) or abort
 - POST `/api/prompt/preview`: Show the assembled prompt (`/prompt`)
 - POST `/api/slash/parse`: Suggest-don't-guess slash normalizer; never executes mutations
 - GET `/api/spend/summary`: Retained spend summary with completeness and read-time USD
-- POST `/api/spend/predict`: Estimate unsent cloud cost (Estimate draft)
-- GET, POST `/api/sessions`: List your sessions or create an owned one
 
 ## api: registered routes (part 4)
 
+- POST `/api/spend/predict`: Estimate unsent cloud cost (Estimate draft)
+- GET, POST `/api/sessions`: List your sessions or create an owned one
 - GET `/api/sessions/legacy`: Administrator metadata inventory of unassigned legacy sessions
 - POST `/api/sessions/search`: Owned local transcript search (bounds)
 - POST `/api/sessions/clear`: Delete owned sessions, attachments and uploaded notes; foreign, legacy, corrupt and…
@@ -262,10 +262,10 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/sessions/{session_id}/goal`: Set goal; optional `web_mode` `off`/`fetch`/`all`, else `web.goal_web_default` (ships…
 - GET, POST `/api/sessions/{session_id}/goal-stage`: Goal staging status and transitions
 - GET, POST `/api/sessions/{session_id}/skills`: Session skill selection
-- GET, POST `/api/sessions/{session_id}/structured-facts`: Structured-memory facts explicitly included in the session
 
 ## api: registered routes (part 5)
 
+- GET, POST `/api/sessions/{session_id}/structured-facts`: Structured-memory facts explicitly included in the session
 - POST `/api/sessions/{session_id}/prompt-history`: Owner-scoped composer line (`{text}`) for ArrowUp recall; last 50, `/api` values dropped
 - DELETE `/api/sessions/{session_id}/attachment-pins`: Owner-scoped unpin; keeps blobs; refused during generation
 - GET, POST `/api/soul`, `/api/soul/document`: Persona state and on/off toggle; read or edit the persona document
@@ -278,10 +278,10 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/memory/add`, `/api/memory/forget`, `/api/memory/clear`: Save a literal note, remove one, remove all
 - GET `/api/structured-memory`: Truthful status and effective gates
 - POST `/api/structured-memory/gates`: Administrator gate override, persisted in `memory/structured_gates.json`
-- GET `/api/structured-memory/search`: Facts-only FTS candidates
 
 ## api: registered routes (part 6)
 
+- GET `/api/structured-memory/search`: Facts-only FTS candidates
 - GET, POST `/api/structured-memory/facts`: List active facts or add one (confirm)
 - GET `/api/structured-memory/facts/{id}`: Recall one fact, including inactive
 - POST `/api/structured-memory/facts/{id}/deactivate`: Deactivate (confirm)
@@ -295,11 +295,11 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET `/api/structured-memory/consolidation/{id}`: Consolidation status
 - POST `/api/structured-memory/consolidation/{id}/cancel`: Cancel
 - GET `/api/structured-memory/export`: Export the owner's memory
-- POST `/api/structured-memory/purge`: Purge the owner's memory
-- GET, POST `/api/web`: Status and on/off toggle
 
 ## api: registered routes (part 7)
 
+- POST `/api/structured-memory/purge`: Purge the owner's memory
+- GET, POST `/api/web`: Status and on/off toggle
 - POST `/api/web/allow`: Atomically grant exact URLs or explicit wildcards with group and seeds
 - POST `/api/web/deny`: Remove a grant
 - POST `/api/web/mode`: Administrator selects allowlist/denylist; denylist requires confirmation
@@ -311,10 +311,10 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/web/research/cancel`: Cancel the owner's running research, detached or not
 - POST, GET `/api/web/research/jobs`: Start a detached owner-bound research job (`/web job`) or list owned jobs; `GET…
 - POST `/api/web/inject`, `/api/web/forget`: Include your last selection in chat, or drop injected reads
-- POST `/api/browser/run`: Administrator `/browse` task: `{task, origins}`; literal `browser.enabled` and…
 
 ## api: registered routes (part 8)
 
+- POST `/api/browser/run`: Administrator `/browse` task: `{task, origins}`; literal `browser.enabled` and…
 - POST `/api/browser/jobs`: The same, detached: 202 `{job_id, status, takeover}`
 - GET `/api/browser/jobs/{job_id}`: Your job: `status`, `turns`, a `waiting` request as `pending`, `result` or `error`
 - POST `/api/browser/jobs/{job_id}/cancel`: Stop before the next model turn
@@ -328,10 +328,10 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET, POST `/api/agent/jobs`: List owned detached jobs or start one
 - GET `/api/agent/jobs/{job_id}`: Job status
 - POST `/api/agent/jobs/{job_id}/cancel`: Cancel a job
-- POST `/api/agent/schedules/preview`: Preview five occurrences and return an owner-bound receipt
 
 ## api: registered routes (part 9)
 
+- POST `/api/agent/schedules/preview`: Preview five occurrences and return an owner-bound receipt
 - GET, POST `/api/agent/schedules`: List owned schedules or activate the exact previewed request
 - GET `/api/agent/schedules/{schedule_id}`: One schedule
 - POST `/api/agent/schedules/{schedule_id}/cancel`: Cancel a schedule

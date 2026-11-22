@@ -33,6 +33,30 @@ pub fn diag_error(err: &HarnessError) -> ApiError {
     ApiError::from_err(status_for(&err.code), err)
 }
 
+/// The staged excerpt a chat turn or preview may carry, decided on the
+/// caller's role as this request sees it. An inject already past its role
+/// check can stage after an account change dropped the owner's state; a
+/// caller that no longer holds `ReadLogs` therefore drops whatever is staged
+/// instead of receiving it ("reload policy after any wait and before a send").
+pub fn excerpt_for_turn(
+    state: &AppState,
+    user: Option<&UserSummary>,
+    owner: &str,
+    session_id: &str,
+    surface: diag_reader::Surface,
+) -> ApiResult<Option<diag_reader::Staged>> {
+    let reads_logs =
+        user.is_some_and(|u| authz::grants_stored(&u.role, Capability::ReadLogs) && !u.must_change_password);
+    if !reads_logs {
+        state.diag.forget_owner(owner);
+        return Ok(None);
+    }
+    state
+        .diag
+        .for_turn(owner, session_id, surface)
+        .map_err(|e| diag_error(&e))
+}
+
 /// Audit a refusal by code only, then return it.
 fn refuse(state: &AppState, code: &str, message: &str) -> ApiError {
     state.audit.log(json!({"event": "diag_refused", "code": code}));

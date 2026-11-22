@@ -2041,7 +2041,8 @@ async function refreshSessions() {
     } catch (error) { if (revision === sessionRevision) legacyRows.textContent = error.message; }
     finally { legacy.disabled = false; }
   });
-  if (can('own_data')) pane.append(legacy, legacyRows, sessionSearchControls(revision));
+  if (can('manage_shared_content')) pane.append(legacy, legacyRows);
+  if (can('own_data')) pane.append(sessionSearchControls(revision));
   data.sessions.forEach(s => {
     const el = document.createElement('div');
     el.className = 'sess-item' + (s.session_id === currentSession ? ' current' : '');

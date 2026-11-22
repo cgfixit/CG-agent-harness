@@ -270,9 +270,15 @@ pub const ROUTE_CAPS: &[(&str, Method, Capability)] = &[
     ("/api/sessions", Method::POST, Capability::OwnSessions),
     ("/api/sessions/{session_id}", Method::GET, Capability::OwnSessions),
     ("/api/sessions/search", Method::POST, Capability::OwnData),
-    ("/api/sessions/legacy", Method::GET, Capability::OwnData),
+    // Unassigned legacy sessions are shared data, not the caller's own:
+    // administrator-only, as `session_io::legacy_owner` also enforces.
+    ("/api/sessions/legacy", Method::GET, Capability::ManageSharedContent),
     ("/api/sessions/clear", Method::POST, Capability::OwnData),
-    ("/api/sessions/{session_id}/adopt", Method::POST, Capability::OwnData),
+    (
+        "/api/sessions/{session_id}/adopt",
+        Method::POST,
+        Capability::ManageSharedContent,
+    ),
     (
         "/api/sessions/{session_id}/attachment-pins",
         Method::DELETE,

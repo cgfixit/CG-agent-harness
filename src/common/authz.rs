@@ -60,7 +60,8 @@ pub enum Capability {
     /// Global model selection, Ollama inventory, profile and pulls.
     ManageModels,
     /// Shared content: persona document and proposals, memory and soul and
-    /// style toggles, pinned-note add and clear.
+    /// style toggles, pinned-note add and clear, unassigned legacy session
+    /// inventory and adoption.
     ManageSharedContent,
     /// Web policy: enable, allow, deny, mode, block and unblock.
     ManageWebPolicy,
