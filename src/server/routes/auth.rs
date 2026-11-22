@@ -524,6 +524,13 @@ pub async fn set_role(
                 &user.username,
                 json!({"role": user.role}),
             );
+            // A machine key reads its owner's facts and the gateway checks only
+            // the key row, so a role that holds no memory read keeps no key.
+            // After the audit line, as disable does: a failed retirement is
+            // returned, with the role change already on record.
+            if !crate::server::mcp_keys::owner_may_hold_keys(&user.role) {
+                disable_machine_keys(&state, &user.user_id)?;
+            }
         }
         Ok(Json(json!({"ok": true})))
     })
