@@ -4,6 +4,7 @@
 //! provider-written answer nor a page body enters a listing. Linked pages still
 //! need their own URL permission.
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -11,6 +12,7 @@ use serde_json::{json, Value};
 use super::web_google::{add_result, cooldown_error, listing_body, unix_now, SearchResult, SEARCH_NOTICE};
 use super::web_policy::error;
 use super::web_search::WebTool;
+use super::web_units::Paid;
 use crate::common::audit::Audit;
 use crate::common::errors::Result;
 
@@ -94,6 +96,10 @@ impl WebTool {
         if let Some(pause) = self.search_cooldown.holding(PROVIDER, Instant::now()) {
             return Err(cooldown_error(PROVIDER, &pause));
         }
+        // One credit, reserved durably before anything leaves (#772 D10). It is
+        // given back only if the request is never sent (`sent` stays false).
+        let reservation = self.reserve_units(Paid::Tavily, 1, audit).await?;
+        let sent = AtomicBool::new(false);
         let fetched = tokio::time::timeout(Duration::from_secs(self.limits.request_seconds), async {
             let _permit = self
                 .permits
@@ -111,6 +117,7 @@ impl WebTool {
             if self.tavily_key_off_worker().await?.trim() != key {
                 return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
             }
+            sent.store(true, Ordering::SeqCst);
             let response = client
                 .post(endpoint)
                 .bearer_auth(key)
@@ -144,6 +151,7 @@ impl WebTool {
         let rows = match fetched {
             Ok(rows) => rows,
             Err(failure) => {
+                self.release_unsent(reservation, sent.load(Ordering::SeqCst)).await;
                 // One audit line when a pause starts; none while it holds.
                 if let Some(until) =
                     self.search_cooldown

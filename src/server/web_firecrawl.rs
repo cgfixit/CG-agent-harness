@@ -70,6 +70,17 @@ impl HourlyCap {
         state.1 += 1;
         true
     }
+
+    /// Give back a read taken this clock hour whose request was never sent, so
+    /// a refusal before the send (a changed key or policy, a disabled web, a
+    /// failed lookup) does not spend the hour's allowance.
+    pub(super) fn give_back(&self, now_unix: u64) {
+        let hour = now_unix - now_unix % 3600;
+        let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        if state.0 == hour {
+            state.1 = state.1.saturating_sub(1);
+        }
+    }
 }
 
 /// Whether a pinned read may be re-read by Firecrawl: a server answered 403, 429
@@ -209,7 +220,20 @@ impl WebTool {
                 "web.run_bytes cannot cover a fallback read",
             ))
         } else {
-            self.firecrawl_read(raw, group, audit, &fallback_charge).await
+            // Firecrawl bills a scraped page one credit and a parsed PDF one per
+            // page (up to PDF_MAX_PAGES). A script shell and an oversized body the
+            // server labelled as something other than a PDF are known not to be
+            // PDFs before the send; a 403, 429 or 503 says nothing about the
+            // document, so it reserves the PDF worst case (#772 D10: the
+            // defensible upper bound).
+            let known_not_pdf = match &pinned {
+                Ok(_) => true,
+                Err(failure) => {
+                    failure.code == "WEB_TOO_LARGE" && failure.details.get("pdf") == Some(&Value::Bool(false))
+                }
+            };
+            let units = if known_not_pdf { 1 } else { PDF_MAX_PAGES };
+            self.firecrawl_read(raw, group, audit, &fallback_charge, units).await
         };
         let fallback_charge = fallback_charge.load(Ordering::SeqCst);
         self.check_enabled()?;
@@ -248,6 +272,7 @@ impl WebTool {
         group: Option<&str>,
         audit: &Audit,
         charged: &AtomicUsize,
+        units: u64,
     ) -> Result<Page> {
         if self.search_cooldown.holding(PROVIDER, Instant::now()).is_some() {
             return Err(error(
@@ -268,11 +293,23 @@ impl WebTool {
         let policy = self.policy()?;
         let target = policy.authorize_read(raw, group)?;
         if !self.firecrawl_spent.take(unix_now(), self.firecrawl.max_per_hour) {
-            return Err(error(
-                "WEB_FALLBACK_CAP",
-                "web.firecrawl.max_per_hour is spent for this hour",
-            ));
+            return Err(
+                error("WEB_FALLBACK_CAP", "web.firecrawl.max_per_hour is spent for this hour")
+                    .detail("limit", "hourly"),
+            );
         }
+        // The durable daily units (#772 D10) after the hourly slot; a refusal
+        // gives that slot back, since nothing was sent.
+        let reservation = match self
+            .reserve_units(super::web_units::Paid::Firecrawl, units, audit)
+            .await
+        {
+            Ok(reservation) => reservation,
+            Err(refusal) => {
+                self.firecrawl_spent.give_back(unix_now());
+                return Err(refusal);
+            }
+        };
         let endpoint = self.firecrawl_endpoint();
         // A rendered or parsed read takes longer than a direct fetch: the fallback
         // gets twice `web.request_seconds` (at most a minute; before, the same 8 s
@@ -351,6 +388,12 @@ impl WebTool {
         let (title, text, status, transfer_bytes) = match fetched {
             Ok(read) => read,
             Err(failure) => {
+                // `charged` is set just before the send: zero proves nothing left.
+                let sent = charged.load(Ordering::SeqCst) > 0;
+                if !sent {
+                    self.firecrawl_spent.give_back(unix_now());
+                }
+                self.release_unsent(reservation, sent).await;
                 if let Some(until) =
                     self.search_cooldown
                         .start(PROVIDER, &failure.code, &self.limits, Instant::now(), unix_now())
@@ -806,7 +849,9 @@ mod tests {
         }
     }
 
-    const ON: &str = "web: {firecrawl: {enabled: true, max_per_hour: 4}}";
+    // A daily ceiling well above what these tests read, so each exercises the
+    // behavior it names; `the_daily_unit_ceiling_*` tests the shipped one.
+    const ON: &str = "web: {firecrawl: {enabled: true, max_per_hour: 4, units_per_day: 1000}}";
 
     /// Operator decision, 2026-11-10: a permitted URL whose body is over
     /// `web.response_bytes`, or is a PDF that local extraction (issue 813)
@@ -1141,6 +1186,58 @@ mod tests {
         assert_eq!(failure.details["fallback"], "WEB_FALLBACK_KEY_CHANGED");
         assert!(failure.details.get("charged_bytes").is_none(), "nothing was sent");
         assert_eq!(rig.hits(), 0, "a cleared key never reaches Firecrawl");
+        // Refused before the send: the hour's slot and the day's units come back.
+        assert_eq!(
+            rig.web.firecrawl_spent.0.lock().unwrap().1,
+            0,
+            "the hourly slot was given back"
+        );
+        assert_eq!(
+            rig.web
+                .units
+                .used(super::super::web_units::Paid::Firecrawl, unix_now())
+                .unwrap(),
+            0,
+            "the daily units were released"
+        );
+    }
+
+    /// #772 D10: Firecrawl reads reserve durable daily units before anything is
+    /// sent. A 403 says nothing about the document, so it reserves the 10-page
+    /// PDF worst case; a script shell is known HTML and reserves one. A read the
+    /// ceiling refuses sends nothing and keeps the original outcome. Sent reads
+    /// keep their units.
+    #[tokio::test]
+    async fn the_daily_unit_ceiling_refuses_a_fallback_before_it_is_sent() {
+        let rig = fixture::rig(
+            "web: {firecrawl: {enabled: true, max_per_hour: 100, units_per_day: 21}}",
+            "good",
+        )
+        .await;
+        for _ in 0..2 {
+            assert_eq!(rig.fetch("wall").await.unwrap()["via"], "firecrawl");
+        }
+        let used = |rig: &fixture::Rig| {
+            rig.web
+                .units
+                .used(super::super::web_units::Paid::Firecrawl, unix_now())
+                .unwrap()
+        };
+        assert_eq!(used(&rig), 20, "each 403 fallback reserved the PDF worst case");
+        let refused = rig.fetch("wall").await.unwrap_err();
+        assert_eq!(refused.code, "WEB_FETCH_FAILED", "the original outcome is kept");
+        assert_eq!(refused.details["fallback"], "WEB_FALLBACK_CAP");
+        assert_eq!(rig.hits(), 2, "the refused read sent nothing");
+        // One unit is left: a script shell (known HTML) still fits.
+        assert_eq!(rig.fetch("shell").await.unwrap()["via"], "firecrawl");
+        assert_eq!(used(&rig), 21);
+        assert_eq!(rig.hits(), 3);
+        let audit = rig.audit_text();
+        assert!(
+            audit.contains("\"event\":\"web_units_refused\""),
+            "the refusal is audited"
+        );
+        assert!(!audit.contains("site.fixture"), "the refusal carries no URL");
     }
 
     /// Operator decision, 2026-11-14: a PDF answer may use `web.pdf_response_bytes`
