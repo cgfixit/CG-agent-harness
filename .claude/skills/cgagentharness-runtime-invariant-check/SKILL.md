@@ -1,7 +1,7 @@
 ---
 name: cgagentharness-runtime-invariant-check
 description: |
-  Verify that core security invariants still hold after code changes. Run this before pushing core-path PRs (touching src/shim, guards.rs, headers.rs, writer.rs, sandbox.rs, workspace.rs, or config.default.yaml). Checks: I6 process isolation (server never imports agentic), guard chain order, CSRF contracts, write gates closed by default, RUN_ID_PATTERN consistency across boundary, clone jail contracts, and config fail-closed defaults. Complements tests/invariant_guard.rs by providing human-readable guidance on what to check and how to fix violations.
+  Verify that core security invariants still hold after code changes. Run this before pushing core-path PRs (touching src/shim, guards.rs, headers.rs, routes/mod.rs, authz.rs, writer.rs, sandbox.rs, workspace.rs, or config.default.yaml). Checks: I6 process isolation (server never imports agentic), guard chain order, CSRF contracts, write gates closed by default, RUN_ID_PATTERN consistency across boundary, clone jail contracts, and config fail-closed defaults. Complements tests/invariant_guard.rs by providing human-readable guidance on what to check and how to fix violations.
 compatibility: |
   Requires: ripgrep, cargo test infrastructure
   Context: Rust codebase with INVARIANTS.md, tests/invariant_guard.rs, and security-critical modules

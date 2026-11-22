@@ -1,7 +1,7 @@
 # src/server
 
-The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs) and
-[`headers.rs`](headers.rs) are core paths. Agentic work goes out through
+The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs),
+[`headers.rs`](headers.rs) and [`routes/mod.rs`](routes/mod.rs) are core paths. Agentic work goes out through
 `crate::shim` as a child process, never in-process (I6). Routes:
 [docs/API_ROUTES.md](../../docs/API_ROUTES.md); console behavior:
 [docs/CONSOLE.md](../../docs/CONSOLE.md); contracts: [INVARIANTS.md](../../INVARIANTS.md).
