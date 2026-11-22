@@ -1510,6 +1510,79 @@ async fn an_accounts_running_coding_jobs_stop_when_it_loses_run_coding() {
     assert!(stopped.iter().all(|line| line["coding_jobs"] == 1));
 }
 
+/// A synchronous coding run lasts as long as its child, and the account was
+/// checked only when the request arrived. Disabling the account mid-run kills
+/// the child and answers 401 AUTH_REQUIRED (audited `agent_run_withheld`)
+/// instead of waiting for the child and delivering its result.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_sync_coding_run_stops_when_its_account_is_disabled_mid_run() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let (exe, pidfile) = (dir.path().join("slow-shim"), dir.path().join("child.pid"));
+    std::fs::write(
+        &exe,
+        format!(
+            "#!/bin/sh\necho $$ > '{}'\nsleep 20\nprintf '{{\"status\":\"finished\"}}\\n'\n",
+            pidfile.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let model = start_mock_model().await;
+    let opts = ServerOptions {
+        shim_exe: Some(exe),
+        ..Default::default()
+    }
+    .with("auth.enabled", "true");
+    let server = spawn_server(&model.base_url(), opts).await;
+    let auth = server.state.auth.as_ref().unwrap();
+    let secret = cgagentharness::common::random_urlsafe(24);
+    auth.create_user("worker", &secret, "operator").unwrap();
+    let session = login(&server, "worker", &secret).await;
+    let body = json!({"instruction": "fix the parser", "branch": "claude/parser-fix", "commit_message": "fix: parser", "reason": "triage"});
+
+    let started = std::time::Instant::now();
+    let run = request(&server, &session, Method::POST, "/api/agent/run", body);
+    let disable = async {
+        for _ in 0..200 {
+            if pidfile.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        assert!(pidfile.exists(), "the child started");
+        auth.disable_user("worker").unwrap();
+    };
+    let (response, ()) = tokio::join!(run, disable);
+    assert_eq!(response.status(), 401);
+    let reply: Value = response.json().await.unwrap();
+    assert_eq!(reply["detail"]["code"], "AUTH_REQUIRED");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "the run stopped without waiting for its child"
+    );
+
+    let pid = std::fs::read_to_string(&pidfile).unwrap().trim().to_string();
+    let mut alive = true;
+    for _ in 0..100 {
+        alive = std::process::Command::new("kill")
+            .args(["-0", &pid])
+            .status()
+            .is_ok_and(|status| status.success());
+        if !alive {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(!alive, "the child was killed with the run");
+    let audit = server.audit_log();
+    assert!(audit
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .any(|line| line["event"] == "agent_run_withheld" && line["outcome"] == "stopped"));
+}
+
 /// A key an `auditor` account still holds at boot (a fold acknowledged by an
 /// earlier build, or a role set while the key store was unwritable) is retired
 /// before the gateway can serve it.
