@@ -73,7 +73,9 @@ ollama show qwen3.8:27b
 Set `models.local_llm.model` (chat) and `agentic.deepagent_github.model`
 (planner) to your exact tag in [first run](INSTALL.md#6-first-run); each has
 its own `base_url`, and both require loopback. `/model use <tag>` changes the chat
-selection, which `/browse` follows; the planner keeps its own. Check `/status`.
+selection, which `/browse` follows; the planner keeps its own. Check `/status`. Ollama
+cloud tags (`:cloud`, `-cloud`) are refused for chat, memory and pulls: a signed-in
+Ollama would send the local prompt to ollama.com. Cloud chat uses `/model` providers.
 
 ### Exact-model diagnostics and optional fallback
 

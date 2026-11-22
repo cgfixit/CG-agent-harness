@@ -653,6 +653,16 @@ pub async fn soul_toggle(
     Ok(super::structured_memory::off_worker(move || Json(soul_status(&state, snapshot.soul_enabled))).await)
 }
 
+/// An Ollama cloud tag selected as a local model: refused, because Ollama
+/// would forward the local prompt to ollama.com (`ollama::cloud_tag`).
+fn ollama_cloud_refusal() -> ApiError {
+    ApiError::new(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "MODEL_SELECTION_REJECTED",
+        "Ollama cloud models (a :cloud or -cloud tag) send the prompt to ollama.com; local chat keeps prompts on this machine. Use a cloud provider through /model for cloud chat.",
+    )
+}
+
 pub async fn model_select(
     State(state): State<Arc<AppState>>,
     user: Caller,
@@ -668,6 +678,9 @@ pub async fn model_select(
         ));
     }
     let cloud = state.cloud_chat.selection_status(selected);
+    if cloud.is_none() && crate::llm::ollama::cloud_tag(selected) {
+        return Err(ollama_cloud_refusal());
+    }
     let mut from_provider = state.current_provider();
     let model = cloud
         .as_ref()
@@ -1014,6 +1027,9 @@ pub(crate) async fn chat_inner(
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| state.current_model());
     let cloud_selected = state.cloud_chat.is_cloud_selection(&model);
+    if !cloud_selected && crate::llm::ollama::cloud_tag(&model) {
+        return Err(ollama_cloud_refusal());
+    }
     let chat_policy = crate::common::authz::ChatPolicy::for_user(user.as_ref().map(|u| &u.0));
     refuse_restricted_chat_extras(&req, &state.current_model(), cloud_selected, &chat_policy)?;
     // Reading or creating the session file stays off the async worker.
