@@ -828,7 +828,7 @@ best-effort, not containment ([limits and tests](docs/PROCESS_LIFECYCLE.md)).
 
 `GET /api/ollama/inventory` reuses the `/v1/models` readiness probe plus
 `GET /api/tags`; `/api/ollama/profile` reads `/api/show` and `/api/ps`. All are
-CSRF-guarded (operator/admin). `POST /api/ollama/pull` streams NDJSON (SSE on
+CSRF-guarded (admin). `POST /api/ollama/pull` streams NDJSON (SSE on
 `Accept: text/event-stream`) to a derived loopback origin. The pull is
 single-flighted, abortable (`POST /api/ollama/pull/cancel` or disconnect), and
 never sends `num_ctx`. It takes only `name` or `ns/name`; Ollama dials `host` in
