@@ -13,10 +13,10 @@ noted inline; what shipped and what was measured is in
 ## Outcome and accepted scope
 
 The implementation baseline is `8e14eb2be46419d97a77e38d5ad5fd780ba0d226`.
-The operator chose to preserve provider opt-ins and defaults. Credit
-purchasing, plan selection and free-tier accounting remain elsewhere; the
-router consumes their availability/refusal decisions and keeps existing hard
-caps. It must never change keys, enable a provider or buy capacity.
+Provider opt-ins and defaults are preserved. Credit purchasing, plan selection
+and free-tier accounting live elsewhere (durable provider-unit caps are #772
+phase 2); the router consumes their decisions, keeps existing hard caps, and
+never changes keys, enables a provider or buys capacity.
 
 Design target: local long-form /goal and /loop research on M5 Pro, 48 GB,
 qwen3.8:27b-mlx-cg, 32,768-token context. This is the server chat loop, not the
@@ -45,11 +45,11 @@ filesystem, MCP, cloud or repository permission.
    provider=tavily:
      Same chain as auto with a Tavily key. Missing forced key is an error.
 
-   Each fallback flag independently removes its hop. Flags missing from older
-   configs are false because flag_is_true requires literal YAML true. The
-   shipped YAML sets provider=auto, fallback_to_serpapi=true,
-   fallback_to_public_google=true. Invalid provider names/types fail
-   configuration loading.
+   Each fallback flag independently removes its hop; a flag missing from an
+   older config is false (flag_is_true needs literal YAML true). The shipped
+   YAML sets provider=auto and both fallbacks true (SerpAPI: operator
+   decision, 2026-11-22), so a failed Tavily search spends SerpAPI quota when
+   that key is active. Invalid provider names/types fail configuration loading.
 
 3. Global web off or goal mode off closes web. Goal mode fetch permits exact
    reads but no discovery search. Goal mode all enables both tools, not URL
@@ -64,10 +64,9 @@ filesystem, MCP, cloud or repository permission.
    malformed data and reflected credentials, so adding it wholesale would
    erase an important distinction.
 
-5. web.request_seconds was 8 in shipped config (15 since 2026-11-10). At the baseline SerpAPI could
-   take the whole deadline and leave none for public Google, whose pacing has
-   a three-second floor; a timeout fixture reproduced it. Fixed by the
-   deadline split below.
+5. At the baseline (web.request_seconds 8, now 15) SerpAPI could take the
+   whole deadline and leave none for public Google's three-second pacing
+   floor. Fixed by the deadline split below.
 
 6. Baseline listings kept only rank, title, URL and snippet (empty for public
    Google); provider scores, highlighted words and query rewrites were
@@ -86,44 +85,36 @@ filesystem, MCP, cloud or repository permission.
 9. Baseline Firecrawl requests omitted maxAge (now 0), so a response could
    come from Firecrawl's own cache.
 
-10. chat_web.rs::StickyRoute suppresses search after local notes are present
+10. chat_web.rs::StickyRoute suppresses search once local notes are present
     unless the user asks for outside sources: a narrow substring rule, not a
-    general sufficiency/freshness decision. routes/core.rs already retrieves
-    permitted attachments, notes and selected/structured memory, and /loop has
-    no local-file reading tool. Route only among data the current owner and
-    surface are already allowed to use.
+    sufficiency/freshness decision. routes/core.rs already retrieves permitted
+    attachments, notes and memory; /loop has no local-file tool. Route only
+    among data the owner and surface may already use.
 
-11. chat_web.rs::hop_kind assigns Synthesis to every loop hop, with a
-    regression test enforcing it. At the baseline the loop answer cap was the
-    smaller of the configured 8,192 and active auto-tuning (4,096 on the
-    verified 32K Qwen profile), and ordinary tool hops used 512 tokens at
-    temperature zero. Simply lowering the loop cap would truncate useful goal
-    reasoning.
+11. chat_web.rs::hop_kind assigns Synthesis to every loop hop (a test pins
+    it). At the baseline ordinary tool hops used 512 tokens at temperature
+    zero; simply lowering the loop cap would truncate useful goal reasoning.
 
 12. The session web ledger holds targets, counts, failures and truncation,
-    not passages. carry_forward_sources ships 5 (operator, 2026-11-22) and
-    carries only metadata. Search deduplication is local to one chat turn.
+    not passages. carry_forward_sources ships 5 (operator, 2026-11-22): earlier
+    reads are listed as URL/query rows, never page text, and a reply that uses
+    one cites it. Search deduplication is local to one chat turn.
     /web research has checked Citation/Claim/Answer types worth reusing, but
     its runner takes generation and search gates: reuse its pure
     retrieval/validation helpers rather than calling it from chat.
 
-13. The Mac is verified as Mac17,9, Apple M5 Pro, 48 GB, 18 CPU cores.
-    Both repository Qwen Modelfiles match: num_ctx 32768, temperature 0,
-    top_p 0.9, top_k 20, min_p 0, presence_penalty 0, repeat_penalty 1,
-    draft_num_predict 2. Request-time reasoning is none in shipped config.
-    An authorized live probe verified Ollama 0.40.15, the MLX runner,
-    model digest `b957244f74776492aa8c7ebac67328d26f1068410c719a08733981871cca3afa`,
-    and a loaded context of 32,768. The cold readiness probe took 7.14 seconds,
-    including 5.52 seconds loading. This tiny probe is not a routing benchmark.
-    Verification uses a disposable authenticated TLS home.
+13. Hardware: Mac17,9, Apple M5 Pro, 48 GB. Both repository Qwen Modelfiles
+    match (num_ctx 32768, temperature 0); request-time reasoning is none. A
+    live probe verified Ollama 0.40.15, the MLX runner, model digest
+    `b957244f74776492aa8c7ebac67328d26f1068410c719a08733981871cca3afa` and a
+    loaded 32,768 context; its 7.14 s cold start is not a routing benchmark.
 
 ## Routing design
 
-Keep execution deterministic and use the model only for semantic choices.
-Reuse the two public model tools, web_search and web_fetch. Code calculates
-provider eligibility; the model never selects credentials or endpoints. No
-separate agent, vector store, plugin protocol, new dependency or generic
-router framework is needed.
+Keep execution deterministic and use the model only for semantic choices,
+through the two model tools web_search and web_fetch. Code calculates provider
+eligibility; the model never selects credentials or endpoints. No separate
+agent, vector store, plugin protocol, dependency or router framework.
 
 ### A. Decide whether outside evidence is needed.
 
@@ -148,11 +139,10 @@ decision code and evidence need, not private chain-of-thought.
 
 ### B. Search the configured chain only.
 
-Start with one focused query and five results. Use the existing hop plan,
-cooldowns, bounded clients, key-change checks and external quota decisions.
-Preserve forced-provider missing/bad-key errors. A disabled or missing optional
-fallback is unavailable, not implicitly enabled. No round-robin, no parallel
-requests to all providers, no speculative retry after a successful answer.
+Start with one focused query and five results through the existing hop plan,
+cooldowns, bounded clients, key-change checks and quota decisions. Forced
+missing/bad-key errors stay loud; a disabled optional fallback is unavailable.
+No round-robin, parallel fan-out or retry after a successful answer.
 
 Divide the absolute deadline among remaining authorized hops, reserve Google
 pacing plus useful request time, and return unused time to later hops. Never
@@ -163,9 +153,8 @@ A successful zero-result listing is not a transport failure. The router may
 form one genuinely different query for a stated gap, counted as a new search.
 Do not switch providers because the model dislikes valid results.
 
-Treat a malformed provider response separately from credential reflection
-before proposing broader failover. Fail closed on secrets, authority, SSRF,
-policy, TLS and cancellation; add no blind retry loops.
+Keep a malformed response distinct from credential reflection. Fail closed on
+secrets, authority, SSRF, policy, TLS and cancellation; no blind retries.
 
 ### C. Select pages from bounded listings.
 
@@ -208,10 +197,9 @@ Route fetched text through web_index::retrieve/retrieve_many on a blocking
 worker, using the active subquestion. Retain coherent passages, headings and
 nearby qualifiers/table context: two or three passages per source, never a
 prefix-only window. Relevance selection saves model context, not the first
-HTTP download. Oversized/complex pages remain explicit failures; do not raise
-response caps or send those failures to Firecrawl under today's contract.
-(2026-11-10: an oversized body or a PDF local extraction refuses now goes to the enabled fallback; see
-`INVARIANTS.md`.)
+HTTP download. Do not raise response caps. Since 2026-11-10 an oversized body,
+or a PDF the local reader refuses as textless, over a limit or malformed, may go
+to the enabled Firecrawl fallback; other failures stay explicit (`INVARIANTS.md`).
 
 For explicitly fresh Firecrawl reads, validate maxAge=0 and keep
 storeInCache=false. Distinguish local fetch timestamp, provider
@@ -226,10 +214,10 @@ questions. Server-side receipts hold exact URL, reader/provider, fetch/cache
 status, content hash, passage ID and offsets; Qwen gets short S1/S2
 identifiers the server maps to them.
 
-Validate quote membership and referenced passage IDs before acceptance. That
-proves provenance, not that a quote entails the claim: evaluate semantic
-support separately. Read status and source badges derive from receipts, never
-from the assistant saying it read a page.
+Validate quote membership and passage IDs before acceptance: that proves
+provenance, not that a quote entails the claim, so semantic support is checked
+separately. Read status and badges derive from receipts, never from the
+assistant saying it read a page.
 
 Keep a small bounded active-run record of resolved questions, selected
 receipt references, attempted queries and unresolved gaps, scoped to owner,
@@ -240,57 +228,46 @@ manufacture a receipt. Do not add page bodies to web_ledger, widen
 carry_forward_sources past metadata, persist a second corpus, or promote web inferences
 into user memory facts.
 
-Permission revocation cannot erase historical chat text; prevent fresh
-injection/delivery instead. Keep unsuccessful/blocked research distinct from
-satisfied goal criteria, and keep the unverified GOAL_DONE label until
-evidence-aware goal completion is independently implemented and checked.
+Revocation cannot erase historical chat text; it prevents fresh injection and
+delivery. Blocked research is not a satisfied goal, and GOAL_DONE stays
+unverified until evidence-aware completion is implemented and checked.
 
 ## M5 pro / 32k starting profile, subject to measurement
 
-Do not change the Modelfile, quantization, drafting or context size in this work,
-and do not send num_ctx. One inference at a time through GenerationGate, with
-sequential page reads; the global four-fetch ceiling is an I/O bound, not
-permission for four simultaneous Qwen generations.
+Leave the Modelfile, quantization, drafting and context size alone, and never
+send num_ctx. One inference at a time through GenerationGate with sequential
+page reads; the four-fetch ceiling is an I/O bound, not four generations.
 
-Keep web.total_tokens=28000 as the outer prompt-plus-reply allowance, not 28K
-plus the reply. This leaves 4,768 tokens below a verified 32,768 window, but
-calibrated estimation and live-window checks are still required.
-
-With the shipped 4,096 loop answer cap, 23,904 estimated tokens remain for all
-input, tool schemas, evidence and framing: an accounting ceiling, not a
-target. Never add 6,000 evidence tokens on top of a full history window.
+`web.total_tokens` is the outer prompt-plus-reply allowance, not an allowance
+plus the reply; calibrated estimation and live-window checks still apply. What
+the loop answer cap leaves is an accounting ceiling for input, schemas,
+evidence and framing, not a target: never add the full evidence cap on top of a
+full history window.
 
 Candidate working targets:
 - Listings: five initially, ten only if the gap justifies it.
 - Selected pages: up to three initially; two/three passages each.
-- New page evidence: aim for 3,000-4,000 tokens; never exceed the configured
-  6,000 evidence cap or the remaining calibrated input room.
-- One evidence digest per useful batch, about 768-1,024 output tokens, using
-  the existing answer schema/validators and counted in usage and deadlines.
-  No evidence, no digest.
-- A normal cycle aims for one search, up to three reads, and at most one
-  different-query refinement before returning to reasoning: a routing target,
-  not a credit quota or a reduction of the configured 30-call ceiling.
-- Keep compaction's 24K configured trigger and dynamic web/reply tightening.
-  Preserve the goal and exact evidence references through compaction, not
+- New page evidence: aim for 3,000-4,000 tokens, within `web.evidence_tokens`
+  and the remaining calibrated input room.
+- One digest per useful batch (≤1,024 output tokens, counted in usage and
+  deadlines); no evidence, no digest.
+- A normal cycle: one search, up to three reads, at most one different-query
+  refinement. A routing target, not a credit quota or a lower call ceiling.
+- Preserve the goal and exact evidence references through compaction, not
   prose assertions that research already happened.
 
-Base timeouts on measured prefill/decode and cold load, reusing
-model_limits.rs's padded estimate and the outer turn deadline: a short output
-can still have expensive prefill. Shipped per-call timeout is 1,800 seconds,
-auto_tune may replace it, and web-turn allowance can double it.
-
-A deferred experiment is request_seconds=20 with a roughly 6/6/8 second
-three-provider allocation; it is a trial profile, not a default. Firecrawl's
-upstream timeout must stay inside the local one.
+Base timeouts on measured prefill/decode and cold load (model_limits.rs's
+padded estimate and the outer turn deadline): a short output can still have
+expensive prefill. A deferred trial profile, not a default, is request_seconds
+20 split roughly 6/6/8 across three providers. Firecrawl's upstream timeout
+stays inside the local one.
 
 ## Acceptance and measurement
 
-Use the current main revision as the baseline in an isolated Harness home.
-Test deterministic routing with controlled HTTP fixtures, then the real
-Ollama model, then explicitly authorized live-provider samples, and keep those
-evidence classes separate. CI/model fixtures do not prove this Qwen tag works
-on this Mac.
+Baseline on current main in an isolated home. Test routing with HTTP
+fixtures, then the real Ollama model, then authorized live-provider samples,
+keeping those evidence classes separate: fixtures do not prove this Qwen tag
+works on this Mac.
 
 Required behavior cases:
 - Web off; goal off/fetch/all; tools unsupported; absent/invalid policy.
@@ -315,10 +292,9 @@ Required behavior cases:
   fits the measured window. Unknown upstream usage stays unknown. Refusal or
   partial evidence is not completion.
 
-Measure per-stage p50/p95 time, first-token time, prefill/decode throughput,
-tokens, selected-source coverage, grounded claim rate, unsupported-read
-claims, repeated queries/reads, compactions, Firecrawl calls and fallback
-success on the same prompt set and evidence budget, warm and cold separately.
+Measure per-stage p50/p95 and first-token time, throughput, tokens, source
+coverage, grounded and unsupported claims, repeats, compactions, Firecrawl
+calls and fallback success on one prompt set and budget, warm and cold apart.
 Require zero unauthorized egress and zero invented read receipts.
 
 Existing coverage lives in tests/chat_web.rs, tests/loop_runner.rs,
@@ -406,15 +382,26 @@ decisions stay deterministic.
   `pdf-text-worker` child; passages are selected from it like any page. With
   Firecrawl on, an oversized body or a PDF refused as textless, over a limit or
   malformed may be re-read there; a busy, timed-out, failed or encrypted PDF read stays local.
+  A worker abort is over a limit only when its allocator wrote the heap-cap
+  marker first; any other abort, signal or unreadable exit is a local failure
+  and makes no remote request (#772 decision 1).
+- Pre-dispatch validation checks every call's structure (ids, offered tools,
+  parsable arguments, the call limit) before any request; a malformed batch
+  refuses whole. A bound one call breaks, such as a `web_fetch` query over 200
+  characters, fails that call alone as `ok: false`, and its siblings run.
+- The digest prompt states the 160-character quote maximum the validator
+  enforces (`QUOTE_MAX_CHARS`) and asks quotes to keep their qualifiers; an
+  over-long quote drops its claim untrimmed, never cut server-side.
+- A counted `/loop` (`loop.max_turns`, shipped 200) asks its last turn for its
+  best complete answer, naming anything unverified, rather than a next step.
+- `/web research` reads its page cache before the final authority check, so a
+  revocation during that wait still withholds the evidence.
 
 ### Runtime observations
 
-Both baseline and candidate used Rust 1.88 binaries, the same disposable TLS
-home/configuration, fresh chat sessions, permitted public pages and the real MLX
-model at 32,768 context, kept warm. Tool receipts, answers and usage were
-inspected. These are individual observations, not p95 estimates or a hardware
-throughput benchmark; background work and network variance limit latency
-attribution. No structured facts were injected.
+Baseline and candidate used Rust 1.88 binaries, one disposable TLS home, fresh
+sessions, permitted public pages and the warm real MLX model at 32,768 context.
+These are individual observations, not p95 estimates or a throughput benchmark.
 
 | Request | Baseline wall / first token | Candidate wall / first token | Observed result |
 |---|---:|---:|---|
@@ -423,38 +410,21 @@ attribution. No structured facts were injected.
 | IANA registration/production guidance | 9.37 / 3.86 s | 12.50 / 5.24 s | Both read the page and quoted it, but overstated a recommendation as impossibility. |
 
 The late-section prompt used 23,997 aggregate prompt tokens on baseline versus
-9,105 on candidate; its 2,398 characters were two passages, the per-page cap
-before single-page reads could fill three. A corrected extension-behavior
-question completed in 12.86 s (first token 4.37 s), distinguishing caches that
-understand an extension from those following the base directive. A
-source-qualifier prompt adjustment did not fix the IANA overstatement
-(10.37 s); semantic faithfulness is not certified.
+9,105 on candidate (two passages, 2,398 characters). A source-qualifier prompt
+adjustment did not fix the IANA overstatement; semantic faithfulness is not
+certified. A real two-turn server goal completed in 61.39 s with one read and
+1,316 completion tokens; its second turn reviewed retained findings without
+another read, and `GOAL_DONE` stayed unverified. The loaded MLX allocation
+later reported 27.75 GB, so the readiness figure is not a memory ceiling.
 
-A real two-turn server goal completed in 61.39 s with one page read, 1,316
-completion tokens and no tool failures. Its second turn reviewed the retained
-findings without another read; `GOAL_DONE` remained explicitly unverified.
-The loaded MLX
-allocation later reported 27.75 GB, so the earlier readiness allocation is not
-a memory ceiling. VM counters showed pre-existing compression/swap; no
-before/after swap claim is made.
-
-Two reruns at `86b28ff` ended after one server turn with a second fetch that
-rephrased the same query and returned the same cached passages. Moving the
-digest before the next tool decision and framing each turn explicitly fixed it.
-
-Five consecutive fresh-session RFC runs with that correction completed two server
-turns, one fetch and one validated digest each, with no tool failures or first-turn
-`GOAL_DONE`. Wall times were 62.35, 57.32, 43.26, 46.51 and 46.31 seconds; completion
-tokens were 1,818, 1,763, 1,080, 1,022 and 982. This verifies the repeated workflow,
-not semantic correctness. A startup attempt blocked by `model_tune` performed
-no inference and was excluded. The temporary diagnostic endpoint was removed.
-
-Two further IANA goals completed two turns with one read each (44.26/56.36 s),
-distinguishing service guidance from technical impossibility, though policy
-extrapolations still require review. A local arithmetic goal in fetch mode attempted
-an unnecessary example.com read, which URL policy refused; stronger routing
-wording did not correct that and was reverted. Natural-language exclusion of
-web is not an enforced gate: use the goal web-off mode when required.
+Two reruns at `86b28ff` ended after one turn with a second fetch that rephrased
+the same query. Moving the digest before the next tool decision and framing each
+turn explicitly fixed it: five fresh-session RFC runs then completed two turns,
+one fetch and one validated digest each (43-62 s, 982-1,818 completion tokens),
+which verifies the workflow, not semantic correctness. A local arithmetic goal
+in fetch mode attempted an unnecessary read that URL policy refused; wording did
+not correct it. Natural-language exclusion of web is not an enforced gate: use
+the goal web-off mode when required.
 
 ### Verification scope
 
@@ -468,11 +438,9 @@ No authenticated Tavily, SerpAPI or Firecrawl request was made, so live
 credit/provider availability is unverified. Public Google challenged a real
 request honestly.
 
-Safari private sign-in and console rendering passed after an operator
-exception; warning-free Safari and Chrome/Firefox trust are unverified.
-
-This is a measured 32K starting configuration, not universal tuning.
-Longer real compaction cycles, a larger semantic-quality corpus, stable-load
-latency distributions and paid-provider runs remain future acceptance work.
-Unavailable authorized providers can still leave an honest gap; no disabled
-provider or permission is silently enabled.
+Safari private sign-in and rendering passed after an operator exception;
+Chrome/Firefox trust is unverified. This is a measured 32K starting
+configuration, not universal tuning: long compaction cycles, a semantic-quality
+corpus, latency distributions and paid-provider runs remain acceptance work
+(#772). An unavailable provider leaves an honest gap; nothing disabled is
+silently enabled.
