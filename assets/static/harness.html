@@ -1136,6 +1136,10 @@ const BROWSE_WAIT_MS = 1830000;
 /* Starting a job answers once the model is loaded, which the server allows up
    to models.local_llm.warmup.timeout_sec for (120 s at most). */
 const BROWSE_START_MS = 150000;
+/* /memory consolidate waits on one local model call, whose timeout is at most
+   3600 s (models.local_llm.timeout_sec, or the measured one). The run finishes
+   on the server even if this request is abandoned. */
+const CONSOLIDATION_WAIT_MS = 3610000;
 /* A bare first /browse word ending in one of these is more likely a file than a
    site (.py, .md, .sh and .rs are also country domains), so the console shows
    the grant and asks for the same line again before running it (#945). */
@@ -3502,7 +3506,7 @@ async function runSlash(line, webCommand) {
         } else if (sub === 'consolidate') {
           const ids = rest.slice(1).filter(Boolean);
           if (!ids.length) { sys('usage: /memory consolidate <episode-id> [episode-id...]'); break; }
-          const r = await api('/api/structured-memory/consolidation', 'POST', { episode_ids: ids });
+          const r = await api('/api/structured-memory/consolidation', 'POST', { episode_ids: ids }, CONSOLIDATION_WAIT_MS);
           sys(table([
             ['run', r && r.id],
             ['state', r && r.state],
