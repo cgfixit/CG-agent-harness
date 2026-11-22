@@ -661,7 +661,7 @@ async fn approving_a_held_browser_request_is_refused_while_takeover_is_off() {
         let refused = job_approve(
             State(s.state.clone()),
             Some(axum::Extension(boss)),
-            Path("0123456789abcdef0123456789abcdef".to_string()),
+            Path("0123456789abcdef0123456789abcdef".to_string()), // DevSkim: ignore DS173237 because this is a 32-hex browser job-id fixture, not a credential.
             ValidJson(BrowserApproveRequest {
                 request: 1,
                 sha256: "ab".repeat(32),
