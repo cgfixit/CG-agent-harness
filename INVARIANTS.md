@@ -1010,13 +1010,13 @@ notes, spend, sessions or coding tools are published. I6 remains unchanged.
 Machine credentials use their own STRICT schema/version/initialized marker and
 private no-follow database. Only hashes of random 256-bit secrets persist; keys
 are not users or cookie sessions. The CLI mints/revokes with explicit confirm and
-reason using local filesystem authority, never for a missing, disabled,
+reason by filesystem authority, never for a missing, disabled,
 `auditor` or setup-code owner. Table/rate/concurrency/body/result/time
 ceilings are finite; revocation is rechecked before reads. In-flight reads may
-finish. Disabling or deleting an account sets `disabled=1` on its machine keys
-and retires its schedules and completion notifications; making it `auditor`
-disables the keys.
-Key rows stay until an explicit key-id revoke.
+finish. Disabling or deleting an account disables its machine keys and retires
+its schedules, completion notifications and running coding jobs; `auditor`
+demotion retires keys and jobs.
+Key rows stay until a key-id revoke.
 Audits contain recognized tools, public IDs and coarse outcomes, never content.
 All gateway settings remain restart-only, outside `RELOADABLE`.
 Remote exposure needs the deployment acceptance in `docs/MCP.md`; nothing

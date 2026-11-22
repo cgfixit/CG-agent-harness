@@ -1433,6 +1433,83 @@ async fn an_account_made_auditor_loses_its_machine_keys_and_gets_no_new_one() {
     );
 }
 
+/// Work an account already started stops when the account loses the
+/// authority to start it: disable, deletion and a demotion out of
+/// `run_coding` abort its running coding jobs (audited
+/// `account.work_stopped`); a role that keeps `run_coding` keeps them, and
+/// another account's jobs are never touched.
+#[tokio::test]
+async fn an_accounts_running_coding_jobs_stop_when_it_loses_run_coding() {
+    let model = start_mock_model().await;
+    let server = spawn_server(&model.base_url(), ServerOptions::default().with("auth.enabled", "true")).await;
+    let auth = server.state.auth.as_ref().unwrap();
+    let secret = cgagentharness::common::random_urlsafe(24);
+    auth.create_user("ops-admin", &secret, "admin").unwrap();
+    for name in ["worker", "bystander", "leaver", "keeper"] {
+        auth.create_user(name, &cgagentharness::common::random_urlsafe(24), "operator")
+            .unwrap();
+    }
+    let id = |name: &str| auth.get_user(name).unwrap().user_id;
+    let admin = login(&server, "ops-admin", &secret).await;
+    let jobs = &server.state.jobs;
+    let start =
+        |owner: &str, job: &str| jobs.insert_running(owner, job, "real-repo-run", tokio::spawn(std::future::pending()));
+    let status = |owner: &str, job: &str| jobs.get(owner, job).unwrap()["status"].clone();
+    let (worker, bystander, leaver, keeper) = (id("worker"), id("bystander"), id("leaver"), id("keeper"));
+    start(&worker, "w1");
+    start(&bystander, "b1");
+    start(&leaver, "l1");
+    start(&keeper, "k1");
+
+    let post = |path: &'static str, body: Value| request(&server, &admin, Method::POST, path, body);
+    assert_eq!(
+        post("/api/auth/users/keeper/role", json!({"role":"admin"}))
+            .await
+            .status(),
+        200
+    );
+    assert_eq!(
+        status(&keeper, "k1"),
+        "running",
+        "a role that keeps run_coding keeps its job"
+    );
+
+    assert_eq!(
+        post("/api/auth/users/worker/disabled", json!({"disabled":true}))
+            .await
+            .status(),
+        200
+    );
+    assert_eq!(status(&worker, "w1"), "cancelled", "disable stops the running job");
+    assert_eq!(status(&bystander, "b1"), "running", "another account's job runs on");
+
+    assert_eq!(
+        post("/api/auth/users/keeper/role", json!({"role":"auditor"}))
+            .await
+            .status(),
+        200
+    );
+    assert_eq!(
+        status(&keeper, "k1"),
+        "cancelled",
+        "a demotion out of run_coding stops it"
+    );
+
+    let deleted = request(&server, &admin, Method::DELETE, "/api/auth/users/leaver", Value::Null).await;
+    assert_eq!(deleted.status(), 200);
+    assert_eq!(status(&leaver, "l1"), "cancelled", "deletion stops the running job");
+    assert_eq!(status(&bystander, "b1"), "running");
+
+    let audit = server.audit_log();
+    let stopped: Vec<Value> = audit
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|line| line["event"] == "account.work_stopped")
+        .collect();
+    assert_eq!(stopped.len(), 3, "one audit line per account whose work stopped");
+    assert!(stopped.iter().all(|line| line["coding_jobs"] == 1));
+}
+
 /// A key an `auditor` account still holds at boot (a fold acknowledged by an
 /// earlier build, or a role set while the key store was unwritable) is retired
 /// before the gateway can serve it.
