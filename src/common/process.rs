@@ -403,6 +403,25 @@ mod tests {
         (pid, f[1], f[2])
     }
 
+    /// A PDF at the 15 MiB input cap reaches its worker in a small part of the
+    /// 5 s per-file deadline. Before, each 8 KiB write was followed by a 2 ms
+    /// sleep and a drain that shifted the remainder: about 4 s for 14 MB.
+    #[cfg(unix)]
+    #[test]
+    fn a_large_stdin_is_fed_without_a_sleep_per_write() {
+        let argv: Vec<String> = ["/bin/sh", "-c", "wc -c"].map(String::from).to_vec();
+        let bytes = vec![b'0'; 15 * 1024 * 1024];
+        let out = run(RunSpec {
+            argv: &argv,
+            cwd: None,
+            env: None,
+            timeout: Duration::from_secs(3),
+            stdin: Some(&bytes),
+        })
+        .expect("15 MiB of stdin is written well inside 3 s");
+        assert_eq!(out.stdout.trim(), bytes.len().to_string());
+    }
+
     /// A streaming child hears what the caller sends while it runs, the caller
     /// sees stdout before the exit, and dropping the sender closes stdin.
     #[cfg(unix)]
