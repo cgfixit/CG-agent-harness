@@ -337,7 +337,18 @@ pub async fn agent_run(
     let owner = super::auth::context_owner(user);
     refuse_bound_session_pins(&state, &owner, &req)?;
     let prepared = prepare_run(&state, &req, &owner)?;
-    let Json(mut result) = agentic_call(&state, prepared.ops).await?;
+    // The run lasts as long as the child, and the account was checked only
+    // when the request arrived. A disable, deletion or loss of `RunCoding`
+    // while it runs drops the child (`kill_on_drop`) and the gates; one that
+    // lands after the child exits withholds its result.
+    let outcome = tokio::select! {
+        outcome = agentic_call(&state, prepared.ops) => outcome,
+        () = coding_authority_lost(&state, &owner) => return Err(run_withheld(&state, &owner, "stopped")),
+    };
+    if !owner_still_may_run(&state, &owner).await {
+        return Err(run_withheld(&state, &owner, "withheld"));
+    }
+    let Json(mut result) = outcome?;
     // The receipt stages an episode in the memory store: off the async worker.
     let result = super::structured_memory::off_worker(move || {
         result["memory_suggestion"] =
@@ -346,6 +357,49 @@ pub async fn agent_run(
     })
     .await;
     Ok(Json(result))
+}
+
+/// How often a synchronous run rechecks its account while its child runs.
+const RUN_ACCOUNT_RECHECK: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Whether `owner` may still run coding, read on the blocking pool. Always
+/// true without accounts: the one local user cannot be disabled.
+async fn owner_still_may_run(state: &Arc<AppState>, owner: &str) -> bool {
+    if state.auth.is_none() {
+        return true;
+    }
+    let (state, owner) = (state.clone(), owner.to_string());
+    super::structured_memory::off_worker(move || schedule_owner_authorized(&state, &owner)).await
+}
+
+/// Resolves once `owner` may no longer run coding, checked every
+/// `RUN_ACCOUNT_RECHECK`; never resolves without accounts.
+async fn coding_authority_lost(state: &Arc<AppState>, owner: &str) {
+    if state.auth.is_none() {
+        return std::future::pending().await;
+    }
+    loop {
+        tokio::time::sleep(RUN_ACCOUNT_RECHECK).await;
+        if !owner_still_may_run(state, owner).await {
+            return;
+        }
+    }
+}
+
+/// The refusal for a synchronous run whose account changed: `stopped` while
+/// the child ran, `withheld` after it exited. Audited; the result never leaves.
+fn run_withheld(state: &AppState, owner: &str, outcome: &str) -> ApiError {
+    state.audit.log(json!({
+        "event": "agent_run_withheld",
+        "owner": owner,
+        "outcome": outcome,
+        "reason": "account_changed",
+    }));
+    ApiError::new(
+        StatusCode::UNAUTHORIZED,
+        "AUTH_REQUIRED",
+        "The account was disabled, deleted or lost coding access during this run; its result was not delivered.",
+    )
 }
 
 // ---------------------------------------------------------------- detached jobs
@@ -395,6 +449,35 @@ pub(crate) fn start_job(
     let (registered, ready) = tokio::sync::oneshot::channel();
     let handle = tokio::spawn(async move {
         if ready.await.is_err() {
+            return;
+        }
+        // The account was checked when the request arrived. An account
+        // disabled, deleted or demoted out of `RunCoding` before this job was
+        // registered missed `JobStore::cancel_owner`, so it is checked again
+        // now that the job is in the store: any later change finds it there.
+        let (check_state, check_owner, check_job) = (task_state.clone(), task_owner.clone(), task_job.clone());
+        let still_allowed = super::structured_memory::off_worker(move || {
+            if schedule_owner_authorized(&check_state, &check_owner) {
+                return true;
+            }
+            check_state.audit.log(json!({
+                "event": "agent_job_refused",
+                "job_id": check_job,
+                "owner": check_owner,
+                "reason": "account_changed",
+            }));
+            check_state.jobs.finish(
+                &check_job,
+                Err(ApiError::new(
+                    StatusCode::UNAUTHORIZED,
+                    "AUTH_REQUIRED",
+                    "The account was disabled, deleted or lost coding access before this job started; nothing ran.",
+                )),
+            );
+            false
+        })
+        .await;
+        if !still_allowed {
             return;
         }
         // `prepared` (and both gate guards) live exactly as long as this task.
@@ -593,7 +676,20 @@ pub async fn schedule_cancel(
     Ok(Json(v.to_json()))
 }
 
-/// Authority is rechecked at every occurrence, including legacy rows.
+/// Test seam: `start_job` for `owner` without the HTTP gate, standing in for
+/// a request that passed the gate before its account changed.
+#[cfg(any(test, feature = "test-support"))]
+pub fn start_job_for_owner(
+    state: Arc<AppState>,
+    req: AgentRunRequest,
+    owner: String,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    start_job(state, req, owner, None)
+}
+
+/// Whether `owner` may run coding now: an enabled account holding
+/// `RunCoding` (or `local` without accounts). Rechecked at every schedule
+/// occurrence, including legacy rows, and by every job once it is registered.
 fn schedule_owner_authorized(state: &AppState, owner: &str) -> bool {
     match &state.auth {
         Some(auth) => auth.list_users().iter().any(|user| {

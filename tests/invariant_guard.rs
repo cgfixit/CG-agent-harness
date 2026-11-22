@@ -2467,7 +2467,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: moved out of docs/learning (operator reading material agents never open) into docs/ on 2026-11-08.
     // why: the 2026-11-11 trim-and-refresh pass cut 928 words net (now 3646); the cap drops by the same amount, rounded up to the next 10, keeping its earlier headroom.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 3680, within a few words of the file.
-    ("docs/WEB_DECISION_ROUTER.md", Guide, 3880),
+    // why: the 2026-11-22 refresh trimmed measurement narrative and restated config numbers (3871 to 3685 words with the week's provider, digest and loop changes added); the cap drops to the next 10 above it so the cut stays cut.
+    ("docs/WEB_DECISION_ROUTER.md", Guide, 3690),
     // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 577 words net of the post-#834 additions; measured 2538, rounded up to the next 10 so the cut stays cut.

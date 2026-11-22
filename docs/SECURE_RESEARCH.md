@@ -37,12 +37,13 @@ password and CSRF token, then invalidates old sessions.
 Every role can **change password** with its current password. An
 administrator uses **USERS** (`/users`) to create users or reset passwords.
 Password reset, role change, disable and deletion revoke that account's
-sessions. The last enabled administrator cannot be deleted, disabled or
+sessions; disable, deletion and loss of coding access also stop its coding
+work. The last enabled administrator cannot be deleted, disabled or
 demoted.
 
-Console authentication probes time out after five seconds and account
-mutations after fifteen, body included. A timeout does not prove a submitted
-change was rejected; refresh before retrying.
+Authentication probes time out after five seconds and account
+mutations after fifteen, body included. A timeout does not prove a
+change was rejected; refresh first.
 
 ### Roles
 

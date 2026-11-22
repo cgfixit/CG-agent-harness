@@ -9,7 +9,7 @@
 //! also audits its counts as `chat_web_turn`, without targets.
 //!
 //! The ledger enters a prompt only through [`carry_forward`], when
-//! `web.carry_forward_sources` (ships 0, off) allows rows: targets the current
+//! `web.carry_forward_sources` (ships 5; 0 is off) allows rows: targets the current
 //! URL policy still permits, never page text.
 
 use std::collections::{BTreeSet, HashSet};

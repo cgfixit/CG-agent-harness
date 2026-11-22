@@ -581,8 +581,8 @@ impl WebTool {
     /// `web.search.provider` picks the backend; `auto` lets a key choose the fixed
     /// SerpAPI Google backend. A key is sent only to its own provider's fixed
     /// endpoint, never to Google, another provider or a returned result
-    /// URL. Fallback hops (`web.search.fallback_*`): public Google ships on,
-    /// SerpAPI off; see `plan_hops`.
+    /// URL. Fallback hops (`web.search.fallback_*`) both ship on; see
+    /// `plan_hops`.
     pub async fn google_search(&self, query: &str, count: usize, enabled: bool, audit: &Audit) -> Result<Value> {
         self.google_search_at(
             query,
