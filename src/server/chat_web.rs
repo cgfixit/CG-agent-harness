@@ -787,10 +787,12 @@ async fn run_inner(
                 }
             }
             if !selected.is_empty() {
-                check_evidence(state, web, owner, sign_in, &sources)?;
+                // The window check can load the model: authority is read after
+                // that wait, immediately before the passages are sent.
                 state
                     .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
                     .await?;
+                check_evidence(state, web, owner, sign_in, &sources)?;
                 let digest = state
                     .chat
                     .chat_json(
@@ -918,9 +920,12 @@ async fn run_inner(
         peak_extra = peak_extra.max(extra);
         let validate = || check_evidence(state, web, owner, sign_in, &sources);
         // A tool round may run long: the window must still allow this budget.
+        // That check can load the model, so authority is read again after it,
+        // before the request carries the conversation and any passages.
         state
             .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
             .await?;
+        validate()?;
         // The model may answer on a hop that offers tools, so every hop is
         // sampled as an answer: the answer cap (an answer is generated once,
         // never cut at a smaller planning cap and started again) and the
