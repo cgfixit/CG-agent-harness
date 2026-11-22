@@ -150,8 +150,10 @@ async fn prepare(
         )
     })?;
     // The task goes in a private temporary file (0600, removed with `Prepared`),
-    // not in argv, which other local accounts can list.
-    let task_file = write_task_file(&req.task)?;
+    // not in argv, which other local accounts can list. Creating and writing
+    // it blocks: off the async worker, as the shim stages its files (#1024).
+    let task = req.task.clone();
+    let task_file = super::structured_memory::off_worker(move || write_task_file(&task)).await?;
     // Canonical origins only: a requested URL's path or query (a token, say)
     // never reaches argv, the audit log or the report.
     let grants = session.grant_strings();
