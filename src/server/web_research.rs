@@ -474,7 +474,9 @@ async fn model_call(
     }
     // Gathering sources can take minutes: the window must still allow this
     // budget. Checked before reserving, since a refused call sends nothing.
+    // It can load the model, so the account is read again after that wait.
     state.ensure_window_allows(model, 0, total_budget, sized_tuned).await?;
+    authorize_owner(state, owner)?;
     // Reserve before awaiting so cancellation, timeout and malformed upstream
     // responses still appear in total usage, explicitly estimated at the cap.
     usage.push(Usage {

@@ -507,6 +507,85 @@ async fn an_excerpt_staged_across_a_demotion_never_reaches_the_new_role() {
     assert!(s.state.diag.staged(&staged_owner(&s, "ops-demoted")).is_none());
 }
 
+/// A password reset or change revokes the account's sign-ins, so the /diag
+/// read and excerpt one of them left go too, as on logout, disable, a role
+/// change or deletion (INVARIANTS.md: account changes drop it).
+#[tokio::test]
+async fn a_password_reset_or_change_drops_staged_diag_state() {
+    let model = start_mock_model().await;
+    let s = server(&model, true).await;
+    let boss = account(&s, "ops-boss", "admin").await;
+    let auth = s.state.auth.as_ref().unwrap();
+    for reset in [true, false] {
+        let name = if reset { "ops-reset" } else { "ops-change" };
+        let password = cgagentharness::common::random_hex(24);
+        auth.create_user(name, &password, "admin").unwrap();
+        let login = s
+            .client
+            .post(s.url("/api/auth/login"))
+            .json(&json!({"username":name,"password":password}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(login.status(), 200);
+        let cookie = login.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+        let (_, session) = json_call(
+            &s,
+            &cookie,
+            Method::POST,
+            "/api/sessions",
+            Some(json!({"title":"diag"})),
+        )
+        .await;
+        let sid = session["session_id"].as_str().unwrap().to_string();
+        let (status, read) = json_call(&s, &cookie, Method::GET, "/api/diag/read?file=audit.jsonl&last=3", None).await;
+        assert_eq!(status, 200, "{read}");
+        let (status, staged) = json_call(
+            &s,
+            &cookie,
+            Method::POST,
+            "/api/diag/inject",
+            Some(json!({"session_id": sid})),
+        )
+        .await;
+        assert_eq!(status, 200, "{staged}");
+        let owner = staged_owner(&s, name);
+        assert!(s.state.diag.staged(&owner).is_some() && s.state.diag.last(&owner).is_some());
+        let fresh = cgagentharness::common::random_hex(24);
+        let (status, body) = if reset {
+            json_call(
+                &s,
+                &boss,
+                Method::POST,
+                &format!("/api/auth/users/{name}/password"),
+                Some(json!({"password": fresh})),
+            )
+            .await
+        } else {
+            json_call(
+                &s,
+                &cookie,
+                Method::POST,
+                "/api/auth/password",
+                Some(json!({"current_password": password, "password": fresh})),
+            )
+            .await
+        };
+        assert_eq!(status, 200, "{name}: {body}");
+        assert!(
+            s.state.diag.staged(&owner).is_none(),
+            "{name}: the staged excerpt survived"
+        );
+        assert!(s.state.diag.last(&owner).is_none(), "{name}: the last read survived");
+    }
+}
+
 fn staged_owner(s: &TestServer, username: &str) -> String {
     s.state.auth.as_ref().unwrap().get_user(username).unwrap().user_id
 }
