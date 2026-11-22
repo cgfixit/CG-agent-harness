@@ -47,7 +47,7 @@ filesystem, MCP, cloud or repository permission.
 
    Each fallback flag independently removes its hop. Flags missing from older
    configs are false because flag_is_true requires literal YAML true. The
-   shipped YAML sets provider=auto, fallback_to_serpapi=false,
+   shipped YAML sets provider=auto, fallback_to_serpapi=true,
    fallback_to_public_google=true. Invalid provider names/types fail
    configuration loading.
 
@@ -101,8 +101,8 @@ filesystem, MCP, cloud or repository permission.
     reasoning.
 
 12. The session web ledger holds targets, counts, failures and truncation,
-    not passages. carry_forward_sources ships zero, and enabling it carries
-    only metadata. Search deduplication is local to one chat turn.
+    not passages. carry_forward_sources ships 5 (operator, 2026-11-22) and
+    carries only metadata. Search deduplication is local to one chat turn.
     /web research has checked Citation/Claim/Answer types worth reusing, but
     its runner takes generation and search gates: reuse its pure
     retrieval/validation helpers rather than calling it from chat.
@@ -236,8 +236,8 @@ receipt references, attempted queries and unresolved gaps, scoped to owner,
 session and goal and cleared on changed goal/cancel/end. Rehydrate permitted
 passages from the cache after compaction, checking hashes, age and authority
 again. Missing/evicted/revoked content becomes unavailable; a summary cannot
-manufacture a receipt. Do not add page bodies to web_ledger, silently enable
-carry_forward_sources, persist a second corpus, or promote web inferences
+manufacture a receipt. Do not add page bodies to web_ledger, widen
+carry_forward_sources past metadata, persist a second corpus, or promote web inferences
 into user memory facts.
 
 Permission revocation cannot erase historical chat text; prevent fresh

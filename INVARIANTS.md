@@ -253,7 +253,7 @@ target and pattern with unreserved escapes decoded and `/` runs merged
 `//private/` stay covered; path case is kept. Private
 addresses stay refused, with no exception for any search provider. Existing choices persist; absent/invalid legacy
 `web_enabled` stays off. `tools/web_allowlist.json` is versioned and bounded by
-restart-only `web.max_rules` (default 64); over-cap, malformed, missing,
+restart-only `web.max_rules` (default 256); over-cap, malformed, missing,
 unreadable or partially invalid policy refuses access.
 Exact HTTP(S) rules retain scheme, port, path and query identity.
 Only explicit `*.host` and `/path/*` rules broaden scope. Path wildcards include
@@ -703,7 +703,7 @@ consecutive failed turns or failed web rounds, unverified `GOAL_DONE`, a
 near-repeat reply, or a web refusal every later turn would repeat. A turn waits
 (stoppable, at most two hours) while another generation holds the model
 instead of counting a failure. Both budgets
-ship finite, 50 turns and 200,000 completion tokens (#675); `0` is an explicit
+ship finite, 200 turns and 200,000 completion tokens (#675); `0` is an explicit
 opt-in to unlimited, and a home whose file lacks the key keeps the code fallback
 `0`. With both budgets zero, startup and transitions into unbounded on reload
 warn and audit `loop_budgets_unlimited`; unchanged or finite reloads do not.

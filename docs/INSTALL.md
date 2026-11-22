@@ -535,7 +535,7 @@ on first run. Common operator settings:
 |---|---|---|
 | `api.rate_limit.max_requests` / `window_seconds` | 300 / 240 | Per-IP sliding-window ceiling on every route: 75 a minute sustained, above the 44 a console polls during an `/agent` job |
 | `api.harness_loop_rate_limit.*` | 34 / 500 s / 4096 tokens | Separate `/loop` budget; same backend-dependent ceiling as local chat after the legacy `0` → `2048` fallback. A tuned model's loop reply never exceeds `models.local_llm.max_tokens`, so raise both together |
-| `loop.max_turns` / `loop.max_total_completion_tokens` | 50 / 200000 | Per-run caps; zero or absent keys stay unlimited, with a startup and console warning when both are. [Reloadable](#reload-limits-without-a-restart) |
+| `loop.max_turns` / `loop.max_total_completion_tokens` | 200 / 200000 | Per-run caps; zero or absent keys stay unlimited, with a startup and console warning when both are. [Reloadable](#reload-limits-without-a-restart) |
 | `models.cloud_chat.enabled`, `max_tokens` / `timeout_sec` | true, 10000 / 360 | Allows `/model use grok` / `claude` (each provider has its own `enabled` and `model`); reply ceiling and timeout, where boot refuses 0 or >32768 tokens or a timeout outside 1–720 s |
 | `models.local_llm.max_tokens` | 4096 | Local reply ceiling: 1–25904 with resolved Ollama and explicit reasoning `none`; otherwise 1–12952, reserved twice. Invalid combinations fail startup with `CONFIG_ERROR` |
 | `models.local_llm.reasoning_effort` | `none` | Sent only to resolved Ollama: `none`, `low`, `medium`, `high`, `max`. Missing/empty omits the field and uses the doubled reservation |

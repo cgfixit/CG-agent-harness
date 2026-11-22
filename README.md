@@ -14,7 +14,7 @@
 | Capability | What it provides | Fresh-home state |
 |---|---|---|
 | **Web research** | Search, permitted reads and crawls, `/web research` jobs with checked quotes, local PDF text. | On; allowlist with one seeded Google rule. |
-| **Goal loops** | `/goal` and `/loop` continue after the tab closes. | 50 turns, 200,000 tokens, two failed turns; local only. |
+| **Goal loops** | `/goal` and `/loop` continue after the tab closes. | 200 turns, 200,000 tokens, two failed turns; local only. |
 | **Memory** | Pinned and [uploaded notes](docs/CONSOLE.md#text-file-attachments-and-prompt-preview), account-private facts. | On; proposals need review. |
 | **Local chat** | Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles. | Ollama on loopback. |
 | **Browser tasks** | `/browse <site> <task>`: the local model drives sandboxed Chrome on those sites only. Block rules cover every request and redirect; password fields and non-GET/HEAD requests are held. | On for administrators; [setup](#3-sign-in-and-research). |
