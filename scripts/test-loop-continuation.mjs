@@ -126,8 +126,11 @@ for (const server of [false, true]) {
 }
 console.log('Both loop paths warn only for server-reported unbounded budgets and still run.');
 
+// A bare manual /loop keeps the short default; /loop auto (the server path)
+// runs to the configured cap, and to the default only when the cap is unlimited.
 for (const server of [false, true]) {
-  for (const [cap, turns] of [[0, 3], [1, 1], [2, 2], [50, 3]]) {
+  for (const [cap, manual, auto] of [[0, 3, 3], [1, 1, 1], [2, 2, 2], [50, 3, 50]]) {
+    const turns = server ? auto : manual;
     const c=vm.createContext({rest:[],loopState:null,loopAuto:server,serverLoopSupported:server,MAX_LOOP_TURNS:0,currentSession:'owned',sessionGoal:'',staleReview:()=>false,loopCancelGeneration:0,
       api:async path=>path==='/api/status'?{provider:'ollama',loop:{max_turns:cap}}:{goal:'stored goal'},
       paintGoalLoop(){},sys(){},runLoopTurns:async()=>{},runServerLoop:async()=>{}});
@@ -136,7 +139,7 @@ for (const server of [false, true]) {
     assert.equal(c.loopState.server,server);
   }
 }
-console.log('Bare /loop limits default turns using preflight, even before a status refresh.');
+console.log('Bare /loop limits default turns using preflight, even before a status refresh; /loop auto runs to the cap.');
 
 // Goal derivation: the last own prompt, never a loop turn or compaction note.
 assert.equal(loopGoalFromMessages([{role:'user',content:'first'},{role:'assistant',content:'ack'},{role:'user',content:'fix the parser'}],2000),'fix the parser');
