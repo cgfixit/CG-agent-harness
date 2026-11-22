@@ -22,7 +22,7 @@ How a run works:
    no provider keys or GitHub tokens reach Node or Chrome.
 2. The child starts `browser/sidecar.mjs` (Playwright 1.65.1, installed Google
    Chrome, temporary profile). Prepare it once: `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
-   npm ci` in `browser/`. The desktop app needs an absolute `browser.sidecar`.
+   npm ci --ignore-scripts` in `browser/`; the desktop app needs absolute `browser.sidecar`.
 3. Each observation is Playwright's aria snapshot: real roles, accessible
    names, absolute link targets. `src/common/browser.rs` mints refs that
    expire with each observation.

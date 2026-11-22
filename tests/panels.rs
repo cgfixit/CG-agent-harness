@@ -883,7 +883,9 @@ async fn auth_bootstrap_login_roles_and_last_admin() {
         body.get("needs_password").is_none() && body.get("username").is_none(),
         "only whether the setup code works is public: {body}"
     );
-    // The legacy set-password route is retired, so it is no longer public.
+    // The legacy set-password route is retired: unregistered, so the gate
+    // answers 401 here for want of a session, as it does for any unknown path.
+    assert!(!cgagentharness::server::routes::REGISTERED_PATHS.contains(&"/api/auth/bootstrap-password"));
     let retired = s
         .client
         .post(s.url("/api/auth/bootstrap-password"))

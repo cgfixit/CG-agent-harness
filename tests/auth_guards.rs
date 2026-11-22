@@ -634,6 +634,48 @@ async fn account_changes_recheck_the_acting_admin_when_they_run() {
     }
 }
 
+/// #1002: with `browser.takeover.enabled: false` an approval is refused by
+/// name before any job lookup, so a held request can only end its task.
+#[tokio::test]
+async fn approving_a_held_browser_request_is_refused_while_takeover_is_off() {
+    use axum::extract::{Path, State};
+    use cgagentharness::server::routes::browser::{job_approve, BrowserApproveRequest};
+    use cgagentharness::server::schemas::ValidJson;
+    let model = start_mock_model().await;
+    for (takeover, expected) in [
+        ("false", "BROWSER_TAKEOVER_DISABLED"),
+        ("true", "BROWSER_JOB_NOT_FOUND"),
+    ] {
+        let s = spawn_server(
+            &model.base_url(),
+            ServerOptions::default()
+                .with("auth.enabled", "true")
+                .with("browser.enabled", "true")
+                .with("browser.takeover.enabled", takeover),
+        )
+        .await;
+        let mgr = s.state.auth.clone().unwrap();
+        mgr.create_user("boss", &cgagentharness::common::random_hex(24), "admin")
+            .unwrap();
+        let boss = mgr.get_user("boss").unwrap();
+        let refused = job_approve(
+            State(s.state.clone()),
+            Some(axum::Extension(boss)),
+            Path("0123456789abcdef0123456789abcdef".to_string()), // DevSkim: ignore DS173237 because this is a 32-hex browser job-id fixture, not a credential.
+            ValidJson(BrowserApproveRequest {
+                request: 1,
+                sha256: "ab".repeat(32),
+                confirm: true,
+                reason: "the order I asked for".into(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        // With takeover on, the same call reaches the job lookup instead.
+        assert_eq!(refused.code, expected, "takeover {takeover}");
+    }
+}
+
 /// #945: with accounts off the admin check in guards.rs does not run, so the
 /// browser route refuses on its own before anything is spawned.
 #[tokio::test]

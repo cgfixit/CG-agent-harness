@@ -18,8 +18,9 @@ use crate::common::errors::Result;
 const TAVILY_ENDPOINT: &str = "https://api.tavily.com/search";
 const PROVIDER: &str = "tavily";
 
-/// Rows from a Tavily answer. Only `title`, `url` and `content` are read: an
-/// `answer` or `raw_content` field is never copied, whatever the request said.
+/// Rows from a Tavily answer. Only `title`, `url`, `content`, `score` and
+/// `published_date` are read: an `answer` or `raw_content` field is never
+/// copied, whatever the request said.
 pub(super) fn tavily_results(body: &[u8], limit: usize) -> Result<Vec<SearchResult>> {
     let value: Value =
         serde_json::from_slice(body).map_err(|_| error("WEB_SEARCH_RESPONSE", "invalid search response"))?;
@@ -45,6 +46,13 @@ pub(super) fn tavily_results(body: &[u8], limit: usize) -> Result<Vec<SearchResu
             row.provider_score = item["score"]
                 .as_f64()
                 .filter(|s| s.is_finite() && (0.0..=1.0).contains(s));
+            // Present for some results (always for the news topic): the same
+            // `source_date` a SerpAPI or public Google row carries.
+            row.source_date = item["published_date"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| crate::common::clip_chars(s, 80));
         }
     }
     Ok(rows)
@@ -193,6 +201,11 @@ mod tests {
             "snippets are clipped like every listing"
         );
         assert!(tavily_results(br#"{"results":[]}"#, 5).unwrap().is_empty());
+        let dated = json!({"results":[{"title":"News","url":"https://example.org/n","content":"c",
+            "published_date":"Tue, 03 Nov 2026 10:00:00 GMT"},{"title":"Plain","url":"https://example.org/p","content":"c","published_date":""}]});
+        let rows = tavily_results(dated.to_string().as_bytes(), 5).unwrap();
+        assert_eq!(rows[0].source_date.as_deref(), Some("Tue, 03 Nov 2026 10:00:00 GMT"));
+        assert_eq!(rows[1].source_date, None);
         for bad in [
             &br#"{"detail":{"error":"secret upstream text"}}"#[..],
             b"<html>",

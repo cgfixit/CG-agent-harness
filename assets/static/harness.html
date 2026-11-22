@@ -4391,7 +4391,10 @@ async function runSlash(line, webCommand) {
         if (loopCancelGeneration !== loopGeneration) break;
         if (sub || !loopState || loopState.remaining <= 0) {
           const turnCap = loopStatus?.loop?.max_turns ?? MAX_LOOP_TURNS;
-          const n = sub ? Math.min(parseInt(sub, 10), turnCap > 0 ? turnCap : Number.MAX_SAFE_INTEGER) : defaultLoopTurns(turnCap);
+          /* /loop auto with no count runs to GOAL_DONE or the configured cap
+             (loop.max_turns); a bare manual /loop keeps the short default. */
+          const n = sub ? Math.min(parseInt(sub, 10), turnCap > 0 ? turnCap : Number.MAX_SAFE_INTEGER)
+            : (loopAuto && turnCap > 0 ? turnCap : defaultLoopTurns(turnCap));
           loopState = {
             remaining: n, total: n, auto: loopAuto, stop: false,
             running: false, failures: 0, lastReply: '', completionTokens: 0,
@@ -4633,8 +4636,12 @@ function loopTurnPrompt(turn, total, goal) {
   // Code points, not UTF-16 units: a cut surrogate pair is JSON the server rejects.
   const g = Array.from(String(goal || '').replace(/\s+/g, ' ').trim());
   const reminder = g.length > LOOP_GOAL_REMINDER_CHARS ? g.slice(0, LOOP_GOAL_REMINDER_CHARS - 1).join('') + '…' : g.join('');
+  /* The run's last budgeted turn asks for the best answer so far (server LOOP_FINAL_STEP). */
+  const step = turn === total
+    ? "This is the run's last turn: give your best complete answer to the goal from what earlier turns found, and name anything still unverified."
+    : 'Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies.';
   return 'Loop turn ' + turn + ' of ' + total + '. Session goal: ' + reminder + '\n' +
-    'Follow every constraint in the full stored goal in system context. Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies. ' +
+    'Follow every constraint in the full stored goal in system context. ' + step + ' ' +
     'Complete only harness turn ' + turn + '; tool calls and evidence digests do not advance the turn. Do not simulate later turns. ' +
     'Be concise. If the goal is fully satisfied, give a short summary and end with GOAL_DONE on its own line. ' +
     'Stay in this chat; do not request a real-repo write.';

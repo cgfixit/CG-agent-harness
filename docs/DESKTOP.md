@@ -270,7 +270,7 @@ under other service names and shared tools stay outside the purge.
 app as in a browser console: [Browser use](Browser-Use.md) is the guide. In the
 app does not bundle `browser/`: set `browser.sidecar` to the absolute path of
 `browser/sidecar.mjs` in a repository checkout, run
-`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci` there once, and restart. The task
+`PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --ignore-scripts` there once, and restart. The task
 drives installed Google Chrome, not the app's webview.
 
 ## Later: native computer use

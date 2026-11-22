@@ -9,7 +9,7 @@ This manual is static text bundled with the build and indexed at startup. It is 
 ## readme: capability overview
 
 - Web research: Search, permitted reads and crawls, `/web research` jobs with checked quotes, local PDF text. Starts: On; allowlist with one seeded Google rule.
-- Goal loops: `/goal` and `/loop` continue after the tab closes. Starts: 50 turns, 200,000 tokens, two failed turns; local only.
+- Goal loops: `/goal` and `/loop` continue after the tab closes. Starts: 200 turns, 200,000 tokens, two failed turns; local only.
 - Memory: Pinned and uploaded notes, account-private facts. Starts: On; proposals need review.
 - Local chat: Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles. Starts: Ollama on loopback.
 - Browser tasks: `/browse <site> <task>`: the local model drives sandboxed Chrome on those sites only. Block rules cover every request and redirect; password fields… Starts: On for administrators; setup.
@@ -19,28 +19,21 @@ This manual is static text bundled with the build and indexed at startup. It is 
 
 ## agents: process and home map
 
-- `cgagentharness serve` -> loopback HTTP/HTTPS console in `src/server`. Public
- `account` and `web` call that service; `tls` manages local certificates and
- `mcp-key` manages machine keys by filesystem authority.
-- `cgagentharness agentic <action>` -> `src/agentic` (hidden; spawned by
- `src/shim` as a child process, never called in-process).
-- `cgagentharness netconnect status|devices|diag` and `/net` -> `src/netconnect`.
- Only `diag` dials, through the budgeted `Dialer` in `connect.rs`.
-- `agentic`/`netconnect` exit codes: `0` ok, `2` failed, `3` env/config,
- `4` refused. Through the shim, a non-zero child exit is HTTP
- 200 with `ok=false`; shim failures map to 400/502/504 and the disabled-layer
- banner to 409. Other subcommands (`serve`, `account`, `web`, `tls`,
- `mcp-key`) exit `1` on error; hidden `desktop` and `mcp-stdio-worker` exit `3`;
- hidden `pdf-text-worker` exits `0` text, `2` refused, `3` unusable environment;
- hidden `browser` and `browser-verify` exit `0` passed, `2` failed, `3` bad
- arguments or config.
-- Application state: `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`); coding writes
-
-## agents: process and home map (part 2)
-
-stay in pipeline-created clones under `data/agentic/workspaces`.
-- Before changing a feature, read its guide below and owning `INVARIANTS.md`
- section. Source index locates implementations.
+- `cgagentharness serve` is the loopback console (`src/server`); `account`,
+ `web`, `tls` and `mcp-key` are its CLI faces. `agentic <action>`
+ (`src/agentic`) runs only as a child the shim spawns, never in-process.
+ `netconnect diag` alone dials, through the budgeted `Dialer`.
+- Exit codes: `agentic`/`netconnect` `0` ok, `2` failed, `3` env/config, `4`
+ refused (through the shim a non-zero child is HTTP 200 `ok=false`; shim
+ failures 400/502/504, the disabled-layer banner 409). `serve`, `account`,
+ `web`, `tls`, `mcp-key` exit `1`; hidden `desktop`/`mcp-stdio-worker` `3`;
+ `pdf-text-worker` `0` text, `2` refused, `3` environment; `browser` and
+ `browser-verify` `0` passed, `2` failed, `3` bad arguments or config.
+- State lives in `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`); coding writes stay
+ in pipeline clones under `data/agentic/workspaces`. Shipped defaults seed new
+ homes only: an existing `config.yaml` is never rewritten.
+- Read a feature's guide and owning `INVARIANTS.md` section first;
+ Source index locates code.
 
 ## invariant: I6 — process isolation between the console and the agentic pipeline
 
@@ -344,7 +337,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 ## troubleshooting: symptom to fix
 
-- `/browse` says playwright is not prepared → From `browser/`, run `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci`; the app needs an absolute `browser.sidecar` (browser use)
+- `/browse` says playwright is not prepared → From `browser/`, run `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --ignore-scripts`; the app needs absolute `browser.sidecar` (browser use)
 - `/browse` refused: `BROWSER_AUTH_REQUIRED` → Turn accounts on and sign in as an administrator (Browser use)
 - `/browse` refused: `BROWSER_ORIGIN_BLOCKED` or `BROWSER_PRIVATE_ADDRESS` → `/web status` lists the rules; browser tasks reach public addresses only
 - Spend reports partial, unreadable, too large or invalid UTF-8 → Preserve the ledger; inspect permissions and size. Missing evidence is not zero spend
@@ -443,6 +436,7 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - attachments.max_concurrent_uploads
   - attachments.body_timeout_sec
 - notes_corpus: Home-jail .md/.txt notes for local prompt retrieval. Separate from structured memory. Cloud and /agent never receive these bytes.
+  - notes_corpus.enabled: literal false refuses uploads and keeps notes out of prompts (list/delete still work); a missing key is on;…
   - notes_corpus.max_files_per_owner: 1–256
   - notes_corpus.max_file_bytes: 1024–1048576; also caps a PDF note's extracted text
   - notes_corpus.max_pdf_bytes: 1024–15728640 stored size of one .pdf note; max_home_bytes still applies
@@ -450,26 +444,26 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - notes_corpus.max_files_per_request: 1–16
   - notes_corpus.max_concurrent_ingests: 1–8
 - api: These API limits and the listed web limits support admin Reload limits/SIGHUP. See the reloadable-limits section of docs/INSTALL.md; secrets, authority and other settings require restart.
-  - api.rate_limit
-  - api.harness_loop_rate_limit
 
 ## config: sections and keys (values omitted) (part 3)
 
+- api.rate_limit
+  - api.harness_loop_rate_limit
 - loop: Server-side /loop runner bounds (Reload limits/SIGHUP; see docs/INSTALL.md and docs/CONSOLE.md). The console reads these from /api/status at runtime and falls back to these values. Both budgets ship…
-  - loop.max_turns: 0 (unlimited) or 1–1000000
+  - loop.max_turns: 0 (unlimited) or 1–1000000; /loop auto with no count runs to GOAL_DONE or this cap
   - loop.max_total_completion_tokens: 0 (unlimited) or 1–100000000
   - loop.max_failures: 1–100
   - loop.cooldown_ms: 0–300000
 - web: Bounded public content reads; a fresh home enables web with one seeded allow rule, https://www.google.com/* (public Google search); /web deny removes it. Missing values in existing homes use these…
   - web.chat_tool_calls: 1–30 read-only calls per chat or local /loop turn; web.total_tokens usually binds first
-  - web.carry_forward_sources: 0 (off) or 1–50 earlier reads (URL/query only, no page text) listed in web turns; reloadable
+  - web.carry_forward_sources: 0 (off) or 1–50 earlier reads (URL/query only, no page text) listed in web turns, cited when used; reloadable
   - web.goal_web_default: off|fetch|all; restart-only. The mode a /goal gets without --web.
   - web.fetch_provenance: restart-only; a missing key is also on; false reads as before
-  - web.response_bytes: 1024–1048576; compressed bodies refused. Shipped 262144 until 2026-11-10: uncompressed, many documentation…
 
 ## config: sections and keys (values omitted) (part 4)
 
-- web.pdf_response_bytes: 1024–15728640; an application/pdf body (text layer read locally). A budgeted run reads at most what…
+- web.response_bytes: 1024–1048576; compressed bodies refused. Shipped 262144 until 2026-11-10: uncompressed, many documentation…
+  - web.pdf_response_bytes: 1024–15728640; an application/pdf body (text layer read locally). A budgeted run reads at most what…
   - web.request_seconds: 1–30, includes queue, DNS, headers, body and extraction; also the one deadline a search's provider hops…
   - web.html_parser_handles: 64–4096; bound open-element/formatting state, restart-only
   - web.concurrency: 1–4 total fetches; restart-only (shared permits)
@@ -480,11 +474,11 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - web.per_site_pages: 1–20
   - web.pace_ms: 100–5000 between requests to an origin; public Google searches wait at least 3000 (code floor)
   - web.search_cooldown_public_sec: 60–3600 after public Google WEB_GOOGLE_CHALLENGE or WEB_GOOGLE_BLOCKED
-  - web.search_cooldown_quota_sec: 0–3600 after SerpAPI or Tavily WEB_SEARCH_QUOTA; 0 waits for the next clock hour (SerpAPI's hourly cap)
 
 ## config: sections and keys (values omitted) (part 5)
 
-- web.cache_pages: 1–256; derived cache, oldest documents evicted
+- web.search_cooldown_quota_sec: 0–3600 after SerpAPI or Tavily WEB_SEARCH_QUOTA; 0 waits for the next clock hour (SerpAPI's hourly cap)
+  - web.cache_pages: 1–256; derived cache, oldest documents evicted
   - web.cache_bytes: 1048576–33554432 serialized cache bytes
   - web.subqueries: 1–5 total model-selected subqueries
   - web.rounds: 1–2 planning/retrieval rounds; one bounded crawl per run
@@ -501,10 +495,10 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - browser.sidecar
   - browser.max_turns: model turns per task, clamped to 1–40
   - browser.timeout_sec: whole task; the child tree is killed after it, clamped to 30–1800
-  - browser.takeover
 
 ## config: sections and keys (values omitted) (part 6)
 
+- browser.takeover
 - computer: Native computer use (issue #996; docs/Browser-Use.md#roadmap-computer-use). Nothing reads this key yet: no route, child or driver exists. It ships now so the gate is closed before any of them is…
   - computer.enabled
 - notifications: Completion webhooks are explicit operator configuration and restart-only.
@@ -518,11 +512,11 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - notifications.batch_interval_sec: 1–3600; initial batching delay
   - notifications.poll_interval_sec: 1–60; durable outbox scan
   - notifications.max_attempts: 1–3 per delivery/replay; IDs remain stable
-  - notifications.retry_delay_sec: 1–60; exponential backoff base
 
 ## config: sections and keys (values omitted) (part 7)
 
-- notifications.max_backoff_sec: 1–3600; before bounded jitter
+- notifications.retry_delay_sec: 1–60; exponential backoff base
+  - notifications.max_backoff_sec: 1–3600; before bounded jitter
   - notifications.jitter_percent: 0–50; nonnegative random delay
   - notifications.retention_sec: 60–2592000; pending and terminal delivery retention
   - notifications.max_replays: 0–10; explicit owner-confirmed replay cycles
@@ -539,11 +533,11 @@ Future remote exposure requires a separate reviewed change: There is no remote m
   - security.allow_plaintext_key_file: keep managed provider keys in the OS credential store
 - tls
   - tls.enabled: newly seeded homes use HTTPS; existing configs are not rewritten
-  - tls.auto_generate: unique local cert/key in a private atomic PEM bundle
 
 ## config: sections and keys (values omitted) (part 8)
 
-- tls.certificate_days: 1–365; renew explicitly before expiry
+- tls.auto_generate: unique local cert/key in a private atomic PEM bundle
+  - tls.certificate_days: 1–365; renew explicitly before expiry
   - tls.cert_file: optional operator PEM chain, relative to home or absolute
   - tls.key_file: paired private PEM key; never overwritten by automatic generation
 - auth

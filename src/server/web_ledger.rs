@@ -78,6 +78,9 @@ pub struct TurnSummary {
     pub same_turn_repeats: u64,
     pub rereads_after_compaction: u64,
     pub cited: u64,
+    /// Pages an earlier turn fetched that this reply cites without reading
+    /// them again (the carried-forward list asks for that citation).
+    pub carried_cited: u64,
     /// Distinct codes the turn's tool events carried, refusals and
     /// `WEB_TOOLS_WITHHELD` included.
     pub codes: Vec<String>,
@@ -103,6 +106,7 @@ impl TurnSummary {
             "same_turn_repeats": self.same_turn_repeats,
             "rereads_after_compaction": self.rereads_after_compaction,
             "cited": self.cited,
+            "carried_cited": self.carried_cited,
             "codes": self.codes,
             "providers": self.providers,
             "fallbacks": self.fallbacks,
@@ -212,7 +216,18 @@ pub fn record_turn(
             summary.cited += 1;
         }
     }
-    if summary.calls == 0 && codes.is_empty() {
+    // A reply citing a page an earlier turn fetched counts on that row, so it
+    // ranks ahead in later carried-forward lists, without a new read.
+    for source in sources
+        .iter_mut()
+        .filter(|s| s.tool == "web_fetch" && s.turns.last() != Some(&turn) && s.last_code.is_none())
+    {
+        if cites(reply, &source.target) {
+            source.cited += 1;
+            summary.carried_cited += 1;
+        }
+    }
+    if summary.calls == 0 && codes.is_empty() && summary.carried_cited == 0 {
         return None;
     }
     // First-read order stays; the least recently read target goes.
@@ -277,7 +292,8 @@ pub fn carry_forward(
     let omitted = eligible.len().saturating_sub(rows);
     let mut block = String::from(
         "Earlier turns of this session already made these web reads. Page text is not kept: \
-         prefer what earlier replies already say, and read a page again only if you need its content.\n",
+         prefer what earlier replies already say, and read a page again only if you need its content. \
+         When your reply relies on a fetched page listed here, cite its URL.\n",
     );
     for (_, source) in eligible.into_iter().take(rows) {
         let turns = source.turns.iter().map(u64::to_string).collect::<Vec<_>>().join(", ");
@@ -352,6 +368,7 @@ mod tests {
                 same_turn_repeats: 0,
                 rereads_after_compaction: 0,
                 cited: 2,
+                carried_cited: 0,
                 codes: vec!["WEB_HOST_DENIED".into(), "WEB_TOOLS_WITHHELD".into()],
                 providers: vec![],
                 fallbacks: 0,
@@ -441,6 +458,30 @@ mod tests {
         assert!(sources.is_empty());
         assert!(!cites("see a.io for more", "https://a.io/"));
         assert!(cites("per docs.example/guide.", "https://docs.example/guide/"));
+    }
+
+    #[test]
+    fn a_reply_citing_a_page_an_earlier_turn_fetched_counts_without_a_read() {
+        let mut sources = Vec::new();
+        record_turn(
+            &mut sources,
+            &[fetch("https://docs.example/guide", "x", 1)],
+            "",
+            1,
+            0,
+            1.0,
+        )
+        .unwrap();
+        assert_eq!(sources[0].cited, 0);
+        // Turn 2 reads nothing; its reply cites the turn 1 page.
+        let summary = record_turn(&mut sources, &[], "Per https://docs.example/guide, yes.", 2, 0, 2.0).unwrap();
+        assert_eq!((summary.calls, summary.carried_cited, summary.cited), (0, 1, 0));
+        assert_eq!((sources[0].cited, sources[0].reads), (1, 1), "cited, not read again");
+        // A reply that cites nothing earlier is still not recorded.
+        assert_eq!(record_turn(&mut sources, &[], "no links", 3, 0, 3.0), None);
+        let block = carry_forward(&sources, "", 5, |_| true).unwrap();
+        assert!(block.contains("cite its URL"), "{block}");
+        assert!(block.contains("cited in a reply"), "{block}");
     }
 
     fn source(tool: &str, target: &str, last_ts: f64) -> WebSource {
