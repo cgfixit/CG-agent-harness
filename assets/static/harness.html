@@ -2606,7 +2606,7 @@ const COMMAND_MAN = {
   '/soul edit|history|propose': {detail:'edit opens the persona editor; propose opens it in proposal-only mode; history lists backup revisions.'},
   '/soul reject <id> <reason>': {detail:'Rejects the persona proposal you reviewed with /soul review <id>. The id must match and a reason is required.'},
   '/soul review <id>': {detail:'Shows a retained persona proposal. apply and reject require this review first.'},
-  '/status': {detail:'Shows version, model, provider, soul, style, memory, sessions, tokens, home, goal and loop state. Signed-out and audit accounts see a reduced view.'},
+  '/status': {detail:'Shows version, model, provider, soul, style, memory, sessions, tokens, home, goal and loop state. Signed-out and auditor accounts see a reduced view.'},
   '/style [<name>|off]': {detail:'Shows or sets this session’s output style. The whole remainder is the name, so extra words are refused rather than ignored. soul.md is unchanged.', args:{name:'a style name from the status-bar menu'}},
   '/tokens': {detail:'Shows this session’s prompt, completion and total tokens, and the exchange count.'},
   '/tools [all|help|mcp|<name>]': {detail:'Draws the registered runtime tools. all includes unwired rows; mcp shows external MCP grants; a name draws one tool; help lists these forms.', examples:['/tools mcp']},

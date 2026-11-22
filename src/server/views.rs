@@ -254,7 +254,7 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 84] = [
         "(API only)",
         "POST",
         "/api/ollama/pull",
-        "operator/admin abortable Ollama pull; SSE progress; never sends num_ctx",
+        "administrator abortable Ollama pull; SSE progress; never sends num_ctx",
     ),
     (
         "ollama-pull-cancel",
