@@ -435,7 +435,7 @@ async fn an_operator_reads_the_current_persona_to_propose_but_never_its_history(
         Some(json!({"content":"FIRST_PERSONA","base_revision":"missing","reason":"seed","confirm":true})),
     )
     .await;
-    assert_eq!(status, 200, "{first}");
+    assert_eq!(status, 200, "the first admin save");
     let old = first["revision"].as_str().unwrap().to_string();
     let (status, second) = as_account(
         &s,
@@ -445,16 +445,13 @@ async fn an_operator_reads_the_current_persona_to_propose_but_never_its_history(
         Some(json!({"content":"SECOND_PERSONA","base_revision":old,"reason":"revise","confirm":true})),
     )
     .await;
-    assert_eq!(status, 200, "{second}");
+    assert_eq!(status, 200, "the second admin save");
     let (status, managed) = as_account(&s, &admin, Method::GET, "/api/soul/document", None).await;
-    assert_eq!(status, 200, "{managed}");
+    assert_eq!(status, 200, "the admin reads the managed document");
     assert_eq!(managed["versions"], json!([old]), "the admin still lists backups");
 
     let (status, current) = as_account(&s, &operator, Method::GET, "/api/soul/document", None).await;
-    assert_eq!(
-        status, 200,
-        "an operator reads the document it proposes against: {current}"
-    );
+    assert_eq!(status, 200, "an operator reads the document it proposes against");
     assert_eq!(current["content"], "SECOND_PERSONA");
     assert_eq!(current["revision"], second["revision"]);
     assert!(current.get("versions").is_none(), "no backup list for an operator");
@@ -483,7 +480,7 @@ async fn an_operator_reads_the_current_persona_to_propose_but_never_its_history(
         Some(json!({"content":"OPERATOR_PROPOSAL","base_revision":current["revision"],"reason":"suggest"})),
     )
     .await;
-    assert_eq!(status, 200, "{proposal}");
+    assert_eq!(status, 200, "the operator proposal");
     assert_eq!(proposal["status"], "pending");
 
     // Everything else about the persona stays where it was.
@@ -502,11 +499,11 @@ async fn an_operator_reads_the_current_persona_to_propose_but_never_its_history(
         ),
         (Method::POST, "/api/soul".to_string(), Some(json!({"enabled":false}))),
     ] {
-        let (status, body) = as_account(&s, &operator, method.clone(), &path, body).await;
-        assert_eq!(status, 403, "operator {method} {path}: {body}");
+        let (status, _) = as_account(&s, &operator, method.clone(), &path, body).await;
+        assert_eq!(status, 403, "operator {method} {path}");
     }
-    let (status, body) = as_account(&s, &auditor, Method::GET, "/api/soul/document", None).await;
-    assert_eq!(status, 403, "an auditor's chat carries no persona: {body}");
+    let (status, _) = as_account(&s, &auditor, Method::GET, "/api/soul/document", None).await;
+    assert_eq!(status, 403, "an auditor's chat carries no persona");
     assert_eq!(
         std::fs::read_to_string(s.home.join("soul.md")).unwrap(),
         "SECOND_PERSONA"
