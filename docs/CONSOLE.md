@@ -102,23 +102,21 @@ flowchart LR
     S -->|no| T
 ```
 
-Bare `/loop` defaults to three turns within the configured cap.
+Bare `/loop` defaults to three turns; `/loop auto` without a count runs to
+`GOAL_DONE` or `loop.max_turns`. A counted run ends on its best answer.
 [`loop.*` limits](INSTALL.md#reload-limits-without-a-restart) reload;
 `api.harness_loop_rate_limit.max_tokens` bounds each reply, and while
 `auto_tune` has tuned the model a loop reply never exceeds
-`models.local_llm.max_tokens`. When both configured caps are zero or absent,
-`/status` and loop preflight warn without blocking: set a finite cap, then
-**Reload limits**.
+`models.local_llm.max_tokens`. With both caps zero or absent, `/status` and
+preflight warn, never block.
 
-Text after the count sets the goal; otherwise a goal-less loop takes the last
-prompt. Manual mode pauses between turns. `/loop auto` toggles automatic
-continuation: turning it on with a goal (or last prompt) to follow starts the
-loop after 5 s, as does `/goal <text>` while auto is on or `/loop auto` with a
-count, mode or goal. A turn that needed compaction continues automatically.
+Text after the count sets the goal; otherwise the last prompt is used. Manual mode pauses between turns. `/loop auto` toggles automatic
+continuation: with a goal (or last prompt) it starts the loop after 5 s, as
+does `/goal <text>` while auto is on. A compacted turn continues automatically.
 `/loop stop` cancels generation, cooldown or a pending start. Goal clear,
 session switching, token budgets, a 90%-identical reply or `loop.max_failures`
 consecutive failed turns (default 2; auto retries once) stop it. A `GOAL_DONE`
-line (even `**GOAL_DONE**`) stops it too, but is only model advice.
+line (even `**GOAL_DONE**`) stops it too; it is only model advice.
 
 With `server_loop` in `/api/status`, auto loops outlive tabs: the console
 reattaches through the [loop routes](API_ROUTES.md#chat-model-and-chat-sessions),
@@ -448,7 +446,8 @@ sections say they are incomplete.
 Sessions retain at most 12 owner-scoped blob IDs. The next local turn may
 BM25-search them and inject matching passages into the attachment fence.
 `.md`, `.txt` and `.pdf` notes ingested at `/api/notes-corpus` use a separate home jail
-but share that local prompt budget (`source=notes_corpus`). Local loops include
+but share that local prompt budget (`source=notes_corpus`); `notes_corpus.enabled:
+false` refuses uploads and withholds notes, keeping list and delete. Local loops include
 these sources; cloud chat and `/agent` refuse attachment IDs or live pins with
 `ATTACHMENT_SURFACE_FORBIDDEN` and never receive notes-corpus bytes.
 `/session unpin` clears session references, keeping blobs.

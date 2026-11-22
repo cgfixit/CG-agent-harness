@@ -53,7 +53,7 @@ fn shipped_loop_budgets_are_finite_and_a_missing_key_stays_unlimited() {
     assert_eq!(
         shipped,
         LoopLimits {
-            max_turns: 50,
+            max_turns: 200,
             max_total_completion_tokens: 200_000,
             max_failures: 2,
             cooldown_ms: 2000,

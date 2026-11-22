@@ -1278,9 +1278,6 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "diagnostics.model_tool",
         // #996: native computer use ships off before any of its code exists.
         "computer.enabled",
-        // #647 Phase 2: spending another search provider is opt-in; the free public
-        // Google hop ships on (asserted below).
-        "web.search.fallback_to_serpapi",
         // #782 S2: the network-only Linux backend is an explicit operator opt-in.
         "agentic.sandbox.allow_linux_netns_fallback",
     ] {
@@ -1300,6 +1297,12 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
     assert!(
         cfg.flag_is_true("web.search.fallback_to_public_google"),
         "web.search.fallback_to_public_google must ship true"
+    );
+    // why: operator decision (2026-11-22, superseding #647 Phase 2's opt-in): a failed
+    // Tavily search tries SerpAPI, which spends SerpAPI quota only when a key is active.
+    assert!(
+        cfg.flag_is_true("web.search.fallback_to_serpapi"),
+        "web.search.fallback_to_serpapi must ship true"
     );
     // why: operator decision (2026-11-12): an administrator's turn may read the exact URLs
     // its own search listed, for that turn or loop run. It was added off the day before. The
@@ -2246,8 +2249,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".claude/skills/cgagentharness-config-guard/SKILL.md", Agent, 900),
     (".claude/skills/cgagentharness-gotchas/SKILL.md", Agent, 1700),
     (".claude/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
-    // why: operator-approved raise from 1400 to 1776 for the optimize skill rewrite. The file is 1277 words, so
-    // 499 are unused headroom; the Agent group cap, not this row, is the binding limit.
+    // why: operator-approved raise from 1400 to 1776 for the optimize skill rewrite. The file was 1277 words then
+    // and 1520 on 2026-11-22; the Agent group cap, not this row, is the binding limit.
     (".claude/skills/cgagentharness-optimize/SKILL.md", Agent, 1776),
     // why: port of CyClaw's otel-hardening skill (telemetry-kill contract for a Rust tree); 1241 words, rounded up to the next 100.
     (".claude/skills/cgagentharness-otel-hardening/SKILL.md", Agent, 1500),
@@ -2303,10 +2306,13 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // subcommand exit codes, the console MAX_GOAL_CHARS duplicate, the cyclaw/ prefix and the
     // Copilot skill scope; raised to the reported count.
     // why: operator decision (2026-11-12): set to 1776, the cap it had on 2026-11-02; the file sat exactly at 1541, so every added word needed a cut.
-    ("AGENTS.md", Agent, 1776),
+    // why: operator-requested (2026-11-22) ~30% trim (1775 to 1248 words): the architecture diagram and
+    // restated stack details went, every rule stayed; lowered to 1250.
+    ("AGENTS.md", Agent, 1250),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     // why: now `@AGENTS.md` plus Claude-only lines; 183 words, rounded up to the next 100.
-    ("CLAUDE.md", Agent, 400),
+    // why: operator-requested (2026-11-22) ~10% trim (377 to 334 words); lowered to 340.
+    ("CLAUDE.md", Agent, 340),
     // why: #237 and #243 added the cloud-truncation and web-budget contracts;
     // #235 the process-global CSRF note and the I6 process map.
     // why: netconnect fail-closed LAN scope section; 5683 words, rounded up to the next 100.

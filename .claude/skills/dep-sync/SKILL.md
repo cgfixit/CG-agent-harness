@@ -60,7 +60,8 @@ For each file in the diff, extract the semantic change, not just the text:
 - `.github/workflows/*.yml` (list the directory; the dependency-bearing ones
   are `ci.yml`, `clippy-sarif.yml`, `dependency-advisories.yml`, `desktop.yml`,
   `desktop-check.yml`, `bundle.yml`, `release.yml`, `install-macos.yml`,
-  `netconnect.yml`, `live-ollama.yml`; the last two hard-code Rust 1.89) —
+  `netconnect.yml`, `live-ollama.yml`; all but `install-macos.yml` and
+  `dependency-advisories.yml` hard-code Rust 1.89, desktop jobs also 1.90) —
   toolchain versions, runner labels, cached paths, new required jobs
 - `.github/dependabot.yml` — ecosystems (Actions, cargo for both crates, npm
   for `browser/`) and the 7-day cooldown

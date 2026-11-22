@@ -38,6 +38,10 @@ const NOTES_MULTIPART_OVERHEAD_BYTES: u64 = 256 * 1024;
 
 #[derive(Debug, Clone, Copy)]
 pub struct NotesLimits {
+    /// `notes_corpus.enabled`: false refuses uploads and keeps every note out
+    /// of the prompt; listing and deleting still work, so an owner can always
+    /// remove what was stored. A missing key is on (`MISSING_MEANS_ON`).
+    pub enabled: bool,
     pub max_files_per_owner: usize,
     pub max_file_bytes: u64,
     /// Stored size of one `.pdf` note; its extracted text must fit `max_file_bytes`.
@@ -50,6 +54,7 @@ pub struct NotesLimits {
 impl NotesLimits {
     pub fn from_config(cfg: &AppConfig) -> Result<Self> {
         Ok(Self {
+            enabled: cfg.flag_missing_on("notes_corpus.enabled")?,
             max_files_per_owner: cfg.u64_in("notes_corpus.max_files_per_owner", DEFAULT_MAX_FILES_PER_OWNER, 1..=256)?
                 as usize,
             max_file_bytes: cfg.u64_in("notes_corpus.max_file_bytes", DEFAULT_MAX_FILE_BYTES, 1024..=1_048_576)?,
@@ -346,7 +351,7 @@ impl NotesCorpus {
     }
 
     pub fn fence_for_query(&self, owner: &str, query: &str, budget: usize) -> Result<String> {
-        if budget == 0 {
+        if budget == 0 || !self.limits.enabled {
             return Ok(String::new());
         }
         let verified = self.verified_texts(owner)?;
@@ -487,10 +492,11 @@ pub fn ingest_error(err: &HarnessError) -> crate::server::errors::ApiError {
     let status = match err.code.as_str() {
         "NOTES_TOO_LARGE" | "NOTES_QUOTA" | "PDF_LIMIT" => axum::http::StatusCode::PAYLOAD_TOO_LARGE,
         "NOTES_BUSY" | "PDF_BUSY" => axum::http::StatusCode::SERVICE_UNAVAILABLE,
-        "PDF_TIMEOUT" => axum::http::StatusCode::REQUEST_TIMEOUT,
+        "NOTES_TIMEOUT" | "PDF_TIMEOUT" => axum::http::StatusCode::REQUEST_TIMEOUT,
         "PDF_WORKER_FAILED" => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
         "NOTES_NOT_FOUND" => axum::http::StatusCode::NOT_FOUND,
         "IO_ERROR" => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+        "NOTES_DISABLED" => axum::http::StatusCode::CONFLICT,
         "ATTACHMENT_SURFACE_FORBIDDEN" => axum::http::StatusCode::BAD_REQUEST,
         _ => axum::http::StatusCode::BAD_REQUEST,
     };
@@ -504,6 +510,7 @@ mod tests {
 
     fn limits() -> NotesLimits {
         NotesLimits {
+            enabled: true,
             max_files_per_owner: 64,
             max_file_bytes: 524_288,
             max_pdf_bytes: 8_388_608,
@@ -803,6 +810,7 @@ mod tests {
     fn quota_and_injection_scan() {
         let dir = tempfile::tempdir().unwrap();
         let tight = NotesLimits {
+            enabled: true,
             max_files_per_owner: 1,
             max_file_bytes: 64,
             max_pdf_bytes: 64,
@@ -837,6 +845,7 @@ mod tests {
             8 * 524_288 + NOTES_MULTIPART_OVERHEAD_BYTES
         );
         let max_legal = NotesLimits {
+            enabled: true,
             max_files_per_owner: 64,
             max_file_bytes: 1_048_576,
             max_pdf_bytes: 15 * 1_048_576,
@@ -930,6 +939,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("notes");
         let tight = NotesLimits {
+            enabled: true,
             max_files_per_owner: 2,
             ..limits()
         };

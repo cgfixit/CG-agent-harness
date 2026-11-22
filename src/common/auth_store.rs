@@ -525,6 +525,11 @@ impl AuthManager {
     /// `change_password` with the check of the current password supplied. The
     /// check runs between two short lock scopes, never inside one; a test
     /// supplies its own to act while it runs.
+    ///
+    /// The current password is a guess at the account's password, so it
+    /// shares sign-in's failure count and lockout: a wrong one counts, and an
+    /// active lockout refuses the change before any check. A session cookie
+    /// therefore buys no more guesses than the sign-in form allows.
     fn change_password_with(
         &self,
         username: &str,
@@ -536,29 +541,46 @@ impl AuthManager {
         let record = authn::hash_password(password)?;
         let now = self.now();
         let checked = self.user_row(&canonical).ok_or_else(HarnessError::auth_login_failed)?;
-        let current = Self::credential(&canonical, &checked, current);
-        if checked.disabled || !verify(&current, &checked.password_hash).0 {
-            return Err(HarnessError::auth_login_failed());
+        if authn::is_locked(checked.locked_until_ts, now) {
+            return Err(Self::locked(&checked, now, &canonical));
         }
+        let current = Self::credential(&canonical, &checked, current);
+        // One check on every path, a disabled account's included, as at sign-in.
+        let (ok, _) = verify(&current, &checked.password_hash);
         // A forced change must actually change the credential: the setup code
         // has been on screen and in a file, so it may not become the password.
-        if Self::credential(&canonical, &checked, password) == current {
+        if ok && Self::credential(&canonical, &checked, password) == current {
             return Err(HarnessError::password_policy(
                 "the new password must differ from the current one",
             ));
         }
         let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let mut db = stored.1.clone();
-        // An account deleted, disabled or given another password while the
-        // check ran keeps that change: the checked password no longer speaks
-        // for it.
+        // Recorded at the time read under the lock, as `login_with` does.
+        let now = self.now();
+        // An account deleted or given another password while the check ran
+        // keeps that change, and the attempt records nothing: the checked
+        // password no longer speaks for it.
         let Some(user) = db
             .users
             .get_mut(&canonical)
-            .filter(|user| !user.disabled && same_credential(&checked, user))
+            .filter(|user| same_credential(&checked, user))
         else {
             return Err(HarnessError::auth_login_failed());
         };
+        // A lockout that started while this check ran refuses it, right
+        // password or not, so overlapping attempts learn no more than serial ones.
+        if authn::is_locked(user.locked_until_ts, now) {
+            return Err(Self::locked(user, now, &canonical));
+        }
+        // The count and the disabled flag are read now: a failure or a
+        // disable that landed meanwhile is kept.
+        if user.disabled || !ok {
+            user.failed_count = user.failed_count.saturating_add(1);
+            user.locked_until_ts = Some(authn::next_lock_until(user.failed_count, now));
+            self.persist(&mut stored, &db)?;
+            return Err(HarnessError::auth_login_failed());
+        }
         user.password_hash = record;
         user.must_change_password = false;
         user.failed_count = 0;
@@ -865,6 +887,11 @@ mod tests {
             assert_eq!(error.code, "AUTH_LOGIN_FAILED", "{name}");
             assert_eq!(checks.replace(0), 1, "{name}");
         }
+        for (name, typed) in [("alice", &wrong), ("gone", &password)] {
+            let error = auth.change_password_with(name, typed, &next, unlocked).unwrap_err();
+            assert_eq!(error.code, "AUTH_LOGIN_FAILED", "password change for {name}");
+            assert_eq!(checks.replace(0), 1, "password change for {name}");
+        }
         auth.login_with("alice", &password, unlocked).unwrap();
         assert_eq!(checks.replace(0), 1, "sign-in");
         auth.change_password_with("alice", &password, &next, unlocked).unwrap();
@@ -942,6 +969,75 @@ mod tests {
             5,
             "the refused attempt did not clear the count"
         );
+    }
+
+    /// A password change from a signed-in session guesses the same password
+    /// the sign-in form does, so the two share one failure count: wrong
+    /// current passwords lock the account, the lockout refuses both before any
+    /// check, and a change that succeeds clears the count like a sign-in.
+    #[test]
+    fn a_wrong_current_password_counts_toward_the_sign_in_lockout() {
+        let (_dir, auth) = store();
+        let [password, wrong, next] = [(); 3].map(|_| crate::common::random_hex(24));
+        auth.create_user("alice", &password, "operator").unwrap();
+
+        // Below the threshold a wrong current password is a counted failure,
+        // and the right one still changes the password and clears the count.
+        let error = auth.change_password("alice", &wrong, &next).unwrap_err();
+        assert_eq!(error.code, "AUTH_LOGIN_FAILED");
+        assert_eq!(failed_count(&auth, "alice"), 1);
+        auth.change_password("alice", &password, &next).unwrap();
+        assert_eq!(failed_count(&auth, "alice"), 0, "a successful change clears the count");
+
+        // Sign-in and password-change failures add up to the one lockout.
+        for attempt in 1..=4 {
+            let error = if attempt % 2 == 0 {
+                auth.login("alice", &wrong).unwrap_err()
+            } else {
+                auth.change_password("alice", &wrong, &password).unwrap_err()
+            };
+            assert_eq!(error.code, "AUTH_LOGIN_FAILED", "attempt {attempt}");
+        }
+        assert_eq!(failed_count(&auth, "alice"), 4);
+        let error = auth.change_password("alice", &wrong, &password).unwrap_err();
+        assert_eq!(error.code, "AUTH_LOGIN_FAILED", "the fifth failure starts the lockout");
+        assert_eq!(failed_count(&auth, "alice"), 5);
+
+        // Locked: the right password is refused on both paths, and refused
+        // before a check, so neither path is a way to keep guessing.
+        let checks = std::cell::Cell::new(0);
+        let counted = |password: &str, record: &str| {
+            checks.set(checks.get() + 1);
+            authn::verify_password(password, record)
+        };
+        let error = auth
+            .change_password_with("alice", &next, &password, counted)
+            .unwrap_err();
+        assert_eq!(error.code, "AUTH_ACCOUNT_LOCKED");
+        let error = auth.login_with("alice", &next, counted).unwrap_err();
+        assert_eq!(error.code, "AUTH_ACCOUNT_LOCKED");
+        assert_eq!(checks.get(), 0, "a locked account pays no check");
+        assert_eq!(
+            failed_count(&auth, "alice"),
+            5,
+            "a refused attempt is not counted again"
+        );
+
+        // A lockout that starts while a change's check runs refuses that change.
+        let (_dir, auth) = store();
+        auth.create_user("bob", &password, "operator").unwrap();
+        for _ in 0..4 {
+            auth.login("bob", &wrong).unwrap_err();
+        }
+        let another_failure = || {
+            auth.login("bob", &wrong).unwrap_err();
+        };
+        let error = auth
+            .change_password_with("bob", &password, &next, check_then(another_failure))
+            .unwrap_err();
+        assert_eq!(error.code, "AUTH_ACCOUNT_LOCKED");
+        assert_eq!(live_sessions(&auth, "bob"), 0);
+        auth.login("bob", &password).unwrap_err();
     }
 
     #[test]
