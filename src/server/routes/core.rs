@@ -1705,12 +1705,17 @@ pub(crate) async fn chat_inner(
             }, &model);
         }
         // A web turn re-reads the account before each read and before its
-        // answer (`web_research::authorize_owner`). Losing it mid-turn is an
-        // account change, not a model-server failure: same status and code as
-        // a plain turn whose account was revoked, and nothing is stored.
-        if e.code == "WEB_PERMISSION_DENIED" {
+        // answer (`web_research::authorize_owner`); a plain or log-tool turn
+        // before each streamed chunk. Losing it mid-turn is an account change,
+        // not a model-server failure: same status and code as a turn whose
+        // account was revoked after the model answered, and nothing is stored.
+        if matches!(
+            e.code.as_str(),
+            "WEB_PERMISSION_DENIED" | CHAT_ACCOUNT_CHANGED | "DIAG_PERMISSION_DENIED"
+        ) {
             state.audit.log(json!({"event":"chat_reply_withheld","owner_id":owner,
-                "session_id":session.session_id,"reason":"account_changed","web":true}));
+                "session_id":session.session_id,"reason":"account_changed",
+                "web":e.code == "WEB_PERMISSION_DENIED"}));
             return ApiError::new(
                 StatusCode::UNAUTHORIZED,
                 "AUTH_REQUIRED",
@@ -1791,6 +1796,19 @@ pub(crate) async fn chat_inner(
         .await
         .map_err(local_failure)?
     } else {
+        // Streamed text is built under the authority this turn started with
+        // (persona, memory, attachments, a staged /diag excerpt): the account is
+        // re-read before every chunk reaches the client, as web and log-tool
+        // chat do, not only once the reply is complete.
+        let account_live = || match (state.auth.as_ref(), user.as_ref()) {
+            (Some(auth), Some(user)) if !auth.account_unchanged(&user.0, sign_ins) => Err(
+                crate::common::errors::HarnessError::new(
+                    CHAT_ACCOUNT_CHANGED,
+                    "the account changed during this turn",
+                ),
+            ),
+            _ => Ok(()),
+        };
         let result = state
             .chat
             .chat_stream(
@@ -1801,7 +1819,7 @@ pub(crate) async fn chat_inner(
                 temperature,
                 output.map(|sender| crate::llm::openai_stream::Output {
                     sender,
-                    validate: &|| Ok(()),
+                    validate: &account_live,
                 }),
             )
             .await;
@@ -2176,6 +2194,10 @@ pub(crate) async fn chat_inner(
         error
     })
 }
+
+/// A plain turn's account was disabled, deleted, demoted or had its sign-ins
+/// revoked while its reply streamed. Internal: answered as `AUTH_REQUIRED`.
+const CHAT_ACCOUNT_CHANGED: &str = "CHAT_ACCOUNT_CHANGED";
 
 /// Keep window, quota and context refusals distinct from upstream failures (502).
 /// The chat lock reuses the research lease, whose refusal reads "research
