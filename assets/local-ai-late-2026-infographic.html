@@ -185,7 +185,7 @@ footer{max-width:var(--max);margin:auto;padding:28px 18px calc(34px + env(safe-a
       <article class="truth reveal"><h3>Model files are a supply chain</h3><p>Security researchers documented Hugging Face and ClawHub being abused for malware distribution in spring 2026. OWASP's Agentic Top 10 (ASI04) now explicitly covers malicious tools, MCP servers, agent cards and registries.</p></article>
       <article class="truth reveal"><h3>Safety-stripped templates in the wild</h3><p>The January 2026 scan found at least 201 exposed hosts running prompt templates with safety instructions removed, 56% of them on fixed-line telecom networks rather than cloud hosting, meaning home and small-office boxes, not just rented VMs.</p></article>
     </div>
-    <div class="callout reveal" style="margin-top:18px"><strong>Verification beats assumption:</strong> from a machine on a different network run <code>nmap -Pn -p 11434 your.host</code> then <code>curl -s -m 5 http://your.host:11434/api/tags</code>. Read the response body, not just the exit code.</div>
+    <div class="callout reveal" style="margin-top:18px"><strong>Verification beats assumption:</strong> from a machine on a different network run <code>nmap -Pn -p 11434 your.host</code> then <code>curl -s -m 5 http://your.host:11434/api/tags</code>. Read the response body, not just the exit code.</div> <!-- DevSkim: ignore DS137138 because this is a documented curl probe of a plain-HTTP Ollama port, not a link the page loads. -->
   </section>
 
   <section id="futures">
