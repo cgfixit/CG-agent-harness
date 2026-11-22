@@ -210,6 +210,8 @@ impl Identity {
 
 /// Bytes a streaming caller may have queued for the child's stdin at once.
 const MAX_PENDING_INPUT_BYTES: usize = 64 * 1024;
+/// At most this much stdin per write: a full pipe buffer on Linux.
+const STDIN_CHUNK_BYTES: usize = 64 * 1024;
 
 pub(super) fn run(
     spec: RunSpec<'_>,
@@ -236,9 +238,12 @@ pub(super) fn run(
     let mut out = Vec::new();
     let mut err = Vec::new();
     let mut total = 0;
-    // Input not yet written. A streaming caller adds to it while the child runs;
-    // stdin closes once this is empty and the caller's sender is gone.
+    // Input not yet written: `pending[written..]`. A streaming caller adds to it
+    // while the child runs; stdin closes once it is empty and the caller's sender
+    // is gone. An offset, not a drain per write: draining shifted the whole
+    // remainder each time, about 12 GB of copying for a 14 MB PDF.
     let mut pending = spec.stdin.unwrap_or_default().to_vec();
+    let mut written = 0;
     let mut feed_open = stream.is_some();
     let mut observed = Instant::now() - Duration::from_secs(1);
     loop {
@@ -256,20 +261,30 @@ pub(super) fn run(
         }
         if let (true, Some(stream)) = (feed_open, stream.as_ref()) {
             match stream.input.try_recv() {
-                Ok(bytes) if pending.len() + bytes.len() <= MAX_PENDING_INPUT_BYTES => pending.extend(bytes),
+                Ok(bytes) if pending.len() - written + bytes.len() <= MAX_PENDING_INPUT_BYTES => {
+                    pending.drain(..written);
+                    written = 0;
+                    pending.extend(bytes)
+                }
                 Ok(_) => return Err(ProcessError::Capture("stdin feed exceeded its limit".into())),
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => feed_open = false,
             }
         }
+        // Whether this pass moved input: a pass that wrote does not sleep, or a
+        // 14 MB PDF took about 4 s (8 KiB per 2 ms) of its 5 s deadline to send.
+        let mut fed = false;
         if let Some(pipe) = input.as_mut() {
-            if pending.is_empty() {
+            if written == pending.len() {
                 if !feed_open {
                     input = None;
                 }
             } else {
-                match pipe.write(&pending[..pending.len().min(8192)]) {
-                    Ok(n) => drop(pending.drain(..n)),
+                match pipe.write(&pending[written..pending.len().min(written + STDIN_CHUNK_BYTES)]) {
+                    Ok(n) => {
+                        written += n;
+                        fed = n > 0;
+                    }
                     Err(e)
                         if matches!(
                             e.kind(),
@@ -301,7 +316,7 @@ pub(super) fn run(
                 stderr: String::from_utf8_lossy(&err).into_owned(),
             });
         }
-        if total == before {
+        if total == before && !fed {
             std::thread::sleep(Duration::from_millis(2));
         }
     }

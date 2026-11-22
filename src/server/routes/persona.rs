@@ -9,6 +9,7 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::common::authz::{self, Capability, Role};
 use crate::common::sha256_hex;
 use crate::server::errors::{session_status, ApiError, ApiResult};
 use crate::server::prompts::PromptInputs;
@@ -206,8 +207,26 @@ pub struct DocumentQuery {
 }
 pub async fn document(
     State(state): State<Arc<AppState>>,
+    role: Option<axum::Extension<Role>>,
     Query(query): Query<DocumentQuery>,
 ) -> ApiResult<Json<Value>> {
+    // The route admits every role that may propose an edit. History is the
+    // shared-content manager's: a caller without that capability reads the
+    // current document and its revision, which its own chat prompt already
+    // carries, and no backup or version list. With accounts on, a request
+    // without the gate's parsed role is refused rather than trusted.
+    let manages = match (&state.auth, role) {
+        (None, _) => true,
+        (Some(_), Some(axum::Extension(role))) => authz::grants(role, Capability::ManageSharedContent),
+        (Some(_), None) => false,
+    };
+    if !manages && query.version.is_some() {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "AUTH_PERMISSION_DENIED",
+            "persona history needs an administrator",
+        ));
+    }
     // Every persona operation reads, fsyncs and renames files under
     // EDIT_LOCK: run it off the async workers, lock included.
     super::structured_memory::off_worker(move || {
@@ -217,12 +236,18 @@ pub async fn document(
             if !valid_id(&id) {
                 return Err(error("SOUL_VERSION", "Invalid version"));
             }
-            let text =
-                read(&records(&state)?, &format!("{id}.md"))?.ok_or_else(|| error("SOUL_VERSION", "No such version"))?;
+            let text = read(&records(&state)?, &format!("{id}.md"))?
+                .ok_or_else(|| error("SOUL_VERSION", "No such version"))?;
             (text, id)
         } else {
             current(&state)?
         };
+        let scope = "chat persona only; fixed contracts and coding planner are separate";
+        if !manages {
+            return Ok(Json(
+                json!({"content":content,"revision":rev,"max_chars":max_chars(&state),"scope":scope}),
+            ));
+        }
         let versions: Vec<String> = if home_dir(&state)?.symlink_metadata("soul-history").is_ok() {
             records(&state)?
                 .entries()
@@ -242,7 +267,7 @@ pub async fn document(
             Vec::new()
         };
         Ok(Json(
-            json!({"content":content,"revision":rev,"max_chars":max_chars(&state),"versions":versions,"scope":"chat persona only; fixed contracts and coding planner are separate"}),
+            json!({"content":content,"revision":rev,"max_chars":max_chars(&state),"versions":versions,"scope":scope}),
         ))
     })
     .await
