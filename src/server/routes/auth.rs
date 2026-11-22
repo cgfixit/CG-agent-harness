@@ -56,13 +56,7 @@ async fn account_change<T: Send + 'static>(change: impl FnOnce() -> ApiResult<T>
 }
 
 fn manager(state: &AppState) -> ApiResult<&AuthManager> {
-    state.auth.as_deref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "AUTH_DISABLED",
-            "authentication is not enabled",
-        )
-    })
+    state.auth.as_deref().ok_or_else(manager_missing)
 }
 
 fn cookie_value(req: &Request<Body>) -> Option<String> {
@@ -122,6 +116,109 @@ pub(crate) fn actor(state: &AppState, req: &Request<Body>) -> ApiResult<UserSumm
     let unauthorized = || ApiError::new(StatusCode::UNAUTHORIZED, "AUTH_REQUIRED", "authentication required");
     let info = mgr.validate_session(&token).ok_or_else(unauthorized)?;
     mgr.get_user(&info.username).ok_or_else(unauthorized)
+}
+
+/// The gate's session lookup, on the blocking pool. `validate_session` takes
+/// the account lock that `persist` holds across a full rewrite, and slides the
+/// idle window with a SQLite write; neither may stall an async worker. The
+/// future borrows nothing from the request, so the gate stays `Send`.
+pub(crate) fn session_account(
+    state: &AppState,
+    req: &Request<Body>,
+) -> impl std::future::Future<Output = ApiResult<UserSummary>> + Send + 'static {
+    let known = req.extensions().get::<UserSummary>().cloned();
+    let mgr = state.auth.clone();
+    let token = cookie_value(req).unwrap_or_default();
+    async move {
+        if let Some(user) = known {
+            return Ok(user);
+        }
+        let unauthorized = || ApiError::new(StatusCode::UNAUTHORIZED, "AUTH_REQUIRED", "authentication required");
+        let Some(mgr) = mgr else {
+            return Err(manager_missing());
+        };
+        if token.is_empty() {
+            return Err(unauthorized());
+        }
+        super::structured_memory::off_worker(move || {
+            mgr.validate_session(&token)
+                .and_then(|info| mgr.get_user(&info.username))
+        })
+        .await
+        .ok_or_else(unauthorized)
+    }
+}
+
+/// What the gate authorized, kept so a body extractor can reread it once the
+/// body has arrived. A client may take as long as it likes to send a body;
+/// an account disabled, deleted, demoted or reset meanwhile must not complete
+/// the request it was authorized for (`schemas::ValidJson`, the attachment
+/// and notes uploads).
+#[derive(Clone)]
+pub(crate) struct SessionRecheck {
+    mgr: Arc<AuthManager>,
+    token: String,
+    user_id: String,
+    capability: Option<authz::Capability>,
+}
+
+impl SessionRecheck {
+    pub(crate) fn new(
+        state: &AppState,
+        req: &Request<Body>,
+        account: &UserSummary,
+        capability: Option<authz::Capability>,
+    ) -> Option<Self> {
+        Some(Self {
+            mgr: state.auth.clone()?,
+            token: cookie_value(req)?,
+            user_id: account.user_id.clone(),
+            capability,
+        })
+    }
+
+    /// Reread the session and the account on the blocking pool: 401 when the
+    /// sign-in no longer validates or names another account, 403 when the
+    /// current role no longer grants what the gate granted.
+    pub(crate) async fn verify(self) -> ApiResult<()> {
+        super::structured_memory::off_worker(move || self.verify_now()).await
+    }
+
+    fn verify_now(&self) -> ApiResult<()> {
+        let unauthorized = || ApiError::new(StatusCode::UNAUTHORIZED, "AUTH_REQUIRED", "authentication required");
+        let current = self
+            .mgr
+            .validate_session(&self.token)
+            .and_then(|info| self.mgr.get_user(&info.username))
+            .filter(|user| !user.disabled && user.user_id == self.user_id)
+            .ok_or_else(unauthorized)?;
+        let own = self.capability == Some(authz::Capability::OwnAccount);
+        if current.must_change_password && !own {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "AUTH_PASSWORD_CHANGE_REQUIRED",
+                "replace the bootstrap password before using the harness",
+            ));
+        }
+        // No capability means a method passthrough: the router answers 405
+        // and no handler reads the body.
+        let granted = self
+            .capability
+            .is_none_or(|capability| authz::grants_stored(&current.role, capability));
+        if granted {
+            Ok(())
+        } else {
+            Err(denied())
+        }
+    }
+}
+
+fn manager_missing() -> ApiError {
+    ApiError::new(
+        StatusCode::SERVICE_UNAVAILABLE,
+        "AUTH_DISABLED",
+        "authentication is not enabled",
+    )
 }
 
 /// Request-owned web state uses the authenticated account; explicitly disabled

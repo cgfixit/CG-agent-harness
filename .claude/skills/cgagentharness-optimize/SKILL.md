@@ -18,8 +18,10 @@ one read-only Explore-type subagent per shard, in parallel. More than 2
 subagents on one task needs the operator's yes first (`CLAUDE.md`); without it,
 or with no subagent tool, scan serially from the same briefs. Shards marked
 `opt` and server files in no shard (state, transport, schemas, config_reload,
-live_state, self_manual, diag_reader, model_limits) are not scanned by default;
-the report says so.
+live_state, self_manual, diag_reader, model_limits, generation_gate,
+schedule_time, tool_inventory, request_log, console, client, desktop,
+env_keys, errors, views, `routes/ollama.rs`) are not scanned by default; the
+report says so.
 
 | Shard | Scan | Read first (INVARIANTS.md) | Look for |
 |---|---|---|---|
@@ -28,7 +30,7 @@ the report says so.
 | io-build | `src/{llm,common,netconnect}`, `desktop/src`, `browser/`, `scripts/` | Secrets never reach; Provider keys live; Native Ollama pull; Netconnect | loopback validators, timeouts, secret echo, bounded capture, child env (`pdf-text-worker`, Playwright sidecar), credential-store fallbacks, packaging order and atomicity, bundled-helper byte checks |
 | ci-tests | `.github/workflows`, `tests/` | Signals weaker than their name | coverage gaps (hostile argv, exit 4, jail, shipped gates), assertions that pass for the wrong reason |
 | data `opt` | `src/server/{structured_memory*,memory_notes,notes_corpus,retrieval*,passage_index,compaction}.rs`, `routes/{structured_memory,notes_corpus}.rs` | Account, transport; Local chat compaction | owner isolation, SQLite off async workers, bounded reads, save-then-publish on gates |
-| web `opt` | `src/server/{web_*,chat_web*,fetch_confirm,attachment*,docx,mcp*}.rs`, `routes/browser.rs` | Public web evidence; Private MCP; I6 (browser edges) | permission gates, pinned DNS, no proxy/redirect/retry, bounded fetch, provider order (Tavily, SerpAPI, public Google), `result_reads` grants, Firecrawl same-URL only, `/browse` origin and held-request rules |
+| web `opt` | `src/server/{web_*,chat_web*,chat_diag,fetch_confirm,attachment*,docx,mcp*,browser_jobs}.rs`, `routes/browser.rs` | Public web evidence; Private MCP; I6 (browser edges) | permission gates, pinned DNS, no proxy/redirect/retry, bounded fetch, provider order (Tavily, SerpAPI, public Google), `result_reads` grants, Firecrawl same-URL only, `/browse` origin and held-request rules |
 | chat `opt` | `src/server/{sessions,session_*,slash,prompts,notification*,loop_runner,style}.rs`, `routes/{core,panels,auth,persona,goals,loop_runner,skills,style,session_io,diag,notifications}.rs` | Session export; Completion notifications; Self-knowledge; /diag | request limits, audit coverage, local-only export and search, `/loop` attaches no MCP tool |
 
 Cross-shard patterns that produced merged fixes (PRs #969-#987), worth one

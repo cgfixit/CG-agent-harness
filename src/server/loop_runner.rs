@@ -188,6 +188,13 @@ pub fn replies_nearly_repeat(previous: &str, next: &str) -> bool {
     2.0 * row[b.len()] as f64 / (a.len() + b.len()) as f64 >= LOOP_STALL_SIMILARITY
 }
 
+/// The step a loop turn asks for; the run's last budgeted turn asks for the
+/// best answer so far instead, so a counted `/loop` ends on an answer rather
+/// than on an intermediate step. Console `loopTurnPrompt` sends the same text.
+pub const LOOP_NEXT_STEP: &str =
+    "Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies.";
+pub const LOOP_FINAL_STEP: &str = "This is the run's last turn: give your best complete answer to the goal from what earlier turns found, and name anything still unverified.";
+
 /// One loop turn's instruction (console `loopTurnPrompt`). `total` is `None`
 /// for an unlimited run. The goal reminder is code-point bounded so a cut
 /// surrogate pair can never reach JSON.
@@ -195,9 +202,14 @@ pub fn loop_turn_prompt(turn: u64, total: Option<u64>, goal: &str) -> String {
     let collapsed: String = goal.split_whitespace().collect::<Vec<_>>().join(" ");
     let reminder: String = collapsed.chars().take(LOOP_GOAL_REMINDER_CHARS).collect();
     let total_label = total.map(|n| n.to_string()).unwrap_or_else(|| "unlimited".to_string());
+    let step = if total == Some(turn) {
+        LOOP_FINAL_STEP
+    } else {
+        LOOP_NEXT_STEP
+    };
     format!(
         "Loop turn {turn} of {total_label}. Session goal: {reminder}\n\
-         Follow every constraint in the full stored goal in system context. Do the next concrete step toward this goal; do not repeat or re-summarize earlier replies. \
+         Follow every constraint in the full stored goal in system context. {step} \
          Complete only harness turn {turn}; tool calls and evidence digests do not advance the turn. Do not simulate later turns. \
          Be concise. If the goal is fully satisfied, give a short summary and end with GOAL_DONE on its own line. \
          Stay in this chat; do not request a real-repo write."
@@ -862,6 +874,20 @@ mod tests {
             "the goal reminder is code-point bounded"
         );
         assert!(!long.contains(&"x".repeat(2001)));
+    }
+
+    #[test]
+    fn the_last_budgeted_turn_asks_for_the_best_answer_and_the_console_sends_the_same() {
+        let middle = loop_turn_prompt(2, Some(3), "g");
+        assert!(middle.contains(LOOP_NEXT_STEP) && !middle.contains(LOOP_FINAL_STEP));
+        let last = loop_turn_prompt(3, Some(3), "g");
+        assert!(last.contains(LOOP_FINAL_STEP) && !last.contains(LOOP_NEXT_STEP));
+        // An unlimited run has no last turn to announce.
+        assert!(loop_turn_prompt(9, None, "g").contains(LOOP_NEXT_STEP));
+        let console = include_str!("../../assets/static/harness.html");
+        for text in [LOOP_NEXT_STEP, LOOP_FINAL_STEP] {
+            assert!(console.contains(text), "console loopTurnPrompt drifted from: {text}");
+        }
     }
 
     #[test]
