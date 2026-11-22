@@ -1412,6 +1412,37 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
 /// legacy surface pinned below until the follow-up consolidation; a new
 /// comparison outside the pins means a handler grew its own role authority
 /// instead of consulting the capability table.
+/// A line is an account-role comparison when it names `role`, names an
+/// account role and has a comparison shape. Message roles
+/// ("user"/"assistant") never match.
+fn is_role_comparison(line: &str) -> bool {
+    const SHAPES: &[&str] = &[
+        "==",
+        "!=",
+        ".eq(",
+        ".ne(",
+        "=>",
+        "matches!(",
+        ".as_str()",
+        ".as_ref()",
+        ".as_deref()",
+        "starts_with(",
+        ".contains(",
+    ];
+    const TOKENS: &[&str] = &[
+        "\"admin\"",
+        "\"operator\"",
+        "\"auditor\"",
+        "AUDITOR_ROLE",
+        "ROLE_ADMIN",
+        "ROLE_OPERATOR",
+    ];
+    let packed: String = line.split_whitespace().collect();
+    packed.contains("role")
+        && TOKENS.iter().any(|token| packed.contains(token))
+        && SHAPES.iter().any(|shape| packed.contains(shape))
+}
+
 #[test]
 fn account_role_comparisons_stay_pinned_to_authz() {
     /// Files that may name account roles freely: the string constants and the
@@ -1423,17 +1454,29 @@ fn account_role_comparisons_stay_pinned_to_authz() {
     /// the scan stays so the next comparison fails the build until it is
     /// pinned here with its PR.
     const PINNED: &[(&str, &str)] = &[];
-    /// A line is an account-role comparison when it has a comparison shape and
-    /// names an account role. Message roles ("user"/"assistant") never match.
-    const SHAPES: &[&str] = &["role == ", "role != ", "role.as_str()"];
-    const TOKENS: &[&str] = &[
-        "\"admin\"",
-        "\"operator\"",
-        "\"auditor\"",
-        "AUDITOR_ROLE",
-        "ROLE_ADMIN",
-        "ROLE_OPERATOR",
-    ];
+    // The shapes are matched with whitespace removed and in either operand
+    // order: `"admin" == account.role`, `role.eq("operator")` and a `match` arm
+    // are the same decision as `role == "admin"`.
+    for comparison in [
+        r#"if account.role == "admin" {"#,
+        r#"if account.role=="admin" {"#,
+        r#"if "admin" == account.role {"#,
+        r#"if account.role.eq("operator") {"#,
+        r#"if AUDITOR_ROLE != user.role {"#,
+        r#"match account.role.as_ref() { "admin" => true, _ => false }"#,
+        r#"matches!(user.role.as_str(), "auditor")"#,
+    ] {
+        assert!(is_role_comparison(comparison), "{comparison}");
+    }
+    for other in [
+        r#"mgr.set_role("alice", "operator").unwrap();"#,
+        r#"assert_eq!(user.role, "admin");"#,
+        r#"json!({"role": "user", "content": text})"#,
+        r#"if message.role == "assistant" {"#,
+        r#"let name = if username == "admin" { 1 } else { 2 };"#,
+    ] {
+        assert!(!is_role_comparison(other), "{other}");
+    }
     let mut pins: Vec<(&str, &str)> = PINNED.to_vec();
     for (path, text) in read_tree(&root()) {
         let rel = path.replace('\\', "/");
@@ -1441,7 +1484,7 @@ fn account_role_comparisons_stay_pinned_to_authz() {
             continue;
         }
         for line in text.lines() {
-            if !SHAPES.iter().any(|shape| line.contains(shape)) || !TOKENS.iter().any(|token| line.contains(token)) {
+            if !is_role_comparison(line) {
                 continue;
             }
             let hit = pins
