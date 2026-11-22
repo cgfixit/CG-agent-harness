@@ -186,7 +186,9 @@ const server=createServer(async(req,res)=>{
  if(path==='/api/status'){reply({model:'mock',provider:'mock',home:'/fixture',soul_enabled:true,soul:{loaded:false,unavailable_reason:'missing'},total_tokens:987654,loop:loopFixture});return;}
  if(path==='/api/soul/document'){
   if(req.method==='POST'){if(!body.confirm){reply({detail:{code:'SOUL_CONFIRM',message:'Confirmation required'}},400);return;}persona=body.content;reply({saved:true,revision:'1'.repeat(64)});return;}
-  reply({content:persona,revision:persona?'1'.repeat(64):'missing',max_chars:8000,versions:[]});return;
+  // As the server does: only the shared-content manager is sent the backup list.
+  const doc={content:persona,revision:persona?'1'.repeat(64):'missing',max_chars:8000};
+  reply(authFixture&&authRole==='operator'?doc:{...doc,versions:[]});return;
  }
  if(path==='/api/prompt/preview'){reply({scope:'Chat preview',prompt:'Discipline contract\n'+(body.soul_content??persona)});return;}
  if(path==='/api/registry'){reply({skills:[],tools:[],connectors:[]});return;}
@@ -1339,6 +1341,13 @@ try {
  await evaluate('document.getElementById("hAuthUser").value="op-fixture";document.getElementById("hAuthPass").value="browser-operator-password";document.getElementById("hAuthLogin").click()');
  await until('document.getElementById("sessionSearch")!==null');
  assert.equal(await evaluate('[...document.querySelectorAll("#pane-sessions button")].some(b=>b.textContent.includes("legacy"))'),false,'an operator does not see the legacy-session review');
+ // An operator holds propose_persona: /soul propose opens the editor on the
+ // current persona with only the proposal button, and history stays the administrator's.
+ await send('/soul propose');await until('document.getElementById("soulEditor").open');
+ assert.equal(await evaluate('document.getElementById("soulSave").hidden'),true,'an operator cannot save the persona');
+ assert.equal(await evaluate('document.getElementById("soulPropose").hidden'),false,'an operator can create a proposal');
+ await evaluate('document.getElementById("soulClose").click()');
+ await send('/soul history');await until('document.body.textContent.includes("Persona backups are listed for administrators only.")');
  await evaluate('document.getElementById("hAuthLogout").click()');
  await until('!document.getElementById("hAuthLoginBox").hidden');assert.equal(signedIn,false);
  assert.equal(await evaluate(headerState),'');
