@@ -690,6 +690,8 @@ struct PolicyEditingProposer<'a> {
     edit: PolicyEdit<'a>,
     reply: String,
     prompts: RefCell<Vec<String>>,
+    /// `"scripted"` is local; a `CLOUD_PROVIDERS` name makes the double cloud.
+    provider: &'a str,
 }
 
 #[cfg(unix)]
@@ -703,7 +705,7 @@ impl ProposerClient for PolicyEditingProposer<'_> {
         Ok(self.reply.clone())
     }
     fn provider(&self) -> &str {
-        "scripted"
+        self.provider
     }
 }
 
@@ -729,6 +731,7 @@ fn loop_stops_when_policy_changes_mid_run() {
             edit,
             reply: block("new.txt", "hello"),
             prompts: RefCell::default(),
+            provider: "scripted",
         };
         let error = run_real_repo_loop(&ctx, &ws, &proposer, &params(&checks, &[], &[])).unwrap_err();
         assert_eq!(exit_code_for(&error), exit, "{}: {}", error.code, error.message);
@@ -765,6 +768,7 @@ fn loop_stops_when_policy_changes_mid_run() {
         edit: &unchanged,
         reply: block("new.txt", "hello"),
         prompts: RefCell::default(),
+        provider: "scripted",
     };
     let error = run_real_repo_loop(&ctx, &ws, &proposer, &params(&checks, &[], &[])).unwrap_err();
     assert_eq!(exit_code_for(&error), 4, "{}: {}", error.code, error.message);
@@ -774,6 +778,67 @@ fn loop_stops_when_policy_changes_mid_run() {
         1,
         "the revoked run never reaches the planner again"
     );
+}
+
+/// Cloud authority is policy too. A provider turned off while the first
+/// attempt runs gets no second prompt: the run ends refused before the next
+/// send, whether the provider's own flag or the master switch was turned off.
+#[cfg(unix)]
+#[test]
+fn a_cloud_run_stops_when_its_provider_is_turned_off_mid_run() {
+    use cgagentharness::agentic::cli::exit_code_for;
+    let provider_off = |policy: &str| {
+        let next = policy.replacen(
+            "      claude:\n        enabled: true",
+            "      claude:\n        enabled: false",
+            1,
+        );
+        assert_ne!(next, policy, "fixture config has no enabled claude provider");
+        next
+    };
+    let master_off = |policy: &str| {
+        let next = policy
+            .replacen("allow_cloud_providers: true", "allow_cloud_providers: false", 1)
+            .replace(
+                "        enabled: true\n        model: \"grok",
+                "        enabled: false\n        model: \"grok",
+            )
+            .replace(
+                "        enabled: true\n        model: \"claude",
+                "        enabled: false\n        model: \"claude",
+            );
+        assert_eq!(
+            next.matches("enabled: false\n        model:").count(),
+            2,
+            "both providers off"
+        );
+        next
+    };
+    let edits: [PolicyEdit; 2] = [&provider_off, &master_off];
+    for edit in edits {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = loop_ctx(dir.path());
+        assert!(ctx.acfg.deepagent.cloud_provider("claude").is_some());
+        let clone = clone_into_workspace(&ctx, dir.path());
+        let ws = RepoWorkspace::attach(&ctx, &clone).unwrap();
+        // The first attempt fails its check, so the loop would prompt again.
+        let checks = vec![Check::new("false", vec!["false".into()]).unwrap()];
+        let proposer = PolicyEditingProposer {
+            config: &ctx.config_path,
+            edit,
+            reply: block("new.txt", "hello"),
+            prompts: RefCell::default(),
+            provider: "claude",
+        };
+        let error = run_real_repo_loop(&ctx, &ws, &proposer, &params(&checks, &[], &[])).unwrap_err();
+        assert_eq!(exit_code_for(&error), 4, "{}: {}", error.code, error.message);
+        assert_eq!(error.details["failed_gate"], "cloud_provider");
+        assert_eq!(
+            proposer.prompts.borrow().len(),
+            1,
+            "nothing more was sent to the provider after it was turned off"
+        );
+    }
 }
 
 #[cfg(unix)]
