@@ -2,7 +2,9 @@
 //! [`CappedAlloc`] as its global allocator; it is a pass-through to `System`
 //! until a worker process calls [`arm`] once at start. Armed, it counts live
 //! heap bytes and refuses an allocation that would pass the ceiling, which
-//! aborts that child (the PDF parent then reports `PDF_LIMIT`).
+//! aborts that child. Armed, every failed allocation (this ceiling, or the
+//! system's under `RLIMIT_AS`) first writes [`REFUSAL_MARKER`] to stderr once:
+//! the PDF parent reports `PDF_LIMIT` only for an abort that carries it.
 //!
 //! Unarmed cost: one relaxed atomic load per allocation and free. Bytes
 //! allocated before arming and freed after it are not counted, so the bound
@@ -11,11 +13,35 @@
 //! the kill deadline was the only bound.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// 0 = unarmed. Set once, never lowered back to 0.
 static LIMIT: AtomicUsize = AtomicUsize::new(0);
 static LIVE: AtomicUsize = AtomicUsize::new(0);
+/// Set by the first failed allocation while armed.
+static REFUSED: AtomicBool = AtomicBool::new(false);
+
+/// The line an armed process writes to stderr when an allocation first fails.
+/// It is the in-band proof that the abort that usually follows was the heap
+/// bound, not a bug, a double panic or a stack overflow, which abort the same way.
+pub const REFUSAL_MARKER: &str = "cgagentharness: armed allocation refused";
+
+/// Notes a failed allocation. Armed only, once per process, and without
+/// allocating: a raw `write(2)` of a static line (Unix; Windows reports no
+/// signal, so its parent never reads an abort as a limit and needs no line).
+fn note_refusal() {
+    if LIMIT.load(Ordering::Relaxed) == 0 || REFUSED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    // SAFETY: fd 2 and a static buffer of `MARKER_LINE.len()` bytes; a short or
+    // failed write only loses the marker, and the parent then fails closed.
+    #[cfg(unix)]
+    let _ = unsafe { libc::write(2, MARKER_LINE.as_ptr().cast(), MARKER_LINE.len()) };
+}
+
+/// [`REFUSAL_MARKER`] on a line of its own, whatever stderr held before it.
+#[cfg(unix)]
+const MARKER_LINE: &[u8] = b"\ncgagentharness: armed allocation refused\n";
 
 pub struct CappedAlloc;
 
@@ -58,24 +84,28 @@ fn release(size: usize) {
 unsafe impl GlobalAlloc for CappedAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if !reserve(layout.size()) {
+            note_refusal();
             return std::ptr::null_mut();
         }
         // SAFETY: same layout the caller passed, which it guarantees is valid.
         let ptr = unsafe { System.alloc(layout) };
         if ptr.is_null() {
             release(layout.size());
+            note_refusal();
         }
         ptr
     }
 
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
         if !reserve(layout.size()) {
+            note_refusal();
             return std::ptr::null_mut();
         }
         // SAFETY: as in `alloc`.
         let ptr = unsafe { System.alloc_zeroed(layout) };
         if ptr.is_null() {
             release(layout.size());
+            note_refusal();
         }
         ptr
     }
@@ -89,6 +119,7 @@ unsafe impl GlobalAlloc for CappedAlloc {
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         let old = layout.size();
         if new_size > old && !reserve(new_size - old) {
+            note_refusal();
             return std::ptr::null_mut();
         }
         // SAFETY: the caller upholds `realloc`'s contract for `ptr`, `layout` and `new_size`.
@@ -97,6 +128,7 @@ unsafe impl GlobalAlloc for CappedAlloc {
             if new_size > old {
                 release(new_size - old);
             }
+            note_refusal();
         } else if new_size < old {
             release(old - new_size);
         }
@@ -123,8 +155,10 @@ mod tests {
         let q = unsafe { a.alloc(small) };
         assert!(!q.is_null());
         assert_eq!(live_bytes(), 1024);
+        assert!(!REFUSED.load(Ordering::Relaxed), "nothing refused yet");
         let big = Layout::from_size_align(8192, 8).unwrap();
         assert!(unsafe { a.alloc(big) }.is_null(), "past the ceiling");
+        assert!(REFUSED.load(Ordering::Relaxed), "a refusal while armed is noted");
         assert_eq!(live_bytes(), 1024, "a refusal reserves nothing");
         let grown = unsafe { a.realloc(q, small, 3000) };
         assert!(!grown.is_null());
@@ -136,5 +170,13 @@ mod tests {
         // A pre-arm block freed now saturates at zero instead of wrapping.
         unsafe { a.dealloc(p, small) };
         assert_eq!(live_bytes(), 0);
+    }
+
+    /// The parent matches the marker by text; the bytes written are that text.
+    #[cfg(unix)]
+    #[test]
+    fn the_written_line_is_the_marker_on_a_line_of_its_own() {
+        let line = std::str::from_utf8(MARKER_LINE).unwrap();
+        assert_eq!(line, format!("\n{REFUSAL_MARKER}\n"));
     }
 }

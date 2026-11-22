@@ -362,6 +362,23 @@ async fn pdf_text_reaches_preview_and_local_chat_through_the_worker() {
     assert!(common::turn_message(&model.last_request().unwrap()).contains("The PDF_CHAT_FACT is 42."));
 }
 
+/// #772 decision 1, end to end: a 14 MB PDF whose one array outgrows the
+/// worker's 768 MiB heap makes the real child abort. The armed allocator's
+/// own stderr line is what makes that abort `PDF_LIMIT`, the one abort a
+/// Firecrawl fallback may act on; an abort without it is `PDF_WORKER_FAILED`
+/// and stays local (the unit tests in `pdf_text` and `web_firecrawl`).
+#[cfg(unix)]
+#[test]
+fn a_heap_ceiling_abort_in_the_real_worker_is_a_document_limit() {
+    use cgagentharness::common::pdf_text::{extract, set_test_worker_exe};
+    set_test_worker_exe(env!("CARGO_BIN_EXE_cgagentharness").into());
+    let mut pdf = b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n3 0 obj\n[".to_vec();
+    pdf.extend(b"0 ".repeat(7_000_000));
+    pdf.extend(b"]\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n");
+    let failure = extract(&pdf, std::time::Instant::now() + std::time::Duration::from_secs(30)).unwrap_err();
+    assert_eq!(failure.code, "PDF_LIMIT", "{failure}");
+}
+
 #[tokio::test]
 async fn docx_uses_local_prompt_fence_and_refuses_hostile_xml() {
     use std::io::{Cursor, Write};

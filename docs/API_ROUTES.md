@@ -86,7 +86,7 @@ Roles, scrypt bounds and session timeouts: [SECURE_RESEARCH.md](SECURE_RESEARCH.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET, POST | `/api/soul`, `/api/soul/document` | Persona state and on/off toggle; read or edit the persona document |
+| GET, POST | `/api/soul`, `/api/soul/document` | Persona state, toggle; read (operators: current only) or edit the document |
 | POST | `/api/soul/proposals` | Propose a persona change |
 | GET, POST | `/api/soul/proposals/{id}` | Review or decide a proposal |
 | GET, POST | `/api/style` | Output-style catalog and session select (`/style <name>`, `/style off`) |

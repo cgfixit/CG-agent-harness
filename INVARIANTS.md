@@ -70,7 +70,7 @@ Process edges; update this map when adding one.
   environment, PDF bytes on stdin, one JSON reply under the 4 MiB capture ceiling, a
   5 s kill deadline and at most two at once. Before reading, the worker caps its own
   CPU time, sets core and regular-file writes to zero, arms a 768 MiB heap ceiling
-  on every OS (`common::alloc_cap`; over it the child aborts) and on Linux caps its
+  on every OS (`common::alloc_cap`; only its marked abort is `PDF_LIMIT`) and on Linux caps its
   address space at 1 GiB. That bounds parsing; it is not a sandbox (no filesystem or network
   denial). Text is cached in memory by content digest only after the caller's
   owner and digest checks; refusals carry fixed `PDF_*` codes, never parser text.
