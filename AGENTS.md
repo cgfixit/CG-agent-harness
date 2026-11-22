@@ -152,17 +152,16 @@ server -> browser child -> Playwright sidecar -> Chrome (granted origins only)
 - MCP tools never attach to `/loop`; permitted read-only web tools can.
 - Prefer a `#[cfg(test)] mod tests` unit test beside a pure parser or matcher
   over another integration test.
-- PRs are draft, one concern, on a driver-prefixed branch (see
-  template), **based on `main`**, title
+- PRs are draft, one concern, on a driver-prefixed branch, **based on `main`**, title
   `[prefix] - Sentence`, body from `.github/PULL_REQUEST_TEMPLATE.md` with `McLuhan tetrad` and
   `ELI5` filled (run `scripts/check-pr-template.sh`). Core-path changes need an
   invariant statement.
 - Refresh `origin/main` and open PR heads/files/checks before publication;
   trial-merge overlapping changes, including generated manuals and doc caps.
-- The advisory `review gate` check reports unresolved threads and running Codex
-  reviews; only evaluation errors fail it. Read it before merging and re-run it after
-  resolving the last thread. Never comment `@codex review` without the
-  operator's approval.
+- The advisory `review gate` reports unresolved threads, running Codex reviews
+  and a body older than an operator `@codex review`; only evaluation errors
+  fail it. Read it before merging; re-run once threads resolve. Never
+  comment `@codex review` without operator approval.
 
 ## Docs policy
 
