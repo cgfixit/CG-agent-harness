@@ -439,14 +439,13 @@ pub async fn preview(
     };
     // Shown, not consumed: the next local chat turn of this session takes it.
     let diag = match session.as_ref() {
-        Some(session) => state
-            .diag
-            .for_turn(
-                &owner,
-                &session.session_id,
-                crate::server::diag_reader::Surface::Preview,
-            )
-            .map_err(|e| super::diag::diag_error(&e))?,
+        Some(session) => super::diag::excerpt_for_turn(
+            &state,
+            user.as_ref().map(|u| &u.0),
+            &owner,
+            &session.session_id,
+            crate::server::diag_reader::Surface::Preview,
+        )?,
         None => None,
     };
     let chat_web_mode = if !chat_policy.web {

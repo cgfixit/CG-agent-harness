@@ -428,6 +428,89 @@ async fn a_staged_excerpt_reaches_one_local_turn_and_is_refused_elsewhere() {
     assert_eq!(forgot["cleared"], true);
 }
 
+/// An excerpt staged by a request that was already past its role check when an
+/// admin changed the role (the route's `forget_owner` ran first) still never
+/// reaches the account's next turn under a role without log reads: delivery
+/// rereads the caller's live grant. Bypassing the route's `forget_owner` with a
+/// direct store change models exactly that interleaving.
+#[tokio::test]
+async fn an_excerpt_staged_across_a_demotion_never_reaches_the_new_role() {
+    let model = start_mock_model().await;
+    let s = server(&model, true).await;
+    let auth = s.state.auth.as_ref().unwrap();
+    let password = cgagentharness::common::random_hex(24);
+    auth.create_user("ops-demoted", &password, "auditor").unwrap();
+    let login = || async {
+        let response = s
+            .client
+            .post(s.url("/api/auth/login"))
+            .json(&json!({"username":"ops-demoted","password":password}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 200);
+        response.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string()
+    };
+    let auditor = login().await;
+    let (_, session) = json_call(&s, &auditor, Method::POST, "/api/sessions", Some(json!({"title":"d"}))).await;
+    let sid = session["session_id"].as_str().unwrap().to_string();
+    let (status, read) = json_call(
+        &s,
+        &auditor,
+        Method::GET,
+        "/api/diag/read?file=audit.jsonl&last=3",
+        None,
+    )
+    .await;
+    assert_eq!(status, 200, "{read}");
+    let (status, staged) = json_call(
+        &s,
+        &auditor,
+        Method::POST,
+        "/api/diag/inject",
+        Some(json!({"session_id": sid})),
+    )
+    .await;
+    assert_eq!(status, 200, "{staged}");
+    auth.set_role("ops-demoted", "operator").unwrap();
+    let operator = login().await;
+    let (status, preview) = json_call(
+        &s,
+        &operator,
+        Method::POST,
+        "/api/prompt/preview",
+        Some(json!({"session_id": sid})),
+    )
+    .await;
+    assert_eq!(status, 200, "{preview}");
+    assert!(
+        !preview["prompt"].as_str().unwrap_or("").contains("DIAG_DATA") && preview["diag"].is_null(),
+        "{preview}"
+    );
+    let (status, body) = json_call(
+        &s,
+        &operator,
+        Method::POST,
+        "/api/chat",
+        Some(json!({"session_id": sid, "message": "hi"})),
+    )
+    .await;
+    assert_eq!(status, 200, "{body}");
+    assert!(!common::turn_message(&model.last_request().unwrap()).contains("DIAG_DATA"));
+    // Dropped, not withheld: the store keeps nothing for the account.
+    assert!(s.state.diag.staged(&staged_owner(&s, "ops-demoted")).is_none());
+}
+
+fn staged_owner(s: &TestServer, username: &str) -> String {
+    s.state.auth.as_ref().unwrap().get_user(username).unwrap().user_id
+}
+
 #[tokio::test]
 async fn auditor_chats_locally_without_memory_or_other_surfaces() {
     let model = start_mock_model().await;
