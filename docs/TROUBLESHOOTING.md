@@ -6,7 +6,7 @@ See also [models](MODELS.md) and [coding](CODING_PIPELINE.md).
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/browse` says playwright is not prepared | `browser/node_modules` is missing | From `browser/`, run `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci`; the app needs an absolute `browser.sidecar` ([browser use](Browser-Use.md)) |
+| `/browse` says playwright is not prepared | `browser/node_modules` is missing | From `browser/`, run `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --ignore-scripts`; the app needs absolute `browser.sidecar` ([browser use](Browser-Use.md)) |
 | `/browse` refused: `BROWSER_AUTH_REQUIRED` | Accounts are off (`auth.enabled` is not literal `true`), so the administrator check cannot run | Turn accounts on and sign in as an administrator ([Browser use](Browser-Use.md)) |
 | `/browse` refused: `BROWSER_ORIGIN_BLOCKED` or `BROWSER_PRIVATE_ADDRESS` | The origin is on the web block list, or is a loopback or private IP | `/web status` lists the rules; browser tasks reach public addresses only |
 | Spend reports partial, unreadable, too large or invalid UTF-8 | A retained ledger generation could not be summarized | Preserve the ledger; inspect permissions and size. [Missing evidence is not zero spend](SPEND_AND_NOTIFICATIONS.md#read-spend-without-mistaking-missing-data-for-zero) |

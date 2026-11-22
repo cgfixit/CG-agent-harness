@@ -54,12 +54,15 @@ pub(crate) fn resolve_secret(value: &str) -> Result<String> {
 // `web.search.result_reads.enabled` existed gets the shipped behaviour without an edit.
 // why: operator decision (2026-11-19): `web.fetch_provenance` likewise, so existing
 // homes get the composed-fetch confirmation without an edit.
+// why: operator decision (2026-11-22): `notes_corpus.enabled` likewise, so a home
+// written before the switch existed keeps its uploaded notes in local chat.
 // Every other gate keeps `flag_is_true`, where a missing key is off.
 pub const MISSING_MEANS_ON: &[&str] = &[
     "diagnostics.self_knowledge",
     "diagnostics.live_state",
     "web.search.result_reads.enabled",
     "web.fetch_provenance",
+    "notes_corpus.enabled",
 ];
 
 /// Shipped numbers the code reads as floating point. [`AppConfig::load`]

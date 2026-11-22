@@ -359,7 +359,7 @@ impl Sidecar {
             .parent()
             .is_some_and(|dir| dir.join("node_modules/playwright").exists())
         {
-            return Err("playwright is not prepared. From browser/, run PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci. A session does not install it.".into());
+            return Err("playwright is not prepared. From browser/, run PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --ignore-scripts. A session does not install it.".into());
         }
         let child = Command::new("node")
             .arg(script)

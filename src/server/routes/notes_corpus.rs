@@ -43,6 +43,12 @@ pub async fn ingest_notes(
     req: axum::extract::Request,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
+    if !state.notes_corpus.limits().enabled {
+        return Err(notes_corpus::ingest_error(&crate::common::errors::HarnessError::new(
+            "NOTES_DISABLED",
+            "the notes corpus is off (notes_corpus.enabled); existing notes can still be listed and deleted",
+        )));
+    }
     let Ok(permit) = state.notes_ingest_permits.clone().try_acquire_owned() else {
         return Err(notes_corpus::ingest_error(&crate::common::errors::HarnessError::new(
             "NOTES_BUSY",
