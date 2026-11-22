@@ -392,7 +392,7 @@ fn audit_tail(path: &std::path::Path) -> std::io::Result<Option<Vec<u8>>> {
 }
 
 /// The newest 100 request events in `tail`, newest first, as the fixed
-/// projection audit accounts see. Model content, paths in the filesystem,
+/// projection auditor accounts see. Model content, paths in the filesystem,
 /// account records and keys are never read. A line the window cut, or one that
 /// is not JSON, is skipped.
 fn portal_events(tail: &[u8]) -> Vec<Value> {
@@ -524,6 +524,13 @@ pub async fn set_role(
                 &user.username,
                 json!({"role": user.role}),
             );
+            // A machine key reads its owner's facts and the gateway checks only
+            // the key row, so a role that holds no memory read keeps no key.
+            // After the audit line, as disable does: a failed retirement is
+            // returned, with the role change already on record.
+            if !crate::server::mcp_keys::owner_may_hold_keys(&user.role) {
+                disable_machine_keys(&state, &user.user_id)?;
+            }
         }
         Ok(Json(json!({"ok": true})))
     })

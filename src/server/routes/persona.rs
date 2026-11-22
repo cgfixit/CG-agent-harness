@@ -364,7 +364,9 @@ pub async fn preview(
     let web = if !chat_policy.web {
         String::new()
     } else {
-        state.web_snapshot().context_text(web_enabled, &owner)
+        // The same saved-page read the turn makes: off the async worker.
+        let (web, owner) = (state.web_snapshot(), owner.clone());
+        super::structured_memory::off_worker(move || web.context_text(web_enabled, &owner)).await
     };
     let selections = if !chat_policy.memory {
         Vec::new()
