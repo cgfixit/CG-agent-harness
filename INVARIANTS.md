@@ -315,7 +315,7 @@ linked pages; each content fetch still requires its own URL permission.
 Restart-only `web.search.result_reads.enabled` (ships true; operator decision,
 2026-11-12, one day after it was added off) is the one exception: an administrator's chat or `/loop` web turn may read the exact
 URLs its own search listings returned, as listed, for that turn or that loop run
-only, at most `max_urls` (default 20) held. The one derived URL: with `result_reads.arxiv_pdf` (a `flag_is_true` gate; ships true, operator decision 2026-11-14, #883), a listed `https://arxiv.org/abs/<id>` also grants exactly `https://arxiv.org/pdf/<id>` (same host and identifier, no query or fragment), counted in `max_urls`. Only `admin` (operator decision, 2026-11-12, after review): that role keeps the URL policy and could add the same rule, so a listing grants nothing the account lacks. `operator` turns stay bound by the policy, and `/api/web` reports the setting off to them. A home without accounts has one local user, who owns the policy file and is treated as its administrator. A server-run loop reloads the account before each turn, so a demoted account loses the grant on its next turn and evidence read under it no longer restores. Literal `false` keeps reads to the URL policy alone. Like the two self-knowledge switches, this one is not a `flag_is_true` gate: a home whose config lacks the key reads it as on (operator decision, 2026-11-12), so an existing home gains these reads at its next start without an edit, a literal boolean is used as written, and any other value fails boot. `common::config::MISSING_MEANS_ON` lists the three such keys; the guard requires each to be read through `flag_missing_on` and no other key to use it. The grant lives in memory on that
+only, at most `max_urls` (default 20) held. The one derived URL: with `result_reads.arxiv_pdf` (a `flag_is_true` gate; ships true, operator decision 2026-11-14, #883), a listed `https://arxiv.org/abs/<id>` also grants exactly `https://arxiv.org/pdf/<id>` (same host and identifier, no query or fragment), counted in `max_urls`. Only `admin` (operator decision, 2026-11-12, after review): that role keeps the URL policy and could add the same rule, so a listing grants nothing the account lacks. `operator` turns stay bound by the policy, and `/api/web` reports the setting off to them. A home without accounts has one local user, who owns the policy file and is treated as its administrator. A server-run loop reloads the account before each turn, so a demoted account loses the grant on its next turn and evidence read under it no longer restores. Literal `false` keeps reads to the URL policy alone. Like the two self-knowledge switches, this one is not a `flag_is_true` gate: a home whose config lacks the key reads it as on (operator decision, 2026-11-12), so an existing home gains these reads at its next start without an edit, a literal boolean is used as written, and any other value fails boot. `common::config::MISSING_MEANS_ON` lists every such key; the guard requires each to be read through `flag_missing_on` and no other key to use it. The grant lives in memory on that
 turn's policy snapshot and is never written to `tools/web_allowlist.json`. Blocked
 rules, private addresses, refused redirects and an empty allowlist still refuse;
 each such read is audited as `web_result_read`. Model output still grants
@@ -327,7 +327,7 @@ SerpAPI key selects the fixed Google-results API transport, else public Google; 
 keys Tavily wins, so saving a Tavily key sends queries to its fixed endpoint.
 `google-public`, `serpapi` or `tavily` force one;
 the removed `searxng` provider and a non-empty `web.search.searxng_url` fail boot by
-name. Fallback hops follow tavily → serpapi → google-public (the hop to public Google ships on, the hop to SerpAPI off) within one deadline and search slot; they are audited
+name. Fallback hops follow tavily → serpapi → google-public (both hops ship on; SerpAPI by operator decision, 2026-11-22) within one deadline and search slot; they are audited
 with the provider that answered. A hop moves on only when it cannot answer: an unusable provider or a spent SerpAPI or Tavily quota (the next hop costs less or nothing). A rejected or missing key, a refused query and a clean zero-result answer never fall through. Keyed listings (SerpAPI, Tavily) require enabled web and current
 account authority, independently of page URL grants; public Google and linked-page
 fetches retain URL policy checks. Tavily requests pin `include_answer`,
@@ -693,25 +693,24 @@ restart-only `web.goal_web_default` (ships `all`; withhold unattended search wit
 goal; a turn needing compaction continues automatically.
 
 `POST /api/loop/start` runs those turns in a server task that outlives the
-browser; the session stores each as a short label (`Loop turn N of M.`), not the
-goal reminder sent with it. Each turn goes through `chat_inner` (`loop_turn: true`) after re-reading
+browser; the session stores each as `Loop turn N of M.` (N counts completed
+turns), not the goal reminder. Each turn goes through `chat_inner` (`loop_turn: true`) after re-reading
 the starting account: deleted, disabled, password-pending, or no longer
-operator/admin ends the run `failed`. `auditor` cannot start one. Start,
+operator/admin ends the run `failed`; a role or password change mid-turn withholds its reply. `auditor` cannot start one. Start,
 stop, status and events are bound to the starting owner; a foreign run reads as
 `LOOP_RUN_NOT_FOUND`. A session holds one live run (`LOOP_IN_FLIGHT`). A run ends
 on stop, a changed or cleared session goal (`LOOP_GOAL_CHANGED`), `loop.max_turns`,
 `loop.max_total_completion_tokens`, `loop.max_failures`
 consecutive failed turns or failed web rounds, unverified `GOAL_DONE`, a
 near-repeat reply, or a web refusal every later turn would repeat. A turn waits
-(stoppable, at most two hours) while another generation holds the model
-instead of counting a failure. Both budgets
+(stoppable, at most two hours) for a busy model without counting a failure. Both budgets
 ship finite, 200 turns and 200,000 completion tokens (#675); `0` is an explicit
 opt-in to unlimited, and a home whose file lacks the key keeps the code fallback
 `0`. With both budgets zero, startup and transitions into unbounded on reload
 warn and audit `loop_budgets_unlimited`; unchanged or finite reloads do not.
 `/api/status.loop.unbounded` is authoritative (audit is best effort); console
-`/status` and `/loop` preflight warn without blocking or rewriting configuration.
-`loop_run_started.unbounded` describes effective per-run caps, including overrides.
+`/status` and `/loop` preflight only warn.
+`loop_run_started.unbounded` describes the effective per-run caps.
 Runs live in process memory: a restart ends them without resuming, and
 `loops/<run_id>.json` is a record, not a resume point. Audits hold start and
 finish metadata, never replies.

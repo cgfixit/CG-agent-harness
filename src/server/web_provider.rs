@@ -59,8 +59,8 @@ impl SearchProvider {
 }
 
 /// Hops after the configured provider (#647 Phase 2), restart-only. Both read
-/// through `flag_is_true`; the public Google hop ships on, the SerpAPI hop off;
-/// the order is fixed. The SerpAPI hop follows a Tavily first hop.
+/// through `flag_is_true` and both ship on (SerpAPI: operator decision,
+/// 2026-11-22); the order is fixed. The SerpAPI hop follows a Tavily first hop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fallback {
     pub to_serpapi: bool,

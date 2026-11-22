@@ -10,6 +10,10 @@ cd "$(dirname "$0")/.."
 
 CLIPPY="${CLIPPY:-cargo clippy}"
 
+# Same two commands as .github/workflows/diff-lint.yml, so a local run and CI
+# cannot disagree about the recurring-mistake lint (CG001-CG011).
+echo "== lint-diff fixtures"; python3 scripts/test-lint-diff.py
+echo "== lint-diff"; python3 scripts/lint-diff.py --base origin/main
 echo "== fmt"; cargo fmt --all -- --check
 echo "== clippy"; $CLIPPY --all-targets --all-features --locked -- -D warnings
 if command -v cargo-deny >/dev/null 2>&1; then echo "== deny"; cargo deny check; else echo "== deny (skipped: cargo-deny not installed; CI runs it)"; fi

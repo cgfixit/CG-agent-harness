@@ -1041,6 +1041,32 @@ fn duplicated_constants_still_agree() {
         protocol("src/server/desktop.rs", r"pub const PROTOCOL: u32 = (\d+);"),
         "desktop/src/backend.rs PROTOCOL drifted from src/server/desktop.rs"
     );
+    // `/loop` keeps private Rust mirrors of three console limits; nothing else
+    // pinned them, so a changed console value left the server stalling on a
+    // different threshold than the page that shows it.
+    let loop_runner =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/server/loop_runner.rs")).unwrap();
+    for name in [
+        "LOOP_GOAL_REMINDER_CHARS",
+        "LOOP_STALL_SIMILARITY",
+        "LOOP_STALL_MAX_WORDS",
+    ] {
+        let value = |text: &str, pattern: String| {
+            regex::Regex::new(&pattern)
+                .unwrap()
+                .captures(text)
+                .map(|c| c[1].to_string())
+                .unwrap_or_else(|| panic!("no `{name}` matched {pattern}"))
+        };
+        assert_eq!(
+            value(&loop_runner, format!(r"const {name}: \w+ = ([0-9.]+);")),
+            value(
+                cgagentharness::server::console::HARNESS_HTML,
+                format!(r"const {name} = ([0-9.]+);")
+            ),
+            "console {name} drifted from src/server/loop_runner.rs"
+        );
+    }
     // The shim whitelist is exactly the CLI's dispatch table (no deepagent-plan, no __sleep),
     // in both directions: an arm missing from ACTIONS would be unreachable through the shim.
     let commands = std::fs::read_to_string(root().join("agentic").join("commands.rs")).unwrap();
@@ -2137,6 +2163,368 @@ fn agent_run_and_jobs_share_prepare_run() {
     );
 }
 
+/// One function the async-blocking scan read: what it calls directly and by bare name,
+/// with closure bodies left out (a closure is how work reaches `off_worker`/`spawn_blocking`).
+#[derive(Default)]
+struct BlockingFacts {
+    file: String,
+    name: String,
+    is_async: bool,
+    direct: Vec<String>,
+    callees: std::collections::BTreeSet<String>,
+}
+
+struct BlockingScan {
+    file: String,
+    stack: Vec<BlockingFacts>,
+    closure: usize,
+    out: Vec<BlockingFacts>,
+}
+
+fn is_test_item(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| {
+        let last = a
+            .path()
+            .segments
+            .last()
+            .map(|s| s.ident.to_string())
+            .unwrap_or_default();
+        match (&a.meta, last.as_str()) {
+            (_, "test") => true,
+            (syn::Meta::List(l), "cfg") => {
+                let t = l.tokens.to_string();
+                t.contains("test") && !t.contains("not")
+            }
+            _ => false,
+        }
+    })
+}
+
+/// The calls that park the thread they run on: file system, SQLite open and the password hash.
+fn blocking_call(path: &syn::Path) -> Option<String> {
+    const FS: &[&str] = &[
+        "read",
+        "read_to_string",
+        "write",
+        "create_dir_all",
+        "create_dir",
+        "remove_file",
+        "remove_dir_all",
+        "remove_dir",
+        "rename",
+        "copy",
+        "metadata",
+        "read_dir",
+        "canonicalize",
+        "symlink_metadata",
+        "set_permissions",
+    ];
+    const HASH: &[&str] = &[
+        "hash_password",
+        "verify_password",
+        "hash_bootstrap_password",
+        "hash_password_with_salt",
+    ];
+    let segs: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+    let last = segs.last()?.as_str();
+    let prev = if segs.len() >= 2 {
+        segs[segs.len() - 2].as_str()
+    } else {
+        ""
+    };
+    let named = match (prev, last) {
+        ("fs", f) if FS.contains(&f) => true,
+        ("File", "open" | "create") | ("OpenOptions", "new") => true,
+        ("Connection", "open" | "open_in_memory") => true,
+        (_, h) if HASH.contains(&h) => true,
+        _ => false,
+    };
+    named.then(|| {
+        if prev.is_empty() {
+            last.to_string()
+        } else {
+            format!("{prev}::{last}")
+        }
+    })
+}
+
+impl BlockingScan {
+    fn live(&self) -> bool {
+        self.closure == 0 && !self.stack.is_empty()
+    }
+    fn enter(&mut self, name: String, is_async: bool, walk: impl FnOnce(&mut Self)) {
+        let saved = std::mem::replace(&mut self.closure, 0);
+        self.stack.push(BlockingFacts {
+            file: self.file.clone(),
+            name,
+            is_async,
+            ..Default::default()
+        });
+        walk(self);
+        let done = self.stack.pop().unwrap();
+        self.out.push(done);
+        self.closure = saved;
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for BlockingScan {
+    fn visit_item_mod(&mut self, m: &'ast syn::ItemMod) {
+        if !is_test_item(&m.attrs) {
+            syn::visit::visit_item_mod(self, m);
+        }
+    }
+    fn visit_item_fn(&mut self, f: &'ast syn::ItemFn) {
+        if !is_test_item(&f.attrs) {
+            self.enter(f.sig.ident.to_string(), f.sig.asyncness.is_some(), |s| {
+                syn::visit::visit_item_fn(s, f)
+            });
+        }
+    }
+    fn visit_impl_item_fn(&mut self, f: &'ast syn::ImplItemFn) {
+        if !is_test_item(&f.attrs) {
+            self.enter(f.sig.ident.to_string(), f.sig.asyncness.is_some(), |s| {
+                syn::visit::visit_impl_item_fn(s, f)
+            });
+        }
+    }
+    fn visit_expr_closure(&mut self, c: &'ast syn::ExprClosure) {
+        self.closure += 1;
+        syn::visit::visit_expr_closure(self, c);
+        self.closure -= 1;
+    }
+    fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
+        if let (true, syn::Expr::Path(p)) = (self.live(), &*c.func) {
+            let top = self.stack.last_mut().unwrap();
+            top.direct.extend(blocking_call(&p.path));
+            top.callees.extend(p.path.segments.last().map(|s| s.ident.to_string()));
+        }
+        syn::visit::visit_expr_call(self, c);
+    }
+    fn visit_expr_method_call(&mut self, c: &'ast syn::ExprMethodCall) {
+        if self.live() {
+            let top = self.stack.last_mut().unwrap();
+            if c.method == "query_row" || c.method == "execute_batch" {
+                top.direct.push(format!(".{}", c.method));
+            }
+            top.callees.insert(c.method.to_string());
+        }
+        syn::visit::visit_expr_method_call(self, c);
+    }
+}
+
+/// `file :: fn` for every non-test `async fn` that calls blocking work inline: directly, or through
+/// a sync function of a name no other function in `sources` shares and that itself blocks. A name
+/// two functions share is skipped, since without types `get` or `new` cannot be told apart.
+fn async_blocking_violations(sources: &[(String, String)]) -> Vec<String> {
+    use std::collections::BTreeMap;
+    use syn::visit::Visit;
+    let mut facts = Vec::new();
+    for (path, text) in sources {
+        let file = syn::parse_file(text).unwrap_or_else(|e| panic!("{path} does not parse as Rust: {e}"));
+        let mut scan = BlockingScan {
+            file: path.clone(),
+            stack: Vec::new(),
+            closure: 0,
+            out: Vec::new(),
+        };
+        scan.visit_file(&file);
+        facts.extend(scan.out);
+    }
+    let mut defs: BTreeMap<&str, usize> = BTreeMap::new();
+    for f in &facts {
+        *defs.entry(f.name.as_str()).or_default() += 1;
+    }
+    let unique = |f: &BlockingFacts| defs[f.name.as_str()] == 1;
+    let mut blocking: std::collections::BTreeSet<String> = facts
+        .iter()
+        .filter(|f| !f.is_async && unique(f) && !f.direct.is_empty())
+        .map(|f| f.name.clone())
+        .collect();
+    loop {
+        let before = blocking.len();
+        for f in facts.iter().filter(|f| !f.is_async && unique(f)) {
+            if f.callees.iter().any(|c| blocking.contains(c)) {
+                blocking.insert(f.name.clone());
+            }
+        }
+        if blocking.len() == before {
+            break;
+        }
+    }
+    let mut found: Vec<String> = facts
+        .iter()
+        .filter(|f| f.is_async && (!f.direct.is_empty() || f.callees.iter().any(|c| blocking.contains(c))))
+        .map(|f| format!("{} :: {}", f.file, f.name))
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// Async functions that still call blocking work inline, as of this guard's introduction. Each was
+/// read, not fixed: the list may only shrink. Fix the function (see `routes::structured_memory::off_worker`)
+/// and delete its row; the test fails on a row that no longer matches.
+const ASYNC_BLOCKING_BASELINE: &[&str] = &[
+    "src/common/mcp_worker.rs :: run",
+    "src/server/chat_web.rs :: run_inner",
+    "src/server/chat_web/evidence.rs :: read",
+    "src/server/mod.rs :: build_app_with_sources",
+    "src/server/web_google.rs :: google_hop",
+    "src/server/web_index.rs :: crawl",
+    "src/server/web_index.rs :: fetch_many",
+    "src/server/web_index.rs :: search_with_count",
+    "src/server/web_research.rs :: run_with",
+    "src/server/web_search.rs :: fetch_page",
+];
+
+#[test]
+fn async_fns_leave_blocking_file_and_database_work_to_the_blocking_pool() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut sources = Vec::new();
+    for dir in ["src/server", "src/shim", "src/common", "src/llm", "src/netconnect"] {
+        for (path, text) in read_tree_raw(&root.join(dir)) {
+            let relative = Path::new(&path).strip_prefix(root).unwrap().display().to_string();
+            sources.push((relative.replace('\\', "/"), text));
+        }
+    }
+    let found = async_blocking_violations(&sources);
+    let new: Vec<_> = found
+        .iter()
+        .filter(|f| !ASYNC_BLOCKING_BASELINE.contains(&f.as_str()))
+        .collect();
+    assert!(
+        new.is_empty(),
+        "these async fns call file, SQLite or password-hash work inline, which parks an async worker: {new:#?}. \
+         Move the work into `routes::structured_memory::off_worker(move || ..)` (or `spawn_blocking`) and await it."
+    );
+    let stale: Vec<_> = ASYNC_BLOCKING_BASELINE
+        .iter()
+        .filter(|b| !found.iter().any(|f| f == *b))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "fixed or renamed, so delete them from ASYNC_BLOCKING_BASELINE: {stale:#?}"
+    );
+}
+
+#[test]
+fn the_async_blocking_scan_reads_what_it_claims_to() {
+    let src = |text: &str| vec![("x.rs".to_string(), text.to_string())];
+    let flagged = |text: &str| async_blocking_violations(&src(text));
+    // A direct call in an async fn is flagged; the same call in a closure handed to the pool is not.
+    assert_eq!(
+        flagged("async fn a() { std::fs::write(p, b).unwrap(); }"),
+        ["x.rs :: a"]
+    );
+    assert!(flagged("async fn a() { off_worker(move || { std::fs::write(p, b).unwrap(); }).await; }").is_empty());
+    // A uniquely named sync helper carries the block to its async caller, two hops deep.
+    assert_eq!(
+        flagged("fn save() { std::fs::write(p, b).unwrap(); } fn persist() { save(); } async fn a() { persist(); }"),
+        ["x.rs :: a"]
+    );
+    // A name two functions share proves nothing, and test code is skipped.
+    assert!(flagged("fn get() { std::fs::read(p); } fn get() {} async fn a() { get(); }").is_empty());
+    assert!(flagged("#[tokio::test] async fn a() { std::fs::read(p); }").is_empty());
+    assert!(flagged("#[cfg(test)] mod t { async fn a() { std::fs::read(p); } }").is_empty());
+    // A sync fn that blocks is fine on its own.
+    assert!(flagged("fn a() { std::fs::read(p); }").is_empty());
+    assert!(flagged("async fn a() { let x = hash_password(p); }") == ["x.rs :: a"]);
+}
+
+/// What one closure body mentions, for the owner-recheck scan.
+#[derive(Default)]
+struct ClosureFacts {
+    user_id: bool,
+    must_change_password: bool,
+    grants_stored: bool,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for ClosureFacts {
+    fn visit_expr_field(&mut self, f: &'ast syn::ExprField) {
+        if let syn::Member::Named(name) = &f.member {
+            match name.to_string().as_str() {
+                "user_id" => self.user_id = true,
+                "must_change_password" => self.must_change_password = true,
+                _ => {}
+            }
+        }
+        syn::visit::visit_expr_field(self, f);
+    }
+    fn visit_path(&mut self, p: &'ast syn::Path) {
+        self.grants_stored |= p.segments.last().is_some_and(|s| s.ident == "grants_stored");
+        syn::visit::visit_path(self, p);
+    }
+}
+
+struct OwnerCheckScan {
+    copies: usize,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for OwnerCheckScan {
+    fn visit_expr_closure(&mut self, c: &'ast syn::ExprClosure) {
+        let mut facts = ClosureFacts::default();
+        syn::visit::visit_expr(&mut facts, &c.body);
+        if facts.user_id && facts.must_change_password && facts.grants_stored {
+            self.copies += 1;
+        }
+        syn::visit::visit_expr_closure(self, c);
+    }
+}
+
+/// Files with a closure that rebuilds "this account may still do X" from a user
+/// row: it names `user_id`, `must_change_password` and `grants_stored` together,
+/// the shape every copy of the owner recheck had (`list_users().iter().any(..)`).
+fn copied_owner_checks(sources: &[(String, String)]) -> Vec<String> {
+    use syn::visit::Visit;
+    let mut found = Vec::new();
+    for (path, text) in sources {
+        let file = syn::parse_file(text).unwrap_or_else(|e| panic!("{path} does not parse as Rust: {e}"));
+        let mut scan = OwnerCheckScan { copies: 0 };
+        scan.visit_file(&file);
+        if scan.copies > 0 {
+            found.push(format!("{path} ({} closure(s))", scan.copies));
+        }
+    }
+    found
+}
+
+#[test]
+fn the_owner_recheck_is_one_function_not_a_copy_per_caller() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut sources = Vec::new();
+    for dir in ["src/server", "src/shim", "src/llm", "src/netconnect"] {
+        for (path, text) in read_tree_raw(&root.join(dir)) {
+            let relative = Path::new(&path).strip_prefix(root).unwrap().display().to_string();
+            sources.push((relative.replace('\\', "/"), text));
+        }
+    }
+    let copies = copied_owner_checks(&sources);
+    assert!(
+        copies.is_empty(),
+        "these files rebuild the owner recheck by hand: {copies:#?}. Call \
+         `AuthManager::owner_permits(user_id, Capability)` (or `owner_lapse` for the reason, or \
+         `UserSummary::lapse` on a row you already hold) and map the answer to your own error code."
+    );
+}
+
+#[test]
+fn the_owner_recheck_scan_reads_what_it_claims_to() {
+    let src = |text: &str| vec![("x.rs".to_string(), text.to_string())];
+    let copy = "fn f(a: &A, owner: &str) -> bool { a.list_users().iter().any(|u| u.user_id == owner \
+                && !u.disabled && !u.must_change_password && authz::grants_stored(&u.role, Cap)) }";
+    assert_eq!(copied_owner_checks(&src(copy)), ["x.rs (1 closure(s))"]);
+    // A request-time check on a row already in hand names no `user_id`.
+    let in_hand = "fn f(u: Option<U>) -> bool { u.is_some_and(|u| authz::grants_stored(&u.role, Cap) \
+                   && !u.must_change_password) }";
+    assert!(copied_owner_checks(&src(in_hand)).is_empty());
+    // Finding an account by id is not the capability check.
+    let lookup = "fn f(v: &[U], id: &str) -> bool { v.iter().any(|u| u.user_id == id) }";
+    assert!(copied_owner_checks(&src(lookup)).is_empty());
+    // The shared call is clean.
+    let shared = "fn f(a: &A, owner: &str) -> bool { a.owner_permits(owner, Cap) }";
+    assert!(copied_owner_checks(&src(shared)).is_empty());
+}
+
 #[test]
 fn console_asset_is_verbatim_with_both_placeholders() {
     let html = cgagentharness::server::console::HARNESS_HTML;
@@ -2468,7 +2856,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: moved out of docs/learning (operator reading material agents never open) into docs/ on 2026-11-08.
     // why: the 2026-11-11 trim-and-refresh pass cut 928 words net (now 3646); the cap drops by the same amount, rounded up to the next 10, keeping its earlier headroom.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 3680, within a few words of the file.
-    ("docs/WEB_DECISION_ROUTER.md", Guide, 3880),
+    // why: the 2026-11-22 refresh trimmed measurement narrative and restated config numbers (3871 to 3685 words with the week's provider, digest and loop changes added); the cap drops to the next 10 above it so the cut stays cut.
+    ("docs/WEB_DECISION_ROUTER.md", Guide, 3690),
     // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 577 words net of the post-#834 additions; measured 2538, rounded up to the next 10 so the cut stays cut.

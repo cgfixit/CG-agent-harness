@@ -434,7 +434,7 @@ pub fn run(command: KeyCommand) -> anyhow::Result<()> {
                     // An account still on its initial password may only replace
                     // it; it gets no machine key either. Nor does a role that
                     // holds no memory read (`auditor`).
-                    .filter(|user| !user.disabled && !user.must_change_password && owner_may_hold_keys(&user.role))
+                    .filter(|user| user.lapse(crate::common::authz::Capability::OwnData).is_none())
                     .map(|user| user.user_id)
                     .collect::<Vec<_>>()
             } else {

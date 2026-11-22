@@ -89,6 +89,37 @@ pub struct UserSummary {
     pub must_change_password: bool,
 }
 
+/// Why an account no longer permits work that began under it. The one
+/// vocabulary for the mid-turn and per-occurrence rechecks, so each caller maps
+/// it to its own error code and none restates the conditions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnerLapse {
+    /// The account no longer exists.
+    Missing,
+    Disabled,
+    /// Still on an initial or reset password.
+    MustChangePassword,
+    /// The stored role no longer grants the capability (an unparseable role fails closed).
+    Role(String),
+}
+
+impl UserSummary {
+    /// Why this account may not use `capability` now, or `None` when it may.
+    /// The single definition of "still permitted": enabled, past its setup
+    /// password, and a role that grants the capability.
+    pub fn lapse(&self, capability: authz::Capability) -> Option<OwnerLapse> {
+        if self.disabled {
+            Some(OwnerLapse::Disabled)
+        } else if self.must_change_password {
+            Some(OwnerLapse::MustChangePassword)
+        } else if !authz::grants_stored(&self.role, capability) {
+            Some(OwnerLapse::Role(self.role.clone()))
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LoginResult {
     pub username: String,
@@ -461,6 +492,24 @@ impl AuthManager {
             .get(&canonical)
             .is_some_and(|current| current.user_id == account.user_id && !current.disabled)
             && revocations.is_none_or(|seen| db.revocations.get(&canonical).copied().unwrap_or(0) == seen)
+    }
+
+    /// Why the account `user_id` may no longer use `capability`, read live from
+    /// the store under one lock, or `None` when it still may. Recheck with this
+    /// after any wait and before a send or stored delivery; the callers own the
+    /// error code. Do not rebuild the conditions from `list_users`
+    /// (`invariant_guard` fails a copy).
+    pub fn owner_lapse(&self, user_id: &str, capability: authz::Capability) -> Option<OwnerLapse> {
+        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        match stored.1.users.iter().find(|(_, row)| row.user_id == user_id) {
+            Some((username, row)) => Self::summary(username, row).lapse(capability),
+            None => Some(OwnerLapse::Missing),
+        }
+    }
+
+    /// [`Self::owner_lapse`] as a yes or no.
+    pub fn owner_permits(&self, user_id: &str, capability: authz::Capability) -> bool {
+        self.owner_lapse(user_id, capability).is_none()
     }
 
     pub fn list_users(&self) -> Vec<UserSummary> {
@@ -949,6 +998,35 @@ mod tests {
         auth.delete_user("alice").unwrap();
         assert_eq!(auth.sign_in_revocations("alice"), count + 1, "delete");
         assert!(!auth.account_unchanged(&alice, None));
+    }
+
+    /// `owner_lapse` names why an account stopped being permitted, in the order
+    /// the callers' messages rely on, and agrees with `owner_permits`.
+    #[test]
+    fn owner_lapse_names_why_an_account_no_longer_permits_work() {
+        use authz::Capability::OwnData;
+        let (_dir, auth) = store();
+        let password = crate::common::random_hex(24);
+        auth.create_user("alice", &password, "operator").unwrap();
+        let id = auth.get_user("alice").unwrap().user_id;
+        assert_eq!(auth.owner_lapse(&id, OwnData), None);
+        assert!(auth.owner_permits(&id, OwnData));
+
+        auth.set_role("alice", "auditor").unwrap();
+        assert_eq!(auth.owner_lapse(&id, OwnData), Some(OwnerLapse::Role("auditor".into())));
+        auth.set_role("alice", "operator").unwrap();
+        assert!(auth.owner_permits(&id, OwnData));
+
+        auth.require_password_change("alice").unwrap();
+        assert_eq!(auth.owner_lapse(&id, OwnData), Some(OwnerLapse::MustChangePassword));
+        // A disabled account reports that first, whatever else is true of it.
+        auth.disable_user("alice").unwrap();
+        assert_eq!(auth.owner_lapse(&id, OwnData), Some(OwnerLapse::Disabled));
+        assert!(!auth.owner_permits(&id, OwnData));
+
+        auth.delete_user("alice").unwrap();
+        assert_eq!(auth.owner_lapse(&id, OwnData), Some(OwnerLapse::Missing));
+        assert_eq!(auth.owner_lapse("not-an-id", OwnData), Some(OwnerLapse::Missing));
     }
 
     fn store() -> (tempfile::TempDir, AuthManager) {
