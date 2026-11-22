@@ -65,7 +65,11 @@ struct Prepared {
     task_file: tempfile::NamedTempFile,
     /// Held until this is dropped: one model operation at a time.
     gate: crate::server::generation_gate::GateGuard,
+    /// The account and its sign-in revocation count when the task was asked.
+    account: Option<Account>,
 }
+
+type Account = (crate::common::auth_store::UserSummary, u64);
 
 async fn prepare(
     state: &Arc<AppState>,
@@ -139,6 +143,10 @@ async fn prepare(
             ));
         }
     }
+    let account = match (state.auth.as_ref(), user.as_ref()) {
+        (Some(auth), Some(user)) => Some((user.0.clone(), auth.sign_in_revocations(&user.0.username))),
+        _ => None,
+    };
     let owner = super::auth::context_owner(user);
     let exe = std::env::current_exe()
         .map_err(|_| ApiError::new(StatusCode::BAD_GATEWAY, "BROWSER_FAILED", "harness binary not found"))?;
@@ -183,6 +191,7 @@ async fn prepare(
         timeout: Duration::from_secs(timeout_sec),
         task_file,
         gate,
+        account,
     })
 }
 
@@ -195,6 +204,7 @@ struct Asked {
     owner: String,
     task_sha256: String,
     job: Option<String>,
+    account: Option<Account>,
 }
 
 type ChildResult = Result<(i32, String, String), ShimError>;
@@ -229,6 +239,11 @@ async fn deliver(state: &Arc<AppState>, asked: &Asked, result: ChildResult) -> A
     // the block list now covers a granted origin.
     if policy_now_blocks(state, &asked.session).await {
         return Err(policy_changed());
+    }
+    // The account checked at launch is stale too: a disabled, deleted,
+    // demoted or reset account gets no report, as chat withholds its reply.
+    if account_changed(state, &asked.account) {
+        return Err(account_withheld(state, asked));
     }
     let report = stdout
         .lines()
@@ -286,8 +301,33 @@ pub async fn deliver_exited_child(
         owner: "test".into(),
         task_sha256: String::new(),
         job: None,
+        account: None,
     };
     deliver(state, &asked, Ok((exit_code, stdout.into(), String::new()))).await
+}
+
+/// Test seam: `deliver` for a child that has already exited, asked by `user`
+/// with the sign-in revocation count `seen` read at launch.
+#[cfg(any(test, feature = "test-support"))]
+pub async fn deliver_exited_child_as(
+    state: &Arc<AppState>,
+    user: crate::common::auth_store::UserSummary,
+    seen: u64,
+    origins: &[String],
+    stdout: &str,
+) -> ApiResult<Value> {
+    let session = Session::general(origins)
+        .map_err(|_| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "BROWSER_BAD_ORIGIN", "origins"))?;
+    let asked = Asked {
+        grants: session.grant_strings(),
+        session,
+        model: None,
+        owner: user.user_id.clone(),
+        task_sha256: String::new(),
+        job: None,
+        account: Some((user, seen)),
+    };
+    deliver(state, &asked, Ok((0, stdout.into(), String::new()))).await
 }
 
 /// Whether the shared block list covers a granted origin. The policy file is
@@ -315,6 +355,45 @@ fn policy_changed() -> ApiError {
     )
 }
 
+/// Whether the asking account was disabled, deleted, demoted or had its
+/// sign-ins revoked (role or password change) since the task was asked.
+fn account_changed(state: &AppState, account: &Option<Account>) -> bool {
+    match (state.auth.as_ref(), account) {
+        (Some(auth), Some((user, seen))) => !auth.account_unchanged(user, Some(*seen)),
+        _ => false,
+    }
+}
+
+/// Resolves once the asking account changes, checked every second: a run is
+/// not left driving Chrome for an account that lost its authority.
+async fn account_lost(state: &AppState, account: &Option<Account>) {
+    if account.is_none() {
+        return std::future::pending().await;
+    }
+    loop {
+        tokio::time::sleep(ACCOUNT_RECHECK).await;
+        if account_changed(state, account) {
+            return;
+        }
+    }
+}
+
+const ACCOUNT_RECHECK: Duration = Duration::from_secs(1);
+
+fn account_withheld(state: &AppState, asked: &Asked) -> ApiError {
+    state.audit.log(json!({
+        "event": "browser.withheld",
+        "owner": asked.owner,
+        "job": asked.job,
+        "reason": "account_changed",
+    }));
+    ApiError::new(
+        StatusCode::UNAUTHORIZED,
+        "AUTH_REQUIRED",
+        "The account was disabled, deleted, demoted or had its password reset during this browser task; it was stopped and nothing was delivered.",
+    )
+}
+
 pub async fn run(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
@@ -331,9 +410,8 @@ pub async fn run(
         timeout,
         task_file,
         gate: _gate,
+        account,
     } = prepare(&state, user, &req).await?;
-    let result = crate::shim::run_argv_with_env(&argv, &cwd, timeout, child_environment()).await;
-    drop(task_file);
     let asked = Asked {
         session,
         grants,
@@ -341,7 +419,17 @@ pub async fn run(
         owner,
         task_sha256,
         job: None,
+        account,
     };
+    // Dropping the child future on a lost account kills its process tree.
+    let result = tokio::select! {
+        result = crate::shim::run_argv_with_env(&argv, &cwd, timeout, child_environment()) => result,
+        () = account_lost(&state, &asked.account) => {
+            drop(task_file);
+            return Err(account_withheld(&state, &asked));
+        }
+    };
+    drop(task_file);
     deliver(&state, &asked, result).await.map(Json)
 }
 
@@ -376,6 +464,7 @@ pub async fn job_start(
         timeout,
         task_file,
         gate,
+        account,
     } = prepare(&state, user, &req).await?;
     argv.push("--job".into());
     // Literal true only: a job started without it holds every request, as before.
@@ -406,6 +495,7 @@ pub async fn job_start(
         owner,
         task_sha256,
         job: Some(job_id.clone()),
+        account,
     };
     let (id, task_state) = (job_id.clone(), state.clone());
     let work = tokio::spawn(async move {
@@ -421,13 +511,18 @@ pub async fn job_start(
             token.cancelled().await;
             tokio::time::sleep(CANCEL_GRACE).await;
         };
-        tokio::pin!(child, overdue);
+        let lost = account_lost(&state, &asked.account);
+        tokio::pin!(child, overdue, lost);
         let result = loop {
             tokio::select! {
                 result = &mut child => break Some(result),
                 Some(line) = printed.recv() => state.browser_jobs.note_line(&id, &line),
                 // Leaving this scope drops the child future, which kills its process tree.
                 () = &mut overdue => break None,
+                () = &mut lost => {
+                    let err = account_withheld(&state, &asked);
+                    return Outcome::Failed { code: err.code, message: err.message };
+                }
             }
         };
         match result {
