@@ -1,9 +1,10 @@
 # AGENTS.md — CGagentHarness operating manual
 
 Every coding agent follows this file. Exceptions to "never" require explicit
-operator approval. Read [INVARIANTS.md](INVARIANTS.md) before touching a core path:
-`src/shim/`, `src/server/{guards,headers}.rs`, `src/agentic/{writer,workspace}.rs`,
-`src/agentic/executor/sandbox.rs`, `assets/config.default.yaml`.
+operator approval. Read [INVARIANTS.md](INVARIANTS.md) before touching core paths:
+`src/shim/`, `src/server/{guards,headers,routes/mod}.rs`, `src/common/authz.rs`,
+`src/agentic/{writer,workspace}.rs`, `src/agentic/executor/sandbox.rs`,
+`assets/config.default.yaml`.
 
 Reading scope: never open `docs/learning/*` unless the operator asks. Open other
 `docs/*` files only when a root file links the page and the task needs it.
@@ -13,196 +14,148 @@ Reading scope: never open `docs/learning/*` unless the operator asks. Open other
 1. Code. 2. `assets/config.default.yaml` (every tunable; read, never copied
 elsewhere). 3. `INVARIANTS.md`. 4. This file. 5. `README.md`.
 When prose contradicts code, fix the prose in the same PR; `lint-diff.py`
-CG009 checks stated shipped config values.
+CG009 checks stated shipped values.
 
 ## The map
 
-```text
-browser/webview -> server guards -> chat / web / memory
-desktop shell -> verified backend sidecar -> same server
-server -> shim --child CLI--> agentic -> owned clone / sandbox
-server -> MCP runtime -> declared stdio children / SSE servers
-server -> browser child -> Playwright sidecar -> Chrome (granted origins only)
-```
-
-- `cgagentharness serve` -> loopback HTTP/HTTPS console in `src/server`. Public
-  `account` and `web` call that service; `tls` manages local certificates and
-  `mcp-key` manages machine keys by filesystem authority.
-- `cgagentharness agentic <action>` -> `src/agentic` (hidden; spawned by
-  `src/shim` as a child process, never called in-process).
-- `cgagentharness netconnect status|devices|diag` and `/net` -> `src/netconnect`.
-  Only `diag` dials, through the budgeted `Dialer` in `connect.rs`.
-- `agentic`/`netconnect` exit codes: `0` ok, `2` failed, `3` env/config,
-  `4` refused. Through the shim, a non-zero child exit is HTTP
-  200 with `ok=false`; shim failures map to 400/502/504 and the disabled-layer
-  banner to 409. Other subcommands (`serve`, `account`, `web`, `tls`,
-  `mcp-key`) exit `1` on error; hidden `desktop` and `mcp-stdio-worker` exit `3`;
-  hidden `pdf-text-worker` exits `0` text, `2` refused, `3` unusable environment;
-  hidden `browser` and `browser-verify` exit `0` passed, `2` failed, `3` bad
-  arguments or config.
-- Application state: `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`); coding writes
-  stay in pipeline-created clones under `data/agentic/workspaces`.
-- Before changing a feature, read its guide below and owning `INVARIANTS.md`
-  section. [Source index](src/README.md) locates implementations.
+- `cgagentharness serve` is the loopback console (`src/server`); `account`,
+  `web`, `tls` and `mcp-key` are its CLI faces. `agentic <action>`
+  (`src/agentic`) runs only as a child the shim spawns, never in-process.
+  `netconnect diag` alone dials, through the budgeted `Dialer`.
+- Exit codes: `agentic`/`netconnect` `0` ok, `2` failed, `3` env/config, `4`
+  refused (through the shim a non-zero child is HTTP 200 `ok=false`; shim
+  failures 400/502/504, the disabled-layer banner 409). `serve`, `account`,
+  `web`, `tls`, `mcp-key` exit `1`; hidden `desktop`/`mcp-stdio-worker` `3`;
+  `pdf-text-worker` `0` text, `2` refused, `3` environment; `browser` and
+  `browser-verify` `0` passed, `2` failed, `3` bad arguments or config.
+- State lives in `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`); coding writes stay
+  in pipeline clones under `data/agentic/workspaces`. Shipped defaults seed new
+  homes only: an existing `config.yaml` is never rewritten.
+- Read a feature's guide and owning `INVARIANTS.md` section first;
+  [Source index](src/README.md) locates code.
 
 | Changing | Read first / trap |
 |----------|-------------------|
-| Accounts, TLS, ownership, auditor role | [Secure portal](docs/SECURE_RESEARCH.md#accounts-and-roles), [native trust](docs/DESKTOP.md#ownership-ports-and-security-boundaries) |
-| Chat search/fetch, providers, goal web routing | [Search permissions](docs/SECURE_RESEARCH.md#google-search), [router](docs/WEB_DECISION_ROUTER.md): `auto` prefers a saved Tavily key, then SerpAPI. Listings grant admin-turn exact-URL reads (`web.search.result_reads`); a listed arXiv abstract also grants its PDF (`arxiv_pdf`). A model-composed wildcard-rule URL needs Approve in a live admin turn, else is refused (`web.fetch_provenance`). |
-| PDF text | [PDF text](docs/CONSOLE.md#pdf-text): parsed only in the hidden `pdf-text-worker` child; only a textless, over-limit or malformed PDF may escalate to Firecrawl. |
-| Browser tasks (`/browse`) | [Browser use](docs/Browser-Use.md), [I6 process edges](INVARIANTS.md#i6--process-isolation-between-the-console-and-the-agentic-pipeline): origins come only from the request; `navigate` takes only task, grant or page URLs; requests but GET/HEAD are held; the host judges every request URL against the block list (`Policy::blocks_request`), never the sidecar. |
-| Exact fetch fallback | [Firecrawl](docs/SECURE_RESEARCH.md#fetch-discovery-and-research): opt-in, sends URLs off-machine; same-URL results only, never discovery/crawl/research. |
-| Web research/jobs | [Research](docs/SECURE_RESEARCH.md#fetch-discovery-and-research), [job contract](INVARIANTS.md#a-detached-run-cannot-outlive-its-gates): local model, separate discovery/synthesis deadlines; owner-bound jobs survive tabs, not restart. |
-| Provider keys | [Credential storage](docs/INSTALL.md#supported-managed-keys): inherited environment (even empty) wins; saved SerpAPI/Tavily/Firecrawl keys apply next search/read. |
-| Memory, notes corpus | [Memory contract](docs/STRUCTURED_MEMORY.md#two-memory-systems), [source owners](src/server/README.md): pinned notes, uploaded corpus and structured facts are distinct. |
-| Clone reads, edits, Git approval | [Coding pipeline](docs/CODING_PIPELINE.md): retrieval and publication have separate gates. |
-| Coding jobs, schedules, `/loop` | [Retained jobs](docs/INSTALL.md#retained-jobs-and-runs), [loops](docs/CONSOLE.md#71-sessions-and-bounded-chat-continuation) |
-| Outbound MCP / subprocess cleanup | [MCP client](docs/MCP.md#outbound-client-capabilities), [lifetime limits](docs/PROCESS_LIFECYCLE.md): capabilities select confinement; process groups are not strict containment. |
-| Inbound MCP memory gateway | [MCP gateway](docs/MCP.md#private-read-only-memory-gateway): separate machine credentials, owner-bound read-only facts. |
-| Ollama, context, compaction | [Models](docs/MODELS.md), [compaction](docs/CONSOLE.md#local-history-compaction): inspect live allocation; never send `num_ctx`. |
-| Session search/export | [Transcripts](docs/CONSOLE.md#search-and-export-session-transcripts): owner-scoped, local only. |
-| Spend, estimates, webhooks | [Spend/notifications](docs/SPEND_AND_NOTIFICATIONS.md): estimates are not charges; notifications grant no job authority. |
-| Config reload | [Reloadable limits](docs/INSTALL.md#reload-limits-without-a-restart): `src/server/config_reload.rs::RELOADABLE` lists them; authority and `web.concurrency` require restart. |
-| netconnect | [Gates/scope](docs/netconnect.md): tools inventory is not chat dispatch. |
-| Self-manual, live state, `/diag` | [Prompt context](docs/CONSOLE.md#72-default-soul-effective-prompt-and-persona-editing), [diagnostics](docs/TROUBLESHOOTING.md): untrusted local context, no additional authority. |
+| Accounts, TLS, roles | [Secure portal](docs/SECURE_RESEARCH.md#accounts-and-roles), [native trust](docs/DESKTOP.md#ownership-ports-and-security-boundaries) |
+| Chat search/fetch, providers | [Search](docs/SECURE_RESEARCH.md#google-search), [router](docs/WEB_DECISION_ROUTER.md): listings grant admin-turn exact-URL reads (`web.search.result_reads`; arXiv abstract → its PDF). A composed wildcard-rule URL needs Approve in a live admin turn (`web.fetch_provenance`). |
+| PDF text | [PDF text](docs/CONSOLE.md#pdf-text): parsed only in the `pdf-text-worker` child; only textless, over-limit or malformed PDFs may escalate to Firecrawl. |
+| Browser tasks (`/browse`) | [Browser use](docs/Browser-Use.md), [I6 edges](INVARIANTS.md#i6--process-isolation-between-the-console-and-the-agentic-pipeline): origins come only from the request; non-GET/HEAD requests are held; the host judges every URL against the block list. |
+| Firecrawl, research, jobs | [Fetch and research](docs/SECURE_RESEARCH.md#fetch-discovery-and-research), [job contract](INVARIANTS.md#a-detached-run-cannot-outlive-its-gates): Firecrawl is opt-in, same-URL only. |
+| Provider keys | [Credential storage](docs/INSTALL.md#supported-managed-keys): an inherited environment value (even empty) wins. |
+| Memory, notes | [Memory contract](docs/STRUCTURED_MEMORY.md#two-memory-systems): pinned notes, notes corpus and structured facts are distinct. |
+| Coding pipeline, jobs, `/loop` | [Pipeline](docs/CODING_PIPELINE.md), [jobs](docs/INSTALL.md#retained-jobs-and-runs), [loops](docs/CONSOLE.md#71-sessions-and-bounded-chat-continuation): retrieval and publication have separate gates. |
+| MCP, subprocesses | [MCP](docs/MCP.md), [lifetimes](docs/PROCESS_LIFECYCLE.md): process groups are not strict containment; the inbound gateway is read-only and owner-bound. |
+| Models, compaction | [Models](docs/MODELS.md): never send `num_ctx`. |
+| Spend, webhooks | [Spend/notifications](docs/SPEND_AND_NOTIFICATIONS.md): estimates are not charges. |
+| Config reload | [Reloadable limits](docs/INSTALL.md#reload-limits-without-a-restart): `config_reload.rs::RELOADABLE`; authority needs a restart. |
+| netconnect, `/diag`, self-manual | [netconnect](docs/netconnect.md), [diagnostics](docs/TROUBLESHOOTING.md): untrusted context, no added authority. |
 
 ## Traps
 
 - **Never** make `src/{server,shim,llm,common,netconnect}` reference
-  `crate::agentic`, and never make `src/agentic` reference server or shim (I6).
-  `tests/invariant_guard.rs` fails if you do, including aliased `use` forms.
-  Cross the boundary only through `src/shim` and the CLI whitelist.
-- Duplicated on purpose, kept in sync by tests: `RUN_ID_PATTERN` (server
-  `agent_policy` vs agentic `run_store`), the planner/check timeout and
-  setup-budget constants (shim/server vs agentic), the iteration default, the
-  console's `MAX_GOAL_CHARS`. Never deduplicate them.
+  `crate::agentic`, or `src/agentic` reference server or shim (I6);
+  `tests/invariant_guard.rs` catches aliased `use` too. Cross only through
+  `src/shim` and the CLI whitelist.
+- Duplicated on purpose, synced by tests; never deduplicate: `RUN_ID_PATTERN`,
+  the planner/check timeout and setup-budget constants, the iteration default,
+  the console's `MAX_GOAL_CHARS`.
 - Under operator review (2026-11-20): shim actions `test`, `context`,
   `propose-skill`, `apply-skill` lack a server caller; keep them.
 - Config is strict by type. Gates read through `flag_is_true`: only literal
-  YAML `true` is on; quoted `"true"` and a missing key are off. A missing key
-  is not the shipped value: several gates ship `true` (structured memory,
-  Ollama warmup, auth, TLS). `AppConfig::load` rejects malformed shipped
-  numeric values; `FLOAT_KEYS` permits finite numbers, otherwise unsigned integers.
-  Use literal-key `AppConfig` accessors and load operator text through `load`;
-  the invariant guard enforces both.
-- Unspecified malformed-input handling defaults to strict: refuse at parsing,
-  name the field, never its value, preserve missing-means-default, and record
-  the choice in the PR. Lenient handling needs a recorded operator decision.
+  YAML `true` is on; quoted `"true"` and a missing key are off, except the
+  recorded `config::MISSING_MEANS_ON` keys. A missing key is not the shipped
+  value. `AppConfig::load` rejects malformed shipped numbers (`FLOAT_KEYS` may
+  be finite floats). Use literal-key accessors and load operator text through
+  `load`; the guard enforces both.
+- Unspecified malformed input is refused at parsing, naming the field, never
+  its value; missing still means default. Leniency needs an operator decision.
 - Write gates `agentic.enabled`, `deepagent_github.enabled` and
-  `deepagent_github.allow_git_write_tools` ship false. `confirm` is never
-  defaulted on; `reason` is never optional on a write.
-- Repository retrieval is gated by `agentic.deepagent_github.retrieval.enabled`
-  (ships true), not the parent key.
+  `allow_git_write_tools` ship false. `confirm` is never defaulted on;
+  `reason` is never optional. Repository retrieval has its own gate
+  (`agentic.deepagent_github.retrieval.enabled`, ships true).
 - The browser never supplies a command: fixed argv only; free text is one
   `--opt=value` element or a temp file.
 - The console asset stays verbatim: `__CYCLAW_CSRF_TOKEN__`,
-  `__CYCLAW_CSP_NONCE__` and the `X-CyClaw-CSRF` header name are contractual.
-- `GROK_API_KEY` on a developer machine is real: tests never assert on its
-  presence, and CI blanks it with `ANTHROPIC_API_KEY` and `DEEPAGENT_API_KEY`.
-- `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` on an operator machine is real:
-  `cargo test` isolates it so later write gates are what fail. Never flip
-  `EXECUTION_ENABLED` to false (or OR the kill switch) to make tests green.
-- Server audit appends go to one bounded writer thread
-  (`logging.audit_queue_lines`; 0 appends inline). Audit queue overflow drops
-  lines; explicit flushes can wait.
+  `__CYCLAW_CSP_NONCE__` and the `X-CyClaw-CSRF` header are contractual.
+- `GROK_API_KEY` and `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` are real on
+  operator machines: tests never assert on the key, CI blanks it with
+  `ANTHROPIC_API_KEY` and `DEEPAGENT_API_KEY`, and `cargo test` isolates the
+  kill switch. Never flip `EXECUTION_ENABLED` or OR the switch to go green.
+- Audit appends go to one bounded writer thread
+  (`logging.audit_queue_lines`); overflow drops lines.
 - SQLite, file and fsync work stays off async workers, lock included
-  (`routes::structured_memory::off_worker`). Publish a live setting only after
-  its save (`panels::commit_setting`); refuse before changing state.
-- scrypt at n=2^17 is slow unoptimized; `[profile.dev.package."*"] opt-level=3`
-  is load-bearing for test time.
-- Reload policy after any wait and before a send or stored delivery;
-  permission checked earlier is stale.
-- Assert and panic messages never print secret-bearing values (audit lines,
-  results, base URLs); CodeQL flags them.
-- DevSkim alerts after push. A weak-hash name used as a label, not for
-  integrity, ends its line with `DevSkim: ignore DS126858 because …`;
-  `lint-diff.py` CG006 warns first.
-- Console replies check `sessionRevision` before rendering; an older
-  selection's reply is dropped.
-- Reuse `common::dns::lookup_bounded` and `web_search::pinned_client_builder`
-  for pinned egress; callers still authorize destinations. Fixture bypasses
-  require `test-support`, absent from default release builds. reqwest 0.13
-  verifies public TLS through the OS trust store (#992).
+  (`structured_memory::off_worker`). Publish a live setting only after its save
+  (`panels::commit_setting`); refuse before changing state.
+- Reload policy and authority after any wait, before a send or stored delivery.
+- `[profile.dev.package."*"] opt-level=3` is load-bearing: scrypt is slow
+  unoptimized.
+- Assert and panic messages never print secret-bearing values; CodeQL flags
+  them. A weak-hash name used as a label ends its line with
+  `DevSkim: ignore DS126858 because …` (`lint-diff.py` CG006 warns first).
+- Console replies check `sessionRevision` before rendering.
+- Pinned egress reuses `common::dns::lookup_bounded` and
+  `web_search::pinned_client_builder`; callers still authorize destinations.
+  Fixture bypasses need `test-support`. reqwest 0.13 uses the OS trust store.
+- `cgagentharness browser guards` and the other sidecar fixtures run Chrome
+  with its sandbox on, so they refuse root: run them as an unprivileged user.
 
 ## Quality bar
 
-- Once per clone, before committing: `bash scripts/ensure-githooks.sh`.
-- CI merge gate: `cargo fmt --all -- --check`,
-  `cargo clippy --all-targets --all-features -- -D warnings`,
-  `cargo test --all-targets`, `cargo deny check`. Rust 1.89 is pinned for the
-  backend; `desktop/` pins 1.90. `scripts/verify-local.sh` skips deny when
-  cargo-deny is missing, so its green run is not deny evidence.
-- Verifying a change locally: lint (fmt, clippy, `python3 scripts/lint-diff.py`),
-  then run the changed code (route, binary or function). Use focused tests when
-  needed; for docs, run
+- Once per clone: `bash scripts/ensure-githooks.sh`.
+- CI gate: `cargo fmt --all -- --check`, `cargo clippy --all-targets
+  --all-features -- -D warnings`, `cargo test --all-targets`,
+  `cargo deny check`. Rust 1.89 (desktop 1.90). `verify-local.sh` skips a
+  missing cargo-deny: not deny evidence.
+- Locally: lint (fmt, clippy, `python3 scripts/lint-diff.py`), then run the
+  changed code; focused tests when needed. Docs:
   `cargo test --test invariant_guard markdown_stays_on_the_docs_budget`.
-  Leave full suites to CI. Lint workflow edits with `scripts/lint-workflows.sh`.
-- A green PR is not Windows or desktop evidence: the full Windows leg runs
-  on `main`; `desktop/` compiles only on macOS, when `desktop-check.yml`'s
-  path regex matches the diff.
-- Changing a shipped default, refusal order or exit code: `rg` the tests for
-  it and run every matching target.
-- New routes: add to `src/server/routes/mod.rs::REGISTERED_PATHS` (and
-  `views.rs` if the console lists them) or `/api/tools` reports them unwired.
-- New shim actions: extend `shim::ACTIONS` (and `shim::JSON_ACTIONS` if it
-  returns JSON), `agentic/commands.rs::dispatch`, and the invariant guard's
-  whitelist assertion together.
-- `/api/agent/run`, `/api/agent/jobs` and persisted schedules all go through
-  `prepare_run`; never give one a path the others skip.
-- MCP tools never attach to `/loop`; permitted read-only web tools can.
-- Prefer a `#[cfg(test)] mod tests` unit test beside a pure parser or matcher
-  over another integration test.
-- PRs are draft, one concern, on a driver-prefixed branch, **based on `main`**, title
-  `[prefix] - Sentence`, body from `.github/PULL_REQUEST_TEMPLATE.md` with `McLuhan tetrad` and
-  `ELI5` filled (run `scripts/check-pr-template.sh`). Core-path changes need an
-  invariant statement.
-- Refresh `origin/main` and open PR heads/files/checks before publication;
-  trial-merge overlapping changes, including generated manuals and doc caps.
-- The advisory `review gate` reports unresolved threads, running Codex reviews
-  and a body older than an operator `@codex review`; only evaluation errors
-  fail it. Read it before merging; re-run once threads resolve. Never
-  comment `@codex review` without operator approval.
+  Workflows: `scripts/lint-workflows.sh`. Leave full suites to CI.
+- A green PR is not Windows or desktop evidence (`desktop-check.yml` runs only
+  when its path regex matches).
+- Changing a shipped default, refusal order or exit code: `rg` the tests and
+  run every match.
+- New routes go in `routes/mod.rs::REGISTERED_PATHS` and `ROUTE_CAPS` (and
+  `views.rs` if listed). New shim actions extend `shim::ACTIONS` (and
+  `JSON_ACTIONS`), `agentic/commands.rs::dispatch` and the guard's whitelist.
+- `/api/agent/run`, `/api/agent/jobs` and schedules all go through
+  `prepare_run`. MCP tools never attach to `/loop`.
+- Prefer a `#[cfg(test)]` unit test beside a pure parser over another
+  integration test.
+- PRs: draft, one concern, driver-prefixed branch, **based on `main`**, title
+  `[prefix] - Sentence`, body from `.github/PULL_REQUEST_TEMPLATE.md` with
+  `McLuhan tetrad` and `ELI5` (`scripts/check-pr-template.sh`). Core-path
+  changes need an invariant statement.
+- Before publishing, refresh `origin/main` and open PRs; trial-merge
+  overlaps, including the generated manual and doc caps.
+- Read the advisory `review gate` before merging. Never comment
+  `@codex review` without operator approval.
 
 ## Docs policy
 
-Edit the owning section; create no Markdown except folder `README.md` indexes.
-Link instead of duplicating. Evidence belongs in PRs/issues; significant-change
-screenshots in `docs/screenshots/`. `tests/invariant_guard.rs` enforces
-`DOCS_BUDGET`: per-file/group word caps, no new root screenshots or docs PDFs,
-1 MiB/file (8 MiB for screenshot videos). Check `wc -w` before Markdown commits,
-including web edits. New rows or raised caps need operator approval and `// why:`.
+Edit the owning section; create no Markdown except folder `README.md` indexes
+(150 words unless budgeted). Link instead of duplicating; evidence belongs in
+PRs; screenshots in `docs/screenshots/`. `tests/invariant_guard.rs` enforces
+`DOCS_BUDGET` (word caps, 1 MiB per file). `wc -w` before committing Markdown;
+new rows or raised caps need operator approval and `// why:`. Lower a trimmed
+file's cap.
 
-A folder `README.md` without its own budget row has `FOLDER_README_WORDS`
-(150) words: contents, consumers and links to full docs.
-
-Deleting a doc requires removing its budget row and references in docs, skills,
-indexes and packaging scripts; search its basename with `rg` first
-(`lint-diff.py` CG008 checks exempt entries, rows and names).
-
-Sync, then trim. For multi-module PRs or a sync older than weeks, use `doc-sync`
-and `dep-sync`, or perform their work manually:
-recheck described code, pins, locks and `deny.toml` against `origin/main`;
-remove stale/duplicate guidance, dead links and retired dependency watches.
-Lower each trimmed file's `DOCS_BUDGET` cap. Weekly, `cgfixit` reviews
+Deleting a doc removes its budget row and every reference; `rg` its basename
+first (`lint-diff.py` CG008). For multi-module or weeks-old syncs use
+`doc-sync` and `dep-sync`, or recheck code, pins, locks and `deny.toml`
+against `origin/main` by hand. Weekly, `cgfixit` reviews
 `git log --since=1.week --stat -- '*.md'` and
 [dependency watches](docs/DEPENDENCIES.md#retained-constraints).
 
-After editing a `scripts/build-self-manual.py::INPUTS` source (including this
-map), regenerate `assets/self/MANUAL.md`; commit it when the bytes change.
+After editing a `scripts/build-self-manual.py::INPUTS` source, this file
+included, regenerate `assets/self/MANUAL.md` and commit it when it changes.
 
 ## Project skills
 
-Repository guidance is separate from runtime `/api/skills`. Codex and Claude start
-with `cgagentharness-project-guidance`, then the applicable task skill; neither
-expands publication, merge or release authority.
-
-- Codex: [.codex/skills/README.md](.codex/skills/README.md) indexes contract/config
-  guards, write-policy probes, verification, optimization and macOS release work.
-- Claude: [.claude/skills/README.md](.claude/skills/README.md) includes its separate
-  invocation policies and Claude-only procedures. Preserve operator-only skills.
-- Copilot: [.github/skills/README.md](.github/skills/README.md) owns its inventory.
-
-Keep operating rules here, contracts in `INVARIANTS.md`, mechanics in skills.
-Verify each inventory and invocation policy independently. Skill edits require
-frontmatter, path/symbol, command-filter and Markdown-budget checks; static
-checks cannot prove runtime discovery or instruction reload in existing chats.
+Repository guidance is separate from runtime `/api/skills`. Start with
+`cgagentharness-project-guidance`, then the task skill; none expands
+publication, merge or release authority. Indexes:
+[.codex/skills](.codex/skills/README.md),
+[.claude/skills](.claude/skills/README.md) (keep operator-only skills
+operator-only), [.github/skills](.github/skills/README.md). Skill edits need
+frontmatter, path/symbol, command-filter and budget checks; static checks
+cannot prove runtime discovery.

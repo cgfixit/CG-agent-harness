@@ -729,3 +729,45 @@ async fn unlisted_routes_deny_authenticated_callers_by_default() {
     let (status, _) = open.open_get("/api/definitely-not-a-route").await;
     assert_eq!(status, 404);
 }
+
+/// #1002: with `browser.takeover.enabled: false` an approval is refused by
+/// name before any job lookup, so a held request can only end its task.
+#[tokio::test]
+async fn approving_a_held_browser_request_is_refused_while_takeover_is_off() {
+    use axum::extract::{Path, State};
+    use cgagentharness::server::routes::browser::{job_approve, BrowserApproveRequest};
+    use cgagentharness::server::schemas::ValidJson;
+    let model = start_mock_model().await;
+    for (takeover, expected) in [
+        ("false", "BROWSER_TAKEOVER_DISABLED"),
+        ("true", "BROWSER_JOB_NOT_FOUND"),
+    ] {
+        let s = spawn_server(
+            &model.base_url(),
+            ServerOptions::default()
+                .with("auth.enabled", "true")
+                .with("browser.enabled", "true")
+                .with("browser.takeover.enabled", takeover),
+        )
+        .await;
+        let mgr = s.state.auth.clone().unwrap();
+        mgr.create_user("boss", &cgagentharness::common::random_hex(24), "admin")
+            .unwrap();
+        let boss = mgr.get_user("boss").unwrap();
+        let refused = job_approve(
+            State(s.state.clone()),
+            Some(axum::Extension(boss)),
+            Path("0123456789abcdef0123456789abcdef".to_string()),
+            ValidJson(BrowserApproveRequest {
+                request: 1,
+                sha256: "ab".repeat(32),
+                confirm: true,
+                reason: "the order I asked for".into(),
+            }),
+        )
+        .await
+        .unwrap_err();
+        // With takeover on, the same call reaches the job lookup instead.
+        assert_eq!(refused.code, expected, "takeover {takeover}");
+    }
+}

@@ -32,19 +32,19 @@ Core paths that always trigger this skill:
 
    ```text
    GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-     cargo test --test invariant_guard -- --nocapture
+     cargo test --locked --test invariant_guard -- --nocapture
 
    GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-     cargo test --test shim_and_agent_routes -- --nocapture
+     cargo test --locked --test shim_and_agent_routes -- --nocapture
 
    GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-     cargo test --test real_repo_loop -- --nocapture
+     cargo test --locked --test real_repo_loop -- --nocapture
 
    GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-     cargo test --test agentic_foundations -- --nocapture
+     cargo test --locked --test agentic_foundations -- --nocapture
 
    GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-     cargo test --test auth_guards --test security_headers -- --nocapture
+     cargo test --locked --test auth_guards --test security_headers -- --nocapture
    ```
 
    Map areas to evidence (non-exhaustive):
