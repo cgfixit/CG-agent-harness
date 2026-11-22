@@ -126,14 +126,14 @@ CG009 checks stated shipped values.
 
 ## Rule enforcers
 
-Enforce corrections at the highest level; add rows.
+Enforce corrections highest-level; add rows.
 
 | Rule | Enforcer |
 |------|-------------|
 | Duplicated constants (never deduplicate), `/loop` limits | `duplicated_constants_still_agree` |
 | Async fns: no SQLite, file or hash work (`off_worker`) | `async_fns_leave_blocking_…` |
 | Assert messages print no secret-bearing value | `lint-diff.py` CG011 |
-| Reload policy and authority after waits | prose only |
+| Recheck policy, authority after waits | `owner_permits` (copies fail); calling: prose |
 
 ## Docs policy
 
