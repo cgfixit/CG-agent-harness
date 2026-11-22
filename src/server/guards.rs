@@ -170,6 +170,11 @@ pub fn enforce_direct_loopback(req: &Request<Body>) -> Result<(), ApiError> {
 
 /// One account boundary covers every API route, including reads. Static login
 /// assets and the minimal status endpoint carry no operational authority.
+/// The `/api/` paths the gate serves without an account. `routes::ROUTE_CAPS`
+/// marks the same paths `Capability::Public`; a routes test keeps the two
+/// equal, so a path added here cannot skip a capability the table assigns.
+pub(crate) const PUBLIC_API_PATHS: [&str; 3] = ["/api/status", "/api/auth/setup-status", "/api/auth/login"];
+
 pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<Body>, next: Next) -> Response {
     use axum::response::IntoResponse;
     if !req.uri().path().starts_with("/api/") {
@@ -183,10 +188,7 @@ pub async fn account_gate(State(state): State<Arc<AppState>>, mut req: Request<B
     {
         return e.into_response();
     }
-    let public = matches!(
-        path.as_str(),
-        "/api/status" | "/api/auth/setup-status" | "/api/auth/login"
-    );
+    let public = PUBLIC_API_PATHS.contains(&path.as_str());
     let mut actor_name = "local".to_string();
     if state.auth.is_some() {
         let account = super::routes::auth::actor(&state, &req);
