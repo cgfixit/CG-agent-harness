@@ -133,6 +133,16 @@ fn start_blocking(
             "a loop run is already active for this session",
         ));
     }
+    // Every turn of a run uses the selected model, and a cloud selection
+    // refuses loop turns: such a run could only fail, so the start refuses
+    // with the turn's own code before the goal is saved. `chat_inner` still
+    // checks each turn, for a selection made after the start.
+    if state.cloud_chat.is_cloud_selection(&state.current_model()) {
+        return Err(ApiError::bad_request(
+            "CLOUD_CHAT_LOOP",
+            "cloud chat is unavailable for /loop turns",
+        ));
+    }
     // A goal or web mode on a valid request persists on the session first,
     // exactly like the console's `/loop <goal>` does before it starts turning.
     let session = if req.goal.is_some() || web_mode.is_some() {
