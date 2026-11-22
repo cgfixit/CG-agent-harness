@@ -49,7 +49,7 @@ change was rejected; refresh before retrying.
 | Role | Allowed | Refused |
 |---|---|---|
 | Administrator (`admin`) | Normal harness work; users, roles, disable/reset; global credentials; web enablement and URL policy | Every operation lacking existing repository/write/approval/publication authorization |
-| Portal operator (`operator`) | Chat; permitted fetch/search/research; own sessions/jobs/schedules/notes/style; persona edit proposals; coding workflows; read-only MCP servers; password/logout | Users/roles, keys, web/provider security, model pulls/selection, shared persona/memory, audit/log reads, privileged MCP servers |
+| Portal operator (`operator`) | Chat; permitted fetch/search/research; own sessions/jobs/schedules/notes/style; persona read/proposals; coding workflows; read-only MCP servers; password/logout | Users/roles, keys, web/provider security, model pulls/selection, persona edits/backups, shared memory, audit/log reads, privileged MCP servers |
 | Auditor (`auditor`) | Local chat in own sessions, prompt preview, `/api/audit`, `/diag` reads, opt-in log chat tools | Memory, attachments, web tools, cloud, loops, model choice, shared data, keys, administration |
 
 Schema 3 folds retired roles into `auditor`: `portal_auditor`

@@ -411,7 +411,9 @@ pub(crate) fn start_job(
         // The receipt stages an episode in the memory store: off the async worker.
         // `finish` released this task's handle, so no cancel can abort it here.
         let (receipt_state, receipt_job, receipt_owner) = (task_state.clone(), task_job.clone(), task_owner.clone());
-        super::structured_memory::off_worker(move || {
+        // The same closure reads the job back: the job lock is held across the
+        // job file's fsync by its writers, so no read of it runs on an async worker.
+        let finished = super::structured_memory::off_worker(move || {
             receipt_state.jobs.annotate_completion(&receipt_job, |result| {
                 result["memory_suggestion"] = crate::server::structured_memory_suggest::coding_completed(
                     &receipt_state,
@@ -420,9 +422,10 @@ pub(crate) fn start_job(
                     result,
                 );
             });
+            receipt_state.jobs.get(&receipt_owner, &receipt_job)
         })
         .await;
-        if let Some(job) = task_state.jobs.get(&task_owner, &task_job) {
+        if let Some(job) = finished {
             if let Some(sid) = task_schedule {
                 let event = if job["status"] == crate::server::agent_jobs::FINISHED {
                     "agent_schedule_completed"
@@ -500,10 +503,12 @@ pub async fn schedule_preview(
         .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
     let request = serde_json::to_value(&body.request)
         .map_err(|_| ApiError::bad_request("INVALID_SCHEDULE_REQUEST", "request could not be previewed"))?;
-    let result = state
-        .schedules
-        .preview(spec, request, &owner, crate::common::now_ts())
-        .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
+    // Activation holds the preview lock across the schedule file's fsync.
+    let result = super::structured_memory::off_worker(move || {
+        state.schedules.preview(spec, request, &owner, crate::common::now_ts())
+    })
+    .await
+    .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
     Ok(Json(result))
 }
 
@@ -536,8 +541,11 @@ pub async fn schedule_create(
 
 pub async fn schedules_list(State(state): State<Arc<AppState>>, user: Caller) -> Json<Value> {
     let owner = super::auth::context_owner(user);
+    // Writers hold the schedule lock across the schedule file's fsync, so a
+    // read waits for it on the blocking pool, as every read below does.
+    let schedules = super::structured_memory::off_worker(move || state.schedules.list(&owner)).await;
     Json(json!({
-        "schedules": state.schedules.list(&owner).into_iter().map(|s| s.to_json()).collect::<Vec<_>>(),
+        "schedules": schedules.into_iter().map(|s| s.to_json()).collect::<Vec<_>>(),
     }))
 }
 
@@ -558,9 +566,8 @@ pub async fn schedule_get(
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
     let id = validated_schedule_id(&schedule_id)?;
-    state
-        .schedules
-        .get(&owner, &id)
+    super::structured_memory::off_worker(move || state.schedules.get(&owner, &id))
+        .await
         .map(|s| Json(s.to_json()))
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "SCHEDULE_NOT_FOUND", "no such schedule"))
 }
@@ -659,16 +666,15 @@ pub async fn agent_job_get(
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user);
     let id = validated_job_id(&job_id)?;
-    state
-        .jobs
-        .get(&owner, &id)
+    super::structured_memory::off_worker(move || state.jobs.get(&owner, &id))
+        .await
         .map(Json)
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "JOB_NOT_FOUND", "no such job"))
 }
 
 pub async fn agent_jobs_list(State(state): State<Arc<AppState>>, user: Caller) -> Json<Value> {
     let owner = super::auth::context_owner(user);
-    let jobs = state.jobs.list(&owner);
+    let jobs = super::structured_memory::off_worker(move || state.jobs.list(&owner)).await;
     let running = jobs
         .iter()
         .filter(|j| j["status"] == crate::server::agent_jobs::RUNNING)
