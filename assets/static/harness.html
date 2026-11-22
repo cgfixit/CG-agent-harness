@@ -3414,7 +3414,7 @@ async function runSlash(line, webCommand) {
       case 'soul': {
         const sub = rest[0];
         if (sub === 'edit' || sub === 'propose') { await openSoulEditor(sub === 'propose'); break; }
-        if (sub === 'history') { const r = await api('/api/soul/document'); sys(table(r.versions.map(v => [v]), ['backup revision'])); break; }
+        if (sub === 'history') { const r = await api('/api/soul/document'); sys(r.versions ? table(r.versions.map(v => [v]), ['backup revision']) : 'Persona backups are listed for administrators only.'); break; }
         if (sub === 'review') {
           if (!rest[1]) { sys('usage: /soul review <id> — use the proposal id printed after Propose in the persona editor (/soul propose)'); break; }
           const r = await api('/api/soul/proposals/' + encodeURIComponent(rest[1]));
