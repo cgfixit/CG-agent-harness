@@ -691,25 +691,24 @@ restart-only `web.goal_web_default` (ships `all`; withhold unattended search wit
 goal; a turn needing compaction continues automatically.
 
 `POST /api/loop/start` runs those turns in a server task that outlives the
-browser; the session stores each as a short label (`Loop turn N of M.`), not the
-goal reminder sent with it. Each turn goes through `chat_inner` (`loop_turn: true`) after re-reading
+browser; the session stores each as `Loop turn N of M.` (N counts completed
+turns), not the goal reminder. Each turn goes through `chat_inner` (`loop_turn: true`) after re-reading
 the starting account: deleted, disabled, password-pending, or no longer
-operator/admin ends the run `failed`. `auditor` cannot start one. Start,
+operator/admin ends the run `failed`; a role or password change mid-turn withholds its reply. `auditor` cannot start one. Start,
 stop, status and events are bound to the starting owner; a foreign run reads as
 `LOOP_RUN_NOT_FOUND`. A session holds one live run (`LOOP_IN_FLIGHT`). A run ends
 on stop, a changed or cleared session goal (`LOOP_GOAL_CHANGED`), `loop.max_turns`,
 `loop.max_total_completion_tokens`, `loop.max_failures`
 consecutive failed turns or failed web rounds, unverified `GOAL_DONE`, a
 near-repeat reply, or a web refusal every later turn would repeat. A turn waits
-(stoppable, at most two hours) while another generation holds the model
-instead of counting a failure. Both budgets
+(stoppable, at most two hours) for a busy model without counting a failure. Both budgets
 ship finite, 200 turns and 200,000 completion tokens (#675); `0` is an explicit
 opt-in to unlimited, and a home whose file lacks the key keeps the code fallback
 `0`. With both budgets zero, startup and transitions into unbounded on reload
 warn and audit `loop_budgets_unlimited`; unchanged or finite reloads do not.
 `/api/status.loop.unbounded` is authoritative (audit is best effort); console
-`/status` and `/loop` preflight warn without blocking or rewriting configuration.
-`loop_run_started.unbounded` describes effective per-run caps, including overrides.
+`/status` and `/loop` preflight only warn.
+`loop_run_started.unbounded` describes the effective per-run caps.
 Runs live in process memory: a restart ends them without resuming, and
 `loops/<run_id>.json` is a record, not a resume point. Audits hold start and
 finish metadata, never replies.
