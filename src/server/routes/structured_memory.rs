@@ -967,9 +967,32 @@ pub async fn start_consolidation(
             "cancel": "/api/structured-memory/consolidation/{id}/cancel",
         })));
     };
-    let run = crate::server::structured_memory_consolidate::run_manual(&state, &owner, &req.episode_ids)
-        .await
-        .map_err(|e| {
+    // why: the run lives in its own task, holding the model gate, because the
+    // console abandons a request after 15 s and a local summary can take
+    // longer. Dropping this handler then stops waiting, not the run: it still
+    // finishes or records its failure, and its audit line is still written.
+    let task = tokio::spawn(async move {
+        let _gate = _gate;
+        let run = crate::server::structured_memory_consolidate::run_manual(&state, &owner, &req.episode_ids).await?;
+        audit(
+            &state,
+            "structured_memory_consolidation",
+            &owner,
+            json!({
+                "id": run.id,
+                "state": run.state,
+                "episode_count": run.episode_ids.len(),
+                "proposal_count": run.proposal_count,
+                "candidate_count": run.candidate_count,
+                "rejected_count": run.rejected_count,
+                "error_class": run.error_class,
+                "summarizer_version": run.summarizer_version,
+            }),
+        );
+        Ok::<_, crate::common::errors::HarnessError>(run)
+    });
+    let run = match task.await {
+        Ok(outcome) => outcome.map_err(|e| {
             let mut api = store_err(&e);
             if e.code == "STRUCTURED_MEMORY_BUSY" {
                 api = ApiError::from_err(StatusCode::CONFLICT, &e);
@@ -978,22 +1001,12 @@ pub async fn start_consolidation(
                 api = ApiError::from_err(StatusCode::BAD_GATEWAY, &e);
             }
             api
-        })?;
-    audit(
-        &state,
-        "structured_memory_consolidation",
-        &owner,
-        json!({
-            "id": run.id,
-            "state": run.state,
-            "episode_count": run.episode_ids.len(),
-            "proposal_count": run.proposal_count,
-            "candidate_count": run.candidate_count,
-            "rejected_count": run.rejected_count,
-            "error_class": run.error_class,
-            "summarizer_version": run.summarizer_version,
-        }),
-    );
+        })?,
+        Err(failed) => match failed.try_into_panic() {
+            Ok(panic) => std::panic::resume_unwind(panic),
+            Err(cancelled) => panic!("consolidation run did not finish: {cancelled}"),
+        },
+    };
     Ok(Json(run.to_json()))
 }
 

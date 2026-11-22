@@ -256,14 +256,14 @@ selected facts are dropped as `cloud_chat`.
 ## Consolidation
 
 - **Selected episodes only.** The operator supplies episode public IDs.
-  Manual runs accept summary-less episodes, a worse path because metadata
-  cannot support durable facts; the v2 prompt asks for no candidates from
-  metadata alone. Auto-batching requires a nonblank semantic summary and an
+  Manual runs accept summary-less episodes; the v2 prompt asks for no
+  candidates from metadata alone. Auto-batching requires a nonblank semantic summary and an
   unexpired `none`/`pending` row; running owners and episodes from
   failed/cancelled current-version runs are skipped until a manual retry,
-  including after restart. Completion-suggestion runs never change an
-  episode's consolidation state, so neither their success nor their failure
-  blocks or repeats human-summary consolidation.
+  including after restart, except an `owner_retired` run (account disabled
+  or demoted mid-call), retried once the account returns. Completion-suggestion
+  runs never change an episode's consolidation state, so their outcome neither
+  blocks nor repeats human-summary consolidation.
 - **Suggestion quality.** `consolidator-v2` asks for durable preferences,
   identity, corrections or standing constraints supported by semantic summaries.
   Temporary plans, jokes, tool/status dumps, errands and unsupported guesses
@@ -273,7 +273,8 @@ selected facts are dropped as `cloud_chat`.
   (`FLOAT_KEYS`). A supplied confidence below the floor is rejected; a missing
   one is accepted. Confidence never bypasses human review.
 - **Local model only.** The generation gate is claimed, with no tools or web.
-  Chat and consolidation contend for it and report busy.
+  Chat and consolidation contend for it and report busy. A manual run finishes,
+  or records its failure, even if its request is abandoned.
 - **No recalled-memory feedback.** Current facts are loaded only after
   extraction, to bind update/deactivate revision+digest or convert an exact
   content match from add → update.
