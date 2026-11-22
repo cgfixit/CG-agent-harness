@@ -834,11 +834,15 @@ async fn loop_start_validates_goal_config_and_run_ids() {
     assert_eq!(status, 400);
     assert_eq!(code(&body), "LOOP_REQUIRES_GOAL");
 
-    // A goal on the request persists on the session, then the run starts.
+    // A goal on the request persists on the session, then the run starts. The
+    // long cooldown keeps it live for the refusals below: with no cooldown the
+    // mock's repeated reply could end it as a stall after two quick turns,
+    // before the next start reached it (seen on CI as 200 for an expected 409).
+    // The stop at the end ends the cooldown at once.
     let (status, body) = s
         .post_json(
             "/api/loop/start",
-            json!({"session_id": sid, "goal": "ship it", "cooldown_ms": 0}),
+            json!({"session_id": sid, "goal": "ship it", "cooldown_ms": 300_000}),
         )
         .await;
     assert_eq!(status, 200, "{body}");
