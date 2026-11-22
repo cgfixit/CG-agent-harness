@@ -100,11 +100,25 @@ pub fn model_name_ok(name: &str) -> bool {
 /// pulled outside the harness; neither contacts a registry.
 pub fn pull_name_ok(name: &str) -> bool {
     model_name_ok(name)
+        && !cloud_tag(name)
         && name
             .trim()
             .split(':')
             .next()
             .is_some_and(|body| body.split('/').count() <= 2)
+}
+
+/// Whether `name` is an Ollama cloud model (`gpt-oss:120b-cloud`,
+/// `glm-4.6:cloud`). A signed-in Ollama forwards those requests to ollama.com,
+/// so the harness would send a local turn's whole prompt (memory, notes,
+/// attachments, history) off the machine unredacted and without the cloud
+/// consent and spend checks. Local selection, pulls and memory work refuse
+/// them; cloud chat goes through `cloud_chat` instead.
+pub fn cloud_tag(name: &str) -> bool {
+    name.trim().split_once(':').is_some_and(|(_, tag)| {
+        let tag = tag.to_ascii_lowercase();
+        tag == "cloud" || tag.ends_with("-cloud")
+    })
 }
 
 fn tag_token(s: &str) -> bool {
@@ -461,6 +475,14 @@ mod tests {
     #[test]
     fn pull_names_never_select_a_registry_host() {
         assert!(pull_name_ok("tinyllama"));
+        // Ollama cloud tags leave the machine; plain names that mention cloud do not.
+        for cloud in ["gpt-oss:120b-cloud", "glm-4.6:cloud", "qwen3-coder:480B-Cloud"] {
+            assert!(cloud_tag(cloud), "{cloud}");
+            assert!(!pull_name_ok(cloud), "{cloud}");
+        }
+        for local in ["tinyllama", "cloudy:7b", "qwen3.8:27b-mlx-cg", "cloud-model:latest"] {
+            assert!(!cloud_tag(local), "{local}");
+        }
         assert!(pull_name_ok("library/tinyllama:latest"));
         assert!(pull_name_ok("qwen3.8:27b-mlx-cg"));
         assert!(model_name_ok("hf.co/user/repo:Q4_K_M"));

@@ -511,3 +511,34 @@ async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secr
     no_secret(&json!(ledger));
     fixture_task.abort();
 }
+
+/// An Ollama cloud tag (`:cloud`, `-cloud`) would make the local Ollama
+/// forward the whole local prompt to ollama.com, unredacted and without cloud
+/// consent. It is refused as a local selection, as a chat turn's model and as
+/// a pull; the model is never called, and a plain local name still works.
+#[tokio::test]
+async fn an_ollama_cloud_tag_is_refused_as_a_local_model() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    for tag in ["gpt-oss:120b-cloud", "glm-4.6:cloud"] {
+        let (status, body) = s.post_json("/api/model", json!({"model": tag})).await;
+        assert_eq!(status, 422, "selecting {tag}");
+        assert_eq!(body["detail"]["code"], "MODEL_SELECTION_REJECTED", "selecting {tag}");
+        let (status, body) = s
+            .post_json("/api/chat", json!({"message": "private notes canary", "model": tag}))
+            .await;
+        assert_eq!(status, 422, "a chat turn naming {tag}");
+        assert_eq!(
+            body["detail"]["code"], "MODEL_SELECTION_REJECTED",
+            "a chat turn naming {tag}"
+        );
+        let (status, _) = s.post_json("/api/ollama/pull", json!({"model": tag})).await;
+        assert_ne!(status, 200, "pulling {tag}");
+    }
+    assert!(
+        model.requests.lock().unwrap().is_empty(),
+        "no refused turn reached the model"
+    );
+    let (status, _) = s.post_json("/api/chat", json!({"message": "hello"})).await;
+    assert_eq!(status, 200, "a local turn still runs");
+}
