@@ -377,8 +377,8 @@ PR execution reload `config.yaml` and require `agentic.enabled`, write mode,
 nonblank human reason (white space and format controls alone are blank), and
 explicit confirmation. The emergency disable switch is AND-ed
 with `EXECUTION_ENABLED`; it cannot arm writes. Missing/invalid config refuses.
-A changed repository, workspace root, protected scope, scanner setting, or budget
-requires a new invocation; no stale snapshot continues.
+A changed repository, workspace root, protected scope, scanner setting or budget,
+or a disabled cloud provider, requires a new invocation; no stale snapshot continues.
 
 Run confirmation authorizes isolated candidate edits only. Approval verifies the
 manifest and commits locally with fresh reason/confirmation. Push and draft PR
