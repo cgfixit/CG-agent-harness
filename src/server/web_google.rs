@@ -45,7 +45,7 @@ pub(crate) const SEARCH_NOTICE: &str =
 fn blocked() -> crate::common::errors::HarnessError {
     error(
         "WEB_GOOGLE_BLOCKED",
-        "Public Google refused or redirected the request; configure a SerpAPI key in API Keys",
+        "Public Google refused or redirected the request; save a Tavily or SerpAPI key in API Keys",
     )
 }
 
@@ -344,13 +344,13 @@ fn public_results(
         {
             return Err(error(
                 "WEB_GOOGLE_CHALLENGE",
-                "Google requires browser interaction; configure a SerpAPI key in API Keys",
+                "Google requires browser interaction; save a Tavily or SerpAPI key in API Keys",
             ));
         }
         if !lower.contains("did not match any documents") {
             return Err(error(
                 "WEB_GOOGLE_UNREADABLE",
-                "Google returned no recognizable listing; configure a SerpAPI key in API Keys",
+                "Google returned no recognizable listing; save a Tavily or SerpAPI key in API Keys",
             ));
         }
     }

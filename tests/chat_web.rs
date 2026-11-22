@@ -6,7 +6,12 @@ mod common;
 /// `web.fetch_provenance: false` keeps them on what they test; the
 /// confirmation itself is covered in `tests/chat_stream.rs`.
 fn legacy_options() -> common::ServerOptions {
-    common::ServerOptions::default().with("web.fetch_provenance", "false")
+    // Pre-#901 composed fetches, and no carried-forward reads (shipped 0 until
+    // 2026-11-22): these tests pin prompt sizes and budgets without that block.
+    // The carry-forward test sets its own value after these.
+    common::ServerOptions::default()
+        .with("web.fetch_provenance", "false")
+        .with("web.carry_forward_sources", "0")
 }
 use axum::{
     routing::{get, post},
@@ -533,7 +538,7 @@ async fn check_fetch_evidence(loop_turn: bool) {
 
 /// With `web.carry_forward_sources` above 0, the next web turn's system prompt
 /// lists the URL an earlier turn read (no page text) in a fenced untrusted
-/// block; at the shipped 0 it lists nothing until a reload raises it.
+/// block; at 0 it lists nothing until a reload raises it.
 #[tokio::test]
 async fn a_later_web_turn_lists_earlier_reads_only_when_carry_forward_is_on() {
     for rows in ["0", "5"] {
@@ -605,7 +610,7 @@ async fn a_later_web_turn_lists_earlier_reads_only_when_carry_forward_is_on() {
         );
         let second = &systems[2];
         if rows == "0" {
-            assert!(!second.contains("WEB_READS_DATA"), "off at the shipped 0");
+            assert!(!second.contains("WEB_READS_DATA"), "off at 0");
             // Reloadable: raising the key in config.yaml and reloading turns it
             // on for the next turn, with no restart.
             let path = &s.state.cfg.path;

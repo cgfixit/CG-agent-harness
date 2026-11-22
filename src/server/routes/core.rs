@@ -235,10 +235,12 @@ pub async fn spend_predict(
         .chat_owner
         .start(&owner)
         .map_err(|e| ApiError::from_err(StatusCode::CONFLICT, &e))?;
+    // Counted as it would be sent: the same redaction as the cloud turn.
+    let outbound = state.audit.redactors().redact(&req.message).into_owned();
     let prediction = tokio::select! {
         biased;
         _ = lease.token.cancelled() => return Err(ApiError::new(StatusCode::BAD_GATEWAY,"WEB_CANCELLED","prediction cancelled")),
-        result = state.cloud_chat.predict(&model, &req.message) => result.map_err(|e| ApiError::from_err(llm_status(&e), &e))?,
+        result = state.cloud_chat.predict(&model, &outbound) => result.map_err(|e| ApiError::from_err(llm_status(&e), &e))?,
     };
     state.audit.log(
         json!({"event":"cloud_chat_prediction", "owner":super::auth::context_owner(user),
@@ -1719,10 +1721,19 @@ pub(crate) async fn chat_inner(
     };
     let (mut reply, web_tools) = if cloud_selected {
         require_cloud_consent(&state, &owner, &model)?;
+        // The message leaves this machine: secrets, emails, IPs and financial
+        // numbers are redacted first (`policy.privacy`). The session keeps the
+        // text as typed; the audit line says only that something was redacted.
+        let outbound = state.audit.redactors().redact(&req.message).into_owned();
+        if outbound != req.message {
+            state
+                .audit
+                .log(json!({"event":"cloud_chat_redacted", "owner":owner, "model":model}));
+        }
         (
             state
                 .cloud_chat
-                .chat_with_source(&model, &req.message, spend_source)
+                .chat_with_source(&model, &outbound, spend_source)
                 .await
                 .map_err(|e| {
                     if e.code == "CLOUD_CHAT_BUDGET" {

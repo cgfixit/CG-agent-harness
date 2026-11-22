@@ -558,6 +558,39 @@ async fn notes_corpus_injects_local_chat_and_loop() {
     assert!(system.contains("source=notes_corpus"));
 }
 
+/// `notes_corpus.enabled: false` refuses uploads and keeps stored notes out
+/// of the prompt, while listing still shows them so they can be deleted.
+#[tokio::test]
+async fn a_disabled_notes_corpus_refuses_uploads_and_withholds_stored_notes() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default().with("notes_corpus.enabled", "false"),
+    )
+    .await;
+    let (status, body) = post_notes(&s, &[("new.md", b"NEW_NOTE body")]).await;
+    assert_eq!((status, code(&body).as_str()), (409, "NOTES_DISABLED"), "{body}");
+    // A note stored while the corpus was on.
+    s.state
+        .notes_corpus
+        .store(
+            "local",
+            &[cgagentharness::server::attachments::IncomingFile {
+                filename: "old.md".into(),
+                data: b"DISABLED_NOTES_NEEDLE runbook".to_vec(),
+            }],
+        )
+        .unwrap();
+    let (status, chat) = s
+        .post_json("/api/chat", json!({"message": "DISABLED_NOTES_NEEDLE"}))
+        .await;
+    assert_eq!(status, 200, "{chat}");
+    let system = common::turn_message(&model.last_request().unwrap());
+    assert!(!system.contains("DISABLED_NOTES_NEEDLE runbook"), "{system}");
+    let (status, listed) = s.get_json("/api/notes-corpus").await;
+    assert_eq!((status, listed["count"].as_u64()), (200, Some(1)), "{listed}");
+}
+
 #[tokio::test]
 async fn notes_corpus_lists_and_deletes_by_id() {
     let model = start_mock_model().await;

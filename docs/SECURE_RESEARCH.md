@@ -306,8 +306,8 @@ or restart.
 `POST /api/chat` returns `web_tools`, reply and usage; the console shows each
 outcome separately. Each entry records its call's `query` and `refresh`, or
 `count`; a digest entry lists one `drop_reasons` code per dropped claim. Session `web_sources` is a bounded metadata ledger,
-never a second page store. `web.carry_forward_sources` ships off; when
-enabled it supplies permitted earlier URLs/queries, not page text.
+never a second page store. `web.carry_forward_sources` ships 5: permitted earlier URLs/queries (no
+page text), cited when used.
 Design: [router](WEB_DECISION_ROUTER.md); summary:
 [README](../README.md#how-the-research-loop-decides).
 
@@ -346,8 +346,8 @@ Fresh homes seed the Google grant; a home that removed it re-grants it:
 /web search veeam software cve
 ```
 
-`web.search.fallback_to_public_google` (ships true) and the opt-in
-`fallback_to_serpapi` (after Tavily) try the next hop only when a provider is
+`web.search.fallback_to_public_google` and
+`fallback_to_serpapi` (after Tavily; both ship true) try the next hop only when a provider is
 unusable or its quota is spent; a rejected key, a refused query and a clean
 zero-result answer never fall through. The answer carries `fallback_from`, each
 hop logs `web_search_fallback`, and more than `fallback_alert_per_hour` (ships

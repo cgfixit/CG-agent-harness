@@ -1278,9 +1278,6 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "diagnostics.model_tool",
         // #996: native computer use ships off before any of its code exists.
         "computer.enabled",
-        // #647 Phase 2: spending another search provider is opt-in; the free public
-        // Google hop ships on (asserted below).
-        "web.search.fallback_to_serpapi",
         // #782 S2: the network-only Linux backend is an explicit operator opt-in.
         "agentic.sandbox.allow_linux_netns_fallback",
     ] {
@@ -1300,6 +1297,12 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
     assert!(
         cfg.flag_is_true("web.search.fallback_to_public_google"),
         "web.search.fallback_to_public_google must ship true"
+    );
+    // why: operator decision (2026-11-22, superseding #647 Phase 2's opt-in): a failed
+    // Tavily search tries SerpAPI, which spends SerpAPI quota only when a key is active.
+    assert!(
+        cfg.flag_is_true("web.search.fallback_to_serpapi"),
+        "web.search.fallback_to_serpapi must ship true"
     );
     // why: operator decision (2026-11-12): an administrator's turn may read the exact URLs
     // its own search listed, for that turn or loop run. It was added off the day before. The
