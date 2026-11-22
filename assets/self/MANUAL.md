@@ -262,7 +262,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET, POST `/api/sessions/{session_id}/structured-facts`: Structured-memory facts explicitly included in the session
 - POST `/api/sessions/{session_id}/prompt-history`: Owner-scoped composer line (`{text}`) for ArrowUp recall; last 50, `/api` values dropped
 - DELETE `/api/sessions/{session_id}/attachment-pins`: Owner-scoped unpin; keeps blobs; refused during generation
-- GET, POST `/api/soul`, `/api/soul/document`: Persona state and on/off toggle; read or edit the persona document
+- GET, POST `/api/soul`, `/api/soul/document`: Persona state, toggle; read (operators: current only) or edit the document
 - POST `/api/soul/proposals`: Propose a persona change
 - GET, POST `/api/soul/proposals/{id}`: Review or decide a proposal
 - GET, POST `/api/style`: Output-style catalog and session select (`/style <name>`, `/style off`)

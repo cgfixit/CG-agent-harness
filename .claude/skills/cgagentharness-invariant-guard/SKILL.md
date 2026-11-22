@@ -1,6 +1,6 @@
 ---
 name: cgagentharness-invariant-guard
-description: Assert CG-agent-harness security invariants still hold against the current tree or a diff. Use before merging changes to src/shim, guards/headers, writer, sandbox, workspace, or assets/config.default.yaml; when asked to check invariants; or as the first gate of a harness security review.
+description: Assert CG-agent-harness security invariants still hold against the current tree or a diff. Use before merging changes to src/shim, guards/headers, routes/mod.rs, authz.rs, writer, sandbox, workspace, or assets/config.default.yaml; when asked to check invariants; or as the first gate of a harness security review.
 disable-model-invocation: true
 ---
 
@@ -14,6 +14,7 @@ Core paths that always trigger this skill:
 
 - `src/shim`
 - `src/server/guards.rs`, `src/server/headers.rs`
+- `src/server/routes/mod.rs`, `src/common/authz.rs`
 - `src/agentic/writer.rs`
 - `src/agentic/executor/sandbox.rs`
 - `src/agentic/workspace.rs`
@@ -60,10 +61,11 @@ Core paths that always trigger this skill:
    | Detached jobs lockstep | `invariant_guard::agent_run_and_jobs_share_prepare_run`, job cancel/finish tests in `shim_and_agent_routes` |
    | CSRF placeholders | `invariant_guard::console_asset_is_verbatim_with_both_placeholders` |
    | Auth / headers | `auth_guards`, `security_headers` |
+   | Roles / capability table | `cargo test --lib -- authz::tests routes::tests guards::tests`; `invariant_guard::account_role_comparisons_stay_pinned_to_authz` |
 
 3. **Diff-read the boundary.** Manually inspect imports across `src/server` ↔
    `src/agentic` (only `src/shim` may spawn). Check that new routes landed in
-   `REGISTERED_PATHS`, new actions updated `shim::ACTIONS` + CLI + whitelist
+   `REGISTERED_PATHS` and `ROUTE_CAPS`, new actions updated `shim::ACTIONS` + CLI + whitelist
    together, and that gate defaults in `assets/config.default.yaml` remain
    fail-closed (`flag_is_true` — quoted `"true"` is OFF). Confirm
    `/api/agent/run` and `/api/agent/jobs` still share `prepare_run`.

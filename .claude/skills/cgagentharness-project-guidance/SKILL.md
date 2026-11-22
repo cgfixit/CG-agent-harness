@@ -61,6 +61,7 @@ Any other feature: the "Changing / Read first" table in `AGENTS.md`.
 
 Core paths always require an invariant statement in the PR body when touched:
 `src/shim`, `src/server/guards.rs`, `src/server/headers.rs`,
+`src/server/routes/mod.rs`, `src/common/authz.rs`,
 `src/agentic/writer.rs`, `src/agentic/executor/sandbox.rs`,
 `src/agentic/workspace.rs`, `assets/config.default.yaml`.
 

@@ -178,8 +178,8 @@ fn run_isolated(data: &[u8], deadline: Instant) -> Result<String> {
         crate::common::process::ProcessError::Timeout { .. } => refusal("PDF_TIMEOUT"),
         _ => refusal("PDF_WORKER_FAILED"),
     })?;
-    let reply: WorkerReply =
-        serde_json::from_str(output.stdout.trim()).map_err(|_| refusal(unanswered_worker_code(output.signal)))?;
+    let reply: WorkerReply = serde_json::from_str(output.stdout.trim())
+        .map_err(|_| refusal(unanswered_worker_code(output.signal, &output.stderr)))?;
     match (output.status, reply) {
         (Some(0), WorkerReply::Text { text }) if text.len() <= MAX_OUTPUT_BYTES => Ok(text),
         (_, WorkerReply::Refused { code }) => Err(refusal(&code)),
@@ -188,20 +188,30 @@ fn run_isolated(data: &[u8], deadline: Instant) -> Result<String> {
 }
 
 /// The refusal for a worker that ended without a reply. Only the document can
-/// exhaust the heap ceiling or address-space limit: an allocation failure under
-/// either aborts the child (SIGABRT; panics unwind and exit, they do not
-/// abort). The CPU limit sits past the parent's kill deadline, so SIGXCPU is a
-/// timeout. Any other signal, or none, is a local worker failure, never a
-/// document limit, so it cannot qualify for a remote fallback.
-fn unanswered_worker_code(signal: Option<i32>) -> &'static str {
+/// exhaust the heap ceiling or address-space limit, and the armed allocator
+/// writes [`alloc_cap::REFUSAL_MARKER`](crate::common::alloc_cap::REFUSAL_MARKER)
+/// on its own stderr line before the abort that follows. A SIGABRT is a
+/// document limit only with that line: a bug, a double panic or a stack
+/// overflow aborts the same way and stays a local failure (#772 decision 1:
+/// an ambiguous exit makes no remote request). The CPU limit sits past the
+/// parent's kill deadline, so SIGXCPU is a timeout. Any other signal, or none,
+/// is a local worker failure, never a document limit, so it cannot qualify for
+/// a remote fallback.
+fn unanswered_worker_code(signal: Option<i32>, stderr: &str) -> &'static str {
     #[cfg(unix)]
     match signal {
-        Some(libc::SIGABRT) => return "PDF_LIMIT",
+        Some(libc::SIGABRT)
+            if stderr
+                .lines()
+                .any(|line| line == crate::common::alloc_cap::REFUSAL_MARKER) =>
+        {
+            return "PDF_LIMIT"
+        }
         Some(libc::SIGXCPU) => return "PDF_TIMEOUT",
         _ => {}
     }
     #[cfg(not(unix))]
-    let _ = signal;
+    let _ = (signal, stderr);
     "PDF_WORKER_FAILED"
 }
 
@@ -1351,13 +1361,35 @@ mod tests {
 
     #[test]
     fn a_worker_without_a_reply_is_a_document_limit_only_after_an_allocation_abort() {
-        assert_eq!(unanswered_worker_code(None), "PDF_WORKER_FAILED");
+        let marker = crate::common::alloc_cap::REFUSAL_MARKER;
+        let refused = format!("\n{marker}\nmemory allocation of 1006632960 bytes failed\n");
+        assert_eq!(unanswered_worker_code(None, ""), "PDF_WORKER_FAILED");
+        assert_eq!(unanswered_worker_code(None, &refused), "PDF_WORKER_FAILED");
         #[cfg(unix)]
         {
-            assert_eq!(unanswered_worker_code(Some(libc::SIGABRT)), "PDF_LIMIT");
-            assert_eq!(unanswered_worker_code(Some(libc::SIGXCPU)), "PDF_TIMEOUT");
+            assert_eq!(unanswered_worker_code(Some(libc::SIGABRT), &refused), "PDF_LIMIT");
+            // An abort without the allocator's own line is ambiguous: a bug,
+            // a double panic or a stack overflow. It stays local (#772).
+            for stderr in [
+                "",
+                "memory allocation of 1006632960 bytes failed\n",
+                "\nthread 'main' has overflowed its stack\nfatal runtime error: stack overflow\n",
+                &format!("prefix {marker}\n"),
+                &format!("{marker} and more\n"),
+            ] {
+                assert_eq!(
+                    unanswered_worker_code(Some(libc::SIGABRT), stderr),
+                    "PDF_WORKER_FAILED",
+                    "{stderr:?}"
+                );
+            }
+            assert_eq!(unanswered_worker_code(Some(libc::SIGXCPU), ""), "PDF_TIMEOUT");
             for signal in [libc::SIGSEGV, libc::SIGKILL, libc::SIGBUS, libc::SIGTERM] {
-                assert_eq!(unanswered_worker_code(Some(signal)), "PDF_WORKER_FAILED", "{signal}");
+                assert_eq!(
+                    unanswered_worker_code(Some(signal), &refused),
+                    "PDF_WORKER_FAILED",
+                    "{signal}"
+                );
             }
         }
     }

@@ -117,8 +117,8 @@ Start from a clean tree. Use the branch the session assigns, else
 chunk until the first merges. Never stack bases.
 
 Reproduce first: run `verify_with` before editing, then show it passing. Keep
-diffs minimal. Core paths (`src/shim`, `guards.rs`, `headers.rs`, `writer.rs`,
-`sandbox.rs`, `workspace.rs`, `config.default.yaml`) need an invariant statement
+diffs minimal. Core paths (`src/shim`, `guards.rs`, `headers.rs`, `routes/mod.rs`,
+`authz.rs`, `writer.rs`, `sandbox.rs`, `workspace.rs`, `config.default.yaml`) need an invariant statement
 in the PR body, and the operator runs `/cgagentharness-invariant-guard`. Also:
 `cgagentharness-config-guard`, `cgagentharness-write-policy-redteam`,
 `verification-specialist` (break a chunk), `dep-sync` (lock or toolchain drift).

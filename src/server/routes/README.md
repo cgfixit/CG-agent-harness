@@ -5,7 +5,7 @@ Router assembly and handlers grouped by surface. A route missing from
 on drift. Every path sits behind the guard chain in [`../guards.rs`](../guards.rs).
 Inventory: [docs/API_ROUTES.md](../../../docs/API_ROUTES.md).
 
-- [`mod.rs`](mod.rs): `REGISTERED_PATHS`, `build_router` guard layering, the SSE helper.
+- [`mod.rs`](mod.rs): **core path.** `REGISTERED_PATHS`, `ROUTE_CAPS`, `build_router` guard layering, the SSE helper.
 - [`agent.rs`](agent.rs): `/api/github/status` and `/api/agent/*`: `prepare_run`, runs, jobs, schedules, decisions.
 - [`auth.rs`](auth.rs): `/api/auth/*` sessions, RBAC user admin, the `/api/audit` reader.
 - [`browser.rs`](browser.rs): admin-only `/api/browser/run` behind `browser.enabled`; runs the `browser run` child.
