@@ -3,7 +3,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime};
 
-use scraper::Selector;
+use scraper::{ElementRef, Selector};
 use serde::Serialize;
 use serde_json::{json, Value};
 
@@ -172,6 +172,10 @@ pub(super) struct SearchResult {
     pub(super) highlights: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) source_date: Option<String>,
+    /// Query words the provider says this result lacks (SerpAPI `missing`):
+    /// a relevance signal, so a model need not read a page to learn it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) missing_terms: Vec<String>,
 }
 
 pub(super) fn add_result(
@@ -200,10 +204,56 @@ pub(super) fn add_result(
         provider_score: None,
         highlights: Vec::new(),
         source_date: None,
+        missing_terms: Vec::new(),
     });
 }
 
+/// Listing-wide facts a model needs to read the rows right, as plain text that
+/// grants nothing (grants come only from `results[].url`): the query Google
+/// actually ran when it rewrote this one, a spelling it suggests instead, and
+/// up to five related queries to refine with. Never a provider-written answer:
+/// `answer_box`, `knowledge_graph` and `ai_overview` are not read, as Tavily's
+/// `answer` is not.
+pub(super) type Extras = serde_json::Map<String, Value>;
+
+fn listing_extras(query: &str, value: &Value) -> Extras {
+    let text = |v: &Value, max: usize| {
+        v.as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| crate::common::clip_chars(s, max))
+    };
+    let mut extras = Extras::new();
+    let info = &value["search_information"];
+    let rewrite = text(&info["showing_results_for"], 200);
+    if let Some(rewrite) = &rewrite {
+        extras.insert("showing_results_for".into(), json!(rewrite));
+    }
+    if let Some(fix) = text(&info["spelling_fix"], 200).filter(|fix| Some(fix) != rewrite.as_ref()) {
+        extras.insert("spelling_suggestion".into(), json!(fix));
+    }
+    let mut seen = BTreeSet::from([query.trim().to_lowercase()]);
+    let related: Vec<String> = value["related_searches"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(20)
+        .filter_map(|row| text(&row["query"], 100))
+        .filter(|q| seen.insert(q.to_lowercase()))
+        .take(5)
+        .collect();
+    if !related.is_empty() {
+        extras.insert("related_queries".into(), json!(related));
+    }
+    extras
+}
+
+#[cfg(test)]
 fn api_results(body: &[u8], limit: usize) -> Result<Vec<SearchResult>> {
+    api_listing("", body, limit).map(|(rows, _)| rows)
+}
+
+fn api_listing(query: &str, body: &[u8], limit: usize) -> Result<(Vec<SearchResult>, Extras)> {
     let value: Value =
         serde_json::from_slice(body).map_err(|_| error("WEB_SEARCH_RESPONSE", "invalid search response"))?;
     if value.get("error").is_some() {
@@ -237,9 +287,19 @@ fn api_results(body: &[u8], limit: usize) -> Result<Vec<SearchResult>> {
                 .map(|s| crate::common::clip_chars(s, 80))
                 .collect();
             row.source_date = item["date"].as_str().map(|s| crate::common::clip_chars(s, 80));
+            row.missing_terms = item["missing"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .take(8)
+                .map(|s| crate::common::clip_chars(s, 40))
+                .collect();
         }
     }
-    Ok(rows)
+    Ok((rows, listing_extras(query, &value)))
 }
 
 /// Provider `site:` echoes are hints; enforce recognizable host/path constraints locally.
@@ -295,6 +355,7 @@ fn public_results(
     let html = parse_html(body, max_handles, checkpoint)?;
     let anchors = Selector::parse("a[href]").unwrap();
     let headings = Selector::parse("h3").unwrap();
+    let linked_headings = Selector::parse("a[href] h3").unwrap();
     let base = url::Url::parse("https://www.google.com/").unwrap();
     let mut rows = Vec::new();
     let mut seen = BTreeSet::new();
@@ -323,7 +384,12 @@ fn public_results(
             continue;
         }
         let title = heading.text().collect::<Vec<_>>().join(" ");
-        add_result(&mut rows, &mut seen, &title, url.as_str(), "", limit);
+        let before = rows.len();
+        let (date, snippet) = public_snippet(anchor, &linked_headings);
+        add_result(&mut rows, &mut seen, &title, url.as_str(), &snippet, limit);
+        if rows.len() > before {
+            rows.last_mut().unwrap().source_date = date;
+        }
     }
     // A page with result links is a listing, whatever words it contains: a
     // search about "unusual traffic" or reCAPTCHA returns titles and snippets
@@ -356,6 +422,71 @@ fn public_results(
     }
     checkpoint()?;
     Ok(rows)
+}
+
+/// How far above a result link its own block may be: Google nests a result's
+/// text a few levels from its link, and a bound keeps the walk cheap.
+const RESULT_BLOCK_DEPTH: usize = 8;
+/// A public snippet is the block's own text, so it is cut nearer a provider
+/// snippet's length than the 1,000 characters every listing allows.
+const PUBLIC_SNIPPET_CHARS: usize = 400;
+
+/// The text Google shows under one organic result link, found without class
+/// names (they change): the largest ancestor of `anchor`, up to
+/// [`RESULT_BLOCK_DEPTH`] levels, that holds no other result link. Its text
+/// outside the link (title and breadcrumb) and outside scripts or styles is
+/// the snippet. A leading date ("Mar 5, 2024 — ", "3 days ago · ") moves to
+/// `source_date`, as SerpAPI's `date` does. Empty when the link stands alone.
+fn public_snippet(anchor: ElementRef<'_>, linked_headings: &Selector) -> (Option<String>, String) {
+    let mut block = None;
+    for node in anchor.ancestors().take(RESULT_BLOCK_DEPTH) {
+        let Some(element) = ElementRef::wrap(node) else {
+            break;
+        };
+        if matches!(element.value().name(), "body" | "html") || element.select(linked_headings).nth(1).is_some() {
+            break;
+        }
+        block = Some(element);
+    }
+    let Some(block) = block else {
+        return (None, String::new());
+    };
+    let mut text = String::new();
+    for node in block.descendants() {
+        let Some(piece) = node.value().as_text() else {
+            continue;
+        };
+        let outside = node.ancestors().all(|up| {
+            up.id() != anchor.id()
+                && !ElementRef::wrap(up).is_some_and(|el| matches!(el.value().name(), "script" | "style"))
+        });
+        if outside {
+            text.push_str(piece);
+            text.push(' ');
+        }
+    }
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let (date, snippet) = split_leading_date(&text);
+    (date, crate::common::clip_chars(snippet, PUBLIC_SNIPPET_CHARS))
+}
+
+/// A snippet's leading date and the text after its separator, when the start
+/// reads as one: "Mar 5, 2024", "5 Mar 2024" or "3 days ago".
+fn split_leading_date(text: &str) -> (Option<String>, &str) {
+    static DATE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
+            r"^(?:[A-Z][a-z]{2,8}\.? \d{1,2}, \d{4}|\d{1,2} [A-Z][a-z]{2,8}\.? \d{4}|\d{1,2} (?:second|minute|hour|day|week|month|year)s? ago)$",
+        )
+        .expect("static pattern")
+    });
+    for separator in [" — ", " · ", " - "] {
+        if let Some((head, tail)) = text.split_once(separator) {
+            if head.chars().count() <= 24 && DATE.is_match(head) {
+                return (Some(head.to_string()), tail);
+            }
+        }
+    }
+    (None, text)
 }
 
 impl WebTool {
@@ -713,7 +844,7 @@ impl WebTool {
                     .map_err(|_| error("WEB_CANCELLED", "search cancelled"))?;
                 let max_handles = self.limits.html_parser_handles;
                 run_web_cpu(deadline, permit, move |checkpoint| {
-                    public_results(&body, count, max_handles, checkpoint)
+                    public_results(&body, count, max_handles, checkpoint).map(|rows| (rows, Extras::new()))
                 })
                 .await
             })
@@ -723,8 +854,8 @@ impl WebTool {
         } else {
             self.api_search(endpoint, query, count, key.trim()).await
         };
-        let rows = match fetched {
-            Ok(rows) => rows,
+        let (rows, extras) = match fetched {
+            Ok(listing) => listing,
             Err(failure) => {
                 // One audit line when a pause starts; none while it holds.
                 if let Some(until) =
@@ -757,14 +888,22 @@ impl WebTool {
                 ));
             }
         }
-        Ok(
-            json!({"query":query,"provider":provider,"search_url":target.as_str(),"results":rows,
-            "notice":SEARCH_NOTICE,"complete":false}),
-        )
+        let mut listing = json!({"query":query,"provider":provider,"search_url":target.as_str(),"results":rows,
+            "notice":SEARCH_NOTICE,"complete":false});
+        if let Some(object) = listing.as_object_mut() {
+            object.extend(extras);
+        }
+        Ok(listing)
     }
     // Only the fixed HTTPS endpoint above calls this in production. Tests use a
     // local fixture to verify credential isolation without sending a real key.
-    async fn api_search(&self, endpoint: url::Url, query: &str, count: usize, key: &str) -> Result<Vec<SearchResult>> {
+    async fn api_search(
+        &self,
+        endpoint: url::Url,
+        query: &str,
+        count: usize,
+        key: &str,
+    ) -> Result<(Vec<SearchResult>, Extras)> {
         tokio::time::timeout(Duration::from_secs(self.limits.request_seconds), async {
             let _permit = self
                 .permits
@@ -803,14 +942,17 @@ impl WebTool {
                 ));
             }
             let body = listing_body(response, self.limits.response_bytes).await?;
-            let rows = api_results(&body, count)?;
-            if !key.is_empty() && serde_json::to_string(&rows)?.contains(key) {
+            let (rows, extras) = api_listing(query, &body, count)?;
+            // Every provider string that leaves here is checked, rows and extras alike.
+            if !key.is_empty()
+                && (serde_json::to_string(&rows)?.contains(key) || serde_json::to_string(&extras)?.contains(key))
+            {
                 return Err(error(
                     "WEB_SEARCH_RESPONSE",
                     "credential reflected in provider results; response discarded",
                 ));
             }
-            Ok(rows)
+            Ok((rows, extras))
         })
         .await
         .map_err(|_| error("WEB_TIMEOUT", "search deadline exceeded"))?
@@ -2149,7 +2291,9 @@ mod tests {
             assert_eq!(q.get("engine").map(String::as_str),Some("google"));
             let query=q.get("q").unwrap();
             if query=="quota" { return (axum::http::StatusCode::TOO_MANY_REQUESTS,Json(json!({"error":"fixture-secret-key"}))); }
-            (axum::http::StatusCode::OK,Json(json!({"organic_results":[{"title":if query=="reflect" {"fixture-secret-key"} else {"Actual API result"},"link":"https://veeam.com/kb1","snippet":"API snippet"}]})))
+            let related = if query=="reflect-related" {"fixture-secret-key"} else {"veeam backup"};
+            (axum::http::StatusCode::OK,Json(json!({"organic_results":[{"title":if query=="reflect" {"fixture-secret-key"} else {"Actual API result"},"link":"https://veeam.com/kb1","snippet":"API snippet"}],
+                "related_searches":[{"query":related,"link":"https://www.google.com/search?q=x"}]})))
         }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -2189,6 +2333,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result["provider"], "google-serpapi");
+        // Related queries are text only: no `link` is copied, so none can grant a read.
+        assert_eq!(result["related_queries"], json!(["veeam backup"]), "{result}");
+        assert!(!result.to_string().contains("search?q=x"), "{result}");
         web.google_search_at("veeam backup", 5, true, &audit, endpoint.clone())
             .await
             .unwrap();
@@ -2225,7 +2372,7 @@ mod tests {
             &std::collections::BTreeMap::from([("SERPAPI_API_KEY".into(), "fixture-secret-key".into())]),
         )
         .unwrap();
-        let rows = web
+        let (rows, _) = web
             .api_search(endpoint.clone(), "veeam", 5, "fixture-secret-key")
             .await
             .unwrap();
@@ -2248,7 +2395,12 @@ mod tests {
         assert!(audit_text.contains("argv_digest"), "{audit_text}");
         assert!(!audit_text.contains("fixture-secret-key"), "{audit_text}");
         assert!(!audit_text.contains("api_key"), "{audit_text}");
-        for (query, code) in [("quota", "WEB_SEARCH_QUOTA"), ("reflect", "WEB_SEARCH_RESPONSE")] {
+        // A key reflected in a listing-wide field is refused like one in a row.
+        for (query, code) in [
+            ("quota", "WEB_SEARCH_QUOTA"),
+            ("reflect", "WEB_SEARCH_RESPONSE"),
+            ("reflect-related", "WEB_SEARCH_RESPONSE"),
+        ] {
             let failure = web
                 .api_search(endpoint.clone(), query, 5, "fixture-secret-key")
                 .await
@@ -2262,6 +2414,92 @@ mod tests {
             );
         }
         server.abort();
+    }
+
+    /// Public Google rows carry the text Google shows under each link, found by
+    /// structure, not class names, for both the basic and the scripted layout;
+    /// a leading date becomes `source_date`, and a bare link has no snippet.
+    #[test]
+    fn public_rows_carry_their_snippet_and_leading_date() {
+        let basic = r#"<div class="Gx5Zad"><div class="egMi0"><a href="/url?q=https%3A%2F%2Fdocs.example.org%2Fretry&amp;sa=U"><h3><div>Retry guide</div></h3><div>docs.example.org &#8250; retry</div></a></div><div class="kCrYT"><div><span>Mar 5, 2024</span><span> &#183; </span>The client retries three times<script>tracker()</script> before failing.</div></div></div>
+<div class="Gx5Zad"><div><a href="/url?q=https%3A%2F%2Fother.example.net%2Fa"><h3>Other</h3></a></div><div>3 days ago — Backoff doubles each retry.</div></div>"#;
+        let rows = public_results(basic, 5).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].url, "https://docs.example.org/retry");
+        assert_eq!(rows[0].snippet, "The client retries three times before failing.");
+        assert_eq!(rows[0].source_date.as_deref(), Some("Mar 5, 2024"));
+        assert!(!rows[0].snippet.contains("Retry guide") && !rows[0].snippet.contains("tracker"));
+        assert_eq!(rows[1].snippet, "Backoff doubles each retry.");
+        assert_eq!(rows[1].source_date.as_deref(), Some("3 days ago"));
+        let modern = r#"<div id="rso"><div class="g"><a href="https://a.example.com/x"><h3>A</h3><cite>a.example.com</cite></a><div><span>About widgets — not a date.</span></div></div><div class="g"><a href="https://b.example.com/y"><h3>B</h3></a></div></div>"#;
+        let rows = public_results(modern, 5).unwrap();
+        assert_eq!(rows[0].snippet, "About widgets — not a date.");
+        assert_eq!(rows[0].source_date, None);
+        assert_eq!(rows[1].snippet, "", "a link with no text beside it has no snippet");
+        let long = format!(
+            r#"<div><a href="https://c.example.com/"><h3>C</h3></a><p>{}</p></div>"#,
+            "word ".repeat(400)
+        );
+        let cut = public_results(&long, 5).unwrap()[0].snippet.chars().count();
+        assert!(
+            (PUBLIC_SNIPPET_CHARS - 5..=PUBLIC_SNIPPET_CHARS).contains(&cut),
+            "{cut}"
+        );
+    }
+
+    #[test]
+    fn only_a_leading_date_with_its_separator_moves_to_the_date() {
+        for (text, date, rest) in [
+            ("Mar 5, 2024 — Body", Some("Mar 5, 2024"), "Body"),
+            ("5 Mar 2024 · Body", Some("5 Mar 2024"), "Body"),
+            ("Sept. 12, 2025 - Body", Some("Sept. 12, 2025"), "Body"),
+            ("1 hour ago — Body", Some("1 hour ago"), "Body"),
+            ("12 days ago · Body", Some("12 days ago"), "Body"),
+            ("Version 2024 — Body", None, "Version 2024 — Body"),
+            ("Mar 5, 2024 Body", None, "Mar 5, 2024 Body"),
+            (
+                "A long heading that is no date at all · Body",
+                None,
+                "A long heading that is no date at all · Body",
+            ),
+        ] {
+            assert_eq!(split_leading_date(text), (date.map(String::from), rest), "{text}");
+        }
+    }
+
+    /// SerpAPI's listing-wide facts reach the model as bounded text that grants
+    /// nothing; provider-written answers never do.
+    #[test]
+    fn serpapi_listings_keep_the_rewrite_related_queries_and_missing_terms_but_no_answers() {
+        let body = json!({
+            "search_information":{"showing_results_for":"veeam backup","spelling_fix":"veeam backup"},
+            "answer_box":{"answer":"PROVIDER ANSWER"},
+            "knowledge_graph":{"description":"PROVIDER GRAPH"},
+            "ai_overview":{"text_blocks":[{"snippet":"PROVIDER OVERVIEW"}]},
+            "related_searches":[{"query":"Veeam bakup"},{"query":"veeam backup pricing","link":"https://www.google.com/search?q=p"},
+                {"query":"veeam backup pricing"},{"query":""},{"query":"a"},{"query":"b"},{"query":"c"},{"query":"d"},{"query":"e"}],
+            "organic_results":[{"title":"Guide","link":"https://docs.example.com/path","snippet":"s",
+                "missing":["bakup", "", 7]}]});
+        let (rows, extras) = api_listing("veeam bakup", body.to_string().as_bytes(), 5).unwrap();
+        assert_eq!(rows[0].missing_terms, ["bakup"]);
+        assert_eq!(extras["showing_results_for"], "veeam backup");
+        assert!(
+            extras.get("spelling_suggestion").is_none(),
+            "the same text is not repeated"
+        );
+        assert_eq!(
+            extras["related_queries"],
+            json!(["veeam backup pricing", "a", "b", "c", "d"]),
+            "the query itself, duplicates and blanks are dropped; five at most"
+        );
+        let rendered = serde_json::to_string(&(&rows, &extras)).unwrap();
+        for absent in ["PROVIDER", "search?q=p"] {
+            assert!(!rendered.contains(absent), "{absent}: {rendered}");
+        }
+        let suggested = json!({"search_information":{"spelling_fix":"veeam backup"},"organic_results":[]});
+        let (_, extras) = api_listing("veeam bakup", suggested.to_string().as_bytes(), 5).unwrap();
+        assert_eq!(extras["spelling_suggestion"], "veeam backup");
+        assert!(extras.get("related_queries").is_none());
     }
 
     #[test]

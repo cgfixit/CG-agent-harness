@@ -296,11 +296,10 @@ summary: [README](../README.md#how-the-research-loop-decides).
 
 ### Google search
 
-In **API Keys**, paste a [SerpAPI](https://serpapi.com/search-api) key (not a
-Google Cloud key) into **Google results (SerpAPI)** or a Tavily key into
-**Tavily search**, save, then **Test search**. Saving or clearing applies to
-the next search; an inherited environment value still wins
-([managed keys](INSTALL.md#supported-managed-keys)).
+In **API Keys**, save a [SerpAPI](https://serpapi.com/search-api) key (not a
+Google Cloud key) under **Google results (SerpAPI)** or a Tavily key under
+**Tavily search**, then **Test search**; changes apply to the next search, and
+an inherited environment value wins ([managed keys](INSTALL.md#supported-managed-keys)).
 
 Restart-only `web.search.provider` is `auto`, `google-public`, `serpapi` or
 `tavily`. `auto` follows the active keys: Tavily first, then SerpAPI, then
@@ -313,14 +312,16 @@ URL grant.
 - **SerpAPI** uses the fixed `https://serpapi.com/search.json` Google backend,
   key in the request query.
 - **Tavily** sends one basic-depth request (one credit) to the fixed
-  `https://api.tavily.com/search`, key in the Authorization header. Listings
-  keep title, URL, snippet and bounded provider metadata, never a provider
-  answer or page body. If the effective key changes during DNS, the search
-  refuses before sending. HTTP 429, 432 and 433 are quota refusals.
-- **Public Google**, with no active key, requests the permitted search URL and
-  parses organic result links in order. It never runs JavaScript, solves
-  CAPTCHA, adopts cookies or invents results; challenges, redirects and
-  transport failures are explicit.
+  `https://api.tavily.com/search`, key in the Authorization header. A key
+  changed during DNS refuses before sending; HTTP 429, 432 and 433 are quota
+  refusals.
+- **Public Google**, with no active key, parses the permitted search page's
+  organic results in order, each with the text Google shows under it as its
+  snippet. It never runs JavaScript, solves CAPTCHA, adopts cookies or invents
+  results; challenges, redirects and transport failures are explicit.
+
+Provider answers and page bodies never enter a listing; its row and query
+fields are in the [router](WEB_DECISION_ROUTER.md#implemented-behavior-and-measured-limits).
 
 Fresh homes seed the Google grant; a home that removed it re-grants it:
 
@@ -338,23 +339,24 @@ hop logs `web_search_fallback`, and more than `fallback_alert_per_hour` (ships
 line. The removed `provider: searxng` or a non-empty `web.search.searxng_url`
 fails boot by name.
 
-An exact generated search URL also works as a grant; an exact homepage grant
-does not. `https://google.com/*` does not grant `www`, and redirects remain
-refused. In allowlist mode, an empty policy gives `WEB_ALLOWLIST_EMPTY` and a
-non-Google policy gives `WEB_GOOGLE_PERMISSION`. Denylist mode needs no Google
-grant, but blocked Google URLs remain refused.
+An exact generated search URL also grants; an exact homepage grant does not,
+`https://google.com/*` does not grant `www`, and redirects stay refused.
+Allowlist mode answers `WEB_ALLOWLIST_EMPTY` for an empty policy and
+`WEB_GOOGLE_PERMISSION` for a non-Google one; denylist mode needs no grant but
+still refuses blocked Google URLs.
 
 A challenge or block pauses public Google for `web.search_cooldown_public_sec`
 (ships 600); a quota refusal pauses SerpAPI or Tavily for
 `web.search_cooldown_quota_sec` (0: next clock hour). A paused search answers
 `WEB_SEARCH_COOLDOWN` ("cooling down until HH:MM", local time) without a
-request; `/loop` does not count it. Restart clears it; rejected keys never pause.
+request, which `/loop` does not count; restart clears it, and rejected keys
+never pause.
 
-`/web search` defaults to Google in the console and CLI; `/web pages`, or a
-source-group argument, selects the permitted-page passage search. For API
-compatibility, `POST /api/web/search` without `engine` still means page search;
-send `engine: "google"` and optional `count` (1–10, default 5) for listings.
-`/api/web/research` accepts only the page-search engine.
+`/web search` means Google in the console and CLI; `/web pages`, or a
+source-group argument, selects permitted-page passage search.
+`POST /api/web/search` without `engine` is still page search; send
+`engine: "google"` and optional `count` (1–10, default 5) for listings.
+`/api/web/research` accepts only page search.
 
 ### Fetch, discovery and research
 
