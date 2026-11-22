@@ -236,8 +236,26 @@ await check(publish, { env: { CONCLUSION: 'neutral', STALE_BODY: 'true' } }, f =
   assert.match(f.writes[0].output.title, /PR body is older/);
   assert.match(f.writes[0].output.summary, /PULL_REQUEST_TEMPLATE/);
 });
-await check(publish, { env: { CONCLUSION: 'neutral', STALE_BODY: 'true', THREAD_COUNT: '2' } },
-  f => assert.match(f.writes[0].output.title, /2 unresolved review thread/));
+// A stale body is published alongside open threads and running reviews, never
+// hidden behind them; a single finding keeps the title it always had.
+for (const [extra, titles] of [
+  [{ THREAD_COUNT: '2' }, ['2 unresolved review thread(s)']],
+  [{ RUNNING_COUNT: '1' }, ['1 bot review(s) still running on this head']],
+  [{ STALE_BODY: 'true', THREAD_COUNT: '2' }, ['2 unresolved review thread(s)', 'PR body is older']],
+  [{ STALE_BODY: 'true', RUNNING_COUNT: '1' }, ['1 bot review(s) still running on this head', 'PR body is older']],
+  [{ STALE_BODY: 'true', RUNNING_COUNT: '1', THREAD_COUNT: '3' },
+    ['1 bot review(s) still running on this head', '3 unresolved review thread(s)', 'PR body is older']],
+]) {
+  await check(publish, { env: { CONCLUSION: 'neutral', ...extra } }, f => {
+    const { title, summary } = f.writes[0].output;
+    assert.equal(f.writes[0].conclusion, 'neutral');
+    for (const part of titles) assert.ok(title.includes(part), `${title} lacks ${part}`);
+    if (titles.length === 1) assert.equal(title, titles[0]);
+    assert.equal(/PULL_REQUEST_TEMPLATE/.test(summary), extra.STALE_BODY === 'true');
+    if (extra.THREAD_COUNT) assert.match(summary, new RegExp(`${extra.THREAD_COUNT} unresolved review thread`));
+    if (extra.RUNNING_COUNT) assert.match(summary, /1 bot review\(s\) still running\./);
+  });
+}
 await check(publish, { livePr: { ...pr, head: { ...pr.head, sha: 'b'.repeat(40) } } }, f => {
   assert.equal(f.writes[0].conclusion, 'failure');
   assert.match(f.writes[0].output.title, /head changed/);

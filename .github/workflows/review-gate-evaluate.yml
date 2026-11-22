@@ -338,20 +338,18 @@ jobs:
             }
             const threadCount = countsOk ? Number(threads) : 0;
             const runningCount = countsOk ? Number(running) : 0;
+            // Every active finding is published, not only the first: a stale
+            // body must not hide behind an open thread or a running review.
+            const findings = [];
+            if (runningCount) findings.push([`${runningCount} bot review(s) still running on this head`, `${runningCount} bot review(s) still running.`]);
+            if (threadCount) findings.push([`${threadCount} unresolved review thread(s)`, `${threadCount} unresolved review thread(s).`]);
+            if (staleBody) findings.push(["PR body is older than the latest @codex review request", "The PR body was not edited after the latest @codex review comment by a person with write access. Refresh it from .github/PULL_REQUEST_TEMPLATE.md (head SHA, commands and exit codes, merge order, Last updated stamp); editing the body re-runs this check."]);
             let title = verdictOk
-              ? (runningCount
-                ? `${runningCount} bot review(s) still running on this head`
-                : threadCount ? `${threadCount} unresolved review thread(s)`
-                : staleBody ? "PR body is older than the latest @codex review request"
-                : "All review threads resolved; no review running")
+              ? (findings.map(f => f[0]).join("; ") || "All review threads resolved; no review running")
               : superseded ? "Superseded: evaluation cancelled before a verdict"
               : "Review gate evaluation did not finish";
             let summary = verdictOk
-              ? (runningCount
-                ? `${runningCount} bot review(s) still running.`
-                : threadCount ? `${threadCount} unresolved review thread(s).`
-                : staleBody ? "The PR body was not edited after the latest @codex review comment by a person with write access. Refresh it from .github/PULL_REQUEST_TEMPLATE.md (head SHA, commands and exit codes, merge order, Last updated stamp); editing the body re-runs this check."
-                : "No unresolved review threads and no review in progress.")
+              ? (findings.map(f => f[1]).join(" ") || "No unresolved review threads and no review in progress.")
               : superseded
                 ? "This workflow run was cancelled before evaluate finished: a newer evaluation of this PR replaced it, or the run was cancelled manually. Not an evaluation error; read the newest review gate check on this head."
                 : `evaluate result was '${evalResult}'. Evaluation failed, timed out, or returned an invalid verdict.`;
