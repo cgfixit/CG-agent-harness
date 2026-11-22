@@ -38,6 +38,14 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
                 assert!(refused.get("text").is_none(),"a refused read carries no page text: {refused}");
                 return Json(common::ok_reply("Compared the permitted source only.",20,5));
             }
+            if finished && mode=="long-query" {
+                // A valid read and an over-bound query, each handed back as that call's result.
+                assert_eq!(tool_messages.len(),2);
+                assert!(tool_messages[0]["content"].as_str().unwrap().contains("BATCH_BACKUP_EVIDENCE"));
+                let refused:Value=serde_json::from_str(tool_messages[1]["content"].as_str().unwrap()).unwrap();
+                assert_eq!(refused["error"],"WEB_TOOL_ARGUMENTS","{refused}");
+                return Json(common::ok_reply("Compared the readable source only.",20,5));
+            }
             if finished && mode=="later-denied" {
                 if tool_messages.len()==1 {
                     // After one good read, ask for a refused URL: the batch fails entirely.
@@ -57,6 +65,7 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
             let mut calls:Vec<_>=(0..if mode=="overlimit" {4} else if mode=="later-denied" {1} else {2}).map(|i|json!({"id":format!("batch_{i}"),"type":"function","function":{"name":"web_fetch","arguments":json!({"url":format!("http://docs.example/docs/{i}")}).to_string()}})).collect(); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
             if mode=="duplicate" { calls[1]["id"]=calls[0]["id"].clone(); }
             if mode=="malformed" { calls[1]["function"]["arguments"]=json!("{}"); }
+            if mode=="long-query" { calls[1]["function"]["arguments"]=json!(json!({"url":"http://docs.example/docs/1","query":"q".repeat(201)}).to_string()); } // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
             if mode=="denied" { calls[1]["function"]["arguments"]=json!(json!({"url":"http://docs.example/private"}).to_string()); } // DevSkim: ignore DS137138 because this synthetic URL tests permission refusal against the loopback fixture.
             let usage = if mode=="cumulative-missing" && !finished { json!({"prompt_tokens":10}) } else { json!({"prompt_tokens":10,"completion_tokens":3}) };
             Json(json!({"choices":[{"finish_reason":"tool_calls","message":{"content":null,"tool_calls":calls}}],"usage":usage}))
@@ -156,6 +165,19 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
         6,
         "one more permitted read, none for the refusal"
     );
+    // A bound one call's arguments break (a fetch query over 200 characters)
+    // fails that call alone, once the whole batch's structure was checked, as
+    // an overlong search query does; its valid sibling still reads (#772).
+    let (status, reply) = s.post_json("/api/chat", json!({"message":"long-query"})).await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["reply"], "Compared the readable source only.", "{reply}");
+    assert_eq!(reply["web_tools"][0]["ok"], true, "{reply}");
+    assert_eq!(reply["web_tools"][1]["code"], "WEB_TOOL_ARGUMENTS", "{reply}");
+    assert_eq!(
+        reads.load(Ordering::SeqCst),
+        7,
+        "one read for the valid call, none for the over-bound one"
+    );
     let (_, reply) = s.post_json("/api/chat", json!({"message":"cumulative-missing"})).await;
     assert_eq!(common::code(&reply), "WEB_TOOL_LIMIT");
     assert_eq!(reply["detail"]["details"]["prompt_tokens"], 20);
@@ -164,7 +186,7 @@ async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_p
     s.state.audit.flush_async().await;
     let ledger = std::fs::read_to_string(s.home.join("logs/spend.jsonl")).unwrap();
     let rows: Vec<Value> = ledger.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
-    assert_eq!(rows.len(), 8);
+    assert_eq!(rows.len(), 9);
     let row = rows.last().unwrap();
     assert_eq!(row["outcome"], "failed_after_billing");
     assert_eq!(row["input_tokens"], 20);
