@@ -165,6 +165,49 @@ class RuleTests(unittest.TestCase):
         ]:
             self.assertEqual(module.password_literals(line), [], line)
 
+    def test_assert_messages_follow_the_cleartext_logging_alerts(self):
+        # bee4525: as_account sends the session cookie, and every body it returned was printed.
+        source = """async fn as_account(s: &S, who: &Who, m: Method) -> (u16, Value) {
+    let req = s.req(m).header("cookie", who.cookie());
+}
+async fn plain(s: &S) -> (u16, Value) { todo!() }
+let (status, first) = as_account(&s, &admin, Method::GET).await;
+assert_eq!(status, 200, "{first}");
+assert_eq!(
+    status, 403,
+    "operator {method} {path}: {first}"
+);
+assert_eq!(status, 200, "saw {}", first);
+let (status, other) = plain(&s).await;
+assert_eq!(status, 200, "{other}");
+assert_eq!(status, 200, "the first admin save");
+let line = format!("{first}");
+assert!(token.len() > 8, "{token}");
+assert_eq!(status, 200, "{first}"); // lint-diff: allow CG011 until 2099-01-01 approved by the operator: fixture
+assert_eq!(status, 200, "{first}"); // lint-diff: allow CG011 until 2001-01-01 approved by the operator: expired
+"""
+        lines = source.splitlines()
+        bound = module.credentialed_bodies(source)
+        self.assertEqual(bound, {"first"})
+        today = module.datetime.date(2026, 11, 22)
+
+        def hits(text):
+            return module.message_leaks(lines, lines.index(text), bound, today)
+
+        self.assertEqual(hits('assert_eq!(status, 200, "{first}");'), ["first"])
+        self.assertEqual(hits('    "operator {method} {path}: {first}"'), ["first"])
+        self.assertEqual(hits('assert_eq!(status, 200, "saw {}", first);'), ["first"])
+        self.assertEqual(hits('assert_eq!(status, 200, "{other}");'), [])
+        self.assertEqual(hits('assert_eq!(status, 200, "the first admin save");'), [])
+        self.assertEqual(hits('let line = format!("{first}");'), [])
+        self.assertEqual(hits('assert!(token.len() > 8, "{token}");'), ["token"])
+        allowed = 'assert_eq!(status, 200, "{first}"); // lint-diff: allow CG011 until 2099-01-01 approved by the operator: fixture'
+        self.assertEqual(module.message_leaks([allowed], 0, bound, today), [])
+        expired = allowed.replace("2099-01-01", "2001-01-01")
+        self.assertEqual(module.message_leaks([expired], 0, bound, today), ["first"])
+        unapproved = 'assert_eq!(status, 200, "{first}"); // lint-diff: allow CG011 until 2099-01-01'
+        self.assertEqual(module.message_leaks([unapproved], 0, bound, today), ["first"])
+
     def test_owner_exempt_paths_are_read_from_the_guard(self):
         guard = 'const DOCS_BUDGET_OWNER_EXEMPT: &[(&str, &str)] = &[\n    ("docs/a.md", "why"),\n    // ("docs/b.md", "old"),\n];\n'
         self.assertEqual(module.owner_exempt_paths(guard), {"docs/a.md"})

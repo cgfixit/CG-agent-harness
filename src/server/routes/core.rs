@@ -985,20 +985,32 @@ pub(super) async fn live_pins(state: &Arc<AppState>, owner: &str, pinned: Vec<St
     .await
 }
 
+/// What a server-run `/loop` turn hands `chat_inner`: the goal the run
+/// started with, and its account's sign-in revocation count as read with the
+/// authority check before this turn (`None` without accounts).
+pub(crate) struct LoopTurn<'a> {
+    pub goal: &'a str,
+    pub sign_ins: Option<u64>,
+}
+
 pub(crate) async fn chat_inner(
     state: Arc<AppState>,
     peer: SocketAddr,
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     req: ChatRequest,
     output: Option<&tokio::sync::mpsc::Sender<Value>>,
-    expected_loop_goal: Option<&str>,
+    loop_turn: Option<LoopTurn<'_>>,
 ) -> ApiResult<Json<Value>> {
     let owner = super::auth::context_owner(user.clone());
     // What the account's sign-in revocation count is as this turn begins. A
-    // server-run loop turn has no requesting sign-in: the loop reloads its
-    // account's authority itself before each turn.
-    let sign_ins = match (state.auth.as_ref(), user.as_ref()) {
-        (Some(auth), Some(user)) if expected_loop_goal.is_none() => Some(auth.sign_in_revocations(&user.0.username)),
+    // server-run loop turn has no requesting sign-in: the loop read the count
+    // with its authority check before the turn, so a role or password change
+    // during the model wait still withholds the reply (it used to pass `None`,
+    // which checked only disable and deletion).
+    let expected_loop_goal = loop_turn.as_ref().map(|turn| turn.goal);
+    let sign_ins = match (state.auth.as_ref(), user.as_ref(), &loop_turn) {
+        (_, _, Some(turn)) => turn.sign_ins,
+        (Some(auth), Some(user), None) => Some(auth.sign_in_revocations(&user.0.username)),
         _ => None,
     };
     if req.loop_turn && req.session_id.as_deref().unwrap_or("").is_empty() {

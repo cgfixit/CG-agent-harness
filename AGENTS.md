@@ -56,9 +56,6 @@ CG009 checks stated shipped values.
   `crate::agentic`, or `src/agentic` reference server or shim (I6);
   `tests/invariant_guard.rs` catches aliased `use` too. Cross only through
   `src/shim` and the CLI whitelist.
-- Duplicated on purpose, synced by tests; never deduplicate: `RUN_ID_PATTERN`,
-  the planner/check timeout and setup-budget constants, the iteration default,
-  the console's `MAX_GOAL_CHARS`.
 - Under operator review (2026-11-20): shim actions `test`, `context`,
   `propose-skill`, `apply-skill` lack a server caller; keep them.
 - Config is strict by type. Gates read through `flag_is_true`: only literal
@@ -83,15 +80,12 @@ CG009 checks stated shipped values.
   kill switch. Never flip `EXECUTION_ENABLED` or OR the switch to go green.
 - Audit appends go to one bounded writer thread
   (`logging.audit_queue_lines`); overflow drops lines.
-- SQLite, file and fsync work stays off async workers, lock included
-  (`structured_memory::off_worker`). Publish a live setting only after its save
-  (`panels::commit_setting`); refuse before changing state.
-- Reload policy and authority after any wait, before a send or stored delivery.
+- Publish a live setting only after its save (`panels::commit_setting`);
+  refuse before changing state.
 - `[profile.dev.package."*"] opt-level=3` is load-bearing: scrypt is slow
   unoptimized.
-- Assert and panic messages never print secret-bearing values; CodeQL flags
-  them. A weak-hash name used as a label ends its line with
-  `DevSkim: ignore DS126858 because …` (`lint-diff.py` CG006 warns first).
+- A weak-hash name used as a label ends its line with
+  `DevSkim: ignore DS126858 because …`.
 - Console replies check `sessionRevision` before rendering.
 - Pinned egress reuses `common::dns::lookup_bounded` and
   `web_search::pinned_client_builder`; callers still authorize destinations.
@@ -129,6 +123,17 @@ CG009 checks stated shipped values.
   overlaps, including the generated manual and doc caps.
 - Read the advisory `review gate` before merging. Never comment
   `@codex review` without operator approval.
+
+## Rule enforcers
+
+Enforce corrections highest-level; add rows.
+
+| Rule | Enforcer |
+|------|-------------|
+| Duplicated constants (never deduplicate), `/loop` limits | `duplicated_constants_still_agree` |
+| Async fns: no SQLite, file or hash work (`off_worker`) | `async_fns_leave_blocking_…` |
+| Assert messages print no secret-bearing value | `lint-diff.py` CG011 |
+| Recheck policy, authority after waits | `owner_permits` (copies fail); calling: prose |
 
 ## Docs policy
 

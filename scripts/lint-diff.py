@@ -18,6 +18,15 @@ index snapshot, so unstaged edits neither hide nor cause a finding.
                  failed #766, #778 and main)
   CG006 warning  added weak-hash name without a same-line DevSkim DS126858
                  suppression (alerted after push twice on #885)
+  CG011 error    added assert/panic/expect message that prints a response body
+                 or credential (CodeQL rust/cleartext-logging alerted after
+                 push on #1036's alert #1094 and on #1096-#1100, #1102, fixed
+                 in bee4525): a name bound by `let (status, name) =` in the
+                 file from a helper that sends a cookie (as_account), or
+                 `cookie`, `token`, `secret`, `password` and kin. Use fixed text naming the step; `status` may stay.
+                 An exception ends its own line with
+                 `// lint-diff: allow CG011 until YYYY-MM-DD approved by <who>: <why>`
+                 and stops counting on that date.
   CG010 warning  added Rust string literal passed to a password hasher or
                  bound to a password-named variable (CodeQL
                  rust/hard-coded-cryptographic-value alerted after push on
@@ -47,6 +56,7 @@ Errors exit 1, warnings exit 0, a bad invocation exits 2.
 Usage: python3 scripts/lint-diff.py [--base REF | --staged]
 """
 import argparse
+import datetime
 import os
 import re
 import subprocess
@@ -76,6 +86,21 @@ PASSWORD_LITERAL = re.compile(
     r'|\blet\s+(?:mut\s+)?\w*(?:password|passwd|passphrase)\w*\s*(?::\s*&(?:\'static\s+)?str\s*)?=\s*"',
     re.IGNORECASE,
 )
+# CG011: a macro whose message reaches the test log, the names that hold a
+# response body or credential, and how an exception is spelled.
+ASSERT_MACRO = re.compile(
+    r"\b(?:debug_)?assert(?:_eq|_ne)?!\s*\(|\b(?:panic|unreachable|todo|unimplemented)!\s*\(|\.expect\("
+)
+INTERPOLATED = re.compile(r"\{(\w+)(?::[^{}]*)?\}")
+POSITIONAL = re.compile(r"\{(?::[^{}]*)?\}")
+RESPONSE_TUPLE = re.compile(
+    r"\blet\s+\(\s*(?:status|status_code|code|st)\s*,\s*(?:mut\s+)?(\w+)\s*\)\s*=\s*(\w+)\s*\("
+)
+HELPER_FN = re.compile(r"^\s*(?:pub(?:\([a-z]+\))?\s+)?(?:async\s+)?fn\s+(\w+)", re.M)
+SECRET_NAMES = frozenset({
+    "cookie", "cookies", "token", "secret", "password", "passwd", "api_key", "bearer", "authorization",
+})
+ALLOW_CG011 = re.compile(r"lint-diff:\s*allow\s+CG011\s+until\s+(\d{4}-\d{2}-\d{2})\s+approved by\s+\S[^:]*:\s*\S")
 # DevSkim's own suppression pattern (Suppression.cs). It reads only the first one on a line.
 SUPPRESSION = re.compile(r"DevSkim:\s+ignore\s([a-zA-Z\d,:]+)", re.IGNORECASE)
 # One table entry. rustfmt breaks a row wider than max_width over several lines
@@ -279,6 +304,75 @@ def check_password_literals(report, added):
                     "a string literal reaches a password hasher or password binding; CodeQL "
                     "rust/hard-coded-cryptographic-value alerts on it after push. Mint it per run "
                     "(`crate::common::random_urlsafe(24)` or `authn::new_session_id()`).",
+                )
+
+
+def message_leaks(lines, index, bound, today):
+    """CG011 on lines[index]: names an assert/panic/expect message prints that
+    hold a response body from a credentialed helper, or a credential. `bound`
+    is the file's names bound by `let (status, name) = helper(`. A macro opened on an earlier line still counts
+    while its parentheses are open; an expired or unapproved allow does not."""
+    line = lines[index]
+    code = code_part(line)
+    opened = False
+    for at in range(index, max(-1, index - 9), -1):
+        found = ASSERT_MACRO.search(code_part(lines[at]))
+        if not found:
+            continue
+        if at == index:
+            opened = True
+        else:
+            # Only the macro's own parenthesis counts: later lines open and close others.
+            span = STRING.sub('""', "\n".join([lines[at][found.end() - 1:]] + lines[at + 1:index]))
+            depth = 0
+            for ch in span:
+                depth += (ch == "(") - (ch == ")")
+                if depth == 0:
+                    break
+            opened = depth > 0
+        break
+    if not opened:
+        return []
+    allow = ALLOW_CG011.search(line)
+    if allow and allow.group(1) >= today.isoformat():
+        return []
+    literals = STRING.findall(code)
+    names = {name for literal in literals for name in INTERPOLATED.findall(literal)}
+    if any(POSITIONAL.search(literal) for literal in literals):
+        names.update(re.findall(r"[A-Za-z_]\w*", code[code.rfind('"') + 1:]))
+    return sorted(name for name in names if name in SECRET_NAMES or name in bound)
+
+
+def credentialed_bodies(text):
+    """Names a file binds as the body of a helper that sends a credential: a
+    helper fn of this file whose own text mentions a cookie (`as_account`,
+    which CodeQL followed from the session cookie to the message). Bodies of
+    helpers that send none are printed all over the tests and are not linted."""
+    starts = [(m.start(), m.group(1)) for m in HELPER_FN.finditer(text)]
+    helpers = {
+        name for i, (start, name) in enumerate(starts)
+        if "cookie" in text[start:(starts[i + 1][0] if i + 1 < len(starts) else len(text))].lower()
+    }
+    return {name for name, helper in RESPONSE_TUPLE.findall(text) if helper in helpers}
+
+
+def check_assert_messages(report, added, read, today=None):
+    today = today or datetime.date.today()
+    for path, numbered in sorted(added.items()):
+        if not path.endswith(".rs"):
+            continue
+        lines = read(path).splitlines()
+        bound = credentialed_bodies("\n".join(lines))
+        for number in sorted(numbered):
+            if number > len(lines):
+                continue
+            for name in message_leaks(lines, number - 1, bound, today):
+                report.add(
+                    "error", "CG011", path, number,
+                    f"this assert/panic message prints `{name}`, a response body or credential; CodeQL "
+                    "rust/cleartext-logging alerts on it after push (#1096-#1102). Use fixed text naming the "
+                    "step and keep `status` (as bee4525 did). A reviewed exception ends the line with "
+                    "`// lint-diff: allow CG011 until YYYY-MM-DD approved by <who>: <why>`.",
                 )
 
 
@@ -635,6 +729,7 @@ def main():
         check_timing(report, added)
         check_weak_hashes(report, added)
         check_password_literals(report, added)
+        check_assert_messages(report, added, lambda path: read_text(content, path))
         grep_scope = ["--cached"] if args.staged else []
 
         def references(needle):

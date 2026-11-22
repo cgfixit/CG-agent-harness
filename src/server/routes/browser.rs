@@ -93,6 +93,15 @@ async fn prepare(
             "Browser tasks need accounts: set auth.enabled: true in config.yaml and restart, then sign in as an administrator.",
         ));
     }
+    // The account as the task is asked, read before the first wait below. A
+    // role change or password reset bumps the revocation count, so a count read
+    // after the block-list check or the window check (which can load the model)
+    // would already include a demotion made during them, and every later check
+    // would compare against it and pass (#1057).
+    let account = match (state.auth.as_ref(), user.as_ref()) {
+        (Some(auth), Some(user)) => Some((user.0.clone(), auth.sign_in_revocations(&user.0.username))),
+        _ => None,
+    };
     let session = Session::general(&req.origins)
         .map_err(|_| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "BROWSER_BAD_ORIGIN", "origins"))?;
     // A name is checked at connect time by the sidecar; an IP literal skips DNS,
@@ -143,10 +152,6 @@ async fn prepare(
             ));
         }
     }
-    let account = match (state.auth.as_ref(), user.as_ref()) {
-        (Some(auth), Some(user)) => Some((user.0.clone(), auth.sign_in_revocations(&user.0.username))),
-        _ => None,
-    };
     let owner = super::auth::context_owner(user);
     let exe = std::env::current_exe()
         .map_err(|_| ApiError::new(StatusCode::BAD_GATEWAY, "BROWSER_FAILED", "harness binary not found"))?;
@@ -162,6 +167,22 @@ async fn prepare(
     // it blocks: off the async worker, as the shim stages its files (#1024).
     let task = req.task.clone();
     let task_file = super::structured_memory::off_worker(move || write_task_file(&task)).await?;
+    // After the last wait and before the child exists: an account changed
+    // meanwhile gets no task, rather than one stopped a second into its run.
+    let (check_state, check_account) = (state.clone(), account.clone());
+    if super::structured_memory::off_worker(move || account_changed(&check_state, &check_account)).await {
+        state.audit.log(json!({
+            "event": "browser.withheld",
+            "owner": owner,
+            "job": Value::Null,
+            "reason": "account_changed",
+        }));
+        return Err(ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "AUTH_REQUIRED",
+            "The account was disabled, deleted, demoted or had its password reset before this browser task started; nothing was started.",
+        ));
+    }
     // Canonical origins only: a requested URL's path or query (a token, say)
     // never reaches argv, the audit log or the report.
     let grants = session.grant_strings();
