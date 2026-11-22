@@ -208,8 +208,8 @@ notes, spend, audit, agent, chat or loop tool.
    restart-only; a port collision or invalid value refuses startup.
 3. Mint a key with the local CLI for an account's stable `user_id`
    (`GET /api/auth/whoami`, or `GET /api/auth/users` as administrator), or
-   `local` on an auth-disabled home. The account must be enabled and past its
-   setup code:
+   `local` on an auth-disabled home. The account must be enabled, past its
+   setup code and not an `auditor`:
 
    ```sh
    cgagentharness mcp-key create --owner YOUR_OWNER_ID --label workstation \
@@ -246,9 +246,11 @@ cgagentharness mcp-key list
 cgagentharness mcp-key revoke KEY_ID --confirm --reason 'Retire workstation access'
 ```
 
-Listing returns metadata only. `mcp-key create` refuses a missing or disabled
-owner or one still on its setup code, and accepts only `local` with account
-authentication off. Disabling or deleting an account disables its keys. A later
+Listing returns metadata only. `mcp-key create` refuses a missing, disabled or
+`auditor` owner or one still on its setup code, and accepts only `local` with
+account authentication off. Disabling or deleting an account disables its keys,
+as does making it an `auditor`, a role that reads no memory (checked again at
+startup); a later promotion does not restore them. A later
 request sees a revocation and rechecks it before a memory read, though a read
 already executing may finish. Owner binding is immutable: mint a new key to
 rotate. At capacity (`max_keys`), revoke an old key; rotation removes the
