@@ -2,7 +2,8 @@
 # caches, PR code, secrets, or PR-controlled verdicts enter this workflow.
 # The evaluator reads live GitHub state with a read-only token. Only mark
 # and publish can write the Checks API. The exact check name stays "review gate".
-# Open threads / running Codex reviews are advisory (neutral); evaluation
+# Open threads, running Codex reviews and a PR body not edited since an
+# operator's `@codex review` comment are advisory (neutral); evaluation
 # failure or an evaluate timeout closes this run's marker as failure. A run
 # cancelled as a whole (a newer evaluation of this PR replaced it, or a manual
 # cancel) closes its marker as neutral. Resolving a thread alone emits no
@@ -92,6 +93,7 @@ jobs:
       conclusion: ${{ steps.gate.outputs.conclusion }}
       thread_count: ${{ steps.gate.outputs.thread_count }}
       running_count: ${{ steps.gate.outputs.running_count }}
+      stale_body: ${{ steps.gate.outputs.stale_body }}
       finished: ${{ steps.gate.outputs.finished }}
     env:
       # Logins whose review-summary comment marks an in-progress review
@@ -130,6 +132,9 @@ jobs:
               return;
             }
 
+            // GitHub's own record of the body's last edit (the PR's creation
+            // when it was never edited), read with the first page of threads.
+            let bodyEditedAt = null;
             async function unresolvedThreads() {
               const out = [];
               let after = null;
@@ -138,6 +143,7 @@ jobs:
                   query($owner: String!, $repo: String!, $num: Int!, $after: String) {
                     repository(owner: $owner, name: $repo) {
                       pullRequest(number: $num) {
+                        lastEditedAt createdAt
                         reviewThreads(first: 100, after: $after) {
                           pageInfo { hasNextPage endCursor }
                           nodes {
@@ -148,6 +154,7 @@ jobs:
                       }
                     }
                   }`, { owner, repo, num: pr.number, after });
+                bodyEditedAt = q.repository.pullRequest.lastEditedAt || q.repository.pullRequest.createdAt || null;
                 const t = q.repository.pullRequest.reviewThreads;
                 for (const n of t.nodes) {
                   if (n.isResolved) continue;
@@ -164,12 +171,36 @@ jobs:
             // Codex edits one summary comment in place: "🔄 **Running**" while a
             // review is in flight, "✅ **Completed**" afterwards. Any listed bot
             // whose summary still says Running blocks the merge.
-            async function runningReviews() {
+            //
+            // A person with write access who comments `@codex review` (or
+            // `@codex security review`) asks for a review of the PR as it
+            // stands, so its body must have been edited since that comment:
+            // head SHA, commands, merge order and stamp, per
+            // .github/PULL_REQUEST_TEMPLATE.md. Only the comment's author,
+            // association, time and leading words are read; a bot's comment, a
+            // comment that merely quotes the phrase, and the body's own
+            // "Last updated" stamp are not evidence either way.
+            const writers = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+            async function reviewComments() {
               const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number: pr.number, per_page: 100 });
-              return comments
+              const running = comments
                 .filter(c => c.user && bots.has(c.user.login) && /<!--\s*codex-pull-request-review-summary\s*-->/.test(c.body || ""))
                 .filter(c => /\*\*Running\*\*/.test(c.body))
                 .map(c => ({ login: c.user.login, url: c.html_url }));
+              const requests = comments
+                .filter(c => c.user && c.user.type === "User" && !bots.has(c.user.login) &&
+                  writers.has(c.author_association) && /^\s*@codex\s+(security\s+)?review\b/i.test(c.body || "") &&
+                  Number.isFinite(Date.parse(c.created_at)))
+                .sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
+              return { running, request: requests.length ? requests[requests.length - 1] : null };
+            }
+            // Stale when the newest such request is later than the body's last
+            // edit. An unreadable edit time is stale, never fresh.
+            function staleBody(request) {
+              if (!request) return null;
+              const edited = Date.parse(bodyEditedAt || "");
+              if (Number.isFinite(edited) && edited >= Date.parse(request.created_at)) return null;
+              return { url: request.html_url, at: request.created_at };
             }
 
             if (bots.size && process.env.WAIT_FOR_BOT === "true") {
@@ -178,13 +209,16 @@ jobs:
               await sleep(grace);
             }
 
-            let threads, running, attempt = 0;
+            let threads, running, stale, attempt = 0;
             for (;;) {
               attempt += 1;
-              [threads, running] = await Promise.all([unresolvedThreads(), runningReviews()]);
-              if (threads.length === 0 && running.length === 0) break;
+              let comments;
+              [threads, comments] = await Promise.all([unresolvedThreads(), reviewComments()]);
+              running = comments.running;
+              stale = staleBody(comments.request);
+              if (threads.length === 0 && running.length === 0 && !stale) break;
               if (Date.now() >= deadline) break;
-              core.info(`attempt ${attempt}: ${threads.length} unresolved thread(s), ${running.length} review(s) running; polling again in 20s`);
+              core.info(`attempt ${attempt}: ${threads.length} unresolved thread(s), ${running.length} review(s) running, body ${stale ? "older than" : "not older than"} the latest review request; polling again in 20s`);
               await sleep(20_000);
             }
 
@@ -199,8 +233,13 @@ jobs:
               for (const t of threads) lines.push(`- \`${t.path}${t.line ? ":" + t.line : ""}\`${t.outdated ? " (outdated)" : ""} by ${t.author || "unknown"}: ${t.title} ${t.url}`);
               lines.push("", "Apply the fix and push, or reply with why not, then resolve the thread. Re-run this job if the last thread was resolved without a push.");
             }
-            const ok = !running.length && !threads.length;
-            if (ok) lines.push("✅ No unresolved review threads and no review in progress.");
+            if (stale) {
+              lines.push(`### PR body older than the latest \`@codex review\` request`, "",
+                `- Requested ${stale.at}: ${stale.url}`, "",
+                "Refresh the PR body from `.github/PULL_REQUEST_TEMPLATE.md` (head SHA, commands and exit codes, merge order, `Last updated` stamp) and check it with `scripts/check-pr-template.sh`. Editing the body re-runs this check.");
+            }
+            const ok = !running.length && !threads.length && !stale;
+            if (ok) lines.push("✅ No unresolved review threads, no review in progress and the PR body is not older than a review request.");
             const summary = lines.join("\n");
             await core.summary.addRaw(summary).write();
 
@@ -208,6 +247,7 @@ jobs:
             core.setOutput("conclusion", ok ? "success" : "neutral");
             core.setOutput("thread_count", String(threads.length));
             core.setOutput("running_count", String(running.length));
+            core.setOutput("stale_body", String(Boolean(stale)));
             core.setOutput("finished", "true");
 
   # Records whether the whole workflow run was cancelled. Only a job-level `if`
@@ -260,6 +300,7 @@ jobs:
           CONCLUSION: ${{ needs.evaluate.outputs.conclusion }}
           THREAD_COUNT: ${{ needs.evaluate.outputs.thread_count }}
           RUNNING_COUNT: ${{ needs.evaluate.outputs.running_count }}
+          STALE_BODY: ${{ needs.evaluate.outputs.stale_body }}
           RUN_CANCELLED: ${{ needs.run-state.result == 'success' && needs.run-state.outputs.run_cancelled == 'true' }}
           CHECK_NAME: review gate
         with:
@@ -271,14 +312,17 @@ jobs:
             const conclusion = process.env.CONCLUSION || "";
             const threads = process.env.THREAD_COUNT || "";
             const running = process.env.RUNNING_COUNT || "";
+            const stale = process.env.STALE_BODY || "";
             if (markerResult !== "success" || markerResult === "skipped" || evalResult === "skipped") {
               core.info("marker or evaluate was skipped; not changing the check");
               return;
             }
             const markFailed = evalResult === "failure" || evalResult === "cancelled";
             const countsOk = /^(0|[1-9][0-9]*)$/.test(threads) && /^(0|[1-9][0-9]*)$/.test(running) &&
-              Number.isSafeInteger(Number(threads)) && Number.isSafeInteger(Number(running));
-            const expectedConclusion = countsOk && Number(threads) === 0 && Number(running) === 0 ? "success" : "neutral";
+              Number.isSafeInteger(Number(threads)) && Number.isSafeInteger(Number(running)) &&
+              (stale === "true" || stale === "false");
+            const staleBody = stale === "true";
+            const expectedConclusion = countsOk && Number(threads) === 0 && Number(running) === 0 && !staleBody ? "success" : "neutral";
             let verdictOk = evalResult === "success" && finished === "true" && countsOk && conclusion === expectedConclusion;
             // Superseded: the run, not just evaluate, was cancelled before a
             // verdict. Not an evaluation error, so it must not leave a red check.
@@ -297,13 +341,17 @@ jobs:
             let title = verdictOk
               ? (runningCount
                 ? `${runningCount} bot review(s) still running on this head`
-                : threadCount ? `${threadCount} unresolved review thread(s)` : "All review threads resolved; no review running")
+                : threadCount ? `${threadCount} unresolved review thread(s)`
+                : staleBody ? "PR body is older than the latest @codex review request"
+                : "All review threads resolved; no review running")
               : superseded ? "Superseded: evaluation cancelled before a verdict"
               : "Review gate evaluation did not finish";
             let summary = verdictOk
               ? (runningCount
                 ? `${runningCount} bot review(s) still running.`
-                : threadCount ? `${threadCount} unresolved review thread(s).` : "No unresolved review threads and no review in progress.")
+                : threadCount ? `${threadCount} unresolved review thread(s).`
+                : staleBody ? "The PR body was not edited after the latest @codex review comment by a person with write access. Refresh it from .github/PULL_REQUEST_TEMPLATE.md (head SHA, commands and exit codes, merge order, Last updated stamp); editing the body re-runs this check."
+                : "No unresolved review threads and no review in progress.")
               : superseded
                 ? "This workflow run was cancelled before evaluate finished: a newer evaluation of this PR replaced it, or the run was cancelled manually. Not an evaluation error; read the newest review gate check on this head."
                 : `evaluate result was '${evalResult}'. Evaluation failed, timed out, or returned an invalid verdict.`;

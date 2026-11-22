@@ -10,9 +10,9 @@ and [release controls](../../docs/RELEASING.md).
 |---|---|
 | [`ci.yml`](ci.yml) | Rust formatting, Clippy, dependency policy, browser, sandbox and lifecycle tests; PR, main push, merge queue and release calls. |
 | [`pr-template-check.yml`](pr-template-check.yml) | PR-body requirements (Cursor and trailing Claude Code footers are stripped; verified Dependabot updates are exempt) and base-is-main checks; PR open/edit/sync/reopen/ready events. |
-| [`review-gate-request.yml`](review-gate-request.yml) | Unprivileged wake-up signal from PR, review and review-comment events, including forks. |
+| [`review-gate-request.yml`](review-gate-request.yml) | Unprivileged wake-up signal from PR (body edits included), review and review-comment events, including forks. |
 | [`review-gate.yml`](review-gate.yml) | Trusted dispatcher; validates request-run identity or handles Codex summary comments, then calls the evaluator. |
-| [`review-gate-evaluate.yml`](review-gate-evaluate.yml) | Reusable advisory check: unresolved threads/running reviews are neutral; evaluation errors fail. Re-run the dispatcher after resolving threads. |
+| [`review-gate-evaluate.yml`](review-gate-evaluate.yml) | Reusable advisory check: unresolved threads, running reviews and a PR body not edited since an operator's `@codex review` comment are neutral; evaluation errors fail. Re-run the dispatcher after resolving threads. |
 
 The [docs-only classifier](../../scripts/ci-docs-only.sh) skips compile jobs only
 on qualifying PRs; browser, formatting and invariant checks still run.
