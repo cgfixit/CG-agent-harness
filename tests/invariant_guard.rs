@@ -2160,6 +2160,276 @@ fn agent_run_and_jobs_share_prepare_run() {
     );
 }
 
+/// One function the async-blocking scan read: what it calls directly and by bare name,
+/// with closure bodies left out (a closure is how work reaches `off_worker`/`spawn_blocking`).
+#[derive(Default)]
+struct BlockingFacts {
+    file: String,
+    name: String,
+    is_async: bool,
+    direct: Vec<String>,
+    callees: std::collections::BTreeSet<String>,
+}
+
+struct BlockingScan {
+    file: String,
+    stack: Vec<BlockingFacts>,
+    closure: usize,
+    out: Vec<BlockingFacts>,
+}
+
+fn is_test_item(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|a| {
+        let last = a
+            .path()
+            .segments
+            .last()
+            .map(|s| s.ident.to_string())
+            .unwrap_or_default();
+        match (&a.meta, last.as_str()) {
+            (_, "test") => true,
+            (syn::Meta::List(l), "cfg") => {
+                let t = l.tokens.to_string();
+                t.contains("test") && !t.contains("not")
+            }
+            _ => false,
+        }
+    })
+}
+
+/// The calls that park the thread they run on: file system, SQLite open and the password hash.
+fn blocking_call(path: &syn::Path) -> Option<String> {
+    const FS: &[&str] = &[
+        "read",
+        "read_to_string",
+        "write",
+        "create_dir_all",
+        "create_dir",
+        "remove_file",
+        "remove_dir_all",
+        "remove_dir",
+        "rename",
+        "copy",
+        "metadata",
+        "read_dir",
+        "canonicalize",
+        "symlink_metadata",
+        "set_permissions",
+    ];
+    const HASH: &[&str] = &[
+        "hash_password",
+        "verify_password",
+        "hash_bootstrap_password",
+        "hash_password_with_salt",
+    ];
+    let segs: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+    let last = segs.last()?.as_str();
+    let prev = if segs.len() >= 2 {
+        segs[segs.len() - 2].as_str()
+    } else {
+        ""
+    };
+    let named = match (prev, last) {
+        ("fs", f) if FS.contains(&f) => true,
+        ("File", "open" | "create") | ("OpenOptions", "new") => true,
+        ("Connection", "open" | "open_in_memory") => true,
+        (_, h) if HASH.contains(&h) => true,
+        _ => false,
+    };
+    named.then(|| {
+        if prev.is_empty() {
+            last.to_string()
+        } else {
+            format!("{prev}::{last}")
+        }
+    })
+}
+
+impl BlockingScan {
+    fn live(&self) -> bool {
+        self.closure == 0 && !self.stack.is_empty()
+    }
+    fn enter(&mut self, name: String, is_async: bool, walk: impl FnOnce(&mut Self)) {
+        let saved = std::mem::replace(&mut self.closure, 0);
+        self.stack.push(BlockingFacts {
+            file: self.file.clone(),
+            name,
+            is_async,
+            ..Default::default()
+        });
+        walk(self);
+        let done = self.stack.pop().unwrap();
+        self.out.push(done);
+        self.closure = saved;
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for BlockingScan {
+    fn visit_item_mod(&mut self, m: &'ast syn::ItemMod) {
+        if !is_test_item(&m.attrs) {
+            syn::visit::visit_item_mod(self, m);
+        }
+    }
+    fn visit_item_fn(&mut self, f: &'ast syn::ItemFn) {
+        if !is_test_item(&f.attrs) {
+            self.enter(f.sig.ident.to_string(), f.sig.asyncness.is_some(), |s| {
+                syn::visit::visit_item_fn(s, f)
+            });
+        }
+    }
+    fn visit_impl_item_fn(&mut self, f: &'ast syn::ImplItemFn) {
+        if !is_test_item(&f.attrs) {
+            self.enter(f.sig.ident.to_string(), f.sig.asyncness.is_some(), |s| {
+                syn::visit::visit_impl_item_fn(s, f)
+            });
+        }
+    }
+    fn visit_expr_closure(&mut self, c: &'ast syn::ExprClosure) {
+        self.closure += 1;
+        syn::visit::visit_expr_closure(self, c);
+        self.closure -= 1;
+    }
+    fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
+        if let (true, syn::Expr::Path(p)) = (self.live(), &*c.func) {
+            let top = self.stack.last_mut().unwrap();
+            top.direct.extend(blocking_call(&p.path));
+            top.callees.extend(p.path.segments.last().map(|s| s.ident.to_string()));
+        }
+        syn::visit::visit_expr_call(self, c);
+    }
+    fn visit_expr_method_call(&mut self, c: &'ast syn::ExprMethodCall) {
+        if self.live() {
+            let top = self.stack.last_mut().unwrap();
+            if c.method == "query_row" || c.method == "execute_batch" {
+                top.direct.push(format!(".{}", c.method));
+            }
+            top.callees.insert(c.method.to_string());
+        }
+        syn::visit::visit_expr_method_call(self, c);
+    }
+}
+
+/// `file :: fn` for every non-test `async fn` that calls blocking work inline: directly, or through
+/// a sync function of a name no other function in `sources` shares and that itself blocks. A name
+/// two functions share is skipped, since without types `get` or `new` cannot be told apart.
+fn async_blocking_violations(sources: &[(String, String)]) -> Vec<String> {
+    use std::collections::BTreeMap;
+    use syn::visit::Visit;
+    let mut facts = Vec::new();
+    for (path, text) in sources {
+        let file = syn::parse_file(text).unwrap_or_else(|e| panic!("{path} does not parse as Rust: {e}"));
+        let mut scan = BlockingScan {
+            file: path.clone(),
+            stack: Vec::new(),
+            closure: 0,
+            out: Vec::new(),
+        };
+        scan.visit_file(&file);
+        facts.extend(scan.out);
+    }
+    let mut defs: BTreeMap<&str, usize> = BTreeMap::new();
+    for f in &facts {
+        *defs.entry(f.name.as_str()).or_default() += 1;
+    }
+    let unique = |f: &BlockingFacts| defs[f.name.as_str()] == 1;
+    let mut blocking: std::collections::BTreeSet<String> = facts
+        .iter()
+        .filter(|f| !f.is_async && unique(f) && !f.direct.is_empty())
+        .map(|f| f.name.clone())
+        .collect();
+    loop {
+        let before = blocking.len();
+        for f in facts.iter().filter(|f| !f.is_async && unique(f)) {
+            if f.callees.iter().any(|c| blocking.contains(c)) {
+                blocking.insert(f.name.clone());
+            }
+        }
+        if blocking.len() == before {
+            break;
+        }
+    }
+    let mut found: Vec<String> = facts
+        .iter()
+        .filter(|f| f.is_async && (!f.direct.is_empty() || f.callees.iter().any(|c| blocking.contains(c))))
+        .map(|f| format!("{} :: {}", f.file, f.name))
+        .collect();
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// Async functions that still call blocking work inline, as of this guard's introduction. Each was
+/// read, not fixed: the list may only shrink. Fix the function (see `routes::structured_memory::off_worker`)
+/// and delete its row; the test fails on a row that no longer matches.
+const ASYNC_BLOCKING_BASELINE: &[&str] = &[
+    "src/common/mcp.rs :: spawn",
+    "src/common/mcp_worker.rs :: run",
+    "src/llm/cloud_chat.rs :: request",
+    "src/server/chat_web.rs :: run_inner",
+    "src/server/chat_web/evidence.rs :: read",
+    "src/server/mod.rs :: build_app_with_sources",
+    "src/server/web_google.rs :: google_hop",
+    "src/server/web_index.rs :: crawl",
+    "src/server/web_index.rs :: fetch_many",
+    "src/server/web_index.rs :: search_with_count",
+    "src/server/web_research.rs :: run_with",
+    "src/server/web_search.rs :: fetch_page",
+];
+
+#[test]
+fn async_fns_leave_blocking_file_and_database_work_to_the_blocking_pool() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut sources = Vec::new();
+    for dir in ["src/server", "src/shim", "src/common", "src/llm", "src/netconnect"] {
+        for (path, text) in read_tree_raw(&root.join(dir)) {
+            let relative = Path::new(&path).strip_prefix(root).unwrap().display().to_string();
+            sources.push((relative.replace('\\', "/"), text));
+        }
+    }
+    let found = async_blocking_violations(&sources);
+    let new: Vec<_> = found
+        .iter()
+        .filter(|f| !ASYNC_BLOCKING_BASELINE.contains(&f.as_str()))
+        .collect();
+    assert!(
+        new.is_empty(),
+        "these async fns call file, SQLite or password-hash work inline, which parks an async worker: {new:#?}. \
+         Move the work into `routes::structured_memory::off_worker(move || ..)` (or `spawn_blocking`) and await it."
+    );
+    let stale: Vec<_> = ASYNC_BLOCKING_BASELINE
+        .iter()
+        .filter(|b| !found.iter().any(|f| f == *b))
+        .collect();
+    assert!(
+        stale.is_empty(),
+        "fixed or renamed, so delete them from ASYNC_BLOCKING_BASELINE: {stale:#?}"
+    );
+}
+
+#[test]
+fn the_async_blocking_scan_reads_what_it_claims_to() {
+    let src = |text: &str| vec![("x.rs".to_string(), text.to_string())];
+    let flagged = |text: &str| async_blocking_violations(&src(text));
+    // A direct call in an async fn is flagged; the same call in a closure handed to the pool is not.
+    assert_eq!(
+        flagged("async fn a() { std::fs::write(p, b).unwrap(); }"),
+        ["x.rs :: a"]
+    );
+    assert!(flagged("async fn a() { off_worker(move || { std::fs::write(p, b).unwrap(); }).await; }").is_empty());
+    // A uniquely named sync helper carries the block to its async caller, two hops deep.
+    assert_eq!(
+        flagged("fn save() { std::fs::write(p, b).unwrap(); } fn persist() { save(); } async fn a() { persist(); }"),
+        ["x.rs :: a"]
+    );
+    // A name two functions share proves nothing, and test code is skipped.
+    assert!(flagged("fn get() { std::fs::read(p); } fn get() {} async fn a() { get(); }").is_empty());
+    assert!(flagged("#[tokio::test] async fn a() { std::fs::read(p); }").is_empty());
+    assert!(flagged("#[cfg(test)] mod t { async fn a() { std::fs::read(p); } }").is_empty());
+    // A sync fn that blocks is fine on its own.
+    assert!(flagged("fn a() { std::fs::read(p); }").is_empty());
+    assert!(flagged("async fn a() { let x = hash_password(p); }") == ["x.rs :: a"]);
+}
+
 #[test]
 fn console_asset_is_verbatim_with_both_placeholders() {
     let html = cgagentharness::server::console::HARNESS_HTML;
