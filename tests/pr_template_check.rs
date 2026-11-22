@@ -773,6 +773,11 @@ fn workflow_and_script_share_the_core_path_list() {
         from_script.contains(&"assets/config.default.yaml".to_string()),
         "{from_script:?}"
     );
+    // Role decisions live in the capability matrix and the route table since
+    // #1027, no longer inline in guards.rs: both stay on the list.
+    for authority in ["src/common/authz.rs", "src/server/routes/mod.rs"] {
+        assert!(from_script.contains(&authority.to_string()), "{from_script:?}");
+    }
     assert_eq!(
         from_script, from_workflow,
         "check-pr-template.sh vs pr-template-check.yml"

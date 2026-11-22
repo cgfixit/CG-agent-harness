@@ -70,7 +70,7 @@ _Put an `x` in the boxes that apply_
 
 
 **Optional free-text scope note** (recommended):  
-Core isolation / write-gate path (`src/shim`, guards, writer, sandbox, workspace, shipped config) | Agentic pipeline | Console / server | Docs + audits | Infrastructure / CI only
+Core isolation / write-gate path (`src/shim`, guards, route table, authz, writer, sandbox, workspace, shipped config) | Agentic pipeline | Console / server | Docs + audits | Infrastructure / CI only
 
 Check a box only when the diff matches it. A docs or template edit is not a new feature. If a quality-bar command was skipped, leave the checklist row open and explain it under Risks, with the head SHA those boxes describe.
 
@@ -116,7 +116,7 @@ Mark a box only after that command exits 0 on the head SHA you will push. A skip
 ## Further comments
 If this is a relatively large, complex, or core-path change, kick off the discussion here.
 
-**For changes touching `src/shim`, `src/server/guards.rs`, `src/server/headers.rs`, `src/agentic/writer.rs`, `src/agentic/executor/sandbox.rs`, `src/agentic/workspace.rs`, or `assets/config.default.yaml`, include:**
+**For changes touching `src/shim`, `src/server/guards.rs`, `src/server/headers.rs`, `src/server/routes/mod.rs`, `src/common/authz.rs`, `src/agentic/writer.rs`, `src/agentic/executor/sandbox.rs`, `src/agentic/workspace.rs`, or `assets/config.default.yaml`, include:**
 - Explicit before/after invariant statement (which `INVARIANTS.md` guarantee holds and why)
 - Test or `scripts/verify-local.sh` evidence
 - Any compensating controls or observability added

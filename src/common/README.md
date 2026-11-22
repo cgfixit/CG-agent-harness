@@ -12,6 +12,7 @@ Contracts: [INVARIANTS.md](../../INVARIANTS.md); process rules:
 - [`auth_sqlite.rs`](auth_sqlite.rs): SQLite schema and commit-before-snapshot writes, included by `auth_store.rs` via `#[path]`.
 - [`auth_store.rs`](auth_store.rs): `AuthManager`: users, sessions, lockout, bootstrap admin, one-time `auth.json` migration.
 - [`authn.rs`](authn.rs): scrypt n=2^17 password records, lockout math, session and CSRF tokens.
+- [`authz.rs`](authz.rs): **core path.** `Role`, `Capability` and the `grants` matrix: where a stored role becomes an access decision.
 - [`bounded_log.rs`](bounded_log.rs): two-generation JSONL retention; `append_until` retries a busy lease to a deadline.
 - [`browser.rs`](browser.rs): browser session policy: origin grants, per-observation refs, allow/handoff/refuse.
 - [`browser_host.rs`](browser_host.rs): Playwright sidecar owner, the model task loop, `browser` CLI and fixtures.

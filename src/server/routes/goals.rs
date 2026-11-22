@@ -137,7 +137,12 @@ pub async fn status(
     };
     let mut out = json!({"stage":stage,"status":"staged","completion":"Model text never establishes completion; local completion requires checked candidate evidence and operator approval.","auto_resume":false});
     if let Some(job_id) = stage["job_id"].as_str() {
-        match state.jobs.get(&owner, job_id) {
+        // The job lock is held across the job file's fsync by its writers.
+        let job = {
+            let (state, owner, job_id) = (state.clone(), owner.clone(), job_id.to_string());
+            super::structured_memory::off_worker(move || state.jobs.get(&owner, &job_id)).await
+        };
+        match job {
             Some(job) => {
                 out["status"] = job["status"].clone();
                 if let Some(run_id) = job["result"]["parsed"]["run_id"].as_str() {

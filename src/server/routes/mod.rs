@@ -403,7 +403,10 @@ pub const ROUTE_CAPS: &[(&str, Method, Capability)] = &[
     ("/api/mcp/call", Method::POST, Capability::UseMcp),
     ("/api/soul", Method::GET, Capability::ManageSharedContent),
     ("/api/soul", Method::POST, Capability::ManageSharedContent),
-    ("/api/soul/document", Method::GET, Capability::ManageSharedContent),
+    // A proposal must carry the current revision, so the role that may propose
+    // reads the current document; `persona::document` keeps backups and the
+    // version list for `ManageSharedContent`.
+    ("/api/soul/document", Method::GET, Capability::ProposePersona),
     ("/api/soul/document", Method::POST, Capability::ManageSharedContent),
     ("/api/soul/proposals", Method::POST, Capability::ProposePersona),
     ("/api/soul/proposals/{id}", Method::GET, Capability::ManageSharedContent),

@@ -25,6 +25,12 @@ to Claude Code.
 - Branch prefix is `claude/`. Draft PR, one concern, based on `main`, body from
   `.github/PULL_REQUEST_TEMPLATE.md`.
 - Never comment `@codex review` on a PR without the operator's approval.
+- Watching a PR (`subscribe_pr_activity`): when the operator comments
+  `@codex review`, first refresh the PR body from
+  `.github/PULL_REQUEST_TEMPLATE.md` (head SHA, commands with exit codes, merge
+  order, `Last updated` stamp) and pass `scripts/check-pr-template.sh`, then
+  handle findings. The `review gate` stays neutral until the body is newer than
+  that comment.
 - The pre-commit security gate prints questions when a diff touches an agent
   instruction surface or adds an execution path; answer them in the PR body.
 - After a dependency, network-crate or `Command::new(` change, ask the operator
