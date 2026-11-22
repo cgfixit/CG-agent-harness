@@ -116,7 +116,9 @@ using Rosetta** unchecked. Run every command from the clone, as your user.
 8. **Set your password:** fresh homes open a form for the private setup code
    and a new password of at least 12 characters ([first run](#6-first-run)). The
    app shows the code in **Harness → Setup and recovery** (**Cmd and +**
-   reopens it); for a terminal server, `cat ~/.CGagentHarness/setup-code`. Until
+   reopens it); for a terminal server, `cat ~/.CGagentHarness/setup-code`. In a
+   browser, **Where's my setup code?** lists both, with copy buttons, and can
+   read that file in the page for 20 seconds; the server never sends it. Until
    then the session can only change its password or log out, and the CLI and
    API answer `AUTH_PASSWORD_CHANGE_REQUIRED`. The browser needs its own sign-in.
 9. **Optional web allowlist:** with that console origin, sign the CLI in and grant
