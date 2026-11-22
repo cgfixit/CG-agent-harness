@@ -13,34 +13,31 @@ to Claude Code.
   `python3 scripts/test-desktop-backend.py`. Anything else prompts; do not work
   around a prompt.
 - Agent fan-out is capped (operator decision, 2026-10-19): settings deny the
-  `Workflow` tool and put every `Agent` spawn behind an approval prompt. Ask before
-  using more than 2 subagents on one task; never route around the cap.
+  `Workflow` tool and gate every `Agent` spawn. Ask before using more than 2
+  subagents on one task; never route around the cap.
 - A `SessionStart` hook runs `.claude/hooks/session-start.sh` (git hooks; in cloud
-  sessions also toolchain, libdbus, build cache). If a build fails right after start, read
-  `${TMPDIR:-/tmp}/cgah-session-start.log` before debugging.
+  sessions also toolchain, libdbus, build cache). If a build fails right after
+  start, read `${TMPDIR:-/tmp}/cgah-session-start.log` first.
 - `.claude/skills/<slug>/SKILL.md` runs as `/<slug>`. Four are operator-only
   (`disable-model-invocation: true`): `cgagentharness-invariant-guard`,
   `cgagentharness-otel-hardening`, `doc-sync`, `run-cg-agent-harness`. Ask the
-  operator to run them; never self-load them. `dep-sync` is model-loadable.
-- Branch prefix is `claude/`. Draft PR, one concern, based on `main`, body from
-  `.github/PULL_REQUEST_TEMPLATE.md`.
-- Never comment `@codex review` on a PR without the operator's approval.
+  operator to run them; never self-load them.
+- Branch prefix is `claude/`. Never comment `@codex review` without the
+  operator's approval.
 - Watching a PR (`subscribe_pr_activity`): when the operator comments
-  `@codex review`, first refresh the PR body from
-  `.github/PULL_REQUEST_TEMPLATE.md` (head SHA, commands with exit codes, merge
-  order, `Last updated` stamp) and pass `scripts/check-pr-template.sh`, then
-  handle findings. The `review gate` stays neutral until the body is newer than
-  that comment.
-- The pre-commit security gate prints questions when a diff touches an agent
-  instruction surface or adds an execution path; answer them in the PR body.
+  `@codex review`, first refresh the PR body (head SHA, commands with exit codes,
+  merge order, `Last updated` stamp) and pass `scripts/check-pr-template.sh`,
+  then handle findings. The `review gate` stays neutral until the body is newer
+  than that comment.
+- Answer the pre-commit security gate's questions in the PR body.
 - After a dependency, network-crate or `Command::new(` change, ask the operator
-  to run `/cgagentharness-otel-hardening`: CI runs its static checker
-  (`telemetry-contract.yml`), never its vendor sweep.
+  to run `/cgagentharness-otel-hardening`: CI runs only its static checker
+  (`telemetry-contract.yml`).
 
 ## Cloud sessions (Linux container)
 - No `gh`: use the GitHub MCP tools. `cargo-deny` may be absent; say so, never
   count it as a pass.
-- `desktop/` does not compile here (macOS-only bindings); its compile gate is
+- `desktop/` does not compile here (macOS-only bindings); its gate is
   `desktop-check.yml`.
 - Keep extra build output outside the repository (`CARGO_TARGET_DIR`); an
   untracked directory blocks the stop hook.
@@ -48,6 +45,5 @@ to Claude Code.
 ## Local verification
 Lint (fmt, clippy), then run the changed code. Never the full suite locally; CI
 runs it with `GROK_API_KEY`, `ANTHROPIC_API_KEY` and `DEEPAGENT_API_KEY` blanked.
-After any `.md` edit, `wc -w` it against its `DOCS_BUDGET` cap (`CLAUDE.md` 400,
-`AGENTS.md` 1776).
-
+After any `.md` edit, `wc -w` it against its `DOCS_BUDGET` cap (`CLAUDE.md` 340,
+`AGENTS.md` 1250).

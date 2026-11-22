@@ -114,6 +114,7 @@ attachments:
 # Home-jail .md/.txt notes for local prompt retrieval.
 # Separate from structured memory. Cloud and /agent never receive these bytes.
 notes_corpus:
+  enabled: true # literal false refuses uploads and keeps notes out of prompts (list/delete still work); a missing key is on; restart-only
   max_files_per_owner: 64 # 1–256
   max_file_bytes: 524288 # 1024–1048576; also caps a PDF note's extracted text
   max_pdf_bytes: 8388608 # 1024–15728640 stored size of one .pdf note; max_home_bytes still applies
@@ -148,7 +149,7 @@ api:
 # repeated reply, max_failures, or /loop stop) still end a run.
 loop:
   # Turns one /loop run may take. 0 means unlimited.
-  max_turns: 50 # 0 (unlimited) or 1–1000000
+  max_turns: 200 # 0 (unlimited) or 1–1000000; /loop auto with no count runs to GOAL_DONE or this cap
   # Aggregate reported completion tokens across a run's turns. 0 means unlimited.
   max_total_completion_tokens: 200000 # 0 (unlimited) or 1–100000000
   # Consecutive failed turns (a timeout, a truncated or malformed reply, a
@@ -162,7 +163,7 @@ loop:
 # Missing values in existing homes use these defaults; invalid values fail boot.
 web:
   chat_tool_calls: 30 # 1–30 read-only calls per chat or local /loop turn; web.total_tokens usually binds first
-  carry_forward_sources: 0 # 0 (off) or 1–50 earlier reads (URL/query only, no page text) listed in web turns; reloadable
+  carry_forward_sources: 5 # 0 (off) or 1–50 earlier reads (URL/query only, no page text) listed in web turns, cited when used; reloadable
   goal_web_default: all # off|fetch|all; restart-only. The mode a /goal gets without --web.
   # A model-composed web_fetch URL (only a /* or *. rule, or denylist mode, permits it;
   # no search listed it; the message did not name it) pauses an administrator's live
@@ -178,7 +179,7 @@ web:
   request_seconds: 15 # 1–30, includes queue, DNS, headers, body and extraction; also the one deadline a search's provider hops share. Shipped 8 until 2026-11-10
   html_parser_handles: 4096 # 64–4096; bound open-element/formatting state, restart-only
   concurrency: 4 # 1–4 total fetches; restart-only (shared permits)
-  max_rules: 64 # 1–256 allowlist rules (one per pattern; a grant names 1–32); restart-only; file cap 4 KiB per rule, at least 64 KiB
+  max_rules: 256 # 1–256 allowlist rules (one per pattern; a grant names 1–32); restart-only; file cap 4 KiB per rule, at least 64 KiB
   pages: 40 # 1–40 per run
   run_bytes: 8388608 # 1024–8388608 per run; shipped 2097152 until 2026-11-10 (two full responses at the new response_bytes)
   run_seconds: 180 # 1–180
@@ -220,7 +221,7 @@ web:
   # key never fall through.
   search:
     provider: auto # auto|google-public|serpapi|tavily
-    fallback_to_serpapi: false # literal true: a failed tavily tries SerpAPI when a key is active
+    fallback_to_serpapi: true # ships on (operator decision, 2026-11-22); a failed Tavily search tries SerpAPI only when a SerpAPI key is active, spending its quota; literal false turns it off
     fallback_to_public_google: true # ships on (operator decision, 2026-11-01); literal false turns it off. A failed earlier hop tries public Google (fresh homes seed its URL rule)
     fallback_alert_per_hour: 20 # 1–1000 SerpAPI fallbacks per clock hour before one web_search_fallback_burst audit line
     # Reads of search results, restart-only. Ships on (operator decision, 2026-11-12; it was
@@ -336,6 +337,10 @@ mcp:
   servers: []
 
 security:
+  # DNS: the console answers only loopback Host/authority names (DNS-rebinding
+  # defense, server/headers.rs). Outbound reads resolve once, refuse any private,
+  # loopback, unspecified or special-use answer and connect to the vetted address,
+  # so a sinkhole resolver (Pi-hole's 0.0.0.0 or ::) blocks a host by failing closed.
   # Compatibility setting. Harness keys are optional metadata and never grant
   # account permissions. False is deprecated and does not disable account login.
   api_key_optional: true # optional harness metadata key; account login remains required
@@ -438,8 +443,14 @@ policy:
       - 'decode\s+and\s+execute|base64.{0,40}execute|execute.{0,40}base64'
       - 'reveal\s+(your\s+)?(instructions|system\s+prompt)'
   privacy:
+    # Audit lines, /diag reads, coding-cloud prompts and cloud chat messages are
+    # redacted; local-model prompts stay on this machine and are not.
     redact_emails: true
-    redact_ips: true
+    redact_ips: true # IPv4, and IPv6 that parses as an address
+    # Checked shapes, labeled [REDACTED_PII]: Luhn-valid card numbers, mod-97 IBANs,
+    # checksum-valid ABA routing numbers and account numbers beside their label,
+    # dashed US SSNs. Literal true only; a missing key is off.
+    redact_financial: true
     # Pattern redaction is best effort, not comprehensive financial-PII detection.
     redact_secrets_like:
       - 'Bearer\s+[A-Za-z0-9\-_.]+'
