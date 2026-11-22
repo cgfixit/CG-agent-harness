@@ -828,7 +828,7 @@ best-effort, not containment ([limits and tests](docs/PROCESS_LIFECYCLE.md)).
 
 `GET /api/ollama/inventory` reuses the `/v1/models` readiness probe plus
 `GET /api/tags`; `/api/ollama/profile` reads `/api/show` and `/api/ps`. All are
-CSRF-guarded (operator/admin). `POST /api/ollama/pull` streams NDJSON (SSE on
+CSRF-guarded (admin). `POST /api/ollama/pull` streams NDJSON (SSE on
 `Accept: text/event-stream`) to a derived loopback origin. The pull is
 single-flighted, abortable (`POST /api/ollama/pull/cancel` or disconnect), and
 never sends `num_ctx`. It takes only `name` or `ns/name`; Ollama dials `host` in
@@ -1009,11 +1009,12 @@ notes, spend, sessions or coding tools are published. I6 remains unchanged.
 Machine credentials use their own STRICT schema/version/initialized marker and
 private no-follow database. Only hashes of random 256-bit secrets persist; keys
 are not users or cookie sessions. The CLI mints/revokes with explicit confirm and
-reason using local filesystem authority, never for an owner that is missing,
-disabled or still on its setup code. Table/rate/concurrency/body/result/time
+reason using local filesystem authority, never for a missing, disabled,
+`auditor` or setup-code owner. Table/rate/concurrency/body/result/time
 ceilings are finite; revocation is rechecked before reads. In-flight reads may
-finish. Disabling or deleting an account sets `disabled=1` on that owner's
-machine keys and retires that owner's schedules and completion notifications.
+finish. Disabling or deleting an account sets `disabled=1` on its machine keys
+and retires its schedules and completion notifications; making it `auditor`
+disables the keys.
 Key rows stay until an explicit key-id revoke.
 Audits contain recognized tools, public IDs and coarse outcomes, never content.
 All gateway settings remain restart-only, outside `RELOADABLE`.

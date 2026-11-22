@@ -1365,3 +1365,119 @@ async fn a_retired_role_is_migrated_and_audited_once_at_boot() {
         .unwrap();
     assert_eq!(whoami["role"], "auditor", "the migrated account signs in as auditor");
 }
+
+/// The gateway authenticates by the key row alone and `auditor` holds no memory
+/// read, so a role change to `auditor` retires that owner's machine keys and
+/// none is minted for one. A later promotion does not bring a key back.
+#[tokio::test]
+async fn an_account_made_auditor_loses_its_machine_keys_and_gets_no_new_one() {
+    let model = start_mock_model().await;
+    let server = spawn_server(&model.base_url(), ServerOptions::default().with("auth.enabled", "true")).await;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&server.home, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let auth = server.state.auth.as_ref().unwrap();
+    // Minted per run: no literal reaches the password hasher.
+    let secret = cgagentharness::common::random_urlsafe(24);
+    auth.create_user("ops-admin", &secret, "admin").unwrap();
+    auth.create_user("worker", &cgagentharness::common::random_urlsafe(24), "operator")
+        .unwrap();
+    let worker_id = auth.get_user("worker").unwrap().user_id;
+    let admin = login(&server, "ops-admin", &secret).await;
+    let mint = [
+        "mcp-key",
+        "create",
+        "--owner",
+        &worker_id,
+        "--label",
+        "fixture",
+        "--confirm",
+        "--reason",
+        "fixture",
+    ];
+    let minted = cli(&server, &mint, "").await;
+    assert!(minted.status.success(), "an operator owner gets a key");
+    let token = serde_json::from_slice::<Value>(&minted.stdout).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let home = cgagentharness::common::home::Home::at(server.home.clone());
+    let keys = cgagentharness::server::mcp_keys::KeyStore::open(&home, 8).unwrap();
+    assert!(keys.authenticate(&token).is_ok(), "the key works for an operator");
+
+    let role = |role: &'static str| {
+        request(
+            &server,
+            &admin,
+            Method::POST,
+            "/api/auth/users/worker/role",
+            json!({"role": role}),
+        )
+    };
+    assert_eq!(role("auditor").await.status(), 200);
+    assert!(
+        keys.authenticate(&token).is_err(),
+        "the role change retired the auditor's machine key"
+    );
+    let refused = cli(&server, &mint, "").await;
+    assert!(!refused.status.success(), "no key is minted for an auditor");
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("MCP_KEY_OWNER_REFUSED"));
+    assert!(!String::from_utf8_lossy(&refused.stdout).contains("token"));
+
+    assert_eq!(role("operator").await.status(), 200);
+    assert!(
+        keys.authenticate(&token).is_err(),
+        "a promotion does not re-enable a key"
+    );
+}
+
+/// A key an `auditor` account still holds at boot (a fold acknowledged by an
+/// earlier build, or a role set while the key store was unwritable) is retired
+/// before the gateway can serve it.
+#[tokio::test]
+async fn boot_retires_a_machine_key_an_auditor_account_still_holds() {
+    let model = start_mock_model().await;
+    let prepared = prepare_server(&model.base_url(), ServerOptions::default().with("auth.enabled", "true")).await;
+    // Minted per run: no literal reaches the password hasher.
+    let hash = cgagentharness::common::authn::hash_password(&cgagentharness::common::random_urlsafe(24)).unwrap();
+    let (watcher_id, worker_id) = (
+        cgagentharness::common::random_hex(16),
+        cgagentharness::common::random_hex(16),
+    );
+    let legacy = json!({"users": {
+        "admin": {"password_hash": hash, "created_ts": 123.0, "role": "admin"},
+        "watcher": {"user_id": watcher_id, "password_hash": hash, "created_ts": 123.0, "role": "auditor"},
+        "worker": {"user_id": worker_id, "password_hash": hash, "created_ts": 123.0, "role": "operator"},
+    }, "sessions": {}});
+    cgagentharness::common::atomic::write_atomic(
+        &prepared.home_dir.join("auth.json"),
+        &serde_json::to_vec(&legacy).unwrap(),
+        Some(0o600),
+    )
+    .unwrap();
+    let home = cgagentharness::common::home::Home::at(prepared.home_dir.clone());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&home.root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let keys = cgagentharness::server::mcp_keys::KeyStore::open(&home, 8).unwrap();
+    let owners = [watcher_id.clone(), worker_id.clone()];
+    let mint = |owner: &str| {
+        keys.mint(
+            owner,
+            "before-boot",
+            cgagentharness::server::mcp_keys::OwnerCheck::EnabledOwners(&owners),
+        )
+        .unwrap()
+        .1
+    };
+    let (watcher, worker) = (mint(&watcher_id), mint(&worker_id));
+    assert!(keys.authenticate(&watcher).is_ok(), "the key works before boot");
+    let (router, state) = cgagentharness::server::build_app(prepared.app_opts).await.unwrap();
+    let _server = start_test_server(prepared.tmp, prepared.home_dir, prepared.api_key, router, state).await;
+    assert!(keys.authenticate(&watcher).is_err(), "boot retired the auditor's key");
+    assert!(keys.authenticate(&worker).is_ok(), "an operator's key is untouched");
+}

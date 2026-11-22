@@ -230,6 +230,26 @@ async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secr
     assert_eq!(code_status, 400, "{body}");
     assert_eq!(code(&body), "CLOUD_CHAT_LOOP");
     no_secret(&body);
+    // A server-run loop would send those same turns: its start refuses before
+    // it saves the goal or registers a run that could only fail.
+    let (code_status, body) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id":created["session_id"],"goal":"LOOP_GOAL_CANARY","max_turns":1}),
+        )
+        .await;
+    assert_eq!(code_status, 400, "{body}");
+    assert_eq!(code(&body), "CLOUD_CHAT_LOOP");
+    let session_path = format!("/api/sessions/{}", created["session_id"].as_str().unwrap());
+    assert_eq!(
+        s.get_json(&session_path).await.1["goal"],
+        "",
+        "a refused start persisted its goal"
+    );
+    assert!(
+        !s.audit_log().contains("loop_run_started"),
+        "a refused start registered a run"
+    );
     let (code_status, body) = s
         .post_json("/api/chat", json!({"message":"PRIVATE_PROMPT_CANARY"}))
         .await;
