@@ -19,7 +19,7 @@ use super::chat_web::{
 use super::diag_reader::{SearchFilter, STAT_GROUP_FIELDS};
 use super::state::AppState;
 use super::web_policy::error;
-use crate::common::authz::{self, Capability};
+use crate::common::authz::Capability;
 use crate::common::errors::Result;
 use crate::llm::openai_chat::{parse_chat_response, ChatMessage, ChatResult};
 
@@ -126,13 +126,7 @@ fn parse_until_arg(text: &str) -> Option<i64> {
 /// the turn the way `chat_web`'s per-read checks end a web turn.
 fn authorize_turn(state: &AppState, owner: &str, sign_in: SignIn<'_>) -> Result<()> {
     if let Some(auth) = state.auth.as_ref() {
-        let permits = auth.list_users().iter().any(|u| {
-            u.user_id == owner
-                && !u.disabled
-                && !u.must_change_password
-                && authz::grants_stored(&u.role, Capability::InvestigateLogs)
-        });
-        if !permits {
+        if !auth.owner_permits(owner, Capability::InvestigateLogs) {
             return Err(error(
                 "DIAG_PERMISSION_DENIED",
                 "the account no longer permits log investigation",

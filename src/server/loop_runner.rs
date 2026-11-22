@@ -21,7 +21,8 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::common::authz::{self, Capability};
+use crate::common::auth_store::OwnerLapse;
+use crate::common::authz::Capability;
 use crate::common::errors::{HarnessError, Result};
 use crate::server::config_reload::LoopLimits;
 use crate::server::routes::core::chat_inner;
@@ -432,21 +433,19 @@ fn current_authority(
     if current.user_id != started.user_id {
         return Err("the account that started this loop no longer exists".into());
     }
-    if current.disabled {
-        return Err("the account that started this loop was disabled".into());
-    }
-    if current.must_change_password {
-        return Err("the account that started this loop must change its password".into());
-    }
     // Loop turns continue the full local surface; the auditor role holds no
     // own-data grant, so the capability check is the role check (#965).
-    if !authz::grants_stored(&current.role, Capability::OwnData) {
-        return Err(format!(
-            "the account that started this loop now has role {} and cannot run loop turns",
-            current.role
-        ));
+    match current.lapse(Capability::OwnData) {
+        None => Ok(Some(axum::Extension(current))),
+        Some(OwnerLapse::Disabled) => Err("the account that started this loop was disabled".into()),
+        Some(OwnerLapse::MustChangePassword) => {
+            Err("the account that started this loop must change its password".into())
+        }
+        Some(OwnerLapse::Role(role)) => Err(format!(
+            "the account that started this loop now has role {role} and cannot run loop turns"
+        )),
+        Some(OwnerLapse::Missing) => Err("the account that started this loop no longer exists".into()),
     }
-    Ok(Some(axum::Extension(current)))
 }
 
 /// Write the run record on the blocking pool and wait for it: the turn task
