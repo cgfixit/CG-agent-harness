@@ -1,8 +1,7 @@
 # Browser use and computer use
 
-Status as of 2026-11-20. The local model (the `/model use` selection, else
-`models.local_llm.model`; `qwen3.8:27b-mlx-cg` on a 32K window) drives a real
-Chrome. Computer use (native apps) is a skeleton that nothing calls.
+Status as of 2026-11-20. The selected local model (`/model use`, else `models.local_llm.model`)
+drives a real Chrome. Computer use (native apps) is a skeleton that nothing calls.
 
 ## What works today
 
@@ -26,7 +25,7 @@ How a run works:
    npm ci` in `browser/`. The desktop app needs an absolute `browser.sidecar`.
 3. Each observation is Playwright's aria snapshot: real roles, accessible
    names, absolute link targets. `src/common/browser.rs` mints refs that
-   expire with every observation, so a stale ref cannot act.
+   expire with each observation.
 4. The model calls `navigate`, `observe`, `click`, `type`, `press_enter`,
    `select` (a listed option of a select box), `select_tab`, `follow_link`,
    `scroll`, `wait` (1 to 5 s) and `finish`. An observation is 40 elements and 4,000 characters, read after
@@ -47,7 +46,8 @@ Boundaries, enforced in code:
   private temporary file, never argv; the audit keeps only its SHA-256.
 - A page cannot flood the run: a link target over 8,192 characters is
   dropped, the model sees each cut to 300, the title to 300 and the URL to
-  8,192; a sidecar reply line over 4 MiB stops the task.
+  8,192; a sidecar reply line over 4 MiB stops the task. Documents over
+  16 MiB are refused mid-stream.
 - The sidecar's loopback proxy is the egress check, and it answers only this
   task's Chrome (a per-session credential). The task's fresh profile
   keeps WebRTC to proxied TCP, so a page cannot send UDP around it. A granted

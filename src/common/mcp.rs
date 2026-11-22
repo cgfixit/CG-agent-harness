@@ -143,7 +143,19 @@ impl StdioClient {
         if !program.is_absolute() {
             return Err(mcp_err("MCP_STDIO", "stdio command must be an absolute path"));
         }
-        let wrap = wrap_mcp_stdio(argv, cwd, home, capabilities)?;
+        // Wrapping probes the sandbox (a bounded `bwrap` run of up to 5 s on
+        // Linux) and creates and canonicalizes directories: blocking pool.
+        let wrap = {
+            let (argv, cwd, home, capabilities) = (
+                argv.to_vec(),
+                cwd.map(Path::to_path_buf),
+                home.map(Path::to_path_buf),
+                capabilities.clone(),
+            );
+            tokio::task::spawn_blocking(move || wrap_mcp_stdio(&argv, cwd.as_deref(), home.as_deref(), &capabilities))
+                .await
+                .map_err(|_| mcp_err("MCP_STDIO", "stdio sandbox setup did not finish"))??
+        };
         let mut cmd = Command::new(&wrap.argv[0]);
         cmd.args(&wrap.argv[1..]);
         cmd.env_clear();

@@ -1566,6 +1566,9 @@ type Received = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
 /// What the guard fixture's loopback server answers for one path.
 enum Reply {
     Html(String),
+    /// HTML sent without `content-length` (the connection's close ends it),
+    /// so the sidecar learns the size only by reading.
+    Unsized(String),
     Script(&'static str),
     Redirect(&'static str),
 }
@@ -1582,6 +1585,9 @@ fn serve_recording(routes: Vec<(&'static str, Reply)>) -> Result<(String, u16, R
         for _ in 0..256 {
             let Ok((mut socket, _)) = listener.accept() else { break };
             let _ = socket.set_read_timeout(Some(Duration::from_secs(2)));
+            // One connection at a time: a body the browser stops reading (the
+            // refused `/huge`) must not stall the routes after it.
+            let _ = socket.set_write_timeout(Some(Duration::from_secs(2)));
             let mut head = Vec::new();
             let mut buf = [0u8; 4096];
             while !head.windows(4).any(|w| w == b"\r\n\r\n") && head.len() < 16 * 1024 {
@@ -1605,6 +1611,12 @@ fn serve_recording(routes: Vec<(&'static str, Reply)>) -> Result<(String, u16, R
                     format!("<!doctype html><html><body>{body}</body></html>"),
                     String::new(),
                 ),
+                Some(Reply::Unsized(body)) => {
+                    let head = "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\nconnection: close\r\n\r\n";
+                    let _ =
+                        socket.write_all(format!("{head}<!doctype html><html><body>{body}</body></html>").as_bytes());
+                    continue;
+                }
                 Some(Reply::Script(body)) => ("200 OK", "text/javascript", (*body).to_string(), String::new()),
                 Some(Reply::Redirect(to)) => (
                     "301 Moved Permanently",
@@ -2135,6 +2147,8 @@ fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Resu
         "filler ".repeat(BIG_TEXT_CHARS / 7),
         "a".repeat(LONG_HREF_CHARS)
     );
+    // Past the sidecar's MAX_DOCUMENT_BYTES (16 MiB): refused, never rendered.
+    let huge = format!("<p>HUGE-DOCUMENT-RENDERED</p>{}", "x".repeat(17 * 1024 * 1024));
     let (origin, port, seen) = serve_recording(vec![
         ("/workers", Reply::Html(GUARD_WORKERS_PAGE.to_string())),
         ("/w.js", Reply::Script(GUARD_WORKER_SCRIPT)),
@@ -2142,6 +2156,7 @@ fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Resu
         ("/old", Reply::Redirect("/new")),
         ("/new", Reply::Html("<p>REDIRECT-LANDED</p>".to_string())),
         ("/big", Reply::Html(big)),
+        ("/huge", Reply::Unsized(huge)),
         ("/holds", Reply::Html(GUARD_HOLDS_PAGE.to_string())),
         ("/docs", Reply::Html(GUARD_DENIALS_PAGE.to_string())),
         ("/to-private", Reply::Redirect("/private/landing")),
@@ -2221,6 +2236,25 @@ fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Resu
     if named("Short link").and_then(|el| el["href"].as_str().map(str::to_string)) != Some(format!("{base}/new")) {
         return Err("an ordinary href was not listed".into());
     }
+
+    // A document past the read cap is refused whole, and the session goes on.
+    let huge = sidecar.call(json!({"op":"navigate","url": format!("{base}/huge")}))?;
+    if huge.to_string().contains("HUGE-DOCUMENT-RENDERED") {
+        return Err("a document past the 16 MiB read cap was rendered".into());
+    }
+    if huge["ok"] == true || !huge.to_string().contains("MiB a browser task reads") {
+        return Err(format!(
+            "a document past the read cap was not refused by name: {}",
+            truncate(&huge.to_string(), 300)
+        ));
+    }
+    lines.push("a 17 MiB document -> refused at the read cap".into());
+    // Back to the page the proxy-probe check below observes.
+    guard_call(
+        &mut sidecar,
+        &mut lines,
+        json!({"op":"navigate","url": format!("{base}/big")}),
+    )?;
 
     // Proxy: without the session credential every form of request gets 407.
     let proxy = sidecar.proxy_port.ok_or("the sidecar did not report its proxy port")?;

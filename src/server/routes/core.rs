@@ -1947,18 +1947,18 @@ pub(crate) async fn chat_inner(
         // The cancellable window read finished. Consume only the pending row:
         // later cancellation still needs the known subtotal for loop budgets.
         let tokens = local_usage.lock().unwrap().pending.take().expect("completed local usage");
-        crate::llm::spend::record(
-            &state.audit,
-            &state.spend_file,
-            crate::llm::spend::SpendEvent {
-                provider: "local",
-                model: &reply.model,
-                served_model: None,
-                source: spend_source,
-                tokens,
-                outcome: None,
-            },
-        );
+        // The sink waits on the ledger's file lease: blocking pool, awaited so
+        // the row is written before the reply returns.
+        let row = crate::llm::spend::row_from_event(&crate::llm::spend::SpendEvent {
+            provider: "local",
+            model: &reply.model,
+            served_model: None,
+            source: spend_source,
+            tokens,
+            outcome: None,
+        });
+        let ledger = state.clone();
+        super::structured_memory::off_worker(move || ledger.audit.append_spend(&ledger.spend_file, &row)).await;
     }
     // Counts only, never bodies: the audit and the response say what this
     // turn's compaction kept, summarized and repaired.
