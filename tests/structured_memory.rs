@@ -1886,6 +1886,51 @@ async fn auto_consolidation_passes_over_a_disabled_account_until_it_is_enabled()
     .await;
 }
 
+/// An account disabled while the model is answering for it loses that answer,
+/// not its episodes: once the account is enabled the worker picks them again.
+#[tokio::test]
+async fn auto_consolidation_picks_a_batch_up_again_after_its_account_returns_mid_generation() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), auto_consolidation().with("auth.enabled", "true")).await;
+    let auth = s.state.auth.as_ref().unwrap();
+    auth.create_user("alice", &cgagentharness::common::random_hex(24), "operator")
+        .unwrap();
+    let alice = auth.get_user("alice").unwrap().user_id;
+    // The reply is read after the delay, so it can be set once the id is known.
+    model.set_delay_ms(1000);
+    let episode_id = stage_store_episode(&s, &alice);
+    model.set_reply(consolidator_reply(&episode_id, "Prefer metric units"));
+    wait_until(
+        || {
+            model
+                .last_request()
+                .is_some_and(|request| request.to_string().contains(&episode_id))
+        },
+        "the model call for the account's batch",
+    )
+    .await;
+    auth.disable_user("alice").unwrap();
+    wait_until(
+        || {
+            store_of(&s)
+                .list_consolidation_runs(&alice)
+                .unwrap()
+                .iter()
+                .any(|run| run.error_class.as_deref() == Some("owner_retired"))
+        },
+        "the run stopped for the retired account",
+    )
+    .await;
+    assert!(store_of(&s).list_proposals(&alice).unwrap().is_empty());
+    model.set_delay_ms(0);
+    auth.enable_user("alice").unwrap();
+    wait_until(
+        || store_of(&s).list_proposals(&alice).unwrap().len() == 1,
+        "the returned account's pending proposal",
+    )
+    .await;
+}
+
 #[tokio::test]
 async fn auto_consolidation_creates_pending_proposals_only() {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
