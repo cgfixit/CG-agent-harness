@@ -371,3 +371,141 @@ async fn failed_backup_and_symlink_edits_preserve_originals() {
         assert_eq!(std::fs::read_to_string(target).unwrap(), "OUTSIDE");
     }
 }
+
+/// Sign in a fresh account of `role` and return its session cookie.
+async fn signed_in(s: &TestServer, name: &str, role: &str) -> String {
+    let password = cgagentharness::common::random_hex(24);
+    s.state
+        .auth
+        .as_ref()
+        .unwrap()
+        .create_user(name, &password, role)
+        .unwrap();
+    let response = s
+        .client
+        .post(s.url("/api/auth/login"))
+        .json(&json!({"username":name,"password":password}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    response.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+async fn as_account(
+    s: &TestServer,
+    cookie: &str,
+    method: Method,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> (u16, serde_json::Value) {
+    let mut request = s.req(method, path).header("cookie", cookie);
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    let response = request.send().await.unwrap();
+    let status = response.status().as_u16();
+    (status, response.json().await.unwrap_or(serde_json::Value::Null))
+}
+
+/// An operator holds `ProposePersona`, and a proposal must carry the current
+/// revision. The operator therefore reads the current document, the one its
+/// own chat prompt already carries, and nothing older: backups and the
+/// version list stay with the role that manages shared content.
+#[tokio::test]
+async fn an_operator_reads_the_current_persona_to_propose_but_never_its_history() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default().with("auth.enabled", "true")).await;
+    let admin = signed_in(&s, "persona-admin", "admin").await;
+    let operator = signed_in(&s, "persona-operator", "operator").await;
+    let auditor = signed_in(&s, "persona-auditor", "auditor").await;
+
+    // Two admin saves leave one backup: the history an operator must not read.
+    let (status, first) = as_account(
+        &s,
+        &admin,
+        Method::POST,
+        "/api/soul/document",
+        Some(json!({"content":"FIRST_PERSONA","base_revision":"missing","reason":"seed","confirm":true})),
+    )
+    .await;
+    assert_eq!(status, 200, "the first admin save");
+    let old = first["revision"].as_str().unwrap().to_string();
+    let (status, second) = as_account(
+        &s,
+        &admin,
+        Method::POST,
+        "/api/soul/document",
+        Some(json!({"content":"SECOND_PERSONA","base_revision":old,"reason":"revise","confirm":true})),
+    )
+    .await;
+    assert_eq!(status, 200, "the second admin save");
+    let (status, managed) = as_account(&s, &admin, Method::GET, "/api/soul/document", None).await;
+    assert_eq!(status, 200, "the admin reads the managed document");
+    assert_eq!(managed["versions"], json!([old]), "the admin still lists backups");
+
+    let (status, current) = as_account(&s, &operator, Method::GET, "/api/soul/document", None).await;
+    assert_eq!(status, 200, "an operator reads the document it proposes against");
+    assert_eq!(current["content"], "SECOND_PERSONA");
+    assert_eq!(current["revision"], second["revision"]);
+    assert!(current.get("versions").is_none(), "no backup list for an operator");
+
+    let (status, refused) = as_account(
+        &s,
+        &operator,
+        Method::GET,
+        &format!("/api/soul/document?version={old}"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        (status, code(&refused).as_str()),
+        (403, "AUTH_PERMISSION_DENIED"),
+        "a backup is history"
+    );
+    assert!(!refused.to_string().contains("FIRST_PERSONA"));
+
+    // The read is what makes the granted proposal reachable.
+    let (status, proposal) = as_account(
+        &s,
+        &operator,
+        Method::POST,
+        "/api/soul/proposals",
+        Some(json!({"content":"OPERATOR_PROPOSAL","base_revision":current["revision"],"reason":"suggest"})),
+    )
+    .await;
+    assert_eq!(status, 200, "the operator proposal");
+    assert_eq!(proposal["status"], "pending");
+
+    // Everything else about the persona stays where it was.
+    let review = format!("/api/soul/proposals/{}", proposal["id"].as_str().unwrap());
+    for (method, path, body) in [
+        (
+            Method::POST,
+            "/api/soul/document".to_string(),
+            Some(json!({"content":"OPERATOR_EDIT","base_revision":current["revision"],"reason":"edit","confirm":true})),
+        ),
+        (Method::GET, review.clone(), None),
+        (
+            Method::POST,
+            review.clone(),
+            Some(json!({"revision":proposal["revision"],"reason":"self-approve","confirm":true,"apply":true})),
+        ),
+        (Method::POST, "/api/soul".to_string(), Some(json!({"enabled":false}))),
+    ] {
+        let (status, _) = as_account(&s, &operator, method.clone(), &path, body).await;
+        assert_eq!(status, 403, "operator {method} {path}");
+    }
+    let (status, _) = as_account(&s, &auditor, Method::GET, "/api/soul/document", None).await;
+    assert_eq!(status, 403, "an auditor's chat carries no persona");
+    assert_eq!(
+        std::fs::read_to_string(s.home.join("soul.md")).unwrap(),
+        "SECOND_PERSONA"
+    );
+}
