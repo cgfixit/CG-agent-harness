@@ -701,15 +701,14 @@ on stop, a changed or cleared session goal (`LOOP_GOAL_CHANGED`), `loop.max_turn
 `loop.max_total_completion_tokens`, `loop.max_failures`
 consecutive failed turns or failed web rounds, unverified `GOAL_DONE`, a
 near-repeat reply, or a web refusal every later turn would repeat. A turn waits
-(stoppable, at most two hours) while another generation holds the model
-instead of counting a failure. Both budgets
+(stoppable, at most two hours) for a busy model without counting a failure. Both budgets
 ship finite, 200 turns and 200,000 completion tokens (#675); `0` is an explicit
 opt-in to unlimited, and a home whose file lacks the key keeps the code fallback
 `0`. With both budgets zero, startup and transitions into unbounded on reload
 warn and audit `loop_budgets_unlimited`; unchanged or finite reloads do not.
 `/api/status.loop.unbounded` is authoritative (audit is best effort); console
-`/status` and `/loop` preflight warn without blocking or rewriting configuration.
-`loop_run_started.unbounded` describes effective per-run caps, including overrides.
+`/status` and `/loop` preflight only warn.
+`loop_run_started.unbounded` describes the effective per-run caps.
 Runs live in process memory: a restart ends them without resuming, and
 `loops/<run_id>.json` is a record, not a resume point. Audits hold start and
 finish metadata, never replies.
