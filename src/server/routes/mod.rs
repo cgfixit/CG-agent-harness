@@ -866,6 +866,35 @@ mod tests {
         }
     }
 
+    /// The gate lets `guards::PUBLIC_API_PATHS` through before it looks at
+    /// this table, and never sees a path outside `/api/`. Both facts are a
+    /// second copy of the `Public` rows: a path added to the gate's list
+    /// whose row names another capability would reach its handler with no
+    /// account at all.
+    #[test]
+    fn public_rows_are_exactly_what_the_gate_serves_without_an_account() {
+        let gate: BTreeSet<&str> = guards::PUBLIC_API_PATHS.into_iter().collect();
+        for (path, method, cap) in ROUTE_CAPS {
+            let open = !path.starts_with("/api/") || gate.contains(path);
+            assert_eq!(
+                *cap == Capability::Public,
+                open,
+                "{method} {path}: the table says {cap:?}, the gate {}",
+                if open {
+                    "serves it without an account"
+                } else {
+                    "requires an account"
+                }
+            );
+        }
+        for path in gate {
+            assert!(
+                ROUTE_CAPS.iter().any(|(p, _, _)| *p == path),
+                "{path} is public at the gate but has no ROUTE_CAPS row"
+            );
+        }
+    }
+
     #[test]
     fn route_caps_rows_are_registered_paths() {
         let all = registered_paths();

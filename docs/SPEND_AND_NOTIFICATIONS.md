@@ -149,8 +149,9 @@ At most eight destinations; IDs are unique, 1–64 ASCII
 letters/digits/underscores/hyphens. Each destination's rate is 1–120
 batches/minute. An enabled nonempty
 legacy global `webhook_url` is refused rather than assigned to an arbitrary
-account. Only the local operator configures grants; portal accounts can
-inspect and replay their own retained deliveries. Queue, batch, retry,
+account. Only the local operator configures grants; operator and administrator
+accounts can inspect their own retained deliveries, and only an administrator
+can replay one. Queue, batch, retry,
 retention and timeout bounds are listed with their ranges under
 `notifications:` in the shipped YAML.
 
@@ -248,9 +249,10 @@ result, and bounded retention cannot guarantee delivery of every job.
 Open **Job webhooks** and **Refresh status**; the header button appears only while
 notifications are enabled. The panel lists only the acting owner's destinations
 and retained metadata (state, attempts, replays, coarse result codes), never a
-destination URL, token or job result. A failed or delivered row can be replayed
-with a reason and checkbox, within current authority and the replay
-and retention limits. Pending, revoked, expired and evicted deliveries cannot
+destination URL, token or job result. An administrator can replay a failed or
+delivered row of their own with a reason and checkbox, within current authority
+and the replay and retention limits; other roles see no Replay control
+(`AUTH_PERMISSION_DENIED`). Pending, revoked, expired and evicted deliveries cannot
 be replayed, and a revoked destination revision needs a new grant.
 
 The guarded APIs are `GET /api/notifications` and
