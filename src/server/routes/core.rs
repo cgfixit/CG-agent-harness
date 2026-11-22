@@ -1,4 +1,4 @@
-//! Status, sessions, soul/model toggles, chat + cancel.
+//! Status, sessions, soul/ model toggles, chat + cancel.
 
 use std::sync::Arc;
 
