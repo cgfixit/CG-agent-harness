@@ -1,4 +1,4 @@
-//! Status, sessions, soul/model toggles, chat + cancel.
+//! Status, sessions, soul/ model toggles, chat + cancel.
 
 use std::sync::Arc;
 
@@ -1958,12 +1958,16 @@ pub(crate) async fn chat_inner(
                         a derived tag needs its own num_ctx raised; the harness sends no num_ctx.")})
             })
     };
-    if !cloud_selected {
-        // The cancellable window read finished. Consume only the pending row:
-        // later cancellation still needs the known subtotal for loop budgets.
+    // The cancellable window read finished. Consume only the pending row:
+    // later cancellation still needs the known subtotal for loop budgets.
+    // The sink waits on the ledger's file lease, so it runs on the blocking
+    // pool. It is started here but awaited only after the exchange write: an
+    // await between them would let a dropped request record its spend and
+    // release the gate without ever storing the exchange. Both are handed to
+    // the blocking pool in this one poll, and the row is still written before
+    // the reply returns.
+    let spend = (!cloud_selected).then(|| {
         let tokens = local_usage.lock().unwrap().pending.take().expect("completed local usage");
-        // The sink waits on the ledger's file lease: blocking pool, awaited so
-        // the row is written before the reply returns.
         let row = crate::llm::spend::row_from_event(&crate::llm::spend::SpendEvent {
             provider: "local",
             model: &reply.model,
@@ -1973,8 +1977,8 @@ pub(crate) async fn chat_inner(
             outcome: None,
         });
         let ledger = state.clone();
-        super::structured_memory::off_worker(move || ledger.audit.append_spend(&ledger.spend_file, &row)).await;
-    }
+        tokio::task::spawn_blocking(move || ledger.audit.append_spend(&ledger.spend_file, &row))
+    });
     // Counts only, never bodies: the audit and the response say what this
     // turn's compaction kept, summarized and repaired.
     let compaction_report = compaction.as_ref().map(|c| {
@@ -2100,6 +2104,13 @@ pub(crate) async fn chat_inner(
     };
     let (gate, written) = super::structured_memory::off_worker(write).await;
     let _gate = gate;
+    if let Some(spend) = spend {
+        if let Err(failed) = spend.await {
+            if let Ok(panic) = failed.try_into_panic() {
+                std::panic::resume_unwind(panic);
+            }
+        }
+    }
     let (updated, owner_live) = written.map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     if !owner_live {
         return Err(ApiError::new(

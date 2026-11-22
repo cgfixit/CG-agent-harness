@@ -295,8 +295,8 @@ or indexed with sessions or structured memory.
 ## Cloud planner data egress
 
 With `deepagent_github.allow_cloud_providers` and a provider enabled,
-`--confirm-online` sends the real working context for each iteration, not a
-short plan prompt. Per attempt, `real_repo_loop.rs` assembles:
+`--confirm-online` sends real working context for each iteration, rechecking
+both flags first, not a short plan prompt. Per attempt, `real_repo_loop.rs` assembles:
 
 - the operator's instruction and the approved plan, if staged;
 - the prior attempt's check-failure feedback;

@@ -518,8 +518,25 @@ pub fn cap_reject_detail(text: &str) -> String {
     text[..end].to_string()
 }
 
-fn require_run_gates(tools: &RepoWorkspace<'_>, reason: &str, confirm: bool) -> Result<()> {
-    tools.require_write("run", reason, confirm)
+/// Reload the write policy and, for a cloud planner, its authority to send.
+/// `cloud_gates` checked the provider when the command started; after a clone,
+/// a model call or checks that is stale, so a provider turned off in
+/// `config.yaml` mid-run receives no further prompt.
+fn require_run_gates(ctx: &AgenticCtx, client: &dyn ProposerClient, reason: &str, confirm: bool) -> Result<()> {
+    let current = super::writer::current_repository_policy(ctx, "run", reason, confirm)?;
+    if client.is_cloud() && current.deepagent.cloud_provider(client.provider()).is_none() {
+        return Err(super::writer::refuse(
+            &ctx.audit,
+            &format!(
+                "cloud provider '{}' is no longer enabled; start a new invocation",
+                client.provider()
+            ),
+            "run",
+            "cloud_provider",
+            reason,
+        ));
+    }
+    Ok(())
 }
 
 /// Refusals from reloading `config.yaml` at the apply boundary, as opposed to
@@ -559,7 +576,7 @@ pub fn run_real_repo_loop(
     client: &dyn ProposerClient,
     p: &LoopParams<'_>,
 ) -> Result<RealRepoLoopResult> {
-    require_run_gates(tools, p.reason, p.confirm)?;
+    require_run_gates(ctx, client, p.reason, p.confirm)?;
     // Fail deterministic setup problems before the first model request.
     if p.checks.iter().any(|c| c.argv.first().is_some_and(|v| v == "cargo")) {
         let inputs = super::executor::prepared::CargoInputs::load(
@@ -616,7 +633,7 @@ pub fn run_real_repo_loop(
         // A later iteration follows a model call and checks: reload policy
         // before it reads, retrieves or sends anything again.
         if step > 1 {
-            require_run_gates(tools, p.reason, p.confirm)?;
+            require_run_gates(ctx, client, p.reason, p.confirm)?;
         }
         let quoted_context = p
             .context
