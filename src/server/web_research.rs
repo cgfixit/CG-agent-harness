@@ -947,6 +947,17 @@ async fn run_with(
             answer = Answer::default();
         }
     }
+    // Reading, hashing and parsing the whole cache (16 MiB at the default cap)
+    // blocks: off the async worker, as `lookup` and page search already are.
+    // It is the run's last wait, so it comes before the final authority check:
+    // a revocation while it runs still withholds everything below.
+    let (tool, selected) = (web.clone(), group.map(str::to_string));
+    let cache_errors = tokio::task::spawn_blocking(move || {
+        tool.cached_pages(selected.as_deref())
+            .map_or_else(|e| vec![json!({"code":e.code})], |(_, errors)| errors)
+    })
+    .await
+    .unwrap_or_else(|_| vec![json!({"code":"WEB_INDEX_FAILED"})]);
     if authorize_evidence(&state, &evidence, group, owner).is_err() {
         // No text derived from a revoked source is delivered, including synthesis.
         evidence.clear();
@@ -962,15 +973,6 @@ async fn run_with(
         .filter(|p| crate::common::now_ts() - p.fetched_at > web.limits.stale_seconds as f64)
         .map(|p| p.id.clone())
         .collect();
-    // Reading, hashing and parsing the whole cache (16 MiB at the default cap)
-    // blocks: off the async worker, as `lookup` and page search already are.
-    let (tool, selected) = (web.clone(), group.map(str::to_string));
-    let cache_errors = tokio::task::spawn_blocking(move || {
-        tool.cached_pages(selected.as_deref())
-            .map_or_else(|e| vec![json!({"code":e.code})], |(_, errors)| errors)
-    })
-    .await
-    .unwrap_or_else(|_| vec![json!({"code":"WEB_INDEX_FAILED"})]);
     let estimated = usage.iter().any(|u| u.estimated);
     Ok(
         json!({"question":question,"group":group,"model":model,"scope":"request","answer":answer,"passages":evidence,
