@@ -73,10 +73,8 @@ server -> browser child -> Playwright sidecar -> Chrome (granted origins only)
   `crate::agentic`, and never make `src/agentic` reference server or shim (I6).
   `tests/invariant_guard.rs` fails if you do, including aliased `use` forms.
   Cross the boundary only through `src/shim` and the CLI whitelist.
-- Duplicated on purpose, kept in sync by tests: `RUN_ID_PATTERN` (server
-  `agent_policy` vs agentic `run_store`), the planner/check timeout and
-  setup-budget constants (shim/server vs agentic), the iteration default, the
-  console's `MAX_GOAL_CHARS`. Never deduplicate them.
+- Duplicated on purpose (`RUN_ID_PATTERN`, planner/check timeouts, setup
+  budget, iteration default, console `MAX_GOAL_CHARS`); never deduplicate them.
 - Under operator review (2026-11-20): shim actions `test`, `context`,
   `propose-skill`, `apply-skill` lack a server caller; keep them.
 - Config is strict by type. Gates read through `flag_is_true`: only literal
@@ -94,18 +92,18 @@ server -> browser child -> Playwright sidecar -> Chrome (granted origins only)
   defaulted on; `reason` is never optional on a write.
 - Repository retrieval is gated by `agentic.deepagent_github.retrieval.enabled`
   (ships true), not the parent key.
+- The console asset stays verbatim: `__CYCLAW_CSRF_TOKEN__`,
+  `__CYCLAW_CSP_NONCE__`, the `X-CyClaw-CSRF` header name.
 - The browser never supplies a command: fixed argv only; free text is one
   `--opt=value` element or a temp file.
-- The console asset stays verbatim: `__CYCLAW_CSRF_TOKEN__`,
-  `__CYCLAW_CSP_NONCE__` and the `X-CyClaw-CSRF` header name are contractual.
 - `GROK_API_KEY` on a developer machine is real: tests never assert on its
   presence, and CI blanks it with `ANTHROPIC_API_KEY` and `DEEPAGENT_API_KEY`.
 - `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` on an operator machine is real:
   `cargo test` isolates it so later write gates are what fail. Never flip
   `EXECUTION_ENABLED` to false (or OR the kill switch) to make tests green.
 - Server audit appends go to one bounded writer thread
-  (`logging.audit_queue_lines`; 0 appends inline). Audit queue overflow drops
-  lines; explicit flushes can wait.
+  (`logging.audit_queue_lines`; 0 appends inline). Overflow drops lines;
+  explicit flushes can wait.
 - SQLite, file and fsync work stays off async workers, lock included
   (`routes::structured_memory::off_worker`). Publish a live setting only after
   its save (`panels::commit_setting`); refuse before changing state.
@@ -115,9 +113,8 @@ server -> browser child -> Playwright sidecar -> Chrome (granted origins only)
   permission checked earlier is stale.
 - Assert and panic messages never print secret-bearing values (audit lines,
   results, base URLs); CodeQL flags them.
-- DevSkim alerts after push. A weak-hash name used as a label, not for
-  integrity, ends its line with `DevSkim: ignore DS126858 because …`;
-  `lint-diff.py` CG006 warns first.
+- A weak-hash name used as a label ends its line with
+  `DevSkim: ignore DS126858 because …`.
 - Console replies check `sessionRevision` before rendering; an older
   selection's reply is dropped.
 - Reuse `common::dns::lookup_bounded` and `web_search::pinned_client_builder`
@@ -143,13 +140,6 @@ server -> browser child -> Playwright sidecar -> Chrome (granted origins only)
   path regex matches the diff.
 - Changing a shipped default, refusal order or exit code: `rg` the tests for
   it and run every matching target.
-- New routes: add to `src/server/routes/mod.rs::REGISTERED_PATHS` (and
-  `views.rs` if the console lists them) or `/api/tools` reports them unwired.
-- New shim actions: extend `shim::ACTIONS` (and `shim::JSON_ACTIONS` if it
-  returns JSON), `agentic/commands.rs::dispatch`, and the invariant guard's
-  whitelist assertion together.
-- `/api/agent/run`, `/api/agent/jobs` and persisted schedules all go through
-  `prepare_run`; never give one a path the others skip.
 - MCP tools never attach to `/loop`; permitted read-only web tools can.
 - Prefer a `#[cfg(test)] mod tests` unit test beside a pure parser or matcher
   over another integration test.
@@ -163,6 +153,18 @@ server -> browser child -> Playwright sidecar -> Chrome (granted origins only)
   and a body older than an operator `@codex review`; only evaluation errors
   fail it. Read it before merging; re-run once threads resolve. Never
   comment `@codex review` without operator approval.
+
+## Rule enforcers
+
+Enforce a corrected rule at the highest level that works; add its row.
+
+| Rule | Enforced by |
+|------|-------------|
+| Mirrored constants, shim `ACTIONS`, `/loop` limits | `duplicated_constants_still_agree` |
+| New route in `REGISTERED_PATHS` | unit test in `routes/mod.rs` |
+| Async fns leave file, SQLite and hash work to `off_worker` | `async_fns_leave_blocking_…` (baseline only shrinks) |
+| Assert messages print no credentialed body | `lint-diff.py` CG011 |
+| Recheck authority after a wait | prose; per-fix tests only |
 
 ## Docs policy
 
