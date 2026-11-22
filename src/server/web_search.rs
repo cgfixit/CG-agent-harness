@@ -1933,7 +1933,7 @@ mod tests {
     }
 
     #[test]
-    fn rule_cap_is_bounded_and_defaults_to_the_shipped_64() {
+    fn rule_cap_is_bounded_and_defaults_to_the_shipped_256() {
         for value in ["1", "32", "64", "100", "256", "0", "257", "-1", "1.5", "\"32\"", "null"] {
             let cfg = AppConfig::from_str(&format!("web: {{max_rules: {value}}}"), Path::new("config.yaml")).unwrap();
             let parsed = Limits::load(&cfg);
@@ -1943,6 +1943,7 @@ mod tests {
                 assert!(parsed.is_err(), "{value}");
             }
         }
+        assert_eq!(DEFAULT_MAX_RULES, 256);
         for yaml in ["{}", include_str!("../../assets/config.default.yaml")] {
             assert_eq!(
                 Limits::load(&AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap())
