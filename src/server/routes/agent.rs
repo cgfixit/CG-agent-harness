@@ -546,8 +546,10 @@ pub(crate) fn start_job(
                 .for_owner(&owner)
                 .claim_goal_stage(&binding.session_id, &binding.stage_id, &req, &job_id)
         };
+        // Refused before it started: the job leaves no record and sends no
+        // completion notification (a cancel would report work that never ran).
         if let Err(error) = claimed {
-            state.jobs.cancel(&owner, &job_id);
+            state.jobs.discard_unstarted(&owner, &job_id);
             return Err(ApiError::from_err(StatusCode::CONFLICT, &error));
         }
     }
