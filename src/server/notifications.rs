@@ -1,7 +1,7 @@
 //! Durable owner-bound completion delivery. Only bounded job metadata leaves here.
 use super::notification_outbox::{read_private, Delivery, Outbox};
 use super::web_policy::{canonical_http_url, is_public_ip};
-use crate::common::authz::{self, Capability};
+use crate::common::authz::Capability;
 use crate::common::credential_store::CredentialStore;
 use crate::common::{
     audit::Audit,
@@ -506,12 +506,7 @@ impl Inner {
             return false;
         }
         let owner_ok = match &self.auth {
-            Some(auth) => auth.list_users().iter().any(|u| {
-                u.user_id == destination.spec.owner
-                    && !u.disabled
-                    && !u.must_change_password
-                    && authz::grants_stored(&u.role, Capability::OwnData)
-            }),
+            Some(auth) => auth.owner_permits(&destination.spec.owner, Capability::OwnData),
             None => destination.spec.owner == "local",
         };
         if !owner_ok {

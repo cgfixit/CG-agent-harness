@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use crate::common::authz::{self, Capability};
+use crate::common::authz::Capability;
 use crate::server::routes::structured_memory::off_worker;
 use crate::server::state::AppState;
 use crate::server::structured_memory::{auto_consolidation_available, current_gates, ConsolidationRun};
@@ -67,14 +67,10 @@ pub fn sync_worker(state: &Arc<AppState>) {
 /// episodes are passed over, not deleted, and are picked up again if the
 /// account returns. With accounts off there is nothing to retire.
 pub(crate) fn owner_active(state: &AppState, owner: &str) -> bool {
-    state.auth.as_ref().is_none_or(|auth| {
-        auth.list_users().iter().any(|user| {
-            user.user_id == owner
-                && !user.disabled
-                && !user.must_change_password
-                && authz::grants_stored(&user.role, Capability::OwnData)
-        })
-    })
+    state
+        .auth
+        .as_ref()
+        .is_none_or(|auth| auth.owner_permits(owner, Capability::OwnData))
 }
 
 fn worker_available(state: &AppState) -> bool {

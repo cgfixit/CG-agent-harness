@@ -2431,6 +2431,100 @@ fn the_async_blocking_scan_reads_what_it_claims_to() {
     assert!(flagged("async fn a() { let x = hash_password(p); }") == ["x.rs :: a"]);
 }
 
+/// What one closure body mentions, for the owner-recheck scan.
+#[derive(Default)]
+struct ClosureFacts {
+    user_id: bool,
+    must_change_password: bool,
+    grants_stored: bool,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for ClosureFacts {
+    fn visit_expr_field(&mut self, f: &'ast syn::ExprField) {
+        if let syn::Member::Named(name) = &f.member {
+            match name.to_string().as_str() {
+                "user_id" => self.user_id = true,
+                "must_change_password" => self.must_change_password = true,
+                _ => {}
+            }
+        }
+        syn::visit::visit_expr_field(self, f);
+    }
+    fn visit_path(&mut self, p: &'ast syn::Path) {
+        self.grants_stored |= p.segments.last().is_some_and(|s| s.ident == "grants_stored");
+        syn::visit::visit_path(self, p);
+    }
+}
+
+struct OwnerCheckScan {
+    copies: usize,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for OwnerCheckScan {
+    fn visit_expr_closure(&mut self, c: &'ast syn::ExprClosure) {
+        let mut facts = ClosureFacts::default();
+        syn::visit::visit_expr(&mut facts, &c.body);
+        if facts.user_id && facts.must_change_password && facts.grants_stored {
+            self.copies += 1;
+        }
+        syn::visit::visit_expr_closure(self, c);
+    }
+}
+
+/// Files with a closure that rebuilds "this account may still do X" from a user
+/// row: it names `user_id`, `must_change_password` and `grants_stored` together,
+/// the shape every copy of the owner recheck had (`list_users().iter().any(..)`).
+fn copied_owner_checks(sources: &[(String, String)]) -> Vec<String> {
+    use syn::visit::Visit;
+    let mut found = Vec::new();
+    for (path, text) in sources {
+        let file = syn::parse_file(text).unwrap_or_else(|e| panic!("{path} does not parse as Rust: {e}"));
+        let mut scan = OwnerCheckScan { copies: 0 };
+        scan.visit_file(&file);
+        if scan.copies > 0 {
+            found.push(format!("{path} ({} closure(s))", scan.copies));
+        }
+    }
+    found
+}
+
+#[test]
+fn the_owner_recheck_is_one_function_not_a_copy_per_caller() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut sources = Vec::new();
+    for dir in ["src/server", "src/shim", "src/llm", "src/netconnect"] {
+        for (path, text) in read_tree_raw(&root.join(dir)) {
+            let relative = Path::new(&path).strip_prefix(root).unwrap().display().to_string();
+            sources.push((relative.replace('\\', "/"), text));
+        }
+    }
+    let copies = copied_owner_checks(&sources);
+    assert!(
+        copies.is_empty(),
+        "these files rebuild the owner recheck by hand: {copies:#?}. Call \
+         `AuthManager::owner_permits(user_id, Capability)` (or `owner_lapse` for the reason, or \
+         `UserSummary::lapse` on a row you already hold) and map the answer to your own error code."
+    );
+}
+
+#[test]
+fn the_owner_recheck_scan_reads_what_it_claims_to() {
+    let src = |text: &str| vec![("x.rs".to_string(), text.to_string())];
+    let copy = "fn f(a: &A, owner: &str) -> bool { a.list_users().iter().any(|u| u.user_id == owner \
+                && !u.disabled && !u.must_change_password && authz::grants_stored(&u.role, Cap)) }";
+    assert_eq!(copied_owner_checks(&src(copy)), ["x.rs (1 closure(s))"]);
+    // A request-time check on a row already in hand names no `user_id`.
+    let in_hand = "fn f(u: Option<U>) -> bool { u.is_some_and(|u| authz::grants_stored(&u.role, Cap) \
+                   && !u.must_change_password) }";
+    assert!(copied_owner_checks(&src(in_hand)).is_empty());
+    // Finding an account by id is not the capability check.
+    let lookup = "fn f(v: &[U], id: &str) -> bool { v.iter().any(|u| u.user_id == id) }";
+    assert!(copied_owner_checks(&src(lookup)).is_empty());
+    // The shared call is clean.
+    let shared = "fn f(a: &A, owner: &str) -> bool { a.owner_permits(owner, Cap) }";
+    assert!(copied_owner_checks(&src(shared)).is_empty());
+}
+
 #[test]
 fn console_asset_is_verbatim_with_both_placeholders() {
     let html = cgagentharness::server::console::HARNESS_HTML;
