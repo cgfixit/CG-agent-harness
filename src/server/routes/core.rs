@@ -285,6 +285,7 @@ pub async fn upload_attachments(
         }
     }
     let limit = attachments::MAX_REQUEST_BYTES as usize;
+    let recheck = req.extensions().get::<super::auth::SessionRecheck>().cloned();
     // The body read is bounded so a client that trickles or never finishes
     // its upload cannot hold the permit indefinitely.
     let bytes = tokio::time::timeout(
@@ -304,6 +305,9 @@ pub async fn upload_attachments(
             "request body exceeds the attachment request limit",
         ))
     })?;
+    if let Some(recheck) = recheck {
+        recheck.verify().await?;
+    }
     attachments::check_content_length(declared, bytes.len() as u64).map_err(|e| attachments::upload_error(&e))?;
     let boundary = attachments::multipart_boundary(&content_type).map_err(|e| attachments::upload_error(&e))?;
     // Parsing, hashing, blob writes and fsync are synchronous and run under
