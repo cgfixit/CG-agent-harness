@@ -103,12 +103,12 @@ flowchart LR
 ```
 
 Bare `/loop` defaults to three turns; `/loop auto` without a count runs to
-`GOAL_DONE` or `loop.max_turns`. A counted run's last turn asks for its best answer.
+`GOAL_DONE` or `loop.max_turns`. A counted run ends on its best answer.
 [`loop.*` limits](INSTALL.md#reload-limits-without-a-restart) reload;
 `api.harness_loop_rate_limit.max_tokens` bounds each reply, and while
 `auto_tune` has tuned the model a loop reply never exceeds
 `models.local_llm.max_tokens`. With both caps zero or absent, `/status` and
-loop preflight warn but do not block.
+preflight warn, never block.
 
 Text after the count sets the goal; otherwise the last prompt is used. Manual mode pauses between turns. `/loop auto` toggles automatic
 continuation: with a goal (or last prompt) it starts the loop after 5 s, as
