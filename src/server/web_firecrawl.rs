@@ -386,8 +386,10 @@ impl WebTool {
         let (title, text, status, transfer_bytes) = match fetched {
             Ok(read) => read,
             Err(failure) => {
-                // `charged` is set just before the send: zero proves nothing left.
-                if charged.load(Ordering::SeqCst) == 0 {
+                // Only a read refused before the send gives its slot back. The send
+                // flag decides, not `charged`: an empty answer resets that to zero
+                // after the request already left.
+                if !reserved.sent_flag().load(Ordering::SeqCst) {
                     self.firecrawl_spent.give_back(hour);
                 }
                 if let Some(until) =
@@ -605,6 +607,7 @@ mod tests {
 
     mod fixture {
         use super::*;
+        use axum::response::IntoResponse;
         use axum::{http::HeaderMap, http::StatusCode, routing::get, routing::post, Json, Router};
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
@@ -782,14 +785,16 @@ mod tests {
                             && body["skipTlsVerification"] == json!(false)
                             && body.get("actions").is_none();
                         if !pinned {
-                            return (StatusCode::BAD_REQUEST, Json(json!({"success":false})));
+                            return (StatusCode::BAD_REQUEST, Json(json!({"success":false}))).into_response();
                         }
                         match headers.get("authorization").and_then(|v| v.to_str().ok()) {
                             Some("Bearer good") => {}
                             Some("Bearer quota") => {
-                                return (StatusCode::PAYMENT_REQUIRED, Json(json!({"success":false})))
+                                return (StatusCode::PAYMENT_REQUIRED, Json(json!({"success":false}))).into_response()
                             }
-                            _ => return (StatusCode::UNAUTHORIZED, Json(json!({"success":false}))),
+                            // A sent request answered with an empty 200 body.
+                            Some("Bearer empty") => return StatusCode::OK.into_response(),
+                            _ => return (StatusCode::UNAUTHORIZED, Json(json!({"success":false}))).into_response(),
                         }
                         let url = body["url"].as_str().unwrap_or("").to_string();
                         if url.ends_with("/slow.pdf") {
@@ -806,6 +811,7 @@ mod tests {
                             Json(json!({"success":true,"data":{"markdown":"# Rendered\nFallback body",
                                 "metadata":{"title":"Rendered","url":final_url,"statusCode":200}}})),
                         )
+                            .into_response()
                     }
                 }),
             );
@@ -1196,6 +1202,33 @@ mod tests {
             0,
         )
         .await;
+    }
+
+    /// A sent read whose answer is an empty 200 body keeps its hourly slot and
+    /// its daily units: the refund follows the send flag, not the byte count,
+    /// which drops to zero after the send.
+    #[tokio::test]
+    async fn an_empty_answer_after_the_send_keeps_the_hourly_slot() {
+        let rig = fixture::rig("web: {firecrawl: {enabled: true, max_per_hour: 1}}", "empty").await;
+        let failed = rig.fetch("wall").await.unwrap_err();
+        assert_eq!(failed.code, "WEB_FETCH_FAILED", "the original outcome is kept");
+        assert_eq!(rig.hits(), 1, "the fallback was sent");
+        assert_eq!(
+            rig.web.firecrawl_spent.0.lock().unwrap().1,
+            1,
+            "the sent read keeps its slot"
+        );
+        assert_eq!(
+            rig.web
+                .units
+                .used(super::super::web_units::Paid::Firecrawl, unix_now())
+                .unwrap(),
+            PDF_MAX_PAGES,
+            "the sent read keeps its daily units"
+        );
+        let refused = rig.fetch("wall").await.unwrap_err();
+        assert_eq!(refused.details["fallback"], "WEB_FALLBACK_CAP", "{refused:?}");
+        assert_eq!(rig.hits(), 1, "the hour's only slot stayed spent");
     }
 
     /// #772 D10: Firecrawl reads reserve durable daily units before anything is
