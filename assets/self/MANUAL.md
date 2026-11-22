@@ -19,28 +19,21 @@ This manual is static text bundled with the build and indexed at startup. It is 
 
 ## agents: process and home map
 
-- `cgagentharness serve` -> loopback HTTP/HTTPS console in `src/server`. Public
- `account` and `web` call that service; `tls` manages local certificates and
- `mcp-key` manages machine keys by filesystem authority.
-- `cgagentharness agentic <action>` -> `src/agentic` (hidden; spawned by
- `src/shim` as a child process, never called in-process).
-- `cgagentharness netconnect status|devices|diag` and `/net` -> `src/netconnect`.
- Only `diag` dials, through the budgeted `Dialer` in `connect.rs`.
-- `agentic`/`netconnect` exit codes: `0` ok, `2` failed, `3` env/config,
- `4` refused. Through the shim, a non-zero child exit is HTTP
- 200 with `ok=false`; shim failures map to 400/502/504 and the disabled-layer
- banner to 409. Other subcommands (`serve`, `account`, `web`, `tls`,
- `mcp-key`) exit `1` on error; hidden `desktop` and `mcp-stdio-worker` exit `3`;
- hidden `pdf-text-worker` exits `0` text, `2` refused, `3` unusable environment;
- hidden `browser` and `browser-verify` exit `0` passed, `2` failed, `3` bad
- arguments or config.
-- Application state: `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`); coding writes
-
-## agents: process and home map (part 2)
-
-stay in pipeline-created clones under `data/agentic/workspaces`.
-- Before changing a feature, read its guide below and owning `INVARIANTS.md`
- section. Source index locates implementations.
+- `cgagentharness serve` is the loopback console (`src/server`); `account`,
+ `web`, `tls` and `mcp-key` are its CLI faces. `agentic <action>`
+ (`src/agentic`) runs only as a child the shim spawns, never in-process.
+ `netconnect diag` alone dials, through the budgeted `Dialer`.
+- Exit codes: `agentic`/`netconnect` `0` ok, `2` failed, `3` env/config, `4`
+ refused (through the shim a non-zero child is HTTP 200 `ok=false`; shim
+ failures 400/502/504, the disabled-layer banner 409). `serve`, `account`,
+ `web`, `tls`, `mcp-key` exit `1`; hidden `desktop`/`mcp-stdio-worker` `3`;
+ `pdf-text-worker` `0` text, `2` refused, `3` environment; `browser` and
+ `browser-verify` `0` passed, `2` failed, `3` bad arguments or config.
+- State lives in `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`); coding writes stay
+ in pipeline clones under `data/agentic/workspaces`. Shipped defaults seed new
+ homes only: an existing `config.yaml` is never rewritten.
+- Read a feature's guide and owning `INVARIANTS.md` section first;
+ Source index locates code.
 
 ## invariant: I6 — process isolation between the console and the agentic pipeline
 
@@ -344,7 +337,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 
 ## troubleshooting: symptom to fix
 
-- `/browse` says playwright is not prepared → From `browser/`, run `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci`; the app needs an absolute `browser.sidecar` (browser use)
+- `/browse` says playwright is not prepared → From `browser/`, run `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --ignore-scripts`; the app needs absolute `browser.sidecar` (browser use)
 - `/browse` refused: `BROWSER_AUTH_REQUIRED` → Turn accounts on and sign in as an administrator (Browser use)
 - `/browse` refused: `BROWSER_ORIGIN_BLOCKED` or `BROWSER_PRIVATE_ADDRESS` → `/web status` lists the rules; browser tasks reach public addresses only
 - Spend reports partial, unreadable, too large or invalid UTF-8 → Preserve the ledger; inspect permissions and size. Missing evidence is not zero spend

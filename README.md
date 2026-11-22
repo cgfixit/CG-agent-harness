@@ -100,7 +100,7 @@ Open `https://127.0.0.1:8790/`, trusting the [local certificate](docs/SECURE_RES
 1. **Set your password** with the setup code (app: **Setup and recovery**; terminal: `<home>/setup-code`) and 12+ characters.
 2. `/model list`, `/model use <tag>`, `/help`.
 3. `/web allow https://example.org/*`, then `/web research <question>`; for a longer piece, `/goal <question>` and `/loop 3`.
-4. Browser tasks: install Google Chrome, run `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci` in `browser/`, then `/browse docs.python.org what does zipfile.Path do?`.
+4. Browser tasks: install Google Chrome, run `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --ignore-scripts` in `browser/`, then `/browse docs.python.org what does zipfile.Path do?`.
 
 ## Commands and configuration
 
