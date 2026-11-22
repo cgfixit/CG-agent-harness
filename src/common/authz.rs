@@ -49,7 +49,8 @@ pub enum Capability {
     /// per-server authority check (`mcp_server_allowed`) once the server name
     /// resolves in the handler.
     UseMcp,
-    /// Propose a persona (soul) edit; only admin applies one
+    /// Propose a persona (soul) edit and read the current document it must
+    /// be based on, never its backups; only admin applies one
     /// (`persona::decide`).
     ProposePersona,
     /// Re-send an owner-scoped notification delivery: an outbound effect, so
@@ -59,7 +60,7 @@ pub enum Capability {
     RunCoding,
     /// Global model selection, Ollama inventory, profile and pulls.
     ManageModels,
-    /// Shared content: persona document and proposals, memory and soul and
+    /// Shared content: persona edits, history and proposal decisions, memory and soul and
     /// style toggles, pinned-note add and clear, unassigned legacy session
     /// inventory and adoption.
     ManageSharedContent,
