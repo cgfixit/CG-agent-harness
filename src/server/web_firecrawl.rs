@@ -223,19 +223,14 @@ impl WebTool {
             ))
         } else {
             // Firecrawl bills a scraped page one credit and a parsed PDF one per
-            // page (up to PDF_MAX_PAGES). A script shell and an oversized body the
-            // server labelled as something other than a PDF are known not to be
-            // PDFs before the send; a 403, 429 or 503 says nothing about the
-            // document, so it reserves the PDF worst case (#772 D10: the
-            // defensible upper bound).
-            let known_not_pdf = match &pinned {
-                Ok(_) => true,
-                Err(failure) => {
-                    failure.code == "WEB_TOO_LARGE" && failure.details.get("pdf") == Some(&Value::Bool(false))
-                }
-            };
-            let units = if known_not_pdf { 1 } else { PDF_MAX_PAGES };
-            self.firecrawl_read(raw, group, audit, &fallback_charge, units).await
+            // page (up to PDF_MAX_PAGES), and it fetches the URL itself. What the
+            // pinned fetch saw (a script shell, or a Content-Type that was not a
+            // PDF) does not bind what Firecrawl fetches and bills: it detects
+            // documents by extension, and an origin can answer it differently.
+            // Every read reserves the PDF worst case (#772 D10: the defensible
+            // upper bound), so no origin can spend past units_per_day.
+            self.firecrawl_read(raw, group, audit, &fallback_charge, PDF_MAX_PAGES)
+                .await
         };
         let fallback_charge = fallback_charge.load(Ordering::SeqCst);
         self.check_enabled()?;
@@ -1193,21 +1188,21 @@ mod tests {
             0,
             "the hourly slot was given back"
         );
-        assert_eq!(
-            rig.web
-                .units
-                .used(super::super::web_units::Paid::Firecrawl, unix_now())
-                .unwrap(),
+        // The unsent guard releases on the blocking pool after the read returns.
+        super::super::web_units::tests::wait_for_used(
+            &rig.web.units,
+            super::super::web_units::Paid::Firecrawl,
+            unix_now(),
             0,
-            "the daily units were released"
-        );
+        )
+        .await;
     }
 
     /// #772 D10: Firecrawl reads reserve durable daily units before anything is
-    /// sent. A 403 says nothing about the document, so it reserves the 10-page
-    /// PDF worst case; a script shell is known HTML and reserves one. A read the
-    /// ceiling refuses sends nothing and keeps the original outcome. Sent reads
-    /// keep their units.
+    /// sent. Every read reserves the 10-page PDF worst case, a script shell
+    /// included: Firecrawl fetches the URL itself, so the pinned fetch cannot
+    /// prove what it will bill. A read the ceiling refuses sends nothing and
+    /// keeps the original outcome. Sent reads keep their units.
     #[tokio::test]
     async fn the_daily_unit_ceiling_refuses_a_fallback_before_it_is_sent() {
         let rig = fixture::rig(
@@ -1229,10 +1224,11 @@ mod tests {
         assert_eq!(refused.code, "WEB_FETCH_FAILED", "the original outcome is kept");
         assert_eq!(refused.details["fallback"], "WEB_FALLBACK_CAP");
         assert_eq!(rig.hits(), 2, "the refused read sent nothing");
-        // One unit is left: a script shell (known HTML) still fits.
-        assert_eq!(rig.fetch("shell").await.unwrap()["via"], "firecrawl");
-        assert_eq!(used(&rig), 21);
-        assert_eq!(rig.hits(), 3);
+        // One unit is left, and a script shell also reserves the worst case.
+        let shell = rig.fetch("shell").await.unwrap();
+        assert_ne!(shell["via"], "firecrawl", "the shell was not sent to Firecrawl");
+        assert_eq!(used(&rig), 20);
+        assert_eq!(rig.hits(), 2);
         let audit = rig.audit_text();
         assert!(
             audit.contains("\"event\":\"web_units_refused\""),

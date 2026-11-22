@@ -381,8 +381,7 @@ machine once, to the fixed `https://api.firecrawl.dev/v2/scrape`: basic proxy,
 markdown only, `storeInCache: false`. Another final URL is refused as a
 redirect; no links are kept; the page carries `via: firecrawl`.
 `web.firecrawl.max_per_hour` (default 20) caps reads (a read refused before it
-is sent gives its slot back), each reserves daily units (1 for a known non-PDF,
-else the 10-page PDF cap), batches charge both reads to `web.run_bytes`, and HTTP
+is sent gives its slot back), each reserves the 10-page PDF cap in daily units, batches charge both reads to `web.run_bytes`, and HTTP
 402 or 429 pauses it like a search quota. A failed fallback keeps the original
 result, its code in `details.fallback`.
 

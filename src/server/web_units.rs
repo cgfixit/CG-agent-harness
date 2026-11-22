@@ -390,7 +390,7 @@ impl WebTool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(in crate::server) mod tests {
     use super::*;
 
     const DAY: u64 = SECONDS_PER_DAY;
@@ -564,7 +564,9 @@ mod tests {
         }
     }
 
-    async fn wait_for_used(units: &Ledger, provider: Paid, now: u64, want: u64) {
+    /// An unsent guard releases on the blocking pool after it is dropped, so a
+    /// test waits (up to 2 s) for the count instead of reading it once.
+    pub(in crate::server) async fn wait_for_used(units: &Ledger, provider: Paid, now: u64, want: u64) {
         for _ in 0..200 {
             if units.used(provider, now).unwrap() == want {
                 return;

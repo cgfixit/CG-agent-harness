@@ -271,7 +271,7 @@ web:
   firecrawl:
     enabled: false # flag_is_true; literal true sends qualifying URLs to api.firecrawl.dev
     max_per_hour: 20 # 1–1000 Firecrawl reads per clock hour; a 402 or 429 also pauses it for search_cooldown_quota_sec. A read refused before it is sent gives its slot back
-    units_per_day: 30 # 1–100000 Firecrawl credits per UTC day (see the search ceilings above). A read reserves 1 credit when the page is known not to be a PDF (a script shell, or an oversized body labelled otherwise) and the 10-page PDF cap otherwise (a 403, 429 or 503 says nothing about the document); spent: WEB_FALLBACK_CAP and the original outcome
+    units_per_day: 30 # 1–100000 Firecrawl credits per UTC day (see the search ceilings above). Every read reserves the 10-page PDF cap, since Firecrawl fetches the URL itself and can bill it as a PDF; spent: WEB_FALLBACK_CAP and the original outcome
 
 browser:
   # Model-driven browsing through browser/sidecar.mjs (docs/Browser-Use.md).
