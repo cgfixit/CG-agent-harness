@@ -294,6 +294,30 @@ impl JobStore {
         Ok(())
     }
 
+    /// Drop a job registered by `try_insert_running` whose request was then
+    /// refused before it started (its goal-stage claim failed): abort its task
+    /// and remove it, with no completion and so no notification. The client
+    /// never received its id, so it is not reported as cancelled work, and it
+    /// does not take one of the `MAX_RETAINED_JOBS` slots. Blocking: persists
+    /// the job file (fsync). A running job only; anything else is left alone.
+    pub fn discard_unstarted(&self, owner: &str, job_id: &str) {
+        let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
+        let unstarted = g
+            .get(job_id)
+            .is_some_and(|j| j.owner.as_deref() == Some(owner) && j.status == RUNNING);
+        if !unstarted {
+            return;
+        }
+        if let Some(mut job) = g.remove(job_id) {
+            if let Some(handle) = job.handle.take() {
+                handle.abort();
+            }
+        }
+        if self.persist(&g).is_err() {
+            tracing::error!("a refused job could not be removed durably; restart will report it as interrupted");
+        }
+    }
+
     /// Blocking: persists the job file (fsync) and may enqueue a notification.
     pub fn finish(&self, job_id: &str, outcome: Result<Value, ApiError>) {
         let completion = self.settle(job_id, outcome);
@@ -475,6 +499,52 @@ mod tests {
             std::fs::write(&path, serde_json::to_vec(&vec![&record]).unwrap()).unwrap();
             assert!(JobStore::open(&path).is_err());
         }
+    }
+
+    /// A job refused after registration (its goal-stage claim failed) leaves
+    /// nothing: not listed, not on disk after a reopen, its task aborted, so it
+    /// is never reported as cancelled work. Another owner's or a finished job
+    /// is not touched. `cancel` would have kept a CANCELLED row (and, with
+    /// notifications on, queued a completion for work that never ran).
+    #[tokio::test]
+    async fn a_refused_unstarted_job_is_discarded_not_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("jobs.json");
+        let store = JobStore::open(&path).unwrap();
+        let (refused, done) = ("r".repeat(32), "f".repeat(32));
+        let task = tokio::spawn(std::future::pending::<()>());
+        let aborted = task.abort_handle();
+        store
+            .try_insert_running("user_alice", &refused, "deepagent-run", task)
+            .unwrap();
+        store
+            .try_insert_running("user_alice", &done, "deepagent-run", idle_handle())
+            .unwrap();
+        store.finish(&done, Ok(json!({"ok": true})));
+
+        store.discard_unstarted("user_bob", &refused);
+        assert!(
+            store.get("user_alice", &refused).is_some(),
+            "another owner cannot discard it"
+        );
+        store.discard_unstarted("user_alice", &done);
+        assert_eq!(
+            store.get("user_alice", &done).unwrap()["status"],
+            FINISHED,
+            "a finished job is kept"
+        );
+
+        store.discard_unstarted("user_alice", &refused);
+        assert!(store.get("user_alice", &refused).is_none());
+        assert_eq!(store.list("user_alice").len(), 1);
+        tokio::task::yield_now().await;
+        assert!(aborted.is_finished(), "the refused job's task was aborted");
+        let reopened = JobStore::open(&path).unwrap();
+        assert!(
+            reopened.get("user_alice", &refused).is_none(),
+            "nothing durable remains"
+        );
+        assert_eq!(reopened.list("user_alice").len(), 1);
     }
 
     #[tokio::test]
