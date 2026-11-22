@@ -88,7 +88,7 @@ Managed keys (`GROK_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPAGENT_API_KEY`, `SERPAPI
 
 ## invariant: A detached run cannot outlive its gates
 
-`POST /api/agent/jobs` runs the identical validated request as `POST /api/agent/run` in a tokio task, but the run gate and (when the local model is also the planner) the chat gate are held by the TASK via `GateGuard`'s `Drop`, not by the HTTP request. A closed tab or dead client cannot leave the gate stuck: cancelling (`POST /api/agent/jobs/{job_id}/cancel`) aborts the task, dropping the guards and the child (`kill_on_drop`). A job's terminal state is set exactly once (`JobStore::finish` is a no-op after…
+`POST /api/agent/jobs` runs the identical validated request as `POST /api/agent/run` in a tokio task, but the run gate and (when the local model is also the planner) the chat gate are held by the TASK via `GateGuard`'s `Drop`, not by the HTTP request. A closed tab or dead client cannot strand the gate: cancelling (`POST /api/agent/jobs/{job_id}/cancel`) aborts the task, dropping guards and child (`kill_on_drop`). A job's terminal state is set exactly once (`JobStore::finish` is a no-op after cancellation), so a…
 
 ## invariant: Local chat compaction preserves goal and the first user turn
 
