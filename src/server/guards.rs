@@ -335,6 +335,8 @@ mod tests {
             (Method::GET, "/api/audit"),
             (Method::GET, "/api/diag"),
             (Method::POST, "/api/notifications/{delivery_id}/replay"),
+            (Method::GET, "/api/sessions/legacy"),
+            (Method::POST, "/api/sessions/{session_id}/adopt"),
         ];
         for (method, path) in denied {
             let cap = super::super::routes::route_capability(&method, path)

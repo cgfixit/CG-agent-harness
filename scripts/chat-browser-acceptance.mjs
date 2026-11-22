@@ -25,7 +25,7 @@ const canonicalCommands = [...slashSource.match(/const COMMANDS: &[\s\S]*?= &\[(
 // The fresh-home credential is restricted until the password route replaces it.
 const FIXTURE_SETUP_CODE='fx2a-b3cd-e4fg-h5jk';
 let adminPassword=FIXTURE_SETUP_CODE;
-const userIds={admin:'1'.repeat(32),'audit-fixture':'2'.repeat(32),'memory-second':'3'.repeat(32)}; // random_hex(16) owner ids
+const userIds={admin:'1'.repeat(32),'audit-fixture':'2'.repeat(32),'memory-second':'3'.repeat(32),'op-fixture':'4'.repeat(32)}; // random_hex(16) owner ids
 let persona=''; let clearFails=false, slashMode='dispatch';
 let authFixture=false, signedIn=false, logoutStatus=200, whoamiDrop=false, mustChange=true, authRole='admin', authUsername='admin';
 // Mirrors authz::Capability::name + grants() (src/common/authz.rs): the console
@@ -157,9 +157,10 @@ const server=createServer(async(req,res)=>{
  if(path==='/api/auth/login'){
   const auditor=body.username==='audit-fixture'&&body.password==='browser-auditor-password';
   const secondOwner=body.username==='memory-second'&&body.password==='browser-memory-password';
-  signedIn=auditor||secondOwner||(body.username==='admin'&&body.password===adminPassword);
-  authUsername=auditor?'audit-fixture':secondOwner?'memory-second':'admin';authRole=auditor?'auditor':'admin';
-  if(auditor)mustChange=false;
+  const operator=body.username==='op-fixture'&&body.password==='browser-operator-password';
+  signedIn=auditor||secondOwner||operator||(body.username==='admin'&&body.password===adminPassword);
+  authUsername=auditor?'audit-fixture':secondOwner?'memory-second':operator?'op-fixture':'admin';authRole=auditor?'auditor':operator?'operator':'admin';
+  if(auditor||operator)mustChange=false;
   reply({username:authUsername,role:authRole,user_id:userIds[authUsername],must_change_password:mustChange,capabilities:CAPS[authRole]},signedIn?200:401);return;
  }
  if(path==='/api/auth/password'){assert.equal(body.current_password,adminPassword);assert.ok(body.password.length>=12);adminPassword=body.password;mustChange=false;reply({ok:true,must_change_password:false});return;}
@@ -1331,6 +1332,13 @@ try {
  const auditorStatus=await evaluate('document.getElementById("stream").innerText');
  assert.equal(auditorStatus.includes('undefined'),false,'redacted status must not render missing fields');
  assert.match(auditorStatus,/read.only/i,'auditor status must explain its read-only scope');
+ await evaluate('document.getElementById("hAuthLogout").click()');
+ await until('!document.getElementById("hAuthLoginBox").hidden');assert.equal(signedIn,false);
+ // An operator keeps its own-data controls but not the administrator's
+ // unassigned-legacy review: the route table maps it to manage_shared_content.
+ await evaluate('document.getElementById("hAuthUser").value="op-fixture";document.getElementById("hAuthPass").value="browser-operator-password";document.getElementById("hAuthLogin").click()');
+ await until('document.getElementById("sessionSearch")!==null');
+ assert.equal(await evaluate('[...document.querySelectorAll("#pane-sessions button")].some(b=>b.textContent.includes("legacy"))'),false,'an operator does not see the legacy-session review');
  await evaluate('document.getElementById("hAuthLogout").click()');
  await until('!document.getElementById("hAuthLoginBox").hidden');assert.equal(signedIn,false);
  assert.equal(await evaluate(headerState),'');
