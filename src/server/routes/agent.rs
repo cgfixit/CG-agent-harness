@@ -403,7 +403,7 @@ pub(crate) fn start_job(
         // now that the job is in the store: any later change finds it there.
         let (check_state, check_owner, check_job) = (task_state.clone(), task_owner.clone(), task_job.clone());
         let still_allowed = super::structured_memory::off_worker(move || {
-            if owner_may_run_coding(&check_state, &check_owner) {
+            if schedule_owner_authorized(&check_state, &check_owner) {
                 return true;
             }
             check_state.audit.log(json!({
@@ -634,7 +634,7 @@ pub fn start_job_for_owner(
 /// Whether `owner` may run coding now: an enabled account holding
 /// `RunCoding` (or `local` without accounts). Rechecked at every schedule
 /// occurrence, including legacy rows, and by every job once it is registered.
-fn owner_may_run_coding(state: &AppState, owner: &str) -> bool {
+fn schedule_owner_authorized(state: &AppState, owner: &str) -> bool {
     match &state.auth {
         Some(auth) => auth.list_users().iter().any(|user| {
             user.user_id == owner
@@ -666,7 +666,7 @@ fn tick_schedules_blocking(state: &Arc<AppState>, now: f64) {
             &due,
             now,
             || {
-                if !owner_may_run_coding(state, &owner) {
+                if !schedule_owner_authorized(state, &owner) {
                     state.audit.log(json!({"event":"agent_schedule_refused","schedule_id":schedule_id,"code":"SCHEDULE_OWNER_REVOKED"}));
                     return DispatchOutcome::Revoked;
                 }
@@ -677,7 +677,7 @@ fn tick_schedules_blocking(state: &Arc<AppState>, now: f64) {
                 DispatchOutcome::Accepted
             },
             || {
-                if !owner_may_run_coding(state, &owner) {
+                if !schedule_owner_authorized(state, &owner) {
                     state.audit.log(json!({"event":"agent_schedule_refused","schedule_id":schedule_id,"code":"SCHEDULE_OWNER_REVOKED"}));
                     return DispatchOutcome::Revoked;
                 }
