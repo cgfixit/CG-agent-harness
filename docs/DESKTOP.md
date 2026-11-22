@@ -25,8 +25,8 @@ checks need their configured tools. Native acceptance evidence lives in PR bodie
    Launch fetches no content. `/model list` and `/model use <exact-tag>` select
    an installed chat model ([Models](MODELS.md)).
 
-The account bar displays the role. Auditors have read-only status and cannot use
-chat, research, users, API Keys, or Sessions data.
+The account bar displays the role. Auditors get local chat in their own
+sessions, the audit view and `/diag` ([roles](SECURE_RESEARCH.md#accounts-and-roles)).
 
 This build is **ad-hoc signed, universal (Apple Silicon + Intel), and not notarized**.
 Its signature checks integrity, not publisher identity. Gatekeeper may require

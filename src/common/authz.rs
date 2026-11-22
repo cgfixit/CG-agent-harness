@@ -89,7 +89,8 @@ pub enum Capability {
 impl Capability {
     /// Every capability in declaration order: the iteration domain for
     /// [`capabilities_for`]. Adding a variant fails compilation in `grants`
-    /// and here until both are decided.
+    /// and `name`; a fixed-size array cannot notice one it omits, so
+    /// `all_lists_every_capability_variant` fails until it is listed here.
     pub const ALL: [Capability; 22] = [
         Capability::Public,
         Capability::OwnAccount,
@@ -377,6 +378,34 @@ mod tests {
         ] {
             assert!(grants(Role::Operator, cap), "operator keeps {cap:?}");
         }
+    }
+
+    /// `ALL` drives what whoami reports, and the test below loops over `ALL`
+    /// alone, so a variant missing from it would drop out of both unnoticed.
+    /// Count the variants the enum declares in this file instead.
+    #[test]
+    fn all_lists_every_capability_variant() {
+        let source = include_str!("authz.rs");
+        let body = source
+            .split_once("pub enum Capability {")
+            .and_then(|(_, rest)| rest.split_once("\n}"))
+            .map(|(body, _)| body)
+            .expect("the Capability enum is declared in this file");
+        let declared: Vec<&str> = body
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with("//"))
+            .map(|line| line.trim_end_matches(','))
+            .collect();
+        assert!(
+            declared.iter().all(|v| v.chars().all(|c| c.is_ascii_alphanumeric())),
+            "unit variants only: {declared:?}"
+        );
+        let listed: Vec<String> = Capability::ALL.iter().map(|cap| format!("{cap:?}")).collect();
+        assert_eq!(
+            listed, declared,
+            "Capability::ALL must list every variant, in declaration order"
+        );
     }
 
     #[test]
