@@ -691,10 +691,10 @@ restart-only `web.goal_web_default` (ships `all`; withhold unattended search wit
 goal; a turn needing compaction continues automatically.
 
 `POST /api/loop/start` runs those turns in a server task that outlives the
-browser; the session stores each as a short label (`Loop turn N of M.`), not the
-goal reminder sent with it. Each turn goes through `chat_inner` (`loop_turn: true`) after re-reading
+browser; the session stores each as `Loop turn N of M.` (N counts completed
+turns), not the goal reminder. Each turn goes through `chat_inner` (`loop_turn: true`) after re-reading
 the starting account: deleted, disabled, password-pending, or no longer
-operator/admin ends the run `failed`. `auditor` cannot start one. Start,
+operator/admin ends the run `failed`; a role or password change mid-turn withholds its reply. `auditor` cannot start one. Start,
 stop, status and events are bound to the starting owner; a foreign run reads as
 `LOOP_RUN_NOT_FOUND`. A session holds one live run (`LOOP_IN_FLIGHT`). A run ends
 on stop, a changed or cleared session goal (`LOOP_GOAL_CHANGED`), `loop.max_turns`,

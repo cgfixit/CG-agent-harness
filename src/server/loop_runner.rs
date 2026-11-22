@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 use crate::common::authz::{self, Capability};
 use crate::common::errors::{HarnessError, Result};
 use crate::server::config_reload::LoopLimits;
-use crate::server::routes::core::chat_inner;
+use crate::server::routes::core::{chat_inner, LoopTurn};
 use crate::server::schemas::ChatRequest;
 
 /// Mirror of the console `LOOP_GOAL_REMINDER_CHARS`: the goal restated next to
@@ -491,7 +491,6 @@ async fn run_turns(
 ) {
     let peer: SocketAddr = SocketAddr::from(([127, 0, 0, 1], 0));
     let mut last_reply: Option<String> = None;
-    let mut turn: u64 = 0;
     let mut busy_retries: u32 = 0;
     loop {
         let (mut run, user) = {
@@ -553,9 +552,24 @@ async fn run_turns(
         }
         // After the wait, never before it: the wait can last as long as a
         // background model job, and an account disabled or demoted meanwhile
-        // must not get the turn that was queued for it.
-        let user = match current_authority(&state, user) {
-            Ok(user) => user,
+        // must not get the turn that was queued for it. The account store's
+        // lock is held across its SQLite rewrite, so this reads on the
+        // blocking pool. The revocation count is read first: a role or
+        // password change landing after it is caught when the turn writes,
+        // which withholds that turn's reply.
+        let checked = {
+            let state = state.clone();
+            crate::server::routes::structured_memory::off_worker(move || {
+                let sign_ins = match (state.auth.as_ref(), user.as_ref()) {
+                    (Some(auth), Some(user)) => Some(auth.sign_in_revocations(&user.username)),
+                    _ => None,
+                };
+                current_authority(&state, user).map(|user| (user, sign_ins))
+            })
+            .await
+        };
+        let (user, sign_ins) = match checked {
+            Ok(checked) => checked,
             Err(reason) => {
                 finish(
                     &state,
@@ -570,7 +584,11 @@ async fn run_turns(
                 return;
             }
         };
-        turn += 1;
+        // The turn this pass runs: a failed or busy-retried turn is attempted
+        // again under the same number, as the console's loop does ("retrying
+        // this turn"), so the budget's last turn is the one that gets
+        // LOOP_FINAL_STEP even after an isolated failure.
+        let turn = run.stats.turns_completed + 1;
         let total = (run.config.max_turns > 0).then_some(run.config.max_turns);
         let framed = loop_turn_prompt(turn, total, &run.goal);
         let req = ChatRequest {
@@ -584,7 +602,11 @@ async fn run_turns(
             attachment_ids: Vec::new(),
             stored_message: Some(loop_turn_stored(turn, total)),
         };
-        let result = chat_inner(state.clone(), peer, user, req, None, Some(&run.goal)).await;
+        let loop_turn = LoopTurn {
+            goal: &run.goal,
+            sign_ins,
+        };
+        let result = chat_inner(state.clone(), peer, user, req, None, Some(loop_turn)).await;
         let mut terminal: Option<(LoopRunState, String)> = None;
         match result {
             Ok(axum::Json(value)) => {
@@ -644,7 +666,6 @@ async fn run_turns(
             // and not counted, and the next pass waits again.
             Err(error) if error.code == "CHAT_BUSY" && busy_retries < MAX_BUSY_RETRIES => {
                 busy_retries += 1;
-                turn -= 1;
             }
             Err(error) => {
                 busy_retries = 0;
