@@ -47,7 +47,7 @@ async fn model() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
             };
             let stream = futures_util::stream::unfold((0, frames, prompt, guard), |(index, frames, prompt, guard)| async move {
                 if index >= frames.len() { return None; }
-                if index == 1 { tokio::time::sleep(Duration::from_millis(if prompt == "slow" { 30_000 } else { 150 })).await; }
+                if index == 1 { tokio::time::sleep(Duration::from_millis(match prompt.as_str() { "slow" => 30_000, "paced" => 1_000, _ => 150 })).await; }
                 Some((Ok::<_, std::convert::Infallible>(Event::default().data(&frames[index])), (index+1, frames, prompt, guard)))
             });
             Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_millis(20))).into_response()
@@ -351,6 +351,86 @@ async fn incremental_delivery_commits_only_completed_exchange_with_and_without_t
         assert_eq!(s.state.store.for_owner("local").get(id).unwrap().messages.len(), 2);
         released(&s, &active).await;
     }
+    task.abort();
+}
+
+/// A plain streamed turn re-reads the account before each chunk, as web and
+/// log-tool chat do: once the account is disabled mid-reply, no further text
+/// reaches that sign-in, the turn ends `AUTH_REQUIRED` and nothing is stored.
+#[tokio::test]
+async fn a_plain_stream_stops_at_the_next_chunk_once_the_account_changes() {
+    let (url, active, task) = model().await;
+    let s = spawn_server(&url, ServerOptions::default().with("auth.enabled", "true")).await;
+    let auth = s.state.auth.as_ref().unwrap();
+    let password = cgagentharness::common::random_hex(24);
+    auth.create_user("alice", &password, "operator").unwrap();
+    let owner = auth.get_user("alice").unwrap().user_id;
+    let login = s
+        .client
+        .post(s.url("/api/auth/login"))
+        .json(&json!({"username":"alice","password":password}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(login.status(), 200);
+    let cookie = login.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+    // Web off: the plain arm, not web chat's own per-chunk evidence check.
+    s.state.settings.lock().unwrap().web_enabled = false;
+    let session: Value = s
+        .req(reqwest::Method::POST, "/api/sessions")
+        .header("cookie", &cookie)
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = session["session_id"].as_str().unwrap();
+    let mut response = s
+        .req(reqwest::Method::POST, "/api/chat")
+        .header("cookie", &cookie)
+        .header("Accept", "text/event-stream")
+        .json(&json!({"message":"paced","session_id":id}))
+        .send()
+        .await
+        .unwrap();
+    let first = tokio::time::timeout(Duration::from_secs(5), response.chunk())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let mut text = String::from_utf8(first.to_vec()).unwrap();
+    assert!(text.contains("hello "), "first delta: {text}");
+    // The fixture holds its next chunk for a second.
+    auth.disable_user("alice").unwrap();
+    while let Some(chunk) = response.chunk().await.unwrap() {
+        text.push_str(std::str::from_utf8(&chunk).unwrap());
+    }
+    assert!(
+        !text.contains("world"),
+        "text streamed after the account changed: {text}"
+    );
+    let events = events(&text);
+    let last = events.last().unwrap();
+    assert_eq!(last["type"], "error", "{text}");
+    assert_eq!(last["status"], 401, "{text}");
+    assert_eq!(last["error"]["detail"]["code"], "AUTH_REQUIRED", "{text}");
+    assert!(s.state.store.for_owner(&owner).get(id).unwrap().messages.is_empty());
+    let audit = s.audit_log();
+    assert!(
+        audit
+            .lines()
+            .any(|l| l.contains("\"chat_reply_withheld\"") && l.contains("\"web\":false")),
+        "{audit}"
+    );
+    released(&s, &active).await;
     task.abort();
 }
 
