@@ -51,10 +51,11 @@ Roles, scrypt bounds and session timeouts: [SECURE_RESEARCH.md](SECURE_RESEARCH.
 |---|---|---|
 | POST | `/api/chat` | One turn; streams SSE when `Accept: text/event-stream` |
 | POST | `/api/chat/cancel` | Cancel the active turn (`/loop stop`) |
-| POST | `/api/chat/attachments` | Upload up to 3 txt/md/json/csv/log/docx/pdf files; 503 past `attachments.max_concurrent_uploads` ([limits and retention](CONSOLE.md#text-file-attachments-and-prompt-preview)) |
-| GET, POST | `/api/notes-corpus` | List owned note metadata and upload limits, or ingest a `.md`/`.txt`/`.pdf` batch for local prompt retrieval; file refusals carry a zero-based `file_index` |
+| POST | `/api/chat/fetch-confirm` | Administrator Approve/Decline of an own paused [composed fetch](SECURE_RESEARCH.md#chat-web-tools) |
+| POST | `/api/chat/attachments` | Upload up to 3 txt/md/json/csv/log/docx/pdf files; 503 past `attachments.max_concurrent_uploads` ([limits](CONSOLE.md#text-file-attachments-and-prompt-preview)) |
+| GET, POST | `/api/notes-corpus` | List owned note metadata and upload limits, or ingest a `.md`/`.txt`/`.pdf` batch; file refusals carry a zero-based `file_index` |
 | DELETE | `/api/notes-corpus/{id}` | Unlink one owned note |
-| POST | `/api/loop/start` | Start an owner-bound server-side `/loop` run: `session_id`, optional `goal`/`web_mode`, limit overrides |
+| POST | `/api/loop/start` | Start an owner-bound `/loop` run: `session_id`, optional `goal`/`web_mode`, limit overrides |
 | POST | `/api/loop/stop` | Stop by `run_id` |
 | GET | `/api/loop/status` | One run (`?run_id=`) or a session's run (`?session_id=`) |
 | GET | `/api/loop/events/{run_id}` | SSE per-turn progress ([server loops](CONSOLE.md#71-sessions-and-bounded-chat-continuation)) |
@@ -98,7 +99,7 @@ Roles, scrypt bounds and session timeouts: [SECURE_RESEARCH.md](SECURE_RESEARCH.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/structured-memory` | Truthful status and effective gates |
+| GET | `/api/structured-memory` | Status and effective gates |
 | POST | `/api/structured-memory/gates` | Administrator gate override, persisted in `memory/structured_gates.json` |
 | GET | `/api/structured-memory/search` | Facts-only FTS candidates |
 | GET, POST | `/api/structured-memory/facts` | List active facts or add one (confirm) |
@@ -128,11 +129,11 @@ Confirmation and gate rules: [STRUCTURED_MEMORY.md](STRUCTURED_MEMORY.md).
 | POST | `/api/web/mode` | Administrator selects allowlist/denylist; denylist requires confirmation |
 | POST | `/api/web/block`, `/api/web/unblock` | Administrator adds/removes blocks |
 | POST | `/api/web/check` | Check exact URL permissions locally, without fetching or granting |
-| POST | `/api/web/fetch` | Read one or more exact permitted URLs within shared resource limits |
+| POST | `/api/web/fetch` | Read exact permitted URLs within shared resource limits |
 | POST | `/api/web/search` | Page search; `engine:"google"` uses `web.search.provider` |
 | POST | `/api/web/research` | Research permitted sources; question ≤2,000 characters, optional group/URLs |
 | POST | `/api/web/research/cancel` | Cancel the owner's running research, detached or not |
-| POST, GET | `/api/web/research/jobs` | Start a detached owner-bound research job (`/web job`) or list owned jobs; `GET …/jobs/{job_id}` reads one ([research](SECURE_RESEARCH.md#fetch-discovery-and-research)) |
+| POST, GET | `/api/web/research/jobs` | Start a detached owner-bound job (`/web job`) or list owned ones; `GET …/jobs/{job_id}` reads one ([research](SECURE_RESEARCH.md#fetch-discovery-and-research)) |
 | POST | `/api/web/inject`, `/api/web/forget` | Include your last selection in chat, or drop injected reads |
 
 The `cgagentharness web` CLI drives these routes.
@@ -157,8 +158,8 @@ The `cgagentharness web` CLI drives these routes.
 
 Bounds and capability policy: [MCP.md](MCP.md#outbound-client-capabilities);
 `/loop` has no MCP tools. The private memory server is not a console route: a
-separate default-off loopback listener accepts `POST /mcp` with machine bearer
-keys minted by `mcp-key`, and console cookies never authorize it
+separate default-off loopback listener accepts `POST /mcp` with `mcp-key` machine bearer
+keys; console cookies never authorize it
 ([activation and limits](MCP.md#deliberate-local-activation)).
 
 ## Coding agent
@@ -179,11 +180,11 @@ keys minted by `mcp-key`, and console cookies never authorize it
 | POST | `/api/agent/runs/{run_id}/decision` | Approve (`reason`, confirm) or reject |
 | POST | `/api/agent/runs/{run_id}/push`, `/api/agent/runs/{run_id}/publish`, `/api/agent/runs/{run_id}/discard` | Push the approved commit, open a draft PR, or discard the run |
 | GET | `/api/notifications` | Owned destinations and retained delivery metadata; no URLs, credentials or job content |
-| POST | `/api/notifications/{delivery_id}/replay` | Confirmed owner replay within current grants/limits; never reruns a job |
+| POST | `/api/notifications/{delivery_id}/replay` | Administrator replay of an own delivery within current grants/limits; never reruns a job |
 
 Run and job creation share `agent::prepare_run`, then spawn through the shim
 ([publication](CODING_PIPELINE.md#git-approval-and-publication)). Run routes
-need literal `agentic.enabled: true`; otherwise they return HTTP 409
+need literal `agentic.enabled: true`; otherwise they return 409
 `AGENTIC_DISABLED` without reading or reconciling records, while
-`GET /api/github/status` stays HTTP 200. Webhook destinations and payloads:
+`GET /api/github/status` stays 200. Webhook destinations and payloads:
 [SPEND_AND_NOTIFICATIONS.md](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook).

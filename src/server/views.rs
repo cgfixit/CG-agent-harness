@@ -503,7 +503,7 @@ pub const HARNESS_SURFACES: [(&str, &str, &str, &str, &str); 84] = [
         "abort a detached run (kills the child process)",
     ),
     ("notification-status", "(Job webhooks button)", "GET", "/api/notifications", "owned destination and retained delivery status; no job or message content"),
-    ("notification-replay", "(Job webhooks button)", "POST", "/api/notifications/{delivery_id}/replay", "explicit owner-confirmed replay after current authority checks; never reruns a job"),
+    ("notification-replay", "(Job webhooks button)", "POST", "/api/notifications/{delivery_id}/replay", "administrator-confirmed replay of an own delivery after current authority checks; never reruns a job"),
     (
         "agent-schedule-preview",
         "(Schedules button)",

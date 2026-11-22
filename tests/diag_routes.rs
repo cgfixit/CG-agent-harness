@@ -591,7 +591,10 @@ async fn auditor_chats_locally_without_memory_or_other_surfaces() {
     for (method, path) in [
         (Method::GET, "/api/memory".to_string()),
         (Method::GET, "/api/structured-memory".to_string()),
-        (Method::DELETE, format!("/api/sessions/{sid}")),
+        // Routed owner-data mutations: an unrouted method would be refused by
+        // the auditor's method-exact rule whatever the role's grants were.
+        (Method::POST, format!("/api/sessions/{sid}/rename")),
+        (Method::DELETE, format!("/api/sessions/{sid}/attachment-pins")),
         (Method::POST, "/api/sessions/clear".to_string()),
         (Method::GET, format!("/api/sessions/{sid}/export")),
         (Method::GET, "/api/keys".to_string()),

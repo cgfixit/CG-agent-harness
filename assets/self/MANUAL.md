@@ -230,13 +230,14 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - GET, POST `/api/keys`: Managed-key presence (masked tail) and `/api set <KEY> <value>`
 - POST `/api/chat`: One turn; streams SSE when `Accept: text/event-stream`
 - POST `/api/chat/cancel`: Cancel the active turn (`/loop stop`)
+- POST `/api/chat/fetch-confirm`: Administrator Approve/Decline of an own paused composed fetch
 - POST `/api/chat/attachments`: Upload up to 3 txt/md/json/csv/log/docx/pdf files; 503 past…
 
 ## api: registered routes (part 3)
 
-- GET, POST `/api/notes-corpus`: List owned note metadata and upload limits, or ingest a `.md`/`.txt`/`.pdf` batch for…
+- GET, POST `/api/notes-corpus`: List owned note metadata and upload limits, or ingest a `.md`/`.txt`/`.pdf` batch; file…
 - DELETE `/api/notes-corpus/{id}`: Unlink one owned note
-- POST `/api/loop/start`: Start an owner-bound server-side `/loop` run: `session_id`, optional `goal`/`web_mode`,…
+- POST `/api/loop/start`: Start an owner-bound `/loop` run: `session_id`, optional `goal`/`web_mode`, limit…
 - POST `/api/loop/stop`: Stop by `run_id`
 - GET `/api/loop/status`: One run (`?run_id=`) or a session's run (`?session_id=`)
 - GET `/api/loop/events/{run_id}`: SSE per-turn progress (server loops)
@@ -276,7 +277,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/skills/check`: Describe a `check:<profile>` ID
 - GET, POST `/api/memory`: Pinned-note status and on/off toggle
 - POST `/api/memory/add`, `/api/memory/forget`, `/api/memory/clear`: Save a literal note, remove one, remove all
-- GET `/api/structured-memory`: Truthful status and effective gates
+- GET `/api/structured-memory`: Status and effective gates
 - POST `/api/structured-memory/gates`: Administrator gate override, persisted in `memory/structured_gates.json`
 
 ## api: registered routes (part 6)
@@ -305,11 +306,11 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/web/mode`: Administrator selects allowlist/denylist; denylist requires confirmation
 - POST `/api/web/block`, `/api/web/unblock`: Administrator adds/removes blocks
 - POST `/api/web/check`: Check exact URL permissions locally, without fetching or granting
-- POST `/api/web/fetch`: Read one or more exact permitted URLs within shared resource limits
+- POST `/api/web/fetch`: Read exact permitted URLs within shared resource limits
 - POST `/api/web/search`: Page search; `engine:"google"` uses `web.search.provider`
 - POST `/api/web/research`: Research permitted sources; question ≤2,000 characters, optional group/URLs
 - POST `/api/web/research/cancel`: Cancel the owner's running research, detached or not
-- POST, GET `/api/web/research/jobs`: Start a detached owner-bound research job (`/web job`) or list owned jobs; `GET…
+- POST, GET `/api/web/research/jobs`: Start a detached owner-bound job (`/web job`) or list owned ones; `GET …/jobs/{job_id}`…
 - POST `/api/web/inject`, `/api/web/forget`: Include your last selection in chat, or drop injected reads
 
 ## api: registered routes (part 8)
@@ -339,7 +340,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - POST `/api/agent/runs/{run_id}/decision`: Approve (`reason`, confirm) or reject
 - POST `/api/agent/runs/{run_id}/push`, `/api/agent/runs/{run_id}/publish`, `/api/agent/runs/{run_id}/discard`: Push the approved commit, open a draft PR, or discard the run
 - GET `/api/notifications`: Owned destinations and retained delivery metadata; no URLs, credentials or job content
-- POST `/api/notifications/{delivery_id}/replay`: Confirmed owner replay within current grants/limits; never reruns a job
+- POST `/api/notifications/{delivery_id}/replay`: Administrator replay of an own delivery within current grants/limits; never reruns a job
 
 ## troubleshooting: symptom to fix
 
