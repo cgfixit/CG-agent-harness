@@ -89,6 +89,8 @@ const approved = [];
 let blocked = 0;
 // The same, for page loads only, so a refused navigate can say why.
 let blockedLoads = 0;
+// Documents the network gate refused at MAX_DOCUMENT_BYTES.
+let oversized = 0;
 
 // Same rule as the harness web reader (web_policy::is_public_ip): a granted
 // name must resolve to global unicast only. An IP-literal grant skips lookup.
@@ -585,6 +587,11 @@ function topLevelLoad(request) {
 // SharedWorker's requests, and routeWebSocket is a page script that a worker's
 // WebSocket never meets. Blob, data and about:blank documents inherit it.
 const WORKER_POLICY = { name: "Content-Security-Policy", value: "worker-src 'none'" };
+// The largest document body the network gate reads before it re-sends it with
+// WORKER_POLICY. Chrome hands the body over as a stream, read in chunks, so a
+// bigger document is refused at the cap rather than after it is held whole.
+const MAX_DOCUMENT_BYTES = 16 * 1024 * 1024;
+const DOCUMENT_CHUNK_BYTES = 1024 * 1024;
 // The body comes back decoded, so these would describe bytes that are gone.
 const STALE_BODY_HEADERS = new Set(["content-encoding", "content-length", "transfer-encoding"]);
 
@@ -604,14 +611,19 @@ async function gate(cdp, event) {
     const status = event.responseStatusCode;
     const redirect = status >= 300 && status < 400 && (event.responseHeaders || []).some(({ name }) => name.toLowerCase() === "location");
     if (redirect) return cdp.send("Fetch.continueRequest", { requestId });
-    const { body, base64Encoded } = await cdp.send("Fetch.getResponseBody", { requestId });
+    const declared = (event.responseHeaders || []).find(({ name }) => name.toLowerCase() === "content-length");
+    const body = Number(declared?.value) > MAX_DOCUMENT_BYTES ? null : await boundedBody(cdp, requestId);
+    if (body === null) {
+      oversized += 1;
+      return cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" });
+    }
     const headers = (event.responseHeaders || []).filter(({ name }) => !STALE_BODY_HEADERS.has(name.toLowerCase()));
     return cdp.send("Fetch.fulfillRequest", {
       requestId,
       responseCode: event.responseStatusCode,
       responsePhrase: event.responseStatusText || undefined,
       responseHeaders: [...headers, WORKER_POLICY],
-      body: base64Encoded ? body : Buffer.from(body).toString("base64"),
+      body: body.toString("base64"),
     });
   }
   const local = /^(data|blob|about):/.test(request.url);
@@ -645,6 +657,27 @@ async function gate(cdp, event) {
     return cdp.send("Fetch.failRequest", { requestId, errorReason: "BlockedByClient" });
   }
   return cdp.send("Fetch.continueRequest", { requestId });
+}
+
+// A paused document's body, read through IO.read in DOCUMENT_CHUNK_BYTES
+// pieces; null once it passes MAX_DOCUMENT_BYTES. After the stream is taken
+// the request can only be fulfilled or failed, never continued as is.
+async function boundedBody(cdp, requestId) {
+  const { stream } = await cdp.send("Fetch.takeResponseBodyAsStream", { requestId });
+  const parts = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { data, base64Encoded, eof } = await cdp.send("IO.read", { handle: stream, size: DOCUMENT_CHUNK_BYTES });
+      const part = Buffer.from(data, base64Encoded ? "base64" : "utf8");
+      total += part.length;
+      if (total > MAX_DOCUMENT_BYTES) return null;
+      parts.push(part);
+      if (eof) return Buffer.concat(parts);
+    }
+  } finally {
+    await cdp.send("IO.close", { handle: stream }).catch(() => {});
+  }
 }
 
 async function startNetworkGate() {
@@ -788,11 +821,15 @@ async function handle(message) {
       return start(message);
     case "navigate": {
       const before = blockedLoads;
+      const large = oversized;
       await page.goto(message.url, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(async (error) => {
-        if (blockedLoads === before) throw error;
+        if (blockedLoads === before && oversized === large) throw error;
         // Chrome commits its error page a moment after a refused load; a
         // navigate sent before that would be interrupted by it.
         await page.waitForEvent("framenavigated", { timeout: 1000 }).catch(() => {});
+        if (oversized !== large) {
+          throw new Error(`that page is larger than the ${MAX_DOCUMENT_BYTES / 1048576} MiB a browser task reads`);
+        }
         // Not the URL: the reason is the operator's rule, and the model has the URL.
         throw new Error("the operator's web block list covers that page");
       });
