@@ -125,7 +125,7 @@ fn same_credential(checked: &UserRow, current: &UserRow) -> bool {
 
 /// Most usernames without an account whose failures are remembered at once.
 /// A fake-name flood stops growing memory here (about 2 MiB); see
-/// `AuthManager::record_unknown_failure` for what is forgotten first.
+/// `count_unknown_failure` for what is forgotten first.
 const UNKNOWN_FAILURE_ENTRIES: usize = 16_384;
 
 /// Sign-in failures for a username with no account, kept only in memory. They
@@ -137,6 +137,49 @@ struct UnknownFailures {
     count: u32,
     locked_until_ts: f64,
     last_ts: f64,
+}
+
+/// Counts one failure for `key` at `now`, or returns the end of an active
+/// lockout; the check and the count are one step, under the caller's lock.
+/// At the cap, names idle longer than the longest lockout are forgotten
+/// first, then the least recently failed name that is not locked at `now`,
+/// and a locked one only when every remembered name is locked: forgetting a
+/// locked name would answer it 401 where a real account answers 423. A
+/// forgotten name starts again from zero, which a real account never does,
+/// so the cap is set well above what the rate limit lets one client reach in
+/// an hour.
+fn count_unknown_failure(
+    failures: &mut HashMap<String, UnknownFailures>,
+    key: String,
+    now: f64,
+) -> std::result::Result<(), f64> {
+    if !failures.contains_key(&key) && failures.len() >= UNKNOWN_FAILURE_ENTRIES {
+        failures.retain(|_, f| now - f.last_ts < authn::LOCKOUT_CEILING_SEC);
+        if failures.len() >= UNKNOWN_FAILURE_ENTRIES {
+            let oldest = |locked: bool| {
+                failures
+                    .iter()
+                    .filter(|(_, f)| authn::is_locked(Some(f.locked_until_ts), now) == locked)
+                    .min_by(|a, b| a.1.last_ts.total_cmp(&b.1.last_ts))
+                    .map(|(k, _)| k.clone())
+            };
+            if let Some(oldest) = oldest(false).or_else(|| oldest(true)) {
+                failures.remove(&oldest);
+            }
+        }
+    }
+    let entry = failures.entry(key).or_insert(UnknownFailures {
+        count: 0,
+        locked_until_ts: 0.0,
+        last_ts: now,
+    });
+    if authn::is_locked(Some(entry.locked_until_ts), now) {
+        return Err(entry.locked_until_ts);
+    }
+    entry.count = entry.count.saturating_add(1);
+    entry.locked_until_ts = authn::next_lock_until(entry.count, now);
+    entry.last_ts = now;
+    Ok(())
 }
 
 /// Longest interval between idle-window slides of a live session.
@@ -722,11 +765,9 @@ impl AuthManager {
         if self.user_row(canonical).is_some() {
             return Err(HarnessError::auth_login_failed());
         }
-        // The time is read again at record time, as `login_with` does, and a
-        // lockout that started while this check ran refuses it.
-        let now = self.now();
-        if let Err(until) = self.record_unknown_failure(key, now) {
-            return Err(HarnessError::auth_locked((until - now).max(0.0), canonical));
+        // A lockout that started while this check ran refuses it.
+        if let Err(retry_after) = self.record_unknown_failure(key) {
+            return Err(HarnessError::auth_locked(retry_after, canonical));
         }
         Err(HarnessError::auth_login_failed())
     }
@@ -739,45 +780,17 @@ impl AuthManager {
     }
 
     /// Counts one failure for `key` as `login_with` counts one for a real
-    /// account, or returns the end of a lockout that started while the check
-    /// ran: the check and the count are one step under the table's lock, so
-    /// overlapping attempts count like serial ones. At the cap, names idle longer than
-    /// the longest lockout are forgotten first, then the least recently failed
-    /// name that is not locked right now, and a locked one only when every
-    /// remembered name is locked: forgetting a locked name would answer it 401
-    /// where a real account answers 423. A forgotten name starts again from
-    /// zero, which a real account never does, so the cap is set well above
-    /// what the rate limit lets one client reach in an hour.
-    fn record_unknown_failure(&self, key: String, now: f64) -> std::result::Result<(), f64> {
+    /// account, or returns the wait of a lockout that started while the check
+    /// ran. The time is read after the table's lock is taken, as `login_with`
+    /// reads it under the store lock: recorded times then follow lock order.
+    /// Read before the lock, an attempt could find a later attempt's failure
+    /// already recorded, and a failure below the threshold stores a lock that
+    /// ends when it was recorded, so that later time would refuse this
+    /// attempt as locked where a real account counts it.
+    fn record_unknown_failure(&self, key: String) -> std::result::Result<(), f64> {
         let mut failures = self.unknown_failures.lock().unwrap_or_else(|p| p.into_inner());
-        if !failures.contains_key(&key) && failures.len() >= UNKNOWN_FAILURE_ENTRIES {
-            failures.retain(|_, f| now - f.last_ts < authn::LOCKOUT_CEILING_SEC);
-            if failures.len() >= UNKNOWN_FAILURE_ENTRIES {
-                let oldest = |locked: bool| {
-                    failures
-                        .iter()
-                        .filter(|(_, f)| authn::is_locked(Some(f.locked_until_ts), now) == locked)
-                        .min_by(|a, b| a.1.last_ts.total_cmp(&b.1.last_ts))
-                        .map(|(k, _)| k.clone())
-                };
-                let oldest = oldest(false).or_else(|| oldest(true));
-                if let Some(oldest) = oldest {
-                    failures.remove(&oldest);
-                }
-            }
-        }
-        let entry = failures.entry(key).or_insert(UnknownFailures {
-            count: 0,
-            locked_until_ts: 0.0,
-            last_ts: now,
-        });
-        if authn::is_locked(Some(entry.locked_until_ts), now) {
-            return Err(entry.locked_until_ts);
-        }
-        entry.count = entry.count.saturating_add(1);
-        entry.locked_until_ts = authn::next_lock_until(entry.count, now);
-        entry.last_ts = now;
-        Ok(())
+        let now = self.now();
+        count_unknown_failure(&mut failures, key, now).map_err(|until| (until - now).max(0.0))
     }
 
     /// Live means: exists, not revoked, within both the absolute expiry and the
@@ -1157,23 +1170,26 @@ mod tests {
     fn remembered_unknown_names_stay_within_the_cap() {
         let (_dir, auth) = store();
         let key = |i: usize| authn::hash_token(&format!("name{i}"));
-        let _ = auth.record_unknown_failure(key(0), 0.0);
+        let count = |key: String, now: f64| {
+            let _ = count_unknown_failure(&mut auth.unknown_failures.lock().unwrap(), key, now);
+        };
+        count(key(0), 0.0);
         for _ in 0..5 {
-            let _ = auth.record_unknown_failure(key(1), 1_000.0);
+            count(key(1), 1_000.0);
         }
         for i in 2..UNKNOWN_FAILURE_ENTRIES {
-            let _ = auth.record_unknown_failure(key(i), 1_000.0);
+            count(key(i), 1_000.0);
         }
         let full = || auth.unknown_failures.lock().unwrap().len();
         assert_eq!(full(), UNKNOWN_FAILURE_ENTRIES);
         // The next new name drops every name idle past the longest lockout.
-        let _ = auth.record_unknown_failure(key(UNKNOWN_FAILURE_ENTRIES), 1_000.0);
+        count(key(UNKNOWN_FAILURE_ENTRIES), 1_000.0);
         assert_eq!(full(), UNKNOWN_FAILURE_ENTRIES);
         assert!(!auth.unknown_failures.lock().unwrap().contains_key(&key(0)));
         // With nothing idle, the least recently failed unlocked name goes, one
         // at a time; the locked name, older than every other, is kept.
         for i in 1..=50 {
-            let _ = auth.record_unknown_failure(key(UNKNOWN_FAILURE_ENTRIES + i), 1_000.0 + i as f64 * 0.01);
+            count(key(UNKNOWN_FAILURE_ENTRIES + i), 1_000.0 + i as f64 * 0.01);
             assert_eq!(full(), UNKNOWN_FAILURE_ENTRIES);
         }
         assert!(
@@ -1181,7 +1197,27 @@ mod tests {
             "a locked name survives the flood"
         );
         // A name already remembered is counted in place, never evicting another.
-        let _ = auth.record_unknown_failure(key(UNKNOWN_FAILURE_ENTRIES + 50), 1_100.0);
+        count(key(UNKNOWN_FAILURE_ENTRIES + 50), 1_100.0);
         assert_eq!(full(), UNKNOWN_FAILURE_ENTRIES);
+    }
+
+    /// Codex review on #1069: an attempt must count against a time no
+    /// earlier than any failure already recorded for its name. A failure
+    /// below the threshold stores a lock that ends when it was recorded, so
+    /// counting at an earlier time than one already stored reads as locked.
+    /// `record_unknown_failure` therefore reads the clock only after taking
+    /// the table's lock, as `login_with` reads it under the store lock.
+    #[test]
+    fn a_failure_counted_at_or_after_the_last_one_is_never_refused_below_the_threshold() {
+        let key = || authn::hash_token("nobody");
+        let mut failures = HashMap::new();
+        assert_eq!(count_unknown_failure(&mut failures, key(), 1_000.002), Ok(()));
+        assert_eq!(count_unknown_failure(&mut failures, key(), 1_000.002), Ok(()));
+        assert_eq!(count_unknown_failure(&mut failures, key(), 1_000.003), Ok(()));
+        assert_eq!(failures[&key()].count, 3);
+        // The hazard the lock order removes: a time read before a later
+        // failure was recorded would be refused, with nothing counted.
+        assert_eq!(count_unknown_failure(&mut failures, key(), 1_000.001), Err(1_000.003));
+        assert_eq!(failures[&key()].count, 3);
     }
 }
