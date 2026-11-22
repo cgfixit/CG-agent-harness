@@ -1250,7 +1250,11 @@ pub(crate) async fn chat_inner(
     let web_context = if cloud_selected || !chat_policy.web {
         String::new()
     } else {
-        web.context_text(session.chat_web_mode(settings.web_enabled).enabled(), &owner)
+        // The saved page is opened, read and parsed, and the policy file with
+        // it: off the async worker.
+        let (web, owner) = (web.clone(), owner.clone());
+        let enabled = session.chat_web_mode(settings.web_enabled).enabled();
+        super::structured_memory::off_worker(move || web.context_text(enabled, &owner)).await
     };
     let selections = if !chat_policy.memory {
         Vec::new()

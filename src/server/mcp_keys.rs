@@ -108,6 +108,14 @@ pub struct KeyStore {
     max_keys: usize,
 }
 
+/// Whether an account of this stored role may own a machine key. A key reads
+/// its owner's structured-memory facts, so the role must hold `OwnData`;
+/// `auditor` does not, and an unparseable role fails closed. Mint, the role
+/// route and boot all ask here, because authentication reads only the key row.
+pub fn owner_may_hold_keys(stored_role: &str) -> bool {
+    crate::common::authz::grants_stored(stored_role, crate::common::authz::Capability::OwnData)
+}
+
 /// Who may receive a new machine key.
 pub enum OwnerCheck<'a> {
     /// `auth.enabled` is off. The only owner is `local`.
@@ -228,7 +236,8 @@ impl KeyStore {
         rows(&connect(&self.path)?)
     }
     /// Trusted local CLI authority supplies the namespace. No HTTP caller can choose it.
-    /// The owner must exist, be enabled and have replaced its initial password.
+    /// The owner must exist, be enabled, have replaced its initial password and
+    /// hold a role that reads its own memory ([`owner_may_hold_keys`]).
     /// Auth-disabled homes may mint only `local`.
     pub fn mint(&self, owner: &str, label: &str, owners: OwnerCheck<'_>) -> anyhow::Result<(KeyInfo, String)> {
         if !super::structured_memory::valid_owner(owner)
@@ -239,7 +248,7 @@ impl KeyStore {
             anyhow::bail!("MCP_KEY_INVALID: supply a valid owner ID and a label of 1-80 printable characters");
         }
         if !owners.allows(owner) {
-            anyhow::bail!("MCP_KEY_OWNER_REFUSED: owner must exist, be enabled and have replaced its initial password");
+            anyhow::bail!("MCP_KEY_OWNER_REFUSED: owner must exist, be enabled, have replaced its initial password and hold a role that reads its own memory");
         }
         let mut conn = connect(&self.path)?;
         let tx = conn
@@ -423,8 +432,9 @@ pub fn run(command: KeyCommand) -> anyhow::Result<()> {
                     .list_users()
                     .into_iter()
                     // An account still on its initial password may only replace
-                    // it; it gets no machine key either.
-                    .filter(|user| !user.disabled && !user.must_change_password)
+                    // it; it gets no machine key either. Nor does a role that
+                    // holds no memory read (`auditor`).
+                    .filter(|user| !user.disabled && !user.must_change_password && owner_may_hold_keys(&user.role))
                     .map(|user| user.user_id)
                     .collect::<Vec<_>>()
             } else {

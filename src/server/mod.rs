@@ -254,12 +254,13 @@ pub async fn build_app_with_sources(
         // refused write re-reports it at the next boot rather than losing it.
         for (user_id, old_role) in mgr.pending_role_migrations()? {
             let disabled = old_role == crate::common::authn::RETIRED_AUDIT_ROLE;
-            // A disabled fold retires the owner's machine keys before the report
-            // is acknowledged, as the admin disable route does: MCP
+            // Every fold lands on `auditor`, which holds no memory read, so it
+            // retires the owner's machine keys before the report is
+            // acknowledged, as the admin role and disable routes do: MCP
             // authentication reads only the key row, so a pre-upgrade key would
-            // outlive the disable. A key store that cannot be read also refuses
+            // outlive the fold. A key store that cannot be read also refuses
             // every token, so boot goes on and the report waits for the next boot.
-            if disabled && mcp_keys::KeyStore::disable_owner_if_initialized(&home, &user_id).is_err() {
+            if mcp_keys::KeyStore::disable_owner_if_initialized(&home, &user_id).is_err() {
                 tracing::warn!(
                     "a migrated account's machine keys could not be disabled; the report is kept for the next boot"
                 );
@@ -276,6 +277,15 @@ pub async fn build_app_with_sources(
                 mgr.acknowledge_role_migration(&user_id)?;
             } else {
                 tracing::warn!("auth.role_migrated was not written; it is kept for the next boot");
+            }
+        }
+        // A fold acknowledged by an earlier build, or a role set while the key
+        // store could not be written, may have left an `auditor` a live key.
+        for user in mgr.list_users() {
+            if !mcp_keys::owner_may_hold_keys(&user.role)
+                && mcp_keys::KeyStore::disable_owner_if_initialized(&home, &user.user_id).is_err()
+            {
+                tracing::warn!("an auditor account's machine keys could not be disabled at boot");
             }
         }
         mgr.bootstrap_if_empty()?;
