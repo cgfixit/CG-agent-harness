@@ -198,11 +198,11 @@ authorizes code execution. `/soul off` disables inclusion without deleting the
 file.
 
 **History and proposals:** replacement is atomic and saves the previous content
-as a private SHA256-named backup. `/soul history` lists backup revisions; the
-guarded API `GET /api/soul/document?version=<revision>` reads one for
+as a private SHA256-named backup. For administrators `/soul history` lists
+backup revisions and `GET /api/soul/document?version=<revision>` reads one for
 restoration through the same confirmed edit. `/soul propose` opens a
-proposal-only editor: **Create proposal only** stores supplied or
-model-authored text without applying it and returns an ID.
+proposal-only editor (operators too): **Create proposal only** stores supplied
+or model-authored text without applying it and returns an ID.
 
 ```text
 /soul review <proposal-id>
