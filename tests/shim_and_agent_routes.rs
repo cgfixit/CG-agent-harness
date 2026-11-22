@@ -1205,3 +1205,64 @@ async fn github_status_spawn_failure_is_502() {
     assert_eq!(status, 502, "{resp}");
     assert_eq!(code(&resp), "SHIM_IO_ERROR");
 }
+
+/// A job whose request passed the account gate, but whose account was
+/// disabled before the job was registered, missed the disable's
+/// `JobStore::cancel_owner`. Once registered it rechecks the account and
+/// fails with AUTH_REQUIRED before any child runs; an unchanged account's
+/// job is not refused.
+#[tokio::test]
+async fn a_job_registered_after_its_account_was_disabled_refuses_to_run() {
+    use cgagentharness::server::routes::agent::start_job_for_owner;
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("agentic.enabled", "true")
+            .with("agentic.deepagent_github.enabled", "true"),
+    )
+    .await;
+    let auth = s.state.auth.as_ref().unwrap();
+    for name in ["worker", "keeper"] {
+        auth.create_user(name, &cgagentharness::common::random_urlsafe(24), "operator")
+            .unwrap();
+    }
+    let worker = auth.get_user("worker").unwrap().user_id;
+    let keeper = auth.get_user("keeper").unwrap().user_id;
+    // The disable lands between the gate and registration.
+    auth.disable_user("worker").unwrap();
+    let req = || serde_json::from_value(run_body()).unwrap();
+
+    let (status, created) = start_job_for_owner(s.state.clone(), req(), worker.clone())
+        .unwrap_or_else(|err| panic!("refused: {}", err.code));
+    assert_eq!(status.as_u16(), 202);
+    let job = created["job_id"].as_str().unwrap().to_string();
+    let mut settled = json!(null);
+    for _ in 0..100 {
+        settled = s.state.jobs.get(&worker, &job).unwrap();
+        if settled["status"] != "running" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(settled["status"], "failed", "the job settles as refused");
+    assert_eq!(settled["error"]["http_status"], 401);
+    assert_eq!(settled["error"]["detail"]["code"], "AUTH_REQUIRED");
+
+    let (status, created) = start_job_for_owner(s.state.clone(), req(), keeper.clone())
+        .unwrap_or_else(|err| panic!("refused: {}", err.code));
+    assert_eq!(status.as_u16(), 202);
+    let kept = created["job_id"].as_str().unwrap().to_string();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    s.state.jobs.cancel(&keeper, &kept);
+
+    let refused: Vec<serde_json::Value> = s
+        .audit_log()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|line| line["event"] == "agent_job_refused")
+        .collect();
+    assert_eq!(refused.len(), 1, "only the disabled account's job is refused");
+    assert_eq!(refused[0]["job_id"], job.as_str());
+}

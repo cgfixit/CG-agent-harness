@@ -397,6 +397,35 @@ pub(crate) fn start_job(
         if ready.await.is_err() {
             return;
         }
+        // The account was checked when the request arrived. An account
+        // disabled, deleted or demoted out of `RunCoding` before this job was
+        // registered missed `JobStore::cancel_owner`, so it is checked again
+        // now that the job is in the store: any later change finds it there.
+        let (check_state, check_owner, check_job) = (task_state.clone(), task_owner.clone(), task_job.clone());
+        let still_allowed = super::structured_memory::off_worker(move || {
+            if schedule_owner_authorized(&check_state, &check_owner) {
+                return true;
+            }
+            check_state.audit.log(json!({
+                "event": "agent_job_refused",
+                "job_id": check_job,
+                "owner": check_owner,
+                "reason": "account_changed",
+            }));
+            check_state.jobs.finish(
+                &check_job,
+                Err(ApiError::new(
+                    StatusCode::UNAUTHORIZED,
+                    "AUTH_REQUIRED",
+                    "The account was disabled, deleted or lost coding access before this job started; nothing ran.",
+                )),
+            );
+            false
+        })
+        .await;
+        if !still_allowed {
+            return;
+        }
         // `prepared` (and both gate guards) live exactly as long as this task.
         let PreparedRun {
             ops,
@@ -591,7 +620,20 @@ pub async fn schedule_cancel(
     Ok(Json(v.to_json()))
 }
 
-/// Authority is rechecked at every occurrence, including legacy rows.
+/// Test seam: `start_job` for `owner` without the HTTP gate, standing in for
+/// a request that passed the gate before its account changed.
+#[cfg(any(test, feature = "test-support"))]
+pub fn start_job_for_owner(
+    state: Arc<AppState>,
+    req: AgentRunRequest,
+    owner: String,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    start_job(state, req, owner, None)
+}
+
+/// Whether `owner` may run coding now: an enabled account holding
+/// `RunCoding` (or `local` without accounts). Rechecked at every schedule
+/// occurrence, including legacy rows, and by every job once it is registered.
 fn schedule_owner_authorized(state: &AppState, owner: &str) -> bool {
     match &state.auth {
         Some(auth) => auth.list_users().iter().any(|user| {
