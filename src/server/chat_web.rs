@@ -25,7 +25,7 @@ pub fn tools_for(mode: super::sessions::GoalWebMode) -> Vec<Value> {
 
 pub fn tools() -> Vec<Value> {
     vec![
-        json!({"type":"function","function":{"name":"web_search","description":"Search the configured provider chain for ranked links, snippets and available metadata. Listings are not page reads. Resolve references using conversation context; write one focused query with the relevant entities and constraints. Start with five results. Search again only for a specific unresolved gap. A WEB_SEARCH_COOLDOWN or WEB_SEARCH_PACED reply means do not call web_search again this turn. Do not send credentials or private conversation text.","parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":200},"count":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":false}}}),
+        json!({"type":"function","function":{"name":"web_search","description":"Search the configured provider chain for ranked links, snippets and available metadata. Listings are not page reads. Resolve references using conversation context; write one focused query with the relevant entities and constraints. Start with five results. Search again only for a specific unresolved gap; a listing's showing_results_for (the query Google ran instead) or related_queries can shape that search. A WEB_SEARCH_COOLDOWN or WEB_SEARCH_PACED reply means do not call web_search again this turn. Do not send credentials or private conversation text.","parameters":{"type":"object","properties":{"query":{"type":"string","maxLength":200},"count":{"type":"integer","minimum":1,"maximum":10}},"required":["query"],"additionalProperties":false}}}),
         json!({"type":"function","function":{"name":"web_fetch","description":"Read an exact permitted public URL and return passages relevant to query. Give the active subquestion in query. Omit refresh to reuse fresh evidence already read for this goal; other reads default fresh. false allows currently permitted cache within web.stale_seconds. Use true for current facts or an explicit fresh read; a second true for the same URL in one turn reuses that turn's read. Never grants permission or follows redirects.","parameters":{"type":"object","properties":{"url":{"type":"string","maxLength":2048},"query":{"type":"string","maxLength":200},"refresh":{"type":"boolean"}},"required":["url"],"additionalProperties":false}}}),
     ]
 }
@@ -304,7 +304,8 @@ pub(crate) fn tool_message(id: &str, result: &Value) -> Result<Value> {
 /// Largest form of a tool result that `fits` accepts, cutting text before
 /// metadata. A fetched page keeps its longest fitting prefix; only when not
 /// even one character fits beside its title is the title cut too. A search
-/// listing drops trailing results, then cuts the last one's snippet and title,
+/// listing drops its related queries, then trailing results, then cuts the last
+/// one's snippet and title,
 /// then drops it too and says how many results it left out. URLs and the query
 /// are never cut. `None` when even that does not fit.
 fn fit_result(mut result: Value, mut fits: impl FnMut(&Value) -> Result<bool>) -> Result<Option<Value>> {
@@ -319,6 +320,15 @@ fn fit_result(mut result: Value, mut fits: impl FnMut(&Value) -> Result<bool>) -
         }
         &[("/text", 1), ("/title", 0)]
     } else {
+        // Related queries are a convenience: they go before any result does.
+        if result
+            .as_object_mut()
+            .and_then(|listing| listing.remove("related_queries"))
+            .is_some()
+            && fits(&result)?
+        {
+            return Ok(Some(result));
+        }
         while let Some(listing) = result.get_mut("results").and_then(Value::as_array_mut) {
             if listing.len() <= 1 {
                 break;
@@ -1548,6 +1558,11 @@ mod tests {
             (&json!([]), &json!(2))
         );
         assert!(fit_result(listing, |v| Ok(size(v) < room)).unwrap().is_none());
+        // Related queries are the first thing a listing gives up, before any result.
+        let related = json!({"query":"q","related_queries":["a ".repeat(40)],"results":[row(5, 5),row(5, 5)]});
+        let room = size(&json!({"query":"q","results":[row(5, 5),row(5, 5)]}));
+        let fitted = fit_result(related, |v| Ok(size(v) <= room)).unwrap().unwrap();
+        assert_eq!(fitted, json!({"query":"q","results":[row(5, 5),row(5, 5)]}));
     }
 
     #[test]

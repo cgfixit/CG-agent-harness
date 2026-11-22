@@ -69,9 +69,9 @@ filesystem, MCP, cloud or repository permission.
    a three-second floor; a timeout fixture reproduced it. Fixed by the
    deadline split below.
 
-6. Baseline listings kept only rank, title, URL and snippet; Tavily scores
-   and SerpAPI highlighted words were discarded. Titles are capped at 300
-   characters and snippets at 1,000.
+6. Baseline listings kept only rank, title, URL and snippet (empty for public
+   Google); provider scores, highlighted words and query rewrites were
+   discarded. Titles are capped at 300 characters and snippets at 1,000.
 
 7. Baseline chat_web.rs gave the model a clipped page prefix, although
    web_index.rs already offered policy-filtered BM25 passage retrieval with
@@ -83,8 +83,8 @@ filesystem, MCP, cloud or repository permission.
    private-address, redirect and policy refusals are not reasons to send a URL
    to Firecrawl.
 
-9. Baseline Firecrawl requests set storeInCache=false but omitted maxAge, so
-   a response could still come from Firecrawl's own cache.
+9. Baseline Firecrawl requests omitted maxAge (now 0), so a response could
+   come from Firecrawl's own cache.
 
 10. chat_web.rs::StickyRoute suppresses search after local notes are present
     unless the user asks for outside sources: a narrow substring rule, not a
@@ -345,9 +345,17 @@ runner. A routing instruction uses the full goal, bounded listings and focused
 read queries. The model judges semantic sufficiency; permission and budget
 decisions stay deterministic.
 
-- `web_google` and `web_tavily` retain bounded optional provider ranks, scores,
-  highlighted words and dates. Recognizable `site:` / `-site:` constraints filter
-  off-host listings; this is not a full search-language parser.
+- Rows share one shape: rank, title, URL, snippet, plus provider rank or
+  score, highlighted words, SerpAPI `missing_terms` and `source_date` (SerpAPI
+  `date`, Tavily `published_date`, or a public snippet's leading date). Public
+  Google takes each snippet (≤400 characters) from the result's own block,
+  found by structure, not class names. SerpAPI listings add
+  `showing_results_for` or `spelling_suggestion` when Google changed the query
+  and up to five `related_queries`: URL-free text that grants nothing, dropped
+  first when a listing must shrink. `answer_box`, knowledge graph, AI overview
+  and Tavily `answer` are never read; a key in any field refuses the listing.
+  Recognizable `site:` / `-site:` constraints filter off-host listings; this is
+  not a full search-language parser.
 - `chat_web/evidence` selects up to three relevant BM25 passages from the page
   a `web_fetch` read; a single-page lookup may fill that limit, while lookups
   ranking several pages keep two per page. Receipt IDs/offsets go only to
