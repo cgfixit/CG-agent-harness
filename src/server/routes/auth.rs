@@ -276,12 +276,16 @@ pub async fn change_password(State(state): State<Arc<AppState>>, req: Request<Bo
     let ValidJson(body) = ValidJson::<AuthChangePasswordRequest>::from_request(req, &()).await?;
     let st = state.clone();
     let username = account.username.clone();
+    let owner_id = account.user_id.clone();
     let result = run_password_operation(state.auth_operation_permits.clone(), move || {
         manager(&st)?
             .change_password(&account.username, &body.current_password, &body.password)
             .map_err(|e| map_auth_error(&e))
     })
     .await?;
+    // A password change revokes the account's other sign-ins: what one of
+    // them staged with /diag goes with them, as on logout or a role change.
+    state.diag.forget_owner(&owner_id);
     audit_account(&state, "account.password_changed", &username, &username, json!({}));
     let mut response = Json(json!({"ok":true,"must_change_password":false})).into_response();
     set_cookie(&mut response, &result.session_id, secure);
@@ -353,12 +357,31 @@ fn disable_machine_keys(state: &AppState, owner: &str) -> ApiResult<()> {
     Ok(())
 }
 
-/// Account disable/delete retires both owner-scoped automation and that owner's
-/// machine keys. Each side runs even when the other fails; the first error is
-/// returned so a partial retirement stays visible.
+/// Work the owner already started keeps no authority the account lost: its
+/// running coding jobs are aborted (child and gates dropped) and, when asked,
+/// its research run is cancelled. Audited only when something stopped.
+fn stop_owner_work(state: &AppState, owner: &str, coding: bool, research: bool) {
+    let jobs = if coding { state.jobs.cancel_owner(owner) } else { 0 };
+    // Err means another account holds the research lease: nothing of ours runs.
+    let research = research && state.web_snapshot().research.cancel(owner).unwrap_or(false);
+    if jobs > 0 || research {
+        state.audit.log(json!({
+            "event": "account.work_stopped",
+            "owner": owner,
+            "coding_jobs": jobs,
+            "research": research,
+        }));
+    }
+}
+
+/// Account disable/delete retires owner-scoped automation, that owner's
+/// machine keys and its running work. Each side runs even when another fails;
+/// the first error is returned so a partial retirement stays visible. Work
+/// stops after notifications are disabled, so a cancelled job sends none.
 fn retire_disabled_owner(state: &AppState, owner: &str) -> ApiResult<()> {
     let automation = revoke_owner_automation(state, owner);
     let keys = disable_machine_keys(state, owner);
+    stop_owner_work(state, owner, true, true);
     automation?;
     keys
 }
@@ -481,8 +504,7 @@ pub async fn set_password(
     require_user_admin(&account)?;
     let target = manager(&state)?
         .get_user(&username)
-        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "AUTH_USER_NOT_FOUND", "unknown user"))?
-        .username;
+        .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "AUTH_USER_NOT_FOUND", "unknown user"))?;
     let ValidJson(body) = ValidJson::<AuthSetPasswordRequest>::from_request(req, &()).await?;
     let st = state.clone();
     let checked = account.clone();
@@ -494,7 +516,16 @@ pub async fn set_password(
         })
     })
     .await?;
-    audit_account(&state, "account.password_reset", &account.username, &target, json!({}));
+    // A reset revokes every sign-in of the account, so /diag state one of them
+    // staged is dropped too, as on disable, a role change or deletion.
+    state.diag.forget_owner(&target.user_id);
+    audit_account(
+        &state,
+        "account.password_reset",
+        &account.username,
+        &target.username,
+        json!({}),
+    );
     Ok(Json(json!({"ok": true})))
 }
 
@@ -528,6 +559,15 @@ pub async fn set_role(
             // the key row, so a role that holds no memory read keeps no key.
             // After the audit line, as disable does: a failed retirement is
             // returned, with the role change already on record.
+            // A running coding job or research run started under the old
+            // role stops when the new one could not have started it.
+            use crate::common::authz::{grants_stored, Capability};
+            stop_owner_work(
+                &state,
+                &user.user_id,
+                !grants_stored(&user.role, Capability::RunCoding),
+                !(grants_stored(&user.role, Capability::WebUse) && grants_stored(&user.role, Capability::OwnData)),
+            );
             if !crate::server::mcp_keys::owner_may_hold_keys(&user.role) {
                 disable_machine_keys(&state, &user.user_id)?;
             }
