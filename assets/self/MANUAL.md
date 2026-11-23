@@ -8,14 +8,17 @@ This manual is static text bundled with the build and indexed at startup. It is 
 
 ## readme: capability overview
 
-- Web research: Search, permitted reads and crawls, `/web research` jobs with checked quotes, local PDF text. Starts: On; allowlist with one seeded Google rule.
-- Goal loops: `/goal` and `/loop` continue after the tab closes. Starts: 200 turns, 200,000 tokens, two failed turns; local only.
+- Web research: Search, permitted reads and crawls, `/web research` jobs with checked quotes, local PDF text; paid providers stop at daily ceilings. Starts: On; allowlist with one seeded Google rule.
+- Goal loops: `/goal` and `/loop` continue after the tab closes; a counted run ends on its best answer. Starts: 200 turns, 200,000 tokens, two failed turns; local only.
 - Memory: Pinned and uploaded notes, account-private facts. Starts: On; proposals need review.
-- Local chat: Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles. Starts: Ollama on loopback.
-- Browser tasks: `/browse <site> <task>`: the local model drives sandboxed Chrome on those sites only. Block rules cover every request and redirect; password fields… Starts: On for administrators; setup.
-- Analytics, diagnostics: Token and run history, **Estimate draft**, `/diag` redacted logs. Starts: On; `/diag` admin or auditor.
-- Cloud chat: Optional Grok or Claude; only the new message leaves. Starts: Needs a key.
-- Off by default: Reviewed coding in isolated clones, MCP tools and memory gateway, Netconnect LAN observation, Firecrawl fallback reads, completion webhooks. Native… Starts: Each needs configuration.
+- Local chat: Sessions, transcript search and export, text, DOCX and PDF attachments, skills, styles; no Ollama cloud tags. Starts: Ollama on loopback.
+- Browser tasks: `/browse <site> <task>`: the local model drives sandboxed Chrome on those sites only. Password fields are never typed; a held non-GET/HEAD request… Starts: On for administrators; setup.
+- Accounts, diagnostics: Administrator, operator and auditor roles; token and run history, **Estimate draft**, `/diag` redacted logs. Starts: On; `/diag` admin or auditor.
+- Cloud chat: Optional Grok or Claude; only the new message leaves, redacted. Starts: Needs a key.
+
+## readme: capability overview (part 2)
+
+- Off by default: Reviewed coding in isolated clones, MCP tools and memory gateway, Netconnect, Firecrawl fallback, completion webhooks; native computer use is a… Starts: Each needs configuration.
 
 ## agents: process and home map
 
