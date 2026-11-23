@@ -204,6 +204,20 @@ pub fn known_secret_values(cfg: &AppConfig) -> Vec<String> {
 /// too likely to occur in ordinary text to replace safely.
 const MIN_LITERAL_SECRET_CHARS: usize = 12;
 
+/// HMAC-SHA256 (RFC 2104) over the `sha2` dependency already in the tree.
+fn hmac_sha256(key: &[u8; 32], message: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut block = [0u8; 64];
+    block[..32].copy_from_slice(key);
+    let pad = |byte: u8| block.map(|b| b ^ byte);
+    let inner = Sha256::new().chain_update(pad(0x36)).chain_update(message).finalize();
+    Sha256::new()
+        .chain_update(pad(0x5c))
+        .chain_update(inner)
+        .finalize()
+        .into()
+}
+
 #[derive(Clone, Default)]
 pub struct Redactors {
     rules: Vec<(Regex, &'static str)>,
@@ -313,6 +327,32 @@ impl Redactors {
     /// over email and IP labels. The input is borrowed back untouched when no
     /// rule matched, so the audit path allocates only for real hits.
     pub fn redact<'a>(&self, text: &'a str) -> Cow<'a, str> {
+        self.redact_spans(text, None).0
+    }
+
+    /// `redact`, but each label carries a short HMAC-SHA256 tag of the span it
+    /// replaced (`[REDACTED_IP#1a2b3c4d]`): equal values share a tag and
+    /// different values almost never do, so a reviewer can see that a
+    /// redacted value changed without seeing it. The tag cannot be reversed
+    /// without `key`, which callers keep in memory only. Also returns how many
+    /// spans were redacted.
+    pub fn redact_tagged(&self, text: &str, key: &[u8; 32]) -> (String, usize) {
+        let (out, count) = self.redact_spans(text, Some(key));
+        (out.into_owned(), count)
+    }
+
+    fn redact_spans<'a>(&self, text: &'a str, key: Option<&[u8; 32]>) -> (Cow<'a, str>, usize) {
+        let label_for = |label: &'static str, span: &str| -> Cow<'static, str> {
+            match key {
+                None => Cow::Borrowed(label),
+                Some(key) => {
+                    let tag = hmac_sha256(key, span.as_bytes());
+                    let hex: String = tag[..4].iter().map(|b| format!("{b:02x}")).collect();
+                    Cow::Owned(format!("{}#{hex}]", label.trim_end_matches(']')))
+                }
+            }
+        };
+        let mut count = 0;
         let mut spans: Vec<(usize, usize, &'static str)> = Vec::new();
         for (re, replacement) in &self.rules {
             spans.extend(
@@ -332,7 +372,7 @@ impl Redactors {
             }
         }
         if spans.is_empty() {
-            return Cow::Borrowed(text);
+            return (Cow::Borrowed(text), 0);
         }
         spans.sort_by_key(|&(start, end, _)| (start, std::cmp::Reverse(end)));
         let mut out = String::with_capacity(text.len());
@@ -349,7 +389,8 @@ impl Redactors {
                 _ => {
                     if let Some((s, e, l)) = merged.replace((start, end, label)) {
                         out.push_str(&text[cursor..s]);
-                        out.push_str(l);
+                        out.push_str(&label_for(l, &text[s..e]));
+                        count += 1;
                         cursor = e;
                     }
                 }
@@ -357,11 +398,12 @@ impl Redactors {
         }
         if let Some((s, e, l)) = merged {
             out.push_str(&text[cursor..s]);
-            out.push_str(l);
+            out.push_str(&label_for(l, &text[s..e]));
+            count += 1;
             cursor = e;
         }
         out.push_str(&text[cursor..]);
-        Cow::Owned(out)
+        (Cow::Owned(out), count)
     }
 
     pub fn redact_value(&self, value: &Value) -> Value {
@@ -716,6 +758,53 @@ impl Sink {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn hmac_sha256_matches_rfc_4231_case_one() {
+        // A 20-byte key zero-padded to 32 bytes is the same HMAC key.
+        let mut key = [0u8; 32];
+        key[..20].fill(0x0b);
+        let mac: String = hmac_sha256(&key, b"Hi There")
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(mac, "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7");
+    }
+
+    #[test]
+    fn tagged_redaction_shows_that_a_hidden_value_changed_without_showing_it() {
+        let cfg = AppConfig::from_str(AppConfig::embedded_default(), Path::new("config.yaml")).unwrap();
+        let r = Redactors::from_config(&cfg);
+        let key = [7u8; 32];
+        let diff = "-listen = \"127.0.0.1:8080\"\n+listen = \"0.0.0.0:8080\"\n same 127.0.0.1\n";
+        let (tagged, count) = r.redact_tagged(diff, &key);
+        assert_eq!(count, 3, "{tagged}");
+        assert!(!tagged.contains("127.0.0.1") && !tagged.contains("0.0.0.0"), "{tagged}");
+        let tags: Vec<&str> = tagged
+            .match_indices("[REDACTED_IP#")
+            .map(|(i, _)| &tagged[i..i + 22])
+            .collect();
+        assert_eq!(tags.len(), 3, "{tagged}");
+        assert_ne!(tags[0], tags[1], "a changed value must look changed: {tagged}");
+        assert_eq!(tags[0], tags[2], "an equal value keeps its tag: {tagged}");
+        // Another key gives other tags; the untagged path is unchanged.
+        assert_ne!(r.redact_tagged(diff, &[8u8; 32]).0, tagged);
+        assert_eq!(
+            r.redact(diff),
+            diff.replace("127.0.0.1", "[REDACTED_IP]")
+                .replace("0.0.0.0", "[REDACTED_IP]")
+        );
+        // Tagged text survives a second pass (the response envelope redacts again).
+        let secret = "api_key = \"sk-live-abcdef123456\" mail ops@example.com";
+        let (tagged, count) = r.redact_tagged(secret, &key);
+        assert_eq!(count, 2, "{tagged}");
+        assert!(
+            !tagged.contains("abcdef123456") && !tagged.contains("example.com"),
+            "{tagged}"
+        );
+        assert_eq!(r.redact(&tagged), tagged);
+        assert_eq!(r.redact_tagged("nothing here", &key), ("nothing here".to_string(), 0));
+    }
 
     #[test]
     fn financial_numbers_and_ipv6_redact_only_when_their_check_passes() {

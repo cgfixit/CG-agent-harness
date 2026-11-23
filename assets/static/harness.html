@@ -3170,6 +3170,10 @@ function showAgentRecord(rec) {
   shownAgentDiffs.delete(rec.run_id);
   if (rec.status === 'pending_decision' && typeof rec.diff === 'string' && rec.diff) {
     sys('candidate diff\n' + rec.diff);
+    if (Number.isSafeInteger(rec.diff_redacted_spans) && rec.diff_redacted_spans > 0) {
+      sys(rec.diff_redacted_spans + ' value(s) above are redacted ([REDACTED_…#tag]). The same tag means the same value; a different tag on a - and + line means the value changed. ' +
+        'The response never carries them: read them on this machine with  git -C ' + JSON.stringify(String(rec.dest || '<clone>')) + ' diff --text  (new files are in that folder).');
+    }
     if (isReviewableAgentDiff(rec)) {
       shownAgentDiffs.set(rec.run_id, rec.diff);
       sys('diff shown above — /agent approve ' + rec.run_id + ' <reason>   or   /agent reject ' + rec.run_id);

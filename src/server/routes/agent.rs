@@ -50,6 +50,14 @@ fn shim_error(state: &AppState, action: &str, e: ShimError) -> ApiError {
 }
 
 async fn agentic_call(state: &AppState, req: OpsRequest) -> ApiResult<Json<Value>> {
+    agentic_call_with(state, req, |_, _| {}).await
+}
+
+async fn agentic_call_with(
+    state: &AppState,
+    req: OpsRequest,
+    prepare: impl FnOnce(&mut shim::OpsResult, &crate::common::audit::Redactors),
+) -> ApiResult<Json<Value>> {
     let action = req.action.clone();
     // The child appends to the audit file directly. Land the server's queued
     // lines first, such as the broker decision that authorized this run.
@@ -65,7 +73,31 @@ async fn agentic_call(state: &AppState, req: OpsRequest) -> ApiResult<Json<Value
         )
         .details(json!({"action": action})));
     }
+    let mut result = result;
+    prepare(&mut result, state.audit.redactors());
     Ok(Json(result.to_json(state.audit.redactors())))
+}
+
+/// Per-process key for review-diff redaction tags. It never leaves memory, so
+/// a tag reveals nothing, and it is fixed for the server's life so repeated
+/// status reads of one run show the same tags.
+fn review_tag_key() -> &'static [u8; 32] {
+    static KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    KEY.get_or_init(rand::random)
+}
+
+/// The review diff is redacted like every response, but each redacted span is
+/// tagged by value, so a change inside one (`127.0.0.1` to `0.0.0.0`) shows as
+/// a changed tag instead of an identical line. `diff_redacted_spans` tells the
+/// console to say so and where the unredacted clone is on this machine.
+fn tag_review_diff(result: &mut shim::OpsResult, redactors: &crate::common::audit::Redactors) {
+    let Some(parsed) = result.parsed.as_mut() else { return };
+    let Some(diff) = parsed.get("diff").and_then(Value::as_str) else {
+        return;
+    };
+    let (tagged, spans) = redactors.redact_tagged(diff, review_tag_key());
+    parsed["diff"] = json!(tagged);
+    parsed["diff_redacted_spans"] = json!(spans);
 }
 
 pub async fn github_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
@@ -836,7 +868,7 @@ pub async fn agent_run_status(
     let checked = validated_run_id(&run_id)?;
     let mut ops = OpsRequest::new("real-repo-run-status");
     ops.run_id = Some(checked);
-    agentic_call(&state, ops).await
+    agentic_call_with(&state, ops, tag_review_diff).await
 }
 
 pub async fn agent_run_decision(

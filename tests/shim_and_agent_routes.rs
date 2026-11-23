@@ -1192,6 +1192,54 @@ async fn an_agentic_child_starts_after_the_audit_line_that_authorized_it() {
     assert_eq!(result["parsed"]["decision_on_disk"], true, "{result}");
 }
 
+/// The review diff stays redacted in the response, but each redacted span is
+/// tagged by value: a change inside one shows as a different tag on the - and
+/// + lines, never as two identical lines that approve would still commit.
+#[cfg(unix)]
+#[tokio::test]
+async fn run_status_tags_redacted_review_values_so_a_hidden_change_is_visible() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let exe = dir.path().join("fixture-shim");
+    let status = json!({
+        "status": "pending_decision",
+        "dest": "/home/op/.CGagentHarness/data/agentic/workspaces/r",
+        "diff": "-listen = \"127.0.0.1:8080\"\n+listen = \"0.0.0.0:8080\"\n+notify = \"ops@example.com\"\n",
+    });
+    std::fs::write(&exe, format!("#!/bin/sh\ncat <<'JSON'\n{status}\nJSON\n")).unwrap();
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let model = start_mock_model().await;
+    let opts = ServerOptions {
+        shim_exe: Some(exe),
+        ..Default::default()
+    };
+    let s = spawn_server(&model.base_url(), opts).await;
+    let (code, result) = s.get_json(&format!("/api/agent/runs/{HEX32}")).await;
+    assert_eq!(code, 200, "{result}");
+    let parsed = &result["parsed"];
+    let diff = parsed["diff"].as_str().unwrap();
+    for hidden in ["127.0.0.1", "0.0.0.0", "ops@example.com"] {
+        assert!(!diff.contains(hidden), "{diff}");
+    }
+    let tag = |line: &str| {
+        let line = diff.lines().find(|l| l.starts_with(line)).unwrap();
+        let at = line.find("[REDACTED_IP#").unwrap();
+        line[at..at + 22].to_string()
+    };
+    assert_ne!(
+        tag("-listen"),
+        tag("+listen"),
+        "a changed value must look changed: {diff}"
+    );
+    assert!(diff.contains("[REDACTED_EMAIL#"), "{diff}");
+    assert_eq!(parsed["diff_redacted_spans"], 3, "{parsed}");
+    let (_, again) = s.get_json(&format!("/api/agent/runs/{HEX32}")).await;
+    assert_eq!(
+        again["parsed"]["diff"], parsed["diff"],
+        "tags are stable for the server's life"
+    );
+}
+
 #[tokio::test]
 async fn github_status_spawn_failure_is_502() {
     let model = start_mock_model().await;
