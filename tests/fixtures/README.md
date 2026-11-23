@@ -13,3 +13,4 @@ Deterministic test inputs; no live-provider credentials required.
   [`../structured_memory_suggestions.rs`](../structured_memory_suggestions.rs).
 - [`web-research/`](web-research/): `corpus.json`, an offline virtual-site page
   and query corpus for [examples/web_research_benchmark.rs](../../examples/web_research_benchmark.rs).
+- [`research-baseline/`](research-baseline/): the #772 12-question baseline corpus proposal (no labels yet), shape-checked by [`../research_baseline_corpus.rs`](../research_baseline_corpus.rs).
