@@ -24,7 +24,7 @@ path = "src/main.rs"
 test-support = []
 
 [dependencies]
-rusqlite = { version = "0.41.1", default-features = false, features = ["bundled"] }
+rusqlite = { version = "0.43.0", default-features = false, features = ["bundled"] }
 axum = "0.8"
 axum-server = { version = "0.8", features = ["tls-rustls-no-provider"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
