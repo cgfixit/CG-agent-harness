@@ -32,9 +32,9 @@ How a run works:
    the page's fetches settle; `observe` takes `page` for the next part and
    `find` for what contains a word. Older observations are dropped to fit
    32K. Three refused or failed actions in a row, or a reply with no action
-   and no answer, end the task. A sidecar call has 75 s; a model call has the
-   task's remaining time. The child stops 20 s before `browser.timeout_sec`
-   and reports its steps.
+   and no answer, end the task. A sidecar call has 75 s plus any takeover
+   wait, a model call the rest; neither outlasts the task. The child stops
+   20 s before `browser.timeout_sec` and reports its steps.
 5. One tab per task. A new tab replaces the page only if it shows a granted
    page; any other is closed and the page stays.
 

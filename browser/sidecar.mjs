@@ -242,9 +242,17 @@ function absolute(raw) {
   }
 }
 
+// Lowercase for matching, one UTF-16 unit per unit, so an index into the
+// result is an index into `text`. `toLowerCase` alone turns "İ" (U+0130)
+// into two units, the only such mapping it has, and an excerpt cut by those
+// indices started one place late for every "İ" before the match.
+function fold(text) {
+  return text.replaceAll("\u0130", "i").toLowerCase();
+}
+
 // The text around each place `find` appears, in page order.
 function excerpts(body, find) {
-  const lower = body.toLowerCase();
+  const lower = fold(body);
   const parts = [];
   let end = 0;
   for (let at = lower.indexOf(find); at >= 0; at = lower.indexOf(find, Math.max(end, at + 1))) {
@@ -265,7 +273,7 @@ async function observe(view = {}) {
     await pendingApproval;
     await settle();
   }
-  const find = typeof view.find === "string" ? view.find.trim().toLowerCase().slice(0, MAX_FIND_CHARS) : "";
+  const find = typeof view.find === "string" ? fold(view.find.trim()).slice(0, MAX_FIND_CHARS) : "";
   const pageNo = Number.isInteger(view.page) && view.page > 0 ? view.page : 1;
   const elements = [];
   let matched = 0;
@@ -274,7 +282,7 @@ async function observe(view = {}) {
     for (const node of nodes || []) {
       if (typeof node !== "object" || node === null) continue;
       const name = ACTIONABLE.has(node.role) ? nameOf(node) : "";
-      if (node.ref && name && name.toLowerCase().includes(find)) {
+      if (node.ref && name && fold(name).includes(find)) {
         matched += 1;
         if (matched > (pageNo - 1) * MAX_ELEMENTS && elements.length < MAX_ELEMENTS) {
           const element = {

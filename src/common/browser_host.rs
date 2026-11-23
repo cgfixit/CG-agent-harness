@@ -255,6 +255,8 @@ struct Sidecar {
     replies: Receiver<Result<String, String>>,
     next_id: u64,
     call_timeout: Duration,
+    /// The task deadline: no call waits past it, held or not.
+    deadline: Option<Instant>,
     /// The sidecar proxy's loopback port, from its `start` reply. Only the
     /// guard fixture uses it, to probe the proxy without the credential.
     proxy_port: Option<u16>,
@@ -321,6 +323,7 @@ impl Sidecar {
             replies,
             next_id: 0,
             call_timeout,
+            deadline: None,
             proxy_port: None,
         })
     }
@@ -405,9 +408,16 @@ impl Driver for Sidecar {
             stdin.flush().map_err(|err| err.to_string())?;
         }
         // A stuck renderer fails this call; the task's report still comes back.
-        let line = match self.replies.recv_timeout(self.call_timeout) {
+        let timeout = self.deadline.map_or(self.call_timeout, |deadline| {
+            self.call_timeout
+                .min(deadline.saturating_duration_since(Instant::now()))
+        });
+        let line = match self.replies.recv_timeout(timeout) {
             Ok(Ok(line)) => line,
             Ok(Err(why)) => return Err(self.stop(why)),
+            Err(RecvTimeoutError::Timeout) if out_of_time(self.deadline).is_some() => {
+                return Err(self.stop(OUT_OF_TIME.to_string()));
+            }
             Err(RecvTimeoutError::Timeout) => {
                 let secs = self.call_timeout.as_secs();
                 return Err(self.stop(format!("sidecar did not answer within {secs} s")));
@@ -859,6 +869,7 @@ pub fn run_task(
     // Only a job started with a wait has someone to ask (#995).
     let takeover = JOB_TAKEOVER.get().cloned();
     let mut sidecar = Sidecar::start_with(script, &session, headless, allow_private, policy, takeover)?;
+    sidecar.deadline = deadline;
     let tools = browser_tools();
     let mut chat = |messages: &[Value]| {
         ollama_chat(api, model, messages, &tools, call_timeout(deadline))
@@ -927,7 +938,12 @@ fn job_input(line: &str) -> Option<JobInput> {
 /// task whose server is gone does not keep driving Chrome. With `wait`, a
 /// request held as the operator's step is announced on stdout and waits that
 /// long for a verdict line; cancel, end of input and silence all mean no.
-fn watch_job_input(wait: Option<Duration>) {
+/// When a held request stops waiting: after `wait`, or at the task deadline.
+fn hold_until(now: Instant, wait: Duration, deadline: Option<Instant>) -> Instant {
+    deadline.map_or(now + wait, |deadline| deadline.min(now + wait))
+}
+
+fn watch_job_input(wait: Option<Duration>, deadline: Option<Instant>) {
     JOB_MODE.store(true, Ordering::Release);
     let (verdicts, answers) = mpsc::channel::<(u64, bool)>();
     if let Some(wait) = wait {
@@ -936,8 +952,10 @@ fn watch_job_input(wait: Option<Duration>) {
             let Some(id) = question["approve"].as_u64() else {
                 return false;
             };
-            job_event(json!({"event": "waiting", "wait_sec": wait.as_secs(), "question": question}));
-            let until = Instant::now() + wait;
+            let now = Instant::now();
+            let until = hold_until(now, wait, deadline);
+            let wait_sec = until.saturating_duration_since(now).as_secs();
+            job_event(json!({"event": "waiting", "wait_sec": wait_sec, "question": question}));
             let answers = answers.lock().unwrap_or_else(|p| p.into_inner());
             let decision = loop {
                 match answers.recv_timeout(until.saturating_duration_since(Instant::now())) {
@@ -1525,7 +1543,12 @@ pub fn run_reach_demo(sidecar: &Path, headless: bool) -> Result<String, String> 
             )
         })
         .collect();
-    let (origin, port) = serve_html(&REACH_PAGE.replace("ENTRIES", &entries))?;
+    // "İ" (U+0130) lowercases to two UTF-16 units, so 200 of them put a
+    // lowercased index 200 units past the same place in the page text.
+    let page = REACH_PAGE
+        .replace("ENTRIES", &entries)
+        .replace("DOTTED_CAPITALS", &"&#304;".repeat(200));
+    let (origin, port) = serve_html(&page)?;
     let session = Session::general([&origin]).map_err(|err| format!("{err:?}"))?;
     let steps = [
         json!({"action":"navigate","url": format!("http://127.0.0.1:{port}/"),"expect":"shows late content"}),
@@ -1537,6 +1560,8 @@ pub fn run_reach_demo(sidecar: &Path, headless: bool) -> Result<String, String> 
         json!({"action":"wait","timeout_ms": 2_500,"expect":"shows TIMER-DONE"}),
         json!({"action":"click","ref_id":"@Notify","expect":"shows alert: Saved draft 7"}),
         json!({"action":"observe","page":3,"expect":"shows RELEASE-MARKER"}),
+        // The excerpt around a match is cut from the page text as written.
+        json!({"action":"observe","find":"dotted-capital","expect":"shows DOTTED-CAPITAL marker"}),
         // Inline markup in a label: the link is named by its text.
         json!({"action":"observe","find":"changelog","expect":"shows Changelog of releases"}),
         json!({"action":"follow_link","ref_id":"@Changelog of releases"}),
@@ -2374,7 +2399,7 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
                 Err(code) => return code,
             };
             if job {
-                watch_job_input(takeover_wait);
+                watch_job_input(takeover_wait, deadline);
             }
             match run_task(
                 &sidecar,
@@ -2492,6 +2517,7 @@ const REACH_PAGE: &str = r#"
 ENTRIES
 <p>RELEASE-MARKER 9.9.9</p>
 <a href="/?changelog"><code>Changelog</code> of releases</a>
+<p>DOTTED_CAPITALS DOTTED-CAPITAL marker</p>
 <script>
 fetch('/data').then(() => setTimeout(() => { document.getElementById('late').textContent = 'late content'; }, 300));
 addEventListener('scroll', () => { document.getElementById('lazy').textContent = 'LAZY-LOADED'; }, {once: true});
@@ -2609,6 +2635,36 @@ mod tests {
             sidecar.call(json!({"op":"observe"})).unwrap_err(),
             "sidecar stdin closed"
         );
+    }
+
+    /// A paused op cannot outlast the task deadline, or the child is killed
+    /// at browser.timeout_sec before it prints its report.
+    #[cfg(unix)]
+    #[test]
+    fn a_sidecar_call_ends_at_the_task_deadline() {
+        let child = Command::new("sh")
+            .args(["-c", "read _; sleep 30"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut sidecar = Sidecar::attach(child, Duration::from_secs(30), RequestPolicy::open(), None).unwrap();
+        sidecar.deadline = Some(Instant::now() + Duration::from_millis(300));
+        let started = Instant::now();
+        let err = sidecar.call(json!({"op":"observe"})).unwrap_err();
+        assert!(err.contains(OUT_OF_TIME), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_held_request_waits_no_later_than_the_task_deadline() {
+        let now = Instant::now();
+        let wait = Duration::from_secs(120);
+        assert_eq!(hold_until(now, wait, None), now + wait);
+        // Shipped defaults: a hold starting 200 s into a 280 s child deadline.
+        let deadline = now + Duration::from_secs(80);
+        assert_eq!(hold_until(now, wait, Some(deadline)), deadline);
+        assert_eq!(hold_until(now, wait, Some(now + Duration::from_secs(200))), now + wait);
     }
 
     /// A loopback listener that answers every connection with `response` and
