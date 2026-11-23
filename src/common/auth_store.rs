@@ -15,6 +15,12 @@ use super::config::AppConfig;
 use super::errors::{HarnessError, Result};
 
 pub const BOOTSTRAP_USERNAME: &str = "admin";
+/// Accounts one store holds. `create_user` refuses the next one; loading or
+/// persisting a store past it fails closed (`sqlite::validate`).
+const MAX_USERS: usize = 128;
+/// Live sign-in sessions across every account, split the same way:
+/// `create_session` refuses the next one, `sqlite::validate` a store past it.
+const MAX_LIVE_SESSIONS: usize = 4096;
 const DEFAULT_IDLE_TIMEOUT_SEC: f64 = 43200.0;
 const DEFAULT_ABSOLUTE_TIMEOUT_SEC: f64 = 604800.0;
 const DEFAULT_RESTRICTED_IDLE_TIMEOUT_SEC: f64 = 600.0;
@@ -434,7 +440,7 @@ impl AuthManager {
         let record = authn::hash_password(password)?;
         let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let mut db = stored.1.clone();
-        if db.users.len() >= 128 {
+        if db.users.len() >= MAX_USERS {
             return Err(HarnessError::new("AUTH_LIMIT", "account limit reached"));
         }
         if db.users.contains_key(&canonical) {
@@ -710,7 +716,7 @@ impl AuthManager {
             self.session_limits(db.users.get(username).is_some_and(|u| u.must_change_password));
         db.sessions
             .retain(|_, row| !row.revoked && row.expires_ts > now && row.last_seen_ts + self.idle_timeout_sec > now);
-        if db.sessions.len() >= 4096 {
+        if db.sessions.len() >= MAX_LIVE_SESSIONS {
             return Err(HarnessError::new("AUTH_LIMIT", "active session limit reached"));
         }
         let session_id = authn::new_session_id();
@@ -1034,6 +1040,55 @@ mod tests {
         let cfg = AppConfig::from_str("{}", Path::new("config.yaml")).unwrap();
         let auth = AuthManager::open(&dir.path().join("auth.db"), &cfg).unwrap();
         (dir, auth)
+    }
+
+    /// Admission stops exactly at each cap, before any write. The snapshot is
+    /// filled directly: one scrypt hash, not one per account.
+    #[test]
+    fn admission_refuses_the_account_and_the_session_past_each_cap() {
+        let (_dir, auth) = store();
+        let password = crate::common::random_hex(24);
+        auth.create_user("alice", &password, "admin").unwrap();
+        let fill = |users: usize, sessions: usize| {
+            let mut stored = auth.state.lock().unwrap();
+            let template = stored.1.users["alice"].clone();
+            for n in 0..users - stored.1.users.len() {
+                let user_id = crate::common::random_hex(16);
+                stored.1.users.insert(
+                    format!("user{n}"),
+                    UserRow {
+                        user_id,
+                        ..template.clone()
+                    },
+                );
+            }
+            let now = auth.now();
+            for _ in 0..sessions - stored.1.sessions.len() {
+                let row = SessionRow {
+                    username: "alice".into(),
+                    csrf_hash: crate::common::random_hex(32),
+                    created_ts: now,
+                    last_seen_ts: now,
+                    expires_ts: now + 3600.0,
+                    revoked: false,
+                };
+                stored.1.sessions.insert(crate::common::random_hex(32), row);
+            }
+        };
+        let code = |r: Result<String>| r.map(|_| ()).unwrap_err().code;
+
+        fill(MAX_USERS - 1, 0);
+        auth.create_user("last", &password, "operator").unwrap();
+        assert_eq!(auth.state.lock().unwrap().1.users.len(), MAX_USERS);
+        assert_eq!(code(auth.create_user("one-more", &password, "operator")), "AUTH_LIMIT");
+        assert!(auth.get_user("one-more").is_none(), "a refused account is not kept");
+
+        fill(MAX_USERS, MAX_LIVE_SESSIONS - 1);
+        auth.login("alice", &password).unwrap();
+        assert_eq!(auth.state.lock().unwrap().1.sessions.len(), MAX_LIVE_SESSIONS);
+        let refused = auth.login("alice", &password).map(|_| String::new());
+        assert_eq!(code(refused), "AUTH_LIMIT");
+        assert_eq!(auth.state.lock().unwrap().1.sessions.len(), MAX_LIVE_SESSIONS);
     }
 
     /// A password check that runs `change` before it answers, as another

@@ -18,6 +18,12 @@ fn sql(error: rusqlite::Error) -> HarnessError {
 
 const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
+/// The `LIMIT` for reading a table capped at `max` rows: one past the cap, so
+/// a store over it reaches [`validate`] and is refused instead of cut to fit.
+fn read_limit(max: usize) -> i64 {
+    max as i64 + 1
+}
+
 /// `(user_id, username, old_role)` for one account folded into `auditor` (#965).
 type RoleMigration = (String, String, String);
 /// The audit-facing part of a [`RoleMigration`]: `(user_id, old_role)`.
@@ -64,10 +70,12 @@ pub(super) fn pending_role_migrations(conn: &Connection) -> Result<Vec<RoleMigra
         return Ok(Vec::new());
     }
     let mut statement = conn
-        .prepare("SELECT user_id, old_role FROM role_migrations ORDER BY user_id LIMIT 129")
+        .prepare("SELECT user_id, old_role FROM role_migrations ORDER BY user_id LIMIT ?1")
         .map_err(sql)?;
     let rows = statement
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        .query_map(params![read_limit(super::MAX_USERS)], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })
         .map_err(sql)?
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(sql)?;
@@ -99,10 +107,15 @@ fn connect(path: &Path) -> Result<Connection> {
 }
 
 pub(super) fn validate(db: &AuthDb) -> Result<()> {
-    if db.users.is_empty() || db.users.len() > 128 || db.sessions.len() > 4096 || super::count_enabled_admins(db) == 0 {
-        return Err(invalid(
-            "account store must contain 1-128 valid users and an enabled administrator",
-        ));
+    if db.users.is_empty()
+        || db.users.len() > super::MAX_USERS
+        || db.sessions.len() > super::MAX_LIVE_SESSIONS
+        || super::count_enabled_admins(db) == 0
+    {
+        return Err(invalid(format!(
+            "account store must contain 1-{} valid users and an enabled administrator",
+            super::MAX_USERS
+        )));
     }
     let timestamp = |v: f64| v.is_finite() && (0.0..1e12).contains(&v);
     let mut identities = std::collections::BTreeSet::new();
@@ -255,9 +268,9 @@ fn load(conn: &mut Connection) -> Result<AuthDb> {
     }
     let mut db = AuthDb::default();
     {
-        let mut statement = conn.prepare("SELECT username,password_hash,created_ts,disabled,last_login_ts,failed_count,locked_until_ts,role,must_change_password,user_id FROM users LIMIT 129").map_err(sql)?;
+        let mut statement = conn.prepare("SELECT username,password_hash,created_ts,disabled,last_login_ts,failed_count,locked_until_ts,role,must_change_password,user_id FROM users LIMIT ?1").map_err(sql)?;
         for row in statement
-            .query_map([], |r| {
+            .query_map(params![read_limit(super::MAX_USERS)], |r| {
                 Ok((
                     r.get(0)?,
                     UserRow {
@@ -282,11 +295,11 @@ fn load(conn: &mut Connection) -> Result<AuthDb> {
     {
         let mut statement = conn
             .prepare(
-                "SELECT token_hash,username,csrf_hash,created_ts,last_seen_ts,expires_ts,revoked FROM sessions LIMIT 4097",
+                "SELECT token_hash,username,csrf_hash,created_ts,last_seen_ts,expires_ts,revoked FROM sessions LIMIT ?1",
             )
             .map_err(sql)?;
         for row in statement
-            .query_map([], |r| {
+            .query_map(params![read_limit(super::MAX_LIVE_SESSIONS)], |r| {
                 Ok((
                     r.get(0)?,
                     SessionRow {
@@ -423,7 +436,7 @@ pub(super) fn persist(conn: &mut Connection, db: &AuthDb) -> Result<()> {
 /// [`persist`], plus the outbox rows for `migrated` in the same transaction.
 fn persist_with(conn: &mut Connection, db: &AuthDb, migrated: &[RoleMigration]) -> Result<()> {
     validate(db)?;
-    // ponytail: <=128 users / 4096 live sessions, one transaction per mutation.
+    // ponytail: at most MAX_USERS users / MAX_LIVE_SESSIONS sessions, one transaction per mutation.
     // Use row-level updates if measured local account traffic warrants it.
     let tx = conn
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
@@ -756,6 +769,58 @@ PRAGMA user_version=2;";
         *now.lock().unwrap() += 43_200.0;
         assert!(mgr.validate_session(&session.session_id).is_none());
         assert_eq!(on_disk(), (created + 60.0, true));
+    }
+
+    /// A store written past a cap by anything but this code is refused on
+    /// open, not cut to fit: each `LIMIT` reads one row past its cap. A store
+    /// at the cap still opens, so the refusal is the cap and nothing else.
+    #[test]
+    fn a_store_past_either_cap_is_refused_on_open_and_one_at_the_cap_opens() {
+        let cfg = AppConfig::from_str("{}", Path::new("config.yaml")).unwrap();
+        let open_with = |users: usize, sessions: usize| {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("auth.db");
+            let mgr = AuthManager::open(&path, &cfg).unwrap();
+            mgr.create_user("alice", &crate::common::random_hex(24), "admin")
+                .unwrap();
+            drop(mgr);
+            let conn = connect(&path.with_extension("sqlite3")).unwrap();
+            let tx = conn.unchecked_transaction().unwrap();
+            // A fresh store also holds the bootstrap admin: fill to a total.
+            let count = |sql: &str| tx.query_row(sql, [], |r| r.get::<_, i64>(0)).unwrap() as usize;
+            let held = count("SELECT COUNT(*) FROM users");
+            for n in held..users {
+                tx.execute(
+                    "INSERT INTO users(username,password_hash,created_ts,disabled,last_login_ts,failed_count,
+                     locked_until_ts,role,must_change_password,user_id)
+                     SELECT ?1,password_hash,created_ts,disabled,last_login_ts,failed_count,locked_until_ts,role,
+                     must_change_password,lower(hex(randomblob(16))) FROM users WHERE username='alice'",
+                    params![format!("user{n}")],
+                )
+                .unwrap();
+            }
+            let live = count("SELECT COUNT(*) FROM sessions");
+            for _ in live..sessions {
+                tx.execute(
+                    "INSERT INTO sessions(token_hash,username,csrf_hash,created_ts,last_seen_ts,expires_ts,revoked)
+                     VALUES(lower(hex(randomblob(32))),'alice',lower(hex(randomblob(32))),1.0,1.0,2e9,0)",
+                    [],
+                )
+                .unwrap();
+            }
+            tx.commit().unwrap();
+            drop(conn);
+            AuthManager::open(&path, &cfg).map(|_| ())
+        };
+        let (users, sessions) = (super::super::MAX_USERS, super::super::MAX_LIVE_SESSIONS);
+        open_with(users, sessions).unwrap();
+        for (users, sessions) in [(users + 1, 0), (1, sessions + 1)] {
+            let refused = open_with(users, sessions).unwrap_err();
+            assert_eq!(
+                refused.code, "AUTH_CONFIG_INVALID",
+                "{users} users, {sessions} sessions"
+            );
+        }
     }
 
     #[test]
