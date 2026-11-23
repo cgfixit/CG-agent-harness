@@ -355,17 +355,28 @@ impl Drop for UnitGuard {
 impl WebTool {
     /// Reserve units for one paid request, on the blocking pool. A refusal is
     /// audited with the provider, code and counts, never a query, URL or key.
-    /// The reservation is handed over through a oneshot: if this future is
-    /// dropped while the blocking task runs, the send fails and the task gives
-    /// the units back itself, so a cancelled reservation never leaks.
+    /// The reservation crosses a oneshot already wrapped in its [`UnitGuard`]:
+    /// if this future is dropped while the blocking task runs, the send fails
+    /// and the task gives the units back itself; if it is dropped after the
+    /// send but before it is polled again, the guard drops with the channel and
+    /// gives them back. A cancelled reservation never leaks either way.
     pub(super) async fn reserve_units(&self, provider: Paid, units: u64, audit: &Audit) -> Result<UnitGuard> {
         let ledger = Arc::clone(&self.units);
         let (handoff, received) = tokio::sync::oneshot::channel();
-        let task_ledger = Arc::clone(&ledger);
         tokio::task::spawn_blocking(move || {
-            let outcome = task_ledger.reserve(provider, units, unix_now());
-            if let Err(Ok(orphaned)) = handoff.send(outcome) {
-                let _ = task_ledger.release(&orphaned);
+            let outcome = ledger
+                .reserve(provider, units, unix_now())
+                .map(|reservation| UnitGuard {
+                    ledger: Arc::clone(&ledger),
+                    reservation: Some(reservation),
+                    sent: std::sync::atomic::AtomicBool::new(false),
+                });
+            // Released here, inline, rather than by the guard's spawned release,
+            // which a runtime already shutting down might not run.
+            if let Err(Ok(mut orphaned)) = handoff.send(outcome) {
+                if let Some(reservation) = orphaned.reservation.take() {
+                    let _ = ledger.release(&reservation);
+                }
             }
         });
         let outcome = received
@@ -381,11 +392,7 @@ impl WebTool {
                 "units_ceiling": refusal.details.get("units_ceiling"),
             }));
         }
-        outcome.map(|reservation| UnitGuard {
-            ledger,
-            reservation: Some(reservation),
-            sent: std::sync::atomic::AtomicBool::new(false),
-        })
+        outcome
     }
 }
 
@@ -639,6 +646,31 @@ pub(in crate::server) mod tests {
             0,
             "the abandoned reservation was given back"
         );
+    }
+
+    /// The blocking task commits and hands the reservation over, and the
+    /// awaiting future is dropped before it is polled again (an outer deadline
+    /// firing at that moment). The units still come back: what crosses the
+    /// channel is a guard, which releases when it is dropped unsent.
+    #[tokio::test]
+    async fn a_reservation_handed_to_a_future_dropped_before_its_next_poll_gives_its_units_back() {
+        use std::future::Future;
+        let dir = private_dir();
+        let cfg = AppConfig::from_str("{}", Path::new("config.yaml")).unwrap();
+        let web = WebTool::new(dir.path(), &cfg).unwrap();
+        let audit = Audit::new(dir.path().join("audit.jsonl"), &cfg);
+        let now = unix_now();
+        let mut pending = Box::pin(web.reserve_units(Paid::Serpapi, 1, &audit));
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(
+            pending.as_mut().poll(&mut cx).is_pending(),
+            "the reservation runs on the blocking pool"
+        );
+        // Committed, then handed over a moment later; the future is not polled again.
+        wait_for_used(&web.units, Paid::Serpapi, now, 1).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        drop(pending);
+        wait_for_used(&web.units, Paid::Serpapi, now, 0).await;
     }
 
     #[test]

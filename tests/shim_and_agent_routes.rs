@@ -83,6 +83,25 @@ fn argv_builder_uses_single_element_form_for_dash_leading_values() {
         shim::timeout_for(&c, &req).as_secs(),
         shim::real_repo_run_budget_sec(150, Some(2), 1)
     );
+    // No planner choice crosses as no flag; a cloud planner crosses as one
+    // element, and `--confirm-online` only when the operator gave it.
+    assert!(
+        !tuned
+            .iter()
+            .any(|a| a.starts_with("--provider") || a == "--confirm-online"),
+        "{tuned:?}"
+    );
+    req.provider = Some("grok".into());
+    let (cloud, _) = shim::build_argv(&c, &req).unwrap();
+    assert!(cloud.contains(&"--provider=grok".to_string()), "{cloud:?}");
+    assert!(!cloud.contains(&"--confirm-online".to_string()), "{cloud:?}");
+    req.confirm_online = true;
+    let (cloud, _) = shim::build_argv(&c, &req).unwrap();
+    assert!(cloud.contains(&"--confirm-online".to_string()), "{cloud:?}");
+    req.provider = Some("--confirm".into());
+    assert!(shim::build_argv(&c, &req).is_err(), "only grok and claude cross");
+    req.provider = None;
+    req.confirm_online = false;
     // Push and publish outlast the child's own bounds. Publish runs four git
     // calls (origin URL 30 s, rev-parse 30 s, ls-remote DEFAULT_PUSH_TIMEOUT_SEC,
     // the clone's recorded default branch 30 s), each preceded by
@@ -1192,6 +1211,54 @@ async fn an_agentic_child_starts_after_the_audit_line_that_authorized_it() {
     assert_eq!(result["parsed"]["decision_on_disk"], true, "{result}");
 }
 
+/// The review diff stays redacted in the response, but each redacted span is
+/// tagged by value: a change inside one shows as a different tag on the - and
+/// + lines, never as two identical lines that approve would still commit.
+#[cfg(unix)]
+#[tokio::test]
+async fn run_status_tags_redacted_review_values_so_a_hidden_change_is_visible() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let exe = dir.path().join("fixture-shim");
+    let status = json!({
+        "status": "pending_decision",
+        "dest": "/home/op/.CGagentHarness/data/agentic/workspaces/r",
+        "diff": "-listen = \"127.0.0.1:8080\"\n+listen = \"0.0.0.0:8080\"\n+notify = \"ops@example.com\"\n",
+    });
+    std::fs::write(&exe, format!("#!/bin/sh\ncat <<'JSON'\n{status}\nJSON\n")).unwrap();
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let model = start_mock_model().await;
+    let opts = ServerOptions {
+        shim_exe: Some(exe),
+        ..Default::default()
+    };
+    let s = spawn_server(&model.base_url(), opts).await;
+    let (code, result) = s.get_json(&format!("/api/agent/runs/{HEX32}")).await;
+    assert_eq!(code, 200, "{result}");
+    let parsed = &result["parsed"];
+    let diff = parsed["diff"].as_str().unwrap();
+    for hidden in ["127.0.0.1", "0.0.0.0", "ops@example.com"] {
+        assert!(!diff.contains(hidden), "{diff}");
+    }
+    let tag = |line: &str| {
+        let line = diff.lines().find(|l| l.starts_with(line)).unwrap();
+        let at = line.find("[REDACTED_IP#").unwrap();
+        line[at..at + 22].to_string()
+    };
+    assert_ne!(
+        tag("-listen"),
+        tag("+listen"),
+        "a changed value must look changed: {diff}"
+    );
+    assert!(diff.contains("[REDACTED_EMAIL#"), "{diff}");
+    assert_eq!(parsed["diff_redacted_spans"], 3, "{parsed}");
+    let (_, again) = s.get_json(&format!("/api/agent/runs/{HEX32}")).await;
+    assert_eq!(
+        again["parsed"]["diff"], parsed["diff"],
+        "tags are stable for the server's life"
+    );
+}
+
 #[tokio::test]
 async fn github_status_spawn_failure_is_502() {
     let model = start_mock_model().await;
@@ -1265,4 +1332,44 @@ async fn a_job_registered_after_its_account_was_disabled_refuses_to_run() {
         .collect();
     assert_eq!(refused.len(), 1, "only the disabled account's job is refused");
     assert_eq!(refused[0]["job_id"], job.as_str());
+}
+
+/// The console's cloud planner choice crosses the route, the shim and into the
+/// real child, which applies its own gates; malformed choices stop at parsing.
+#[tokio::test]
+async fn a_console_run_carries_its_cloud_planner_to_the_child_gates() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("agentic.enabled", "true")
+            .with("agentic.deepagent_github.enabled", "true")
+            .with("agentic.deepagent_github.allow_cloud_providers", "false")
+            .with("agentic.deepagent_github.providers.grok.enabled", "false")
+            .with("agentic.deepagent_github.providers.claude.enabled", "false"),
+    )
+    .await;
+    let mut body = run_body();
+    body["provider"] = json!("grok");
+    body["confirm_online"] = json!(true);
+    let (status, result) = s.post_json("/api/agent/run", body).await;
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(result["exit_code"], 3, "{result}");
+    assert!(
+        result["stderr"]
+            .as_str()
+            .unwrap()
+            .contains("cloud provider 'grok' is not enabled (gates 3/4)"),
+        "{result}"
+    );
+    for (field, value) in [("provider", json!("openai")), ("provider", json!("--confirm"))] {
+        let mut bad = run_body();
+        bad[field] = value;
+        let (status, refused) = s.post_json("/api/agent/run", bad).await;
+        assert_eq!(status, 422, "{refused}");
+    }
+    let mut unpaired = run_body();
+    unpaired["confirm_online"] = json!(true);
+    let (status, refused) = s.post_json("/api/agent/run", unpaired).await;
+    assert_eq!(status, 422, "consent without a provider is malformed: {refused}");
 }

@@ -50,6 +50,14 @@ fn shim_error(state: &AppState, action: &str, e: ShimError) -> ApiError {
 }
 
 async fn agentic_call(state: &AppState, req: OpsRequest) -> ApiResult<Json<Value>> {
+    agentic_call_with(state, req, None).await
+}
+
+/// `prepare` reshapes the child's result before the envelope redaction. It may
+/// hash (review tags), so it runs on the blocking pool, never the async worker.
+type Prepare = fn(&mut shim::OpsResult, &crate::common::audit::Redactors);
+
+async fn agentic_call_with(state: &AppState, req: OpsRequest, prepare: Option<Prepare>) -> ApiResult<Json<Value>> {
     let action = req.action.clone();
     // The child appends to the audit file directly. Land the server's queued
     // lines first, such as the broker decision that authorized this run.
@@ -65,7 +73,41 @@ async fn agentic_call(state: &AppState, req: OpsRequest) -> ApiResult<Json<Value
         )
         .details(json!({"action": action})));
     }
+    let result = match prepare {
+        None => result,
+        Some(prepare) => {
+            let redactors = state.audit.redactors().clone();
+            super::structured_memory::off_worker(move || {
+                let mut result = result;
+                prepare(&mut result, &redactors);
+                result
+            })
+            .await
+        }
+    };
     Ok(Json(result.to_json(state.audit.redactors())))
+}
+
+/// Per-process key for review-diff redaction tags. It never leaves memory, so
+/// a tag reveals nothing, and it is fixed for the server's life so repeated
+/// status reads of one run show the same tags.
+fn review_tag_key() -> &'static [u8; 32] {
+    static KEY: std::sync::OnceLock<[u8; 32]> = std::sync::OnceLock::new();
+    KEY.get_or_init(rand::random)
+}
+
+/// The review diff is redacted like every response, but each redacted span is
+/// tagged by value, so a change inside one (`127.0.0.1` to `0.0.0.0`) shows as
+/// a changed tag instead of an identical line. `diff_redacted_spans` tells the
+/// console to say so and where the unredacted clone is on this machine.
+fn tag_review_diff(result: &mut shim::OpsResult, redactors: &crate::common::audit::Redactors) {
+    let Some(parsed) = result.parsed.as_mut() else { return };
+    let Some(diff) = parsed.get("diff").and_then(Value::as_str) else {
+        return;
+    };
+    let (tagged, spans) = redactors.redact_tagged(diff, review_tag_key());
+    parsed["diff"] = json!(tagged);
+    parsed["diff_redacted_spans"] = json!(spans);
 }
 
 pub async fn github_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
@@ -178,7 +220,13 @@ fn resolve_run_shape(state: &AppState, req: &AgentRunRequest) -> ApiResult<(Vec<
     let checks = resolve_check_profiles(&requested).map_err(|e| {
         ApiError::bad_request("UNKNOWN_CHECK_PROFILE", e.message).details(json!({"requested": requested}))
     })?;
-    let tuned_planner = planner_timeout_sec(state);
+    // A cloud planner uses the configured `planner_timeout_sec` as its HTTP
+    // bound, so a speed-derived local timeout would mis-size its budget.
+    let tuned_planner = if req.provider.is_some() {
+        None
+    } else {
+        planner_timeout_sec(state)
+    };
     let planner = tuned_planner.unwrap_or(state.shim.planner_timeout_sec);
     let estimated = shim::real_repo_run_shape_budget_sec(&state.shim, planner, req.max_iterations, checks.len());
     if estimated > REAL_REPO_RUN_MAX_TIMEOUT_SEC {
@@ -228,6 +276,9 @@ fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recur
     } else {
         super::goals::validate_binding(state, req, owner)?;
     }
+    if recurring {
+        refuse_scheduled_cloud_planner(req)?;
+    }
     let (checks, tuned_planner) = resolve_run_shape(state, req)?;
     assert_allowed(
         AGENT_RUN_TOOL,
@@ -271,6 +322,8 @@ fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recur
         pr: req.pr,
         issue: req.issue,
         planner_timeout_sec: tuned_planner,
+        provider: req.provider.map(|p| p.as_str().to_string()),
+        confirm_online: req.confirm_online,
         planner_identity: Some(
             state
                 .cfg
@@ -284,6 +337,18 @@ fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recur
         _run_gate,
         _chat_gate,
     })
+}
+
+/// A schedule fires with nobody present, so it cannot carry the per-run consent
+/// a cloud planner's repository egress needs.
+fn refuse_scheduled_cloud_planner(req: &AgentRunRequest) -> ApiResult<()> {
+    if req.provider.is_some() || req.confirm_online {
+        return Err(ApiError::bad_request(
+            "SCHEDULED_CLOUD_PLANNER",
+            "a scheduled run uses the local planner; a cloud planner needs a run started from the console",
+        ));
+    }
+    Ok(())
 }
 
 fn refuse_bound_session_pins(state: &AppState, owner: &str, req: &AgentRunRequest) -> ApiResult<()> {
@@ -602,6 +667,7 @@ pub(crate) fn start_job(
 /// file, so the whole check runs on the blocking pool.
 async fn refuse_unschedulable(state: &Arc<AppState>, req: &AgentRunRequest, owner: &str) -> ApiResult<()> {
     let (state, req, owner) = (state.clone(), req.clone(), owner.to_string());
+    refuse_scheduled_cloud_planner(&req)?;
     super::structured_memory::off_worker(move || {
         super::goals::validate_binding(&state, &req, &owner)?;
         refuse_session_pins(&state, &owner, &req)?;
@@ -836,7 +902,7 @@ pub async fn agent_run_status(
     let checked = validated_run_id(&run_id)?;
     let mut ops = OpsRequest::new("real-repo-run-status");
     ops.run_id = Some(checked);
-    agentic_call(&state, ops).await
+    agentic_call_with(&state, ops, Some(tag_review_diff)).await
 }
 
 pub async fn agent_run_decision(

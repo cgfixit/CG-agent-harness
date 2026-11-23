@@ -269,10 +269,16 @@ impl ProposerClient for CloudProposerClient<'_> {
             ))
             .detail("provider", provider.clone())
         })?;
+        // One planner deadline across every attempt and backoff: the shim
+        // budgets a single `timeout_sec` per iteration, so retries share it.
+        let deadline = std::time::Instant::now() + Duration::from_secs(self.settings.timeout_sec.max(1));
         let mut attempts = 0u32;
         loop {
             attempts += 1;
-            let req = self.build_request(system_prompt, &sanitized, max_tokens, temperature);
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let req = self
+                .build_request(system_prompt, &sanitized, max_tokens, temperature)
+                .timeout(remaining.max(Duration::from_millis(1)));
             let outcome = req.send();
             let (retryable, error_type, retry_after, response) = match outcome {
                 Ok(resp) => {
@@ -342,10 +348,15 @@ impl ProposerClient for CloudProposerClient<'_> {
                     "cloud proposer attempt {attempts}/{} failed retryably ({error_type}); backing off",
                     INVOKE_MAX_RETRIES + 1
                 );
-                let delay = retry_after
-                    .unwrap_or_else(|| (BACKOFF_BASE_SEC * 2f64.powi(attempts as i32 - 1)).min(BACKOFF_MAX_SEC));
-                std::thread::sleep(Duration::from_secs_f64(delay));
-                continue;
+                let delay = Duration::from_secs_f64(
+                    retry_after
+                        .unwrap_or_else(|| (BACKOFF_BASE_SEC * 2f64.powi(attempts as i32 - 1)).min(BACKOFF_MAX_SEC)),
+                );
+                // A backoff that leaves no time for the next attempt ends here.
+                if delay < deadline.saturating_duration_since(std::time::Instant::now()) {
+                    std::thread::sleep(delay);
+                    continue;
+                }
             }
             self.audit.log(json!({"event": "agentic_deepagent_cloud_model_failed", "provider": provider, "model": self.settings.model, "error_type": error_type, "attempts": attempts}));
             return Err(

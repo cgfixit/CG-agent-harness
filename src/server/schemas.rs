@@ -844,6 +844,31 @@ pub struct AgentRunRequest {
     pub pr: Option<i64>,
     #[serde(default)]
     pub issue: Option<i64>,
+    /// A cloud planner for this run; `None` keeps the local
+    /// `deepagent_github.model`. The child rechecks gates 3-6.
+    #[serde(default)]
+    pub provider: Option<CloudPlanner>,
+    /// Gate 6: explicit consent to send this run's repository context to
+    /// `provider`. Never defaulted on; refused without a provider.
+    #[serde(default)]
+    pub confirm_online: bool,
+}
+
+/// The cloud planners `agentic real-repo-run --provider` accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CloudPlanner {
+    Grok,
+    Claude,
+}
+
+impl CloudPlanner {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Grok => "grok",
+            Self::Claude => "claude",
+        }
+    }
 }
 
 impl AgentRunRequest {
@@ -913,6 +938,9 @@ impl Validate for AgentRunRequest {
         }
         if matches!(self.issue, Some(n) if n < 1) {
             bad.push("issue".into());
+        }
+        if self.confirm_online && self.provider.is_none() {
+            bad.push("confirm_online".into());
         }
         if self.pr.is_some() && self.issue.is_some() {
             bad.push("pr/issue".into());

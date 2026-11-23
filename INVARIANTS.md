@@ -514,21 +514,22 @@ path -> sha256 + file mode`). `real-repo-run-status` renders every path approve
 would commit: tracked edits as a `--text` diff (a `-diff` or `binary` attribute
 cannot collapse them), every other changed path by full content whatever
 `.gitignore` says, and the diff as unavailable when a path cannot be read; the
-console withholds approve on that text. Approval rechecks live files and a disposable copy,
+console withholds approve on that text. Each redacted span carries a per-value
+HMAC tag (`[REDACTED_IP#…]`), so a hidden change shows; read values in the clone. Approval rechecks live files and a disposable copy,
 then builds an exact tree in a private Git index. An existing index lock refuses
-approval unless the run's own lock was left by a killed approve and reclaimed
-under that run's lease. A retry adopts a branch only when its parent, tree,
-message and identity match the acceptance. An already installed index must
-match that same tree. The lock is held until the new index is installed.
-Unrelated staged content refuses approval and is never incorporated or erased.
+approval unless it is the run's own, left by a killed approve and reclaimed
+under its lease. A retry adopts a branch only when its parent, tree,
+message and identity match the acceptance; an installed index must match that
+tree. The lock holds until the new index is installed.
+Unrelated staged content refuses approval, never incorporated or erased.
 
 The shared agentic Git boundary disables ambient Git configuration, executable
 extensions, replacement objects and automatic maintenance. Unsupported local
 configuration, graft/attribute/alternate metadata and content-transforming
 attributes (including the legacy `crlf`) refuse the operation. Off Unix, where
 file modes cannot be read, approving a path that is executable or a symbolic
-link in the base refuses rather than committing it as `100644`. Inspection uses
-the same boundary. No server or shim imports this agentic helper.
+link in the base refuses rather than committing it as `100644`. Inspection shares
+it; no server or shim imports it.
 
 Runs retain their origin from candidate creation and the exact approved commit.
 Push checks those pins, refuses a local branch head that differs from the approved
@@ -538,10 +539,10 @@ fixed name.
 HTTPS credentials use identity-checked `gh`, ambient Git helpers, hooks and prompts
 disabled and `child_env` gh opt-outs forced.
 Accepted SSH origins can use the operator's SSH configuration and keys.
-Current policy and separate reason/confirmation remain required.
-Older records without these bindings need a new reviewed run. No transaction
+Current policy and separate reason/confirmation remain required;
+older records without these bindings need a new reviewed run. No transaction
 against hostile filesystem races or later remote changes is claimed.
-See `docs/CODING_PIPELINE.md#git-approval-and-publication` for compatibility changes and review limitations.
+See [Git approval](docs/CODING_PIPELINE.md#git-approval-and-publication) for compatibility and review limits.
 
 - Locked by: `tests/git_approval.rs`, `tests/write_policy.rs`,
   `tests/real_repo_loop.rs::loop_iterates_on_feedback_then_accepts_and_finalizes`,
@@ -874,7 +875,7 @@ account never transfers its old random owner identity.
 A persisted schedule (`$CGAGENTHARNESS_HOME/data/agentic/console-schedules.json`,
 `0o600`) fires the same validated request as `POST /api/agent/jobs` through
 `prepare_run`. Creating a schedule without a bound/reviewed `goal_stage` fails
-closed. `confirm` is never defaulted; write gates stay closed. Each occurrence
+closed, as does one naming a cloud planner (`SCHEDULED_CLOUD_PLANNER`). `confirm` is never defaulted; write gates stay closed. Each occurrence
 is consumed before the job starts (at-most-once): versioned interval/cron specs,
 occurrence identity and `next_fire_at` / `last_fired_at`
 survive process restart. Elapsed work is skipped at startup; normal polling has

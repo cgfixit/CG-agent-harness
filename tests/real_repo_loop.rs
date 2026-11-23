@@ -1307,6 +1307,56 @@ fn cloud_proposer_gates_sanitizes_and_retries() {
     .unwrap_err()
     .message
     .contains("injection scan"));
+    // Retries share one planner deadline: a slow 503 that uses most of it is not
+    // followed by a backoff and another attempt the shim never budgeted.
+    let slow_hits = std::sync::Arc::new(std::sync::Mutex::new(0u32));
+    let counted = slow_hits.clone();
+    let slow = Router::new().route(
+        "/v1/x",
+        post(move || {
+            let counted = counted.clone();
+            async move {
+                *counted.lock().unwrap() += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                (
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                    [("retry-after", "1")],
+                    "busy",
+                )
+            }
+        }),
+    );
+    let slow_listener = rt.block_on(tokio::net::TcpListener::bind("127.0.0.1:0")).unwrap(); // DevSkim: ignore DS162092 because this mock provider binds only to loopback.
+    let slow_addr = slow_listener.local_addr().unwrap();
+    rt.spawn(async move { axum::serve(slow_listener, slow).await.unwrap() });
+    let mut bounded = CloudProposerClient::new(
+        CloudSettings {
+            provider: "claude".into(),
+            model: "claude-sonnet-5".into(),
+            max_handoff_chars: 10_000,
+            timeout_sec: 2,
+        },
+        &audit,
+        &scanner,
+        &redactors,
+        spend.clone(),
+    )
+    .unwrap();
+    bounded.endpoint_override = Some(format!("http://127.0.0.1:{}/v1/x", slow_addr.port())); // DevSkim: ignore DS162092 because this mock provider binds only to loopback.
+    let started = std::time::Instant::now();
+    let err =
+        std::thread::scope(|s| s.spawn(|| bounded.invoke("sys", "hello", 100, None)).join().unwrap()).unwrap_err();
+    let elapsed = started.elapsed();
+    assert!(err.message.contains("HTTPStatusError 503"), "{err:?}");
+    assert_eq!(
+        *slow_hits.lock().unwrap(),
+        1,
+        "a retry that cannot fit the deadline is not started"
+    );
+    assert!(
+        elapsed < std::time::Duration::from_millis(2500),
+        "{elapsed:?} exceeds the 2 s planner deadline"
+    );
     std::env::remove_var("ANTHROPIC_API_KEY");
     assert!(CloudProposerClient::new(
         CloudSettings {
