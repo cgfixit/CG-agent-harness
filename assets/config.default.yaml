@@ -383,6 +383,11 @@ auth:
     # change). Capped at the limits above. Restart required.
     password_change_idle_timeout_sec: 600
     password_change_absolute_timeout_sec: 1800
+    # Live sessions one account may hold, 1–32 (else startup stops). A sign-in
+    # past it ends that account's least recently used session, never another
+    # account's, and logs account.session_evicted. Raise it for an account that
+    # runs several long-lived clients. Restart required.
+    max_per_account: 8
 
 logging:
   # Log verbosity is RUST_LOG (default info), not a key here.
