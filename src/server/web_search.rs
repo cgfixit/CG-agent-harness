@@ -503,6 +503,9 @@ pub struct WebTool {
     pub(super) firecrawl: super::web_firecrawl::FirecrawlConfig,
     /// Firecrawl reads this clock hour, shared by every snapshot; lost on restart.
     pub(super) firecrawl_spent: Arc<super::web_firecrawl::HourlyCap>,
+    /// Durable daily provider-unit ceilings for Tavily, SerpAPI and Firecrawl
+    /// (`web.search.*_units_per_day`, `web.firecrawl.units_per_day`), restart-only (#772 D10).
+    pub(super) units: Arc<super::web_units::Ledger>,
     /// Literal `security.allow_plaintext_key_file`. When false, saved search keys come from the OS store.
     pub(super) plaintext_key_file: bool,
     pub limits: Limits,
@@ -563,6 +566,10 @@ impl WebTool {
             firecrawl_key_from_file: false,
             firecrawl: super::web_firecrawl::FirecrawlConfig::load(cfg)?,
             firecrawl_spent: Arc::default(),
+            units: Arc::new(super::web_units::Ledger::new(
+                tools_dir,
+                super::web_units::Ceilings::load(cfg)?,
+            )),
             plaintext_key_file: cfg.flag_is_true(crate::common::credential_store::PLAINTEXT_KEY_FILE),
             mutation: Arc::new(Mutex::new(())),
             search_gate: Arc::new(Semaphore::new(1)),

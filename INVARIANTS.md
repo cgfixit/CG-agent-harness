@@ -260,42 +260,44 @@ Only explicit `*.host` and `/path/*` rules broaden scope. Path wildcards include
 query strings; exact rules retain exact query identity. Encoded query data cannot
 alter host/path, and encoded path separators, dots, spaces and `%` stay refused. Legacy rows authorize
 only their stored fetch target, never old host aliases or implicit descendants.
-Wildcard grants can send arbitrary query data to the allowed site. This is an
-accepted single-operator residual, not prevented by prompt framing; use exact
-URL grants to restrict queries. Injected extracts are bounded, fenced and labeled
-untrusted, with embedded instructions denied authority. This does not prove a
-model will ignore hostile text.
+Wildcard grants can send arbitrary query data to the allowed site: an accepted
+single-operator residual that prompt framing does not prevent; exact URL grants
+restrict queries. Injected extracts are bounded, fenced and labeled untrusted,
+their instructions denied authority, which does not prove a model ignores them.
 
 The fetcher resolves once, rejects mixed/special-use answers, then pins
 Reqwest to validated addresses with a refusing fallback. One lookup
 (`common::dns`) serves every pinned client and keeps at most 32 answers; a
-larger answer is refused. Release builds carry no fixture resolver that skips
-validation; those hooks exist only with `test-support`. Public TLS stays on;
+larger answer is refused. Fixture resolvers that skip validation exist only with
+`test-support`. Public TLS stays on;
 proxies, redirects, retries, compression, and reuse stay off. Deadlines cover
 queueing, DNS, and extraction; headers, bodies, and concurrency are bounded.
 HTML parse/extract runs off async workers, stops on cancel/deadline, and keeps
-its permit until exit. `web.html_parser_handles` bounds parser state; excess
+its permit; `web.html_parser_handles` bounds parser state, and excess
 complexity returns no partial evidence.
 
 The one exception is opt-in `web.firecrawl.enabled` (ships off), for exact reads
-only, never discovery, crawl or search. After a pinned read gets a server's 403,
-429 or 503, a near-empty script shell, a body over `web.response_bytes` (a PDF:
-`web.pdf_response_bytes`) or a PDF
-that local text extraction refuses (the last two by operator decision, 2026-11-10; any other content type, and every
-transport, redirect, policy or address refusal, never escalates), the authorized
-URL, rechecked just before sending, may go once to Firecrawl, so it leaves the
-machine. The read has twice `web.request_seconds` (at most 60 s) and pins a
-10-page PDF cap, since Firecrawl bills a PDF per page. Its answer
-must name that URL as final (a redirect is refused), keeps no links, carries
-`via: firecrawl`, and is capped by `web.firecrawl.max_per_hour`. A failed
-fallback keeps the original outcome.
+only, never discovery, crawl or search. After a pinned read gets a 403, 429 or
+503, a near-empty script shell, a body over `web.response_bytes` (a PDF:
+`web.pdf_response_bytes`) or a PDF local extraction refuses (the last two by
+operator decision, 2026-11-10; nothing else escalates), the authorized URL,
+rechecked just before sending, may go once to Firecrawl and so leaves the
+machine, within twice `web.request_seconds` (at most 60 s) and a 10-page PDF
+cap. Its answer must name that URL as final, keeps no links, carries
+`via: firecrawl` and is capped by `web.firecrawl.max_per_hour`; a failure keeps
+the original outcome.
 
-Live web enablement and URL policy are rechecked after permit, DNS and pacing
-waits, before dispatch and before storage or delivery. Disabling web refuses
-later sends and discards responses at these boundaries with `WEB_DISABLED`. Revoked or
-unproven saved evidence is inaccessible, including old shared plain-text context.
-Revocation cannot erase historical chat or content already sent to a model. No atomicity against arbitrary external file
-edits between an authorization check and an OS operation is claimed.
+Paid requests (Tavily, SerpAPI, Firecrawl) first reserve units in private
+`tools/web_units.sqlite` against restart-only daily ceilings (#772 D10), one
+transaction across processes; units return only if nothing was sent. An unusable
+ledger refuses (`WEB_UNITS_UNAVAILABLE`); a spent search ceiling falls through.
+
+Web enablement and URL policy are rechecked after permit, DNS and pacing
+waits, before dispatch, storage and delivery; disabling web refuses later
+sends and discards responses there (`WEB_DISABLED`). Revoked or
+unproven saved evidence, old shared plain-text context included, is inaccessible;
+revocation cannot erase historical chat or text already sent to a model. No
+atomicity against external file edits between a check and an OS operation is claimed.
 
 A chat `web_fetch` URL that only a `/*` or `*.` rule, or denylist mode, permits, that no
 search listed and the turn's message or goal did not name, is composed (#901): an

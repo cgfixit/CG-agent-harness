@@ -1517,6 +1517,26 @@ async fn an_accounts_running_coding_jobs_stop_when_it_loses_run_coding() {
 #[cfg(unix)]
 #[tokio::test]
 async fn a_sync_coding_run_stops_when_its_account_is_disabled_mid_run() {
+    sync_run_stops_when(|auth| auth.disable_user("worker").unwrap()).await;
+}
+
+/// An admin password reset leaves the account enabled and permitted but
+/// revokes its sign-ins, so the run asked under them stops as `/browse` does.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_sync_coding_run_stops_when_its_password_is_reset_mid_run() {
+    sync_run_stops_when(|auth| {
+        auth.set_password("worker", &cgagentharness::common::random_urlsafe(24))
+            .unwrap()
+    })
+    .await;
+}
+
+/// Starts `POST /api/agent/run` for operator `worker` against a child that
+/// sleeps 20 seconds, applies `change` once the child runs, and checks the
+/// run stopped early, its child is gone and the stop was audited.
+#[cfg(unix)]
+async fn sync_run_stops_when(change: impl FnOnce(&cgagentharness::common::auth_store::AuthManager)) {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let (exe, pidfile) = (dir.path().join("slow-shim"), dir.path().join("child.pid"));
@@ -1552,7 +1572,7 @@ async fn a_sync_coding_run_stops_when_its_account_is_disabled_mid_run() {
             tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         }
         assert!(pidfile.exists(), "the child started");
-        auth.disable_user("worker").unwrap();
+        change(auth);
     };
     let (response, ()) = tokio::join!(run, disable);
     assert_eq!(response.status(), 401);
