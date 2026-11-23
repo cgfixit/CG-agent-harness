@@ -73,6 +73,7 @@ mod web_provider;
 pub mod web_research;
 pub mod web_search;
 mod web_tavily;
+mod web_units;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
