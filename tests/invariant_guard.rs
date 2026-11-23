@@ -2747,7 +2747,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-requested (2026-11-14) browser- and computer-use status and roadmap; measured 869, about 100 words of room.
     // why: operator-approved (2026-11-15) +200 after #895, #896 and #897 left it at 967 of 970.
     // why: operator-approved (2026-11-17) +100 for #945: the auth requirement and the file-name check left it at 1169 of 1170.
-    ("docs/Browser-Use.md", Guide, 1270),
+    // why: operator-approved (2026-11-22) +300 after the takeover-deadline sentence left it at 1270 of 1270.
+    ("docs/Browser-Use.md", Guide, 1570),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 605 words net of the post-#834 additions; measured 2943, rounded up to the next 10 so the cut stays cut.
@@ -2918,7 +2919,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // to the next 100, so the gap to its words is unchanged and stays inside the 19,500 override.
 // why: operator-approved (2026-11-15) +200 Guide words with the docs/Browser-Use.md row raise (970 to 1170).
 // why: operator-approved (2026-11-17) +100 Guide words with the docs/Browser-Use.md row raise (1170 to 1270, #945).
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 12_500), (Guide, 61_600), (Evidence, 700), (Agent, 21_910)];
+// why: operator-approved (2026-11-22) +500 Guide words with the docs/Browser-Use.md row raise (1270 to 1570).
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 12_500), (Guide, 62_100), (Evidence, 700), (Agent, 21_910)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
