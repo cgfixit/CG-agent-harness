@@ -68,7 +68,7 @@ Every proposed file is injection-scanned and code-shape-scanned, scope-checked a
 
 ## invariant: Approval is bound to what was reviewed
 
-`pending_decision` records carry an acceptance digest (`run_id + base HEAD + path -> sha256 + file mode`). `real-repo-run-status` renders every path approve would commit: tracked edits as a `--text` diff (a `-diff` or `binary` attribute cannot collapse them), every other changed path by full content whatever `.gitignore` says, and the diff as unavailable when a path cannot be read; the console withholds approve on that text. Approval rechecks live files and a disposable copy, then builds an exact tree in a…
+`pending_decision` records carry an acceptance digest (`run_id + base HEAD + path -> sha256 + file mode`). `real-repo-run-status` renders every path approve would commit: tracked edits as a `--text` diff (a `-diff` or `binary` attribute cannot collapse them), every other changed path by full content whatever `.gitignore` says, and the diff as unavailable when a path cannot be read; the console withholds approve on that text. Each redacted span carries a per-value HMAC tag (`[REDACTED_IP#…]`), so a hidden change…
 
 ## invariant: Secrets never reach a response or a log line
 
