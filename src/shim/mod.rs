@@ -122,6 +122,11 @@ pub struct OpsRequest {
     pub planner_timeout_sec: Option<u64>,
     /// Startup planner inputs used to size this run; checked by the child after config load.
     pub planner_identity: Option<String>,
+    /// `real-repo-run` only: a cloud planner (`grok` or `claude`). The child
+    /// rechecks gates 3-6; only that provider's key enters its environment.
+    pub provider: Option<String>,
+    /// `real-repo-run` only: gate 6 consent, crossing as `--confirm-online`.
+    pub confirm_online: bool,
 }
 
 impl OpsRequest {
@@ -452,6 +457,15 @@ pub fn build_argv(ctx: &ShimContext, req: &OpsRequest) -> Result<(Vec<String>, V
             if let Some(identity) = &req.planner_identity {
                 argv.push(format!("--planner-identity={identity}"));
             }
+            if let Some(provider) = &req.provider {
+                if cloud_key_env(provider).is_none() {
+                    return Err(ShimError::Ops(format!("unknown cloud planner '{provider}'")));
+                }
+                argv.push(format!("--provider={provider}"));
+                if req.confirm_online {
+                    argv.push("--confirm-online".into());
+                }
+            }
             if req.confirm {
                 argv.push("--confirm".into());
             }
@@ -507,7 +521,16 @@ pub fn timeout_for(ctx: &ShimContext, req: &OpsRequest) -> Duration {
     Duration::from_secs(secs)
 }
 
-fn child_environment(action: &str) -> BTreeMap<String, String> {
+/// The key variable for each cloud planner `real-repo-run` may select.
+fn cloud_key_env(provider: &str) -> Option<&'static str> {
+    match provider {
+        "grok" => Some("GROK_API_KEY"),
+        "claude" => Some("ANTHROPIC_API_KEY"),
+        _ => None,
+    }
+}
+
+fn child_environment(action: &str, provider: Option<&str>) -> BTreeMap<String, String> {
     let mut env: BTreeMap<String, String> = [
         "PATH",
         "HOME",
@@ -542,6 +565,12 @@ fn child_environment(action: &str) -> BTreeMap<String, String> {
         if let Ok(key) = std::env::var("DEEPAGENT_API_KEY") {
             env.insert("DEEPAGENT_API_KEY".into(), key);
         }
+        // Only the selected planner's key; a local run carries no cloud key.
+        if let Some(name) = provider.and_then(cloud_key_env) {
+            if let Ok(key) = std::env::var(name) {
+                env.insert(name.into(), key);
+            }
+        }
     }
     env
 }
@@ -549,7 +578,7 @@ fn child_environment(action: &str) -> BTreeMap<String, String> {
 /// Spawn `argv` with the baseline agentic environment, without provider credentials.
 #[cfg(any(test, feature = "test-support"))]
 pub async fn run_argv(argv: &[String], cwd: &Path, timeout: Duration) -> Result<(i32, String, String), ShimError> {
-    run_argv_with_env(argv, cwd, timeout, child_environment("")).await
+    run_argv_with_env(argv, cwd, timeout, child_environment("", None)).await
 }
 
 #[cfg(unix)]
@@ -756,15 +785,20 @@ pub async fn run_agentic_op(ctx: &ShimContext, req: &OpsRequest) -> Result<OpsRe
     let _active = ActiveOperation::new();
     let (argv, _temps) = build_argv_off_worker(ctx, req).await?;
     let timeout = timeout_for(ctx, req);
-    let (code, stdout, stderr) = run_argv_with_env(&argv, &ctx.cwd, timeout, child_environment(&req.action))
-        .await
-        .map_err(|e| match e {
-            ShimError::Timeout { timeout_sec, .. } => ShimError::Timeout {
-                action: req.action.clone(),
-                timeout_sec,
-            },
-            other => other,
-        })?;
+    let (code, stdout, stderr) = run_argv_with_env(
+        &argv,
+        &ctx.cwd,
+        timeout,
+        child_environment(&req.action, req.provider.as_deref()),
+    )
+    .await
+    .map_err(|e| match e {
+        ShimError::Timeout { timeout_sec, .. } => ShimError::Timeout {
+            action: req.action.clone(),
+            timeout_sec,
+        },
+        other => other,
+    })?;
     let (ok, label) = label_for(code);
     let parsed = if ok && JSON_ACTIONS.contains(&req.action.as_str()) {
         serde_json::from_str::<Value>(&stdout).ok()
@@ -807,6 +841,20 @@ impl Drop for ActiveOperation {
 mod tests {
     use super::*;
 
+    /// A cloud key reaches only a `real-repo-run` child, and only the selected
+    /// planner's. One-directional on purpose: true whatever keys the host has.
+    #[test]
+    fn only_the_selected_planner_key_enters_the_run_child() {
+        let local = child_environment("real-repo-run", None);
+        assert!(!local.contains_key("GROK_API_KEY") && !local.contains_key("ANTHROPIC_API_KEY"));
+        let grok = child_environment("real-repo-run", Some("grok"));
+        assert!(!grok.contains_key("ANTHROPIC_API_KEY"));
+        let claude = child_environment("real-repo-run", Some("claude"));
+        assert!(!claude.contains_key("GROK_API_KEY"));
+        let status = child_environment("real-repo-run-status", Some("grok"));
+        assert!(!status.contains_key("GROK_API_KEY") && !status.contains_key("DEEPAGENT_API_KEY"));
+    }
+
     /// The streaming runner hands over each stdout line as it is printed,
     /// writes what the caller sends, and still returns the whole output.
     #[tokio::test]
@@ -820,7 +868,7 @@ mod tests {
             &argv,
             &cwd,
             Duration::from_secs(10),
-            child_environment(""),
+            child_environment("", None),
             ChildChannel { lines, input },
         );
         tokio::pin!(child);
@@ -846,7 +894,7 @@ mod tests {
             &argv,
             &cwd,
             Duration::from_secs(10),
-            child_environment(""),
+            child_environment("", None),
             ChildChannel { lines, input },
         ));
         tokio::select! {

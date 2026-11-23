@@ -101,7 +101,7 @@ The initial estimator is UTF-8 `bytes.div_ceil(4)`, not a tokenizer. Successful 
 
 ## invariant: Scheduled agentic runs cannot skip reviewed-goal or write gates
 
-A persisted schedule (`$CGAGENTHARNESS_HOME/data/agentic/console-schedules.json`, `0o600`) fires the same validated request as `POST /api/agent/jobs` through `prepare_run`. Creating a schedule without a bound/reviewed `goal_stage` fails closed. `confirm` is never defaulted; write gates stay closed. Each occurrence is consumed before the job starts (at-most-once): versioned interval/cron specs, occurrence identity and `next_fire_at` / `last_fired_at` survive process restart. Elapsed work is skipped at startup;…
+A persisted schedule (`$CGAGENTHARNESS_HOME/data/agentic/console-schedules.json`, `0o600`) fires the same validated request as `POST /api/agent/jobs` through `prepare_run`. Creating a schedule without a bound/reviewed `goal_stage` fails closed, as does one naming a cloud planner (`SCHEDULED_CLOUD_PLANNER`). `confirm` is never defaulted; write gates stay closed. Each occurrence is consumed before the job starts (at-most-once): versioned interval/cron specs, occurrence identity and `next_fire_at` / `last_fired_at`…
 
 ## invariant: Inference spend keeps recorded usage separate from prediction
 

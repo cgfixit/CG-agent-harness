@@ -404,11 +404,12 @@ The `/agent` family operates the separate coding workflow:
 |---|---|
 | `/agent run <branch> <instruction>` | Stage a request for inspection; does not start it |
 | `/agent checks [profiles]` | List fixed profiles, or select space/comma-separated profiles |
-| `/agent iterations <n>` or `clear` | Set a staged iteration cap from 1–10, or restore the configured default |
+| `/agent iterations <n>` or `clear` | Cap iterations at 1–10, or restore the default |
 | `/agent pr <number>` or `/agent issue <number>`; `clear` | Select one context source; choosing one clears the other |
-| `/agent plan` or `/agent plan clear` | Open a file chooser for a supplied plan, or clear it; does not generate a plan |
+| `/agent planner local` or `<grok\|claude> confirm-online` | Local or [cloud](CODING_PIPELINE.md#cloud-planner-data-egress) planner |
+| `/agent plan` or `/agent plan clear` | Choose a supplied plan file, or clear it; never generates one |
 | `/agent read <repo-relative-path[#Lx-Ly]>` or `clear` | Stage up to 8 bounded file-context declarations, or clear them. Denied basenames (`.env`, keys, credentials, …) refuse operator and model reads alike; a cloud planner refuses model-requested and [retrieval](CODING_PIPELINE.md#optional-repository-retrieval) reads. The deny-list is not a secret scanner. |
-| `/agent cancel` | Clear the staged request; does not stop an already submitted job |
+| `/agent cancel` | Clear the staged request; a submitted job keeps running |
 | `/agent confirm <reason>` | Explicitly submit the staged request through the execution gates |
 | `/agent jobs`, `/agent job [job-id]`, `/agent stop [job-id]` | List, monitor or request cancellation; an omitted ID uses the retained job from the URL |
 | `/agent runs`, `/agent status <run-id>` | List runs or inspect a run and its diff |

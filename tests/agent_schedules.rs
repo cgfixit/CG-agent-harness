@@ -336,3 +336,22 @@ async fn preview_and_create_refuse_a_session_with_a_live_pin_like_the_job_route(
     assert!(s.state.schedules.list("local").is_empty());
     assert!(!s.audit_log().contains("agent_schedule_created"));
 }
+
+/// A schedule fires unattended, so it cannot carry a cloud planner's per-run
+/// online consent: preview and create refuse before anything is stored.
+#[tokio::test]
+async fn a_schedule_refuses_a_cloud_planner() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let mut req = staged_request(&s).await;
+    req["provider"] = json!("grok");
+    req["confirm_online"] = json!(true);
+    for path in ["/api/agent/schedules/preview", "/api/agent/schedules"] {
+        let (status, refused) = s.post_json(path, json!({"interval_secs": 60, "request": req})).await;
+        assert_eq!(status, 400, "{path}: {refused}");
+        assert_eq!(
+            refused["detail"]["code"], "SCHEDULED_CLOUD_PLANNER",
+            "{path}: {refused}"
+        );
+    }
+}

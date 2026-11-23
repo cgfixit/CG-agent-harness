@@ -2381,6 +2381,7 @@ const COMMANDS = [
   ['/agent discard <run-id>', "reclaim a terminal run's owned clone"],
   ['/agent issue <n>|clear', 'select an issue context (clears PR), or clear it'],
   ['/agent iterations <n>|clear', 'set 1–10 iterations, or restore the configured default'],
+  ['/agent planner local|<grok|claude> confirm-online', 'use the local planner, or a cloud planner (sends repository content)'],
   ['/agent job [job-id]', 'monitor a job; omitted ID uses the retained job'],
   ['/agent jobs', 'list retained coding jobs'],
   ['/agent plan [clear]', 'choose a reviewed plan file, or clear the staged plan'],
@@ -2578,6 +2579,7 @@ const COMMAND_MAN = {
   '/agent discard <run-id>': {detail:'Releases the clone a finished run owns. A run whose owner is unknown and still running cannot be discarded.'},
   '/agent issue <n>|clear': {detail:'Attaches issue context to the staged request and clears any PR context; clear removes it. Needs a staged request.', args:{n:'the issue number'}},
   '/agent iterations <n>|clear': {detail:'Caps how many planner iterations the staged run may take, 1 to ' + MAX_AGENT_ITERATIONS + '; clear restores the configured default.', args:{n:'1 to ' + MAX_AGENT_ITERATIONS}},
+  '/agent planner local|<grok|claude> confirm-online': {detail:'Selects the planner for the staged run. local is the default deepagent_github.model; grok or claude needs agentic.deepagent_github.allow_cloud_providers and that provider enabled, its API key, and the literal confirm-online, because each iteration sends the instruction, plan, check feedback, declared reads and selected PR or issue text off this machine.', args:{'grok|claude':'the cloud planner to use'}},
   '/agent job [job-id]': {detail:'Watches a job’s progress in the transcript. Without an id, it uses the job this page last watched.'},
   '/agent jobs': {detail:'Lists retained coding jobs with their status.'},
   '/agent plan [clear]': {detail:'Opens a file chooser for a reviewed plan (.md or .txt) to attach to the staged request; clear detaches it. Needs a staged request.'},
@@ -3090,6 +3092,7 @@ function showPendingAgentRun() {
     ['iterations', pendingAgentRun.max_iterations === undefined ? 'server default' : String(pendingAgentRun.max_iterations)],
     ['PR', pendingAgentRun.pr === undefined ? 'none' : String(pendingAgentRun.pr)],
     ['issue', pendingAgentRun.issue === undefined ? 'none' : String(pendingAgentRun.issue)],
+    ['planner', pendingAgentRun.provider ? pendingAgentRun.provider + ' (cloud; online confirmed)' : 'local'],
   ], ['field', 'value']));
 }
 
@@ -4028,7 +4031,7 @@ async function runSlash(line, webCommand) {
           };
           showPendingAgentRun();
           sys('server default check: ' + capabilities.default_profile + '; planner model: ' + capabilities.planner_model);
-          sys('nothing has run yet. Optionally use /agent plan, /agent read, /agent checks, /agent iterations, /agent pr, or /agent issue; then authorize with:  /agent confirm <why you are doing this>');
+          sys('nothing has run yet. Optionally use /agent plan, /agent read, /agent checks, /agent iterations, /agent pr, /agent issue, or /agent planner; then authorize with:  /agent confirm <why you are doing this>');
         } else if (sub === 'iterations' || sub === 'pr' || sub === 'issue') {
           if (!pendingAgentRun) { sys('nothing staged — start with /agent run'); break; }
           const raw = rest[1] || '';
@@ -4046,6 +4049,22 @@ async function runSlash(line, webCommand) {
             pendingAgentRun[field] = value;
             if (sub === 'pr') delete pendingAgentRun.issue;
             if (sub === 'issue') delete pendingAgentRun.pr;
+          }
+          showPendingAgentRun();
+        } else if (sub === 'planner') {
+          if (!pendingAgentRun) { sys('nothing staged — start with /agent run'); break; }
+          const choice = rest[1] || '';
+          if (choice === 'local' && rest.length === 2) {
+            delete pendingAgentRun.provider;
+            delete pendingAgentRun.confirm_online;
+            sys('planner: local deepagent_github.model');
+          } else if ((choice === 'grok' || choice === 'claude') && rest.length === 3 && rest[2] === 'confirm-online') {
+            pendingAgentRun.provider = choice;
+            pendingAgentRun.confirm_online = true;
+            sys('planner: ' + choice + '. Each iteration sends the instruction, plan, check feedback, every declared read excerpt and any selected PR or issue text to ' + choice + '. The cloud planner cannot request reads: declare them with /agent read.');
+          } else {
+            sys('usage: /agent planner local | /agent planner <grok|claude> confirm-online  (a cloud planner sends repository content off this machine)');
+            break;
           }
           showPendingAgentRun();
         } else if (sub === 'plan') {

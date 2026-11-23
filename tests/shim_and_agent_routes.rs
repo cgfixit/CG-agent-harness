@@ -83,6 +83,25 @@ fn argv_builder_uses_single_element_form_for_dash_leading_values() {
         shim::timeout_for(&c, &req).as_secs(),
         shim::real_repo_run_budget_sec(150, Some(2), 1)
     );
+    // No planner choice crosses as no flag; a cloud planner crosses as one
+    // element, and `--confirm-online` only when the operator gave it.
+    assert!(
+        !tuned
+            .iter()
+            .any(|a| a.starts_with("--provider") || a == "--confirm-online"),
+        "{tuned:?}"
+    );
+    req.provider = Some("grok".into());
+    let (cloud, _) = shim::build_argv(&c, &req).unwrap();
+    assert!(cloud.contains(&"--provider=grok".to_string()), "{cloud:?}");
+    assert!(!cloud.contains(&"--confirm-online".to_string()), "{cloud:?}");
+    req.confirm_online = true;
+    let (cloud, _) = shim::build_argv(&c, &req).unwrap();
+    assert!(cloud.contains(&"--confirm-online".to_string()), "{cloud:?}");
+    req.provider = Some("--confirm".into());
+    assert!(shim::build_argv(&c, &req).is_err(), "only grok and claude cross");
+    req.provider = None;
+    req.confirm_online = false;
     // Push and publish outlast the child's own bounds. Publish runs four git
     // calls (origin URL 30 s, rev-parse 30 s, ls-remote DEFAULT_PUSH_TIMEOUT_SEC,
     // the clone's recorded default branch 30 s), each preceded by
@@ -1265,4 +1284,44 @@ async fn a_job_registered_after_its_account_was_disabled_refuses_to_run() {
         .collect();
     assert_eq!(refused.len(), 1, "only the disabled account's job is refused");
     assert_eq!(refused[0]["job_id"], job.as_str());
+}
+
+/// The console's cloud planner choice crosses the route, the shim and into the
+/// real child, which applies its own gates; malformed choices stop at parsing.
+#[tokio::test]
+async fn a_console_run_carries_its_cloud_planner_to_the_child_gates() {
+    let model = start_mock_model().await;
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("agentic.enabled", "true")
+            .with("agentic.deepagent_github.enabled", "true")
+            .with("agentic.deepagent_github.allow_cloud_providers", "false")
+            .with("agentic.deepagent_github.providers.grok.enabled", "false")
+            .with("agentic.deepagent_github.providers.claude.enabled", "false"),
+    )
+    .await;
+    let mut body = run_body();
+    body["provider"] = json!("grok");
+    body["confirm_online"] = json!(true);
+    let (status, result) = s.post_json("/api/agent/run", body).await;
+    assert_eq!(status, 200, "{result}");
+    assert_eq!(result["exit_code"], 3, "{result}");
+    assert!(
+        result["stderr"]
+            .as_str()
+            .unwrap()
+            .contains("cloud provider 'grok' is not enabled (gates 3/4)"),
+        "{result}"
+    );
+    for (field, value) in [("provider", json!("openai")), ("provider", json!("--confirm"))] {
+        let mut bad = run_body();
+        bad[field] = value;
+        let (status, refused) = s.post_json("/api/agent/run", bad).await;
+        assert_eq!(status, 422, "{refused}");
+    }
+    let mut unpaired = run_body();
+    unpaired["confirm_online"] = json!(true);
+    let (status, refused) = s.post_json("/api/agent/run", unpaired).await;
+    assert_eq!(status, 422, "consent without a provider is malformed: {refused}");
 }
