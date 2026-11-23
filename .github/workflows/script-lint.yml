@@ -1,6 +1,7 @@
 # Static checks for the repository's helper scripts: shellcheck on every
 # tracked shell script (and the root init.command and uninstall.command launchers) and git hook, a full compile of every Python script,
-# and `node --check` on every .mjs script and the browser sidecar. Hook behavior runs in disposable
+# and `node --check` on every .mjs script, the browser sidecar and the scripts the console and the
+# desktop setup page load (assets/static/*.js, desktop/ui/*.js). Hook behavior runs in disposable
 # repositories; application contract tests live in ci.yml. Lists use `git ls-files`
 # so a new script is linted without editing this workflow.
 name: Scripts - Shell, Python and Node lint
@@ -11,6 +12,8 @@ on:
     paths:
       - "scripts/**"
       - "browser/**"
+      - "assets/static/**"
+      - "desktop/ui/**"
       - "init.command"
       - "uninstall.command"
       - ".githooks/**"
@@ -21,6 +24,8 @@ on:
     paths:
       - "scripts/**"
       - "browser/**"
+      - "assets/static/**"
+      - "desktop/ui/**"
       - "init.command"
       - "uninstall.command"
       - ".githooks/**"
@@ -76,7 +81,10 @@ jobs:
       - name: Node scripts parse
         run: |
           set -euo pipefail
-          mapfile -d '' files < <(git ls-files -z -- 'scripts/*.mjs' 'browser/*.mjs')
+          # The two .js globs are page scripts no other job loads: the console
+          # serves assets/static/auth_admin.js as a file, and the browser
+          # acceptance run answers /static/ with an empty body.
+          mapfile -d '' files < <(git ls-files -z -- 'scripts/*.mjs' 'browser/*.mjs' 'assets/static/*.js' 'desktop/ui/*.js')
           test "${#files[@]}" -gt 0
           for f in "${files[@]}"; do
             echo "== $f"
