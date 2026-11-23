@@ -372,7 +372,9 @@ async fn prepare_cargo(app: tauri::AppHandle) -> Result<(), String> {
         let home = backend::home()?;
         use std::os::unix::process::CommandExt;
         let tool_path = backend::configured_path(&home)?;
-        let mut child = std::process::Command::new(python).arg(helper).arg(repo).arg(home).arg("--desktop-parent")
+        // -I: Python imports nothing from Resources, user site or PYTHON*
+        // variables, so only the checked bytes run (as env -i does for start-web.sh).
+        let mut child = std::process::Command::new(python).arg("-I").arg(helper).arg(repo).arg(home).arg("--desktop-parent")
             .env("PATH", tool_path).env("RUSTUP_AUTO_INSTALL", "0")
             .current_dir("/").stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
