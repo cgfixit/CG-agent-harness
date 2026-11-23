@@ -6432,6 +6432,10 @@ function signInFailure(status, data) {
     return 'This account is locked after too many failed attempts. ' +
       (wait > 0 ? 'Try again in ' + Math.ceil(wait) + ' seconds.' : 'Wait, then try again.');
   }
+  if (detail.code === 'AUTH_LIMIT') {
+    return 'Sign-in is full: the server is holding the most live sessions it allows. ' +
+      'Ask an administrator to end idle sessions, or wait for them to expire.';
+  }
   if (status === 429) return 'Too many sign-in attempts. Wait a moment, then try again.';
   if (status === 401) return "That username and password don't match. Check both and try again.";
   return 'Sign-in failed (HTTP ' + status + '). Try again.';
