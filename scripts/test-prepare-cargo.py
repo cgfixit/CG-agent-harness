@@ -106,6 +106,31 @@ class PreparationToolchain(unittest.TestCase):
                 self.assertNotEqual(Path(json.loads(records[0].read_text())["toolchain_root"]),
                                     compiler.parent.parent)
 
+    @unittest.skipUnless(os.name == "posix", "desktop preparation needs its own process group")
+    def test_desktop_parent_mode_exits_zero_after_success(self):
+        # As desktop/src/main.rs runs it: own process group, stdin held open
+        # until exit. Its parent-watch thread used to abort shutdown (SIGABRT).
+        helper = Path(__file__).with_name("prepare-cargo.py").resolve()
+        with tempfile.TemporaryDirectory(prefix="cargo-preparation-") as directory:
+            root = Path(directory)
+            repo = root / "candidate"
+            (repo / "src").mkdir(parents=True)
+            (repo / "Cargo.toml").write_text('[package]\nname="fixture"\nversion="0.1.0"\nedition="2021"\n')
+            (repo / "Cargo.lock").write_text('version = 3\n[[package]]\nname="fixture"\nversion="0.1.0"\n')
+            (repo / "src/lib.rs").write_text("pub fn value() -> u8 { 1 }\n")
+            log = root / "stderr.txt"
+            with open(log, "wb") as stderr:
+                child = subprocess.Popen(["python3", str(helper), str(repo), str(root / "home"), "--desktop-parent"],
+                                         cwd="/", env=dict(os.environ, RUSTUP_AUTO_INSTALL="0"),
+                                         stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=stderr,
+                                         start_new_session=True)
+                try:
+                    child.wait(timeout=300)
+                finally:
+                    child.stdin.close()
+            self.assertEqual(child.returncode, 0, log.read_text(errors="replace")[-2000:])
+            self.assertEqual(len(list((root / "home").glob("data/agentic/cargo-prepared/*/prepared.json"))), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -655,7 +655,7 @@ pub async fn soul_toggle(
 
 /// An Ollama cloud tag selected as a local model: refused, because Ollama
 /// would forward the local prompt to ollama.com (`ollama::cloud_tag`).
-fn ollama_cloud_refusal() -> ApiError {
+pub(super) fn ollama_cloud_refusal() -> ApiError {
     ApiError::new(
         StatusCode::UNPROCESSABLE_ENTITY,
         "MODEL_SELECTION_REJECTED",
@@ -1384,9 +1384,11 @@ pub(crate) async fn chat_inner(
     };
     // Earlier reads from the session's ledger, for web turns only (off unless
     // web.carry_forward_sources is above 0).
-    let web_reads = (!cloud_selected && chat_tools)
-        .then(|| crate::server::web_ledger::carried_web_reads(&web, &session, web.limits.carry_forward_sources))
-        .flatten();
+    let web_reads = if !cloud_selected && chat_tools {
+        crate::server::web_ledger::carried_web_reads(&web, &session, web.limits.carry_forward_sources).await
+    } else {
+        None
+    };
     // Local chat turns send what varies with each message (manual excerpts,
     // retrieved facts, attachment excerpts, a staged /diag excerpt) fenced
     // ahead of the new message instead of in the system prompt, so the prompt

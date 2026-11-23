@@ -508,9 +508,13 @@ pub async fn preview(
         })
     });
     let manual = manual_query.and_then(|query| state.self_knowledge.select(&query));
-    let web_reads = session.as_ref().filter(|_| chat_web_mode.enabled()).and_then(|s| {
-        crate::server::web_ledger::carried_web_reads(&state.web, s, state.runtime_limits().web.carry_forward_sources)
-    });
+    let web_reads = match session.as_ref().filter(|_| chat_web_mode.enabled()) {
+        Some(s) => {
+            let rows = state.runtime_limits().web.carry_forward_sources;
+            crate::server::web_ledger::carried_web_reads(&state.web, s, rows).await
+        }
+        None => None,
+    };
     let inputs = PromptInputs {
         selected_skills: &selected,
         soul_enabled: settings.soul_enabled && chat_policy.persona,

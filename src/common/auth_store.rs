@@ -15,6 +15,12 @@ use super::config::AppConfig;
 use super::errors::{HarnessError, Result};
 
 pub const BOOTSTRAP_USERNAME: &str = "admin";
+/// Accounts one store holds. `create_user` refuses the next one; loading or
+/// persisting a store past it fails closed (`sqlite::validate`).
+const MAX_USERS: usize = 128;
+/// Live sign-in sessions across every account, split the same way:
+/// `create_session` refuses the next one, `sqlite::validate` a store past it.
+const MAX_LIVE_SESSIONS: usize = 4096;
 const DEFAULT_IDLE_TIMEOUT_SEC: f64 = 43200.0;
 const DEFAULT_ABSOLUTE_TIMEOUT_SEC: f64 = 604800.0;
 const DEFAULT_RESTRICTED_IDLE_TIMEOUT_SEC: f64 = 600.0;
@@ -434,7 +440,7 @@ impl AuthManager {
         let record = authn::hash_password(password)?;
         let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let mut db = stored.1.clone();
-        if db.users.len() >= 128 {
+        if db.users.len() >= MAX_USERS {
             return Err(HarnessError::new("AUTH_LIMIT", "account limit reached"));
         }
         if db.users.contains_key(&canonical) {
@@ -660,13 +666,6 @@ impl AuthManager {
         let current = Self::credential(&canonical, &checked, current);
         // One check on every path, a disabled account's included, as at sign-in.
         let (ok, _) = verify(&current, &checked.password_hash);
-        // A forced change must actually change the credential: the setup code
-        // has been on screen and in a file, so it may not become the password.
-        if ok && Self::credential(&canonical, &checked, password) == current {
-            return Err(HarnessError::password_policy(
-                "the new password must differ from the current one",
-            ));
-        }
         let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let mut db = stored.1.clone();
         // Recorded at the time read under the lock, as `login_with` does.
@@ -694,6 +693,15 @@ impl AuthManager {
             self.persist(&mut stored, &db)?;
             return Err(HarnessError::auth_login_failed());
         }
+        // A forced change must actually change the credential: the setup code
+        // has been on screen and in a file, so it may not become the password.
+        // Refused only after the lockout recheck above, so a right guess made
+        // while a lockout started is not told apart from a wrong one.
+        if Self::credential(&canonical, &checked, password) == current {
+            return Err(HarnessError::password_policy(
+                "the new password must differ from the current one",
+            ));
+        }
         user.password_hash = record;
         user.must_change_password = false;
         user.failed_count = 0;
@@ -710,7 +718,7 @@ impl AuthManager {
             self.session_limits(db.users.get(username).is_some_and(|u| u.must_change_password));
         db.sessions
             .retain(|_, row| !row.revoked && row.expires_ts > now && row.last_seen_ts + self.idle_timeout_sec > now);
-        if db.sessions.len() >= 4096 {
+        if db.sessions.len() >= MAX_LIVE_SESSIONS {
             return Err(HarnessError::new("AUTH_LIMIT", "active session limit reached"));
         }
         let session_id = authn::new_session_id();
@@ -1036,6 +1044,55 @@ mod tests {
         (dir, auth)
     }
 
+    /// Admission stops exactly at each cap, before any write. The snapshot is
+    /// filled directly: one scrypt hash, not one per account.
+    #[test]
+    fn admission_refuses_the_account_and_the_session_past_each_cap() {
+        let (_dir, auth) = store();
+        let password = crate::common::random_hex(24);
+        auth.create_user("alice", &password, "admin").unwrap();
+        let fill = |users: usize, sessions: usize| {
+            let mut stored = auth.state.lock().unwrap();
+            let template = stored.1.users["alice"].clone();
+            for n in 0..users - stored.1.users.len() {
+                let user_id = crate::common::random_hex(16);
+                stored.1.users.insert(
+                    format!("user{n}"),
+                    UserRow {
+                        user_id,
+                        ..template.clone()
+                    },
+                );
+            }
+            let now = auth.now();
+            for _ in 0..sessions - stored.1.sessions.len() {
+                let row = SessionRow {
+                    username: "alice".into(),
+                    csrf_hash: crate::common::random_hex(32),
+                    created_ts: now,
+                    last_seen_ts: now,
+                    expires_ts: now + 3600.0,
+                    revoked: false,
+                };
+                stored.1.sessions.insert(crate::common::random_hex(32), row);
+            }
+        };
+        let code = |r: Result<String>| r.map(|_| ()).unwrap_err().code;
+
+        fill(MAX_USERS - 1, 0);
+        auth.create_user("last", &password, "operator").unwrap();
+        assert_eq!(auth.state.lock().unwrap().1.users.len(), MAX_USERS);
+        assert_eq!(code(auth.create_user("one-more", &password, "operator")), "AUTH_LIMIT");
+        assert!(auth.get_user("one-more").is_none(), "a refused account is not kept");
+
+        fill(MAX_USERS, MAX_LIVE_SESSIONS - 1);
+        auth.login("alice", &password).unwrap();
+        assert_eq!(auth.state.lock().unwrap().1.sessions.len(), MAX_LIVE_SESSIONS);
+        let refused = auth.login("alice", &password).map(|_| String::new());
+        assert_eq!(code(refused), "AUTH_LIMIT");
+        assert_eq!(auth.state.lock().unwrap().1.sessions.len(), MAX_LIVE_SESSIONS);
+    }
+
     /// A password check that runs `change` before it answers, as another
     /// request can while the lock is released.
     fn check_then<'a>(change: impl Fn() + 'a) -> impl Fn(&str, &str) -> (bool, bool) + 'a {
@@ -1232,6 +1289,22 @@ mod tests {
         assert_eq!(error.code, "AUTH_ACCOUNT_LOCKED");
         assert_eq!(live_sessions(&auth, "bob"), 0);
         auth.login("bob", &password).unwrap_err();
+
+        // The same overlap with the current password sent as the new one: a
+        // right guess gets the lockout too, not "must differ", so the refusal
+        // does not tell it apart from a wrong one.
+        let (_dir, auth) = store();
+        auth.create_user("carol", &password, "operator").unwrap();
+        for _ in 0..4 {
+            auth.login("carol", &wrong).unwrap_err();
+        }
+        let another_failure = || {
+            auth.login("carol", &wrong).unwrap_err();
+        };
+        let error = auth
+            .change_password_with("carol", &password, &password, check_then(another_failure))
+            .unwrap_err();
+        assert_eq!(error.code, "AUTH_ACCOUNT_LOCKED");
     }
 
     #[test]

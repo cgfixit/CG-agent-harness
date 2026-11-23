@@ -137,11 +137,16 @@ fn start_blocking(
     // refuses loop turns: such a run could only fail, so the start refuses
     // with the turn's own code before the goal is saved. `chat_inner` still
     // checks each turn, for a selection made after the start.
-    if state.cloud_chat.is_cloud_selection(&state.current_model()) {
+    let model = state.current_model();
+    if state.cloud_chat.is_cloud_selection(&model) {
         return Err(ApiError::bad_request(
             "CLOUD_CHAT_LOOP",
             "cloud chat is unavailable for /loop turns",
         ));
+    }
+    // So does a configured or saved Ollama cloud tag: each turn refuses it.
+    if crate::llm::ollama::cloud_tag(&model) {
+        return Err(super::core::ollama_cloud_refusal());
     }
     // A goal or web mode on a valid request persists on the session first,
     // exactly like the console's `/loop <goal>` does before it starts turning.

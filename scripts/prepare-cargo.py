@@ -31,7 +31,9 @@ def main():
         if os.name != "posix" or os.getpgrp() != os.getpid():
             raise SystemExit("desktop preparation requires its own process group")
         def parent_watch():
-            sys.stdin.buffer.read(1)
+            # Raw fd read: a daemon thread parked in sys.stdin.buffer holds its
+            # lock, so interpreter shutdown aborted (SIGABRT) after success.
+            os.read(0, 1)
             os.killpg(os.getpgrp(), signal.SIGTERM)
         threading.Thread(target=parent_watch, daemon=True).start()
     repo = args.repository.resolve(strict=True)
