@@ -542,3 +542,36 @@ async fn an_ollama_cloud_tag_is_refused_as_a_local_model() {
     let (status, _) = s.post_json("/api/chat", json!({"message": "hello"})).await;
     assert_eq!(status, 200, "a local turn still runs");
 }
+
+/// A cloud tag cannot be selected, but a configured one is still the model a
+/// server starts on. A `/loop` start then refuses with the turn's own code
+/// before it saves the goal or registers a run that could only fail.
+#[tokio::test]
+async fn a_loop_start_on_a_configured_ollama_cloud_tag_saves_no_goal() {
+    let model = start_mock_model().await;
+    let mut options = ServerOptions::default();
+    options
+        .overrides
+        .push(("models.local_llm.model".into(), "glm-4.6:cloud".into()));
+    let s = spawn_server(&model.base_url(), options).await;
+    let (_, created) = s.post_json("/api/sessions", json!({})).await;
+    let (status, body) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id":created["session_id"],"goal":"LOOP_GOAL_CANARY","max_turns":1}),
+        )
+        .await;
+    assert_eq!(status, 422, "{body}");
+    assert_eq!(body["detail"]["code"], "MODEL_SELECTION_REJECTED", "{body}");
+    let session_path = format!("/api/sessions/{}", created["session_id"].as_str().unwrap());
+    assert_eq!(
+        s.get_json(&session_path).await.1["goal"],
+        "",
+        "a refused start persisted its goal"
+    );
+    assert!(
+        !s.audit_log().contains("loop_run_started"),
+        "a refused start registered a run"
+    );
+    assert!(model.requests.lock().unwrap().is_empty(), "no turn reached the model");
+}

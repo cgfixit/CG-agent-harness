@@ -138,6 +138,16 @@ async fn prepare(
     // loaded here, outside the task's time, and a window too small for a task's
     // prompt is refused; Ollama would cut the prompt without saying so.
     let model = task_model(&state.backend.source, state.local_memory_model());
+    // A configured or saved Ollama cloud tag would send the task and every page
+    // observation to ollama.com. The child refuses one too; this says why first.
+    if runs_on_cloud_tag(model.as_deref(), &cfg.str_or("models.local_llm.model", "")) {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "MODEL_SELECTION_REJECTED",
+            "Ollama cloud models (a :cloud or -cloud tag) send the prompt to ollama.com; a browser task needs a \
+             local model. Nothing was started; choose one with /model use.",
+        ));
+    }
     if let Some(model) = &model {
         if state
             .ensure_window_allows(model, TASK_PROMPT_TOKENS, 0, false)
@@ -835,6 +845,12 @@ fn task_model(backend_source: &str, model: String) -> Option<String> {
     (backend_source == "primary" && !model.trim().is_empty()).then_some(model)
 }
 
+/// Whether the child would chat on an Ollama cloud tag: the model it is told to
+/// use, or else the configured one it reads itself.
+fn runs_on_cloud_tag(task_model: Option<&str>, configured: &str) -> bool {
+    crate::llm::ollama::cloud_tag(task_model.unwrap_or(configured))
+}
+
 /// Seconds the child gets of `browser.timeout_sec`: the rest is for closing
 /// Chrome and printing the report before the runner stops the process tree.
 fn child_deadline_sec(timeout_sec: u64) -> u64 {
@@ -922,6 +938,20 @@ mod tests {
         );
         assert_eq!(task_model("fallback", "lmstudio-tag".into()), None);
         assert_eq!(task_model("primary", " ".into()), None);
+    }
+
+    #[test]
+    fn a_task_that_would_chat_on_an_ollama_cloud_tag_is_refused() {
+        assert!(runs_on_cloud_tag(Some("glm-4.6:cloud"), "qwen3:8b"));
+        assert!(
+            runs_on_cloud_tag(None, "gpt-oss:120b-cloud"),
+            "a fallback backend reads the config"
+        );
+        assert!(
+            !runs_on_cloud_tag(Some("qwen3:8b"), "gpt-oss:120b-cloud"),
+            "the child is told the local tag"
+        );
+        assert!(!runs_on_cloud_tag(None, "qwen3:8b"));
     }
 
     #[test]
