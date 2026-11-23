@@ -172,20 +172,21 @@ fn path_filters_cover_both_events_and_actions_are_pinned_shas() {
     assert!(text.contains("bash scripts/netconnect-syscall-proof.sh --binary target/debug/cgagentharness"));
     assert!(!text.contains("continue-on-error"));
 
+    // Walk the parsed steps: a scan for lines that start with `uses:` never
+    // matched the `- uses:` step form, so it checked nothing and passed.
     let known = pinned_shas();
     assert!(!known.is_empty());
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("uses:") {
-            let uses = rest.trim();
-            let sha = uses
-                .split('@')
-                .nth(1)
-                .and_then(|value| value.split_whitespace().next())
-                .unwrap_or("");
+    let mut checked = 0;
+    for job in doc.get("jobs").and_then(Value::as_mapping).expect("jobs").values() {
+        let steps = job.get("steps").and_then(Value::as_sequence).expect("job steps");
+        for uses in steps.iter().filter_map(|step| step.get("uses")) {
+            let uses = uses.as_str().expect("uses string");
+            let sha = uses.split_once('@').map_or("", |(_, sha)| sha);
             assert_eq!(sha.len(), 40, "{uses}");
             assert!(sha.chars().all(|c| c.is_ascii_hexdigit()), "{uses}");
             assert!(known.contains(sha), "{sha} is not already used in this repo");
+            checked += 1;
         }
     }
+    assert!(checked > 0, "no step `uses:` was checked");
 }
