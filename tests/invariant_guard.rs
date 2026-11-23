@@ -2183,8 +2183,9 @@ fn agent_run_and_jobs_share_prepare_run() {
     );
 }
 
-/// One function the async-blocking scan read: what it calls directly and by bare name,
-/// with closure bodies left out (a closure is how work reaches `off_worker`/`spawn_blocking`).
+/// One function the async-blocking scan read: what it calls directly and by bare name. A closure
+/// handed to the blocking pool (`off_worker`, `spawn_blocking` or a [`pool_wrappers`] helper) is
+/// left out; any other closure, and each `select!` or `join!` arm, is read as the function's own.
 #[derive(Default)]
 struct BlockingFacts {
     file: String,
@@ -2194,12 +2195,26 @@ struct BlockingFacts {
     callees: std::collections::BTreeSet<String>,
 }
 
-struct BlockingScan {
+struct BlockingScan<'p> {
     file: String,
     stack: Vec<BlockingFacts>,
     closure: usize,
     out: Vec<BlockingFacts>,
+    /// Calls whose closure argument runs on the blocking pool.
+    pool: &'p std::collections::BTreeSet<String>,
+    /// Set while the next closure visited is an argument of one of those calls.
+    pool_arg: bool,
 }
+
+/// Method calls that park the thread whatever their receiver: SQLite, tempfile creation, fsync.
+const BLOCKING_METHODS: &[&str] = &[
+    "query_row",
+    "execute_batch",
+    "tempfile",
+    "tempfile_in",
+    "sync_all",
+    "sync_data",
+];
 
 fn is_test_item(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|a| {
@@ -2220,7 +2235,8 @@ fn is_test_item(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
-/// The calls that park the thread they run on: file system, SQLite open and the password hash.
+/// The calls that park the thread they run on: file system (std, cap_std, tempfile), SQLite open
+/// and the password hash.
 fn blocking_call(path: &syn::Path) -> Option<String> {
     const FS: &[&str] = &[
         "read",
@@ -2256,6 +2272,8 @@ fn blocking_call(path: &syn::Path) -> Option<String> {
         ("fs", f) if FS.contains(&f) => true,
         ("File", "open" | "create") | ("OpenOptions", "new") => true,
         ("Connection", "open" | "open_in_memory") => true,
+        // The persona read in #1007 opened a cap_std directory; the task file in #1046 was a tempfile.
+        ("Dir", "open_ambient_dir") | ("NamedTempFile", "new" | "new_in") | ("tempfile", "tempfile") => true,
         (_, h) if HASH.contains(&h) => true,
         _ => false,
     };
@@ -2268,9 +2286,18 @@ fn blocking_call(path: &syn::Path) -> Option<String> {
     })
 }
 
-impl BlockingScan {
+impl BlockingScan<'_> {
     fn live(&self) -> bool {
         self.closure == 0 && !self.stack.is_empty()
+    }
+    /// Visit a pool call's arguments: a closure among them runs on the pool, not here.
+    fn visit_pool_args<'ast>(&mut self, args: impl IntoIterator<Item = &'ast syn::Expr>) {
+        use syn::visit::Visit;
+        for arg in args {
+            self.pool_arg = matches!(arg, syn::Expr::Closure(_));
+            self.visit_expr(arg);
+            self.pool_arg = false;
+        }
     }
     fn enter(&mut self, name: String, is_async: bool, walk: impl FnOnce(&mut Self)) {
         let saved = std::mem::replace(&mut self.closure, 0);
@@ -2287,7 +2314,7 @@ impl BlockingScan {
     }
 }
 
-impl<'ast> syn::visit::Visit<'ast> for BlockingScan {
+impl<'ast> syn::visit::Visit<'ast> for BlockingScan<'_> {
     fn visit_item_mod(&mut self, m: &'ast syn::ItemMod) {
         if !is_test_item(&m.attrs) {
             syn::visit::visit_item_mod(self, m);
@@ -2308,27 +2335,237 @@ impl<'ast> syn::visit::Visit<'ast> for BlockingScan {
         }
     }
     fn visit_expr_closure(&mut self, c: &'ast syn::ExprClosure) {
-        self.closure += 1;
+        // Only a closure handed to the pool leaves this function. `(|| ..)()` and `.then(|| ..)`
+        // run right here: #1007's persona read and the carried-reads policy read sat in those.
+        let pooled = usize::from(std::mem::take(&mut self.pool_arg));
+        self.closure += pooled;
         syn::visit::visit_expr_closure(self, c);
-        self.closure -= 1;
+        self.closure -= pooled;
     }
     fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
-        if let (true, syn::Expr::Path(p)) = (self.live(), &*c.func) {
+        let mut pooled = false;
+        if let syn::Expr::Path(p) = &*c.func {
+            if let Some(last) = p.path.segments.last() {
+                pooled = self.pool.contains(&last.ident.to_string());
+                if self.live() {
+                    let top = self.stack.last_mut().unwrap();
+                    top.direct.extend(blocking_call(&p.path));
+                    top.callees.insert(last.ident.to_string());
+                }
+            }
+        }
+        if pooled {
+            self.visit_expr(&c.func);
+            self.visit_pool_args(&c.args);
+        } else {
+            syn::visit::visit_expr_call(self, c);
+        }
+    }
+    fn visit_expr_method_call(&mut self, c: &'ast syn::ExprMethodCall) {
+        let method = c.method.to_string();
+        if self.live() {
             let top = self.stack.last_mut().unwrap();
-            top.direct.extend(blocking_call(&p.path));
-            top.callees.extend(p.path.segments.last().map(|s| s.ident.to_string()));
+            if BLOCKING_METHODS.contains(&method.as_str()) {
+                top.direct.push(format!(".{method}"));
+            }
+            top.callees.insert(method.clone());
+        }
+        if self.pool.contains(&method) {
+            self.visit_expr(&c.receiver);
+            self.visit_pool_args(&c.args);
+        } else {
+            syn::visit::visit_expr_method_call(self, c);
+        }
+    }
+    fn visit_macro(&mut self, m: &'ast syn::Macro) {
+        // A macro body is a token stream to syn. Long async fns run their main work inside
+        // `tokio::select!` (chat_inner's turn does), so its arms and `join!`'s are parsed and read.
+        let name = m.path.segments.last().map(|s| s.ident.to_string()).unwrap_or_default();
+        let arms = match name.as_str() {
+            "select" => m.parse_body_with(select_arms).ok(),
+            "join" | "try_join" => m
+                .parse_body_with(syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated)
+                .ok()
+                .map(|exprs| exprs.into_iter().collect()),
+            _ => None,
+        };
+        for arm in arms.iter().flatten() {
+            self.visit_expr(arm);
+        }
+    }
+}
+
+/// The expressions in a `tokio::select!` body: each branch's future, its `if` precondition and
+/// its handler (`biased;` and `else` are skipped). A body this cannot read stays unread.
+fn select_arms(input: syn::parse::ParseStream) -> syn::Result<Vec<syn::Expr>> {
+    let mut out = Vec::new();
+    if input.peek(syn::Ident) && input.fork().parse::<syn::Ident>()? == "biased" {
+        input.parse::<syn::Ident>()?;
+        input.parse::<syn::Token![;]>()?;
+    }
+    while !input.is_empty() {
+        if input.peek(syn::Token![else]) {
+            input.parse::<syn::Token![else]>()?;
+        } else {
+            syn::Pat::parse_multi_with_leading_vert(input)?;
+            input.parse::<syn::Token![=]>()?;
+            out.push(input.call(syn::Expr::parse_without_eager_brace)?);
+            if input.peek(syn::Token![,]) {
+                input.parse::<syn::Token![,]>()?;
+                input.parse::<syn::Token![if]>()?;
+                out.push(input.call(syn::Expr::parse_without_eager_brace)?);
+            }
+        }
+        input.parse::<syn::Token![=>]>()?;
+        out.push(input.parse()?);
+        if input.peek(syn::Token![,]) {
+            input.parse::<syn::Token![,]>()?;
+        }
+    }
+    Ok(out)
+}
+
+/// Whether a type or bound names `Fn`, `FnOnce` or `FnMut`.
+#[derive(Default)]
+struct NamesFn(bool);
+
+impl<'ast> syn::visit::Visit<'ast> for NamesFn {
+    fn visit_path_segment(&mut self, s: &'ast syn::PathSegment) {
+        self.0 |= s.ident == "Fn" || s.ident == "FnOnce" || s.ident == "FnMut";
+        syn::visit::visit_path_segment(self, s);
+    }
+}
+
+/// The parameters of `sig` that take a closure: `impl Fn..`, `&dyn Fn..` or a generic bounded by one.
+fn closure_params(sig: &syn::Signature) -> std::collections::BTreeSet<String> {
+    use syn::visit::Visit;
+    let bounded = |bounds: &syn::punctuated::Punctuated<syn::TypeParamBound, syn::Token![+]>| {
+        let mut v = NamesFn::default();
+        bounds.iter().for_each(|b| v.visit_type_param_bound(b));
+        v.0
+    };
+    let mut generic = std::collections::BTreeSet::new();
+    for param in &sig.generics.params {
+        if let syn::GenericParam::Type(t) = param {
+            if bounded(&t.bounds) {
+                generic.insert(t.ident.to_string());
+            }
+        }
+    }
+    for pred in sig.generics.where_clause.iter().flat_map(|w| &w.predicates) {
+        if let syn::WherePredicate::Type(t) = pred {
+            if let (true, syn::Type::Path(p)) = (bounded(&t.bounds), &t.bounded_ty) {
+                generic.extend(p.path.get_ident().map(|i| i.to_string()));
+            }
+        }
+    }
+    let mut out = std::collections::BTreeSet::new();
+    for input in &sig.inputs {
+        let syn::FnArg::Typed(t) = input else { continue };
+        let named_generic = matches!(&*t.ty, syn::Type::Path(p)
+            if p.path.get_ident().is_some_and(|i| generic.contains(&i.to_string())));
+        let mut v = NamesFn::default();
+        v.visit_type(&t.ty);
+        if let (true, syn::Pat::Ident(id)) = (named_generic || v.0, &*t.pat) {
+            out.insert(id.ident.to_string());
+        }
+    }
+    out
+}
+
+/// Every identifier an expression mentions.
+#[derive(Default)]
+struct Idents(std::collections::BTreeSet<String>);
+
+impl<'ast> syn::visit::Visit<'ast> for Idents {
+    fn visit_ident(&mut self, i: &'ast syn::Ident) {
+        self.0.insert(i.to_string());
+    }
+}
+
+/// Every call in one function body (nested fns skipped): the callee's last name and the
+/// identifiers its arguments mention.
+#[derive(Default)]
+struct CallArgs(Vec<(String, std::collections::BTreeSet<String>)>);
+
+impl CallArgs {
+    fn push<'a>(&mut self, callee: String, args: impl IntoIterator<Item = &'a syn::Expr>) {
+        use syn::visit::Visit;
+        let mut idents = Idents::default();
+        args.into_iter().for_each(|a| idents.visit_expr(a));
+        self.0.push((callee, idents.0));
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for CallArgs {
+    fn visit_item_fn(&mut self, _: &'ast syn::ItemFn) {}
+    fn visit_expr_call(&mut self, c: &'ast syn::ExprCall) {
+        if let syn::Expr::Path(p) = &*c.func {
+            if let Some(last) = p.path.segments.last() {
+                self.push(last.ident.to_string(), &c.args);
+            }
         }
         syn::visit::visit_expr_call(self, c);
     }
     fn visit_expr_method_call(&mut self, c: &'ast syn::ExprMethodCall) {
-        if self.live() {
-            let top = self.stack.last_mut().unwrap();
-            if c.method == "query_row" || c.method == "execute_batch" {
-                top.direct.push(format!(".{}", c.method));
-            }
-            top.callees.insert(c.method.to_string());
-        }
+        self.push(c.method.to_string(), &c.args);
         syn::visit::visit_expr_method_call(self, c);
+    }
+}
+
+/// Each function that takes a closure: its name, those parameters and the calls its body makes.
+#[derive(Default)]
+struct ClosureTakers(Vec<(String, std::collections::BTreeSet<String>, CallArgs)>);
+
+impl ClosureTakers {
+    fn add(&mut self, sig: &syn::Signature, body: &syn::Block) {
+        use syn::visit::Visit;
+        let params = closure_params(sig);
+        if !params.is_empty() {
+            let mut calls = CallArgs::default();
+            calls.visit_block(body);
+            self.0.push((sig.ident.to_string(), params, calls));
+        }
+    }
+}
+
+impl<'ast> syn::visit::Visit<'ast> for ClosureTakers {
+    fn visit_item_fn(&mut self, f: &'ast syn::ItemFn) {
+        self.add(&f.sig, &f.block);
+        syn::visit::visit_item_fn(self, f);
+    }
+    fn visit_impl_item_fn(&mut self, f: &'ast syn::ImplItemFn) {
+        self.add(&f.sig, &f.block);
+        syn::visit::visit_impl_item_fn(self, f);
+    }
+}
+
+/// The calls whose closure argument runs on the blocking pool: the entry points, plus every
+/// function that passes one of its own closure parameters into such a call (to a fixed point),
+/// as `commit_setting` and `account_change` do. A function that takes a closure and runs it
+/// inline, like `web_research::run_with`'s `on_start`, is not one.
+fn pool_wrappers(files: &[syn::File]) -> std::collections::BTreeSet<String> {
+    use syn::visit::Visit;
+    let mut takers = ClosureTakers::default();
+    files.iter().for_each(|f| takers.visit_file(f));
+    // A thread's closure runs off the async workers too; `tokio::spawn` takes a future, not a closure.
+    let mut pool: std::collections::BTreeSet<String> = ["spawn_blocking", "block_in_place", "off_worker", "spawn"]
+        .map(String::from)
+        .into();
+    loop {
+        let before = pool.len();
+        for (name, params, calls) in &takers.0 {
+            let hands_over = calls
+                .0
+                .iter()
+                .any(|(callee, args)| callee != name && pool.contains(callee) && !args.is_disjoint(params));
+            if hands_over {
+                pool.insert(name.clone());
+            }
+        }
+        if pool.len() == before {
+            return pool;
+        }
     }
 }
 
@@ -2338,16 +2575,22 @@ impl<'ast> syn::visit::Visit<'ast> for BlockingScan {
 fn async_blocking_violations(sources: &[(String, String)]) -> Vec<String> {
     use std::collections::BTreeMap;
     use syn::visit::Visit;
+    let files: Vec<syn::File> = sources
+        .iter()
+        .map(|(path, text)| syn::parse_file(text).unwrap_or_else(|e| panic!("{path} does not parse as Rust: {e}")))
+        .collect();
+    let pool = pool_wrappers(&files);
     let mut facts = Vec::new();
-    for (path, text) in sources {
-        let file = syn::parse_file(text).unwrap_or_else(|e| panic!("{path} does not parse as Rust: {e}"));
+    for ((path, _), file) in sources.iter().zip(&files) {
         let mut scan = BlockingScan {
             file: path.clone(),
             stack: Vec::new(),
             closure: 0,
             out: Vec::new(),
+            pool: &pool,
+            pool_arg: false,
         };
-        scan.visit_file(&file);
+        scan.visit_file(file);
         facts.extend(scan.out);
     }
     let mut defs: BTreeMap<&str, usize> = BTreeMap::new();
@@ -2449,6 +2692,44 @@ fn the_async_blocking_scan_reads_what_it_claims_to() {
     // A sync fn that blocks is fine on its own.
     assert!(flagged("fn a() { std::fs::read(p); }").is_empty());
     assert!(flagged("async fn a() { let x = hash_password(p); }") == ["x.rs :: a"]);
+    // Shapes the earlier scan passed, from real fixes. A closure not handed to the pool runs
+    // here: #1007's persona read sat in `(|| ..)()` through a cap_std directory, and the
+    // carried-reads policy read in `.then(|| ..)`.
+    let persona = "fn load_text() { let r = (|| cap_std::fs::Dir::open_ambient_dir(p, a))(); }";
+    assert_eq!(
+        flagged(&format!("{persona} async fn a() {{ on.then(|| load_text()); }}")),
+        ["x.rs :: a"]
+    );
+    // #1046: the /browse task file was a tempfile written from a sync helper.
+    let task_file = "fn write_task_file() { tempfile::Builder::new().prefix(\"t\").tempfile(); }";
+    assert_eq!(
+        flagged(&format!("{task_file} async fn a() {{ write_task_file(); }}")),
+        ["x.rs :: a"]
+    );
+    // A `select!` arm and a `join!` argument are the function's own work.
+    assert_eq!(
+        flagged("async fn a() { tokio::select! { r = f() => { std::fs::read(p); } _ = c.cancelled() => {} } }"),
+        ["x.rs :: a"]
+    );
+    assert_eq!(
+        flagged("async fn a() { tokio::join!(f(), async { std::fs::read(p) }); }"),
+        ["x.rs :: a"]
+    );
+    // A helper that passes its closure parameter to the pool is a pool entry point, as a method
+    // too; one that runs its closure inline is not.
+    let wrapper = "async fn on_store<T>(work: impl FnOnce() -> T) -> T { off_worker(move || work()).await }";
+    assert!(flagged(&format!(
+        "{wrapper} async fn a() {{ on_store(|| std::fs::read(p)).await; }}"
+    ))
+    .is_empty());
+    assert!(flagged("async fn a(w: W) { w.off_worker(move |web, _| std::fs::read(p)).await; }").is_empty());
+    let inline = "async fn run_with(on_start: impl FnOnce()) { on_start(); spawn_blocking(|| 1).await; }";
+    assert_eq!(
+        flagged(&format!(
+            "{inline} async fn a() {{ run_with(|| {{ std::fs::read(p); }}).await; }}"
+        )),
+        ["x.rs :: a"]
+    );
 }
 
 /// What one closure body mentions, for the owner-recheck scan.

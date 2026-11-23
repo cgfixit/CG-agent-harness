@@ -321,8 +321,9 @@ pub fn carry_forward(
 }
 
 /// [`carry_forward`] for `session` under the URL policy as it stands now. With
-/// web off or no readable policy, no fetched page is listed.
-pub fn carried_web_reads(
+/// web off or no readable policy, no fetched page is listed. The policy file is
+/// read on the blocking pool, not on the turn's async worker.
+pub async fn carried_web_reads(
     web: &super::web_search::WebTool,
     session: &super::sessions::Session,
     rows: usize,
@@ -330,7 +331,11 @@ pub fn carried_web_reads(
     if rows == 0 || session.web_sources.is_empty() {
         return None;
     }
-    let policy = web.require_enabled(true).ok();
+    let policy = web
+        .off_worker(|web, _| Ok(web.require_enabled(true).ok()))
+        .await
+        .ok()
+        .flatten();
     carry_forward(&session.web_sources, &session.goal, rows, |url| {
         policy.as_ref().is_some_and(|p| p.authorize(url, None).is_ok())
     })
