@@ -4,7 +4,8 @@
 release.yml runs this with the GitHub Actions environment. Run by hand outside
 Actions, it previews the next release of main exactly like a manual dispatch
 with publish=false: `python3 scripts/release-plan.py` (needs `gh auth login`).
-Set GITHUB_EVENT_NAME=schedule to see what the next scheduled run would decide.
+Set GITHUB_EVENT_NAME=workflow_run to see what a green Bundle run on main's
+tip would decide.
 Nothing here ever publishes.
 """
 import json
@@ -44,7 +45,7 @@ def on_main(compare):
 
 
 def plan(event, ref, publish, sha, tree, latest, latest_tree, tags, releases, bundle_ok=True,
-         reachable_from_main=False):
+         reachable_from_main=False, superseded=False):
     stable = r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
     if not re.fullmatch(r"[0-9a-f]{40}", sha):
         raise ValueError("Expected an exact source commit")
@@ -65,8 +66,8 @@ def plan(event, ref, publish, sha, tree, latest, latest_tree, tags, releases, bu
             raise ValueError("Tag releases must be newer than the latest release")
         changed = True
         enabled = True
-    elif event in ("schedule", "workflow_dispatch"):
-        enabled = event == "schedule" or publish == "true"
+    elif event in ("workflow_run", "workflow_dispatch"):
+        enabled = event == "workflow_run" or publish == "true"
         if enabled and ref != "refs/heads/main":
             raise ValueError("Automatic/manual publication must run on main")
         if current is None:
@@ -81,9 +82,12 @@ def plan(event, ref, publish, sha, tree, latest, latest_tree, tags, releases, bu
         raise ValueError("Unsupported release event")
     if changed and tag in releases:
         raise ValueError(f"Release already exists (including drafts): {tag}")
-    ready = changed and enabled and (bundle_ok if require_bundle else True)
+    # A green Bundle for a commit main has since moved past is skipped, not
+    # failed: the newer tip gets its own Bundle run and release.
+    ready = changed and enabled and (bundle_ok if require_bundle else True) and not superseded
     return {"tag": tag, "source_sha": sha, "changed": str(changed).lower(),
             "bundle_ok": str(bool(bundle_ok)).lower(),
+            "superseded": str(bool(superseded)).lower(),
             "should_release": str(ready).lower()}
 
 
@@ -104,10 +108,16 @@ def main():
     else:
         sha = api(f"{prefix}/commits/{quote(setting('GITHUB_REF').removeprefix('refs/heads/'), safe='')}")["sha"]
         print(f"release-plan: local preview of {repo} at {sha} (nothing is published)", file=sys.stderr)
+    event = setting("GITHUB_EVENT_NAME")
+    # For workflow_run, GITHUB_SHA is main's tip when Bundle finished, and
+    # every checkout in the run builds it; the Bundle run names its own commit.
+    tip = sha
+    if event == "workflow_run" and (os.environ.get("RELEASE_SOURCE_SHA") or os.environ.get("GITHUB_ACTIONS") == "true"):
+        sha = setting("RELEASE_SOURCE_SHA")
     latest = api(f"{prefix}/releases/latest")
     latest_tree = api(f"{prefix}/commits/{quote(latest['tag_name'], safe='')}")["commit"]["tree"]["sha"]
     tree = api(f"{prefix}/commits/{sha}")["commit"]["tree"]["sha"]
-    if setting("GITHUB_EVENT_NAME") == "push":
+    if event == "push":
         tag_commit = api(f"{prefix}/commits/{quote(setting('GITHUB_REF'), safe='')}")
         if tag_commit["sha"] != sha:
             raise ValueError("Tag moved away from the verified source commit")
@@ -125,16 +135,15 @@ def main():
             if len(batch) < 100:
                 return values
             page += 1
-    event = setting("GITHUB_EVENT_NAME")
     bundle_ok = True
-    if event in ("schedule", "workflow_dispatch"):
+    if event in ("workflow_run", "workflow_dispatch"):
         runs = api(f"{prefix}/actions/workflows/bundle.yml/runs?head_sha={sha}&status=success&per_page=10")
         bundle_ok = bundle_succeeded(runs, sha)
     result = plan(event, setting("GITHUB_REF"),
                   os.environ.get("PUBLISH", "false"), sha, tree, latest, latest_tree,
                   {t["name"] for t in pages("tags")},
                   {r["tag_name"] for r in pages("releases")},
-                  bundle_ok, reachable)
+                  bundle_ok, reachable, sha != tip)
     print(json.dumps(result, indent=2))
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
