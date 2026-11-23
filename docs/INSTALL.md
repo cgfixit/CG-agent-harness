@@ -673,9 +673,9 @@ credentials, or soul; a later Finder launch uses the normal home. Do not change
 ### Release cadence and finding updates
 
 The app has no built-in updater. The [release
-workflow](../.github/workflows/release.yml) checks changed `main` at **08:17 and
-20:17 UTC** (runs may be delayed) and publishes Latest only for a SHA with a
-successful Bundle run. Manual preview, `v*` tags and cadence changes are in
+workflow](../.github/workflows/release.yml) publishes Latest after each
+successful Bundle run on `main`'s tip whose tree changed, once the `release`
+environment's wait timer passes. Manual preview, `v*` tags and the delay are in
 [releasing](RELEASING.md).
 
 ## 11. Verify your setup
@@ -744,7 +744,7 @@ all targets with provider keys blanked and deterministic model fixtures. Set
 | [Desktop CI](../.github/workflows/desktop.yml), [desktop check](../.github/workflows/desktop-check.yml) | Bundle and release runs build the universal app on Rust 1.90 and verify signatures, checksums and extraction. PRs touching `desktop/`, `src/common/local_tls.rs` or `scripts/start-web.sh` get fmt, Clippy, tests and `cargo deny` without packaging. |
 | [Bundle](../.github/workflows/bundle.yml) | Pushes to `main` only: packages `linux-x86_64` (glibc 2.39+) and `macos-arm64` CLIs beside desktop, re-verifies checksums, tests loopback binding and exit-3 missing configuration. |
 | [Netconnect CI](../.github/workflows/netconnect.yml) | Path-filtered flag, scope and collector tests, plus a Linux `strace` proof that default `netconnect status` opens no packet socket. |
-| [Release](../.github/workflows/release.yml) | Twice daily; publishes only when `main` differs and its SHA has a successful Bundle ([release controls](RELEASING.md)). |
+| [Release](../.github/workflows/release.yml) | After each green Bundle on `main`; publishes when the tree changed, after the `release` environment's timer ([release controls](RELEASING.md)). |
 | Source checks | CodeQL, DevSkim, Gitleaks, PR-template and base-branch checks, the advisory review gate, the telemetry contract and a daily RustSec scan; workflow edits trigger actionlint and zizmor. |
 
 Passing CI does not prove real-model quality, native GUI behavior or notarized
