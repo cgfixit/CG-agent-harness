@@ -1543,7 +1543,12 @@ pub fn run_reach_demo(sidecar: &Path, headless: bool) -> Result<String, String> 
             )
         })
         .collect();
-    let (origin, port) = serve_html(&REACH_PAGE.replace("ENTRIES", &entries))?;
+    // "İ" (U+0130) lowercases to two UTF-16 units, so 200 of them put a
+    // lowercased index 200 units past the same place in the page text.
+    let page = REACH_PAGE
+        .replace("ENTRIES", &entries)
+        .replace("DOTTED_CAPITALS", &"&#304;".repeat(200));
+    let (origin, port) = serve_html(&page)?;
     let session = Session::general([&origin]).map_err(|err| format!("{err:?}"))?;
     let steps = [
         json!({"action":"navigate","url": format!("http://127.0.0.1:{port}/"),"expect":"shows late content"}),
@@ -1555,6 +1560,8 @@ pub fn run_reach_demo(sidecar: &Path, headless: bool) -> Result<String, String> 
         json!({"action":"wait","timeout_ms": 2_500,"expect":"shows TIMER-DONE"}),
         json!({"action":"click","ref_id":"@Notify","expect":"shows alert: Saved draft 7"}),
         json!({"action":"observe","page":3,"expect":"shows RELEASE-MARKER"}),
+        // The excerpt around a match is cut from the page text as written.
+        json!({"action":"observe","find":"dotted-capital","expect":"shows DOTTED-CAPITAL marker"}),
         // Inline markup in a label: the link is named by its text.
         json!({"action":"observe","find":"changelog","expect":"shows Changelog of releases"}),
         json!({"action":"follow_link","ref_id":"@Changelog of releases"}),
@@ -2510,6 +2517,7 @@ const REACH_PAGE: &str = r#"
 ENTRIES
 <p>RELEASE-MARKER 9.9.9</p>
 <a href="/?changelog"><code>Changelog</code> of releases</a>
+<p>DOTTED_CAPITALS DOTTED-CAPITAL marker</p>
 <script>
 fetch('/data').then(() => setTimeout(() => { document.getElementById('late').textContent = 'late content'; }, 300));
 addEventListener('scroll', () => { document.getElementById('lazy').textContent = 'LAZY-LOADED'; }, {once: true});
