@@ -61,7 +61,7 @@ jobs:
           "CGAH_REQUIRE_WINDOWS_CREDENTIALS=1" >> $env:GITHUB_ENV
       - name: Targeted tests this PR fixes
         run: |
-          cargo test --locked --lib server::mcp::config_tests -- --nocapture
+          cargo test --locked --lib server::mcp:: -- --nocapture
           cargo test --locked --test auth_guards browser_tasks_refuse_without_accounts_even_when_enabled -- --nocapture
           cargo test --locked --test secure_portal https_bootstrap_roles_revocation_and_private_web_context -- --nocapture
           cargo test --locked --test diag_routes -- --nocapture
