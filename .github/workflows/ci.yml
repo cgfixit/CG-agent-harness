@@ -2,6 +2,12 @@ name: CI - Rust checks and cross-platform tests
 
 on:
   workflow_call:
+    inputs:
+      # release.yml sets it: the full Windows suite is advisory there, as on
+      # main pushes. The Windows MCP Job Object job stays required everywhere.
+      windows-advisory:
+        type: boolean
+        default: false
   push:
     branches: [main]
   pull_request:
@@ -283,7 +289,7 @@ jobs:
           "CGAH_REQUIRE_WINDOWS_CREDENTIALS=1" >> $env:GITHUB_ENV
       - name: Test
         id: full-test
-        continue-on-error: ${{ runner.os == 'Windows' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        continue-on-error: ${{ runner.os == 'Windows' && (inputs.windows-advisory || github.event_name == 'push' && github.ref == 'refs/heads/main') }}
         # Seatbelt always exists on macOS runners, so the check-sandbox smoke
         # must not skip there. Linux coverage runs in linux-bwrap below.
         run: |
@@ -300,7 +306,7 @@ jobs:
       - name: Report advisory Windows test failure
         if: ${{ success() && steps.full-test.outcome == 'failure' }}
         run: |
-          message='Full Windows test suite failed (advisory on main pushes). See the Test step for details.'
+          message='Full Windows test suite failed (advisory on main pushes and release verification). See the Test step for details.'
           printf '::warning::%s\n' "$message"
           printf '%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
       - name: Public backend lifecycle and chat contracts (no model downloads)

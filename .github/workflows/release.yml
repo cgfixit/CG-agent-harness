@@ -3,8 +3,11 @@ name: Release - Plan, verify and publish
 on:
   push:
     tags: ["v*"]
-  schedule:
-    - cron: "17 8,20 * * *"
+  # Every green Bundle run on main; the plan job's guard and the planner decide.
+  workflow_run: # zizmor: ignore[dangerous-triggers] Bundle runs only on main pushes; plan requires a same-repository push run, and the planner requires its commit to be main's tip, which every checkout here builds
+    workflows: ["Bundle - CLI archives and macOS app"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
       publish:
@@ -12,16 +15,20 @@ on:
         type: boolean
         default: false
 
-# Read-only previews never wait for, or replace, a pending publication.
-# Publication keeps one running and one pending run; newer runs replace pending ones.
-concurrency:
-  group: release-${{ github.event_name == 'workflow_dispatch' && !inputs.publish && format('preview-{0}', github.run_id) || 'publish' }}
-  cancel-in-progress: false
-
+# No workflow-level concurrency: it would queue a newer run behind one waiting
+# on the release environment's timer. The publish job's group lets the newer
+# run replace it; the called ci.yml and desktop.yml keep their own groups.
 permissions: {}
 
 jobs:
   plan:
+    # workflow_run: only a successful push-triggered Bundle on this repository's main.
+    if: >-
+      github.event_name != 'workflow_run' || (
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -40,6 +47,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLISH: ${{ inputs.publish || false }}
+          RELEASE_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
         run: python3 scripts/release-plan.py
 
   # Fail in minutes, not after the full build, when this run's token cannot
@@ -87,6 +95,9 @@ jobs:
     # Job-level local workflow calls resolve at this commit, before any checkout.
     # Keep ./ syntax until actionlint supports GitHub's newer $/ syntax.
     uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
+    with:
+      # Windows is not in the release bundle; MCP Job Object stays required.
+      windows-advisory: true
 
   build:
     needs: verify
@@ -152,6 +163,12 @@ jobs:
   publish:
     needs: [plan, build, desktop]
     runs-on: ubuntu-latest
+    # The environment's wait timer delays publication; a newer run's publish
+    # cancels this one while it waits.
+    environment: release
+    concurrency:
+      group: release-publish
+      cancel-in-progress: true
     timeout-minutes: 10
     permissions:
       contents: write
@@ -164,6 +181,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLISH: ${{ inputs.publish || false }}
+          RELEASE_SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
         run: python3 scripts/release-plan.py
       - name: Require the original plan
         env:
@@ -185,7 +203,7 @@ jobs:
             sha256sum --check --strict "$checksum"
           done
           sha256sum --check --strict SHA256SUMS
-      - name: Attach binaries to the GitHub release
+      - name: Publish the GitHub release as Latest
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.plan.outputs.tag }}
@@ -199,5 +217,4 @@ jobs:
           signed, not Developer ID signed or notarized. Automated checks do not
           establish interactive native UI acceptance on every supported Mac.
           EOF
-          gh release create "$TAG" dist/* --draft --target "$SOURCE_SHA" --title "$TAG" --generate-notes --notes-file release-notes.md --repo "$GITHUB_REPOSITORY"
-          gh release edit "$TAG" --draft=false --prerelease=false --latest --repo "$GITHUB_REPOSITORY"
+          gh release create "$TAG" dist/* --target "$SOURCE_SHA" --title "$TAG" --generate-notes --notes-file release-notes.md --latest --repo "$GITHUB_REPOSITORY"
