@@ -1384,9 +1384,11 @@ pub(crate) async fn chat_inner(
     };
     // Earlier reads from the session's ledger, for web turns only (off unless
     // web.carry_forward_sources is above 0).
-    let web_reads = (!cloud_selected && chat_tools)
-        .then(|| crate::server::web_ledger::carried_web_reads(&web, &session, web.limits.carry_forward_sources))
-        .flatten();
+    let web_reads = if !cloud_selected && chat_tools {
+        crate::server::web_ledger::carried_web_reads(&web, &session, web.limits.carry_forward_sources).await
+    } else {
+        None
+    };
     // Local chat turns send what varies with each message (manual excerpts,
     // retrieved facts, attachment excerpts, a staged /diag excerpt) fenced
     // ahead of the new message instead of in the system prompt, so the prompt
