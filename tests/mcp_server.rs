@@ -409,6 +409,29 @@ fn mint_requires_a_live_owner_and_account_disable_rejects_the_token() {
     assert_eq!(KeyStore::disable_owner_if_initialized(&home, "user_owner").unwrap(), 0);
 }
 #[test]
+fn boot_retirement_disables_only_the_owners_it_names_and_skips_an_uninitialized_home() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = Home::at(temp.path().join("home"));
+    home.ensure_layout().unwrap();
+    private_home(&home);
+    let gone = |owner: &str| owner == "user_deleted";
+    assert_eq!(KeyStore::retire_owners_if_initialized(&home, gone).unwrap(), 0);
+    let keys = KeyStore::open(&home, 8).unwrap();
+    let owners = ["user_deleted".to_string(), "user_kept".to_string()];
+    let (_, deleted) = keys
+        .mint("user_deleted", "orphan", OwnerCheck::EnabledOwners(&owners))
+        .unwrap();
+    let (_, kept) = keys
+        .mint("user_kept", "live", OwnerCheck::EnabledOwners(&owners))
+        .unwrap();
+    assert_eq!(KeyStore::retire_owners_if_initialized(&home, gone).unwrap(), 1);
+    assert!(keys.authenticate(&deleted).is_err());
+    assert!(keys.authenticate(&kept).is_ok());
+    // Already disabled keys are not counted again.
+    assert_eq!(KeyStore::retire_owners_if_initialized(&home, gone).unwrap(), 0);
+}
+
+#[test]
 fn invalid_store_schema_scope_and_config_fail_closed() {
     let temp = tempfile::tempdir().unwrap();
     let home = Home::at(temp.path().join("home"));
