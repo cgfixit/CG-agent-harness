@@ -510,6 +510,16 @@ dialog p { margin-bottom:12px; }
 :is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog) button.danger:hover { background:var(--accent-red); color:#000; }
 :is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog, #notesDialog) button:disabled { opacity:.45; cursor:default; }
 :is(#passwordDialog, #sessionClearDialog, #soulEditor, #webModeDialog, #htmlEditorDialog, #notesDialog) :focus-visible { outline:2px solid var(--accent-amber); outline-offset:2px; }
+#setupCodeDialog button { padding:6px 12px; margin:4px 8px 4px 0; background:var(--bg-tertiary); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; cursor:pointer; }
+#setupCodeDialog button:hover { background:var(--border); }
+#setupCodeDialog button.primary { background:var(--accent-amber); border-color:var(--accent-amber); color:#000; font-weight:700; }
+#setupCodeDialog :focus-visible { outline:2px solid var(--accent-amber); outline-offset:2px; }
+#setupCodeDialog code { font-family:var(--mono); background:var(--bg-input); padding:1px 5px; border-radius:4px; }
+.setup-code-steps { margin:0 0 12px 20px; display:grid; gap:10px; }
+.setup-code-row { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; margin:6px 0; }
+.setup-code-value { font-family:var(--mono); font-size:20px; letter-spacing:.08em; padding:6px 12px; background:var(--bg-input); border:1px solid var(--border-focus); border-radius:6px; user-select:all; }
+.setup-code-timer { display:flex; align-items:center; gap:8px; color:var(--text-secondary); font-size:13px; }
+.setup-code-timer progress { width:120px; accent-color:var(--accent-amber); }
 #passwordFeedback:empty, #sessionClearFeedback:empty { display:none; }
 #passwordFeedback, #sessionClearFeedback { color:var(--accent-red); }
 #notesDialog input { max-width:100%; margin:6px 0; }
@@ -847,11 +857,31 @@ dialog p { margin-bottom:12px; }
   <p id="passwordHelp">Enter your current password and a new password of at least 12 characters.</p>
   <form id="passwordForm">
     <p id="passwordCurrentField"><label><span id="passwordCurrentLabel">Current password</span> <input id="passwordCurrent" type="password" autocomplete="current-password" required maxlength="1024"></label></p>
+    <p id="passwordFindCodeRow" hidden><button type="button" id="passwordFindCode" aria-haspopup="dialog">Where's my setup code?</button></p>
     <p><label>New password <input id="passwordNew" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"></label></p>
     <p><label>Confirm new password <input id="passwordConfirm" type="password" autocomplete="new-password" required minlength="12" maxlength="1024"></label></p>
     <button id="passwordSave" type="submit" class="primary">Save password</button><button type="button" id="passwordClose">Close</button>
     <p id="passwordFeedback" role="status"></p>
   </form>
+</dialog>
+<!-- The server never sends the setup code (INVARIANTS: never rendered); this
+     dialog only says where it is and reads a file the user picks, locally. -->
+<dialog id="setupCodeDialog" aria-labelledby="setupCodeTitle" aria-describedby="setupCodeHelp">
+  <h2 id="setupCodeTitle">Find your setup code</h2>
+  <p id="setupCodeHelp">The one-time code is in the private file <code>setup-code</code> in the harness home. This page never receives it from the server. Get it one of these ways:</p>
+  <ol class="setup-code-steps">
+    <li><strong>In the app:</strong> Harness → Setup and recovery → Copy setup code.</li>
+    <li><strong>In Terminal:</strong> run this, then copy the code it prints.
+      <span class="setup-code-row"><code id="setupCodeCommand">cat ~/.CGagentHarness/setup-code</code><button type="button" id="setupCodeCommandCopy">Copy command</button></span>
+      For a custom home, use <code>cat "$CGAGENTHARNESS_HOME/setup-code"</code>.</li>
+    <li><strong>From the file:</strong> <button type="button" id="setupCodeOpen">Open setup-code file…</button>
+      In the file window press ⌘⇧G, paste <code>~/.CGagentHarness/setup-code</code>, then Open. The file is read only in this page.
+      <input id="setupCodeFile" type="file" hidden></li>
+  </ol>
+  <p id="setupCodeReveal" class="setup-code-row" hidden><output id="setupCodeValue" class="setup-code-value" aria-label="Setup code"></output><button id="setupCodeCopy" type="button" class="primary">Copy code</button><button id="setupCodeUse" type="button">Fill in</button></p>
+  <p id="setupCodeFeedback" role="status"></p>
+  <p class="setup-code-timer"><progress id="setupCodeTimer" max="20" value="20" aria-hidden="true"></progress> <span id="setupCodeCountdown">Closes in 20 s.</span></p>
+  <button type="button" id="setupCodeStay">Keep open</button><button type="button" id="setupCodeClose">Close</button>
 </dialog>
 <dialog id="sessionClearDialog" aria-labelledby="sessionClearTitle" aria-describedby="sessionClearDescription">
   <h2 id="sessionClearTitle">Clear my session history?</h2>
@@ -6589,18 +6619,108 @@ if (hAuthLogout) {
 }
 function openPasswordChange(required) {
   $('passwordTitle').textContent = required ? 'Set your password' : 'Change your password';
-  $('passwordHelp').textContent = firstRunPassword ? 'Enter your private setup code and choose a password of at least 12 characters. In the app, Harness → Setup and recovery shows the code; for a terminal server, read the setup-code file in the harness home.' : required ? 'Enter your current or temporary password and choose a new password of at least 12 characters to unlock the harness.' : 'Changing your password signs out other sessions. Use at least 12 characters.';
+  $('passwordHelp').textContent = firstRunPassword ? "Enter your private setup code and choose a password of at least 12 characters. Where's my setup code? shows how to get it." : required ? 'Enter your current or temporary password and choose a new password of at least 12 characters to unlock the harness.' : 'Changing your password signs out other sessions. Use at least 12 characters.';
   $('passwordCurrentLabel').textContent = firstRunPassword ? 'Setup code' : 'Current password';
+  $('passwordFindCodeRow').hidden = !firstRunPassword;
   $('passwordFeedback').textContent = '';
   if (!$('passwordDialog').open) $('passwordDialog').showModal();
   $('passwordCurrent').focus();
 }
+/* Where's my setup code: says where the code lives, and can read a file the
+   user picks with FileReader. Nothing here asks the server for the code. The
+   dialog closes itself after SETUP_CODE_SHOW_SEC (Keep open stops that), and
+   closing wipes the shown code and the chosen file. */
+const SETUP_CODE_SHOW_SEC = 20;
+const SETUP_CODE_SYMBOLS = /^[23456789abcdefghjkmnpqrstuvwxyz]{16}$/; // authn::SETUP_CODE_ALPHABET, SETUP_CODE_LEN
+let setupCodeLeft = 0, setupCodeTick = null, setupCodeKeep = false;
+function setupCodeStopTimer() { clearInterval(setupCodeTick); setupCodeTick = null; }
+function setupCodeStartTimer() {
+  setupCodeStopTimer();
+  if (setupCodeKeep) return;
+  setupCodeLeft = SETUP_CODE_SHOW_SEC;
+  const paint = () => {
+    $('setupCodeTimer').value = setupCodeLeft;
+    $('setupCodeCountdown').textContent = 'Closes in ' + setupCodeLeft + ' s.';
+  };
+  paint();
+  $('setupCodeTimer').hidden = false;
+  $('setupCodeStay').hidden = false;
+  setupCodeTick = setInterval(() => {
+    setupCodeLeft -= 1;
+    if (setupCodeLeft <= 0) { $('setupCodeDialog').close(); return; }
+    paint();
+  }, 1000);
+}
+/* The server's normalize_setup_code, for a file: spaces, dashes and periods drop, case folds. */
+function setupCodeFromText(text) {
+  const symbols = text.replace(/[\s.,-]/g, '').toLowerCase();
+  return SETUP_CODE_SYMBOLS.test(symbols) ? symbols.match(/.{4}/g).join('-') : null;
+}
+/* Where the page may not write the clipboard, select the text so ⌘C copies it. */
+async function setupCodeCopy(node, done) {
+  try {
+    await navigator.clipboard.writeText(node.textContent);
+    $('setupCodeFeedback').textContent = done;
+  } catch (e) {
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    $('setupCodeFeedback').textContent = 'This browser blocked Copy. The text is selected: press ⌘C.';
+  }
+}
+$('passwordFindCode').addEventListener('click', () => {
+  $('setupCodeReveal').hidden = true;
+  $('setupCodeFeedback').textContent = '';
+  setupCodeKeep = false;
+  $('setupCodeDialog').showModal();
+  setupCodeStartTimer();
+});
+$('setupCodeCommandCopy').addEventListener('click', () =>
+  setupCodeCopy($('setupCodeCommand'), 'Command copied. Paste it into Terminal.'));
+/* The file window can outlast the countdown, so it pauses while the window is open. */
+$('setupCodeOpen').addEventListener('click', () => { setupCodeStopTimer(); $('setupCodeFile').click(); });
+$('setupCodeFile').addEventListener('cancel', () => { if ($('setupCodeDialog').open) setupCodeStartTimer(); });
+$('setupCodeFile').addEventListener('change', async () => {
+  const file = $('setupCodeFile').files[0];
+  $('setupCodeFile').value = '';
+  if (!$('setupCodeDialog').open || !file) return;
+  // The file is 20 bytes; a large pick is the wrong file, so it is never read.
+  const code = file.size <= 256 ? setupCodeFromText(await file.text().catch(() => '')) : null;
+  if (!$('setupCodeDialog').open) return;
+  $('setupCodeValue').textContent = code || '';
+  $('setupCodeReveal').hidden = !code;
+  $('setupCodeFeedback').textContent = code ? 'Copy it, read it off, or Fill in. It works once.' : 'That file does not hold a setup code. Choose the file named setup-code.';
+  setupCodeStartTimer();
+});
+$('setupCodeCopy').addEventListener('click', () => setupCodeCopy($('setupCodeValue'), 'Code copied. Paste it into Setup code.'));
+$('setupCodeUse').addEventListener('click', () => {
+  $('passwordCurrent').value = $('setupCodeValue').textContent;
+  $('setupCodeDialog').close();
+  $('passwordNew').focus();
+});
+$('setupCodeStay').addEventListener('click', () => {
+  setupCodeKeep = true;
+  setupCodeStopTimer();
+  $('setupCodeTimer').hidden = true;
+  $('setupCodeStay').hidden = true;
+  $('setupCodeCountdown').textContent = 'Stays open until you close it.';
+});
+$('setupCodeClose').addEventListener('click', () => $('setupCodeDialog').close());
+$('setupCodeDialog').addEventListener('close', () => {
+  setupCodeStopTimer();
+  getSelection().removeAllRanges();
+  $('setupCodeValue').textContent = '';
+  $('setupCodeReveal').hidden = true;
+  $('setupCodeFile').value = '';
+});
 $('hAuthPassword').addEventListener('click', () => openPasswordChange(passwordRequired));
 $('passwordLockCard').addEventListener('submit', event => { event.preventDefault(); openPasswordChange(true); });
 $('passwordClose').addEventListener('click', () => $('passwordDialog').close());
 $('passwordSignIn').addEventListener('click', () => showSignIn('login'));
 /* Dismissing a required replacement lands on the lock card, never the console. */
 $('passwordDialog').addEventListener('close', () => {
+  if ($('setupCodeDialog').open) $('setupCodeDialog').close();
   $('passwordForm').reset();
   if (passwordRequired) $('passwordLockOpen').focus();
 });
