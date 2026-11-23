@@ -222,8 +222,11 @@ pub(super) fn run(
     if cancelled.load(Ordering::Acquire) {
         return Err(ProcessError::Capture("command cancelled".into()));
     }
+    // Declared before `owner` so it drops after it: on a cancel or timeout the
+    // child is killed first. Closing stdin first lets a `read` see EOF and run on.
+    let mut input;
     let mut owner = Owner::new(build_command(&spec).spawn().map_err(ProcessError::Spawn)?);
-    let mut input = owner.child.stdin.take();
+    input = owner.child.stdin.take();
     let mut stdout = owner.child.stdout.take();
     let mut stderr = owner.child.stderr.take();
     if let Some(pipe) = &input {
