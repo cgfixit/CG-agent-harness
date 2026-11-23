@@ -935,3 +935,44 @@ fn pending_diff_covers_ignored_new_files_and_attribute_hidden_edits() {
     std::fs::write(clone.join("target.txt"), "hello\n").unwrap();
     assert!(render_pending_diff(&ws, &["target.txt".to_string()]).starts_with("[no diff to show"));
 }
+
+/// The console withholds `/agent approve` by matching marker text in
+/// `isReviewableAgentDiff`; the server never rechecks it. Pin both sides: every
+/// prefix and the truncation pattern the console reads must match exactly what
+/// `render_pending_diff` writes, or a reworded marker would make a truncated
+/// diff look reviewable.
+#[test]
+fn console_review_gate_matches_the_markers_the_pending_diff_writes() {
+    use cgagentharness::agentic::commands::render_pending_diff;
+    let html = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/static/harness.html")).unwrap();
+    let start = html
+        .find("function isReviewableAgentDiff(rec) {")
+        .expect("console review gate");
+    let gate = &html[start..start + html[start..].find("\n}\n").expect("gate body end")];
+    let prefixes: Vec<&str> = gate
+        .split("rec.diff.startsWith('")
+        .skip(1)
+        .map(|rest| &rest[..rest.find("')").unwrap()])
+        .collect();
+    assert_eq!(prefixes, ["[diff unavailable:", "[no diff to show"], "{gate}");
+    let pattern = gate
+        .split("!/")
+        .nth(1)
+        .and_then(|rest| rest.split("/.test(rec.diff)").next())
+        .expect("truncation pattern");
+    let truncated = regex::Regex::new(pattern).expect("the console pattern is also a valid Rust regex");
+
+    let dir = tempfile::tempdir().unwrap();
+    let clone = seeded_clone(dir.path());
+    let ctx = enabled_ctx(dir.path(), &[]);
+    let ws = RepoWorkspace::open_existing(&ctx, &clone).unwrap();
+    let ghost = render_pending_diff(&ws, &["ghost.txt".to_string()]);
+    assert!(ghost.starts_with(prefixes[0]), "{ghost}");
+    assert!(render_pending_diff(&ws, &["target.txt".to_string()]).starts_with(prefixes[1]));
+    std::fs::write(clone.join("big.txt"), "x".repeat(30_000)).unwrap();
+    let big = render_pending_diff(&ws, &["big.txt".to_string()]);
+    assert!(truncated.is_match(&big), "{}", &big[big.len() - 80..]);
+    std::fs::write(clone.join("big.txt"), "x".repeat(100)).unwrap();
+    let small = render_pending_diff(&ws, &["big.txt".to_string()]);
+    assert!(!truncated.is_match(&small) && !small.starts_with('['), "{small}");
+}
