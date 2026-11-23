@@ -1182,11 +1182,10 @@ mod tests {
             auth.validate_session(&second.session_id).is_none(),
             "the least recently used one ended"
         );
-        for kept in [&first, &third, &fourth, &bob] {
+        for (position, kept) in [&first, &third, &fourth, &bob].into_iter().enumerate() {
             assert!(
                 auth.validate_session(&kept.session_id).is_some(),
-                "{} kept",
-                kept.username
+                "session {position} of the kept ones still validates"
             );
         }
     }
@@ -1256,10 +1255,8 @@ mod tests {
             for row in db.sessions.values() {
                 *per_account.entry(row.username.as_str()).or_default() += 1;
             }
-            assert!(
-                per_account.values().all(|n| *n <= cap as usize),
-                "cap {cap}: {per_account:?}"
-            );
+            let most = per_account.values().copied().max().unwrap_or(0);
+            assert!(most <= cap as usize, "cap {cap}: one account held {most}");
             assert!(db.sessions.len() <= MAX_LIVE_SESSIONS);
             stored.1 = db;
         }
