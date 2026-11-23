@@ -246,6 +246,22 @@ fn cmd_apply_skill(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     }
 }
 
+/// The finding fields whose text `bundle_context_text` sends to the planner.
+/// Issue comments are scanned (and audited) but never fed, so they never refuse.
+const PLANNER_FED_FIELDS: [&str; 5] = ["pr.title", "pr.body", "issue.title", "issue.body", "diff"];
+
+/// Blocking findings on fed text, plus any without a field (a missing scanner).
+fn planner_blocking_findings(bundle: &Value) -> Vec<Value> {
+    blocking_context_findings(bundle)
+        .into_iter()
+        .filter(|f| {
+            f["field"]
+                .as_str()
+                .is_none_or(|field| PLANNER_FED_FIELDS.contains(&field))
+        })
+        .collect()
+}
+
 fn bundle_context_text(bundle: &Value) -> Option<String> {
     let mut parts = Vec::new();
     if let Some(pr) = bundle.get("pr").filter(|p| p.is_object()) {
@@ -431,7 +447,7 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
                 return Ok(exit_code_for(&e));
             }
         };
-        let blocking = blocking_context_findings(&bundle);
+        let blocking = planner_blocking_findings(&bundle);
         if !blocking.is_empty() {
             err(&format!(
                 "refusing to run: {} injection finding(s) in the fetched context ({})",
@@ -1062,4 +1078,40 @@ fn cmd_real_repo_run_discard(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     save_run(&runs_dir, &mut record)?;
     print_json(&record.to_json());
     Ok(EXIT_OK)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agentic::context::{INJECTION_FINDING_CODE, SCANNER_UNAVAILABLE_CODE};
+
+    #[test]
+    fn the_run_gate_refuses_exactly_on_the_text_the_planner_is_fed() {
+        let bundle = json!({
+            "pr": {"title": "fed:pr.title", "body": "fed:pr.body"},
+            "issue": {"title": "fed:issue.title", "body": "fed:issue.body",
+                      "comments": [{"body": "unfed:issue.comments[0].body"}]},
+            "diff": "fed:diff",
+        });
+        let fed = bundle_context_text(&bundle).expect("planner text");
+        for field in PLANNER_FED_FIELDS {
+            assert!(fed.contains(&format!("fed:{field}")), "{field} is not fed: {fed}");
+        }
+        assert!(!fed.contains("unfed:"), "{fed}");
+
+        let finding = |code: &str, field: Value| json!({"code": code, "field": field});
+        let mut findings: Vec<Value> = PLANNER_FED_FIELDS
+            .iter()
+            .map(|f| finding(INJECTION_FINDING_CODE, json!(f)))
+            .collect();
+        findings.push(finding(SCANNER_UNAVAILABLE_CODE, Value::Null));
+        let refusing = findings.len();
+        findings.push(finding(INJECTION_FINDING_CODE, json!("issue.comments[0].body")));
+        let blocking = planner_blocking_findings(&json!({"governance_findings": findings}));
+        assert_eq!(blocking.len(), refusing, "{blocking:?}");
+        assert!(
+            blocking.iter().all(|f| f["field"] != "issue.comments[0].body"),
+            "{blocking:?}"
+        );
+    }
 }
