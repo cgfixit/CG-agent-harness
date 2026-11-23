@@ -1457,6 +1457,13 @@ fn local_model(model: Option<String>) -> Result<(String, String), String> {
     if model.is_empty() {
         return Err("models.local_llm.model is empty".into());
     }
+    // A signed-in Ollama forwards a cloud tag's chat, the task and every page
+    // observation, to ollama.com. Every model call here uses this model.
+    if crate::llm::ollama::cloud_tag(&model) {
+        return Err(format!(
+            "{model} is an Ollama cloud model (a :cloud or -cloud tag); browser tasks keep prompts on this machine"
+        ));
+    }
     Ok((model, api))
 }
 
