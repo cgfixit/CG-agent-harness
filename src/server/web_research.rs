@@ -696,6 +696,13 @@ async fn run_with(
     // The run keeps one model and one runtime-limit snapshot: a selection change
     // or config reload during a cold load below does not reach it.
     let model = state.current_model();
+    // The chat client refuses it too; refusing here says why instead of an empty answer.
+    if crate::llm::ollama::cloud_tag(&model) && !state.cloud_chat.is_cloud_selection(&model) {
+        return Err(error(
+            "MODEL_SELECTION_REJECTED",
+            "Ollama cloud models (a :cloud or -cloud tag) send the prompt to ollama.com; web research needs a local model",
+        ));
+    }
     let sized_tuned = state.tuning_for(&model).is_some();
     // A web budget above 32000 needs a fresh read of the selected model's window.
     state.verify_window(&model).await;
