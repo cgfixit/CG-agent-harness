@@ -1,6 +1,5 @@
 # Select an installed model and check Ollama
 
-
 Index: [README.md](../README.md). The harness sends no `num_ctx`; Ollama's own window decides.
 
 ## 4. Select an installed model and check Ollama
