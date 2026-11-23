@@ -87,6 +87,9 @@ jobs:
     # Job-level local workflow calls resolve at this commit, before any checkout.
     # Keep ./ syntax until actionlint supports GitHub's newer $/ syntax.
     uses: ./.github/workflows/ci.yml # zizmor: ignore[self-repository]
+    with:
+      # Windows is not in the release bundle; MCP Job Object stays required.
+      windows-advisory: true
 
   build:
     needs: verify
