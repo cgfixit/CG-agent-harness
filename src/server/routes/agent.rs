@@ -334,18 +334,23 @@ pub async fn agent_run(
             "Goal-linked work uses the durable /api/agent/jobs workflow",
         ));
     }
+    let account = user.as_ref().map(|user| user.0.clone());
     let owner = super::auth::context_owner(user);
+    // The revocation count as the run is asked, read before any wait, as
+    // `/browse` reads it: a count read later would already include a reset.
+    let account = asking_account(&state, account).await;
     refuse_bound_session_pins(&state, &owner, &req)?;
     let prepared = prepare_run(&state, &req, &owner)?;
     // The run lasts as long as the child, and the account was checked only
-    // when the request arrived. A disable, deletion or loss of `RunCoding`
-    // while it runs drops the child (`kill_on_drop`) and the gates; one that
-    // lands after the child exits withholds its result.
+    // when the request arrived. A disable, deletion, loss of `RunCoding` or
+    // revoked sign-in (password reset or change) while it runs drops the
+    // child (`kill_on_drop`) and the gates; one that lands after the child
+    // exits withholds its result.
     let outcome = tokio::select! {
         outcome = agentic_call(&state, prepared.ops) => outcome,
-        () = coding_authority_lost(&state, &owner) => return Err(run_withheld(&state, &owner, "stopped")),
+        () = coding_authority_lost(&state, &owner, &account) => return Err(run_withheld(&state, &owner, "stopped")),
     };
-    if !owner_still_may_run(&state, &owner).await {
+    if !owner_still_may_run(&state, &owner, &account).await {
         return Err(run_withheld(&state, &owner, "withheld"));
     }
     let Json(mut result) = outcome?;
@@ -362,25 +367,54 @@ pub async fn agent_run(
 /// How often a synchronous run rechecks its account while its child runs.
 const RUN_ACCOUNT_RECHECK: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// Whether `owner` may still run coding, read on the blocking pool. Always
-/// true without accounts: the one local user cannot be disabled.
-async fn owner_still_may_run(state: &Arc<AppState>, owner: &str) -> bool {
+/// The signed-in account that asked for a synchronous run and its
+/// `sign_in_revocations` count then; `None` without accounts.
+type AskingAccount = Option<(crate::common::auth_store::UserSummary, u64)>;
+
+/// Reads the asking account's revocation count on the blocking pool (the
+/// account store's lock is held across its SQLite rewrite).
+async fn asking_account(
+    state: &Arc<AppState>,
+    account: Option<crate::common::auth_store::UserSummary>,
+) -> AskingAccount {
+    let account = account?;
+    let state = state.clone();
+    super::structured_memory::off_worker(move || {
+        let auth = state.auth.as_ref()?;
+        let seen = auth.sign_in_revocations(&account.username);
+        Some((account, seen))
+    })
+    .await
+}
+
+/// Whether `owner` may still run coding and its sign-ins have not been
+/// revoked since it asked, read on the blocking pool. Always true without
+/// accounts: the one local user cannot be disabled.
+async fn owner_still_may_run(state: &Arc<AppState>, owner: &str, account: &AskingAccount) -> bool {
     if state.auth.is_none() {
         return true;
     }
-    let (state, owner) = (state.clone(), owner.to_string());
-    super::structured_memory::off_worker(move || schedule_owner_authorized(&state, &owner)).await
+    let (state, owner, account) = (state.clone(), owner.to_string(), account.clone());
+    super::structured_memory::off_worker(move || {
+        schedule_owner_authorized(&state, &owner)
+            && match (state.auth.as_ref(), &account) {
+                (Some(auth), Some((user, seen))) => auth.account_unchanged(user, Some(*seen)),
+                _ => true,
+            }
+    })
+    .await
 }
 
-/// Resolves once `owner` may no longer run coding, checked every
-/// `RUN_ACCOUNT_RECHECK`; never resolves without accounts.
-async fn coding_authority_lost(state: &Arc<AppState>, owner: &str) {
+/// Resolves once `owner` may no longer run coding or its sign-ins are
+/// revoked, checked every `RUN_ACCOUNT_RECHECK`; never resolves without
+/// accounts.
+async fn coding_authority_lost(state: &Arc<AppState>, owner: &str, account: &AskingAccount) {
     if state.auth.is_none() {
         return std::future::pending().await;
     }
     loop {
         tokio::time::sleep(RUN_ACCOUNT_RECHECK).await;
-        if !owner_still_may_run(state, owner).await {
+        if !owner_still_may_run(state, owner, account).await {
             return;
         }
     }
@@ -398,7 +432,7 @@ fn run_withheld(state: &AppState, owner: &str, outcome: &str) -> ApiError {
     ApiError::new(
         StatusCode::UNAUTHORIZED,
         "AUTH_REQUIRED",
-        "The account was disabled, deleted or lost coding access during this run; its result was not delivered.",
+        "The account was disabled, deleted, lost coding access or had its sign-ins revoked during this run; its result was not delivered.",
     )
 }
 

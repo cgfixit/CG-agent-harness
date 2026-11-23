@@ -11,6 +11,7 @@ use serde_json::{json, Value};
 use super::web_google::{add_result, cooldown_error, listing_body, unix_now, SearchResult, SEARCH_NOTICE};
 use super::web_policy::error;
 use super::web_search::WebTool;
+use super::web_units::Paid;
 use crate::common::audit::Audit;
 use crate::common::errors::Result;
 
@@ -94,6 +95,10 @@ impl WebTool {
         if let Some(pause) = self.search_cooldown.holding(PROVIDER, Instant::now()) {
             return Err(cooldown_error(PROVIDER, &pause));
         }
+        // One credit, reserved durably before anything leaves (#772 D10). The
+        // guard gives it back unless the send started, including when an outer
+        // deadline drops this future first.
+        let units = self.reserve_units(Paid::Tavily, 1, audit).await?;
         let fetched = tokio::time::timeout(Duration::from_secs(self.limits.request_seconds), async {
             let _permit = self
                 .permits
@@ -111,6 +116,7 @@ impl WebTool {
             if self.tavily_key_off_worker().await?.trim() != key {
                 return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
             }
+            units.mark_sent();
             let response = client
                 .post(endpoint)
                 .bearer_auth(key)
