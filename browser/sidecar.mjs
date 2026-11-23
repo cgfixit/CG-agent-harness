@@ -122,8 +122,16 @@ function publicLookup(hostname, options, callback) {
   });
 }
 
+// Every `.slice` cut counts UTF-16 units, so it can split an emoji and leave
+// a lone surrogate; JSON.stringify writes that as `\udXXX`, which the host's
+// serde_json refuses. U+FFFD keeps each line parseable.
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+function wellFormed(_key, value) {
+  return typeof value === "string" ? value.replace(LONE_SURROGATE, "\uFFFD") : value;
+}
+
 function send(message) {
-  process.stdout.write(`${JSON.stringify(message)}\n`);
+  process.stdout.write(`${JSON.stringify(message, wellFormed)}\n`);
 }
 
 // Asks the parent whether the operator's block list lets this URL be
