@@ -19,7 +19,7 @@ spec.loader.exec_module(module)
 
 class ReleasePlanTests(unittest.TestCase):
     def plan(self, **overrides):
-        args = dict(event="schedule", ref="refs/heads/main", publish="false", sha="a" * 40,
+        args = dict(event="workflow_run", ref="refs/heads/main", publish="false", sha="a" * 40,
                     tree="new", latest={"tag_name": "v0.1.0", "draft": False, "prerelease": False},
                     latest_tree="old", tags={"v0.1.0"}, releases={"v0.1.0"},
                     reachable_from_main=True)
@@ -47,6 +47,41 @@ class ReleasePlanTests(unittest.TestCase):
         self.assertEqual(result["tag"], "v1.0.0")
         self.assertEqual(result["should_release"], "true")
 
+    def test_superseded_bundle_commit_skips_without_failing(self):
+        result = self.plan(superseded=True)
+        self.assertEqual((result["changed"], result["superseded"]), ("true", "true"))
+        self.assertEqual(result["should_release"], "false")
+
+    def test_schedule_is_no_longer_a_release_event(self):
+        with self.assertRaisesRegex(ValueError, "Unsupported release event"):
+            self.plan(event="schedule")
+
+    def test_workflow_run_plans_the_bundle_commit_not_the_tip(self):
+        replies = [
+            {"tag_name": "v0.1.0", "draft": False, "prerelease": False},
+            {"commit": {"tree": {"sha": "old"}}},
+            {"commit": {"tree": {"sha": "new"}}},
+            {"workflow_runs": [{"head_sha": "b" * 40, "conclusion": "success", "event": "push"}]},
+            [{"name": "v0.1.0"}], [{"tag_name": "v0.1.0"}],
+        ]
+        for tip, superseded in (("b" * 40, "false"), ("a" * 40, "true")):
+            with self.subTest(tip=tip), tempfile.TemporaryDirectory() as tmp:
+                output = Path(tmp) / "output"
+                env = {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "example/repo", "GITHUB_SHA": tip,
+                       "RELEASE_SOURCE_SHA": "b" * 40, "GITHUB_EVENT_NAME": "workflow_run",
+                       "GITHUB_REF": "refs/heads/main", "GITHUB_OUTPUT": str(output)}
+                with patch.dict(os.environ, env, clear=True), \
+                        patch.object(module, "api", side_effect=list(replies)) as api, \
+                        patch("sys.stdout", new_callable=io.StringIO):
+                    module.main()
+                paths = [c.args[0] for c in api.call_args_list]
+                self.assertIn("repos/example/repo/commits/" + "b" * 40, paths)
+                self.assertIn("head_sha=" + "b" * 40, paths[3])
+                text = output.read_text()
+                self.assertIn("source_sha=" + "b" * 40, text)
+                self.assertIn(f"superseded={superseded}", text)
+                self.assertIn("should_release=" + ("true" if superseded == "false" else "false"), text)
+
     def test_identical_tree_skips_even_with_different_commit(self):
         self.assertEqual(self.plan(tree="old")["should_release"], "false")
 
@@ -57,7 +92,7 @@ class ReleasePlanTests(unittest.TestCase):
         self.assertEqual(self.plan(event="workflow_dispatch", publish="true")["should_release"], "true")
 
     def test_off_main_publication_refused(self):
-        for event in ("schedule", "workflow_dispatch"):
+        for event in ("workflow_run", "workflow_dispatch"):
             with self.subTest(event=event), self.assertRaises(ValueError):
                 self.plan(event=event, publish="true", ref="refs/heads/codex/test")
 
@@ -159,9 +194,10 @@ class ReleasePlanTests(unittest.TestCase):
         self.assertEqual(result["should_release"], "false")
 
     def test_actions_run_missing_environment_fails_closed(self):
-        for missing in ("GITHUB_REPOSITORY", "GITHUB_SHA", "GITHUB_EVENT_NAME", "GITHUB_REF"):
+        for missing in ("GITHUB_REPOSITORY", "GITHUB_SHA", "GITHUB_EVENT_NAME", "GITHUB_REF", "RELEASE_SOURCE_SHA"):
             env = {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "example/repo", "GITHUB_SHA": "a" * 40,
-                   "GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/main"}
+                   "RELEASE_SOURCE_SHA": "a" * 40, "GITHUB_EVENT_NAME": "workflow_run",
+                   "GITHUB_REF": "refs/heads/main"}
             del env[missing]
             replies = [{"tag_name": "v0.1.0", "draft": False, "prerelease": False},
                        {"commit": {"tree": {"sha": "old"}}}, {"commit": {"tree": {"sha": "new"}}},
@@ -195,7 +231,7 @@ class ReleasePlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "output"
             env = {"GITHUB_REPOSITORY": "example/repo", "GITHUB_SHA": "a" * 40,
-                   "GITHUB_EVENT_NAME": "schedule", "GITHUB_REF": "refs/heads/main",
+                   "GITHUB_EVENT_NAME": "workflow_run", "GITHUB_REF": "refs/heads/main",
                    "GITHUB_OUTPUT": str(output)}
             with patch.dict(os.environ, env, clear=True), patch.object(module, "api", side_effect=replies):
                 module.main()

@@ -168,7 +168,7 @@ not runtime `/api/skills` plugins.
   `workflow_dispatch` on the same SHA means the release is already in flight;
   watch that run instead. The planner (`scripts/release-plan.py`) fails closed
   on collisions by design. Also note: a green `Bundle` run on the exact main
-  SHA is a hard precondition for `schedule`/`workflow_dispatch` releases.
+  SHA is a hard precondition for `workflow_run`/`workflow_dispatch` releases.
 - **Evidence:** 2026-09-16, `v0.1.14` tag push started run 26 while the docs
   PR was being drafted; dispatch run 27 queued behind it.
 

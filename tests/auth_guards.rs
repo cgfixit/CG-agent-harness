@@ -687,7 +687,16 @@ async fn browser_tasks_refuse_without_accounts_even_when_enabled() {
         ServerOptions::default().with("browser.enabled", "true"),
     )
     .await;
-    for path in ["/api/browser/run", "/api/browser/jobs"] {
+    // Browser jobs are macOS and Linux only: elsewhere every job start is refused first.
+    let jobs_code = if cfg!(unix) {
+        "BROWSER_AUTH_REQUIRED"
+    } else {
+        "BROWSER_JOBS_UNSUPPORTED"
+    };
+    for (path, expected) in [
+        ("/api/browser/run", "BROWSER_AUTH_REQUIRED"),
+        ("/api/browser/jobs", jobs_code),
+    ] {
         let (status, body) = s
             .post_json(
                 path,
@@ -695,7 +704,7 @@ async fn browser_tasks_refuse_without_accounts_even_when_enabled() {
             )
             .await;
         assert_eq!(status, 409, "{path}: {body}");
-        assert_eq!(body["detail"]["code"], "BROWSER_AUTH_REQUIRED", "{path}: {body}");
+        assert_eq!(body["detail"]["code"], expected, "{path}: {body}");
     }
     assert!(
         model.requests.lock().unwrap().is_empty(),

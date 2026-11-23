@@ -1,6 +1,6 @@
 # Daily RustSec scan of all three manifests. A new advisory against a quiet main
-# otherwise surfaces only on the next push; the release cron reaches the deny
-# job only when a release is due. Same pinned action and arguments as the deny
+# otherwise surfaces only on the next push; a release run reaches the deny
+# job only after a green Bundle. Same pinned action and arguments as the deny
 # jobs in ci.yml and desktop.yml, advisories only. The browser sidecar's npm
 # lockfile is outside cargo deny, so `npm audit` reads it here.
 name: Dependencies - Daily RustSec and npm advisories
