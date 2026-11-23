@@ -2707,6 +2707,8 @@ mod tests {
             ask(&mut policy, "https://docs.example.org/guide"),
             json!({"verdict": 7, "allow": true})
         );
+        // The sidecar's grant drops a trailing dot, so the verdict must too.
+        assert_eq!(ask(&mut policy, "https://docs.example.org./private/a")["allow"], false);
         // An edit applies to the next question; no restart, no model turn.
         save(&["https://docs.example.org/private/*", "https://docs.example.org/guide"]);
         assert_eq!(ask(&mut policy, "https://docs.example.org/guide")["allow"], false);
