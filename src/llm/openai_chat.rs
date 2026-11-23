@@ -627,6 +627,14 @@ impl ChatClient {
         output: Option<super::openai_stream::Output<'_>>,
         deadline: f64,
     ) -> Result<Value> {
+        // Every local prompt (chat, research, memory, /browse, compaction) is
+        // sent here, and a signed-in Ollama forwards a cloud tag to ollama.com.
+        if payload["model"].as_str().is_some_and(super::ollama::cloud_tag) {
+            return Err(HarnessError::new(
+                "MODEL_SELECTION_REJECTED",
+                "Ollama cloud models (a :cloud or -cloud tag) send the prompt to ollama.com; local model calls keep prompts on this machine",
+            ));
+        }
         // A per-request timeout replaces the client-wide one, so a measured
         // deadline can be longer or shorter than the configured timeout_sec.
         let mut req = self
@@ -696,6 +704,27 @@ mod tests {
 
     fn reply(content: &str) -> Value {
         json!({"choices":[{"finish_reason":"stop","message":{"content":content}}],"usage":{"prompt_tokens":3,"completion_tokens":2}})
+    }
+
+    /// Port 9 has no listener, so a call that got past the guard would fail as
+    /// unreachable; the cloud refusal must come first, for the default model
+    /// (a configured cloud tag) and for a per-call one (research, memory, /browse).
+    #[tokio::test]
+    async fn an_ollama_cloud_tag_is_refused_before_any_request_is_sent() {
+        let url = "http://127.0.0.1:9/v1"; // DevSkim: ignore DS137138 because this refusal fixture never connects.
+        let configured = ChatClient::new(url, "glm-4.6:cloud", 5.0, "", None).unwrap();
+        let err = configured.chat("s", &[], None, 16, 0.0).await.unwrap_err();
+        assert_eq!(err.code, "MODEL_SELECTION_REJECTED");
+        let local = ChatClient::new(url, "qwen3.8:27b", 5.0, "", None).unwrap();
+        for model in ["gpt-oss:120b-cloud", "GLM-4.6:CLOUD"] {
+            let err = local.chat("s", &[], Some(model), 16, 0.0).await.unwrap_err();
+            assert_eq!(err.code, "MODEL_SELECTION_REJECTED", "{model}");
+        }
+        let err = local.chat("s", &[], Some("cloudy:7b"), 16, 0.0).await.unwrap_err();
+        assert_ne!(
+            err.code, "MODEL_SELECTION_REJECTED",
+            "a name that only contains cloud is local"
+        );
     }
 
     #[test]
