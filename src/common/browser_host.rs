@@ -2527,6 +2527,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_reply_cut_inside_an_emoji_parses_once_the_sidecar_replaces_the_lone_half() {
+        // What `JSON.stringify` wrote for a title cut between an emoji's halves,
+        // before and after `wellFormed` in browser/sidecar.mjs.
+        let lone = r#"{"id":1,"ok":true,"result":{"title":"ab\ud83d"}}"#;
+        assert!(serde_json::from_str::<Value>(lone).is_err());
+        let fixed: Value =
+            serde_json::from_str("{\"id\":1,\"ok\":true,\"result\":{\"title\":\"ab\u{FFFD}\"}}").unwrap();
+        assert_eq!(fixed["result"]["title"], "ab\u{FFFD}");
+        let approve = "{\"approve\":7,\"preview\":\"x\u{FFFD}\"}";
+        assert_eq!(approval_question(approve).unwrap()["approve"], 7);
+        assert!(approval_question(r#"{"approve":7,"preview":"x\ud83d"}"#).is_none());
+    }
+
+    #[test]
     fn long_link_targets_are_cut_for_the_model_only() {
         let short = "https://docs.example/a?b=c";
         assert_eq!(shown_href(short), short);
