@@ -107,7 +107,8 @@ Back in the console:
 3. `/agent read src/lib.rs#L40-L80` declares a bounded existing-file window
    (up to 8 staged paths). A **local** planner may also request reads
    ([Bounded edits](#bounded-edits)); a **cloud** planner refuses them, so
-   pre-stage what that run may see.
+   pre-stage what it may see. `/agent planner grok confirm-online` selects a
+   [cloud planner](#cloud-planner-data-egress).
 4. `/agent confirm <reason>` submits a job and returns its ID immediately.
 5. `/agent job <job-id>` resumes monitoring after a refresh or a new login.
 6. `/agent status <run-id>` shows the candidate and its complete diff. A
@@ -295,8 +296,9 @@ or indexed with sessions or structured memory.
 ## Cloud planner data egress
 
 With `deepagent_github.allow_cloud_providers` and a provider enabled,
-`--confirm-online` sends real working context for each iteration, rechecking
-both flags first, not a short plan prompt. Per attempt, `real_repo_loop.rs` assembles:
+`/agent planner <name> confirm-online` sends real working context each
+iteration, not a short plan prompt. The child rechecks both flags and gets only
+that provider's key; schedules refuse. Per attempt, `real_repo_loop.rs` assembles:
 
 - the operator's instruction and the approved plan, if staged;
 - the prior attempt's check-failure feedback;
@@ -306,22 +308,20 @@ both flags first, not a short plan prompt. Per attempt, `real_repo_loop.rs` asse
 - the GitHub text of a selected `/agent pr` or `/agent issue`, fetched and
   injection-scanned only when selected.
 
-A cloud planner never expands that read set from model `=== READ ===` output
+A cloud planner never expands that read set from `=== READ ===` output
 (`apply_model_read_request` refuses with `cloud_proposer`).
 `CloudProposerClient::invoke` passes the assembled prompt through
 `sanitize_handoff`, an injection scan plus secret-pattern redaction (built-in
 shapes and `policy.privacy.redact_secrets_like`), then sends it to `api.x.ai`
-or `api.anthropic.com`. Redaction catches known secret shapes only. It does not
-strip proprietary source, comments or issue content, and none of that data is
-reviewable before it leaves the machine. Treat enabling a cloud provider as
-authorizing repository-content egress for every later `--confirm-online` run.
+or `api.anthropic.com`. Redaction catches known secret shapes only: proprietary
+source, comments and issue content leave unstripped and unreviewed. Enabling a provider authorizes this
+egress for every later confirmed run.
 
 Cloud proposals require an explicit normal completion: Grok
 `choices[0].finish_reason: "stop"` or Claude `stop_reason: "end_turn"`.
-Truncated, missing, malformed or continuation states are refused before any
-proposal is applied, even when the returned prefix holds a complete edit block.
-These billed 2xx responses are recorded once as `failed_after_billing` and
-never retried automatically. Reduce the task or raise
+Any other state (truncated, missing, malformed, continuation) is refused before
+a proposal applies, even with a complete edit block in the prefix. These billed
+2xx responses are recorded once as `failed_after_billing`, never retried. Reduce the task or raise
 `agentic.deepagent_github.planner_max_tokens` before retrying.
 
 ## Offline Cargo verification

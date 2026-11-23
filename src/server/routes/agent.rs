@@ -178,7 +178,13 @@ fn resolve_run_shape(state: &AppState, req: &AgentRunRequest) -> ApiResult<(Vec<
     let checks = resolve_check_profiles(&requested).map_err(|e| {
         ApiError::bad_request("UNKNOWN_CHECK_PROFILE", e.message).details(json!({"requested": requested}))
     })?;
-    let tuned_planner = planner_timeout_sec(state);
+    // A cloud planner uses the configured `planner_timeout_sec` as its HTTP
+    // bound, so a speed-derived local timeout would mis-size its budget.
+    let tuned_planner = if req.provider.is_some() {
+        None
+    } else {
+        planner_timeout_sec(state)
+    };
     let planner = tuned_planner.unwrap_or(state.shim.planner_timeout_sec);
     let estimated = shim::real_repo_run_shape_budget_sec(&state.shim, planner, req.max_iterations, checks.len());
     if estimated > REAL_REPO_RUN_MAX_TIMEOUT_SEC {
@@ -228,6 +234,9 @@ fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recur
     } else {
         super::goals::validate_binding(state, req, owner)?;
     }
+    if recurring {
+        refuse_scheduled_cloud_planner(req)?;
+    }
     let (checks, tuned_planner) = resolve_run_shape(state, req)?;
     assert_allowed(
         AGENT_RUN_TOOL,
@@ -271,6 +280,8 @@ fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recur
         pr: req.pr,
         issue: req.issue,
         planner_timeout_sec: tuned_planner,
+        provider: req.provider.map(|p| p.as_str().to_string()),
+        confirm_online: req.confirm_online,
         planner_identity: Some(
             state
                 .cfg
@@ -284,6 +295,18 @@ fn prepare_run_inner(state: &AppState, req: &AgentRunRequest, owner: &str, recur
         _run_gate,
         _chat_gate,
     })
+}
+
+/// A schedule fires with nobody present, so it cannot carry the per-run consent
+/// a cloud planner's repository egress needs.
+fn refuse_scheduled_cloud_planner(req: &AgentRunRequest) -> ApiResult<()> {
+    if req.provider.is_some() || req.confirm_online {
+        return Err(ApiError::bad_request(
+            "SCHEDULED_CLOUD_PLANNER",
+            "a scheduled run uses the local planner; a cloud planner needs a run started from the console",
+        ));
+    }
+    Ok(())
 }
 
 fn refuse_bound_session_pins(state: &AppState, owner: &str, req: &AgentRunRequest) -> ApiResult<()> {
@@ -602,6 +625,7 @@ pub(crate) fn start_job(
 /// file, so the whole check runs on the blocking pool.
 async fn refuse_unschedulable(state: &Arc<AppState>, req: &AgentRunRequest, owner: &str) -> ApiResult<()> {
     let (state, req, owner) = (state.clone(), req.clone(), owner.to_string());
+    refuse_scheduled_cloud_planner(&req)?;
     super::structured_memory::off_worker(move || {
         super::goals::validate_binding(&state, &req, &owner)?;
         refuse_session_pins(&state, &owner, &req)?;
