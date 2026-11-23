@@ -37,7 +37,7 @@ claims. Do not silently install Rosetta or change TCC settings to fill an eviden
 
 Match remote SHA, workflow run, artifact COMMIT and checksums.
 `desktop-check.yml` compiles PRs; Bundle and release call reusable `desktop.yml`.
-Use an authorized desktop dispatch for an unmerged artifact. Scheduled/manual
+Use an authorized desktop dispatch for an unmerged artifact. Automatic/manual
 publication requires main and successful Bundle at that SHA. Inspect runs, tags
 and releases before dispatch; the planner rejects prerelease tags.
 Publication follows explicit user authorization. Never overwrite release assets
