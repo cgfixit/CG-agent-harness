@@ -483,7 +483,20 @@ impl Policy {
     }
 
     /// A blocked rule names the target's host and port, whatever its path.
+    /// `example.com.` is `example.com` (the browser grant drops the dot), so
+    /// trailing dots are trimmed here; this check only refuses, never grants.
     fn blocks_host(&self, target: &Url) -> bool {
+        let mut target = target.clone();
+        if let Some(host) = target
+            .host_str()
+            .filter(|h| h.ends_with('.'))
+            .map(|h| h.trim_end_matches('.').to_owned())
+        {
+            if target.set_host(Some(&host)).is_err() {
+                return true;
+            }
+        }
+        let target = &target;
         let mut other = target.clone();
         let swapped = match target.scheme() {
             "https" => other.set_scheme("http").is_ok(),
@@ -1025,6 +1038,17 @@ mod tests {
             .blocked
             .push(Policy::block_rule("https://docs.example.org/%70rivate/*").unwrap());
         assert!(escaped.blocks(&canonical_url("https://docs.example.org/private/a").unwrap()));
+        // Chrome keeps a trailing dot (`docs.example.org.`), the grant check drops
+        // it, and the canonicalizer refuses it: the fallback must still see the
+        // blocked host, on any path, and leave hosts no rule names alone.
+        for url in [
+            "https://docs.example.org./private/a",
+            "https://docs.example.org../private/a",
+            "https://docs.example.org./public/a",
+        ] {
+            assert!(canonical_url(url).is_err() && policy.blocks_request(url), "{url}");
+        }
+        assert!(!policy.blocks_request("https://cdn.example.net./private/a"));
         // Another port is another origin; no URL at all is refused.
         assert!(!policy.blocks_request("https://docs.example.org:8443/a%20b"));
         assert!(policy.blocks_request("not a url"));

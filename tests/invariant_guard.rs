@@ -1067,6 +1067,26 @@ fn duplicated_constants_still_agree() {
             "console {name} drifted from src/server/loop_runner.rs"
         );
     }
+    // The setup-code dialog checks a picked file against the generator's alphabet
+    // and length; a drift would refuse a real code or show a wrong one.
+    let authn = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/common/authn.rs")).unwrap();
+    let grab = |text: &str, pattern: &str| {
+        regex::Regex::new(pattern)
+            .unwrap()
+            .captures(text)
+            .map(|c| (c[1].to_string(), c.get(2).map(|m| m.as_str().to_string())))
+            .unwrap_or_else(|| panic!("no match for {pattern}"))
+    };
+    let (alphabet, _) = grab(&authn, r#"const SETUP_CODE_ALPHABET: &\[u8\] = b"([^"]+)";"#);
+    let (length, _) = grab(&authn, r"const SETUP_CODE_LEN: usize = (\d+);");
+    assert_eq!(
+        grab(
+            cgagentharness::server::console::HARNESS_HTML,
+            r"const SETUP_CODE_SYMBOLS = /\^\[([^\]]+)\]\{(\d+)\}\$/;"
+        ),
+        (alphabet, Some(length)),
+        "console SETUP_CODE_SYMBOLS drifted from src/common/authn.rs"
+    );
     // The shim whitelist is exactly the CLI's dispatch table (no deepagent-plan, no __sleep),
     // in both directions: an arm missing from ACTIONS would be unreachable through the shim.
     let commands = std::fs::read_to_string(root().join("agentic").join("commands.rs")).unwrap();
