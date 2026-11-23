@@ -660,13 +660,6 @@ impl AuthManager {
         let current = Self::credential(&canonical, &checked, current);
         // One check on every path, a disabled account's included, as at sign-in.
         let (ok, _) = verify(&current, &checked.password_hash);
-        // A forced change must actually change the credential: the setup code
-        // has been on screen and in a file, so it may not become the password.
-        if ok && Self::credential(&canonical, &checked, password) == current {
-            return Err(HarnessError::password_policy(
-                "the new password must differ from the current one",
-            ));
-        }
         let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let mut db = stored.1.clone();
         // Recorded at the time read under the lock, as `login_with` does.
@@ -693,6 +686,15 @@ impl AuthManager {
             user.locked_until_ts = Some(authn::next_lock_until(user.failed_count, now));
             self.persist(&mut stored, &db)?;
             return Err(HarnessError::auth_login_failed());
+        }
+        // A forced change must actually change the credential: the setup code
+        // has been on screen and in a file, so it may not become the password.
+        // Refused only after the lockout recheck above, so a right guess made
+        // while a lockout started is not told apart from a wrong one.
+        if Self::credential(&canonical, &checked, password) == current {
+            return Err(HarnessError::password_policy(
+                "the new password must differ from the current one",
+            ));
         }
         user.password_hash = record;
         user.must_change_password = false;
@@ -1232,6 +1234,22 @@ mod tests {
         assert_eq!(error.code, "AUTH_ACCOUNT_LOCKED");
         assert_eq!(live_sessions(&auth, "bob"), 0);
         auth.login("bob", &password).unwrap_err();
+
+        // The same overlap with the current password sent as the new one: a
+        // right guess gets the lockout too, not "must differ", so the refusal
+        // does not tell it apart from a wrong one.
+        let (_dir, auth) = store();
+        auth.create_user("carol", &password, "operator").unwrap();
+        for _ in 0..4 {
+            auth.login("carol", &wrong).unwrap_err();
+        }
+        let another_failure = || {
+            auth.login("carol", &wrong).unwrap_err();
+        };
+        let error = auth
+            .change_password_with("carol", &password, &password, check_then(another_failure))
+            .unwrap_err();
+        assert_eq!(error.code, "AUTH_ACCOUNT_LOCKED");
     }
 
     #[test]
