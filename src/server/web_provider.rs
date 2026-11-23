@@ -216,9 +216,16 @@ pub(super) fn hop_budget(
 /// provider's cooldown is skipped without a request.
 pub(super) fn falls_through(hop: Hop, code: &str) -> bool {
     match hop {
+        // A spent daily unit ceiling or an unusable unit ledger (#772 D10) moves
+        // on too: the next paid hop checks its own ceiling, public Google has none.
         Hop::Tavily | Hop::Serpapi => matches!(
             code,
-            "WEB_SEARCH_PROVIDER" | "WEB_TIMEOUT" | "WEB_SEARCH_COOLDOWN" | "WEB_SEARCH_QUOTA"
+            "WEB_SEARCH_PROVIDER"
+                | "WEB_TIMEOUT"
+                | "WEB_SEARCH_COOLDOWN"
+                | "WEB_SEARCH_QUOTA"
+                | "WEB_SEARCH_DAILY_CAP"
+                | "WEB_UNITS_UNAVAILABLE"
         ),
         Hop::GooglePublic => false,
     }
