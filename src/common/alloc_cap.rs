@@ -30,13 +30,15 @@ pub const REFUSAL_MARKER: &str = "cgagentharness: armed allocation refused";
 /// allocating: a raw `write(2)` of a static line (Unix; Windows reports no
 /// signal, so its parent never reads an abort as a limit and needs no line).
 fn note_refusal() {
-    if LIMIT.load(Ordering::Relaxed) == 0 || REFUSED.swap(true, Ordering::Relaxed) {
-        return;
-    }
+    let first = LIMIT.load(Ordering::Relaxed) != 0 && !REFUSED.swap(true, Ordering::Relaxed);
     // SAFETY: fd 2 and a static buffer of `MARKER_LINE.len()` bytes; a short or
     // failed write only loses the marker, and the parent then fails closed.
     #[cfg(unix)]
-    let _ = unsafe { libc::write(2, MARKER_LINE.as_ptr().cast(), MARKER_LINE.len()) };
+    if first {
+        let _ = unsafe { libc::write(2, MARKER_LINE.as_ptr().cast(), MARKER_LINE.len()) };
+    }
+    #[cfg(not(unix))]
+    let _ = first;
 }
 
 /// [`REFUSAL_MARKER`] on a line of its own, whatever stderr held before it.
