@@ -34,16 +34,16 @@ with at least 12 characters; until then the account can only inspect its
 identity, change its password or log out. Replacement checks the current
 password and CSRF token, then invalidates old sessions.
 
-Every role can **change password** with its current password. An
-administrator uses **USERS** (`/users`) to create users or reset passwords.
-Password reset, role change, disable and deletion revoke that account's
-sessions; disable, deletion and loss of coding access also stop its coding
-work. The last enabled administrator cannot be deleted, disabled or
-demoted.
+Every role can **change password** with its current password. Administrators
+use **USERS** (`/users`) to create users or reset passwords.
+Password reset, role change, disable and deletion revoke the account's
+sessions, ending a coding run it awaits; disable, deletion and losing coding
+access also stop its coding work. The last enabled administrator cannot be
+deleted, disabled or demoted.
 
 Authentication probes time out after five seconds and account
-mutations after fifteen, body included. A timeout does not prove a
-change was rejected; refresh first.
+mutations after fifteen, body included. A timeout does not prove
+rejection; refresh first.
 
 ### Roles
 
