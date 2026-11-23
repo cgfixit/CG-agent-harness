@@ -280,14 +280,21 @@ pub async fn build_app_with_sources(
                 tracing::warn!("auth.role_migrated was not written; it is kept for the next boot");
             }
         }
-        // A fold acknowledged by an earlier build, or a role set while the key
-        // store could not be written, may have left an `auditor` a live key.
-        for user in mgr.list_users() {
-            if !mcp_keys::owner_may_hold_keys(&user.role)
-                && mcp_keys::KeyStore::disable_owner_if_initialized(&home, &user.user_id).is_err()
-            {
-                tracing::warn!("an auditor account's machine keys could not be disabled at boot");
-            }
+        // A fold acknowledged by an earlier build, or a role set, disable or
+        // delete whose key-store write failed, may have left a live key for an
+        // owner that is gone, disabled or may not hold one. A deleted account's
+        // route answers 404, so boot is that delete's only retry. `local` keys
+        // (minted while auth was off) and pending password changes keep theirs.
+        use crate::common::auth_store::OwnerLapse;
+        let retire = |owner: &str| {
+            owner != "local"
+                && matches!(
+                    mgr.owner_lapse(owner, crate::common::authz::Capability::OwnData),
+                    Some(OwnerLapse::Missing | OwnerLapse::Disabled | OwnerLapse::Role(_))
+                )
+        };
+        if mcp_keys::KeyStore::retire_owners_if_initialized(&home, retire).is_err() {
+            tracing::warn!("machine keys of a deleted, disabled or auditor account could not be disabled at boot");
         }
         mgr.bootstrap_if_empty()?;
         Some(Arc::new(mgr))
