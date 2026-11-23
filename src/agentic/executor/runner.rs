@@ -257,6 +257,15 @@ fn cargo_preparation_failure(stderr: &str) -> bool {
             }
             continue;
         }
+        // A failing build script: the header quotes the package, and the `Caused by:`
+        // block holds the script path and its own `--- stdout`/`--- stderr` text.
+        if line.starts_with("error: failed to run custom build command for `") {
+            i += 1;
+            while i < lines.len() && (lines[i].is_empty() || lines[i].starts_with(' ') || lines[i] == "Caused by:") {
+                i += 1;
+            }
+            continue;
+        }
         // `error: 2 targets failed:` lists each failed target's rerun arguments.
         if line.starts_with("error: ") && line.ends_with(" targets failed:") {
             i += 1;
@@ -349,6 +358,10 @@ error: test failed, to rerun pass `--lib`\n",
 error: test failed, to rerun pass `--lib`\n",
             "   Compiling demo5 v0.1.0 (/w/e)\n\
 error: demo5@0.1.0: checksum mismatch in generated table\nerror: build script logged errors\n",
+            // A failing build script: the package name and the script's own stderr.
+            "error: failed to run custom build command for `checksum-tool v0.1.0 (/w)`\n\nCaused by:\n  \
+process didn't exit successfully: `/w/target/debug/build/checksum-tool-1a2b3c4d5e6f7a8b/build-script-build` (exit status: 101)\n  \
+--- stdout\n  cargo:rerun-if-changed=build.rs\n\n  --- stderr\n  failed to get git revision\n",
         ] {
             assert!(!cargo_preparation_failure(stderr), "{stderr}");
         }
