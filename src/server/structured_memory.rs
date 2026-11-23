@@ -1318,6 +1318,13 @@ impl StructuredMemoryStore {
     /// Drops missing, inactive, stale-revision, invalid, duplicate, and
     /// over-limit ids. Cross-owner ids look like missing (SQL owner filter).
     pub fn recall_selected(&self, owner: &str, selections: &[FactSelection]) -> RecallResult {
+        self.recall_up_to(owner, selections, self.limits.max_selected_facts)
+    }
+
+    /// [`Self::recall_selected`] with the caller's own ceiling: explicit picks
+    /// are bounded by `max_selected_facts`, search hits by
+    /// `max_retrieval_results`. Every other recheck is the same.
+    fn recall_up_to(&self, owner: &str, selections: &[FactSelection], max: usize) -> RecallResult {
         if !valid_owner(owner) {
             return RecallResult {
                 injected: Vec::new(),
@@ -1330,7 +1337,6 @@ impl StructuredMemoryStore {
                     .collect(),
             };
         }
-        let max = self.limits.max_selected_facts;
         let mut result = RecallResult::empty();
         let mut seen = std::collections::BTreeSet::new();
         for selection in selections {
@@ -3405,7 +3411,11 @@ pub fn assemble_retrieval_facts(
     match hits {
         Ok(hits) => {
             let selections = StructuredMemoryStore::selections_from_hits(&hits);
-            let mut recalled = store.recall_selected(owner, &selections);
+            // The search already kept at most `limit` hits. Rechecking them under
+            // `max_selected_facts` dropped hits as over_limit whenever that key
+            // was the smaller of the two, below the merge ceiling `prompt_memory`
+            // computes from both.
+            let mut recalled = store.recall_up_to(owner, &selections, limit);
             for fact in &mut recalled.injected {
                 fact.source = "fts";
             }
@@ -4885,6 +4895,51 @@ mod tests {
         );
         assert!(recalled.injected.is_empty());
         assert_eq!(recalled.dropped[0].reason, "recall_disabled");
+    }
+
+    /// Search hits are bounded by `max_retrieval_results`, explicit picks by
+    /// `max_selected_facts`. Hits rechecked under the selection ceiling were
+    /// dropped as over_limit whenever that key was the smaller of the two.
+    #[test]
+    fn retrieval_keeps_its_own_ceiling_when_the_selection_ceiling_is_smaller() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig::from_str(
+            "structured_memory:\n  enabled: true\n  retrieval: true\n  max_selected_facts: 1\n  max_retrieval_results: 3\n",
+            &dir.path().join("config.yaml"),
+        )
+        .unwrap();
+        let store = StructuredMemoryStore::open(&dir.path().join("structured.sqlite3"), &cfg).unwrap();
+        let facts: Vec<Fact> = [
+            "Prefer metric units in examples.",
+            "Metric rulers stay in the drawer.",
+            "Use metric bolts on the frame.",
+            "Metric tape lives in the van.",
+        ]
+        .iter()
+        .map(|text| store.add_fact("user_alice", text, "pref", "add").unwrap())
+        .collect();
+        let intent = RetrievalIntent {
+            force: true,
+            query: Some("metric"),
+            message: None,
+        };
+        let (retrieved, error) =
+            assemble_retrieval_facts(Some(&store), &cfg, "user_alice", &intent, &OperatorGates::default());
+        assert_eq!(error, None);
+        assert_eq!(retrieved.injected.len(), 3, "every hit the search kept is injected");
+        assert!(retrieved.dropped.is_empty());
+        assert!(retrieved.injected.iter().all(|fact| fact.source == "fts"));
+        // Explicit picks keep the smaller selection ceiling.
+        let picks: Vec<FactSelection> = facts
+            .iter()
+            .map(|fact| FactSelection {
+                id: fact.id.clone(),
+                expected_revision: fact.revision,
+            })
+            .collect();
+        let selected = store.recall_selected("user_alice", &picks);
+        assert_eq!(selected.injected.len(), 1);
+        assert_eq!(selected.dropped.iter().filter(|d| d.reason == "over_limit").count(), 3);
     }
 
     #[test]
