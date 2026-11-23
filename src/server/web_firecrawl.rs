@@ -57,18 +57,31 @@ impl FirecrawlConfig {
 pub(crate) struct HourlyCap(std::sync::Mutex<(u64, u64)>);
 
 impl HourlyCap {
-    /// Take one read when fewer than `max` were taken this clock hour.
-    pub(super) fn take(&self, now_unix: u64, max: u64) -> bool {
+    /// Take one read when fewer than `max` were taken this clock hour, and
+    /// return the hour it was charged to.
+    pub(super) fn take(&self, now_unix: u64, max: u64) -> Option<u64> {
         let hour = now_unix - now_unix % 3600;
         let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
         if state.0 != hour {
             *state = (hour, 0);
         }
         if state.1 >= max {
-            return false;
+            return None;
         }
         state.1 += 1;
-        true
+        Some(hour)
+    }
+
+    /// Give back a read whose request was never sent, so a refusal before the
+    /// send (a changed key or policy, a disabled web, a failed lookup) does not
+    /// spend the hour's allowance. Only to the hour `take` charged: once that
+    /// hour has ended the slot is not returned, so a later hour's reads keep
+    /// their own count.
+    pub(super) fn give_back(&self, hour: u64) {
+        let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        if state.0 == hour {
+            state.1 = state.1.saturating_sub(1);
+        }
     }
 }
 
@@ -209,7 +222,15 @@ impl WebTool {
                 "web.run_bytes cannot cover a fallback read",
             ))
         } else {
-            self.firecrawl_read(raw, group, audit, &fallback_charge).await
+            // Firecrawl bills a scraped page one credit and a parsed PDF one per
+            // page (up to PDF_MAX_PAGES), and it fetches the URL itself. What the
+            // pinned fetch saw (a script shell, or a Content-Type that was not a
+            // PDF) does not bind what Firecrawl fetches and bills: it detects
+            // documents by extension, and an origin can answer it differently.
+            // Every read reserves the PDF worst case (#772 D10: the defensible
+            // upper bound), so no origin can spend past units_per_day.
+            self.firecrawl_read(raw, group, audit, &fallback_charge, PDF_MAX_PAGES)
+                .await
         };
         let fallback_charge = fallback_charge.load(Ordering::SeqCst);
         self.check_enabled()?;
@@ -248,6 +269,7 @@ impl WebTool {
         group: Option<&str>,
         audit: &Audit,
         charged: &AtomicUsize,
+        units: u64,
     ) -> Result<Page> {
         if self.search_cooldown.holding(PROVIDER, Instant::now()).is_some() {
             return Err(error(
@@ -267,12 +289,24 @@ impl WebTool {
         }
         let policy = self.policy()?;
         let target = policy.authorize_read(raw, group)?;
-        if !self.firecrawl_spent.take(unix_now(), self.firecrawl.max_per_hour) {
-            return Err(error(
-                "WEB_FALLBACK_CAP",
-                "web.firecrawl.max_per_hour is spent for this hour",
-            ));
-        }
+        let Some(hour) = self.firecrawl_spent.take(unix_now(), self.firecrawl.max_per_hour) else {
+            return Err(
+                error("WEB_FALLBACK_CAP", "web.firecrawl.max_per_hour is spent for this hour")
+                    .detail("limit", "hourly"),
+            );
+        };
+        // The durable daily units (#772 D10) after the hourly slot; a refusal
+        // gives that slot back, since nothing was sent.
+        let reserved = match self
+            .reserve_units(super::web_units::Paid::Firecrawl, units, audit)
+            .await
+        {
+            Ok(reserved) => reserved,
+            Err(refusal) => {
+                self.firecrawl_spent.give_back(hour);
+                return Err(refusal);
+            }
+        };
         let endpoint = self.firecrawl_endpoint();
         // A rendered or parsed read takes longer than a direct fetch: the fallback
         // gets twice `web.request_seconds` (at most a minute; before, the same 8 s
@@ -312,6 +346,7 @@ impl WebTool {
                 ));
             }
             charged.store(self.limits.response_bytes, Ordering::SeqCst);
+            reserved.mark_sent();
             let response = client
                 .post(endpoint)
                 // The pinned client stops at `web.request_seconds`; this request
@@ -351,6 +386,12 @@ impl WebTool {
         let (title, text, status, transfer_bytes) = match fetched {
             Ok(read) => read,
             Err(failure) => {
+                // Only a read refused before the send gives its slot back. The send
+                // flag decides, not `charged`: an empty answer resets that to zero
+                // after the request already left.
+                if !reserved.sent_flag().load(Ordering::SeqCst) {
+                    self.firecrawl_spent.give_back(hour);
+                }
                 if let Some(until) =
                     self.search_cooldown
                         .start(PROVIDER, &failure.code, &self.limits, Instant::now(), unix_now())
@@ -566,6 +607,7 @@ mod tests {
 
     mod fixture {
         use super::*;
+        use axum::response::IntoResponse;
         use axum::{http::HeaderMap, http::StatusCode, routing::get, routing::post, Json, Router};
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
@@ -743,14 +785,16 @@ mod tests {
                             && body["skipTlsVerification"] == json!(false)
                             && body.get("actions").is_none();
                         if !pinned {
-                            return (StatusCode::BAD_REQUEST, Json(json!({"success":false})));
+                            return (StatusCode::BAD_REQUEST, Json(json!({"success":false}))).into_response();
                         }
                         match headers.get("authorization").and_then(|v| v.to_str().ok()) {
                             Some("Bearer good") => {}
                             Some("Bearer quota") => {
-                                return (StatusCode::PAYMENT_REQUIRED, Json(json!({"success":false})))
+                                return (StatusCode::PAYMENT_REQUIRED, Json(json!({"success":false}))).into_response()
                             }
-                            _ => return (StatusCode::UNAUTHORIZED, Json(json!({"success":false}))),
+                            // A sent request answered with an empty 200 body.
+                            Some("Bearer empty") => return StatusCode::OK.into_response(),
+                            _ => return (StatusCode::UNAUTHORIZED, Json(json!({"success":false}))).into_response(),
                         }
                         let url = body["url"].as_str().unwrap_or("").to_string();
                         if url.ends_with("/slow.pdf") {
@@ -767,6 +811,7 @@ mod tests {
                             Json(json!({"success":true,"data":{"markdown":"# Rendered\nFallback body",
                                 "metadata":{"title":"Rendered","url":final_url,"statusCode":200}}})),
                         )
+                            .into_response()
                     }
                 }),
             );
@@ -806,7 +851,9 @@ mod tests {
         }
     }
 
-    const ON: &str = "web: {firecrawl: {enabled: true, max_per_hour: 4}}";
+    // A daily ceiling well above what these tests read, so each exercises the
+    // behavior it names; `the_daily_unit_ceiling_*` tests the shipped one.
+    const ON: &str = "web: {firecrawl: {enabled: true, max_per_hour: 4, units_per_day: 1000}}";
 
     /// Operator decision, 2026-11-10: a permitted URL whose body is over
     /// `web.response_bytes`, or is a PDF that local extraction (issue 813)
@@ -1141,6 +1188,86 @@ mod tests {
         assert_eq!(failure.details["fallback"], "WEB_FALLBACK_KEY_CHANGED");
         assert!(failure.details.get("charged_bytes").is_none(), "nothing was sent");
         assert_eq!(rig.hits(), 0, "a cleared key never reaches Firecrawl");
+        // Refused before the send: the hour's slot and the day's units come back.
+        assert_eq!(
+            rig.web.firecrawl_spent.0.lock().unwrap().1,
+            0,
+            "the hourly slot was given back"
+        );
+        // The unsent guard releases on the blocking pool after the read returns.
+        super::super::web_units::tests::wait_for_used(
+            &rig.web.units,
+            super::super::web_units::Paid::Firecrawl,
+            unix_now(),
+            0,
+        )
+        .await;
+    }
+
+    /// A sent read whose answer is an empty 200 body keeps its hourly slot and
+    /// its daily units: the refund follows the send flag, not the byte count,
+    /// which drops to zero after the send.
+    #[tokio::test]
+    async fn an_empty_answer_after_the_send_keeps_the_hourly_slot() {
+        let rig = fixture::rig("web: {firecrawl: {enabled: true, max_per_hour: 1}}", "empty").await;
+        let failed = rig.fetch("wall").await.unwrap_err();
+        assert_eq!(failed.code, "WEB_FETCH_FAILED", "the original outcome is kept");
+        assert_eq!(rig.hits(), 1, "the fallback was sent");
+        assert_eq!(
+            rig.web.firecrawl_spent.0.lock().unwrap().1,
+            1,
+            "the sent read keeps its slot"
+        );
+        assert_eq!(
+            rig.web
+                .units
+                .used(super::super::web_units::Paid::Firecrawl, unix_now())
+                .unwrap(),
+            PDF_MAX_PAGES,
+            "the sent read keeps its daily units"
+        );
+        let refused = rig.fetch("wall").await.unwrap_err();
+        assert_eq!(refused.details["fallback"], "WEB_FALLBACK_CAP", "{refused:?}");
+        assert_eq!(rig.hits(), 1, "the hour's only slot stayed spent");
+    }
+
+    /// #772 D10: Firecrawl reads reserve durable daily units before anything is
+    /// sent. Every read reserves the 10-page PDF worst case, a script shell
+    /// included: Firecrawl fetches the URL itself, so the pinned fetch cannot
+    /// prove what it will bill. A read the ceiling refuses sends nothing and
+    /// keeps the original outcome. Sent reads keep their units.
+    #[tokio::test]
+    async fn the_daily_unit_ceiling_refuses_a_fallback_before_it_is_sent() {
+        let rig = fixture::rig(
+            "web: {firecrawl: {enabled: true, max_per_hour: 100, units_per_day: 21}}",
+            "good",
+        )
+        .await;
+        for _ in 0..2 {
+            assert_eq!(rig.fetch("wall").await.unwrap()["via"], "firecrawl");
+        }
+        let used = |rig: &fixture::Rig| {
+            rig.web
+                .units
+                .used(super::super::web_units::Paid::Firecrawl, unix_now())
+                .unwrap()
+        };
+        assert_eq!(used(&rig), 20, "each 403 fallback reserved the PDF worst case");
+        let refused = rig.fetch("wall").await.unwrap_err();
+        assert_eq!(refused.code, "WEB_FETCH_FAILED", "the original outcome is kept");
+        assert_eq!(refused.details["fallback"], "WEB_FALLBACK_CAP");
+        assert_eq!(rig.hits(), 2, "the refused read sent nothing");
+        // One unit is left, and a script shell also reserves the worst case.
+        let shell = rig.fetch("shell").await.unwrap();
+        assert_ne!(shell["via"], "firecrawl", "the shell was not sent to Firecrawl");
+        assert_eq!(used(&rig), 20);
+        assert_eq!(rig.hits(), 2);
+        let audit = rig.audit_text();
+        assert!(
+            audit.contains("\"event\":\"web_units_refused\""),
+            "the refusal is audited"
+        );
+        assert!(!audit.contains("site.fixture"), "the refusal carries no URL");
     }
 
     /// Operator decision, 2026-11-14: a PDF answer may use `web.pdf_response_bytes`
@@ -1247,10 +1374,15 @@ mod tests {
     fn the_hourly_cap_counts_per_clock_hour() {
         let cap = HourlyCap::default();
         let hour = 500_000 * 3600;
-        assert!(cap.take(hour + 1, 2));
-        assert!(cap.take(hour + 2, 2));
-        assert!(!cap.take(hour + 3, 2), "the third read in the hour is refused");
-        assert!(cap.take(hour + 3600, 2), "a new hour starts empty");
+        assert_eq!(cap.take(hour + 1, 2), Some(hour));
+        assert_eq!(cap.take(hour + 2, 2), Some(hour));
+        assert_eq!(cap.take(hour + 3, 2), None, "the third read in the hour is refused");
+        assert_eq!(cap.take(hour + 3600, 2), Some(hour + 3600), "a new hour starts empty");
+        // A slot taken in the old hour and given back after the hour changed
+        // does not refund the new hour's read.
+        cap.give_back(hour);
+        assert_eq!(cap.take(hour + 3601, 2), Some(hour + 3600));
+        assert_eq!(cap.take(hour + 3602, 2), None, "the new hour still holds two reads");
     }
 
     #[test]
