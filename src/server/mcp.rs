@@ -1102,9 +1102,11 @@ mod config_tests {
         use crate::common::authz::McpAuthority;
         let command = serde_json::to_string(&std::env::current_exe().unwrap()).unwrap();
         let base = format!("name: fixture\ntransport: stdio\ncommand: [{command}]\ntools: [echo]\n");
+        // An absolute root on this platform: `/tmp` has no drive on Windows.
+        let root = serde_json::to_string(&std::env::temp_dir()).unwrap();
         // Read-only: no write roots, network deny, non-job_object containment.
         let read_only = serde_yaml_ng::from_str(&format!(
-            "{base}capabilities: {{version: 1, network: deny, containment: process_group, read_roots: [/tmp]}}\n"
+            "{base}capabilities: {{version: 1, network: deny, containment: process_group, read_roots: [{root}]}}\n"
         ))
         .unwrap();
         let server = parse_server(&read_only).unwrap();
@@ -1112,9 +1114,9 @@ mod config_tests {
         assert!(!server.operator_allowed);
         // Write roots, unrestricted network or job_object containment are privileged.
         for caps in [
-            "capabilities: {version: 1, network: deny, containment: process_group, write_roots: [/tmp]}",
-            "capabilities: {version: 1, network: unrestricted, containment: process_group}",
-            "capabilities: {version: 1, network: unrestricted, containment: job_object, filesystem: unrestricted, limits: {processes: 8, memory_mb: 256}}",
+            format!("capabilities: {{version: 1, network: deny, containment: process_group, write_roots: [{root}]}}"),
+            "capabilities: {version: 1, network: unrestricted, containment: process_group}".into(),
+            "capabilities: {version: 1, network: unrestricted, containment: job_object, filesystem: unrestricted, limits: {processes: 8, memory_mb: 256}}".into(),
         ] {
             let input = serde_yaml_ng::from_str(&format!("{base}{caps}\n")).unwrap();
             assert_eq!(parse_server(&input).unwrap().authority, McpAuthority::Privileged, "{caps}");
@@ -1130,7 +1132,7 @@ mod config_tests {
             ("operator_allowed: yes", false),
         ] {
             let input = serde_yaml_ng::from_str(&format!(
-                "{base}capabilities: {{version: 1, network: deny, containment: process_group, write_roots: [/tmp]}}\n{suffix}\n"
+                "{base}capabilities: {{version: 1, network: deny, containment: process_group, write_roots: [{root}]}}\n{suffix}\n"
             ))
             .unwrap();
             assert_eq!(parse_server(&input).unwrap().operator_allowed, expected, "{suffix}");

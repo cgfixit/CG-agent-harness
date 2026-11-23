@@ -792,10 +792,16 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
             "{busy}"
         );
         // A job is the same checked request: it refuses the same way, synchronously,
-        // and records nothing. An unknown or malformed id reads as such.
+        // and records nothing. An unknown or malformed id reads as such. Browser
+        // jobs are macOS and Linux only: elsewhere every job start is refused first.
         let busy = request(&server, &admin, Method::POST, "/api/browser/jobs", browse).await;
         assert_eq!(busy.status(), 409);
-        assert_eq!(busy.json::<Value>().await.unwrap()["detail"]["code"], "BROWSER_BUSY");
+        let jobs_code = if cfg!(unix) {
+            "BROWSER_BUSY"
+        } else {
+            "BROWSER_JOBS_UNSUPPORTED"
+        };
+        assert_eq!(busy.json::<Value>().await.unwrap()["detail"]["code"], jobs_code);
         for (method, path, status, code) in [
             (
                 Method::GET,
@@ -899,6 +905,11 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
                 for path in ["/api/browser/run", "/api/browser/jobs"] {
                     let browse = json!({"task":"read the page","origins":["https://example.com"]});
                     let reply = request(server, admin, Method::POST, path, browse).await;
+                    let (status, code) = if cfg!(unix) || path == "/api/browser/run" {
+                        (status, code)
+                    } else {
+                        (409, "BROWSER_JOBS_UNSUPPORTED")
+                    };
                     assert_eq!(reply.status(), status, "{path}");
                     assert_eq!(reply.json::<Value>().await.unwrap()["detail"]["code"], code, "{path}");
                 }

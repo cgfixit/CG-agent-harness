@@ -1592,7 +1592,11 @@ async fn invalid_schema_busy_cancel_and_bounds_are_truthful() {
     model.set_reply(ok_reply("pong", 1, 1));
     let chat = s.post_json("/api/chat", json!({"message": "hold the gate"}));
     let consolidate = async {
-        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        wait_until(
+            || s.state.generation_gate.owner() == "chat",
+            "chat holds generation gate",
+        )
+        .await;
         s.post_json("/api/structured-memory/consolidation", json!({"episode_ids": [second]}))
             .await
     };
@@ -1600,12 +1604,18 @@ async fn invalid_schema_busy_cancel_and_bounds_are_truthful() {
     assert_eq!(status, 409, "{busy}");
     assert_eq!(code(&busy), "STRUCTURED_MEMORY_BUSY");
     model.set_delay_ms(0);
+    wait_until(|| !s.state.generation_gate.is_held(), "gate released after the chat").await;
 
     model.set_delay_ms(1500);
     model.set_reply(consolidator_reply(&second, "Should not land after cancel"));
+    let sent = model.requests.lock().unwrap().len();
     let start = s.post_json("/api/structured-memory/consolidation", json!({"episode_ids": [second]}));
     let cancel = async {
-        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        wait_until(
+            || model.requests.lock().unwrap().len() > sent,
+            "the consolidator reaches the model",
+        )
+        .await;
         let running = s.get_json("/api/structured-memory/consolidation").await.1;
         let run_id = running["runs"][0]["id"].as_str().unwrap().to_string();
         let cancelled = s
