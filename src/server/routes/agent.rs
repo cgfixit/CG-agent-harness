@@ -50,14 +50,14 @@ fn shim_error(state: &AppState, action: &str, e: ShimError) -> ApiError {
 }
 
 async fn agentic_call(state: &AppState, req: OpsRequest) -> ApiResult<Json<Value>> {
-    agentic_call_with(state, req, |_, _| {}).await
+    agentic_call_with(state, req, None).await
 }
 
-async fn agentic_call_with(
-    state: &AppState,
-    req: OpsRequest,
-    prepare: impl FnOnce(&mut shim::OpsResult, &crate::common::audit::Redactors),
-) -> ApiResult<Json<Value>> {
+/// `prepare` reshapes the child's result before the envelope redaction. It may
+/// hash (review tags), so it runs on the blocking pool, never the async worker.
+type Prepare = fn(&mut shim::OpsResult, &crate::common::audit::Redactors);
+
+async fn agentic_call_with(state: &AppState, req: OpsRequest, prepare: Option<Prepare>) -> ApiResult<Json<Value>> {
     let action = req.action.clone();
     // The child appends to the audit file directly. Land the server's queued
     // lines first, such as the broker decision that authorized this run.
@@ -73,8 +73,18 @@ async fn agentic_call_with(
         )
         .details(json!({"action": action})));
     }
-    let mut result = result;
-    prepare(&mut result, state.audit.redactors());
+    let result = match prepare {
+        None => result,
+        Some(prepare) => {
+            let redactors = state.audit.redactors().clone();
+            super::structured_memory::off_worker(move || {
+                let mut result = result;
+                prepare(&mut result, &redactors);
+                result
+            })
+            .await
+        }
+    };
     Ok(Json(result.to_json(state.audit.redactors())))
 }
 
@@ -868,7 +878,7 @@ pub async fn agent_run_status(
     let checked = validated_run_id(&run_id)?;
     let mut ops = OpsRequest::new("real-repo-run-status");
     ops.run_id = Some(checked);
-    agentic_call_with(&state, ops, tag_review_diff).await
+    agentic_call_with(&state, ops, Some(tag_review_diff)).await
 }
 
 pub async fn agent_run_decision(
