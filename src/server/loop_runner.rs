@@ -688,13 +688,13 @@ async fn run_turns(
         let Some((final_state, reason)) = terminal else {
             // Cool down between turns so /loop stop can land and the model
             // server breathes; a stop lands immediately.
+            persist(&dir, &run).await;
             {
                 let mut runs = state.loops.runs.lock().unwrap_or_else(|p| p.into_inner());
                 if let Some(entry) = runs.get_mut(&run_id) {
                     entry.run = run.clone();
                 }
             }
-            persist(&dir, &run).await;
             let _ = events.send(json!({"type": "turn", "run": run}));
             if run.config.cooldown_ms > 0 {
                 tokio::select! {
@@ -724,6 +724,9 @@ async fn finish(
 ) {
     run.state = final_state;
     run.reason = reason.clone();
+    // Recorded before it is visible: a reader that sees the run end finds
+    // the same stats in loops/<run_id>.json.
+    persist(dir, &run).await;
     {
         let mut runs = state.loops.runs.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(entry) = runs.get_mut(run_id) {
@@ -731,7 +734,6 @@ async fn finish(
             entry.web_evidence = Default::default();
         }
     }
-    persist(dir, &run).await;
     state.audit.log(json!({
         "event": "loop_run_finished",
         "run_id": run.run_id,

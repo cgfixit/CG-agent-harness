@@ -181,8 +181,8 @@ manual's order so old links resolve. Truth order is code, then
   Owns: `Cargo.toml`, `Cargo.lock`, `deny.toml`, `rust-toolchain.toml`, their
   `desktop/` twins, [.cargo/config.toml](../.cargo/README.md). Checked by:
   `.github/workflows/dependency-advisories.yml`, the `ci.yml` deny job, the `dep-sync` skill.
-- [RELEASING.md](RELEASING.md): the scheduled `release.yml` workflow (08:17 and
-  20:17 UTC): tree comparison, the Bundle gate, patch versions, publication,
+- [RELEASING.md](RELEASING.md): the `release.yml` workflow after each green
+  Bundle: tree comparison, superseded commits, patch versions, the publish delay,
   manual runs and previews, and verification limits.
   Owns: `.github/workflows/{release,bundle,desktop}.yml`, `scripts/release-plan.py`,
   `scripts/package-release.sh`. Tests: `scripts/test-release-plan.py`.

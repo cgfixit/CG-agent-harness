@@ -554,38 +554,40 @@ pub(crate) fn start_job(
         // disabled, deleted or demoted out of `RunCoding` before this job was
         // registered missed `JobStore::cancel_owner`, so it is checked again
         // now that the job is in the store: any later change finds it there.
-        let (check_state, check_owner, check_job) = (task_state.clone(), task_owner.clone(), task_job.clone());
-        let still_allowed = super::structured_memory::off_worker(move || {
-            if schedule_owner_authorized(&check_state, &check_owner) {
-                return true;
-            }
-            check_state.audit.log(json!({
-                "event": "agent_job_refused",
-                "job_id": check_job,
-                "owner": check_owner,
-                "reason": "account_changed",
-            }));
-            check_state.jobs.finish(
-                &check_job,
-                Err(ApiError::new(
-                    StatusCode::UNAUTHORIZED,
-                    "AUTH_REQUIRED",
-                    "The account was disabled, deleted or lost coding access before this job started; nothing ran.",
-                )),
-            );
-            false
-        })
-        .await;
-        if !still_allowed {
-            return;
-        }
-        // `prepared` (and both gate guards) live exactly as long as this task.
+        let (check_state, check_owner) = (task_state.clone(), task_owner.clone());
+        let still_allowed =
+            super::structured_memory::off_worker(move || schedule_owner_authorized(&check_state, &check_owner)).await;
+        // Both gate guards are released before the job reads as settled: a
+        // caller that sees it settle may start the next run at once.
         let PreparedRun {
             ops,
-            _run_gate,
-            _chat_gate,
+            _run_gate: run_gate,
+            _chat_gate: chat_gate,
         } = prepared;
+        if !still_allowed {
+            drop((run_gate, chat_gate));
+            let (refuse_state, refuse_owner, refuse_job) = (task_state.clone(), task_owner.clone(), task_job.clone());
+            super::structured_memory::off_worker(move || {
+                refuse_state.audit.log(json!({
+                    "event": "agent_job_refused",
+                    "job_id": refuse_job,
+                    "owner": refuse_owner,
+                    "reason": "account_changed",
+                }));
+                refuse_state.jobs.finish(
+                    &refuse_job,
+                    Err(ApiError::new(
+                        StatusCode::UNAUTHORIZED,
+                        "AUTH_REQUIRED",
+                        "The account was disabled, deleted or lost coding access before this job started; nothing ran.",
+                    )),
+                );
+            })
+            .await;
+            return;
+        }
         let outcome = agentic_call(&task_state, ops).await.map(|Json(v)| v);
+        drop((run_gate, chat_gate));
         // Saving the outcome (fsync) and enqueueing its notification block. A
         // cancel that wins the job lock first still makes this finish a no-op.
         let (finish_state, finish_job) = (task_state.clone(), task_job.clone());
