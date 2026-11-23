@@ -433,6 +433,8 @@ async fn a_staged_excerpt_reaches_one_local_turn_and_is_refused_elsewhere() {
 /// reaches the account's next turn under a role without log reads: delivery
 /// rereads the caller's live grant. Bypassing the route's `forget_owner` with a
 /// direct store change models exactly that interleaving.
+// Windows builds refuse every read (`DIAG_UNSUPPORTED`); see the windows test above.
+#[cfg(unix)]
 #[tokio::test]
 async fn an_excerpt_staged_across_a_demotion_never_reaches_the_new_role() {
     let model = start_mock_model().await;
@@ -510,6 +512,8 @@ async fn an_excerpt_staged_across_a_demotion_never_reaches_the_new_role() {
 /// A password reset or change revokes the account's sign-ins, so the /diag
 /// read and excerpt one of them left go too, as on logout, disable, a role
 /// change or deletion (INVARIANTS.md: account changes drop it).
+// Windows builds refuse every read (`DIAG_UNSUPPORTED`); see the windows test above.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_password_reset_or_change_drops_staged_diag_state() {
     let model = start_mock_model().await;
@@ -586,6 +590,7 @@ async fn a_password_reset_or_change_drops_staged_diag_state() {
     }
 }
 
+#[cfg(unix)]
 fn staged_owner(s: &TestServer, username: &str) -> String {
     s.state.auth.as_ref().unwrap().get_user(username).unwrap().user_id
 }
