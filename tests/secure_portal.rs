@@ -905,6 +905,11 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
                 for path in ["/api/browser/run", "/api/browser/jobs"] {
                     let browse = json!({"task":"read the page","origins":["https://example.com"]});
                     let reply = request(server, admin, Method::POST, path, browse).await;
+                    let (status, code) = if cfg!(unix) || path == "/api/browser/run" {
+                        (status, code)
+                    } else {
+                        (409, "BROWSER_JOBS_UNSUPPORTED")
+                    };
                     assert_eq!(reply.status(), status, "{path}");
                     assert_eq!(reply.json::<Value>().await.unwrap()["detail"]["code"], code, "{path}");
                 }
