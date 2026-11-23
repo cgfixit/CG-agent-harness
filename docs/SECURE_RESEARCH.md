@@ -34,16 +34,16 @@ with at least 12 characters; until then the account can only inspect its
 identity, change its password or log out. Replacement checks the current
 password and CSRF token, then invalidates old sessions.
 
-Every role can **change password** with its current password. An
-administrator uses **USERS** (`/users`) to create users or reset passwords.
-Password reset, role change, disable and deletion revoke that account's
-sessions; disable, deletion and loss of coding access also stop its coding
-work. The last enabled administrator cannot be deleted, disabled or
-demoted.
+Every role can **change password** with its current password. Administrators
+use **USERS** (`/users`) to create users or reset passwords.
+Password reset, role change, disable and deletion revoke the account's
+sessions, ending a coding run it awaits; disable, deletion and losing coding
+access also stop its coding work. The last enabled administrator cannot be
+deleted, disabled or demoted.
 
 Authentication probes time out after five seconds and account
-mutations after fifteen, body included. A timeout does not prove a
-change was rejected; refresh first.
+mutations after fifteen, body included. A timeout does not prove
+rejection; refresh first.
 
 ### Roles
 
@@ -64,29 +64,26 @@ tokens, query bodies or keys.
 The **API Keys** tab lists `env_keys::MANAGED_KEYS` except the harness and
 planner keys (`/api` manages those; [managed
 keys](INSTALL.md#supported-managed-keys) covers masks, restarts and precedence).
-Administrators save, replace or clear values and see only masks and status.
-Both use the OS credential store and fail closed without it, unless literal
+Administrators save, replace or clear values and see only masks and status,
+through the OS credential store; without it they fail closed unless literal
 `security.allow_plaintext_key_file: true` keeps the
 [private legacy file](INSTALL.md#8-persistence-optional-keys-and-recovery). A
-missing credential affects only its provider; leave `GH_TOKEN` unset to use
-`gh auth login`. Webhook bearers are
+missing credential affects only its provider; unset `GH_TOKEN` uses `gh auth login`. Webhook bearers are
 [configured separately](SPEND_AND_NOTIFICATIONS.md#configure-a-completion-webhook).
 
 ### Account storage and recovery
 
 Versioned `auth.sqlite3` stores accounts and hashed session tokens
 transactionally; private `auth.initialized` stops a missing database from
-becoming a default-password bootstrap. A valid legacy `auth.json` migrates once
-(`auth.json.pre-sqlite` keeps a private copy; its sessions log in again).
-Corrupt, empty, unsafe or unsupported stores refuse startup and never reset.
-Stop the server before a backup or recovery, keep database and marker
-together, and never delete them to recreate `admin`.
+becoming a default-password bootstrap. A legacy `auth.json` migrates once
+(`auth.json.pre-sqlite` keeps a copy). Corrupt, empty, unsafe or unsupported
+stores refuse startup and never reset. Back up or recover with the server
+stopped, keep database and marker together, and never delete them to recreate `admin`.
 
 Each scrypt derivation uses about 128 MiB, so `auth.max_concurrent_operations`
-(default 1, range 1–4) bounds login and password work; extra attempts wait.
-Sessions expire after `auth.session.idle_timeout_sec` (default 43200) without
-use and `auth.session.absolute_timeout_sec` (default 604800) regardless, each
-at most 30 days. Chat session files under `sessions/` are written atomically
+bounds login and password work; extra attempts wait. Sessions expire after
+`auth.session.idle_timeout_sec` without use and `auth.session.absolute_timeout_sec`
+regardless, each at most 30 days. Chat session files under `sessions/` are written atomically
 with mode 0600 because history can carry pasted secrets;
 `memory/structured.sqlite3` follows the same owner-only policy
 ([at-rest contract](STRUCTURED_MEMORY.md#threat-model-at-rest)).
@@ -99,34 +96,30 @@ administrators inherit no other account's sessions. Auth-disabled homes use
 owner `local`, and enabling auth does not reassign it.
 
 Sessions without an owner are unassigned legacy data: kept on disk, hidden
-from ordinary reads, search and export, and untouched by **Clear my session
-history**. An administrator adopts one from **Sessions → Review unassigned
-legacy sessions (admin)** with a reason and confirmation. Adoption keeps the
-transcript and old blob pin owners but clears the goal-stage coding approval,
-so coding work is staged and reviewed again. Unknown-schema, unreadable and
+from reads, search and export, untouched by **Clear my session history**. An
+administrator adopts one (**Sessions → Review unassigned legacy sessions**) with
+a reason and confirmation; adoption keeps the transcript and blob pin owners but
+clears the goal-stage coding approval. Unknown-schema, unreadable and
 interrupted files stay for manual recovery.
 
-Detached job and schedule management uses the same owner boundary
+Jobs and schedules use the same owner boundary
 ([contract](../INVARIANTS.md#session-export-and-transcript-search-stay-on-the-machine));
-schedule dispatch rechecks the current account, so revocation stops later
-occurrences.
+each schedule occurrence rechecks the current account.
 
 ## HTTPS and native trust
 
 `serve` and the desktop sidecar share one transport setup: a unique P-256 key
 and certificate in private `tls/server.pem` (0600, directory 0700), SANs
-`localhost`, `127.0.0.1` and `::1`, reused across restarts and checked for name,
-validity and key consistency. Invalid or expired material refuses startup, with
-no HTTP fallback; explicit `tls.enabled: false` is the legacy HTTP choice. The
-listener accepts TLS 1.3 only.
+`localhost`, `127.0.0.1` and `::1`, reused across restarts and checked at start.
+Invalid or expired material refuses startup with no HTTP fallback; explicit
+`tls.enabled: false` is the legacy HTTP choice. The listener accepts TLS 1.3 only.
 
 The desktop app pins that leaf for its own WKWebView and changes no global
 trust ([native trust](DESKTOP.md#ownership-ports-and-security-boundaries)). The
 server checks origin, HTTP/2 `:authority` and HTTP/1 Host; HTTPS cookies are
 Secure, HttpOnly and SameSite=Strict. Browsers do not isolate cookies by port,
-so any other service on the same loopback address receives the session cookie
-when the browser visits it; on a shared host, another account's loopback
-server could replay it.
+so another loopback service the browser visits receives the session cookie and,
+on a shared host, could replay it.
 
 Print the public certificate, or renew generated material:
 
@@ -136,15 +129,14 @@ Print the public certificate, or renew generated material:
 ./target/release/cgagentharness tls renew
 ```
 
-Renewal preserves operator-supplied paths: an operator certificate sets both
-`tls.cert_file` and `tls.key_file` (absolute or home-relative; valid chain, key
-and loopback SANs) and is renewed by the operator. CLI sessions log in again
+Renewal leaves an operator certificate (`tls.cert_file` and `tls.key_file`,
+valid chain, key and loopback SANs) to the operator. CLI sessions log in again
 after a renewal.
 
-Browsers, private windows included, need separate trust: **Setup → Export
-public browser certificate** saves the leaf and shows its SHA-256. Safari and
-Chrome on macOS use operator-managed Keychain SSL trust; Firefox may need its
-own exception. Review trust after a renewal; never disable validation.
+Browsers need separate trust: **Setup → Export public browser certificate**
+saves the leaf and shows its SHA-256. Safari and Chrome on macOS use Keychain
+SSL trust; Firefox may need its own exception. Review trust after a renewal;
+never disable validation.
 
 ## Terminal access
 
@@ -160,30 +152,27 @@ desktop or custom-port origin with `--url`.
 ./target/release/cgagentharness account logout
 ```
 
-Passwords are read from hidden terminal input (automation may supply stdin;
-Windows needs a private stdin pipe); never put secrets in argv or chat. Private
-`cli-session.json` binds the cookie to the origin and certificate; logout
-removes it. The CLI refuses foreign origins, redirects, proxies and certificate
-substitution before sending credentials.
+Passwords come from hidden terminal input (or a private stdin pipe); never put
+secrets in argv or chat. Private `cli-session.json` binds the cookie to the
+origin and certificate; logout removes it. The CLI refuses foreign origins,
+redirects, proxies and certificate substitution before sending credentials.
 
 ## Web permissions
 
-Web settings persist (absent or invalid legacy `web_enabled` stays off);
-`/web on|off`, console or terminal, controls future reads and injection.
-Enablement and policy are **shared-home**; selections are account-private.
-Default allowlist mode requires URL grants; an administrator can confirm
-`/web mode denylist` to permit unblocked public URLs. `/web block` and
-`/web unblock` manage blocks, which win in both modes and across HTTP/HTTPS; a
-host without a path blocks its subdomains too. Switching modes preserves both
-lists, and named groups still restrict reads to their allow rules.
+Web settings persist (an absent or invalid legacy `web_enabled` stays off);
+`/web on|off` controls future reads and injection. Enablement and policy are
+**shared-home**; selections are account-private. Default allowlist mode needs
+URL grants; an administrator can confirm `/web mode denylist` to permit
+unblocked public URLs. Blocks (`/web block`, `/web unblock`) win in both modes
+and across HTTP/HTTPS, and a host without a path blocks its subdomains. Switching
+modes keeps both lists; named groups still restrict reads to their allow rules.
 `/web status` shows policy; `/web check URL` checks permission without networking.
 
 `tools/web_allowlist.json` is the v1 policy: up to `web.max_rules` entries per
-allow/block list (default 256, range 1–256, restart-only; batches name 1–32),
-capped at `max(64 KiB, web.max_rules × 4 KiB)`. A policy over a lowered cap is
-refused whole. `allow` validates groups and seeds, assigns stable IDs and
-writes batches atomically. A missing policy refuses reads until an authorized
-mutation initializes it; invalid or unreadable files never reset. Stop the
+allow/block list (batches name 1–32), capped at `max(64 KiB, web.max_rules × 4 KiB)`;
+a policy over a lowered cap is refused whole. `allow` validates groups and
+seeds, assigns stable IDs and writes atomically. A missing policy refuses reads
+until an authorized mutation creates it; invalid files never reset. Stop the
 server before manual edits.
 
 | Rule | Meaning |
@@ -198,16 +187,15 @@ server before manual edits.
 Console `/web` adds only `https://` to scheme-less operands. Default ports,
 IDNA and hostname case normalize; schemes never downgrade; fragments are
 stripped. Trailing-dot hosts, credentials, alternate IP spellings, dot
-segments, encoded path separators/dots/nested escapes, malformed escapes,
-encoded controls and ambiguous authorities are refused. Encoded
+segments, encoded separators or controls, malformed or nested escapes and
+ambiguous authorities are refused. Encoded
 punctuation/space in query data keeps its identity and cannot move
 host or path. Path wildcards include query strings, but never suffix
 impostors or alternate ports. Blocked rules match unreserved escapes decoded and slashes merged. `www.example.org` and `example.org` are distinct.
 Discovered links require current permission.
 
-HTML extraction shares the request deadline and stops on cancellation.
-`web.html_parser_handles` (seeded 4096, 512 if absent, range 64–4096,
-restart-only) bounds parser state; excessive nesting returns
+HTML extraction shares the request deadline and stops on cancellation;
+`web.html_parser_handles` bounds parser state, and excessive nesting returns
 `WEB_HTML_COMPLEXITY` without saving partial evidence.
 
 Each rule belongs to one source group, `default` unless `--group NAME` names
@@ -216,9 +204,9 @@ in the same grant. `--group` on `check`, `fetch`, `pages`, `search` or
 `research` limits that request to the group's allow rules. `/web deny` removes
 an allow rule ID or matching pattern across groups; it adds no block.
 
-Legacy rows migrate as exact URLs (add a wildcard for discovery); one invalid
-row fails the migration. Legacy `web_context.txt`/`web_last.json` are never
-injected; selections live in `tools/web_<account-hash>_{last,context}.json`.
+Legacy rows migrate as exact URLs; one invalid row fails the migration. Legacy
+`web_context.txt`/`web_last.json` are never injected; selections live in
+`tools/web_<account-hash>_{last,context}.json`.
 
 ## Search, fetch and research
 
@@ -229,8 +217,8 @@ allowlist mode, an administrator first grants the example page:
 /web allow https://doc.rust-lang.org/book/ch01-01-installation.html
 ```
 
-Then ask in ordinary chat, for example "Read that page and tell me which
-command checks the installed Rust version", or use direct commands:
+Then ask in chat ("Read that page and tell me which command checks the
+installed Rust version") or use direct commands:
 
 ```text
 /web search --count 3 veeam software cve
@@ -247,9 +235,8 @@ flags (`/web search -- --help`), or single-quote it
 ### Chat web tools
 
 Local chat and `/loop` offer only `web_search` (configured-provider listings)
-and `web_fetch` (an exact permitted URL); no repository, shell, policy,
-account, key or mutation tool is exposed, and `web.chat_tool_calls` bounds all
-rounds (1–30, default 30). Listings grant admin-turn exact-URL reads
+and `web_fetch` (an exact permitted URL), no repository, shell, policy, account,
+key or mutation tool; `web.chat_tool_calls` bounds all rounds. Listings grant admin-turn exact-URL reads
 (`web.search.result_reads.enabled`, on unless literal `false`, even in a home
 whose config predates the key). A listed `https://arxiv.org/abs/<id>` also
 grants exactly `https://arxiv.org/pdf/<id>`, its `full_text_url`, within
@@ -258,38 +245,35 @@ is not offered. A URL only a `/*`, `*.` rule or denylist permits, unlisted and
 not named in the message, pauses a live admin turn for Approve; elsewhere it is
 refused (`WEB_FETCH_COMPOSED`, `web.fetch_provenance`).
 
-Before any call runs, a bad identifier or call type, an unoffered tool,
-unparsable arguments or too many calls refuse the whole batch; a bound one
-call's arguments break (a `query` over 200 characters) fails that call alone,
-like a refused URL, as its own `ok: false` outcome (#772). Each call fits
-prompt, definitions, one reply and minimal results inside `web.total_tokens`; a
-batch without room runs no reads, and results shrink to the calibrated room
-left (`WEB_TOKEN_BUDGET`; `WEB_TOOLS_WITHHELD` reserves an answer after
-evidence). A batch that fails entirely ends the tool rounds: the model answers
-once without tools; an empty answer is retried once, then harness-written
-(`WEB_FINAL_EMPTY`, or "Web operation failed: CODE"). Usage counts completed
-model calls; missing upstream counts stay unknown. Cancellation aborts the turn.
+A malformed batch (bad identifier or call type, unoffered tool, unparsable
+arguments, too many calls) is refused whole before any call runs; a bound one
+call breaks (a `query` over 200 characters) fails that call alone as `ok: false`
+(#772). Each call fits prompt, definitions, one reply and minimal results inside
+`web.total_tokens`; a batch without room runs no reads (`WEB_TOKEN_BUDGET`;
+`WEB_TOOLS_WITHHELD` reserves an answer after evidence). A batch that fails
+entirely ends the tool rounds: the model answers once without tools, retried
+once if empty, then harness-written (`WEB_FINAL_EMPTY`). Usage counts completed
+model calls. Cancellation aborts the turn.
 
 `web_fetch` selects up to three BM25 passages from its page by `query`
-(1–200 characters); multi-page lookups keep at most two per page, and only whole
-delivered passages get receipt IDs and offsets. Omitted `refresh` reuses fresh
+(1–200 characters), two per page across several pages; only whole delivered
+passages get receipt IDs and offsets. Omitted `refresh` reuses fresh
 evidence already read for this goal, other reads default fresh;
 `refresh:false` allows permitted cache within `web.stale_seconds`, and `true`
 forces one fresh read per page per turn (a repeat re-selects from it,
 `refresh_reused`).
 
 Before further tools, new useful passages get a bounded digest (≤1,024 output
-tokens) with validated quotes and source IDs: provenance, not logical support;
-the answer stays unvalidated. The prompt asks for quotes near 120 characters
-that keep their qualifiers; one over 160 (`QUOTE_MAX_CHARS`) drops its claim
-(`quote_too_long`) and is never trimmed. Server-managed goal runs retain at
-most nine URL/hash receipts, three passage IDs per URL and sixteen queries,
-plus the digest. Reuse rechecks age, hashes and permissions. References survive
+tokens) with validated quotes and source IDs: provenance, not logical support.
+A quote over 160 characters (`QUOTE_MAX_CHARS`) drops its claim
+(`quote_too_long`), never trimmed. Server-managed goal runs retain at most nine
+URL/hash receipts, three passage IDs per URL and sixteen queries, plus the
+digest; reuse rechecks age, hashes and permissions. References survive
 compaction, not completion, cancellation or restart.
 
-`POST /api/chat` returns `web_tools`, reply and usage; the console shows each
-outcome separately. Each entry records its call's `query` and `refresh`, or
-`count`; a digest entry lists one `drop_reasons` code per dropped claim. Session
+`POST /api/chat` returns `web_tools`, reply and usage. Each entry records its
+call's `query` and `refresh`, or `count`; a digest entry lists one
+`drop_reasons` code per dropped claim. Session
 `web_sources` is a bounded metadata ledger, never a second page store.
 `web.carry_forward_sources` ships 5: permitted earlier URLs/queries (no page
 text), cited when used. Design: [router](WEB_DECISION_ROUTER.md);
@@ -303,11 +287,10 @@ Google Cloud key) under **Google results (SerpAPI)** or a Tavily key under
 an inherited environment value wins ([managed keys](INSTALL.md#supported-managed-keys)).
 
 Restart-only `web.search.provider` is `auto`, `google-public`, `serpapi` or
-`tavily`. `auto` follows the active keys: Tavily first, then SerpAPI, then
-public Google. Keyed providers receive the keyword query, result count and
-their own key, never chat history or account credentials. Keys never appear in
-user-facing URLs, model context, returned metadata or errors; listings
-reflecting a key are refused. With web enabled, keyed listings need no Google
+`tavily`; `auto` follows the active keys: Tavily, then SerpAPI, then public
+Google. Keyed providers receive the query, result count and their own key,
+never chat history or account credentials. Keys never appear in URLs, model
+context, metadata or errors; a listing reflecting a key is refused. With web enabled, keyed listings need no Google
 URL grant.
 
 - **SerpAPI** uses the fixed `https://serpapi.com/search.json` Google backend,
@@ -333,12 +316,22 @@ Fresh homes seed the Google grant; a home that removed it re-grants it:
 
 `web.search.fallback_to_public_google` and
 `fallback_to_serpapi` (after Tavily; both ship true) try the next hop only when a provider is
-unusable or its quota is spent; a rejected key, a refused query and a clean
-zero-result answer never fall through. The answer carries `fallback_from`, each
-hop logs `web_search_fallback`, and more than `fallback_alert_per_hour` (ships
-20) SerpAPI fallbacks in a clock hour add one `web_search_fallback_burst` audit
-line. The removed `provider: searxng` or a non-empty `web.search.searxng_url`
-fails boot by name.
+unusable or its quota or daily ceiling is spent; a rejected key, a refused query
+and a clean zero-result answer never fall through. The answer carries
+`fallback_from`, each hop logs `web_search_fallback`, and more than
+`fallback_alert_per_hour` SerpAPI fallbacks in a clock hour add one
+`web_search_fallback_burst` line. A removed `provider: searxng` or a non-empty
+`web.search.searxng_url` fails boot.
+
+Each Tavily search, SerpAPI search and Firecrawl read first reserves its units in
+`tools/web_units.sqlite`, a private ledger every turn, loop, job and CLI process
+on the home shares, against restart-only daily ceilings
+(`web.search.tavily_units_per_day` 30, `serpapi_units_per_day` 8,
+`web.firecrawl.units_per_day` 30, UTC days; #772 D10). Units return only when
+nothing was sent. A spent search ceiling (`WEB_SEARCH_DAILY_CAP`) moves on to
+the next hop; an unreadable or deleted ledger refuses the paid hop
+(`WEB_UNITS_UNAVAILABLE`); both audit `web_units_refused`. The ceilings count
+this home only, not a dashboard balance.
 
 An exact generated search URL also grants; an exact homepage grant does not,
 `https://google.com/*` does not grant `www`, and redirects stay refused.
@@ -387,9 +380,10 @@ timed-out, failed or encrypted read stays local), the authorized URL leaves the
 machine once, to the fixed `https://api.firecrawl.dev/v2/scrape`: basic proxy,
 markdown only, `storeInCache: false`. Another final URL is refused as a
 redirect; no links are kept; the page carries `via: firecrawl`.
-`web.firecrawl.max_per_hour` (default 20) caps reads, batches charge both reads
-to `web.run_bytes`, and HTTP 402 or 429 pauses it like a search quota. A failed
-fallback keeps the original result, its code in `details.fallback`.
+`web.firecrawl.max_per_hour` (default 20) caps reads (a read refused before it
+is sent gives its slot back), each reserves the 10-page PDF cap in daily units, batches charge both reads to `web.run_bytes`, and HTTP
+402 or 429 pauses it like a search quota. A failed fallback keeps the original
+result, its code in `details.fallback`.
 
 The HTML parser drops scripts, styles, navigation, headers, footers, forms and
 `hidden` or `aria-hidden` elements; text hidden only by CSS stays. Extracts keep

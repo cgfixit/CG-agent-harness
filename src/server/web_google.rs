@@ -852,7 +852,13 @@ impl WebTool {
             .map_err(|_| error("WEB_TIMEOUT", "request deadline exceeded"))
             .and_then(|rows| rows)
         } else {
-            self.api_search(endpoint, query, count, key.trim()).await
+            // One SerpAPI search, reserved durably before anything leaves (#772
+            // D10). The guard gives it back unless the send started, including
+            // when the hop deadline drops this future first. A spent ceiling
+            // returns here, before the cooldown below, and falls through.
+            let units = self.reserve_units(super::web_units::Paid::Serpapi, 1, audit).await?;
+            self.api_search(endpoint, query, count, key.trim(), units.sent_flag())
+                .await
         };
         let (rows, extras) = match fetched {
             Ok(listing) => listing,
@@ -903,6 +909,7 @@ impl WebTool {
         query: &str,
         count: usize,
         key: &str,
+        sent: &std::sync::atomic::AtomicBool,
     ) -> Result<(Vec<SearchResult>, Extras)> {
         tokio::time::timeout(Duration::from_secs(self.limits.request_seconds), async {
             let _permit = self
@@ -918,6 +925,7 @@ impl WebTool {
             if self.search_key_off_worker().await?.trim() != key.trim() {
                 return Err(error("WEB_SEARCH_KEY_CHANGED", "Search key changed; retry the search"));
             }
+            sent.store(true, std::sync::atomic::Ordering::SeqCst);
             let response = client
                 .get(endpoint)
                 .query(&[
@@ -1615,6 +1623,71 @@ mod tests {
     }
 
     const TAVILY_CHAIN: &str = "web: {request_seconds: 10, search: {provider: tavily, fallback_to_serpapi: true, fallback_to_public_google: true}}";
+
+    /// #772 D10: a spent daily unit ceiling refuses its hop before anything is
+    /// sent and falls through like a spent quota, without a cooldown: Tavily,
+    /// then SerpAPI, then public Google, which has no ceiling. With fallbacks
+    /// off the forced provider's refusal is visible, not silently degraded.
+    #[tokio::test]
+    async fn a_spent_daily_unit_ceiling_moves_the_search_to_the_next_hop() {
+        let tv = chain::tavily().await;
+        let serp = chain::serpapi().await;
+        let google = chain::google().await;
+        let yaml = "web: {request_seconds: 10, search: {provider: tavily, fallback_to_serpapi: true, \
+                    fallback_to_public_google: true, tavily_units_per_day: 1, serpapi_units_per_day: 1}}";
+        let chain = chain::Chain::new(yaml, "good", &serp, Some(&google))
+            .await
+            .with_tavily("good", &tv);
+        let providers: Vec<Value> = {
+            let mut seen = Vec::new();
+            for query in ["veeam one", "veeam two", "veeam three"] {
+                seen.push(chain.search(query).await.unwrap()["provider"].clone());
+            }
+            seen
+        };
+        assert_eq!(
+            providers,
+            [json!("tavily"), json!("google-serpapi"), json!("google-public")]
+        );
+        let hits = |f: &chain::Fixture| f.hits.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            (hits(&tv), hits(&serp), hits(&google)),
+            (1, 1, 1),
+            "a refused hop sent nothing"
+        );
+        let refused = chain.audit_events("web_units_refused");
+        let refused: Vec<(&str, &str)> = refused
+            .iter()
+            .map(|e| (e["provider"].as_str().unwrap(), e["code"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            refused,
+            [
+                ("tavily", "WEB_SEARCH_DAILY_CAP"),
+                ("tavily", "WEB_SEARCH_DAILY_CAP"),
+                ("serpapi", "WEB_SEARCH_DAILY_CAP")
+            ]
+        );
+        assert!(
+            chain.audit_events("web_search_cooldown").is_empty(),
+            "a daily cap starts no cooldown"
+        );
+
+        let alone = chain::Chain::new(
+            "web: {request_seconds: 10, search: {provider: tavily, fallback_to_serpapi: false, \
+             fallback_to_public_google: false, tavily_units_per_day: 1}}",
+            "",
+            &serp,
+            None,
+        )
+        .await
+        .with_tavily("good", &tv);
+        alone.search("veeam four").await.unwrap();
+        assert_eq!(
+            alone.search("veeam five").await.unwrap_err().code,
+            "WEB_SEARCH_DAILY_CAP"
+        );
+    }
 
     #[tokio::test]
     async fn tavily_answers_with_snippets_only_and_spends_no_later_hop() {
@@ -2373,7 +2446,7 @@ mod tests {
         )
         .unwrap();
         let (rows, _) = web
-            .api_search(endpoint.clone(), "veeam", 5, "fixture-secret-key")
+            .api_search(endpoint.clone(), "veeam", 5, "fixture-secret-key", &Default::default())
             .await
             .unwrap();
         assert_eq!(rows[0].title, "Actual API result");
@@ -2402,7 +2475,7 @@ mod tests {
             ("reflect-related", "WEB_SEARCH_RESPONSE"),
         ] {
             let failure = web
-                .api_search(endpoint.clone(), query, 5, "fixture-secret-key")
+                .api_search(endpoint.clone(), query, 5, "fixture-secret-key", &Default::default())
                 .await
                 .unwrap_err();
             assert_eq!(failure.code, code);
