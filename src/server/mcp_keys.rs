@@ -322,6 +322,27 @@ impl KeyStore {
         Self { path, max_keys: 1 }.disable_owner(owner)
     }
 
+    /// Disable every live key whose owner `retire` names. Boot uses it to
+    /// finish a disable or delete whose key-store write failed: a deleted
+    /// account's route answers 404, so nothing else retries it.
+    pub fn retire_owners_if_initialized(home: &Home, retire: impl Fn(&str) -> bool) -> anyhow::Result<usize> {
+        let path = home.root.join("mcp_keys.sqlite3");
+        let marker = home.root.join("mcp_keys.initialized");
+        if !present(&path)? || !present(&marker)? {
+            return Ok(0);
+        }
+        let store = Self { path, max_keys: 1 };
+        let owners: std::collections::BTreeSet<String> = store
+            .list()?
+            .into_iter()
+            .filter(|k| !k.disabled && retire(&k.owner_id))
+            .map(|k| k.owner_id)
+            .collect();
+        owners
+            .iter()
+            .try_fold(0, |n, owner| Ok(n + store.disable_owner(owner)?))
+    }
+
     pub fn authenticate(&self, token: &str) -> anyhow::Result<Principal> {
         // Always hash and compare, including unknown, disabled and malformed inputs.
         let (id, secret) = token
