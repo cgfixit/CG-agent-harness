@@ -7,7 +7,8 @@
 //! back unchanged: a redirect anywhere is refused, as for the pinned fetch. The
 //! URL leaves the machine, so each read is counted against
 //! `web.firecrawl.max_per_hour`.
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -81,6 +82,46 @@ impl HourlyCap {
         let mut state = self.0.lock().unwrap_or_else(|p| p.into_inner());
         if state.0 == hour {
             state.1 = state.1.saturating_sub(1);
+        }
+    }
+}
+
+impl HourlyCap {
+    /// [`Self::take`] as an owned slot: dropped before [`HourSlot::mark_sent`]
+    /// (a refusal before the send, or the future being cancelled while it
+    /// waits for the daily units, the permit, DNS or the key store) it gives
+    /// the read back; marked sent, it stays charged.
+    pub(super) fn take_slot(self: &Arc<Self>, now_unix: u64, max: u64) -> Option<HourSlot> {
+        let hour = self.take(now_unix, max)?;
+        Some(HourSlot {
+            cap: Arc::clone(self),
+            hour,
+            sent: AtomicBool::new(false),
+        })
+    }
+}
+
+/// One read of the hourly allowance, held until its request leaves. The send
+/// flag decides the refund, not the outcome: after the send an answer is
+/// ambiguous, so the read stays spent. [`HourlyCap::give_back`] still refuses
+/// a slot whose hour has ended, so a late drop never refunds a newer hour.
+pub(super) struct HourSlot {
+    cap: Arc<HourlyCap>,
+    hour: u64,
+    sent: AtomicBool,
+}
+
+impl HourSlot {
+    /// Set just before the request leaves, beside the daily units' own mark.
+    pub(super) fn mark_sent(&self) {
+        self.sent.store(true, Ordering::SeqCst);
+    }
+}
+
+impl Drop for HourSlot {
+    fn drop(&mut self) {
+        if !self.sent.load(Ordering::SeqCst) {
+            self.cap.give_back(self.hour);
         }
     }
 }
@@ -289,24 +330,18 @@ impl WebTool {
         }
         let policy = self.policy()?;
         let target = policy.authorize_read(raw, group)?;
-        let Some(hour) = self.firecrawl_spent.take(unix_now(), self.firecrawl.max_per_hour) else {
+        let Some(slot) = self.firecrawl_spent.take_slot(unix_now(), self.firecrawl.max_per_hour) else {
             return Err(
                 error("WEB_FALLBACK_CAP", "web.firecrawl.max_per_hour is spent for this hour")
                     .detail("limit", "hourly"),
             );
         };
-        // The durable daily units (#772 D10) after the hourly slot; a refusal
-        // gives that slot back, since nothing was sent.
-        let reserved = match self
+        // The durable daily units (#772 D10) after the hourly slot. A refusal, or
+        // this future being dropped while it waits, gives the slot back through
+        // its guard, since nothing was sent.
+        let reserved = self
             .reserve_units(super::web_units::Paid::Firecrawl, units, audit)
-            .await
-        {
-            Ok(reserved) => reserved,
-            Err(refusal) => {
-                self.firecrawl_spent.give_back(hour);
-                return Err(refusal);
-            }
-        };
+            .await?;
         let endpoint = self.firecrawl_endpoint();
         // A rendered or parsed read takes longer than a direct fetch: the fallback
         // gets twice `web.request_seconds` (at most a minute; before, the same 8 s
@@ -346,6 +381,7 @@ impl WebTool {
                 ));
             }
             charged.store(self.limits.response_bytes, Ordering::SeqCst);
+            slot.mark_sent();
             reserved.mark_sent();
             let response = client
                 .post(endpoint)
@@ -386,12 +422,9 @@ impl WebTool {
         let (title, text, status, transfer_bytes) = match fetched {
             Ok(read) => read,
             Err(failure) => {
-                // Only a read refused before the send gives its slot back. The send
-                // flag decides, not `charged`: an empty answer resets that to zero
-                // after the request already left.
-                if !reserved.sent_flag().load(Ordering::SeqCst) {
-                    self.firecrawl_spent.give_back(hour);
-                }
+                // Only a read refused before the send gives its slot back, and its
+                // guard does that on drop. The send flag decides, not `charged`: an
+                // empty answer resets that to zero after the request already left.
                 if let Some(until) =
                     self.search_cooldown
                         .start(PROVIDER, &failure.code, &self.limits, Instant::now(), unix_now())
@@ -1202,6 +1235,79 @@ mod tests {
             0,
         )
         .await;
+    }
+
+    /// #1087: a read cancelled after it took its hourly slot, while it still
+    /// waits for the permit, never sent anything, so the slot and the day's
+    /// units come back. Before the slot was an owned guard, dropping the future
+    /// skipped the give-back and the hour stayed charged.
+    #[tokio::test]
+    async fn a_read_cancelled_before_the_send_gives_back_its_hourly_slot() {
+        let rig = fixture::rig(
+            "web: {concurrency: 1, firecrawl: {enabled: true, max_per_hour: 4, units_per_day: 1000}}",
+            "good",
+        )
+        .await;
+        let web = rig.web.clone();
+        let cfg = AppConfig::from_str("{}", std::path::Path::new("config.yaml")).unwrap();
+        let audit = Audit::new(rig.dir.path().join("audit-cancel.jsonl"), &cfg);
+        let read = tokio::spawn(async move {
+            web.fetch("http://site.fixture/gate", true, &audit, "local") // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+                .await
+        });
+        // The pinned read holds the only permit; once it fails the fallback takes
+        // its slot and units, then waits for that permit.
+        rig.gate_hit.notified().await;
+        let held = rig.web.permits.clone().acquire_owned();
+        tokio::pin!(held);
+        tokio::select! {
+            biased;
+            _ = &mut held => unreachable!("the pinned read holds the only permit"),
+            _ = tokio::task::yield_now() => {}
+        }
+        rig.gate_go.notify_one();
+        let held = held.await.unwrap();
+        while rig.web.firecrawl_spent.0.lock().unwrap().1 == 0 {
+            tokio::task::yield_now().await;
+        }
+        read.abort();
+        assert!(read.await.unwrap_err().is_cancelled());
+        drop(held);
+        assert_eq!(rig.hits(), 0, "a cancelled read never reaches Firecrawl");
+        assert_eq!(
+            rig.web.firecrawl_spent.0.lock().unwrap().1,
+            0,
+            "the hourly slot was given back"
+        );
+        super::super::web_units::tests::wait_for_used(
+            &rig.web.units,
+            super::super::web_units::Paid::Firecrawl,
+            unix_now(),
+            0,
+        )
+        .await;
+    }
+
+    /// The slot guard on its own: unsent gives the read back, sent keeps it, and
+    /// a slot whose hour has ended refunds nothing to the new hour.
+    #[test]
+    fn an_hourly_slot_is_refunded_only_while_unsent_and_in_its_hour() {
+        let cap = Arc::new(HourlyCap::default());
+        let hour = 700_000 * 3600;
+        drop(cap.take_slot(hour + 1, 1).expect("the first read fits"));
+        assert!(cap.take_slot(hour + 2, 1).is_some(), "an unsent slot came back");
+
+        let sent = cap.take_slot(hour + 3, 2).expect("the second read fits");
+        sent.mark_sent();
+        drop(sent);
+        assert_eq!(cap.0.lock().unwrap().1, 1, "a sent read stays spent");
+
+        let old = cap.take_slot(hour + 3600, 1).expect("a new hour starts empty");
+        let newer = cap.take_slot(hour + 7200, 1).expect("the next hour starts empty");
+        drop(old);
+        assert_eq!(cap.0.lock().unwrap().1, 1, "the ended hour's slot refunds nothing");
+        drop(newer);
+        assert_eq!(cap.0.lock().unwrap().1, 0);
     }
 
     /// A sent read whose answer is an empty 200 body keeps its hourly slot and
