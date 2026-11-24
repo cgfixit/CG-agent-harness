@@ -33,6 +33,8 @@ jobs:
           - name: desktop
             manifest: desktop/Cargo.toml
             arguments: --all-features --config desktop/deny.toml
+            # The root toolchain; see desktop.yml's desktop-dependencies job.
+            rust-version: "1.89"
           # Seatbelt fixture compiled by tests/macos_cargo.rs; root policy.
           - name: sandbox-fixture
             manifest: tests/fixtures/cargo-sandbox/Cargo.toml
@@ -47,6 +49,7 @@ jobs:
           command-arguments: advisories
           manifest-path: ${{ matrix.manifest }}
           arguments: ${{ matrix.arguments }}
+          rust-version: ${{ matrix.rust-version || '' }}
 
   npm-advisories:
     name: npm audit (browser sidecar)

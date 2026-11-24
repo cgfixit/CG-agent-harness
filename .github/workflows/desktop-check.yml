@@ -157,3 +157,7 @@ jobs:
           command: check
           manifest-path: desktop/Cargo.toml
           arguments: --all-features --config desktop/deny.toml
+          # cargo-deny runs from the repository root, whose rust-toolchain.toml
+          # pins 1.89; the action installs only desktop/'s 1.90. Without the root
+          # toolchain its crate fetch and yanked check fail (warning[index-failure]).
+          rust-version: "1.89"

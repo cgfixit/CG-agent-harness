@@ -98,7 +98,7 @@ fn map_auth_error(e: &HarnessError) -> ApiError {
         "PASSWORD_POLICY" => ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "AUTH_POLICY", e.message.clone()),
         "AUTH_USER_NOT_FOUND" => ApiError::new(StatusCode::NOT_FOUND, &e.code, e.message.clone()),
         "AUTH_LAST_ADMIN" => ApiError::new(StatusCode::FORBIDDEN, &e.code, e.message.clone()),
-        "AUTH_USER_EXISTS" => ApiError::new(StatusCode::CONFLICT, &e.code, e.message.clone()),
+        "AUTH_USER_EXISTS" | "AUTH_LIMIT" => ApiError::new(StatusCode::CONFLICT, &e.code, e.message.clone()),
         // Only the wait crosses the wire; the stored details also name the account.
         "AUTH_ACCOUNT_LOCKED" => ApiError::new(StatusCode::LOCKED, &e.code, e.message.clone())
             .details(json!({"retry_after_sec": e.details.get("retry_after_sec").cloned().unwrap_or(Value::Null)})),
@@ -833,6 +833,24 @@ mod tests {
         assert_eq!(mapped.status, StatusCode::LOCKED);
         assert_eq!(mapped.details["retry_after_sec"], 29.5);
         assert!(mapped.details.get("username").is_none());
+    }
+
+    #[test]
+    fn a_refused_cap_is_a_conflict_not_an_outage() {
+        use crate::common::errors::HarnessError;
+        for message in ["account limit reached", "active session limit reached"] {
+            let mapped = map_auth_error(&HarnessError::new("AUTH_LIMIT", message));
+            assert_eq!(mapped.status, StatusCode::CONFLICT);
+            assert_eq!(mapped.code, "AUTH_LIMIT");
+            assert_eq!(mapped.message, message);
+        }
+        let unknown = map_auth_error(&HarnessError::new("SOMETHING_ELSE", "boom"));
+        assert_eq!(
+            unknown.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the catch-all is unchanged"
+        );
+        assert_eq!(unknown.code, "AUTH_ERROR");
     }
 
     fn with_cookie(raw: &str) -> Option<String> {
