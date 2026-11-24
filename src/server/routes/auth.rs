@@ -326,6 +326,16 @@ pub async fn login(
     state
         .audit
         .log(json!({"event":"account.login", "actor":result.username,"outcome":"success"}));
+    if result.evicted > 0 {
+        // Names the account and how many, so an operator who finds a session
+        // gone can see why; the console has no screen for it.
+        state.audit.log(json!({
+            "event": "account.session_evicted",
+            "actor": result.username,
+            "evicted": result.evicted,
+            "limit": "auth.session.max_per_account",
+        }));
+    }
     let mut resp = Json(json!({
         "username": result.username,
         "role": role,

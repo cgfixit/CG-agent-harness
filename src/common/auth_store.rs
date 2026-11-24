@@ -21,6 +21,13 @@ const MAX_USERS: usize = 128;
 /// Live sign-in sessions across every account, split the same way:
 /// `create_session` refuses the next one, `sqlite::validate` a store past it.
 const MAX_LIVE_SESSIONS: usize = 4096;
+/// Live sessions one account may hold (`auth.session.max_per_account`): the
+/// next sign-in past it ends that account's least recently used session, never
+/// another account's. The ceiling an operator may set is the largest value that
+/// keeps every account at its limit inside [`MAX_LIVE_SESSIONS`], so no mix of
+/// sign-ins can fill the table and lock out an account that holds fewer.
+const DEFAULT_MAX_SESSIONS_PER_ACCOUNT: u64 = 8;
+const MAX_SESSIONS_PER_ACCOUNT_CEILING: u64 = (MAX_LIVE_SESSIONS / MAX_USERS) as u64;
 const DEFAULT_IDLE_TIMEOUT_SEC: f64 = 43200.0;
 const DEFAULT_ABSOLUTE_TIMEOUT_SEC: f64 = 604800.0;
 const DEFAULT_RESTRICTED_IDLE_TIMEOUT_SEC: f64 = 600.0;
@@ -131,6 +138,9 @@ pub struct LoginResult {
     pub username: String,
     pub session_id: String,
     pub expires_ts: f64,
+    /// This account's older sessions ended to make room under
+    /// `auth.session.max_per_account`; the caller audits a non-zero count.
+    pub evicted: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -230,6 +240,7 @@ pub struct AuthManager {
     /// Never longer than the normal limits.
     restricted_idle_timeout_sec: f64,
     restricted_absolute_timeout_sec: f64,
+    max_sessions_per_account: usize,
     state: Mutex<(rusqlite::Connection, AuthDb)>,
     /// Keyed by a hash of the canonical name, so no typed username (or a
     /// password typed into the username field) is held. Never held together
@@ -272,6 +283,11 @@ impl AuthManager {
                 SESSION_TIMEOUT_RANGE_SEC,
             )?
             .min(absolute_timeout_sec);
+        let max_sessions_per_account = cfg.u64_in(
+            "auth.session.max_per_account",
+            DEFAULT_MAX_SESSIONS_PER_ACCOUNT,
+            1..=MAX_SESSIONS_PER_ACCOUNT_CEILING,
+        )? as usize;
         let (mut connection, mut db, fresh) = sqlite::open(path)?;
         // Two older first-run states move to a setup code. Homes created before
         // setup codes shipped `admin` / `admin`: while that account still must
@@ -307,6 +323,7 @@ impl AuthManager {
             absolute_timeout_sec,
             restricted_idle_timeout_sec,
             restricted_absolute_timeout_sec,
+            max_sessions_per_account,
             state: Mutex::new((connection, db)),
             unknown_failures: Mutex::new(HashMap::new()),
             fresh_bootstrap: std::sync::atomic::AtomicBool::new(fresh),
@@ -718,6 +735,9 @@ impl AuthManager {
             self.session_limits(db.users.get(username).is_some_and(|u| u.must_change_password));
         db.sessions
             .retain(|_, row| !row.revoked && row.expires_ts > now && row.last_seen_ts + self.idle_timeout_sec > now);
+        // Room for this account first, from its own sessions only, so a flood of
+        // sign-ins from one account cannot spend the table other accounts need.
+        let evicted = evict_for_room(db, username, self.max_sessions_per_account);
         if db.sessions.len() >= MAX_LIVE_SESSIONS {
             return Err(HarnessError::new("AUTH_LIMIT", "active session limit reached"));
         }
@@ -741,6 +761,7 @@ impl AuthManager {
             username: username.to_string(),
             session_id,
             expires_ts,
+            evicted,
         })
     }
 
@@ -950,6 +971,33 @@ fn count_enabled_admins(db: &AuthDb) -> usize {
         .count()
 }
 
+/// End `username`'s least recently used sessions until one more fits under
+/// `max`, and return how many ended. Ties break on creation time, then on the
+/// stored hash, so the choice never depends on map order. Only this account's
+/// rows are touched: an evicted browser signs in again and a revoked token is
+/// not revived, since nothing here keeps it.
+fn evict_for_room(db: &mut AuthDb, username: &str, max: usize) -> usize {
+    let mut mine: Vec<(f64, f64, String)> = db
+        .sessions
+        .iter()
+        .filter(|(_, row)| row.username == username)
+        .map(|(hash, row)| (row.last_seen_ts, row.created_ts, hash.clone()))
+        .collect();
+    if mine.len() < max {
+        return 0;
+    }
+    mine.sort_by(|a, b| {
+        a.0.total_cmp(&b.0)
+            .then(a.1.total_cmp(&b.1))
+            .then_with(|| a.2.cmp(&b.2))
+    });
+    let ending = mine.len() + 1 - max;
+    for (_, _, hash) in mine.into_iter().take(ending) {
+        db.sessions.remove(&hash);
+    }
+    ending
+}
+
 fn revoke_sessions_for(db: &mut AuthDb, username: &str) {
     for row in db.sessions.values_mut() {
         if row.username == username {
@@ -1085,12 +1133,158 @@ mod tests {
         assert_eq!(code(auth.create_user("one-more", &password, "operator")), "AUTH_LIMIT");
         assert!(auth.get_user("one-more").is_none(), "a refused account is not kept");
 
-        fill(MAX_USERS, MAX_LIVE_SESSIONS - 1);
-        auth.login("alice", &password).unwrap();
-        assert_eq!(auth.state.lock().unwrap().1.sessions.len(), MAX_LIVE_SESSIONS);
-        let refused = auth.login("alice", &password).map(|_| String::new());
+        // One account holds the whole table, as a store flooded before the
+        // per-account cap would. Another account is refused at the global cap,
+        // before any write; the flooding account's own next sign-in trims it to
+        // its limit, after which the other can sign in.
+        fill(MAX_USERS, MAX_LIVE_SESSIONS);
+        let refused = auth.login("last", &password).map(|_| String::new());
         assert_eq!(code(refused), "AUTH_LIMIT");
         assert_eq!(auth.state.lock().unwrap().1.sessions.len(), MAX_LIVE_SESSIONS);
+        auth.login("alice", &password).unwrap();
+        assert_eq!(live_sessions(&auth, "alice"), DEFAULT_MAX_SESSIONS_PER_ACCOUNT as usize);
+        auth.login("last", &password).unwrap();
+    }
+
+    fn store_with_cap(cap: u64) -> (tempfile::TempDir, AuthManager) {
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = format!("auth: {{session: {{max_per_account: {cap}}}}}");
+        let cfg = AppConfig::from_str(&yaml, Path::new("config.yaml")).unwrap();
+        let auth = AuthManager::open(&dir.path().join("auth.db"), &cfg).unwrap();
+        (dir, auth)
+    }
+
+    /// The session past an account's cap ends that account's least recently
+    /// used session, not its newest and not anyone else's. The ended token no
+    /// longer validates; the others do.
+    #[test]
+    fn a_sign_in_past_the_per_account_cap_ends_that_accounts_least_recently_used_session() {
+        let (_dir, auth) = store_with_cap(3);
+        let password = crate::common::random_hex(24);
+        auth.create_user("alice", &password, "operator").unwrap();
+        auth.create_user("bob", &password, "operator").unwrap();
+        let bob = auth.login("bob", &password).unwrap();
+        let first = auth.login("alice", &password).unwrap();
+        let second = auth.login("alice", &password).unwrap();
+        let third = auth.login("alice", &password).unwrap();
+        assert_eq!((first.evicted, second.evicted, third.evicted), (0, 0, 0));
+        // Use the oldest sign-in, so the second is now the least recently used.
+        {
+            let mut stored = auth.state.lock().unwrap();
+            let now = auth.now();
+            let touched = authn::hash_token(&first.session_id);
+            stored.1.sessions.get_mut(&touched).unwrap().last_seen_ts = now + 5.0;
+        }
+        let fourth = auth.login("alice", &password).unwrap();
+        assert_eq!(fourth.evicted, 1);
+        assert_eq!(live_sessions(&auth, "alice"), 3);
+        assert!(
+            auth.validate_session(&second.session_id).is_none(),
+            "the least recently used one ended"
+        );
+        for (position, kept) in [&first, &third, &fourth, &bob].into_iter().enumerate() {
+            assert!(
+                auth.validate_session(&kept.session_id).is_some(),
+                "session {position} of the kept ones still validates"
+            );
+        }
+    }
+
+    /// One account signing in without end cannot fill the table: every other
+    /// account still signs in, however many sign-ins it made.
+    #[test]
+    fn one_account_cannot_fill_the_session_table_against_the_others() {
+        let (_dir, auth) = store_with_cap(MAX_SESSIONS_PER_ACCOUNT_CEILING);
+        let password = crate::common::random_hex(24);
+        auth.create_user("alice", &password, "operator").unwrap();
+        auth.create_user("bob", &password, "operator").unwrap();
+        let mut stored = auth.state.lock().unwrap();
+        let mut db = stored.1.clone();
+        let now = auth.now();
+        let mut evicted = 0;
+        for _ in 0..MAX_LIVE_SESSIONS + 500 {
+            evicted += auth.create_session(&mut db, "alice", now).unwrap().evicted;
+        }
+        assert_eq!(
+            db.sessions.values().filter(|s| s.username == "alice").count(),
+            MAX_SESSIONS_PER_ACCOUNT_CEILING as usize
+        );
+        assert_eq!(
+            evicted,
+            MAX_LIVE_SESSIONS + 500 - MAX_SESSIONS_PER_ACCOUNT_CEILING as usize
+        );
+        let bob = auth.create_session(&mut db, "bob", now).unwrap();
+        assert_eq!(bob.evicted, 0, "another account's sessions are never ended");
+        stored.1 = db;
+    }
+
+    /// No order of sign-ins by several accounts, at any allowed cap, holds more
+    /// than the cap per account or refuses a sign-in at the global limit: the
+    /// ceiling times the account limit fits the table.
+    #[test]
+    fn no_mix_of_sign_ins_exceeds_the_cap_or_reaches_the_global_limit() {
+        assert!(MAX_USERS as u64 * MAX_SESSIONS_PER_ACCOUNT_CEILING <= MAX_LIVE_SESSIONS as u64);
+        for cap in [1, 2, DEFAULT_MAX_SESSIONS_PER_ACCOUNT, MAX_SESSIONS_PER_ACCOUNT_CEILING] {
+            let (_dir, auth) = store_with_cap(cap);
+            // One account is hashed; the rest are copies of its row, which is
+            // all `create_session` reads, so the run costs one scrypt.
+            auth.create_user("user0", &crate::common::random_hex(24), "operator")
+                .unwrap();
+            let mut stored = auth.state.lock().unwrap();
+            let mut db = stored.1.clone();
+            let template = db.users["user0"].clone();
+            for n in 1..MAX_USERS {
+                let user_id = crate::common::random_hex(16);
+                db.users.insert(
+                    format!("user{n}"),
+                    UserRow {
+                        user_id,
+                        ..template.clone()
+                    },
+                );
+            }
+            let names: Vec<String> = (0..MAX_USERS).map(|n| format!("user{n}")).collect();
+            let mut seed = 0x9E37_79B9_7F4A_7C15_u64;
+            for step in 0..6_000u32 {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                // Skewed so a few accounts sign in far more often than the rest.
+                let pick = ((seed >> 33) as usize % names.len()).min((seed >> 45) as usize % names.len());
+                auth.create_session(&mut db, &names[pick], f64::from(step)).unwrap();
+            }
+            let mut per_account = std::collections::BTreeMap::<&str, usize>::new();
+            for row in db.sessions.values() {
+                *per_account.entry(row.username.as_str()).or_default() += 1;
+            }
+            let most = per_account.values().copied().max().unwrap_or(0);
+            assert!(most <= cap as usize, "cap {cap}: one account held {most}");
+            assert!(db.sessions.len() <= MAX_LIVE_SESSIONS);
+            stored.1 = db;
+        }
+    }
+
+    /// `auth.session.max_per_account` is 1 to the ceiling that keeps the table
+    /// reachable only by accounts at their limits; anything else stops startup.
+    #[test]
+    fn the_per_account_cap_is_held_to_its_range_at_startup() {
+        for (yaml, ok) in [
+            ("{}", true),
+            ("auth: {session: {max_per_account: 1}}", true),
+            ("auth: {session: {max_per_account: 32}}", true),
+            ("auth: {session: {max_per_account: 0}}", false),
+            ("auth: {session: {max_per_account: 33}}", false),
+            ("auth: {session: {max_per_account: abc}}", false),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let cfg = AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap();
+            let opened = AuthManager::open(&dir.path().join("auth.db"), &cfg);
+            assert_eq!(opened.is_ok(), ok, "{yaml}");
+            if let Err(error) = opened {
+                assert!(
+                    error.to_string().contains("auth.session.max_per_account"),
+                    "{yaml}: {error}"
+                );
+            }
+        }
     }
 
     /// A password check that runs `change` before it answers, as another
