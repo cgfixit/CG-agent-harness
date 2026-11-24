@@ -1279,13 +1279,30 @@ mod tests {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only an ephemeral loopback port.
             let address = listener.local_addr().unwrap();
             let server = tokio::spawn(async move {
-                for attempt in 0..2 {
+                // Count only this test's own searches. Loopback ports are shared with
+                // every parallel test, so a stray connection (a stale client of a
+                // port another test released) must not consume the fault attempt:
+                // that made the first search read the recovery body and pass. A real
+                // client retry still matches the query and is still counted.
+                let mut attempt = 0;
+                while attempt < 2 {
                     let (mut socket, _) = listener.accept().await.unwrap();
                     let mut request = Vec::new();
+                    let mut complete = true;
                     while !request.ends_with(b"\r\n\r\n") {
-                        request.push(socket.read_u8().await.unwrap());
+                        match socket.read_u8().await {
+                            Ok(byte) => request.push(byte),
+                            Err(_) => {
+                                complete = false;
+                                break;
+                            }
+                        }
                     }
-                    if attempt == 0 {
+                    if !complete || !request.starts_with(b"GET /search?q=veeam+") {
+                        continue;
+                    }
+                    attempt += 1;
+                    if attempt == 1 {
                         if fault != "headers-timeout" {
                             // Even challenge text in an incomplete 200 body is not a verdict.
                             socket
