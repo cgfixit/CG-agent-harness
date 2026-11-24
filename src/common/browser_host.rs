@@ -933,16 +933,17 @@ fn job_input(line: &str) -> Option<JobInput> {
     })
 }
 
-/// Job mode for this process: read stdin on a thread until a `cancel` line
-/// or end of input. Either ends the task before its next model turn, so a
-/// task whose server is gone does not keep driving Chrome. With `wait`, a
-/// request held as the operator's step is announced on stdout and waits that
-/// long for a verdict line; cancel, end of input and silence all mean no.
 /// When a held request stops waiting: after `wait`, or at the task deadline.
 fn hold_until(now: Instant, wait: Duration, deadline: Option<Instant>) -> Instant {
     deadline.map_or(now + wait, |deadline| deadline.min(now + wait))
 }
 
+/// Job mode for this process: read stdin on a thread until a `cancel` line
+/// or end of input. Either ends the task before its next model turn, so a
+/// task whose server is gone does not keep driving Chrome. With `wait`, a
+/// request held as the operator's step is announced on stdout and waits that
+/// long for a verdict line, or until the task `deadline`; cancel, end of input
+/// and silence all mean no.
 fn watch_job_input(wait: Option<Duration>, deadline: Option<Instant>) {
     JOB_MODE.store(true, Ordering::Release);
     let (verdicts, answers) = mpsc::channel::<(u64, bool)>();
