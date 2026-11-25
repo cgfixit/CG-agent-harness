@@ -136,10 +136,9 @@ async fn worker_loop(state: Arc<AppState>) {
             break;
         }
         // The pick was before the waits above: the account may have changed.
-        // The account read takes the auth store's lock, which its writes hold
-        // across SQLite, so it runs on the blocking pool like the pick.
-        let (recheck, owner) = (state.clone(), batch.0.clone());
-        if !off_worker(move || owner_active(&recheck, &owner)).await {
+        // The account store answers from its committed state without waiting
+        // for a write, so this reads inline.
+        if !owner_active(&state, &batch.0) {
             drop(_gate);
             continue;
         }

@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -143,6 +143,14 @@ pub struct LoginResult {
     pub evicted: usize,
 }
 
+/// One judgement of a session row (`AuthManager::judge_session`).
+struct SessionSeen {
+    username: String,
+    expired: bool,
+    /// The `last_seen_ts` to commit, when this lookup must write.
+    write: Option<f64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionInfo {
     pub session_id: String,
@@ -255,10 +263,19 @@ pub struct AuthManager {
     restricted_idle_timeout_sec: f64,
     restricted_absolute_timeout_sec: f64,
     max_sessions_per_account: usize,
-    state: Mutex<(rusqlite::Connection, AuthDb)>,
+    /// The store's one SQLite connection. Every change takes it, reads
+    /// `committed`, writes, commits, then publishes: changes are serialized
+    /// and each starts from the last committed state.
+    writer: Mutex<rusqlite::Connection>,
+    /// The last committed state, which every reader reads. It is replaced
+    /// only after a commit, so a reader never sees an uncommitted change, and
+    /// held only for a copy or a pointer swap, never across I/O: a reader does
+    /// not wait for a write in flight, so it may run on an async worker.
+    committed: RwLock<Arc<AuthDb>>,
     /// Keyed by an HMAC of the canonical name under `name_key`, so no typed
     /// username (or a password typed into the username field) is held or
-    /// stored. Taken before `state` when both are held, never after.
+    /// stored. Taken before `writer` when both are held, never after, and
+    /// never held together with `committed`.
     unknown_failures: Mutex<HashMap<String, UnknownFailures>>,
     /// The store's random key for `unknown_failures` names.
     name_key: [u8; 32],
@@ -352,7 +369,8 @@ impl AuthManager {
             restricted_idle_timeout_sec,
             restricted_absolute_timeout_sec,
             max_sessions_per_account,
-            state: Mutex::new((connection, db)),
+            writer: Mutex::new(connection),
+            committed: RwLock::new(Arc::new(db)),
             unknown_failures: Mutex::new(remembered),
             name_key,
             fresh_bootstrap: std::sync::atomic::AtomicBool::new(fresh),
@@ -389,9 +407,23 @@ impl AuthManager {
         }
     }
 
-    fn persist(&self, stored: &mut (rusqlite::Connection, AuthDb), db: &AuthDb) -> Result<()> {
-        sqlite::persist(&mut stored.0, db)?;
-        stored.1 = db.clone();
+    /// The committed state, as one consistent snapshot. Never waits on I/O.
+    fn snapshot(&self) -> Arc<AuthDb> {
+        self.committed.read().unwrap_or_else(|p| p.into_inner()).clone()
+    }
+
+    /// Starts a change: the connection, held until the change is published
+    /// or dropped, and a copy of the committed state to edit.
+    fn begin(&self) -> (MutexGuard<'_, rusqlite::Connection>, AuthDb) {
+        let conn = self.writer.lock().unwrap_or_else(|p| p.into_inner());
+        let db = (*self.snapshot()).clone();
+        (conn, db)
+    }
+
+    /// Commits `db`, then makes it visible: committed before visible.
+    fn persist(&self, conn: &mut rusqlite::Connection, db: AuthDb) -> Result<()> {
+        sqlite::persist(conn, &db)?;
+        *self.committed.write().unwrap_or_else(|p| p.into_inner()) = Arc::new(db);
         Ok(())
     }
 
@@ -399,8 +431,7 @@ impl AuthManager {
     /// with the lock released: one scrypt run under the lock would stall every
     /// request's session check for its whole duration.
     fn user_row(&self, canonical: &str) -> Option<UserRow> {
-        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        stored.1.users.get(canonical).cloned()
+        self.snapshot().users.get(canonical).cloned()
     }
 
     fn locked(row: &UserRow, now: f64, canonical: &str) -> HarnessError {
@@ -437,14 +468,14 @@ impl AuthManager {
     /// this report commit together, so a crash before the audit write leaves
     /// the report here for the next boot: reported at least once, never lost.
     pub fn pending_role_migrations(&self) -> Result<Vec<(String, String)>> {
-        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        sqlite::pending_role_migrations(&stored.0)
+        let conn = self.writer.lock().unwrap_or_else(|p| p.into_inner());
+        sqlite::pending_role_migrations(&conn)
     }
 
     /// The fold for `user_id` is in the audit log: drop its pending report.
     pub fn acknowledge_role_migration(&self, user_id: &str) -> Result<()> {
-        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        sqlite::acknowledge_role_migration(&stored.0, user_id)
+        let conn = self.writer.lock().unwrap_or_else(|p| p.into_inner());
+        sqlite::acknowledge_role_migration(&conn, user_id)
     }
 
     /// True while the enabled `admin` account still signs in with its setup
@@ -452,9 +483,7 @@ impl AuthManager {
     /// The sign-in screen then names the code, never shows it. Answers without
     /// hashing, so the public setup-status route stays cheap.
     pub fn setup_code_active(&self) -> bool {
-        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        stored
-            .1
+        self.snapshot()
             .users
             .get(BOOTSTRAP_USERNAME)
             .is_some_and(|u| !u.disabled && u.must_change_password)
@@ -484,8 +513,7 @@ impl AuthManager {
         let canonical = authn::validate_username(username)?;
         let canonical_role = authn::validate_role(role)?;
         let record = authn::hash_password(password)?;
-        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let mut db = stored.1.clone();
+        let (mut conn, mut db) = self.begin();
         if db.users.len() >= MAX_USERS {
             return Err(HarnessError::new("AUTH_LIMIT", "account limit reached"));
         }
@@ -506,14 +534,13 @@ impl AuthManager {
                 role: canonical_role,
             },
         );
-        self.persist(&mut stored, &db)?;
+        self.persist(&mut conn, db)?;
         Ok(canonical)
     }
 
     pub fn get_user(&self, username: &str) -> Option<UserSummary> {
         let canonical = Self::canonical(username);
-        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let db = &stored.1;
+        let db = self.snapshot();
         db.users.get(&canonical).map(|u| Self::summary(&canonical, u))
     }
 
@@ -523,9 +550,7 @@ impl AuthManager {
     /// the account (it clears `must_change_password`), and a session's
     /// `revoked` flag is also set by ordinary expiry.
     pub fn sign_in_revocations(&self, username: &str) -> u64 {
-        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        stored
-            .1
+        self.snapshot()
             .revocations
             .get(&Self::canonical(username))
             .copied()
@@ -535,11 +560,10 @@ impl AuthManager {
     /// Whether `account`, as read when some work began, is still the same
     /// enabled account. With `revocations` (the `sign_in_revocations` value
     /// read then), also whether its sign-ins have not been revoked since.
-    /// One lock, so an account change cannot land between the two answers.
+    /// One snapshot, so an account change cannot land between the two answers.
     pub fn account_unchanged(&self, account: &UserSummary, revocations: Option<u64>) -> bool {
         let canonical = Self::canonical(&account.username);
-        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let db = &stored.1;
+        let db = self.snapshot();
         db.users
             .get(&canonical)
             .is_some_and(|current| current.user_id == account.user_id && !current.disabled)
@@ -547,13 +571,12 @@ impl AuthManager {
     }
 
     /// Why the account `user_id` may no longer use `capability`, read live from
-    /// the store under one lock, or `None` when it still may. Recheck with this
+    /// the last committed state, or `None` when it still may. Recheck with this
     /// after any wait and before a send or stored delivery; the callers own the
     /// error code. Do not rebuild the conditions from `list_users`
     /// (`invariant_guard` fails a copy).
     pub fn owner_lapse(&self, user_id: &str, capability: authz::Capability) -> Option<OwnerLapse> {
-        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        match stored.1.users.iter().find(|(_, row)| row.user_id == user_id) {
+        match self.snapshot().users.iter().find(|(_, row)| row.user_id == user_id) {
             Some((username, row)) => Self::summary(username, row).lapse(capability),
             None => Some(OwnerLapse::Missing),
         }
@@ -565,15 +588,13 @@ impl AuthManager {
     }
 
     pub fn list_users(&self) -> Vec<UserSummary> {
-        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let db = &stored.1;
+        let db = self.snapshot();
         db.users.iter().map(|(k, v)| Self::summary(k, v)).collect()
     }
 
     pub fn count_enabled_admins(&self) -> usize {
-        let stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let db = &stored.1;
-        count_enabled_admins(db)
+        let db = self.snapshot();
+        count_enabled_admins(&db)
     }
 
     fn is_last_enabled_admin(db: &AuthDb, username: &str) -> bool {
@@ -586,8 +607,7 @@ impl AuthManager {
     pub fn set_role(&self, username: &str, role: &str) -> Result<()> {
         let canonical = Self::canonical(username);
         let canonical_role = authn::validate_role(role)?;
-        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let mut db = stored.1.clone();
+        let (mut conn, mut db) = self.begin();
         if !db.users.contains_key(&canonical) {
             return Err(HarnessError::auth_user_not_found(&canonical));
         }
@@ -598,13 +618,12 @@ impl AuthManager {
             u.role = canonical_role;
         }
         revoke_sessions_for(&mut db, &canonical);
-        self.persist(&mut stored, &db)
+        self.persist(&mut conn, db)
     }
 
     pub fn delete_user(&self, username: &str) -> Result<()> {
         let canonical = Self::canonical(username);
-        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let mut db = stored.1.clone();
+        let (mut conn, mut db) = self.begin();
         if !db.users.contains_key(&canonical) {
             return Err(HarnessError::auth_user_not_found(&canonical));
         }
@@ -614,13 +633,12 @@ impl AuthManager {
         db.users.remove(&canonical);
         db.sessions.retain(|_, row| row.username != canonical);
         *db.revocations.entry(canonical.clone()).or_default() += 1;
-        self.persist(&mut stored, &db)
+        self.persist(&mut conn, db)
     }
 
     fn set_disabled(&self, username: &str, disabled: bool) -> Result<()> {
         let canonical = Self::canonical(username);
-        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let mut db = stored.1.clone();
+        let (mut conn, mut db) = self.begin();
         if !db.users.contains_key(&canonical) {
             return Err(HarnessError::auth_user_not_found(&canonical));
         }
@@ -638,7 +656,7 @@ impl AuthManager {
         if disabled {
             revoke_sessions_for(&mut db, &canonical);
         }
-        self.persist(&mut stored, &db)
+        self.persist(&mut conn, db)
     }
 
     pub fn disable_user(&self, username: &str) -> Result<()> {
@@ -649,8 +667,7 @@ impl AuthManager {
     #[cfg(any(test, feature = "test-support"))]
     pub fn require_password_change(&self, username: &str) -> Result<()> {
         let canonical = Self::canonical(username);
-        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let mut db = stored.1.clone();
+        let (mut conn, mut db) = self.begin();
         if !db.users.contains_key(&canonical) {
             return Err(HarnessError::auth_user_not_found(&canonical));
         }
@@ -658,7 +675,7 @@ impl AuthManager {
             user.must_change_password = true;
         }
         revoke_sessions_for(&mut db, &canonical);
-        self.persist(&mut stored, &db)
+        self.persist(&mut conn, db)
     }
 
     pub fn enable_user(&self, username: &str) -> Result<()> {
@@ -668,8 +685,7 @@ impl AuthManager {
     pub fn set_password(&self, username: &str, password: &str) -> Result<()> {
         let canonical = Self::canonical(username);
         let record = authn::hash_password(password)?;
-        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let mut db = stored.1.clone();
+        let (mut conn, mut db) = self.begin();
         let Some(u) = db.users.get_mut(&canonical) else {
             return Err(HarnessError::auth_user_not_found(&canonical));
         };
@@ -678,7 +694,7 @@ impl AuthManager {
         u.failed_count = 0;
         u.locked_until_ts = None;
         revoke_sessions_for(&mut db, &canonical);
-        self.persist(&mut stored, &db)?;
+        self.persist(&mut conn, db)?;
         self.forget_setup_code(&canonical);
         Ok(())
     }
@@ -712,8 +728,7 @@ impl AuthManager {
         let current = Self::credential(&canonical, &checked, current);
         // One check on every path, a disabled account's included, as at sign-in.
         let (ok, _) = verify(&current, &checked.password_hash);
-        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let mut db = stored.1.clone();
+        let (mut conn, mut db) = self.begin();
         // Recorded at the time read under the lock, as `login_with` does.
         let now = self.now();
         // An account deleted or given another password while the check ran
@@ -736,7 +751,7 @@ impl AuthManager {
         if user.disabled || !ok {
             user.failed_count = user.failed_count.saturating_add(1);
             user.locked_until_ts = Some(authn::next_lock_until(user.failed_count, now));
-            self.persist(&mut stored, &db)?;
+            self.persist(&mut conn, db)?;
             return Err(HarnessError::auth_login_failed());
         }
         // A forced change must actually change the credential: the setup code
@@ -754,7 +769,7 @@ impl AuthManager {
         user.locked_until_ts = None;
         revoke_sessions_for(&mut db, &canonical);
         let result = self.create_session(&mut db, &canonical, now)?;
-        self.persist(&mut stored, &db)?;
+        self.persist(&mut conn, db)?;
         self.forget_setup_code(&canonical);
         Ok(result)
     }
@@ -828,8 +843,7 @@ impl AuthManager {
             .then(|| authn::hash_password(password).ok())
             .flatten();
 
-        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let mut db = stored.1.clone();
+        let (mut conn, mut db) = self.begin();
         // The outcome is recorded at the time read here, under the lock, so
         // recorded times follow lock order. A failure below the lockout
         // threshold stores a lock that ends when it was recorded; judged
@@ -856,7 +870,7 @@ impl AuthManager {
         if user.disabled || !ok {
             user.failed_count = user.failed_count.saturating_add(1);
             user.locked_until_ts = Some(authn::next_lock_until(user.failed_count, now));
-            self.persist(&mut stored, &db)?;
+            self.persist(&mut conn, db)?;
             return Err(HarnessError::auth_login_failed());
         }
         user.failed_count = 0;
@@ -866,7 +880,7 @@ impl AuthManager {
             user.password_hash = record;
         }
         let result = self.create_session(&mut db, &canonical, now)?;
-        self.persist(&mut stored, &db)?;
+        self.persist(&mut conn, db)?;
         Ok(result)
     }
 
@@ -933,7 +947,7 @@ impl AuthManager {
     /// does. Names forgotten at the cap leave the store either way.
     fn record_unknown_failure(&self, key: String, store: bool) -> Result<std::result::Result<(), f64>> {
         let mut failures = self.unknown_failures.lock().unwrap_or_else(|p| p.into_inner());
-        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut stored = self.writer.lock().unwrap_or_else(|p| p.into_inner());
         let now = self.now();
         let before = failures.get(&key).copied();
         let forgotten = match count_unknown_failure(&mut failures, key.clone(), now) {
@@ -947,7 +961,7 @@ impl AuthManager {
         let names: Vec<String> = forgotten.iter().map(|(k, _)| k.clone()).collect();
         let row = (counted.count, counted.locked_until_ts, counted.last_ts);
         let counted = store.then_some((key.as_str(), row));
-        if let Err(error) = sqlite::record_login_failure(&mut stored.0, counted, &names) {
+        if let Err(error) = sqlite::record_login_failure(&mut stored, counted, &names) {
             match before {
                 Some(before) => failures.insert(key, before),
                 None => failures.remove(&key),
@@ -960,43 +974,84 @@ impl AuthManager {
 
     /// Live means: exists, not revoked, within both the absolute expiry and the
     /// idle window. A valid lookup slides the idle window forward.
+    ///
+    /// Most lookups only read the committed snapshot. A slide or an expiry is
+    /// a write: it takes the connection, judges the session again against the
+    /// state committed by then, and is visible only once committed. That path
+    /// does SQLite I/O, so callers stay on the blocking pool.
     pub fn validate_session(&self, session_id: &str) -> Option<SessionInfo> {
         if session_id.is_empty() {
             return None;
         }
         let key = authn::hash_token(session_id);
         let now = self.now();
-        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let row = stored.1.sessions.get(&key).filter(|row| !row.revoked)?;
-        // Limits follow the account's current state, so a restricted account's
-        // older session cannot outlive the restricted window either.
-        let restricted = stored
-            .1
-            .users
-            .get(&row.username)
-            .is_some_and(|u| u.must_change_password);
-        let (idle_timeout_sec, absolute_timeout_sec) = self.session_limits(restricted);
-        let expired = now >= row.expires_ts
-            || now >= row.created_ts + absolute_timeout_sec
-            || now >= row.last_seen_ts + idle_timeout_sec;
-        let username = row.username.clone();
-        // Every guarded request lands here, so slide the idle window at most once
-        // per interval instead of writing SQLite each time. A skipped slide can
-        // only end a session sooner, never later; an expiry is always written.
-        if expired || now - row.last_seen_ts >= Self::touch_interval_sec(idle_timeout_sec) {
-            let last_seen_ts = if expired { row.last_seen_ts } else { now };
-            // Committed before visible, like `persist`, but only this row is written.
-            sqlite::touch_session(&stored.0, &key, last_seen_ts, expired).ok()?;
-            let row = stored.1.sessions.get_mut(&key)?;
-            row.last_seen_ts = last_seen_ts;
-            row.revoked = expired;
+        let mut db = self.snapshot();
+        let mut seen = self.judge_session(&db, &key, now)?;
+        if seen.write.is_some() {
+            let conn = self.writer.lock().unwrap_or_else(|p| p.into_inner());
+            // Another lookup or change may have committed meanwhile: judge
+            // again against what is committed now, at the same `now`.
+            db = self.snapshot();
+            seen = self.judge_session(&db, &key, now)?;
+            if let Some(last_seen_ts) = seen.write {
+                // Committed before visible, like `persist`, but only this row is written.
+                sqlite::touch_session(&conn, &key, last_seen_ts, seen.expired).ok()?;
+                // Drop this lookup's own snapshot first, so the row is updated
+                // in place unless a reader still holds the old state. Then the
+                // copy is made outside `committed`'s lock, which readers wait
+                // on, and only the pointer swap holds it; `writer` keeps any
+                // other change out meanwhile.
+                drop(db);
+                let slide = |state: &mut AuthDb| {
+                    if let Some(row) = state.sessions.get_mut(&key) {
+                        row.last_seen_ts = last_seen_ts;
+                        row.revoked = seen.expired;
+                    }
+                };
+                let mut committed = self.committed.write().unwrap_or_else(|p| p.into_inner());
+                if let Some(state) = Arc::get_mut(&mut committed) {
+                    slide(state);
+                    db = committed.clone();
+                } else {
+                    let shared = committed.clone();
+                    drop(committed);
+                    let mut next = (*shared).clone();
+                    drop(shared);
+                    slide(&mut next);
+                    db = Arc::new(next);
+                    *self.committed.write().unwrap_or_else(|p| p.into_inner()) = db.clone();
+                }
+            }
         }
-        if expired || stored.1.users.get(&username).is_none_or(|user| user.disabled) {
+        if seen.expired || db.users.get(&seen.username).is_none_or(|user| user.disabled) {
             return None;
         }
         Some(SessionInfo {
             session_id: session_id.to_string(),
-            username,
+            username: seen.username,
+        })
+    }
+
+    /// The session `key` as `db` holds it at `now`, or `None` when it is
+    /// missing or revoked. Limits follow the account's current state, so a
+    /// restricted account's older session cannot outlive the restricted
+    /// window either.
+    fn judge_session(&self, db: &AuthDb, key: &str, now: f64) -> Option<SessionSeen> {
+        let row = db.sessions.get(key).filter(|row| !row.revoked)?;
+        let restricted = db.users.get(&row.username).is_some_and(|u| u.must_change_password);
+        let (idle_timeout_sec, absolute_timeout_sec) = self.session_limits(restricted);
+        let expired = now >= row.expires_ts
+            || now >= row.created_ts + absolute_timeout_sec
+            || now >= row.last_seen_ts + idle_timeout_sec;
+        // Every guarded request lands here, so slide the idle window at most once
+        // per interval instead of writing SQLite each time. A skipped slide can
+        // only end a session sooner, never later; an expiry is always written.
+        let write = (expired || now - row.last_seen_ts >= Self::touch_interval_sec(idle_timeout_sec))
+            .then_some(if expired { row.last_seen_ts } else { now });
+        Some(SessionSeen {
+            username: row.username.clone(),
+            expired,
+            write,
         })
     }
 
@@ -1005,8 +1060,7 @@ impl AuthManager {
             return Ok(false);
         }
         let key = authn::hash_token(session_id);
-        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        let mut db = stored.1.clone();
+        let (mut conn, mut db) = self.begin();
         let hit = match db.sessions.get_mut(&key) {
             Some(row) if !row.revoked => {
                 row.revoked = true;
@@ -1015,7 +1069,7 @@ impl AuthManager {
             _ => false,
         };
         if hit {
-            self.persist(&mut stored, &db)?;
+            self.persist(&mut conn, db)?;
         }
         Ok(hit)
     }
@@ -1165,11 +1219,12 @@ mod tests {
         let password = crate::common::random_hex(24);
         auth.create_user("alice", &password, "admin").unwrap();
         let fill = |users: usize, sessions: usize| {
-            let mut stored = auth.state.lock().unwrap();
-            let template = stored.1.users["alice"].clone();
-            for n in 0..users - stored.1.users.len() {
+            let mut committed = auth.committed.write().unwrap();
+            let db = Arc::make_mut(&mut committed);
+            let template = db.users["alice"].clone();
+            for n in 0..users - db.users.len() {
                 let user_id = crate::common::random_hex(16);
-                stored.1.users.insert(
+                db.users.insert(
                     format!("user{n}"),
                     UserRow {
                         user_id,
@@ -1178,7 +1233,7 @@ mod tests {
                 );
             }
             let now = auth.now();
-            for _ in 0..sessions - stored.1.sessions.len() {
+            for _ in 0..sessions - db.sessions.len() {
                 let row = SessionRow {
                     username: "alice".into(),
                     csrf_hash: crate::common::random_hex(32),
@@ -1187,14 +1242,14 @@ mod tests {
                     expires_ts: now + 3600.0,
                     revoked: false,
                 };
-                stored.1.sessions.insert(crate::common::random_hex(32), row);
+                db.sessions.insert(crate::common::random_hex(32), row);
             }
         };
         let code = |r: Result<String>| r.map(|_| ()).unwrap_err().code;
 
         fill(MAX_USERS - 1, 0);
         auth.create_user("last", &password, "operator").unwrap();
-        assert_eq!(auth.state.lock().unwrap().1.users.len(), MAX_USERS);
+        assert_eq!(auth.snapshot().users.len(), MAX_USERS);
         assert_eq!(code(auth.create_user("one-more", &password, "operator")), "AUTH_LIMIT");
         assert!(auth.get_user("one-more").is_none(), "a refused account is not kept");
 
@@ -1205,7 +1260,7 @@ mod tests {
         fill(MAX_USERS, MAX_LIVE_SESSIONS);
         let refused = auth.login("last", &password).map(|_| String::new());
         assert_eq!(code(refused), "AUTH_LIMIT");
-        assert_eq!(auth.state.lock().unwrap().1.sessions.len(), MAX_LIVE_SESSIONS);
+        assert_eq!(auth.snapshot().sessions.len(), MAX_LIVE_SESSIONS);
         auth.login("alice", &password).unwrap();
         assert_eq!(live_sessions(&auth, "alice"), DEFAULT_MAX_SESSIONS_PER_ACCOUNT as usize);
         auth.login("last", &password).unwrap();
@@ -1235,10 +1290,14 @@ mod tests {
         assert_eq!((first.evicted, second.evicted, third.evicted), (0, 0, 0));
         // Use the oldest sign-in, so the second is now the least recently used.
         {
-            let mut stored = auth.state.lock().unwrap();
+            let mut committed = auth.committed.write().unwrap();
             let now = auth.now();
             let touched = authn::hash_token(&first.session_id);
-            stored.1.sessions.get_mut(&touched).unwrap().last_seen_ts = now + 5.0;
+            Arc::make_mut(&mut committed)
+                .sessions
+                .get_mut(&touched)
+                .unwrap()
+                .last_seen_ts = now + 5.0;
         }
         let fourth = auth.login("alice", &password).unwrap();
         assert_eq!(fourth.evicted, 1);
@@ -1263,8 +1322,7 @@ mod tests {
         let password = crate::common::random_hex(24);
         auth.create_user("alice", &password, "operator").unwrap();
         auth.create_user("bob", &password, "operator").unwrap();
-        let mut stored = auth.state.lock().unwrap();
-        let mut db = stored.1.clone();
+        let mut db = (*auth.snapshot()).clone();
         let now = auth.now();
         let mut evicted = 0;
         for _ in 0..MAX_LIVE_SESSIONS + 500 {
@@ -1280,7 +1338,6 @@ mod tests {
         );
         let bob = auth.create_session(&mut db, "bob", now).unwrap();
         assert_eq!(bob.evicted, 0, "another account's sessions are never ended");
-        stored.1 = db;
     }
 
     /// No order of sign-ins by several accounts, at any allowed cap, holds more
@@ -1295,8 +1352,7 @@ mod tests {
             // all `create_session` reads, so the run costs one scrypt.
             auth.create_user("user0", &crate::common::random_hex(24), "operator")
                 .unwrap();
-            let mut stored = auth.state.lock().unwrap();
-            let mut db = stored.1.clone();
+            let mut db = (*auth.snapshot()).clone();
             let template = db.users["user0"].clone();
             for n in 1..MAX_USERS {
                 let user_id = crate::common::random_hex(16);
@@ -1323,7 +1379,6 @@ mod tests {
             let most = per_account.values().copied().max().unwrap_or(0);
             assert!(most <= cap as usize, "cap {cap}: one account held {most}");
             assert!(db.sessions.len() <= MAX_LIVE_SESSIONS);
-            stored.1 = db;
         }
     }
 
@@ -1367,8 +1422,8 @@ mod tests {
     }
 
     fn live_sessions(auth: &AuthManager, username: &str) -> usize {
-        let stored = auth.state.lock().unwrap();
-        let sessions = stored.1.sessions.values();
+        let db = auth.snapshot();
+        let sessions = db.sessions.values();
         sessions.filter(|s| s.username == username && !s.revoked).count()
     }
 
@@ -1389,7 +1444,10 @@ mod tests {
         let checks = std::cell::Cell::new(0);
         let unlocked = |password: &str, record: &str| {
             checks.set(checks.get() + 1);
-            assert!(auth.state.try_lock().is_ok(), "a password check held the account lock");
+            assert!(
+                auth.writer.try_lock().is_ok(),
+                "a password check held the account store"
+            );
             authn::verify_password(password, record)
         };
         for (name, typed) in [("nobody", &password), ("alice", &wrong), ("gone", &password)] {
@@ -1406,6 +1464,51 @@ mod tests {
         assert_eq!(checks.replace(0), 1, "sign-in");
         auth.change_password_with("alice", &password, &next, unlocked).unwrap();
         assert_eq!(checks.replace(0), 1, "password change");
+    }
+
+    /// Readers run on async workers (`/browse` and streamed-chat rechecks), so
+    /// none may wait for a write in flight: with the connection held, as during
+    /// a full rewrite, every reader still answers from the committed state,
+    /// and a session lookup that needs no slide answers too.
+    #[test]
+    fn readers_never_wait_for_a_write_in_flight() {
+        let (_dir, auth) = store();
+        let password = crate::common::random_hex(24);
+        auth.create_user("alice", &password, "operator").unwrap();
+        let session = auth.login("alice", &password).unwrap().session_id;
+        let account = auth.get_user("alice").unwrap();
+        let before = (
+            auth.list_users().len(),
+            auth.count_enabled_admins(),
+            auth.setup_code_active(),
+        );
+        let auth = Arc::new(auth);
+        let in_flight = auth.writer.lock().unwrap();
+        let (done, answered) = std::sync::mpsc::channel();
+        let reader = auth.clone();
+        std::thread::spawn(move || {
+            let seen = reader.sign_in_revocations("alice");
+            let answers = [
+                reader.get_user("alice").is_some(),
+                reader.account_unchanged(&account, Some(seen)),
+                reader.owner_permits(&account.user_id, authz::Capability::OwnData),
+                reader
+                    .owner_lapse(&account.user_id, authz::Capability::OwnData)
+                    .is_none(),
+                (
+                    reader.list_users().len(),
+                    reader.count_enabled_admins(),
+                    reader.setup_code_active(),
+                ) == before,
+                reader.validate_session(&session).is_some(),
+            ];
+            let _ = done.send(answers);
+        });
+        let answers = answered
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("a reader waited for the write in flight");
+        assert!(answers.iter().all(|ok| *ok), "{answers:?}");
+        drop(in_flight);
     }
 
     /// A verdict is recorded only against the record it was checked on: a
@@ -1734,8 +1837,8 @@ mod tests {
         assert_eq!(codes(&auth, typed), locked(1), "counted in memory");
         assert_eq!(codes(&auth, "zed"), locked(1));
         let rows = |auth: &AuthManager| -> Vec<String> {
-            let stored = auth.state.lock().unwrap();
-            let mut statement = stored.0.prepare("SELECT name_hash FROM login_failures").unwrap();
+            let stored = auth.writer.lock().unwrap();
+            let mut statement = stored.prepare("SELECT name_hash FROM login_failures").unwrap();
             statement
                 .query_map([], |r| r.get(0))
                 .unwrap()
@@ -1765,10 +1868,9 @@ mod tests {
         let (_dir, auth) = store();
         let wrong = crate::common::random_hex(24);
         assert_eq!(attempt(&auth, "zed", &wrong).code, "AUTH_LOGIN_FAILED");
-        auth.state
+        auth.writer
             .lock()
             .unwrap()
-            .0
             .execute_batch(
                 "CREATE TRIGGER refuse_failure BEFORE INSERT ON login_failures \
                  BEGIN SELECT RAISE(ABORT, 'simulated storage failure'); END;",
