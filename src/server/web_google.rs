@@ -2195,6 +2195,7 @@ mod tests {
             .unwrap();
         let value = chain.search("veeam cve").await.unwrap();
         assert_eq!(value["provider"], "google-serpapi");
+        assert!(value.get("fallback_from").is_none());
         assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
         let attempt = &chain.audit_events("web_search_attempt")[0];
         assert_eq!(attempt["code"], "OK");
