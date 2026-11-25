@@ -156,11 +156,9 @@ included, regenerate `assets/self/MANUAL.md` and commit it when it changes.
 
 ## Project skills
 
-Repository guidance is separate from runtime `/api/skills`. Start with
-`cgagentharness-project-guidance`, then the task skill; none expands
-publication, merge or release authority. Indexes:
-[.codex/skills](.codex/skills/README.md),
-[.claude/skills](.claude/skills/README.md) (keep operator-only skills
-operator-only), [.github/skills](.github/skills/README.md). Skill edits need
-frontmatter, path/symbol, command-filter and budget checks; static checks
-cannot prove runtime discovery.
+Start with `cgagentharness-project-guidance` and select by task in the
+[Codex index](.codex/skills/README.md). See [release controls](docs/RELEASING.md)
+for provenance and publication. [Claude](.claude/skills/README.md) and
+[Copilot](.github/skills/README.md) have separate inventories. Preserve
+operator-only skills and authority limits. Check frontmatter, references,
+filters and budgets. Verify runtime discovery separately.

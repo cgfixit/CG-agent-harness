@@ -1,46 +1,32 @@
 ---
 name: cgagentharness-config-guard
-description: Check shipped Harness configuration defaults and fail-closed gate semantics before config changes or a requested defaults audit.
+description: Check shipped Harness defaults, missing-key behavior and fail-closed gates before config changes or a defaults audit.
 ---
 
 # Config guard
 
-Assess `assets/config.default.yaml` against current code and `INVARIANTS.md`.
-This is a read-oriented assessment; corrections need an authorized change set.
-Use `cgagentharness-invariant-guard` for implementation and topology review.
+Compare `assets/config.default.yaml` with the consuming accessor and startup or
+reload path. Distinguish a fresh home, an existing file with the key missing,
+and an explicit value. Seeded defaults never rewrite an existing home.
 
-## Contracts
-
-Report broken contracts as FAIL and unexecuted checks as NOT RUN.
-
-| ID | Check and authoritative evidence |
+| Contract | Evidence |
 |---|---|
-| H1 | `flag_is_true` accepts only literal YAML `true`; missing keys and strings stay off. `tests/common_layer.rs::quoted_true_is_off`. |
-| H2 | Use `invariant_guard::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` for shipped gates, empty grants and provider fallback. Local clone retrieval ships on; write gates and Linux netns fallback ship off. Check first-run Google-only URL seeding and existing-home preservation in `tests/common_layer.rs`. |
-| H3 | Plaintext credential storage ships off and is restart-only. `security.api_key_optional` grants no authority. |
-| H4 | Writes require human reason and per-call confirm; inspect writer, `tests/real_repo_loop.rs` and shim route assertions. |
-| H5 | `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` only disables; `EXECUTION_ENABLED` cannot be flipped to fake a passing refusal. `tests/write_kill_switch.rs`. |
-| H6 | Serve remains loopback-only; distinguish its bind policy in `src/server/mod.rs` from model endpoint validation in `src/llm`. |
-| H7 | Mode/write-enabled alone grants no mutation: fresh disk policy, master/deepagent/clone-write gates and separate intents remain required. `tests/write_policy.rs`. |
-| H8 | The shipped-config test locks the prompt-filter pattern count; inspect its current assertion rather than copying the count here. |
-| H9 | Check `shipped_defaults_protect_agent_instruction_files`, `shipped_defaults_protect_rust_check_configuration` and `shipped_defaults_deny_sensitive_read_basenames`. |
-| H10 | Auth/TLS reject invalid switch types: `tests/common_layer.rs::security_switches_require_boolean_values`. Numeric types are checked at `AppConfig::load`; missing retains defaults, malformed refuses. `tests/invariant_guard.rs::numeric_config_reads_are_type_checked_at_load`, `src/common/config.rs` units. |
-| H11 | The shipped-config test locks pinned/structured-memory defaults. Saved explicit choices win; proposals remain pending until reviewed. Use `tests/common_layer.rs` and `tests/structured_memory_suggestions.rs` for persistence and proposal behavior. |
-| H12 | Firecrawl ships off; its gate and hourly cap are restart-only. See `src/server/web_firecrawl.rs::tests::config_ships_off_and_refuses_a_bad_cap` and `config_reload::RELOADABLE`. |
-| H13 | `browser.enabled` ships on, restart-only; literal true and admin authority are required. Trace `src/server/routes/browser.rs`. |
-| H14 | `web.search.result_reads.enabled` ships on and uses `flag_missing_on`; malformed values fail boot. Its `arxiv_pdf` child ships on but requires literal true. See `MISSING_MEANS_ON` and `src/server/web_provider.rs`. |
+| Literal switches | `flag_is_true` accepts only YAML boolean true. `flag_missing_on` treats absence as on and refuses malformed values for `MISSING_MEANS_ON` keys. `tests/common_layer.rs::quoted_true_is_off` and `src/common/config.rs` unit tests. |
+| Strict load | `AppConfig::load`, `FLOAT_KEYS`, `numeric_config_reads_are_type_checked_at_load`, `security_switches_require_boolean_values`. Verify missing numbers retain defaults and malformed values fail. |
+| Shipped security baseline | `tests/invariant_guard.rs::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` covers auth/TLS, execution gates, empty grants, provider fallback, prompt filters and memory defaults. Check existing-home and first-run seeding in `tests/common_layer.rs`. |
+| Writes and input protection | Use `cgagentharness-write-policy-redteam` for reason, confirm, revocation and the disable-only kill switch. Find the `shipped_defaults_protect_` and `shipped_defaults_deny_` filters in `tests/invariant_guard.rs`. |
+| Network and credentials | Read `src/server/mod.rs` for loopback bind, `src/llm` for model URLs and `INVARIANTS.md` for API-key authority and OS-store/plaintext behavior. |
+| Restart-only gates | Check `src/server/config_reload.rs::RELOADABLE`, `src/server/web_firecrawl.rs` for the Firecrawl gate and cap, and `src/server/routes/browser.rs` for browser/accounts/admin and takeover gates. |
+| Listing reads | `src/server/web_provider.rs::ResultReads` uses `flag_missing_on` for the parent, literal true for `arxiv_pdf`. Exercise their missing-key cases independently. |
+| Memory persistence | Check saved choices and pending proposals in `tests/common_layer.rs` and `tests/structured_memory_suggestions.rs`. |
 
-## Execute and interpret
-
-Select affected filters with the root rustup toolchain:
+Use the pinned rustup toolchain and select affected filters, for example:
 
 ```sh
 GROK_API_KEY='' ANTHROPIC_API_KEY='' DEEPAGENT_API_KEY='' \
-  cargo test --locked --test invariant_guard shipped_ -- --nocapture
-GROK_API_KEY='' ANTHROPIC_API_KEY='' DEEPAGENT_API_KEY='' \
-  cargo test --locked --test common_layer -- quoted_true_is_off security_switches_require_boolean_values --nocapture
+  cargo test --locked --test common_layer quoted_true_is_off -- --exact
 ```
 
-Confirm the selected tests ran. Exercise affected refusal paths separately.
-Report each applicable ID with commands, results, SHA and gaps. Align approved
-default changes with code, config and the PR invariant statement.
+Exercise affected refusal paths. Report applicable contracts as PASS, FAIL or
+NOT RUN with the revision and actual test selections. Follow the root invariant
+statement requirement for approved default changes.

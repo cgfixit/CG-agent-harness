@@ -5,92 +5,60 @@ description: Diagnose misleading Harness install, packaging, browser, toolchain,
 
 # Diagnose misleading results
 
-Use the symptom that matches the failure. Shared invariants, deliberate boundary
-copies, boolean semantics, CSRF names and write gates are owned by the **Traps**
-section of `AGENTS.md`; investigate that contract rather than copying it here.
-Paths below are relative to the repository root.
+Read the corresponding trap in `AGENTS.md`, then locate the failure or apparent
+success in the actual command path.
 
-## Wrong compiler or slow debug crypto
+## Wrong compiler or incomplete local checks
 
-Resolve Cargo, rustc and Clippy through rustup and the relevant root/desktop
-`rust-toolchain.toml`. Check actual paths and versions before using the `CLIPPY`
-override in `scripts/verify-local.sh`; a Homebrew override must match the compiler.
-For incompatible cached artifacts, use a task-specific `CARGO_TARGET_DIR` before
-changing source. Preserve `[profile.dev.package."*"] opt-level=3` in `Cargo.toml`:
-slow debug scrypt is not a reason to lower its security cost.
+Confirm rustup Cargo, rustc and Clippy match the root or desktop
+`rust-toolchain.toml`. A `CLIPPY` override in `scripts/verify-local.sh` must
+match rustc. Use a task-specific `CARGO_TARGET_DIR` for incompatible artifacts.
+For slow scrypt, check the dependency optimization setting in `Cargo.toml`.
+A green `verify-local.sh` can include skipped cargo-deny or live checks. Read
+its output and use scoped commands for ordinary changes.
 
-`verify-local.sh` runs the full local suite and packaged-backend checks; use
-scoped commands for ordinary changes as `AGENTS.md` requires. Its successful exit
-can include skipped cargo-deny or live checks: read the output before claiming
-coverage. Blank planner keys for synthetic tests; their presence proves nothing.
+## Console and model-driven browser sessions
 
-## Console Chrome versus /browse Chrome
+Trace console Chrome through `.github/workflows/ci.yml` and
+`scripts/chat-browser-acceptance.mjs`. For `/browse`, check the child, prepared
+Playwright, installed Chrome and local model. Set an absolute `browser.sidecar`
+for a packaged app. Distinguish launch, policy refusal, an owner decision on
+one held request, and the model result. Use the Browser use guide in `AGENTS.md`
+and `cgagentharness-release` for packaged sidecar identity and WKWebView.
 
-For console CI, inspect Chrome resolution in `.github/workflows/ci.yml` and
-`scripts/chat-browser-acceptance.mjs`. For `/browse`, inspect the browser
-child, sidecar path, prepared Playwright, installed Chrome and local model.
-The packaged app needs an absolute `browser.sidecar` path. Distinguish launch,
-policy refusal, operator hand-off and model outcome. See the Browser use guide
-linked from `AGENTS.md`.
+## Sandbox denial and listener races
 
-## Sidecar digest, signatures and native UI
+An outer sandbox can deny process creation or a loopback bind before assertions.
+Use a disposable `CGAGENTHARNESS_HOME`, verify the candidate PID and listener,
+and stop only owned processes. Linux refuses without usable bubblewrap by
+default. Opt-in `linux-netns` isolates the network only. Verify the actual backend.
 
-Use `cgagentharness-release` for the packaging order and provenance checks.
-Re-signing the backend after its hash is embedded in the desktop invalidates
-that identity. Ad-hoc signatures do not establish notarization. HTTP/browser
-success does not establish WKWebView focus, dialogs or native navigation.
-
-## Sandbox denial or a shared listener
-
-Locate the failure before changing policy: an outer sandbox can reject process
-or listener creation before application assertions run. Reproduce with an owned
-temporary `CGAGENTHARNESS_HOME` and unique port when authorized. On Linux, missing or unusable bubblewrap refuses by default. Record the
-selected backend: `linux-netns` is opt-in and isolates only the network.
-Keep required sandbox checks failing when confinement is unavailable.
-
-A response on the default port can belong to another checkout. Record the
-candidate PID, binary and owned listener; stop only processes started by this
-verification. See `scripts/smoke-ollama.sh` and `cgagentharness-verify`.
-
-## Ephemeral ports and successful early exit
-
-`free_port` in `scripts/test-desktop-backend.py` closes its reservation before the
-child can bind, so the returned port is advisory. `src/server/mod.rs` checks
-`port_in_use` before loading provider keys and returns success after printing an
-already-running notice to stdout. Exit zero can therefore mean the credential
-refusal under test never ran.
-
-Inspect `await_headless`, `serve_expecting_refusal` and their callers. Retry only
-an identified collision on a fresh port, with a bounded attempt count; preserve
-captured output across attempts so a credential leak cannot disappear. Where
-possible, keep the fixture listener open, as `ModelFixture` and
-`test_unrelated_listener_is_never_adopted` do. Recheck every caller moved onto a
-shared helper, not just the originally failing one.
+In `scripts/test-desktop-backend.py`, `free_port` closes the reservation before
+the bind. `src/server/mod.rs::port_in_use` can print an already-running notice
+and exit zero before loading provider keys. Inspect `await_headless` and
+`serve_expecting_refusal`. Retry identified collisions on a fresh port with
+bounded attempts and retain captured output. Keep a fixture listener open where
+possible, as in `ModelFixture` and `test_unrelated_listener_is_never_adopted`.
+When changing a shared helper, recheck all callers.
 
 ## GitHub pagination and reviews
 
-`github.rest.issues.listComments` returns an object with `data`;
-`github.paginate(github.rest.issues.listComments, ...)` returns the array itself.
-Inspect consumers when changing pagination. Exercise the extracted workflow
-script with a marker on page two; optional chaining would conceal a broken
-consumer. Current examples live in `.github/workflows/pr-template-check.yml`.
+`github.rest.issues.listComments` wraps results in `data`.
+`github.paginate(github.rest.issues.listComments, ...)` returns the array.
+Exercise a page-two marker in the extracted script. Find current consumers in
+`.github/workflows/pr-template-check.yml`.
 
-Green CI does not prove the current head was reviewed. Compare the reviewed SHA,
-unresolved threads and `.github/workflows/review-gate.yml`. The gate is advisory;
-thread resolution alone fires no webhook, so re-run it after resolving the final
-thread when that workflow is authorized. A cancelled review is not a verdict.
+Compare reviewed SHA and unresolved threads with the advisory
+`.github/workflows/review-gate.yml`. Resolving a thread sends no webhook.
+Re-run the gate after the final resolution when authorized. Treat cancellation
+as missing review evidence.
 
-## Operator command differs from API or YAML
+## Console command mapping and release collisions
 
-Trace the console dispatcher and help in `src/server/views.rs`. For example,
-`gateMap` in `assets/static/harness.html` maps `/memory auto-retrieve` to
-`auto_retrieval` at `POST /api/structured-memory/gates`. Verify exact paths,
-fields and aliases in the revision being documented.
+Trace help in `src/server/views.rs` and dispatch in `assets/static/harness.html`.
+For example, `gateMap` maps `/memory auto-retrieve` to `auto_retrieval` at
+`POST /api/structured-memory/gates`.
 
-## Release already in flight
-
-Before an authorized release dispatch, inspect runs, tags and draft/published
-releases. Watch an existing release for the same SHA rather than dispatching a
-duplicate. `scripts/release-plan.py` deliberately rejects collisions; preserve
-the tag/assets after an ambiguous result. See `cgagentharness-release` for the
-exact-main Bundle prerequisite and publication acceptance.
+Use `cgagentharness-release` for same-SHA Bundle evidence and existing runs.
+Preserve tags and assets after ambiguous publication. `scripts/release-plan.py`
+rejects collisions.
