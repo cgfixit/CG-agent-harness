@@ -26,7 +26,7 @@ later model call returns the partial report with `finished: false` and
 macOS and Linux use detached jobs. Windows uses the synchronous endpoint.
 
 - Each task grants exact public origins independently of the web allowlist.
-  A blocked navigation redirect names the additional origin it needs. Use
+  When `navigate` hits an ungranted redirect, the result names its origin. Use
   `/browse https://www.python.org/ read the first sentence` for Python’s homepage.
   Expand **Page request details** to inspect other origins the page requested.
   The host checks each request and redirect against current block policy. The authenticated

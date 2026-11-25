@@ -856,13 +856,13 @@ async function handle(message) {
       };
       page.on("response", redirect);
       await page.goto(message.url, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(async (error) => {
-        if (outside && String(error.message).includes("ERR_BLOCKED_BY_CLIENT")) {
+        const deniedRedirect = outside && String(error.message).includes("ERR_BLOCKED_BY_CLIENT");
+        if (!deniedRedirect && blockedLoads === before && oversized === large) throw error;
+        // Wait for Chrome's error page before the model tries another navigation.
+        await page.waitForEvent("framenavigated", { predicate: (frame) => frame === page.mainFrame(), timeout: 1000 }).catch(() => {});
+        if (deniedRedirect) {
           throw Object.assign(new Error("Page redirect requires a separate browser grant"), { redirectOrigin: outside });
         }
-        if (blockedLoads === before && oversized === large) throw error;
-        // Chrome commits its error page a moment after a refused load; a
-        // navigate sent before that would be interrupted by it.
-        await page.waitForEvent("framenavigated", { timeout: 1000 }).catch(() => {});
         if (oversized !== large) {
           throw new Error(`that page is larger than the ${MAX_DOCUMENT_BYTES / 1048576} MiB a browser task reads`);
         }
