@@ -2013,10 +2013,10 @@ impl ScriptedOperator {
 /// - an approved POST reaches the server once, and the page gets its answer;
 /// - the identical POST sent again is a new question, and refused it is held;
 /// - a denied POST and one whose answer comes after the wait never arrive;
-/// - a block rule added while the operator decides stops an approved POST;
-/// - an approved form POST loads its result, a denied one leaves the page;
 /// - a form the page submits while it parses is held, never sent, and the
-///   navigate that opened the page still returns it.
+///   navigate that opened the page still returns it;
+/// - a block rule added while the operator decides stops an approved POST;
+/// - an approved form POST loads its result, a denied one leaves the page.
 ///
 /// The operator is asked with the method, whole URL, size, SHA-256 and text
 /// of the body that would be sent.
@@ -2031,11 +2031,11 @@ pub fn run_takeover_demo(script: &Path, headless: bool) -> Result<String, String
 fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Result<String, String> {
     let (origin, port, seen) = serve_recording(vec![
         ("/shop", Reply::Html(TAKEOVER_PAGE.to_string())),
+        ("/autosubmit", Reply::Html(GUARD_AUTOSUBMIT_PAGE.to_string())),
+        ("/submitted", Reply::Html("<p>SUBMITTED</p>".to_string())),
         ("/api/save", Reply::Html("SAVED".to_string())),
         ("/api/order", Reply::Html(TAKEOVER_RESULT_PAGE.to_string())),
         ("/api/beacon", Reply::Html(String::new())),
-        ("/autosubmit", Reply::Html(GUARD_AUTOSUBMIT_PAGE.to_string())),
-        ("/submitted", Reply::Html("<p>SUBMITTED</p>".to_string())),
     ])?;
     let session = Session::general([&origin]).map_err(|err| format!("{err:?}"))?;
     let base = format!("http://127.0.0.1:{port}");
