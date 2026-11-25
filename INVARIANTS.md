@@ -668,7 +668,7 @@ a stored report rechecks the block list.
 
 An administrator can let one held request of their own job be sent (takeover,
 #995), behind literal `browser.takeover.enabled` (ships `true`; restart-only).
-Only a job asks; `/api/browser/run` holds every request. The page route pauses a request held as the operator's step; the job
+Only a job asks; `/api/browser/run` holds every request. The page route pauses only a request the model's action caused; the job
 reads `waiting`, showing method, whole URL, content type, size, body SHA-256 and
 a text preview for at most `browser.takeover.wait_sec`.
 `POST /api/browser/jobs/{job_id}/approve` needs that request's id and hash,

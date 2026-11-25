@@ -68,7 +68,7 @@ const CHECK_TIMEOUT_MS = 5000;
 const asked = new Map();
 let questions = 0;
 // Takeover (#995). Zero means off: every held request is answered at once.
-// Otherwise a request held as the operator's step stays paused this long for
+// Otherwise a request the model's action caused stays paused this long for
 // the parent's verdict. One request waits at a time; a second is held.
 let takeoverWaitMs = 0;
 const MAX_TAKEOVER_WAIT_MS = 600000;
@@ -535,7 +535,7 @@ function operatorAllows(method, url, contentType, body, sha256) {
   });
 }
 
-// A request held as the operator's step, with takeover on: keep it paused,
+// A request the model's action caused, with takeover on: keep it paused,
 // ask, then release this same request or hold it as before. Release only
 // lets it leave the page route; the network gate still checks it against the
 // pass recorded here, and against the block list as it is then.
@@ -750,9 +750,10 @@ async function start(message) {
     // waits for the operator: every request but GET and HEAD is held here.
     const method = request.method();
     if (method !== "GET" && method !== "HEAD") {
-      // The operator's step, with takeover on: pause it and ask. The whole
-      // URL must fit the question, and only one request waits at a time.
-      if (takeoverWaitMs && (acting || request.isNavigationRequest()) && !pendingApproval && url.length <= MAX_URL) {
+      // The model's action caused it, with takeover on: pause it and ask. A
+      // page's own request, a page load included, is never asked about. The
+      // whole URL must fit the question, and only one request waits at a time.
+      if (takeoverWaitMs && acting && !pendingApproval && url.length <= MAX_URL) {
         const waiting = decideHeld(route, request, method, url).finally(() => {
           if (pendingApproval === waiting) pendingApproval = null;
         });
