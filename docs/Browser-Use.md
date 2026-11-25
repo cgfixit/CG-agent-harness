@@ -32,16 +32,18 @@ macOS and Linux use detached jobs. Windows uses the synchronous endpoint.
   The host checks each request and redirect against current block policy. The authenticated
   loopback proxy pins public addresses. Private access is fixture-only.
   `navigate` accepts a task URL, granted root, page URL or shown link.
-- Playwright routing holds methods other than GET and HEAD. Browser-wide
-  CDP Fetch repeats the hold as defense in depth, without an independent
-  fixture for that hold. Text outside the task or page is held. Each observation
+- Playwright routing holds methods other than GET and HEAD, even mid-load
+  form posts; `navigate` still returns the page. CDP Fetch repeats it
+  browser-wide (unfixtured backup). Text outside the task or page is
+  held. Each observation
   checks text fields concurrently. Targeting a secret field or one whose
   attributes could not be read ends the task with a handoff.
 - With `browser.takeover.enabled` (shipped true), the job owner can approve
-  one request caused by a model action. `POST /api/browser/jobs/{job_id}/approve`
-  needs the request ID, body SHA-256, confirmation and reason. Approval binds method, URL and body under current policy. The wait ends at the earlier
-  of `browser.takeover.wait_sec` and the task deadline. Background holds
-  are reported without an approval prompt.
+  one request sent during a model action, or one form posted within 5s
+  after a click or Enter. `POST /api/browser/jobs/{job_id}/approve`
+  needs request ID, body SHA-256, confirmation and reason. Approval binds
+  method, URL and body under current policy. Waiting ends at
+  `browser.takeover.wait_sec` or the deadline. Other holds get no prompt.
 - Temporary profiles can survive a kill until the next task or server start.
   Ungranted origins, workers and documents over 16 MiB are blocked.
   WebRTC uses proxied TCP. ARIA provides no screenshot.

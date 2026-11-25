@@ -3021,7 +3021,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-set (2026-10-23) standing allowance of 10,000, not a measured count: the file was 7,099 words; the
     // Root group cap below is the binding limit, so new contracts fit without trimming gate text.
     // why: operator-approved (2026-11-20) +200 for the #965 route capability table contract.
-    ("INVARIANTS.md", Root, 10_200),
+    // why: operator-approved (2026-11-25) +10 so the takeover sentence names the late-submit window exactly (#1138).
+    ("INVARIANTS.md", Root, 10_210),
     // why: README refresh folded Origins into the intro and trimmed duplicates; 1443 words, rounded up to the next 100.
     // why: operator-approved (2026-10-14) macOS installer and launcher pointer in Quick start; 1489 words, rounded up to the next 50.
     // why: dependency refresh removed five stale Linux prerequisite words; keep the cut.

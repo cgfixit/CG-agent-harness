@@ -1724,7 +1724,8 @@ const MAX_GUARDED_REPLY_BYTES: usize = 400_000;
 /// - a block rule on a path holds inside the granted origin (#899): see
 ///   `guard_path_denials`;
 /// - a held POST never reaches the server, whether the page sent it on its
-///   own or the model's click caused it (#894): see `guard_holds`.
+///   own, the model's click caused it (#894) or a form submitted while the
+///   page parsed: see `guard_holds`.
 ///
 /// The session's verdicts come from a policy file through `RequestPolicy`, as
 /// a task's do; only the loopback origin's name is swapped for the rules.
@@ -1863,9 +1864,20 @@ const GUARD_HOLDS_PAGE: &str = r#"
 <script>fetch('/autosave', {method: 'POST', body: 'draft'}).catch(() => {});</script>
 "#;
 
+/// A page whose inline script submits a POST form while the page is still
+/// parsing, before `domcontentloaded`.
+const GUARD_AUTOSUBMIT_PAGE: &str = r#"
+<p>AUTOSUBMIT-PAGE</p>
+<form method="post" action="/submitted"><input name="item" value="tea"></form>
+<script>document.forms[0].submit();</script>
+<p>after the script</p>
+"#;
+
 /// The two kinds of held request (#894), by what the server received: a POST
 /// the page sends on its own is listed as background, a POST the model's click
-/// causes is listed as the operator's step, and neither reaches the server.
+/// causes is listed as the operator's step, and neither reaches the server. A
+/// page load the page starts while it parses is held as the operator's step,
+/// and the navigate that opened the page still returns its observation.
 fn guard_holds(sidecar: &mut Sidecar, lines: &mut Vec<String>, base: &str, seen: &Received) -> Result<(), String> {
     let rows = |page: &Value, key: &str| -> Vec<String> {
         page[key]
@@ -1902,28 +1914,73 @@ fn guard_holds(sidecar: &mut Sidecar, lines: &mut Vec<String>, base: &str, seen:
         return Err(format!("a held request reached the server: {sent:?}"));
     }
     lines.push("holds -> page's own POST listed as background, click's POST as the operator's; neither sent".into());
+
+    let (page, _) = guard_call(
+        sidecar,
+        lines,
+        json!({"op":"navigate","url": format!("{base}/autosubmit")}),
+    )?;
+    if rows(&page, "held") != [format!("POST {base}/submitted")] || !rows(&page, "held_background").is_empty() {
+        return Err(format!(
+            "a form submitted while the page parsed was not held as the operator's step: {page}"
+        ));
+    }
+    if !page["text"].as_str().unwrap_or("").contains("AUTOSUBMIT-PAGE") {
+        return Err(format!("the auto-submitting page was not observed: {page}"));
+    }
+    let posted = seen
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .any(|row| row.starts_with("POST "));
+    if posted {
+        return Err("a form submitted while the page parsed reached the server".into());
+    }
+    lines.push("holds -> a form submitted during parsing held, navigate still observed the page".into());
     Ok(())
 }
 
 /// A shop page for the takeover fixture: a button whose click POSTs, one that
 /// sends the identical POST again once the first is answered, and a form.
+/// Three more buttons submit that form only after their click has returned:
+/// once, twice, and once after the late-submit window; a fourth submits it
+/// at once and again later. A wheel event (a scroll) submits it later too,
+/// and a link leads to `TAKEOVER_SLOW_PAGE`.
 const TAKEOVER_PAGE: &str = r#"
 <p>SHOP</p>
 <button onclick="save()">Save</button>
 <button onclick="saveTwice()">Save twice</button>
 <form method="post" action="/api/order"><input name="item" value="tea"><button>Order</button></form>
+<button onclick="later(4000)">Order later</button>
+<button onclick="later(4000); later(4800)">Order twice later</button>
+<button onclick="document.forms[0].submit(); later(4000)">Order and again later</button>
+<button onclick="later(9000)">Order much later</button>
+<a href="/slow">Slow page</a>
 <p id="state">idle</p>
 <script>
 const show = (text) => { document.getElementById('state').textContent = text; };
 const post = () => fetch('/api/save', {method: 'POST', body: 'qty=2'});
 function save() { post().then((r) => show('saved ' + r.status)).catch(() => show('not saved')); }
 function saveTwice() { post().then(() => post()).then(() => show('saved twice')).catch(() => show('second not saved')); }
+function later(ms) { setTimeout(() => document.forms[0].submit(), ms); }
+addEventListener('wheel', () => later(4000), {once: true});
 </script>
 "#;
 
 /// What an approved order loads: a page that POSTs on its own as it loads.
 const TAKEOVER_RESULT_PAGE: &str =
     "<p>ORDER-PLACED</p><script>fetch('/api/beacon', {method: 'POST', body: 'seen'}).catch(() => {});</script>";
+
+/// A page that submits a POST form by itself once it has loaded: no model action.
+const TAKEOVER_AUTO_PAGE: &str = r#"<p>AUTO</p>
+<form id="auto" method="post" action="/api/auto"><input name="item" value="tea"></form>
+<script>addEventListener('load', () => document.getElementById('auto').submit());</script>"#;
+
+/// A page that submits a POST form by itself a while after it has loaded, so
+/// after the click that opened it has returned.
+const TAKEOVER_SLOW_PAGE: &str = r#"<p>SLOW</p>
+<form id="auto" method="post" action="/api/auto"><input name="item" value="tea"></form>
+<script>addEventListener('load', () => setTimeout(() => document.getElementById('auto').submit(), 2500));</script>"#;
 
 /// What the takeover fixture's operator does with the next question.
 enum Verdict {
@@ -1978,8 +2035,15 @@ impl ScriptedOperator {
 /// - an approved POST reaches the server once, and the page gets its answer;
 /// - the identical POST sent again is a new question, and refused it is held;
 /// - a denied POST and one whose answer comes after the wait never arrive;
+/// - a form the page submits while it parses is held, never sent, and the
+///   navigate that opened the page still returns it;
 /// - a block rule added while the operator decides stops an approved POST;
-/// - an approved form POST loads its result, a denied one leaves the page.
+/// - an approved form POST loads its result, a denied one leaves the page;
+/// - a form the page submits by itself is held without a question;
+/// - the one form a click submits within five seconds after it returned is
+///   asked about; a second one, one after a refusal during the click, one
+///   after that window, one after a scroll and one from the page a click
+///   opened are held without a question.
 ///
 /// The operator is asked with the method, whole URL, size, SHA-256 and text
 /// of the body that would be sent.
@@ -1994,9 +2058,14 @@ pub fn run_takeover_demo(script: &Path, headless: bool) -> Result<String, String
 fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Result<String, String> {
     let (origin, port, seen) = serve_recording(vec![
         ("/shop", Reply::Html(TAKEOVER_PAGE.to_string())),
+        ("/autosubmit", Reply::Html(GUARD_AUTOSUBMIT_PAGE.to_string())),
+        ("/submitted", Reply::Html("<p>SUBMITTED</p>".to_string())),
         ("/api/save", Reply::Html("SAVED".to_string())),
         ("/api/order", Reply::Html(TAKEOVER_RESULT_PAGE.to_string())),
         ("/api/beacon", Reply::Html(String::new())),
+        ("/auto", Reply::Html(TAKEOVER_AUTO_PAGE.to_string())),
+        ("/api/auto", Reply::Html("AUTO-SUBMITTED".to_string())),
+        ("/slow", Reply::Html(TAKEOVER_SLOW_PAGE.to_string())),
     ])?;
     let session = Session::general([&origin]).map_err(|err| format!("{err:?}"))?;
     let base = format!("http://127.0.0.1:{port}");
@@ -2112,6 +2181,26 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
     }
     lines.push("denied -> held, not sent".into());
 
+    // A form the page submits while it parses, with takeover on: navigate
+    // still returns the page, the load is held for the operator, and it is
+    // never sent. Whether the operator is asked first is not checked here: a
+    // page's own load may be paused and refused, or held outright.
+    operator.plan([Verdict::Deny]);
+    let (page, _) = guard_call(
+        &mut sidecar,
+        &mut lines,
+        json!({"op":"navigate","url": format!("{base}/autosubmit")}),
+    )?;
+    if rows(&page, "held") != [format!("POST {base}/submitted")]
+        || !page["text"].as_str().unwrap_or("").contains("AUTOSUBMIT-PAGE")
+        || count("POST /submitted") != 0
+    {
+        return Err(format!(
+            "a form submitted while the page parsed was sent, or navigate did not observe the page: {page}"
+        ));
+    }
+    lines.push("page's own submit while parsing -> navigate observed the page, load held, not sent".into());
+
     // A form POST: approved it loads its result, denied the page stays.
     operator.plan([Verdict::Deny]);
     let page = click(&mut sidecar, &mut lines, "Order")?;
@@ -2140,6 +2229,141 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         "form POST -> denied stays on the page; approved after 6 s loads the result once, its own POST held as background"
             .into(),
     );
+
+    // A form the page submits by itself, with no model action: the operator
+    // would say yes, and is not asked. Held as on a session without takeover.
+    operator.plan([Verdict::Allow]);
+    let asked_before = operator.asked().len();
+    let (page, _) = guard_call(
+        &mut sidecar,
+        &mut lines,
+        json!({"op":"navigate","url": format!("{base}/auto")}),
+    )?;
+    // The submit follows the load, so it may land in the next observation.
+    thread::sleep(Duration::from_secs(1));
+    let (later, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    let held = [rows(&page, "held"), rows(&later, "held")].concat();
+    if operator.asked().len() != asked_before
+        || count("POST /api/auto") != 0
+        || held != [format!("POST {base}/api/auto")]
+        || !rows(&page, "approved").is_empty()
+        || !rows(&later, "approved").is_empty()
+    {
+        return Err(format!(
+            "a form the page submitted by itself was asked about, sent, or not held: {page} {later}"
+        ));
+    }
+    lines.push("page's own form POST -> not asked, held, not sent".into());
+
+    // A click whose form goes out after the click has returned (a token fetch
+    // first, a "Processing…" delay) is still that click's step. Nothing waits
+    // on the sidecar when it is asked: the reader thread carries the verdict.
+    operator.plan([Verdict::Allow]);
+    let (asked_before, orders_before) = (operator.asked().len(), count("POST /api/order"));
+    let page = click(&mut sidecar, &mut lines, "Order later")?;
+    if operator.asked().len() != asked_before || !rows(&page, "held").is_empty() {
+        return Err(format!(
+            "the late form POST did not come after its click returned: {page}"
+        ));
+    }
+    thread::sleep(Duration::from_millis(4500));
+    let (page, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    if operator.asked().len() != asked_before + 1
+        || count("POST /api/order") != orders_before + 1
+        || rows(&page, "approved") != [order.clone()]
+        || !page["text"].as_str().unwrap_or("").contains("ORDER-PLACED")
+    {
+        return Err(format!(
+            "a click's late form POST was not asked about and sent once: {page}"
+        ));
+    }
+    lines.push("click's form POST 4 s later -> asked, approved, sent once".into());
+
+    // The window is one question wide: refused, the form the page submits
+    // again is held, although the operator would now say yes.
+    operator.plan([Verdict::Deny, Verdict::Allow]);
+    let (asked_before, orders_before) = (operator.asked().len(), count("POST /api/order"));
+    click(&mut sidecar, &mut lines, "Order twice later")?;
+    thread::sleep(Duration::from_millis(5500));
+    let (page, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    if operator.asked().len() != asked_before + 1
+        || count("POST /api/order") != orders_before
+        || rows(&page, "held") != [order.clone(), order.clone()]
+    {
+        return Err(format!(
+            "a second late form POST was asked about, or one was sent: {page}"
+        ));
+    }
+    // The same when the refusal came during the click: no window opens.
+    operator.plan([Verdict::Deny, Verdict::Allow]);
+    let (asked_before, orders_before) = (operator.asked().len(), count("POST /api/order"));
+    let page = click(&mut sidecar, &mut lines, "Order and again later")?;
+    if operator.asked().len() != asked_before + 1 || rows(&page, "held") != [order.clone()] {
+        return Err(format!("a form POST refused during its click was not held: {page}"));
+    }
+    thread::sleep(Duration::from_millis(4500));
+    let (page, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    if operator.asked().len() != asked_before + 1
+        || count("POST /api/order") != orders_before
+        || rows(&page, "held") != [order.clone()]
+    {
+        return Err(format!(
+            "a form POST after a refusal was asked about, or one was sent: {page}"
+        ));
+    }
+    lines.push("second late form POST, or one after a refusal -> not asked, held".into());
+
+    // After the window, after a scroll, and from a page the click opened: the
+    // page's own. A yes is queued each time, so asking would send it.
+    operator.plan([Verdict::Allow]);
+    let (asked_before, orders_before) = (operator.asked().len(), count("POST /api/order"));
+    click(&mut sidecar, &mut lines, "Order much later")?;
+    thread::sleep(Duration::from_millis(9500));
+    let (page, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    if operator.asked().len() != asked_before
+        || count("POST /api/order") != orders_before
+        || rows(&page, "held") != [order.clone()]
+    {
+        return Err(format!(
+            "a form POST 9 s after its click was asked about, sent, or not held: {page}"
+        ));
+    }
+    guard_call(
+        &mut sidecar,
+        &mut lines,
+        json!({"op":"navigate","url": format!("{base}/shop")}),
+    )?;
+    let (page, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"scroll","dy": 200}))?;
+    if !rows(&page, "held").is_empty() {
+        return Err(format!("the form POST did not come after its scroll returned: {page}"));
+    }
+    thread::sleep(Duration::from_millis(4500));
+    let (page, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    if operator.asked().len() != asked_before
+        || count("POST /api/order") != orders_before
+        || rows(&page, "held") != [order.clone()]
+    {
+        return Err(format!(
+            "a form POST after a scroll was asked about, sent, or not held: {page}"
+        ));
+    }
+    let page = click(&mut sidecar, &mut lines, "Slow page")?;
+    if !page["text"].as_str().unwrap_or("").contains("SLOW") || !rows(&page, "held").is_empty() {
+        return Err(format!(
+            "the click did not open the slow page before its form POST: {page}"
+        ));
+    }
+    thread::sleep(Duration::from_millis(3500));
+    let (page, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    if operator.asked().len() != asked_before
+        || count("POST /api/auto") != 0
+        || rows(&page, "held") != [format!("POST {base}/api/auto")]
+    {
+        return Err(format!(
+            "a form POST from the page a click opened was asked about, sent, or not held: {page}"
+        ));
+    }
+    lines.push("form POST after the window, after a scroll, from an opened page -> not asked, held, not sent".into());
 
     // A block rule added while the operator decides: approved, and still not sent.
     operator.plan([Verdict::BlockThenAllow]);
@@ -2205,6 +2429,8 @@ fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Resu
         ("/big", Reply::Html(big)),
         ("/huge", Reply::Unsized(huge)),
         ("/holds", Reply::Html(GUARD_HOLDS_PAGE.to_string())),
+        ("/autosubmit", Reply::Html(GUARD_AUTOSUBMIT_PAGE.to_string())),
+        ("/submitted", Reply::Html("<p>SUBMITTED</p>".to_string())),
         ("/docs", Reply::Html(GUARD_DENIALS_PAGE.to_string())),
         ("/to-private", Reply::Redirect("/private/landing")),
         ("/hop", Reply::Redirect("/to-private")),
