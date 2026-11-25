@@ -85,6 +85,22 @@ pub struct CloudChat {
     test_fixture: bool,
 }
 
+/// A cloud reply's spend row, already handed to the blocking pool. The task
+/// finishes whether or not this is awaited.
+#[must_use = "await `landed` once the reply's exchange write is queued"]
+pub struct PendingSpend(Option<tokio::task::JoinHandle<()>>);
+
+impl PendingSpend {
+    /// Waits until the row is in the ledger.
+    pub async fn landed(self) {
+        if let Some(append) = self.0 {
+            if append.await.is_err() {
+                tracing::warn!("spend ledger append did not finish");
+            }
+        }
+    }
+}
+
 impl std::fmt::Debug for CloudChat {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CloudChat")
@@ -282,6 +298,22 @@ impl CloudChat {
     }
 
     pub async fn chat_with_source(&self, selection: &str, message: &str, source: &str) -> Result<ChatResult> {
+        let (reply, spend) = self.chat_with_pending_spend(selection, message, source).await?;
+        spend.landed().await;
+        Ok(reply)
+    }
+
+    /// [`Self::chat_with_source`] for a caller that stores the reply: the
+    /// spend row is handed to the blocking pool, not awaited. An await between
+    /// the reply and the caller's own write would let a dropped request bill a
+    /// turn it never stores, so the caller queues that write first and only
+    /// then awaits [`PendingSpend::landed`].
+    pub async fn chat_with_pending_spend(
+        &self,
+        selection: &str,
+        message: &str,
+        source: &str,
+    ) -> Result<(ChatResult, PendingSpend)> {
         let config = self.ready(selection)?;
         self.reserve_request(config)?;
         self.cancellable(self.request(config, message, source)).await
@@ -422,7 +454,12 @@ impl CloudChat {
         }
     }
 
-    async fn request(&self, config: &ProviderConfig, message: &str, source: &str) -> Result<ChatResult> {
+    async fn request(
+        &self,
+        config: &ProviderConfig,
+        message: &str,
+        source: &str,
+    ) -> Result<(ChatResult, PendingSpend)> {
         let prediction = self.predict_request(config, message).await;
         if prediction.budget_exceeded {
             return Err(HarnessError::new(
@@ -535,10 +572,16 @@ impl CloudChat {
         } else {
             None
         };
-        self.record_cloud_spend_off_worker(config, &body, tokens.clone(), source, outcome)
-            .await;
-        let body_text = text?;
-        Ok(ChatResult {
+        let spend = self.start_cloud_spend(config, &body, tokens.clone(), source, outcome);
+        let body_text = match text {
+            Ok(text) => text,
+            Err(error) => {
+                // Nothing is stored for a rejected reply, so its row lands first.
+                spend.landed().await;
+                return Err(error);
+            }
+        };
+        let reply = ChatResult {
             body_text,
             model: body
                 .get("model")
@@ -556,22 +599,24 @@ impl CloudChat {
             final_prompt_tools: false,
             initial_prompt_extra_tokens: 0,
             peak_prompt_extra_tokens: 0,
-        })
+        };
+        Ok((reply, spend))
     }
 
     /// [`Self::record_cloud_spend`] for a reply: the ledger append waits on
-    /// a file lease and syncs the file, so it runs on the blocking pool, and
-    /// it is awaited so the row is in the ledger before the reply returns.
-    async fn record_cloud_spend_off_worker(
+    /// a file lease and syncs the file, so it runs on the blocking pool. The
+    /// caller awaits the returned row, so it is in the ledger before the
+    /// reply returns.
+    fn start_cloud_spend(
         &self,
         config: &ProviderConfig,
         body: &Value,
         tokens: UsageTokens,
         source: &str,
         outcome: Option<&str>,
-    ) {
+    ) -> PendingSpend {
         let Some(path) = self.spend_file.clone() else {
-            return;
+            return PendingSpend(None);
         };
         let row = spend::row_from_event(&spend::SpendEvent {
             provider: config.provider.name(),
@@ -582,12 +627,9 @@ impl CloudChat {
             outcome,
         });
         let max_bytes = self.spend_max_bytes;
-        if tokio::task::spawn_blocking(move || spend::append_row(&path, &row, max_bytes))
-            .await
-            .is_err()
-        {
-            tracing::warn!("spend ledger append did not finish");
-        }
+        PendingSpend(Some(tokio::task::spawn_blocking(move || {
+            spend::append_row(&path, &row, max_bytes)
+        })))
     }
 
     /// Inline: the only caller is `UnparsedBill::drop`, which cannot await.
