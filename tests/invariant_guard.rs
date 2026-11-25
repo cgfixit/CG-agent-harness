@@ -3052,7 +3052,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator-approved (2026-11-15) +200 after #895, #896 and #897 left it at 967 of 970.
     // why: operator-approved (2026-11-17) +100 for #945: the auth requirement and the file-name check left it at 1169 of 1170.
     // why: operator-approved (2026-11-22) +300 after the takeover-deadline sentence left it at 1270 of 1270.
-    ("docs/Browser-Use.md", Guide, 530),
+    // why: operator-approved (2026-11-25) +50 after #1150 and #1153 together left it at 530 of 530.
+    ("docs/Browser-Use.md", Guide, 580),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 605 words net of the post-#834 additions; measured 2943, rounded up to the next 10 so the cut stays cut.
