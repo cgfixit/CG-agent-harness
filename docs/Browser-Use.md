@@ -44,8 +44,8 @@ macOS and Linux use detached jobs. Windows uses the synchronous endpoint.
   needs request ID, body SHA-256, confirmation and reason. Approval binds
   method, URL and body under current policy. Waiting ends at
   `browser.takeover.wait_sec`, the deadline or a `navigate` (held). A
-  request Chrome cancels while waiting (the page left) ends as a no and is
-  held; a later yes sends nothing. Other holds get no prompt.
+  request Chrome cancels while waiting (the page left or closed) ends as
+  a no and is held; a later yes sends nothing. Other holds get no prompt.
 - Temporary profiles can survive a kill until the next task or server start.
   Ungranted origins, workers and documents over 16 MiB are blocked.
   WebRTC uses proxied TCP. ARIA provides no screenshot.

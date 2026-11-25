@@ -86,6 +86,11 @@ let pendingApproval = null;
 let askedThisOp = false;
 // Answers the open question no, as its wait running out would.
 let withdrawQuestion = null;
+// Requests asked about, open or decided in the last ALLOWANCE_MS:
+// {method, url, listed, until, withdraw}. A page that closes can let its
+// paused request reach the network gate undecided; the gate matches it
+// here, so the question ends and the request is listed once.
+const questioned = [];
 // One-shot passes for the network gate: {method, url, sha256, until}. The
 // page route asks; only a matching request, once, passes the gate.
 const allowances = [];
@@ -550,33 +555,61 @@ function operatorAllows(method, url, contentType, body, sha256) {
   });
 }
 
+// Lists a questioned request as the operator's step, once.
+function listOnce(entry) {
+  if (entry.listed) return;
+  entry.listed = true;
+  if (held.length < 20) held.push(`${entry.method} ${entry.url.slice(0, 200)}`);
+}
+
+// The question, open or recently decided, about a request with this method
+// and URL. One request waits at a time, so method and URL name it.
+function questionFor(method, url) {
+  const now = Date.now();
+  return questioned.find((entry) => entry.method === method && entry.url === url && (!entry.until || entry.until > now));
+}
+
 // A request held as the operator's step, with takeover on: keep it paused,
 // ask, then release this same request or hold it as before. Release only
 // lets it leave the page route; the network gate still checks it against the
 // pass recorded here, and against the block list as it is then.
-// A request Chrome cancels or fails first (the page left, say) is never
-// sent: an open question about it ends as a no, as an expired wait does, and
-// a verdict that comes later finds no question. Held either way.
+// A request Chrome cancels or fails first, or whose page closes (the page
+// left, or a click's new tab was adopted), is never sent by this route: an
+// open question about it ends as a no, as an expired wait does, and a
+// verdict that comes later finds no question. It is listed once.
 async function decideHeld(route, request, method, url) {
+  const now = Date.now();
+  for (let at = questioned.length - 1; at >= 0; at -= 1) {
+    if (questioned[at].until && questioned[at].until <= now) questioned.splice(at, 1);
+  }
+  const entry = { method, url, listed: false, until: 0, withdraw: null };
+  questioned.push(entry);
   let gone = false;
-  let withdraw = null;
-  const failed = (other) => {
-    if (other !== request) return;
+  const lost = () => {
     gone = true;
-    withdraw?.();
+    entry.withdraw?.();
   };
+  const failed = (other) => {
+    if (other === request) lost();
+  };
+  let owner = null;
+  try {
+    owner = request.frame().page();
+  } catch {}
   context.on("requestfailed", failed);
+  owner?.on("close", lost);
   try {
     const pageLoad = request.isNavigationRequest();
     const body = request.postDataBuffer() ?? Buffer.alloc(0);
     const sha256 = digest(body);
     const contentType = (await request.headerValue("content-type").catch(() => null)) ?? "";
     let allow = false;
-    if (!gone) {
+    if (!gone && !entry.listed) {
       const answer = operatorAllows(method, url, contentType, body, sha256);
-      withdraw = withdrawQuestion;
-      allow = (await answer) && !gone;
+      entry.withdraw = withdrawQuestion;
+      allow = (await answer) && !gone && !entry.listed;
     }
+    entry.withdraw = null;
     if (allow) {
       const pass = { method, url, sha256, until: Date.now() + ALLOWANCE_MS };
       allowances.push(pass);
@@ -588,14 +621,20 @@ async function decideHeld(route, request, method, url) {
       await bounded(request.response(), "approved request").catch(() => {});
       // The network gate uses the pass up; one still here never reached it.
       const unused = allowances.indexOf(pass);
-      if (unused < 0) return;
+      if (unused < 0) {
+        questioned.splice(questioned.indexOf(entry), 1);
+        return;
+      }
       allowances.splice(unused, 1);
     } else if (!gone) {
       await (pageLoad ? route.fulfill({ status: 204, body: "" }) : route.abort("blockedbyclient")).catch(() => {});
     }
-    if (held.length < 20) held.push(`${method} ${url.slice(0, 200)}`);
+    listOnce(entry);
   } finally {
     context.off("requestfailed", failed);
+    owner?.off("close", lost);
+    entry.withdraw = null;
+    entry.until = Date.now() + ALLOWANCE_MS;
   }
 }
 
@@ -724,7 +763,13 @@ async function gate(cdp, event) {
       if (approved.length < 20) approved.push(`${request.method} ${request.url.slice(0, 200)}`);
       return cdp.send("Fetch.continueRequest", { requestId });
     }
-    hold(request.method, request.url, event.resourceType === "Document");
+    // A questioned request that left the page route undecided: its page
+    // closed. Its question ends now, and it is listed once, as asked.
+    const question = questionFor(request.method, request.url);
+    if (question) {
+      question.withdraw?.();
+      listOnce(question);
+    } else hold(request.method, request.url, event.resourceType === "Document");
     // A held page load answers 204 so the page stays, as the page route does.
     if (event.resourceType === "Document") {
       return cdp.send("Fetch.fulfillRequest", { requestId, responseCode: 204, body: "" });

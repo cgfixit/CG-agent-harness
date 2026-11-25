@@ -2050,6 +2050,7 @@ const TAKEOVER_PAGE: &str = r#"
 <button onclick="later(9000)">Order much later</button>
 <a href="/slow">Slow page</a>
 <button onclick="saveAndLeave()">Save and leave</button>
+<button onclick="saveAndOpen()">Save and open</button>
 <p id="state">idle</p>
 <script>
 const show = (text) => { document.getElementById('state').textContent = text; };
@@ -2057,6 +2058,7 @@ const post = () => fetch('/api/save', {method: 'POST', body: 'qty=2'});
 function save() { post().then((r) => show('saved ' + r.status)).catch(() => show('not saved')); }
 function saveTwice() { post().then(() => post()).then(() => show('saved twice')).catch(() => show('second not saved')); }
 function later(ms) { setTimeout(() => document.forms[0].submit(), ms); }
+function saveAndOpen() { fetch('/api/save', {method: 'POST', body: 'qty=7'}).catch(() => {}); window.open('/submitted'); }
 function saveAndLeave() { fetch('/api/save', {method: 'POST', body: 'qty=9'}).catch(() => {}); location = '/away'; }
 addEventListener('wheel', () => later(4000), {once: true});
 </script>
@@ -2132,6 +2134,7 @@ impl ScriptedOperator {
 /// - a denied POST and one whose answer comes after the wait never arrive;
 /// - a POST Chrome cancels while the operator decides (the page left for an
 ///   ungranted origin) is held at once, and the yes that comes later sends nothing;
+///   so is one whose page closes when the click's new tab is adopted, listed once;
 /// - a form the page submits while it parses is held, never sent, and the
 ///   navigate that opened the page still returns it;
 /// - a block rule added while the operator decides stops an approved POST;
@@ -2551,6 +2554,41 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
     }
     lines
         .push("POST cancelled by a refused redirect while asked -> no at once, held; the late yes sent nothing".into());
+
+    // The click opens a granted tab, which is adopted, so the page whose POST
+    // waits for the operator is closed. That question ends as a no at once,
+    // the POST is listed once as the operator's step, and the yes that comes
+    // later sends nothing.
+    operator.plan([Verdict::AllowAfter(Duration::from_secs(5))]);
+    let asked_before = operator.asked().len();
+    let started = Instant::now();
+    let page = click(&mut sidecar, &mut lines, "Save and open")?;
+    let (later, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    let waited = started.elapsed();
+    let held = [rows(&page, "held"), rows(&later, "held")].concat();
+    let background = [rows(&page, "held_background"), rows(&later, "held_background")].concat();
+    if operator.asked().len() != asked_before + 1
+        || held != [save.clone()]
+        || background.contains(&save)
+        || !rows(&page, "approved").is_empty()
+        || !rows(&later, "approved").is_empty()
+        || waited >= Duration::from_secs(4)
+    {
+        return Err(format!(
+            "a POST whose page closed while the operator decided was not held once at once ({waited:?}): {page} {later}"
+        ));
+    }
+    thread::sleep(Duration::from_secs(5));
+    let (page, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    if count("POST /api/save") != 2 || !rows(&page, "approved").is_empty() || !rows(&page, "held").is_empty() {
+        return Err(format!(
+            "the late yes for a POST whose page closed sent or listed it: {page}"
+        ));
+    }
+    lines.push(
+        "POST whose page closed for an adopted tab while asked -> no at once, held once; the late yes sent nothing"
+            .into(),
+    );
 
     // A block rule added while the operator decides: approved, and still not sent.
     operator.plan([Verdict::BlockThenAllow]);
