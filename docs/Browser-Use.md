@@ -32,8 +32,9 @@ macOS and Linux use detached jobs. Windows uses the synchronous endpoint.
   `navigate` accepts a task URL, granted root, page URL or shown link.
 - Playwright routing holds methods other than GET and HEAD. Browser-wide
   CDP Fetch repeats the hold as defense in depth, without an independent
-  fixture for that hold. Text outside the task or page is held. Password and
-  one-time-code fields end the task with a handoff.
+  fixture for that hold. Text outside the task or page is held. Each observation
+  checks text fields concurrently. Targeting a secret field or one whose
+  attributes could not be read ends the task with a handoff.
 - With `browser.takeover.enabled` (shipped true), the job owner can approve
   one request caused by a model action. `POST /api/browser/jobs/{job_id}/approve`
   needs the request ID, body SHA-256, confirmation and reason. The pass binds

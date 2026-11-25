@@ -206,11 +206,10 @@ function nameOf(node) {
 
 // Roles, names and refs come from Playwright's own aria snapshot, the same
 // engine getByRef/getByRole resolve with, so what the model sees is clickable.
-async function inputKind(node) {
-  if (!TEXT_ROLES.has(node.role)) return "none";
+async function inputKind(ref) {
   try {
     const [type, autocomplete] = await page
-      .getByRef(node.ref)
+      .getByRef(ref)
       .evaluate((el) => [el.getAttribute("type") || "", el.getAttribute("autocomplete") || ""], null, { timeout: 2000 });
     return type.toLowerCase() === "password" || /password|one-time-code|cc-/i.test(autocomplete) ? "secret" : "text";
   } catch {
@@ -276,6 +275,7 @@ async function observe(view = {}) {
   const find = typeof view.find === "string" ? fold(view.find.trim()).slice(0, MAX_FIND_CHARS) : "";
   const pageNo = Number.isInteger(view.page) && view.page > 0 ? view.page : 1;
   const elements = [];
+  const inputChecks = [];
   let matched = 0;
   const optionBudget = { left: MAX_OPTION_CHARS };
   const walk = async (nodes) => {
@@ -290,8 +290,11 @@ async function observe(view = {}) {
             role: node.role,
             name,
             href: node.url ? absolute(node.url) : null,
-            input: await inputKind(node),
+            input: "none",
           };
+          if (TEXT_ROLES.has(node.role)) {
+            inputChecks.push(inputKind(node.ref).then((input) => { element.input = input; }));
+          }
           const options = node.role === "combobox" || node.role === "listbox" ? optionNames(node, optionBudget) : [];
           if (options.length) element.options = options;
           elements.push(element);
@@ -301,6 +304,7 @@ async function observe(view = {}) {
     }
   };
   await walk(await page.ariaSnapshotJSON({ mode: "ai", timeout: 5000 }));
+  await Promise.all(inputChecks);
   const body = (await page.locator("body").innerText({ timeout: 5000 })).replace(/\s+/g, " ").trim();
   const shown = find ? excerpts(body, find) : body;
   const result = {
