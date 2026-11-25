@@ -149,7 +149,7 @@ const server=createServer(async(req,res)=>{
   const rows=browseJob.decided==='approve'?[{approved:'POST https://shop.example/api/order?ref=1'}]
    :browseJob.decided==='deny'?[{held:'POST https://shop.example/api/order?ref=1'}]
    :[{held_background:'POST https://docs.python.org/autosave'},{held:'POST https://docs.python.org/save'}];
-  reply({job_id:id,status:browseJob.decided==='cancel'?'cancelled':'finished',turns:3,result:{finished:true,report:{answer:'BROWSE_FIXTURE_ANSWER',stopped:'answered',for_operator:rows}}});return;
+  reply({job_id:id,status:browseJob.decided==='cancel'?'cancelled':'finished',turns:3,result:{finished:true,report:{answer:'BROWSE_FIXTURE_ANSWER',stopped:'answered',not_granted:['https://analytics.example'],for_operator:rows}}});return;
  }
  if(path==='/api/browser/run'){reply({finished:true,report:{answer:'BROWSE_FIXTURE_ANSWER',stopped:'answered',for_operator:[{held_background:'POST https://docs.python.org/autosave'},{held:'POST https://docs.python.org/save'}]}});return;}
  if(path==='/api/auth/whoami'){if(whoamiDrop){req.socket.destroy();return;}reply(authFixture&&signedIn?{username:authUsername,role:authRole,user_id:userIds[authUsername],must_change_password:mustChange,capabilities:CAPS[authRole]}:{},authFixture?(signedIn?200:401):503);return;}
@@ -653,6 +653,10 @@ try {
   assert.ok(listed.includes('Held in the background, not sent: POST https://docs.python.org/autosave'),'a background hold has its own line');
   assert.ok(listed.includes('the page sent these on its own; the task went on'),'and says the task went on');
   assert.ok(!listed.includes('Held, not sent: POST https://docs.python.org/autosave'),'it is not listed as the operator\'s step');
+  assert.ok(!listed.includes('analytics.example'), 'page-requested origins are collapsed beside the answer');
+  const diagnostics = '[...document.querySelectorAll("#stream details")].find(el=>el.querySelector("summary")?.textContent==="Page request details (1 site)")';
+  await evaluate(diagnostics+'.querySelector("summary").click()');
+  assert.ok(await evaluate(diagnostics+'.innerText.includes("https://analytics.example")'), 'opening details shows the refused origin');
   await send('/browse docs.python.org find the latest Python version');
   for(let i=0;i<100&&browseRuns().length<before+2;i++)await pause(50);
   assert.deepEqual(browseRuns().at(-1)[2].origins,['https://docs.python.org'],'an ordinary bare site runs at once');
