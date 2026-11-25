@@ -457,6 +457,13 @@ pub fn row_from_event(event: &SpendEvent<'_>) -> Value {
 
 static APPEND_LOCK: Mutex<()> = Mutex::new(());
 
+/// Test hook: holds the append lock, so every [`append_row`] waits until the
+/// guard drops. Lets a test park a cloud reply's spend row at a known point.
+#[cfg(any(test, feature = "test-support"))]
+pub fn hold_appends() -> std::sync::MutexGuard<'static, ()> {
+    APPEND_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 /// Append one JSONL row. Never raises. Does not write `usd`.
 /// `bounded_log::append_until` refuses parent-directory components before it
 /// creates the parent directory, so a `logs/../x` path creates nothing.
