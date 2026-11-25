@@ -881,6 +881,60 @@ async function locatorFor(target) {
   return locator;
 }
 
+// Watches, from now until the returned stop(), for a main-frame page load
+// (in this tab or one it opens) redirected to an origin the task was not
+// granted. The gate and the proxy refuse that hop whatever this sees; it only
+// names the refusal, by origin alone, the same way for navigate and for the
+// actions that load a page: `click`, `follow_link` and `press_enter`. A redirect
+// a script starts during another action stays in the Page request details.
+function watchRedirect() {
+  let outside;
+  // A throw here would end the sidecar, so nothing in it may.
+  const seen = (response) => {
+    try {
+      if (outside || !response.request().isNavigationRequest()) return;
+      if (![301, 302, 303, 307, 308].includes(response.status())) return;
+      // A new tab's first load is issued before its frame exists, and
+      // Playwright throws on frame() then; that load is the tab's main frame.
+      let frame = null;
+      try {
+        frame = response.frame();
+      } catch {}
+      if (frame && frame.parentFrame() !== null) return;
+      const location = response.headers().location;
+      if (!location) return;
+      const target = new URL(location, response.url()).href;
+      if (!allowed(target)) outside = originOf(target);
+    } catch {}
+  };
+  context.on("response", seen);
+  return {
+    origin: () => outside,
+    stop: () => {
+      context.off("response", seen);
+      return outside;
+    },
+  };
+}
+
+function redirectRefused(origin) {
+  return Object.assign(new Error("Page redirect requires a separate browser grant"), { redirectOrigin: origin });
+}
+
+// An action that can load a page: a refused redirect on the way fails it with
+// the redirect's origin, as navigate does, rather than reading as done.
+async function loadingAction(run) {
+  const redirect = watchRedirect();
+  try {
+    await run();
+  } finally {
+    redirect.stop();
+  }
+  const outside = redirect.origin();
+  if (outside) throw redirectRefused(outside);
+  return observe();
+}
+
 async function handle(message) {
   if (opening.size) await Promise.allSettled([...opening]);
   switch (message.op) {
@@ -895,22 +949,7 @@ async function handle(message) {
       const before = blockedLoads;
       const large = oversized;
       // A failed goto names the starting URL even when a redirect was refused.
-      // Follow only this main-frame navigation's redirect responses.
-      let nextUrl = new URL(message.url);
-      nextUrl.hash = "";
-      let outside;
-      const redirect = (response) => {
-        if (!response.request().isNavigationRequest() || response.frame() !== page.mainFrame() ||
-            response.url() !== nextUrl.href || ![301, 302, 303, 307, 308].includes(response.status())) return;
-        const location = response.headers().location;
-        if (!location) return;
-        try {
-          nextUrl = new URL(location, response.url());
-          nextUrl.hash = "";
-          if (!allowed(nextUrl.href)) outside = originOf(nextUrl.href);
-        } catch {}
-      };
-      page.on("response", redirect);
+      const redirect = watchRedirect();
       // The page itself loading another page (a form it submits) and that load
       // held: what is shown now is the observation, not a failed navigate.
       // Only once this navigate's page committed: the old page's own load is not it.
@@ -927,13 +966,12 @@ async function handle(message) {
       let stoppedLoad = false;
       const loaded = page.goto(message.url, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(async (error) => {
         if (stoppedLoad) return;
+        const outside = redirect.origin();
         const deniedRedirect = outside && String(error.message).includes("ERR_BLOCKED_BY_CLIENT");
         if (!deniedRedirect && blockedLoads === before && oversized === large) throw error;
         // Wait for Chrome's error page before the model tries another navigation.
         await page.waitForEvent("framenavigated", { predicate: (frame) => frame === page.mainFrame(), timeout: 1000 }).catch(() => {});
-        if (deniedRedirect) {
-          throw Object.assign(new Error("Page redirect requires a separate browser grant"), { redirectOrigin: outside });
-        }
+        if (deniedRedirect) throw redirectRefused(outside);
         if (oversized !== large) {
           throw new Error(`that page is larger than the ${MAX_DOCUMENT_BYTES / 1048576} MiB a browser task reads`);
         }
@@ -942,7 +980,7 @@ async function handle(message) {
       });
       await Promise.race([loaded, stopped.then(() => { stoppedLoad = true; })]).finally(() => {
         loadStopped = null;
-        page.off("response", redirect);
+        redirect.stop();
         page.off("framenavigated", commit);
       });
       // A page that renders from a fetch is still a shell at domcontentloaded.
@@ -955,10 +993,11 @@ async function handle(message) {
     case "follow_link": {
       const locator = await locatorFor(message.target);
       const tab = (await opensTab(locator)) ? page.waitForEvent("popup", { timeout: 5000 }).catch(() => null) : null;
-      await acted(locator.click({ timeout: 5000 }));
-      await tab;
-      await settle();
-      return observe();
+      return loadingAction(async () => {
+        await acted(locator.click({ timeout: 5000 }));
+        await tab;
+        await settle();
+      });
     }
     case "type": {
       const locator = await locatorFor(message.target);
@@ -967,9 +1006,10 @@ async function handle(message) {
     }
     case "press_enter": {
       const locator = await locatorFor(message.target);
-      await acted(locator.press("Enter", { timeout: 5000 }));
-      await settle();
-      return observe();
+      return loadingAction(async () => {
+        await acted(locator.press("Enter", { timeout: 5000 }));
+        await settle();
+      });
     }
     case "select": {
       // Native <select> only. Observations list labels cut to 80 characters,

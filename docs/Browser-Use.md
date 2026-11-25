@@ -26,9 +26,9 @@ later model call returns the partial report with `finished: false` and
 macOS and Linux use detached jobs. Windows uses the synchronous endpoint.
 
 - Each task grants exact public origins independently of the web allowlist.
-  When `navigate` hits an ungranted redirect, the result names its origin. Use
-  `/browse https://www.python.org/ read the first sentence` for Python’s homepage.
-  Expand **Page request details** to inspect other origins the page requested.
+  An ungranted redirect from `navigate`, a link or Enter fails, naming its origin.
+  Use `/browse https://www.python.org/ read the first sentence` for Python’s
+  homepage. Expand **Page request details** for other origins the page requested.
   The host checks each request and redirect against current block policy. The authenticated
   loopback proxy pins public addresses. Private access is fixture-only.
   `navigate` accepts a task URL, granted root, page URL or shown link.
