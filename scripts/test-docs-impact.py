@@ -75,6 +75,15 @@ class DocsImpact(unittest.TestCase):
         self.commit("change a previously reviewed feature")
         self.assertEqual(self.plan()[0], {WEB_GUIDE: [WEB]})
 
+    def test_a_whitespace_only_guide_edit_is_unchanged_on_every_git(self):
+        # git 2.43 prints no numstat record for a whitespace-only edit under -w;
+        # a git that prints one with zero counts must read the same way.
+        changed = IMPACT["content_changed"]
+        self.assertEqual(changed(""), set())
+        self.assertEqual(changed("0\t0\tdocs/a.md\0"), set())
+        records = ("0\t0\tdocs/a.md", "2\t1\tdocs/b c.md", "-\t-\tdocs/d.md", "")
+        self.assertEqual(changed("\0".join(records)), {"docs/b c.md", "docs/d.md"})
+
     def test_config_only_and_no_production_diff(self):
         self.assertFalse(self.plan()[0])
         self.write("tests/local.rs", "// only a fixture\n")

@@ -44,6 +44,18 @@ def on_main(compare):
     return compare["status"] in ("identical", "behind")
 
 
+def workflows_tree(listing):
+    """Git tree of .github/workflows from a contents listing of .github, or None."""
+    if not isinstance(listing, list) or not all(isinstance(entry, dict) for entry in listing):
+        raise ValueError("Expected a directory listing")
+    for entry in listing:
+        if entry.get("name") == "workflows" and entry.get("type") == "dir":
+            if not isinstance(entry.get("sha"), str) or not entry["sha"]:
+                raise ValueError("Expected a tree for .github/workflows")
+            return entry["sha"]
+    return None
+
+
 def plan(event, ref, publish, sha, tree, latest, latest_tree, tags, releases, bundle_ok=True,
          reachable_from_main=False, superseded=False):
     stable = r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
@@ -144,6 +156,16 @@ def main():
                   {t["name"] for t in pages("tags")},
                   {r["tag_name"] for r in pages("releases")},
                   bundle_ok, reachable, sha != tip)
+    # GitHub refuses to tag a commit whose .github/workflows differs from the
+    # default branch unless the token may edit workflows, which the Actions
+    # token cannot (run 221: HTTP 403 at publish). Publish rechecks after the
+    # build and the environment's wait timer, when main may have moved on.
+    if event != "push" and result["should_release"] == "true":
+        source, live = (workflows_tree(api(f"{prefix}/contents/.github?ref={ref}")) for ref in (sha, "main"))
+        if source != live:
+            result.update(superseded="true", should_release="false")
+            print("release-plan: main changed its workflow files after this commit; the newer tip's run publishes",
+                  file=sys.stderr)
     print(json.dumps(result, indent=2))
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
