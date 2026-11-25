@@ -319,6 +319,11 @@ pub async fn run_warmup(backend: &ResolvedLocalBackend, model: &str, cfg: &AppCo
         audit.log(json!({"event":"ollama_warmup_degraded","reason":"model"}));
         return;
     }
+    // Loading a cloud tag makes a signed-in Ollama forward the request to ollama.com.
+    if cloud_tag(model) {
+        audit.log(json!({"event":"ollama_warmup_degraded","reason":"cloud_tag"}));
+        return;
+    }
     let keep_alive = cfg.limit("models.local_llm.warmup.keep_alive_sec");
     let timeout = Duration::from_secs(cfg.limit("models.local_llm.warmup.timeout_sec"));
     if load_model(&native, model, keep_alive, timeout).await {

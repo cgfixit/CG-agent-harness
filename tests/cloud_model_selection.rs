@@ -575,3 +575,60 @@ async fn a_loop_start_on_a_configured_ollama_cloud_tag_saves_no_goal() {
     );
     assert!(model.requests.lock().unwrap().is_empty(), "no turn reached the model");
 }
+
+/// A configured cloud tag is still the model a server starts on. Neither the
+/// startup warmup nor auto_tune may send it to Ollama: both load the model
+/// with `/api/generate`, and a signed-in Ollama would forward that to
+/// ollama.com. Each skips with an audited `cloud_tag` reason instead.
+#[tokio::test]
+async fn startup_warmup_and_auto_tune_never_load_a_configured_ollama_cloud_tag() {
+    let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+    let record = seen.clone();
+    let app = Router::new().fallback(move |req: axum::extract::Request| {
+        let record = record.clone();
+        async move {
+            record
+                .lock()
+                .unwrap()
+                .push(format!("{} {}", req.method(), req.uri().path()));
+            Json(json!({})).into_response()
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut options = ServerOptions::default();
+    for (key, value) in [
+        ("models.local_llm.model", "glm-4.6:cloud"),
+        ("models.local_llm.warmup.enabled", "true"),
+        ("models.local_llm.auto_tune", "true"),
+    ] {
+        options.overrides.push((key.into(), value.into()));
+    }
+    let s = spawn_server(&format!("http://127.0.0.1:{port}/v1"), options).await;
+    let skipped = |log: &str| {
+        log.contains(r#""event":"ollama_warmup_degraded""#)
+            && log.contains(r#""reason":"cloud_tag""#)
+            && log.contains(r#""event":"model_tune_skipped""#)
+    };
+    for _ in 0..50 {
+        if skipped(&s.audit_log()) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let log = s.audit_log();
+    assert!(skipped(&log), "warmup and auto_tune did not skip the cloud tag: {log}");
+    let tune_line = log
+        .lines()
+        .find(|line| line.contains(r#""event":"model_tune_skipped""#))
+        .unwrap_or_default();
+    assert!(tune_line.contains(r#""reason":"cloud_tag""#), "{tune_line}");
+    let sent = seen.lock().unwrap().clone();
+    assert!(
+        !sent
+            .iter()
+            .any(|row| row.contains("/api/generate") || row.contains("/api/show")),
+        "the cloud tag reached Ollama: {sent:?}"
+    );
+}

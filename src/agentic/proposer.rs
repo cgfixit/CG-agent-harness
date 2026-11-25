@@ -114,6 +114,13 @@ impl ProposerClient for LocalProposerClient<'_> {
                 "local proposer model must be configured before invocation",
             ));
         }
+        // `real-repo-run` refuses this first; every other caller is stopped here.
+        if crate::llm::ollama::cloud_tag(&self.model) {
+            return Err(HarnessError::agentic(
+                "the local proposer model is an Ollama cloud model (a :cloud or -cloud tag), which sends the \
+                 planner's prompt to ollama.com",
+            ));
+        }
         self.audit.log(json!({
             "event": "agentic_harness_proposer_model_invoked", "provider": "ollama", "model": self.model,
             "system_prompt_hash": crate::common::sha256_hex(system_prompt), "user_prompt_hash": crate::common::sha256_hex(user_prompt),
