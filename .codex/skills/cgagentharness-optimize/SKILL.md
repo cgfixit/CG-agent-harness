@@ -1,47 +1,36 @@
 ---
 name: cgagentharness-optimize
-description: Find and implement evidence-backed Harness performance or maintainability improvements, with focused drafts when publication is requested.
+description: Find and implement evidence-backed Harness performance or maintainability improvements.
 ---
 
-# Optimize the harness
+# Optimize the Harness
 
-Read `AGENTS.md` and the affected contract in `INVARIANTS.md`. Establish the
-checkout, dirty state, default branch and refreshed remote base; preserve
-unrelated work. Inspect open PR files and heads before choosing findings.
+Follow `AGENTS.md` for checkout isolation, remote refresh, overlap checks and
+delivery. Read the affected invariant and production callers.
 
 ## Earn the change
 
-Inspect the requested scope, tracing production callers before proposing edits:
+- Agentic pipeline: compare exact-edit, reviewed-tree and lifecycle behavior
+  along the same command path.
+- Research: trace `src/server/chat_web/evidence.rs`, `src/common/pdf_text.rs`
+  and `src/llm`. Count reads, worker runs, tokens and retained evidence. For
+  repeated reads, distinguish cache reuse, refresh and digest inference.
+  Check retained passages and citations.
+- Desktop: trace native ownership, sidecar identity and packaging provenance.
+- Workflows and tests: inspect coverage, platform boundaries and the commit
+  each gate checked.
+- Guidance: compare claims with current code and move readers to the owner.
+  Check references and lower trimmed Markdown caps.
 
-- `src/agentic`: exact edits, reviewed-tree approval and process lifecycle.
-- Research: `src/server/chat_web/evidence.rs`, `src/common/pdf_text.rs`,
-  `src/llm`; compare read counts, worker runs, model tokens and retained evidence.
-- `desktop`, packaging scripts: native ownership, sidecar identity and provenance.
-- Workflows/tests: meaningful coverage, platform boundaries and exact-head gates.
-- Guidance: stale claims, broken references and duplicate owner sections.
+Record each finding's trigger, location, impact and verification. Measure
+equivalent baseline and candidate workloads at the bottleneck before claiming
+a speedup. Diagnose baseline failures and report a verified no-op when the
+evidence supports it.
 
-For each finding, record the concrete trigger, location, impact and verification.
-Large files or newer dependencies alone do not justify changes. Measure the
-actual bottleneck on equivalent baseline/candidate workloads before claiming a
-speedup. For repeated goal reads, separate cache reuse, refresh and digest
-inference; check retained passages and citations as well as cost. Diagnose
-baseline failures. Report a no-op if no change earns its place.
+## Implement and deliver
 
-## Implement and verify
-
-Group related changes to shared files into one concern. Independent drafts
-start from current `origin/main` and target `main`; deliver dependent work after
-its prerequisite lands, then refresh and check overlap again.
-
-Use existing helpers and preserve security contracts. Follow `AGENTS.md` for
-scoped static, runtime and native checks. Lint changed workflows and inspect
-the scripts they invoke. State which surfaces you exercised.
-
-For guidance, edit the owner, check references and lower trimmed word caps.
-
-## Deliver within scope
-
-When publication is requested, complete the commit, push and draft PR using the
-repository template and validator. Otherwise deliver the local result. Verify
-remote head and report current CI separately from review and mergeability;
-monitor to completion when requested. Preserve the user's merge/release limits.
+Reuse existing helpers and exercise affected success and refusal paths. Use
+`cgagentharness-verify` for applicable runtime surfaces. Keep each draft to one
+concern. When a prerequisite lands, refresh `origin/main`, recheck overlap and
+verify against the new base. Leave broad regression coverage to hosted CI.
+Follow the exact head to terminal checks when requested.

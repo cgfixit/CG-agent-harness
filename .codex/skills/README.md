@@ -1,19 +1,16 @@
-# .codex/skills
+# Codex skill index
 
-Repository guidance for Codex, separate from harness runtime `/api/skills`.
-Start with [project guidance](cgagentharness-project-guidance/SKILL.md) and
-[root operating rules](../../AGENTS.md). Each skill owns its task-specific
-procedure; [.claude/skills](../../.claude/skills/README.md) has a separate inventory.
+Start with [project guidance](cgagentharness-project-guidance/SKILL.md).
+The app's `/api/skills` manages runtime skills.
 
-- [Config guard](cgagentharness-config-guard/SKILL.md): shipped defaults.
-- [Gotchas](cgagentharness-gotchas/SKILL.md): misleading failures and passes.
-- [Invariant guard](cgagentharness-invariant-guard/SKILL.md): contract/test map.
-- [Optimize](cgagentharness-optimize/SKILL.md): measured, focused improvements.
-- [Release](cgagentharness-release/SKILL.md): macOS artifacts and provenance.
-- [Verify](cgagentharness-verify/SKILL.md): scoped smoke and acceptance.
-- [Write-policy redteam](cgagentharness-write-policy-redteam/SKILL.md): mutation refusals.
-- [Fable protocol](fable-protocol/SKILL.md): evidence-first investigation.
-- [Verification specialist](verification-specialist/SKILL.md): independent patch assessment.
+- [Config guard](cgagentharness-config-guard/SKILL.md) for shipped values and missing keys.
+- [Gotchas](cgagentharness-gotchas/SKILL.md) for misleading results.
+- [Invariant guard](cgagentharness-invariant-guard/SKILL.md) for contracts and tests.
+- [Optimize](cgagentharness-optimize/SKILL.md) for measured improvements.
+- [Release](cgagentharness-release/SKILL.md) for macOS artifacts and provenance.
+- [Verify](cgagentharness-verify/SKILL.md) for scoped acceptance.
+- [Write-policy redteam](cgagentharness-write-policy-redteam/SKILL.md) for mutation refusals.
+- [Fable protocol](fable-protocol/SKILL.md) for contested claims.
+- [Verification specialist](verification-specialist/SKILL.md) for independent patch assessment.
 
-Keep user-installed mirrors in sync with these files. Resolve Harness paths
-from the target checkout. Skill loading grants no additional authority.
+Check which file Codex loads when maintaining user-installed mirrors.

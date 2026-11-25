@@ -2961,16 +2961,16 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     (".claude/skills/fable-protocol/SKILL.md", Agent, 990),
     (".claude/skills/run-cg-agent-harness/SKILL.md", Agent, 500),
     (".claude/skills/verification-specialist/SKILL.md", Agent, 740),
-    (".codex/skills/cgagentharness-config-guard/SKILL.md", Agent, 450),
-    (".codex/skills/cgagentharness-gotchas/SKILL.md", Agent, 690),
-    (".codex/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 520),
-    (".codex/skills/cgagentharness-optimize/SKILL.md", Agent, 320),
-    (".codex/skills/cgagentharness-project-guidance/SKILL.md", Agent, 350),
-    (".codex/skills/cgagentharness-release/SKILL.md", Agent, 370),
-    (".codex/skills/cgagentharness-verify/SKILL.md", Agent, 230),
-    (".codex/skills/cgagentharness-write-policy-redteam/SKILL.md", Agent, 610),
-    (".codex/skills/fable-protocol/SKILL.md", Agent, 390),
-    (".codex/skills/verification-specialist/SKILL.md", Agent, 560),
+    (".codex/skills/cgagentharness-config-guard/SKILL.md", Agent, 300),
+    (".codex/skills/cgagentharness-gotchas/SKILL.md", Agent, 390),
+    (".codex/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 370),
+    (".codex/skills/cgagentharness-optimize/SKILL.md", Agent, 220),
+    (".codex/skills/cgagentharness-project-guidance/SKILL.md", Agent, 190),
+    (".codex/skills/cgagentharness-release/SKILL.md", Agent, 290),
+    (".codex/skills/cgagentharness-verify/SKILL.md", Agent, 170),
+    (".codex/skills/cgagentharness-write-policy-redteam/SKILL.md", Agent, 350),
+    (".codex/skills/fable-protocol/SKILL.md", Agent, 270),
+    (".codex/skills/verification-specialist/SKILL.md", Agent, 310),
     // why: operator-approved (2026-10-14) raise to 2200 after the change-type, merge-order and ELI5 guidance grew it to 2162 words.
     (".github/PULL_REQUEST_TEMPLATE.md", Agent, 2400),
     (".github/skills/repo-optimize/SKILL.md", Agent, 400),
@@ -2997,7 +2997,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator decision (2026-11-12): set to 1776, the cap it had on 2026-11-02; the file sat exactly at 1541, so every added word needed a cut.
     // why: operator-requested (2026-11-22) ~30% trim (1775 to 1248 words): the architecture diagram and
     // restated stack details went, every rule stayed; lowered to 1250.
-    ("AGENTS.md", Agent, 1250),
+    ("AGENTS.md", Agent, 1245),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     // why: now `@AGENTS.md` plus Claude-only lines; 183 words, rounded up to the next 100.
     // why: operator-requested (2026-11-22) ~10% trim (377 to 334 words); lowered to 340.
@@ -3224,7 +3224,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: operator-approved (2026-11-17) +100 Guide words with the docs/Browser-Use.md row raise (1170 to 1270, #945).
 // why: operator-approved (2026-11-22) +500 Guide words with the docs/Browser-Use.md row raise (1270 to 1570).
 // The docs sweep tightened the Guide and Evidence caps to the next 500 words.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 12_500), (Guide, 23_500), (Evidence, 500), (Agent, 21_910)];
+// The Codex guidance refresh removed 1,613 Agent words. Preserve the group's headroom.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 12_500), (Guide, 23_500), (Evidence, 500), (Agent, 20_297)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
