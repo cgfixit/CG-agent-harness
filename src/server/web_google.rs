@@ -2121,6 +2121,13 @@ mod tests {
 
     #[tokio::test]
     async fn a_slow_serpapi_leaves_time_for_the_public_google_fallback() {
+        // The reserve's request share is a fixed 1 s, so with no pacing wait due
+        // public Google gets about 1 s of wall clock after SerpAPI times out, and
+        // a runner stall that long fails the search. A public search that just
+        // left makes the reserve its ~3 s pacing wait plus 1 s: SerpAPI gets
+        // (8 - 4) = 4 s, the wait is over when it times out, and public Google
+        // gets ~4 s. The discriminator is `budget_ms`, computed before any
+        // request leaves: with no reserve SerpAPI gets all 8 s.
         let serp = chain::serpapi().await;
         let google = chain::google().await;
         let chain = chain::Chain::new(
@@ -2130,13 +2137,69 @@ mod tests {
             Some(&google),
         )
         .await;
+        *chain.web.public_search_sent.lock().unwrap() = Some(tokio::time::Instant::now());
         let started = tokio::time::Instant::now();
-        let value = chain.search("veeam cve").await.unwrap();
+        let result = chain.search("veeam cve").await;
+        let attempts = chain.audit_events("web_search_attempt");
+        assert_eq!(attempts.len(), 2, "{attempts:?}");
+        assert_eq!(attempts[0]["provider"], "google-serpapi");
+        assert_eq!(attempts[0]["code"], "WEB_TIMEOUT");
+        assert!(
+            attempts[0]["budget_ms"].as_u64().unwrap() <= 7000,
+            "SerpAPI must leave public Google its reserve: {attempts:?}"
+        );
+        assert_eq!(attempts[1]["provider"], "google-public");
+        assert!(attempts[1]["budget_ms"].as_u64().unwrap() > 0, "{attempts:?}");
+        let value = result.unwrap();
         assert_eq!(value["provider"], "google-public");
         assert_eq!(value["fallback_from"], json!(["google-serpapi"]));
         assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert!(started.elapsed() < Duration::from_secs(8));
+    }
+
+    #[tokio::test]
+    async fn a_slow_serpapi_with_no_pacing_due_still_reaches_public_google() {
+        // The shipped hot path end to end: no public search is recent, so the
+        // reserve is exactly 1 s, SerpAPI gets 8 - 1 = 7 s and public Google the
+        // ~1 s left. `budget_ms` is checked on every try: a wrong reserve fails
+        // the first one whatever the runner load. Only public Google running out
+        // of that 1 s of wall clock is retried, on a fresh chain, so a runner
+        // stall cannot fail the test but a public hop that never fits still does.
+        const TRIES: usize = 3;
+        let yaml = "web: {request_seconds: 8, search: {fallback_to_public_google: true}}";
+        for attempt in 1..=TRIES {
+            let serp = chain::serpapi().await;
+            let google = chain::google().await;
+            let chain = chain::Chain::new(yaml, "slow", &serp, Some(&google)).await;
+            assert_eq!(
+                chain.web.public_search_reserve(),
+                Duration::from_secs(1),
+                "no pacing wait is due"
+            );
+            let result = chain.search("veeam cve").await;
+            let attempts = chain.audit_events("web_search_attempt");
+            assert_eq!(attempts.len(), 2, "{attempts:?}");
+            assert_eq!(attempts[0]["provider"], "google-serpapi");
+            assert_eq!(attempts[0]["code"], "WEB_TIMEOUT");
+            let serp_budget = attempts[0]["budget_ms"].as_u64().unwrap();
+            assert!(
+                (6500..=7000).contains(&serp_budget),
+                "SerpAPI gets the deadline less the 1 s reserve: {attempts:?}"
+            );
+            assert_eq!(attempts[1]["provider"], "google-public");
+            assert!(attempts[1]["budget_ms"].as_u64().unwrap() > 0, "{attempts:?}");
+            assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+            if attempts[1]["code"] == "WEB_TIMEOUT" && attempt < TRIES {
+                eprintln!("try {attempt}: public Google ran out of its ~1 s of wall clock; retrying: {attempts:?}");
+                continue;
+            }
+            let value = result.unwrap();
+            assert_eq!(value["provider"], "google-public");
+            assert_eq!(value["fallback_from"], json!(["google-serpapi"]));
+            assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
+            return;
+        }
     }
 
     #[tokio::test]
@@ -2206,15 +2269,36 @@ mod tests {
 
     #[tokio::test]
     async fn two_slow_keyed_providers_still_reach_public_google() {
+        // As above, a pacing wait that is due widens the public hop's wall clock
+        // past the fixed 1 s. With `pace_ms: 5000` and a public search that just
+        // left: Tavily gets (8 - 6) / 2 = 1 s, SerpAPI (7 - 5) = 2 s, public
+        // Google waits out the pace and gets ~3 s. With no reserve the two keyed
+        // hops get 4 s each and public Google nothing. `budget_ms` is the
+        // discriminator, computed before any request leaves.
         let tv = chain::tavily().await;
         let serp = chain::serpapi().await;
         let google = chain::google().await;
         let chain = chain::Chain::new(
-            "web: {request_seconds: 8, search: {provider: tavily, fallback_to_serpapi: true, fallback_to_public_google: true}}",
+            "web: {request_seconds: 8, pace_ms: 5000, search: {provider: tavily, fallback_to_serpapi: true, fallback_to_public_google: true}}",
             "slow", &serp, Some(&google),
         ).await.with_tavily("slow", &tv);
+        *chain.web.public_search_sent.lock().unwrap() = Some(tokio::time::Instant::now());
         let started = tokio::time::Instant::now();
-        let value = chain.search("veeam cve").await.unwrap();
+        let result = chain.search("veeam cve").await;
+        let attempts = chain.audit_events("web_search_attempt");
+        assert_eq!(attempts.len(), 3, "{attempts:?}");
+        let budget = |index: usize| attempts[index]["budget_ms"].as_u64().unwrap();
+        for (index, provider) in ["tavily", "google-serpapi"].into_iter().enumerate() {
+            assert_eq!(attempts[index]["provider"], provider);
+            assert_eq!(attempts[index]["code"], "WEB_TIMEOUT");
+        }
+        assert!(
+            budget(0) + budget(1) <= 7000,
+            "the keyed hops must leave public Google its reserve: {attempts:?}"
+        );
+        assert_eq!(attempts[2]["provider"], "google-public");
+        assert!(budget(2) > 0, "{attempts:?}");
+        let value = result.unwrap();
         assert_eq!(value["provider"], "google-public");
         assert_eq!(value["fallback_from"], json!(["tavily", "google-serpapi"]));
         assert_eq!(tv.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
