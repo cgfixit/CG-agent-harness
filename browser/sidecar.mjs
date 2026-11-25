@@ -50,6 +50,14 @@ const ACTS = new Set(["click", "follow_link", "type", "press_enter", "select", "
 // True while one of ACTS runs, until it loads a new page: that page's own
 // requests are not the model's.
 let acting = false;
+// Ops whose effect can be a form the page submits a moment later: a token
+// fetch first, or a "Processing…" delay.
+const SUBMITS = new Set(["click", "follow_link", "press_enter"]);
+// Once one of SUBMITS has returned on the page it acted on, with nothing put
+// to the operator, the first POST page load that page sends within this long
+// is still that action's step. `performance.now()` deadline; zero is closed.
+const LATE_SUBMIT_MS = 5000;
+let lateSubmitUntil = 0;
 // Origins a page asked for that this task was not granted; reported the same way.
 const notGranted = new Set();
 // alert, confirm and prompt text since the last observation. Each was
@@ -547,7 +555,7 @@ async function decideHeld(route, request, method, url) {
   if (await operatorAllows(method, url, contentType, body, sha256)) {
     allowances.push({ method, url, sha256, until: Date.now() + ALLOWANCE_MS });
     // The action loaded a new page: what that page requests is its own doing.
-    if (topLevelLoad(request)) acting = false;
+    if (topLevelLoad(request)) leavePage();
     await route.continue().catch(() => {});
     // Still this action's request until it is answered or fails, so the
     // observation that follows shows the page with the answer.
@@ -588,6 +596,27 @@ function takeAllowance(request) {
 function hold(method, url, pageLoad) {
   const rows = pageLoad || acting ? held : heldBackground;
   if (rows.length < 20) rows.push(`${method} ${url.slice(0, 200)}`);
+}
+
+// A new top-level page is loading: neither the running action nor the one
+// that just returned stands behind what that page sends.
+function leavePage() {
+  acting = false;
+  lateSubmitUntil = 0;
+}
+
+// True for a POST page load of the page the model last acted on, inside the
+// window after that action. Only the first one: asked about or not, it closes
+// the window. A frame's or a new tab's load is not this page's.
+function lateSubmit(request) {
+  if (performance.now() >= lateSubmitUntil) return false;
+  try {
+    if (!request.isNavigationRequest() || request.frame() !== page.mainFrame()) return false;
+  } catch {
+    return false;
+  }
+  lateSubmitUntil = 0;
+  return true;
 }
 
 // True for a request that loads a new top-level page. A new tab's first
@@ -750,10 +779,13 @@ async function start(message) {
     // waits for the operator: every request but GET and HEAD is held here.
     const method = request.method();
     if (method !== "GET" && method !== "HEAD") {
-      // The model's own action, with takeover on: pause it and ask. A page
-      // that submits a form by itself is not asked about; it is held below.
-      // The whole URL must fit the question, and only one request waits at a time.
-      if (takeoverWaitMs && acting && !pendingApproval && url.length <= MAX_URL) {
+      // The model's own action, with takeover on: pause it and ask. So is the
+      // one form its click or Enter submits a moment after the op returned.
+      // Any other form a page submits by itself is not asked about; it is
+      // held below. The whole URL must fit the question, and only one request
+      // waits at a time.
+      const late = lateSubmit(request);
+      if (takeoverWaitMs && (acting || late) && !pendingApproval && url.length <= MAX_URL) {
         const waiting = decideHeld(route, request, method, url).finally(() => {
           if (pendingApproval === waiting) pendingApproval = null;
         });
@@ -768,7 +800,7 @@ async function start(message) {
       return;
     }
     // The action loaded a new page: what that page requests is its own doing.
-    if (topLevelLoad(request)) acting = false;
+    if (topLevelLoad(request)) leavePage();
     route.continue();
   });
   await context.routeWebSocket("**/*", (ws) => {
@@ -943,13 +975,22 @@ async function handle(message) {
 }
 
 async function answer(message) {
-  acting = ACTS.has(message?.op);
+  const op = message?.op;
+  acting = ACTS.has(op);
+  // A new action or a navigate ends the window the last action left open.
+  if (acting || op === "navigate") lateSubmitUntil = 0;
   askedThisOp = false;
+  let done = false;
   try {
-    send({ id: message.id, ok: true, result: await handle(message) });
+    const result = await handle(message);
+    done = true;
+    send({ id: message.id, ok: true, result });
   } catch (error) {
     send({ id: message?.id, ok: false, error: String(error.message || error).slice(0, 300), redirect_origin: error.redirectOrigin });
   } finally {
+    // `acting` still set: the action loaded no new page. Nothing asked: its
+    // request has not already been put to the operator.
+    if (done && acting && !askedThisOp && SUBMITS.has(op)) lateSubmitUntil = performance.now() + LATE_SUBMIT_MS;
     acting = false;
   }
 }
