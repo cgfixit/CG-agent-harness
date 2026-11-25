@@ -348,6 +348,69 @@ async fn spawn_serve(home: &std::path::Path) -> (tokio::process::Child, u16, req
     panic!("fixture server exited during startup on 5 ports");
 }
 
+/// Status and error code of one sign-in with a wrong password.
+#[cfg(unix)]
+async fn wrong_sign_in(client: &reqwest::Client, port: u16, username: &str) -> (u16, String) {
+    let base = format!("http://127.0.0.1:{port}"); // DevSkim: ignore DS162092 DS137138 because this is the owned loopback-only HTTP fixture.
+    let response = client
+        .post(format!("{base}/api/auth/login"))
+        .header("Origin", &base)
+        .json(&json!({"username": username, "password": "not-the-password-x9"}))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status().as_u16();
+    let body: Value = response.json().await.unwrap();
+    (status, body["detail"]["code"].as_str().unwrap_or_default().to_string())
+}
+
+/// A name with no account keeps its sign-in failures across a `serve`
+/// restart, as the bootstrap `admin` account's stored count does, so after a
+/// restart the two still answer alike. Memory-only failures once restarted
+/// the unknown name at zero: it answered 401 where the account answered 423,
+/// which told a guesser the account exists. Five failures each start a 2 s
+/// lock, waited out before the restart so both names start the second server
+/// unlocked: the sixth failure then counts (401) and starts a 4 s lock (423).
+#[cfg(unix)]
+#[tokio::test]
+async fn a_name_with_no_account_still_locks_out_like_an_account_after_a_serve_restart() {
+    let model = start_mock_model().await;
+    let dir = tempfile::tempdir().unwrap();
+    config_with(
+        dir.path(),
+        &[
+            ("tls.enabled", "false"),
+            ("models.local_llm.base_url", &format!("\"{}\"", model.base_url())),
+            ("models.local_llm.warmup.enabled", "false"),
+            ("structured_memory.enabled", "false"),
+            ("api.rate_limit.max_requests", "1000"),
+        ],
+    );
+    let (mut child, port, client) = spawn_serve(dir.path()).await;
+    for name in ["admin", "zed"] {
+        for attempt in 1..=5 {
+            let seen = wrong_sign_in(&client, port, name).await;
+            assert_eq!(seen, (401, "AUTH_LOGIN_FAILED".into()), "{name} #{attempt}");
+        }
+    }
+    child.kill().await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(2_500)).await;
+
+    let (mut child, port, client) = spawn_serve(dir.path()).await;
+    let mut after = Vec::new();
+    for name in ["admin", "zed"] {
+        let mut seen = Vec::new();
+        for _ in 0..2 {
+            seen.push(wrong_sign_in(&client, port, name).await);
+        }
+        after.push(seen);
+    }
+    let locked = vec![(401, "AUTH_LOGIN_FAILED".into()), (423, "AUTH_ACCOUNT_LOCKED".into())];
+    assert_eq!(after[0], locked, "admin's stored count survives the restart");
+    assert_eq!(after[1], after[0], "zed must answer as admin does after the restart");
+    child.kill().await.unwrap();
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn sighup_reloads_the_owned_server_and_invalid_reload_keeps_it_running() {
