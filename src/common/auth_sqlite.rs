@@ -548,12 +548,11 @@ pub(super) fn load_login_failures(conn: &mut Connection, max: usize) -> Result<L
     Ok((key, rows))
 }
 
-/// Stores one name's failures and drops the names `forgotten` at the cap, in
-/// one transaction.
+/// Stores one name's failures, when `counted` is given, and drops the names
+/// `forgotten` at the cap, in one transaction.
 pub(super) fn record_login_failure(
     conn: &mut Connection,
-    name_hash: &str,
-    (count, locked_until_ts, last_ts): LoginFailure,
+    counted: Option<(&str, LoginFailure)>,
     forgotten: &[String],
 ) -> Result<()> {
     let tx = conn
@@ -567,11 +566,13 @@ pub(super) fn record_login_failure(
             forget.execute(params![name]).map_err(sql)?;
         }
     }
-    tx.execute(
-        "INSERT OR REPLACE INTO login_failures VALUES (?1,?2,?3,?4)",
-        params![name_hash, count, locked_until_ts, last_ts],
-    )
-    .map_err(sql)?;
+    if let Some((name_hash, (count, locked_until_ts, last_ts))) = counted {
+        tx.execute(
+            "INSERT OR REPLACE INTO login_failures VALUES (?1,?2,?3,?4)",
+            params![name_hash, count, locked_until_ts, last_ts],
+        )
+        .map_err(sql)?;
+    }
     tx.commit().map_err(sql)
 }
 

@@ -180,7 +180,9 @@ const UNKNOWN_FAILURE_ENTRIES: usize = 16_384;
 /// (`auth_sqlite::record_login_failure`) so they survive a restart as an
 /// account's do: a name with no account locks out exactly when a real one
 /// would, otherwise the first `AUTH_ACCOUNT_LOCKED` would tell a guesser which
-/// names exist. Forgetting at the cap is the one remaining difference.
+/// names exist. Forgetting at the cap is the one remaining difference. Only a
+/// name that passes `authn::validate_username` is stored; one that fails can
+/// never be an account, so it is counted in memory alone.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct UnknownFailures {
     count: u32,
@@ -893,8 +895,13 @@ impl AuthManager {
         if self.user_row(canonical).is_some() {
             return Err(HarnessError::auth_login_failed());
         }
+        // Only a name that could be an account is stored: one that never can
+        // reveals nothing by starting again at a restart, and a password
+        // typed into the username field often fails validation, so it stays
+        // off disk.
+        let store = authn::validate_username(canonical).is_ok();
         // A lockout that started while this check ran refuses it.
-        if let Err(retry_after) = self.record_unknown_failure(key)? {
+        if let Err(retry_after) = self.record_unknown_failure(key, store)? {
             return Err(HarnessError::auth_locked(retry_after, canonical));
         }
         Err(HarnessError::auth_login_failed())
@@ -920,10 +927,11 @@ impl AuthManager {
     /// Read before the lock, an attempt could find a later attempt's failure
     /// already recorded, and a failure below the threshold stores a lock that
     /// ends when it was recorded, so that later time would refuse this
-    /// attempt as locked where a real account counts it. The count is stored
-    /// before either lock is released; a refused write restores the table and
-    /// fails the attempt as a refused account write does.
-    fn record_unknown_failure(&self, key: String) -> Result<std::result::Result<(), f64>> {
+    /// attempt as locked where a real account counts it. When `store` is set
+    /// the count is stored before either lock is released; a refused write
+    /// restores the table and fails the attempt as a refused account write
+    /// does. Names forgotten at the cap leave the store either way.
+    fn record_unknown_failure(&self, key: String, store: bool) -> Result<std::result::Result<(), f64>> {
         let mut failures = self.unknown_failures.lock().unwrap_or_else(|p| p.into_inner());
         let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let now = self.now();
@@ -932,10 +940,14 @@ impl AuthManager {
             Ok(forgotten) => forgotten,
             Err(until) => return Ok(Err((until - now).max(0.0))),
         };
+        if !store && forgotten.is_empty() {
+            return Ok(Ok(()));
+        }
         let counted = failures[&key];
         let names: Vec<String> = forgotten.iter().map(|(k, _)| k.clone()).collect();
         let row = (counted.count, counted.locked_until_ts, counted.last_ts);
-        if let Err(error) = sqlite::record_login_failure(&mut stored.0, &key, row, &names) {
+        let counted = store.then_some((key.as_str(), row));
+        if let Err(error) = sqlite::record_login_failure(&mut stored.0, counted, &names) {
             match before {
                 Some(before) => failures.insert(key, before),
                 None => failures.remove(&key),
@@ -1697,6 +1709,53 @@ mod tests {
         assert_eq!(codes, ["AUTH_LOGIN_FAILED", "AUTH_ACCOUNT_LOCKED"]);
         assert_eq!(seen("zed"), real, "the two names must still look the same");
         assert!(auth.get_user("zed").is_none());
+    }
+
+    /// A name that can never be an account (here, password-shaped) is counted
+    /// and locks out like any other, but never reaches the store, so a
+    /// restart forgets it; a valid name beside it is stored.
+    #[test]
+    fn a_name_that_cannot_be_an_account_is_counted_but_never_stored() {
+        let (dir, mut auth) = store();
+        let clock = std::sync::Arc::new(std::sync::Mutex::new(1_000.0_f64));
+        let read = clock.clone();
+        auth.set_clock(Box::new(move || *read.lock().unwrap()));
+        let wrong = crate::common::random_hex(24);
+        let typed = "Hunter2!pass";
+        assert!(authn::validate_username(typed).is_err());
+        let codes = |auth: &AuthManager, name: &str| -> Vec<String> {
+            (0..6).map(|_| attempt(auth, name, &wrong).code).collect()
+        };
+        let locked = |n: usize| {
+            let mut codes = vec!["AUTH_LOGIN_FAILED".to_string(); 5];
+            codes.extend(vec!["AUTH_ACCOUNT_LOCKED".to_string(); n]);
+            codes
+        };
+        assert_eq!(codes(&auth, typed), locked(1), "counted in memory");
+        assert_eq!(codes(&auth, "zed"), locked(1));
+        let rows = |auth: &AuthManager| -> Vec<String> {
+            let stored = auth.state.lock().unwrap();
+            let mut statement = stored.0.prepare("SELECT name_hash FROM login_failures").unwrap();
+            statement
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        assert_eq!(rows(&auth), [auth.name_hash("zed")], "only the valid name is stored");
+        drop(auth);
+
+        let cfg = AppConfig::from_str("{}", Path::new("config.yaml")).unwrap();
+        let mut auth = AuthManager::open(&dir.path().join("auth.db"), &cfg).unwrap();
+        let read = clock.clone();
+        auth.set_clock(Box::new(move || *read.lock().unwrap()));
+        assert_eq!(attempt(&auth, "zed", &wrong).code, "AUTH_ACCOUNT_LOCKED");
+        assert_eq!(
+            attempt(&auth, typed, &wrong).code,
+            "AUTH_LOGIN_FAILED",
+            "forgotten at restart"
+        );
+        assert_eq!(rows(&auth), [auth.name_hash("zed")]);
     }
 
     /// A refused failure write fails the attempt as a refused account write
