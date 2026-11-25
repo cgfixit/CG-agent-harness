@@ -1,70 +1,46 @@
 # Troubleshooting
 
-See also [models](MODELS.md) and [coding](CODING_PIPELINE.md).
-
 ## 12. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/browse` says playwright is not prepared | `browser/node_modules` is missing | From `browser/`, run `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --ignore-scripts`; the app needs absolute `browser.sidecar` ([browser use](Browser-Use.md)) |
-| `/browse` refused: `BROWSER_AUTH_REQUIRED` | Accounts are off (`auth.enabled` is not literal `true`), so the administrator check cannot run | Turn accounts on and sign in as an administrator ([Browser use](Browser-Use.md)) |
-| `/browse` refused: `BROWSER_ORIGIN_BLOCKED` or `BROWSER_PRIVATE_ADDRESS` | The origin is on the web block list, or is a loopback or private IP | `/web status` lists the rules; browser tasks reach public addresses only |
-| Spend reports partial, unreadable, too large or invalid UTF-8 | A retained ledger generation could not be summarized | Preserve the ledger; inspect permissions and size. [Missing evidence is not zero spend](SPEND_AND_NOTIFICATIONS.md#read-spend-without-mistaking-missing-data-for-zero) |
-| A job finished but no webhook arrived | Notifications off, no restart, refused destination, queue overflow or delivery failure | Check **Job webhooks**, `notification_delivery`/`notification_dropped` audit and `/agent job <id>`. Replay the delivery, never rerun the job |
-| Webhook receiver reports duplicates | A lost response retried the batch | Deduplicate on stable `delivery_id`; batch membership can change. At most three attempts per delivery/replay |
-| MCP reports `stdio MCP child closed` | Child stdout ended; stderr is discarded | Reproduce the child in a controlled environment. [MCP diagnostics](PROCESS_LIFECYCLE.md#mcp-stdio-diagnostics) |
-| Command or control missing | Older build | Check `/help`, `Resources/COMMIT`; install [Latest](https://github.com/cgfixit/CG-agent-harness/releases/latest) or a successful main Bundle |
-| Coding loop never fetches a file the planner asked for | Cloud planner, clone-jail refusal, `denied_read_basenames` (`.env`, keys, credentials), 6-read cap, or unclosed FILE/EDITS block swallowing `=== READ ===` | Pre-stage ordinary files with `/agent read`. Sensitive basenames refuse operator and model reads (`sensitive_basename`); cloud refuses all model READs; local refusals audit `agentic_real_repo_read_request_refused`. Neither deny-list nor jail detects every secret |
-| New sessions share old context | Shared notes/persona and account web context remain by design | Inspect `/prompt`; `/session new` separates history only |
-| Chat denies memory exists or claims it can run `gh` | Model output conflicts with the capability contract | Inspect `/memory`, `/tools` and `/prompt`; prose cannot execute commands |
-| Automatic suggestions do not appear | Store/capture/source gate off, invalid mode, queue expiry/full, model/store error, or empty valid output | Read **Suggestion activity** and `/api/structured-memory` `automatic_suggestions`; check the `/memory capture` and `auto-suggest-*` gates. Completions do not guarantee suggestions |
-| `/memory search`, `save` or `consolidate` reports the store closed or a gate off | `structured_memory.enabled` false, store failed to open, or `retrieval` or `consolidation` (auto: also `auto_consolidation`) off | Enable the store and restart; then `/memory retrieval on` or `/memory consolidation on`, plus `/memory auto-consolidate on` for auto. Explicit off choices survive upgrades. Search never injects, and prose is not a save command |
-| Inventory says `tag_missing`, or fallback is selected unexpectedly | Exact configured ID absent from a responding inventory | Compare [inventory/config](MODELS.md) and persisted `/model`; restart to reevaluate fallback |
-| Soul says missing, or is saved but not in chat | No `soul.md` in this home (a valid state), toggle off, wrong home or rejected/stale save | `/soul edit` and `/soul on`; confirm Setup home, `/soul status` and `/prompt`; reload a stale editor before saving again |
-| Persona/proposal save conflicts or history is full | Changed base revision or 32-record limit | Review content and history; archive records deliberately. Never blindly retry or delete the persona |
-| Selected skill prevents chat | Missing, empty, unreadable or unsafe file; wrong directory ID | Restore `<home>/skills/<id>/SKILL.md` or `/skill clear` |
-| `/loop` does not edit files, or warns its budgets are unlimited | It is chat continuation; both caps are zero or absent | Use [goal staging](CODING_PIPELINE.md#94-stage-a-session-goal-as-a-coding-task); set a finite cap, then [Reload limits](INSTALL.md#reload-limits-without-a-restart) |
-| Unattended `/loop` ends with `loop aborted` | `loop.max_failures` turns failed in a row, or the model stayed busy for two hours | Fix the cause the run states. A busy model is waited for, not counted; `/loop stop` ends the wait |
-| Goal task is stale/interrupted/unavailable | Goal changed, job already submitted, restart interrupted work or retention removed evidence | Inspect `/goal task`, `/agent jobs` and `/agent runs`; never infer approval from `GOAL_DONE` |
-| App asks for Rosetta or shows Intel-only kind | Old app copy or forced translation | Verify the installed universal copy; see [hardware](INSTALL.md#21-hardware-and-macos) |
-| `401 Unauthorized` on harness requests | Missing, expired or revoked account session | Sign in again; a fresh bootstrap account must replace its password. A harness key cannot grant access |
-| App reports a home ownership conflict | Another app/server owns the home | Quit that owner normally; do not delete its lock |
-| App waits at startup | File-access mediation, unavailable backend or damaged/moved bundle | Check macOS prompts; quit, move the complete app to Applications and retry. Do not delete the home |
-| Changing config appears to do nothing | Most settings require restart; supported limits need an explicit reload | [Reload limits](INSTALL.md#reload-limits-without-a-restart), or Cmd-Q/relaunch or restart `serve`. Window close only hides it |
-| Offline preparation fails in the app | Missing toolchain, Python/SDK, Cargo.lock, cached sources or an existing snapshot | See Setup and [offline Cargo verification](CODING_PIPELINE.md#offline-cargo-verification); the app downloads nothing |
-| A coding run refuses with `HARD_SANDBOX_UNAVAILABLE` on Linux, before any model call | `bwrap` is missing or its probe failed | Install bubblewrap. `agentic.sandbox.allow_linux_netns_fallback: true` accepts network isolation with the host filesystem visible ([boundary](CODING_PIPELINE.md#execution-boundary)) |
-| Chat takes too long or times out | Wrong model/endpoint, unavailable service, slow loading or inference timeout | Check [inventory](MODELS.md), `/model` and Setup diagnostics; cancel with `/loop stop` rather than resubmitting |
-| Chat reports `502 HARNESS_LLM_ERROR` with `model server returned HTTP ...` | The local model server returned a non-success status | Check the endpoint, model and model-server logs; the harness drops the error body unread and never logs it |
-| A short chat prompt fails with `HARNESS_LLM_ERROR` `model output was truncated` or `repeated one line` | A local call ran to its output cap, or looped on one sentence; one tag does this when web tools are offered ([#941](https://github.com/cgfixit/CG-agent-harness/issues/941)) | A streamed reply that repeats one line `models.local_llm.repeat_abort_lines` times in a row is stopped early and not saved (`finish_reason` `repeat`, `repeat_detector_fired`). Compare `tools_offered`, `finish_reason` and `completion_tokens` on `chat_model_call` lines in `logs/audit.jsonl` (no text). [`probe-tool-repeat.py`](../scripts/probe-tool-repeat.py) replays a turn with and without tools |
-| `Address already in use` when starting `serve` | Another process occupies the port | `lsof -i :8790`; stop only a known owner or choose another `--port`. Each server needs its own home |
-| `/agent` reports `gh: command not found` or "Agentic layer disabled" | GitHub CLI missing, or `agentic.enabled` still `false` | `brew install gh && gh auth login`; follow [coding config](CODING_PIPELINE.md#92-edit-the-configuration-file), then restart |
-| Stop or `/model use` refused with `CHAT_OTHER_ACCOUNT` | Another account's chat turn is running; the model and generation are shared | Wait for it to finish; only that account can stop it |
-| A chat turn ends with `401 AUTH_REQUIRED` and no reply | The account was disabled, deleted, demoted or had its password reset during the turn; `chat_reply_withheld` is in the audit log | Sign in again; an administrator restores the account if needed |
-| A write action is refused | A policy gate is closed, reason/confirm is absent, publication has no reviewed body, or the emergency switch is set | See [coding console steps](CODING_PIPELINE.md#93-run-it-from-the-console) and [the kill switch](CODING_PIPELINE.md#95-the-kill-switch); check `echo $CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` |
-| Managed-key save or legacy migration fails | OS store unavailable, unsafe legacy file, or Windows replacement denied (a sharing lock; the destination stays intact) | Keep plaintext opt-in off unless required and do not broaden file access; see [credential privacy and recovery](INSTALL.md#8-persistence-optional-keys-and-recovery) |
+| `tag_missing` or unexpected fallback | Inventory lacks the exact tag | Compare `/model` and [Models](MODELS.md). Restart to reevaluate fallback. |
+| `CHAT_OTHER_ACCOUNT` | Another account holds the shared model | Wait for the owner to finish. |
+| `HARNESS_LLM_ERROR` | Local endpoint error, truncation or repeated output | Check `/model profile` and `chat_model_call` audit metadata, including `finish_reason` and `tools_offered`. |
+| `/loop` appears stuck | Model busy, request deadline, cooldown or repeated failure | Check `/api/loop/status` and `/loop stop` if needed. See [loop limits](CONSOLE.md#71-sessions-and-bounded-chat-continuation). |
+| `/browse` cannot find Playwright | Sidecar dependencies or path missing | Prepare [browser use](Browser-Use.md) and use an absolute desktop sidecar path. |
+| `BROWSER_AUTH_REQUIRED` or `BROWSER_ORIGIN_BLOCKED` | Accounts off, or origin blocked/unreadable | Sign in as admin with accounts enabled and check `/web status`. Private origins also refuse. |
+| `AUTH_REQUIRED` or login refused | Session expired, revoked or evicted | Sign in again. Check [account caps](SECURE_RESEARCH.md#account-storage-and-recovery). |
+| `AUTH_LIMIT` | Account or session capacity refusal | Check the current account/session inventory before retrying. |
+| `WEB_SEARCH_COOLDOWN` | Provider is paused after a challenge, block or quota failure | Read the provider code and cooldown. Check [provider selection](WEB_DECISION_ROUTER.md#provider-selection). |
+| `WEB_UNITS_UNAVAILABLE` or `WEB_SEARCH_DAILY_CAP` | Paid ledger unavailable or UTC-day allocation exhausted | Inspect current provider and ledger metadata. Failed daily dispatch can use an eligible fallback. |
+| Home lock or occupied port | Another server owns it | Identify the owner. Quit it normally or use a separate home and port. |
+| App waits at startup | OS file access or incomplete bundle | Check macOS prompts and retry from the complete Applications bundle. |
+| Config changes have no effect | Wrong home or restart-only setting | Check Setup and [reloadable limits](INSTALL.md#reload-limits-without-a-restart). Closing the app window keeps the backend running. |
+| No memory suggestions | Source/store gate, model or queue/model failure | Read **Suggestion activity** and `/api/structured-memory`. See [memory](MEMORY_GUIDE.md). |
+| A persona or skill is missing from chat | Wrong home, selected file invalid, toggle off or edit stale | Check `/soul status`, `/skill status` and `/prompt`. |
+| Coding check refuses before inference | Missing preparation or sandbox | Inspect [offline Cargo verification](CODING_PIPELINE.md#offline-cargo-verification) and [execution boundary](CODING_PIPELINE.md#execution-boundary). |
+| Coding write refuses | Gate, revoked authority, missing confirmation/reason or missing reviewed PR body | Check [policy](CODING_PIPELINE.md#git-approval-and-publication) and [kill switch](CODING_PIPELINE.md#95-the-kill-switch). |
+| Spend is partial | Retained ledger unreadable or invalid | Preserve the ledger and check [coverage](SPEND_AND_NOTIFICATIONS.md#read-spend-without-mistaking-missing-data-for-zero). |
+| Webhook missing or duplicated | Grant, outbox failure or retry | Check **Job webhooks** and the delivery audit. Deduplicate by `delivery_id`. |
+| `stdio MCP child closed` | Child stdout closed | Reproduce under a controlled environment. See [stdio diagnostics](PROCESS_LIFECYCLE.md#mcp-stdio-diagnostics). |
 
 ## Read-only host inspection
 
-The harness reads no host file outside its home, and chat (including
-`/loop`) cannot call MCP tools. To read host files, declare a read-only stdio
-filesystem MCP server ([example](MCP.md#read-only-host-files-on-macos)) and
-call its tool yourself; each call needs your `confirm: true`, which model
-prose cannot supply. Roots overlapping the harness home are refused
-(`MCP_HOME_REFUSED`). Read-only is not secret-safe: never grant `~/`, `~/.ssh`,
-`~/Library` or a folder holding `.env` or key material.
+Use a declared [read-only MCP server](MCP.md#read-only-host-files-on-macos)
+and confirm each call. The home and overlaps refuse. Read grants should
+exclude secrets. Chat and `/loop` cannot call MCP.
 
 ## Diagnostics
 
-`/diag` reads allowlisted logs under `<home>/logs/` for an admin or
-`auditor` account once `diagnostics.logs_enabled` is literal `true`.
-`diagnostics.model_tool: true` adds read-only log tools to plain local chat turns.
-Output is redacted, or refused whole on an injection-scanner hit; `/diag
-inject` stages it as untrusted text for one local turn ([contract](../INVARIANTS.md)).
+`/diag` reads bounded allowlisted `<home>/logs/` files for admin/auditor
+with literal `diagnostics.logs_enabled`. Redaction precedes scanning.
+`/diag inject` stages one untrusted excerpt for a local turn.
+`diagnostics.model_tool: true` enables eligible plain local chat log tools.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `/diag` says `DIAG_DISABLED` | `diagnostics.logs_enabled` is missing, quoted or false (new homes seed `true`) | Set literal `true`, then restart |
-| `/diag` says `DIAG_REFUSED` or `AUTH_PERMISSION_DENIED` | The account is `operator` | Use an admin or `auditor` account |
-| A read or `/diag inject` says `DIAG_SCANNER_REFUSED` | The redacted excerpt matched the injection scanner | Narrow with `--event`, `--since` or `--last`; nothing from it is shown or staged |
-| Chat says `DIAG_SURFACE_FORBIDDEN` | An excerpt is staged and the turn is cloud chat or `/agent` | Send a local turn first, or `/diag forget` |
-| `/diag unslop` says `DIAG_NOT_FOUND` | Nothing written yet, or `unslop.metrics_path` is outside `logs/` | `/diag` reads only `<home>/logs/unslop.jsonl` |
+| `DIAG_DISABLED` | Gate off or missing | Set literal true and restart. |
+| `DIAG_SCANNER_REFUSED` | Redacted text matched the scanner | Narrow `--event`, `--since` or `--last`. |
+| `DIAG_REFUSED` | The signed-in role lacks log investigation permission | Use an administrator or auditor. |
+| `DIAG_SURFACE_FORBIDDEN` | Staged logs with cloud or coding | Use local chat or `/diag forget`. |

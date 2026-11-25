@@ -1,139 +1,54 @@
 # Dependency maintenance
 
-The backend and desktop are separate Cargo crates with their own manifests,
-lockfiles, toolchains (Rust 1.89 and 1.90) and `deny.toml` policies. A third
-lockfile, the Seatbelt test fixture `tests/fixtures/cargo-sandbox`, gets the
-root policy's advisories, bans and sources checks in CI. Use rustup's Cargo so
-the toolchain files take effect; CI and release builds resolve `--locked`.
-
-## Runtime additions and boundaries
-
-| Crate | Purpose / selected features |
-|---|---|
-| `rusqlite` 0.41 | Transactional account store; bundled SQLite avoids a machine-specific SQLite dependency |
-| `axum-server` 0.8, `rustls` 0.23 | Shared standalone/sidecar HTTPS; explicit ring provider, ordinary certificate verification |
-| `rcgen` 0.14, `x509-parser` 0.18 | Local P-256 certificate generation and validity/key/name checks; no OpenSSL subprocess |
-| `scraper` 0.27, `html5ever` 0.39, `robotstxt` 0.3 | HTML extraction and permitted robots handling; no browser execution |
-| `tantivy` 0.27 | Embedded BM25 passage retrieval; bounded in-RAM index (`mmap` feature off), no daemon or embeddings |
-| `rmcp = "=3.9.0"` | Inbound MCP memory server (streamable HTTP); exact pin, bumped deliberately (RUSTSEC-2026-0462 fix, 2026-11-09) |
-| `zip` 9.2.2, `quick-xml` 0.42 | DOCX attachment reader: in-memory ZIP, deflate only; namespace-aware XML; limits in [CONSOLE.md](CONSOLE.md#docx-attachments) |
-| `lopdf` 0.47 (default features off) | Text-only PDF reader for attachments, notes and web reads, run in the `pdf-text-worker` child; bounded decompression; [limits](CONSOLE.md#pdf-text) |
-| `objc2` / Foundation / WebKit / Security bindings | Native authentication-challenge handling for the exact owned loopback certificate |
-| Keyring ecosystem 1.x stores | OS store for managed provider keys: macOS Keychain, Windows Credential Manager and the maintained D-Bus Linux Secret Service backend |
-
-Reqwest 0.13 serves both crates: public fetching disables proxies, redirects,
-compression, retries and reuse and pins checked DNS addresses, while loopback
-certificate pinning never replaces public-web trust. Its `rustls` feature
-enables AWS-LC beside the explicit ring provider; locked `aws-lc-sys` 0.47.0
-builds with a C compiler and needs no CMake executable
-([source-build prerequisites](INSTALL.md#51-standalone-backend)). cargo-deny
-does not certify safe runtime use of a crate.
+The [backend](../Cargo.toml) and [desktop](../desktop/Cargo.toml) have separate
+locks, deny policies and Rust pins (1.89 and 1.90). CI and packaging use
+`--locked`. The Seatbelt fixture lock is checked with the root deny policy.
+`browser/package-lock.json` pins Playwright separately. The browser uses
+installed Google Chrome. The daily advisory workflow audits the npm lock.
 
 ## Retained constraints
 
-- Backend `ordered-float` remains locked at 5.4: 5.5 requires Rust 1.90.
-  A semver-compatible release can still exceed the backend MSRV, so
-  `.cargo/config.toml` sets `resolver.incompatible-rust-versions = "fallback"`
-  for both crates: plain `cargo update` prefers releases within each crate's
-  `rust-version`; `--ignore-rust-version` or `--precise` override it. Rust
-  1.89 admits `rusqlite` 0.41 (RUSTSEC-2026-0459); `uuid` 1.27 and later are no
-  longer MSRV-held.
-- Incompatible major lines are separate API migrations, not drift: backend
-  `axum-server` 0.8, `base64` 0.22, `rand` 0.8, `scrypt` 0.11, `scraper` 0.27 with `html5ever`
-  0.39, `windows-sys` 0.59 and the `rmcp` pin; desktop `toml` 0.8.2,
-  held by upstream constraints with `generic-array` and `matchit`. Newer
-  available versions alone do not make a valid lockfile stale or justify
-  expanding a security refresh into a framework/toolchain migration.
-- Manual refreshes follow Dependabot's 7-day cooldown: a younger compatible
-  release is not drift unless it fixes an advisory against a locked crate.
-- The backend license allowlist names only identifiers the locked graph uses;
-  add one deliberately, with the crate that needs it.
-- Desktop Tauri is pinned to `=2.12.4`; its `tauri-utils` 2.10.2 routes
-  `urlpattern` through ICU, so no `unic-*` crate and no Git source remains in
-  either lock (`cargo tree` must show none).
-- Tantivy 0.27 resolves `lru` 0.18.2 or newer; desktop has no advisory exception.
-- Backend `RUSTSEC-2024-0449` waives unmaintained `unsafe-libyaml` via
-  `serde_yaml_ng`. Owner: `cgfixit`, who reviews maintained, MSRV-compatible
-  YAML replacements weekly and on Cargo Dependabot PRs. Remove the waiver when
-  `unsafe-libyaml` leaves the backend lockfile; an unused-ignore warning does
-  not detect an available replacement. Next review by 2027-02-15.
-- Backend `RUSTSEC-2026-0543` and `RUSTSEC-2026-0555` (2026-11-17) waive
-  unmaintained `chrono` and `chrono-tz`; no safe upgrade exists. Both evaluate
-  schedule times in `src/server/schedule_time.rs`, and `chrono` also comes
-  through `cron`, `rmcp` and `schemars`. Owner: `cgfixit`. Remove each waiver
-  when its crate leaves the backend lockfile, which takes a maintained time
-  crate (`jiff` or `time`), a `cron` replacement and `rmcp`/`schemars` releases
-  without `chrono`. Next review by 2027-02-17.
-- Desktop's lock carries Tauri 2.12.4's Linux GTK3 backend (`gtk` 0.18.2, WRY,
-  tao, muda): `glib` 0.18.5 (RUSTSEC-2024-0429, unsound `VariantStrIter`, fixed
-  in 0.20) and `proc-macro-error` 1.0.4 (RUSTSEC-2024-0370, via `glib-macros`).
-  gtk3-rs ends at 0.18 and `webkit2gtk` 2.0.2 requires it (`gtk` 0.19 moves to
-  fixed `glib` 0.22), so no lockfile change removes them. This accepted residual
-  never ships: the app is macOS-only and `cargo tree -i glib` is empty for both
-  Apple targets. On Linux only `Variant::array_iter_str` builds the iterator and
-  no locked crate calls it (checked 2026-11-15). `desktop/deny.toml` evaluates
-  only the Apple targets: keep its ignores empty so a GTK edge on macOS fails
-  CI; its green run is not Linux clearance. Owner: `cgfixit` (#782). Revisit
-  when a Linux desktop target is added, when Tauri moves off `gtk` 0.18
-  ([tauri#12563](https://github.com/tauri-apps/tauri/issues/12563)), or by 2027-02-15.
-- GHSA-qwgh-2vcv-g2f7 (`block-buffer`) affects only `>=0.11.0, <0.12.1`. Both
-  locks carry 0.10.4 and 0.12.1, outside it, so no `deny.toml` ignore is
-  needed; a `scrypt` 0.12 move stays an optional API migration, not a fix.
-- `browser/package-lock.json` (npm) pins the `/browse` sidecar's Playwright,
-  outside `cargo deny`: Dependabot watches it weekly and the daily advisory
-  workflow runs `npm audit --package-lock-only` (installs nothing). Chrome is not
-  locked: the sidecar drives the runner's installed Google Chrome and moves with
-  the CI runner image. [Browser-Use.md](Browser-Use.md) names the version; move both.
-- Duplicate versions are warnings. Advisories, unapproved licenses, wildcard
-  requirements and unknown sources block.
-- Both `deny.toml` files ban push-telemetry and analytics SDK crates by exact
-  name (OpenTelemetry, Sentry, PostHog, Segment, Mixpanel, Amplitude, Datadog,
-  Honeycomb, Bugsnag, RudderStack, Statsig, LaunchDarkly, minitrace).
-- Optional runtime services (Google, SerpAPI, Tavily, Firecrawl, Ollama, cloud
-  providers) are not Cargo dependencies; a live-service check is not a
-  dependency or test pass.
+- Cargo's MSRV fallback prefers compatible releases. Backend
+  `ordered-float` 5.4 is held by Rust 1.89. Check the target lock before
+  treating newer major versions as drift. Keep provider/runtime upgrades
+  separate from version refreshes.
+- `rmcp` is exactly pinned at 3.9.0. Desktop Tauri is pinned at 2.12.4.
+  Desktop `tauri-utils` 2.10.2 uses ICU for `urlpattern`.
+  Keep `cargo tree` free of Git sources and retired `unic-*` crates. Linux-only
+  GTK3 dependencies `glib` and `proc-macro-error` are absent from both
+  shipped Apple target graphs. Keep desktop deny ignores empty.
+  Owner `cgfixit` revisits this if adding Linux desktop, on a Tauri GTK
+  migration or by 2027-02-15. See [#782](https://github.com/cgfixit/CG-agent-harness/issues/782).
+- Root [deny policy](../deny.toml) records the unmaintained
+  `unsafe-libyaml` (RUSTSEC-2024-0449), `chrono` (RUSTSEC-2026-0543)
+  and `chrono-tz` (RUSTSEC-2026-0555) waivers. Owner `cgfixit` reviews YAML
+  replacements weekly and on Cargo Dependabot PRs, next by 2027-02-15,
+  and the schedule dependency chain by 2027-02-17. Remove each waiver
+  when its crate leaves the lock.
+- Bundled SQLite, bounded Tantivy BM25 and the child PDF parser are
+  intentional. Reqwest uses pinned DNS for public web egress and OS
+  public trust. The locked AWS-LC build needs a C compiler.
+  Review feature changes with their call sites. The DOCX reader uses
+  ZIP deflate and namespace-aware XML. The PDF crate runs out of process
+  with its default features disabled.
+- Both policies ban telemetry SDKs. Duplicate versions warn.
+  Advisories, licenses, bans and sources follow the checked-in policies.
 
 ## Check and synchronize
 
-Run in the repository root, then repeat inside `desktop/`; check the fixture with
-`cargo deny --manifest-path tests/fixtures/cargo-sandbox/Cargo.toml --config deny.toml check advisories bans sources`:
+Use rustup's pinned Cargo. In root and `desktop/`, inspect
+`cargo metadata --locked --format-version 1` and `cargo tree --locked`.
+Preview with `cargo update --dry-run --locked --verbose`. Respect
+Dependabot's seven-day cooldown unless fixing a locked advisory. Inspect
+manifest, lock and transitive edge changes before verifying a refresh.
+Use `cargo deny check` with cargo-deny 0.20 or newer. CI also checks root
+all-features and the fixture with:
 
 ```bash
-rustup show active-toolchain
-cargo metadata --locked --format-version 1 > /private/tmp/cgah-dependencies.json
-cargo tree --locked --depth 1
-cargo update --dry-run --locked --verbose
-cargo build --locked
-cargo deny check
+cargo deny --manifest-path tests/fixtures/cargo-sandbox/Cargo.toml --config deny.toml check advisories bans sources
 ```
 
-Use cargo-deny 0.20 or newer (CI's action bundles 0.20.2); 0.18 rejects
-`deny.toml`'s `unsound = "all"`. Check Cargo's exit status rather than a grep
-match. The update command is a preview that leaves the lockfile unchanged. For
-an authorized update, omit `--dry-run --locked`, inspect the manifest and lock
-diff, including dependency edges of crates you did not name, and rerun both
-crates' formatting, Clippy, tests, dependency policy, release builds and any
-native or package acceptance that applies. Do not change global rustup
-overrides to satisfy a dependency. The `dep-sync` skill scripts this pass
-against `origin/main`.
-
-Exact versions are authoritative in the lockfiles. Consult
-the [RustSec advisory database](https://rustsec.org/advisories/) and upstream
-[Cargo resolver documentation](https://doc.rust-lang.org/cargo/reference/resolver.html#rust-version)
-when investigating newly reported drift. A clean dependency-policy result is a
-point-in-time advisory/license/source check, not proof of vulnerability absence.
-Workflow action pins live in `.github/workflows/` and move with those files,
-not with the lockfiles.
-
-## Last synchronization (2026-11-20)
-
-Cooldown refresh, lockfiles only. Both locks: `const-oid` 0.10.3. Backend
-also: `rustls-pki-types` 1.16.0 and `webpki-root-certs` 1.0.12. Each moved
-alone; no other package or edge changed. `errno` 0.3.15, `mio` 1.2.5,
-`rustls-webpki` 0.103.17, `cc`, `uuid`, `syn` 3.0.10, `zip` and the
-`toml_edit` family stay with Dependabot, as do desktop `rustls-pki-types`
-and `webpki-root-certs`: each re-resolved unrelated `syn`, `getrandom` or
-`windows-sys` edges under Cargo 1.89/1.90. Every other compatible candidate
-was younger than the cooldown. The Tauri family waits on the `tauri` pin and
-`rmcp` 3.10 on its own. Rerun the checks above before
-trusting a dated result.
+Exact versions live in the locks. Action pins live in workflows. Match
+CI's [workflow commands](../.github/workflows/README.md) and verify the
+affected application surface. Policy checks do not establish runtime
+behavior.
