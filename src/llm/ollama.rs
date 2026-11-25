@@ -115,7 +115,10 @@ pub fn pull_name_ok(name: &str) -> bool {
 /// consent and spend checks. Local selection, pulls and memory work refuse
 /// them; cloud chat goes through `cloud_chat` instead.
 pub fn cloud_tag(name: &str) -> bool {
-    name.trim().split_once(':').is_some_and(|(_, tag)| {
+    // The tag ends the last path segment: a registry host can carry a port
+    // (`localhost:5000/library/glm-4.6:cloud`).
+    let last = name.trim().rsplit('/').next().unwrap_or_default();
+    last.rsplit_once(':').is_some_and(|(_, tag)| {
         let tag = tag.to_ascii_lowercase();
         tag == "cloud" || tag.ends_with("-cloud")
     })
@@ -470,6 +473,26 @@ mod tests {
         assert!(!model_name_ok("http://evil.example/model")); // DevSkim: ignore DS137138 because this unit test rejects URL-shaped model names.
         assert!(!model_name_ok("name with space"));
         assert!(!model_name_ok("a:"));
+    }
+
+    /// The tag is the last segment's: a registry host may carry a port.
+    #[test]
+    fn a_cloud_tag_is_read_from_the_last_path_segment() {
+        for cloud in [
+            "localhost:5000/library/glm-4.6:cloud",
+            "registry.ollama.ai:443/library/glm-4.6:cloud",
+            "registry.ollama.ai:443/library/gpt-oss:120b-cloud",
+            "hf.co/a/b:cloud",
+        ] {
+            assert!(cloud_tag(cloud), "{cloud}");
+        }
+        for local in [
+            "localhost:5000/library/big-cloud",
+            "localhost:5000/library/big-cloud:latest",
+            "registry.ollama.ai:443/library/qwen3.8:27b-mlx-cg",
+        ] {
+            assert!(!cloud_tag(local), "{local}");
+        }
     }
 
     #[test]

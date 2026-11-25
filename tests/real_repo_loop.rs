@@ -1389,8 +1389,13 @@ fn a_cloud_tag_local_planner_is_refused_before_the_clone_and_the_run_record() {
     let bare = real_bare_repo_on(dir.path(), "trunk");
     let bin = install_fake_gh(dir.path(), &bare);
     let path = path_with(&bin);
-    for model in ["glm-4.6:cloud", "gpt-oss:120b-CLOUD"] {
-        let home = dir.path().join(model.replace(':', "-"));
+    let models = [
+        "glm-4.6:cloud",
+        "gpt-oss:120b-CLOUD",
+        "registry.ollama.ai:443/library/glm-4.6:cloud",
+    ];
+    for (i, model) in models.into_iter().enumerate() {
+        let home = dir.path().join(format!("home-{i}"));
         std::fs::create_dir_all(&home).unwrap();
         config_with(
             &home,
