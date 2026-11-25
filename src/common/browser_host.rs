@@ -1925,6 +1925,11 @@ function saveTwice() { post().then(() => post()).then(() => show('saved twice'))
 const TAKEOVER_RESULT_PAGE: &str =
     "<p>ORDER-PLACED</p><script>fetch('/api/beacon', {method: 'POST', body: 'seen'}).catch(() => {});</script>";
 
+/// A page that submits a POST form by itself once it has loaded: no model action.
+const TAKEOVER_AUTO_PAGE: &str = r#"<p>AUTO</p>
+<form id="auto" method="post" action="/api/auto"><input name="item" value="tea"></form>
+<script>addEventListener('load', () => document.getElementById('auto').submit());</script>"#;
+
 /// What the takeover fixture's operator does with the next question.
 enum Verdict {
     Allow,
@@ -1979,7 +1984,8 @@ impl ScriptedOperator {
 /// - the identical POST sent again is a new question, and refused it is held;
 /// - a denied POST and one whose answer comes after the wait never arrive;
 /// - a block rule added while the operator decides stops an approved POST;
-/// - an approved form POST loads its result, a denied one leaves the page.
+/// - an approved form POST loads its result, a denied one leaves the page;
+/// - a form the page submits by itself is held without a question.
 ///
 /// The operator is asked with the method, whole URL, size, SHA-256 and text
 /// of the body that would be sent.
@@ -1997,6 +2003,8 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         ("/api/save", Reply::Html("SAVED".to_string())),
         ("/api/order", Reply::Html(TAKEOVER_RESULT_PAGE.to_string())),
         ("/api/beacon", Reply::Html(String::new())),
+        ("/auto", Reply::Html(TAKEOVER_AUTO_PAGE.to_string())),
+        ("/api/auto", Reply::Html("AUTO-SUBMITTED".to_string())),
     ])?;
     let session = Session::general([&origin]).map_err(|err| format!("{err:?}"))?;
     let base = format!("http://127.0.0.1:{port}");
@@ -2140,6 +2148,31 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         "form POST -> denied stays on the page; approved after 6 s loads the result once, its own POST held as background"
             .into(),
     );
+
+    // A form the page submits by itself, with no model action: the operator
+    // would say yes, and is not asked. Held as on a session without takeover.
+    operator.plan([Verdict::Allow]);
+    let asked_before = operator.asked().len();
+    let (page, _) = guard_call(
+        &mut sidecar,
+        &mut lines,
+        json!({"op":"navigate","url": format!("{base}/auto")}),
+    )?;
+    // The submit follows the load, so it may land in the next observation.
+    thread::sleep(Duration::from_secs(1));
+    let (later, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    let held = [rows(&page, "held"), rows(&later, "held")].concat();
+    if operator.asked().len() != asked_before
+        || count("POST /api/auto") != 0
+        || held != [format!("POST {base}/api/auto")]
+        || !rows(&page, "approved").is_empty()
+        || !rows(&later, "approved").is_empty()
+    {
+        return Err(format!(
+            "a form the page submitted by itself was asked about, sent, or not held: {page} {later}"
+        ));
+    }
+    lines.push("page's own form POST -> not asked, held, not sent".into());
 
     // A block rule added while the operator decides: approved, and still not sent.
     operator.plan([Verdict::BlockThenAllow]);

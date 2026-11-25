@@ -750,9 +750,10 @@ async function start(message) {
     // waits for the operator: every request but GET and HEAD is held here.
     const method = request.method();
     if (method !== "GET" && method !== "HEAD") {
-      // The operator's step, with takeover on: pause it and ask. The whole
-      // URL must fit the question, and only one request waits at a time.
-      if (takeoverWaitMs && (acting || request.isNavigationRequest()) && !pendingApproval && url.length <= MAX_URL) {
+      // The model's own action, with takeover on: pause it and ask. A page
+      // that submits a form by itself is not asked about; it is held below.
+      // The whole URL must fit the question, and only one request waits at a time.
+      if (takeoverWaitMs && acting && !pendingApproval && url.length <= MAX_URL) {
         const waiting = decideHeld(route, request, method, url).finally(() => {
           if (pendingApproval === waiting) pendingApproval = null;
         });
