@@ -677,7 +677,8 @@ list for that URL and origin, and that the request still waits, then passes the
 verdict on once. The sidecar's CDP gate uses up a pass of `{method, URL, SHA-256}`
 on the first matching request, after asking the block list again. A no, a late
 answer, cancel, a second request while one waits, or a body the gate cannot read
-is held; a page's own requests are never asked about. Each decision
+is held; only a request sent mid-action, or one form posted within 5s of
+a click or Enter, is asked. Each decision
 writes one `browser.approval` audit line (never the path or body).
 
 - Locked by: `browser takeover` (by what its loopback server received),
