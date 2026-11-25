@@ -19,18 +19,21 @@ Grants discard paths and queries. Task text uses a private temporary file
 and is hashed for audit.
 
 ARIA observations carry expiring refs, 40 elements and 4,000 characters.
-`observe` supports `page` and `find`. `BROWSER_WINDOW` refuses a tuned
-window that cannot fit the task. Shipped limits are 12 turns and 300 seconds,
-with 20 seconds reserved to report. Three consecutive failures end a task.
+`observe` supports `page` and `find`. A tuned window too small for the task
+returns `409 BROWSER_WINDOW` before launch. Shipped limits are 12 turns and
+300 seconds, with 20 seconds reserved to report. A deadline reached on a
+later model call returns the partial report with `finished: false` and
+`report.stopped`. Three consecutive failures end a task.
 macOS and Linux use detached jobs. Windows uses the synchronous endpoint.
 
 - Grants are public exact origins from the request. The host checks every
   request and redirect against current block policy. The authenticated
   loopback proxy pins public addresses. Private access is fixture-only.
   `navigate` accepts a task URL, granted root, page URL or shown link.
-- Playwright routing and browser-wide CDP Fetch hold methods other than GET
-  and HEAD. Text outside the task or page is held. Password and one-time-code
-  fields end the task with a handoff.
+- Playwright routing holds methods other than GET and HEAD. Browser-wide
+  CDP Fetch repeats the hold as defense in depth, without an independent
+  fixture for that hold. Text outside the task or page is held. Password and
+  one-time-code fields end the task with a handoff.
 - With `browser.takeover.enabled` (shipped true), the job owner can approve
   one request caused by a model action. `POST /api/browser/jobs/{job_id}/approve`
   needs the request ID, body SHA-256, confirmation and reason. The pass binds
@@ -43,12 +46,9 @@ macOS and Linux use detached jobs. Windows uses the synchronous endpoint.
   Alerts are reported and dismissed. `/goal` and `/loop` have no browser tools.
 
 [Source](../src/common/browser_host.rs) and
-[fixtures](../.github/workflows/README.md) cover the sidecar, guards and
-takeover. Run Chrome fixtures as an unprivileged user with its sandbox on.
-
-  answer can be wrong.
-- `/goal` and `/loop` have no browser tools: "/browse" in a goal runs web
-  search and fetch.
+[fixtures](../.github/workflows/README.md) cover the sidecar, guards,
+takeover, and the synchronous route's window refusal and deadline report.
+Run Chrome fixtures as an unprivileged user with its sandbox on.
 
 ## Roadmap: broader browser use
 
