@@ -1256,6 +1256,156 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
     content.abort();
 }
 
+/// #1123 phase 1: the approve route checks again after the wait, through
+/// `POST /api/browser/jobs/{id}/approve` itself. A block rule added while the
+/// request waited answers 409 `WEB_POLICY_CHANGED`, sends the child a deny
+/// and audits `refused_by_policy`. A wait that ran out answers 409
+/// `BROWSER_NOTHING_WAITING` and sends nothing. An allowed, unexpired request
+/// is approved, so the fixture can tell an approval from a refusal. The job
+/// is a real owner-bound record whose child input is a channel the test
+/// reads, so every verdict that would reach the child is seen.
+#[tokio::test]
+async fn approving_a_held_request_rechecks_policy_and_expiry_after_the_wait() {
+    // The loopback-fixture switch skips the policy recheck; with it set this
+    // test would pass without exercising it.
+    assert!(
+        std::env::var_os("CGAH_TEST_PRIVATE_BROWSER_ORIGINS").is_none(),
+        "this test must run with the production policy recheck"
+    );
+    let model = start_mock_model().await;
+    let options = ServerOptions::default()
+        .with("auth.enabled", "true")
+        .with("browser.enabled", "true")
+        .with("browser.takeover.enabled", "true")
+        .with("api.rate_limit.max_requests", "1000");
+    let server = spawn_server(&model.base_url(), options).await;
+    let auth = server.state.auth.as_ref().unwrap();
+    let password = cgagentharness::common::random_hex(24);
+    auth.create_user("orders", &password, "admin").unwrap();
+    let owner = auth.get_user("orders").unwrap().user_id;
+    let login = server
+        .client
+        .post(server.url("/api/auth/login"))
+        .json(&json!({"username":"orders","password":password}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(login.status(), 200);
+    let session = cookie(&login);
+
+    let job_id = "0a1b2c3d4e5f6789".repeat(2);
+    let approve = format!("/api/browser/jobs/{job_id}/approve");
+    let (input, child) = std::sync::mpsc::channel::<Vec<u8>>();
+    server.state.browser_jobs.insert(
+        &job_id,
+        &owner,
+        &["https://example.com:443".to_string()],
+        cgagentharness::server::browser_jobs::CancelHandle {
+            input,
+            token: Default::default(),
+        },
+    );
+    let sha256 = "5e".repeat(32);
+    // The child's `waiting` line for request `id`, which may be answered for
+    // `wait_sec` seconds.
+    let hold = |id: u64, wait_sec: u64| {
+        let waiting = json!({
+            "event": "waiting",
+            "wait_sec": wait_sec,
+            "question": {
+                "approve": id,
+                "method": "POST",
+                "url": "https://example.com/api/save",
+                "content_type": "application/x-www-form-urlencoded",
+                "size": 5,
+                "sha256": sha256,
+                "preview": "qty=2",
+            },
+        });
+        server.state.browser_jobs.note_line(&job_id, &waiting.to_string());
+        let job = server.state.browser_jobs.get(&owner, &job_id).unwrap();
+        assert_eq!(job["status"], "waiting", "{job}");
+    };
+    let answer = |id: u64| json!({"request":id,"sha256":sha256,"confirm":true,"reason":"the order I asked for"});
+    let sent = || -> Vec<Value> {
+        child
+            .try_iter()
+            .map(|line| serde_json::from_slice(&line).unwrap())
+            .collect()
+    };
+    let approvals = || -> Vec<Value> {
+        server
+            .audit_log()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .filter(|line| line["event"] == "browser.approval")
+            .collect()
+    };
+
+    // Control: allowed and unexpired, so it is approved and the child is told so.
+    hold(1, 60);
+    let reply = request(&server, &session, Method::POST, &approve, answer(1)).await;
+    assert_eq!(reply.status(), 200);
+    assert_eq!(reply.json::<Value>().await.unwrap()["decision"], "approved");
+    assert_eq!(sent(), [json!({"verdict":"approve","id":1})]);
+    assert_eq!(approvals().last().unwrap()["decision"], "approved");
+
+    // Policy changed during the wait: the URL is blocked before the owner says yes.
+    hold(2, 60);
+    let block = json!({"urls":["https://example.com"]});
+    assert_eq!(
+        request(&server, &session, Method::POST, "/api/web/block", block)
+            .await
+            .status(),
+        200
+    );
+    let reply = request(&server, &session, Method::POST, &approve, answer(2)).await;
+    assert_eq!(reply.status(), 409);
+    assert_eq!(
+        reply.json::<Value>().await.unwrap()["detail"]["code"],
+        "WEB_POLICY_CHANGED"
+    );
+    assert_eq!(
+        sent(),
+        [json!({"verdict":"deny","id":2})],
+        "the owner's no, never a yes"
+    );
+    let refused = approvals().last().cloned().unwrap();
+    assert_eq!(refused["decision"], "refused_by_policy", "{refused}");
+    assert_eq!(refused["origin"], "https://example.com", "{refused}");
+    assert!(
+        refused["reason"].is_null(),
+        "a refused approval records no reason: {refused}"
+    );
+    // The deny ended that wait: a second try finds nothing and sends nothing.
+    let again = request(&server, &session, Method::POST, &approve, answer(2)).await;
+    assert_eq!(again.status(), 409);
+    assert_eq!(
+        again.json::<Value>().await.unwrap()["detail"]["code"],
+        "BROWSER_NOTHING_WAITING"
+    );
+    assert!(sent().is_empty());
+    let unblock = json!({"url":"https://example.com"});
+    assert_eq!(
+        request(&server, &session, Method::POST, "/api/web/unblock", unblock)
+            .await
+            .status(),
+        200
+    );
+
+    // The wait ran out: nothing is approved and nothing reaches the child.
+    hold(3, 0);
+    let audited = approvals().len();
+    let reply = request(&server, &session, Method::POST, &approve, answer(3)).await;
+    assert_eq!(reply.status(), 409);
+    assert_eq!(
+        reply.json::<Value>().await.unwrap()["detail"]["code"],
+        "BROWSER_NOTHING_WAITING"
+    );
+    assert!(sent().is_empty(), "an expired wait sends no verdict");
+    assert_eq!(approvals().len(), audited, "an expired wait audits no approval");
+}
+
 #[tokio::test]
 async fn cli_bootstrap_session_can_only_replace_the_password_and_gets_no_machine_key() {
     let model = start_mock_model().await;
