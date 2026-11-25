@@ -675,11 +675,11 @@ a text preview for at most `browser.takeover.wait_sec`.
 `confirm: true` and a `reason` (no defaults); it rechecks both gates, the block
 list for that URL and origin, and that the request still waits, then passes the
 verdict on once. The sidecar's CDP gate uses up a pass of `{method, URL, SHA-256}`
-on the first matching request, after asking the block list again. A no, a late
-answer, cancel, a second request while one waits, or a body the gate cannot read
+on the first matching request, after rechecking the block list. A no, a late
+answer, cancel, a navigate away, a request while another waits, or a body the gate cannot read
 is held; only a request sent mid-action, or one form posted within 5s of
 a click or Enter, is asked. Each decision
-writes one `browser.approval` audit line (never the path or body).
+writes one `browser.approval` audit line (never path or body).
 
 - Locked by: `browser takeover` (by what its loopback server received),
   `src/server/browser_jobs.rs` (verdict binding), `src/shim/mod.rs` and

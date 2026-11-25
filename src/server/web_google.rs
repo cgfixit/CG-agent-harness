@@ -434,25 +434,47 @@ const PUBLIC_SNIPPET_CHARS: usize = 400;
 /// The text Google shows under one organic result link, found without class
 /// names (they change): the largest ancestor of `anchor`, up to
 /// [`RESULT_BLOCK_DEPTH`] levels, that holds no other result link. Its text
-/// outside the link (title and breadcrumb) and outside scripts or styles is
-/// the snippet. A leading date ("Mar 5, 2024 — ", "3 days ago · ") moves to
-/// `source_date`, as SerpAPI's `date` does. Empty when the link stands alone.
+/// after the link (so not the title, breadcrumb or anything placed before the
+/// card) and outside scripts or styles is the snippet. A leading date
+/// ("Mar 5, 2024 — ", "3 days ago · ") moves to `source_date`, as SerpAPI's
+/// `date` does. Empty when the link stands alone.
+///
+/// The block is trusted only when the walk stopped because the next ancestor
+/// holds another result, making it one slot among several. When it reaches
+/// `body` or the depth limit first, nothing bounds it from the page's other
+/// modules, so the result gets no snippet and no date; its title, URL and rank
+/// come from elsewhere and stay. Known limit: a module nested after the
+/// snippet inside a proven slot cannot be told apart by structure, so it can
+/// add to the snippet's tail (cut at [`PUBLIC_SNIPPET_CHARS`]) but never set
+/// the date, which must lead.
 fn public_snippet(anchor: ElementRef<'_>, linked_headings: &Selector) -> (Option<String>, String) {
     let mut block = None;
+    let mut proven = false;
     for node in anchor.ancestors().take(RESULT_BLOCK_DEPTH) {
         let Some(element) = ElementRef::wrap(node) else {
             break;
         };
-        if matches!(element.value().name(), "body" | "html") || element.select(linked_headings).nth(1).is_some() {
+        // The neighbour test comes first: result slots directly under `body`
+        // are still proven by each other.
+        if element.select(linked_headings).nth(1).is_some() {
+            proven = true;
+            break;
+        }
+        if matches!(element.value().name(), "body" | "html") {
             break;
         }
         block = Some(element);
     }
-    let Some(block) = block else {
+    let Some(block) = block.filter(|_| proven) else {
         return (None, String::new());
     };
     let mut text = String::new();
+    let mut after_link = false;
     for node in block.descendants() {
+        if node.id() == anchor.id() {
+            after_link = true;
+            continue;
+        }
         let Some(piece) = node.value().as_text() else {
             continue;
         };
@@ -460,7 +482,7 @@ fn public_snippet(anchor: ElementRef<'_>, linked_headings: &Selector) -> (Option
             up.id() != anchor.id()
                 && !ElementRef::wrap(up).is_some_and(|el| matches!(el.value().name(), "script" | "style"))
         });
-        if outside {
+        if after_link && outside {
             text.push_str(piece);
             text.push(' ');
         }
@@ -568,7 +590,7 @@ impl WebTool {
     /// before its request may leave (none when the last public search is older
     /// than the pace), plus one second for the request. Before, the whole pace
     /// (at least 3 s) was held back on every search, which halved a keyed
-    /// provider's share of the shipped 8 s deadline.
+    /// provider's share of an 8 s deadline.
     pub(super) fn public_search_reserve(&self) -> Duration {
         let pace = Duration::from_millis(self.limits.pace_ms.max(PUBLIC_SEARCH_PACE_FLOOR_MS));
         let last = *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner());
@@ -2206,7 +2228,7 @@ mod tests {
     async fn a_keyed_provider_keeps_the_time_public_google_cannot_use() {
         // The discriminator is each attempt's `budget_ms`, computed from config
         // before any request leaves, so runner load cannot hide a wrong reserve.
-        // The 2.5 s "late" answer then shows the budget is honoured; the shipped
+        // The 2.5 s "late" answer then shows the budget is honoured; this test's
         // 8 s deadline leaves it seconds of slack on a loaded runner.
         //
         // No pacing wait is due: SerpAPI gets 8 - 1 = 7 s. Holding back the whole
@@ -2230,10 +2252,12 @@ mod tests {
 
         // A public search just left: its pacing wait is due, so the reserve is
         // the old one and public Google still gets its turn after a slow hop.
+        // The bounds only tell "pace counted" (about 4 s) from "not counted"
+        // (1 s), so time spent between the two lines below cannot fail them.
         *chain.web.public_search_sent.lock().unwrap() = Some(tokio::time::Instant::now());
         let reserve = chain.web.public_search_reserve();
         assert!(
-            reserve > Duration::from_millis(3900) && reserve <= Duration::from_secs(4),
+            reserve > Duration::from_secs(3) && reserve <= Duration::from_secs(4),
             "{reserve:?}"
         );
 
@@ -2619,8 +2643,9 @@ mod tests {
         assert_eq!(rows[0].snippet, "About widgets — not a date.");
         assert_eq!(rows[0].source_date, None);
         assert_eq!(rows[1].snippet, "", "a link with no text beside it has no snippet");
+        // A second result proves the first one's block; the cut is what this tests.
         let long = format!(
-            r#"<div><a href="https://c.example.com/"><h3>C</h3></a><p>{}</p></div>"#,
+            r#"<div><a href="https://c.example.com/"><h3>C</h3></a><p>{}</p></div><div><a href="https://d.example.com/"><h3>D</h3></a></div>"#,
             "word ".repeat(400)
         );
         let cut = public_results(&long, 5).unwrap()[0].snippet.chars().count();
@@ -2628,6 +2653,83 @@ mod tests {
             (PUBLIC_SNIPPET_CHARS - 5..=PUBLIC_SNIPPET_CHARS).contains(&cut),
             "{cut}"
         );
+    }
+
+    /// A snippet and date belong to a result only when its block is bounded by
+    /// a neighbouring result; a page module next to it is never attributed.
+    /// Plain `div`s throughout, so nothing passes by tag name.
+    #[test]
+    fn public_snippets_stay_inside_their_own_result() {
+        let snippet_of = |html: &str| -> Vec<(String, String, usize, Option<String>, String)> {
+            public_results(html, 10)
+                .unwrap()
+                .into_iter()
+                .map(|r| (r.title, r.url, r.rank, r.source_date, r.snippet))
+                .collect()
+        };
+        let card = r#"<div><a href="https://garden.example.org/"><h3>Botanical garden</h3></a><div>Guided tours on Sundays.</div></div>"#;
+        let garden = |date: Option<&str>, snippet: &str| {
+            (
+                "Botanical garden".to_string(),
+                "https://garden.example.org/".to_string(),
+                1,
+                date.map(String::from),
+                snippet.to_string(),
+            )
+        };
+        // This issue's case: one card beside a module that leads with a date.
+        let lone_after_module =
+            format!(r#"<div id="main"><div><span>Mar 5, 2024</span> — Library opening hours</div>{card}</div>"#);
+        assert_eq!(snippet_of(&lone_after_module), [garden(None, "")]);
+        let lone_before_module = format!(r#"<div id="main">{card}<div>Jan 1, 2020 — People also ask</div></div>"#);
+        assert_eq!(snippet_of(&lone_before_module), [garden(None, "")]);
+
+        // Several cards and modules as siblings in one container: each row keeps
+        // its own text and date, and no module's.
+        let shared = format!(
+            r#"<div id="main"><div>Mar 5, 2024 — Library opening hours</div>{card}<div>Jan 1, 2020 — People also ask</div><div><a href="https://zoo.example.org/"><h3>City zoo</h3></a><div>3 days ago · Open daily</div></div></div>"#
+        );
+        let rows = snippet_of(&shared);
+        assert_eq!(rows[0], garden(None, "Guided tours on Sundays."));
+        assert_eq!(
+            rows[1],
+            (
+                "City zoo".to_string(),
+                "https://zoo.example.org/".to_string(),
+                2,
+                Some("3 days ago".to_string()),
+                "Open daily".to_string()
+            )
+        );
+
+        // A module placed before the card inside a slot a neighbour proves.
+        let leading_in_slot = format!(
+            r#"<div id="main"><div><div>Mar 5, 2024 — Library opening hours</div>{card}</div><div><a href="https://zoo.example.org/"><h3>City zoo</h3></a></div></div>"#
+        );
+        assert_eq!(
+            snippet_of(&leading_in_slot)[0],
+            garden(None, "Guided tours on Sundays.")
+        );
+
+        // Known limit: a module after the snippet in a proven slot adds to its
+        // tail, but cannot set the date.
+        let trailing_in_slot = format!(
+            r#"<div id="main"><div>{card}<div>Jan 1, 2020 — People also ask</div></div><div><a href="https://zoo.example.org/"><h3>City zoo</h3></a></div></div>"#
+        );
+        assert_eq!(
+            snippet_of(&trailing_in_slot)[0],
+            garden(None, "Guided tours on Sundays. Jan 1, 2020 — People also ask")
+        );
+
+        // Nested deeper than the walk looks, the card's neighbour is never seen.
+        let deep = format!(
+            r#"<div id="main">{}{card}{}<div><a href="https://zoo.example.org/"><h3>City zoo</h3></a><div>Open daily</div></div></div>"#,
+            "<div>".repeat(RESULT_BLOCK_DEPTH),
+            "</div>".repeat(RESULT_BLOCK_DEPTH)
+        );
+        let rows = snippet_of(&deep);
+        assert_eq!(rows[0], garden(None, ""));
+        assert_eq!(rows[1].4, "Open daily");
     }
 
     #[test]
