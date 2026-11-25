@@ -206,11 +206,10 @@ function nameOf(node) {
 
 // Roles, names and refs come from Playwright's own aria snapshot, the same
 // engine getByRef/getByRole resolve with, so what the model sees is clickable.
-async function inputKind(node) {
-  if (!TEXT_ROLES.has(node.role)) return "none";
+async function inputKind(ref) {
   try {
     const [type, autocomplete] = await page
-      .getByRef(node.ref)
+      .getByRef(ref)
       .evaluate((el) => [el.getAttribute("type") || "", el.getAttribute("autocomplete") || ""], null, { timeout: 2000 });
     return type.toLowerCase() === "password" || /password|one-time-code|cc-/i.test(autocomplete) ? "secret" : "text";
   } catch {
@@ -276,6 +275,7 @@ async function observe(view = {}) {
   const find = typeof view.find === "string" ? fold(view.find.trim()).slice(0, MAX_FIND_CHARS) : "";
   const pageNo = Number.isInteger(view.page) && view.page > 0 ? view.page : 1;
   const elements = [];
+  const inputChecks = [];
   let matched = 0;
   const optionBudget = { left: MAX_OPTION_CHARS };
   const walk = async (nodes) => {
@@ -290,8 +290,11 @@ async function observe(view = {}) {
             role: node.role,
             name,
             href: node.url ? absolute(node.url) : null,
-            input: await inputKind(node),
+            input: "none",
           };
+          if (TEXT_ROLES.has(node.role)) {
+            inputChecks.push(inputKind(node.ref).then((input) => { element.input = input; }));
+          }
           const options = node.role === "combobox" || node.role === "listbox" ? optionNames(node, optionBudget) : [];
           if (options.length) element.options = options;
           elements.push(element);
@@ -301,6 +304,7 @@ async function observe(view = {}) {
     }
   };
   await walk(await page.ariaSnapshotJSON({ mode: "ai", timeout: 5000 }));
+  await Promise.all(inputChecks);
   const body = (await page.locator("body").innerText({ timeout: 5000 })).replace(/\s+/g, " ").trim();
   const shown = find ? excerpts(body, find) : body;
   const result = {
@@ -838,17 +842,37 @@ async function handle(message) {
     case "navigate": {
       const before = blockedLoads;
       const large = oversized;
+      // A failed goto names the starting URL even when a redirect was refused.
+      // Follow only this main-frame navigation's redirect responses.
+      let nextUrl = new URL(message.url);
+      nextUrl.hash = "";
+      let outside;
+      const redirect = (response) => {
+        if (!response.request().isNavigationRequest() || response.frame() !== page.mainFrame() ||
+            response.url() !== nextUrl.href || ![301, 302, 303, 307, 308].includes(response.status())) return;
+        const location = response.headers().location;
+        if (!location) return;
+        try {
+          nextUrl = new URL(location, response.url());
+          nextUrl.hash = "";
+          if (!allowed(nextUrl.href)) outside = originOf(nextUrl.href);
+        } catch {}
+      };
+      page.on("response", redirect);
       await page.goto(message.url, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(async (error) => {
-        if (blockedLoads === before && oversized === large) throw error;
-        // Chrome commits its error page a moment after a refused load; a
-        // navigate sent before that would be interrupted by it.
-        await page.waitForEvent("framenavigated", { timeout: 1000 }).catch(() => {});
+        const deniedRedirect = outside && String(error.message).includes("ERR_BLOCKED_BY_CLIENT");
+        if (!deniedRedirect && blockedLoads === before && oversized === large) throw error;
+        // Wait for Chrome's error page before the model tries another navigation.
+        await page.waitForEvent("framenavigated", { predicate: (frame) => frame === page.mainFrame(), timeout: 1000 }).catch(() => {});
+        if (deniedRedirect) {
+          throw Object.assign(new Error("Page redirect requires a separate browser grant"), { redirectOrigin: outside });
+        }
         if (oversized !== large) {
           throw new Error(`that page is larger than the ${MAX_DOCUMENT_BYTES / 1048576} MiB a browser task reads`);
         }
         // Not the URL: the reason is the operator's rule, and the model has the URL.
         throw new Error("the operator's web block list covers that page");
-      });
+      }).finally(() => page.off("response", redirect));
       // A page that renders from a fetch is still a shell at domcontentloaded.
       await settle();
       return observe();
@@ -923,7 +947,7 @@ async function answer(message) {
   try {
     send({ id: message.id, ok: true, result: await handle(message) });
   } catch (error) {
-    send({ id: message?.id, ok: false, error: String(error.message || error).slice(0, 300) });
+    send({ id: message?.id, ok: false, error: String(error.message || error).slice(0, 300), redirect_origin: error.redirectOrigin });
   } finally {
     acting = false;
   }

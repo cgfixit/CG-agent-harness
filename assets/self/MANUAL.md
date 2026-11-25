@@ -139,7 +139,7 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/agent [help]`: Coding command help. See the coding workflow.
 - `/analytics`: Read session, spend and coding analytics.
 - `/api`, `/api set <KEY> <value>`, `/api clear <KEY>`: Manage a supported credential.
-- `/browse <site> [site ...] <task>`: Administrator browser task on the named sites only (browser use)
+- `/browse <site> [site ...] <task>`: Administrator browser task on the named sites only. Blocked redirects are reported separately; other ungranted sites appear in **Page request…
 - `/clear`: Clear display, staged reviews and continuation.
 - `/connectors`: Connector catalog; does not activate connectors
 - `/diag [status]`, `/diag audit|spend|unslop|errors [flags]`, `/diag inject|forget`: Read allowlisted logs or stage one excerpt.

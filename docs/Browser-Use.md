@@ -15,8 +15,7 @@ and a temporary profile. In `browser/` run
 `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --ignore-scripts`.
 Desktop requires an absolute `browser.sidecar` path. The sidecar receives
 an allowlisted environment without provider or GitHub credentials.
-Grants discard paths and queries. Task text uses a private temporary file
-and is hashed for audit.
+Task text travels in a private file and is hashed for audit.
 
 ARIA observations carry expiring refs, 40 elements and 4,000 characters.
 `observe` supports `page` and `find`. A tuned window too small for the task
@@ -26,23 +25,26 @@ later model call returns the partial report with `finished: false` and
 `report.stopped`. Three consecutive failures end a task.
 macOS and Linux use detached jobs. Windows uses the synchronous endpoint.
 
-- Grants are public exact origins from the request. The host checks every
-  request and redirect against current block policy. The authenticated
+- Each task grants exact public origins independently of the web allowlist.
+  When `navigate` hits an ungranted redirect, the result names its origin. Use
+  `/browse https://www.python.org/ read the first sentence` for Python’s homepage.
+  Expand **Page request details** to inspect other origins the page requested.
+  The host checks each request and redirect against current block policy. The authenticated
   loopback proxy pins public addresses. Private access is fixture-only.
   `navigate` accepts a task URL, granted root, page URL or shown link.
 - Playwright routing holds methods other than GET and HEAD. Browser-wide
   CDP Fetch repeats the hold as defense in depth, without an independent
-  fixture for that hold. Text outside the task or page is held. Password and
-  one-time-code fields end the task with a handoff.
+  fixture for that hold. Text outside the task or page is held. Each observation
+  checks text fields concurrently. Targeting a secret field or one whose
+  attributes could not be read ends the task with a handoff.
 - With `browser.takeover.enabled` (shipped true), the job owner can approve
   one request caused by a model action. `POST /api/browser/jobs/{job_id}/approve`
-  needs the request ID, body SHA-256, confirmation and reason. The pass binds
-  method, URL and body under current policy. The wait ends at the earlier
+  needs the request ID, body SHA-256, confirmation and reason. Approval binds method, URL and body under current policy. The wait ends at the earlier
   of `browser.takeover.wait_sec` and the task deadline. Background holds
   are reported without an approval prompt.
 - Temporary profiles can survive a kill until the next task or server start.
   Ungranted origins, workers and documents over 16 MiB are blocked.
-  The profile confines WebRTC to proxied TCP. ARIA provides no screenshot.
+  WebRTC uses proxied TCP. ARIA provides no screenshot.
   Alerts are reported and dismissed. `/goal` and `/loop` have no browser tools.
 
 [Source](../src/common/browser_host.rs) and
@@ -52,11 +54,8 @@ Run Chrome fixtures as an unprivileged user with its sandbox on.
 
 ## Roadmap: broader browser use
 
-1. Broader takeover: approve one of the page's own listed requests or resume
-   after a hand-off. Jobs already offer one-shot approval for requests caused
-   by a model action.
-2. Subresource policy: let GET subresources load from public origins without
-   cookies while navigation stays on granted origins.
+1. Let operators approve a page-initiated request or resume after handoff.
+2. Allow cookieless public GET subresources while keeping navigation on granted origins.
 
 ## Roadmap: computer use
 
