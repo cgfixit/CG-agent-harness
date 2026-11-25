@@ -3,7 +3,7 @@
 
 #![allow(dead_code)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use cgagentharness::common::config::AppConfig;
-use cgagentharness::common::credential_store::CredentialStore;
+use cgagentharness::common::credential_store::{CredentialStore, OsCredentialStore, StoreError};
 use cgagentharness::common::home::Home;
 use cgagentharness::server::state::AppState;
 use cgagentharness::server::{build_app, AppOptions};
@@ -200,8 +200,13 @@ pub struct ServerOptions {
     pub resolve_extra: Vec<(String, SocketAddr)>,
     /// Test hook: a fixture URL standing in for the fixed Tavily endpoint.
     pub tavily_search: Option<url::Url>,
-    /// Test hook. `None` uses the OS credential store when the plaintext opt-in is off.
+    /// Test hook: the credential store the server uses. `None` gives a fresh
+    /// [`MemoryCredentialStore`], never the operator's real OS store.
     pub credential_store: Option<Arc<dyn CredentialStore>>,
+    /// Opt in to the real OS credential store (Keychain, Credential Manager,
+    /// Secret Service). A test that sets this holds an [`OsCredentialCleanup`]
+    /// for every name it saves; `tests/invariant_guard.rs` checks the pairing.
+    pub os_credential_store: bool,
 }
 
 impl Default for ServerOptions {
@@ -238,6 +243,7 @@ impl Default for ServerOptions {
             resolve_extra: Vec::new(),
             tavily_search: None,
             credential_store: None,
+            os_credential_store: false,
         }
     }
 }
@@ -246,6 +252,65 @@ impl ServerOptions {
     pub fn with(mut self, key: &str, value: &str) -> Self {
         self.overrides.push((key.to_string(), value.to_string()));
         self
+    }
+}
+
+/// In-memory [`CredentialStore`]. Every test server gets one unless the test
+/// injects its own store or sets [`ServerOptions::os_credential_store`], so
+/// `cargo test` never leaves entries in the operator's OS credential store.
+#[derive(Default)]
+pub struct MemoryCredentialStore(std::sync::Mutex<BTreeMap<String, String>>);
+
+impl CredentialStore for MemoryCredentialStore {
+    fn get(&self, name: &str) -> Result<Option<String>, StoreError> {
+        Ok(self.0.lock().unwrap_or_else(|p| p.into_inner()).get(name).cloned())
+    }
+    fn set(&self, name: &str, value: &str) -> Result<(), StoreError> {
+        self.0
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(name.to_string(), value.to_string());
+        Ok(())
+    }
+    fn delete(&self, name: &str) -> Result<(), StoreError> {
+        self.0.lock().unwrap_or_else(|p| p.into_inner()).remove(name);
+        Ok(())
+    }
+}
+
+/// [`AppOptions::new`] with a [`MemoryCredentialStore`]. Tests build options
+/// only through this or [`prepare_server`]; `tests/invariant_guard.rs` refuses
+/// a bare `AppOptions::new` under `tests/`.
+pub fn app_options(home: Home) -> AppOptions {
+    let mut options = AppOptions::new(home);
+    options.credential_store = Some(Arc::new(MemoryCredentialStore::default()));
+    options
+}
+
+/// Deletes the named entries from the real OS credential store on drop,
+/// including when the test panics. The store is resolved at construction,
+/// while the home still exists, so the canonical service name matches the
+/// server's (`/var` and `/private/var` differ on macOS).
+pub struct OsCredentialCleanup {
+    store: OsCredentialStore,
+    names: Vec<String>,
+}
+
+impl OsCredentialCleanup {
+    pub fn new(home: &Path, names: &[&str]) -> Self {
+        Self {
+            store: OsCredentialStore::for_home(home),
+            names: names.iter().map(|name| name.to_string()).collect(),
+        }
+    }
+}
+
+impl Drop for OsCredentialCleanup {
+    fn drop(&mut self) {
+        for name in &self.names {
+            // Best effort: an absent entry or a locked store leaves nothing to remove.
+            let _ = self.store.delete(name);
+        }
     }
 }
 
@@ -280,7 +345,7 @@ pub async fn prepare_server(model_url: &str, opts: ServerOptions) -> PreparedSer
         overrides.push((k.as_str(), v.as_str()));
     }
     let cfg = config_with(&home_dir, &overrides);
-    let mut app_opts = AppOptions::new(home);
+    let mut app_opts = app_options(home);
     app_opts.config = Some(cfg);
     app_opts.api_key = opts.api_key.clone();
     if opts.deny_all_tools {
@@ -290,7 +355,15 @@ pub async fn prepare_server(model_url: &str, opts: ServerOptions) -> PreparedSer
     app_opts.web_test_public_search = opts.public_search;
     app_opts.web_test_resolve_extra = opts.resolve_extra;
     app_opts.web_test_tavily_search = opts.tavily_search;
-    app_opts.credential_store = opts.credential_store;
+    assert!(
+        !(opts.os_credential_store && opts.credential_store.is_some()),
+        "os_credential_store and an injected credential_store conflict"
+    );
+    if opts.os_credential_store {
+        app_opts.credential_store = None;
+    } else if let Some(store) = opts.credential_store {
+        app_opts.credential_store = Some(store);
+    }
     app_opts.shim_exe = Some(opts.shim_exe.unwrap_or_else(|| PathBuf::from(BIN)));
     PreparedServer {
         tmp,
