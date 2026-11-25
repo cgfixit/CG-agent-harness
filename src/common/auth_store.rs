@@ -175,19 +175,22 @@ fn same_credential(checked: &UserRow, current: &UserRow) -> bool {
 /// `count_unknown_failure` for what is forgotten first.
 const UNKNOWN_FAILURE_ENTRIES: usize = 16_384;
 
-/// Sign-in failures for a username with no account, kept only in memory. They
-/// follow the arithmetic of `UserRow::failed_count` and `locked_until_ts`, so a
-/// name with no account locks out exactly when a real one would: otherwise the
-/// first `AUTH_ACCOUNT_LOCKED` would tell a guesser which names exist.
-#[derive(Clone, Copy)]
+/// Sign-in failures for a username with no account. They follow the arithmetic
+/// of `UserRow::failed_count` and `locked_until_ts`, and are stored with it
+/// (`auth_sqlite::record_login_failure`) so they survive a restart as an
+/// account's do: a name with no account locks out exactly when a real one
+/// would, otherwise the first `AUTH_ACCOUNT_LOCKED` would tell a guesser which
+/// names exist. Forgetting at the cap is the one remaining difference.
+#[derive(Clone, Copy, Debug, PartialEq)]
 struct UnknownFailures {
     count: u32,
     locked_until_ts: f64,
     last_ts: f64,
 }
 
-/// Counts one failure for `key` at `now`, or returns the end of an active
-/// lockout; the check and the count are one step, under the caller's lock.
+/// Counts one failure for `key` at `now` and returns the names forgotten to
+/// make room, with what they held, or returns the end of an active lockout;
+/// the check and the count are one step, under the caller's lock.
 /// At the cap, names idle longer than the longest lockout are forgotten
 /// first, then the least recently failed name that is not locked at `now`,
 /// and a locked one only when every remembered name is locked: forgetting a
@@ -199,9 +202,16 @@ fn count_unknown_failure(
     failures: &mut HashMap<String, UnknownFailures>,
     key: String,
     now: f64,
-) -> std::result::Result<(), f64> {
+) -> std::result::Result<Vec<(String, UnknownFailures)>, f64> {
+    let mut forgotten = Vec::new();
     if !failures.contains_key(&key) && failures.len() >= UNKNOWN_FAILURE_ENTRIES {
-        failures.retain(|_, f| now - f.last_ts < authn::LOCKOUT_CEILING_SEC);
+        failures.retain(|k, f| {
+            let keep = now - f.last_ts < authn::LOCKOUT_CEILING_SEC;
+            if !keep {
+                forgotten.push((k.clone(), *f));
+            }
+            keep
+        });
         if failures.len() >= UNKNOWN_FAILURE_ENTRIES {
             let oldest = |locked: bool| {
                 failures
@@ -211,7 +221,9 @@ fn count_unknown_failure(
                     .map(|(k, _)| k.clone())
             };
             if let Some(oldest) = oldest(false).or_else(|| oldest(true)) {
-                failures.remove(&oldest);
+                if let Some(f) = failures.remove(&oldest) {
+                    forgotten.push((oldest, f));
+                }
             }
         }
     }
@@ -226,7 +238,7 @@ fn count_unknown_failure(
     entry.count = entry.count.saturating_add(1);
     entry.locked_until_ts = authn::next_lock_until(entry.count, now);
     entry.last_ts = now;
-    Ok(())
+    Ok(forgotten)
 }
 
 /// Longest interval between idle-window slides of a live session.
@@ -242,10 +254,12 @@ pub struct AuthManager {
     restricted_absolute_timeout_sec: f64,
     max_sessions_per_account: usize,
     state: Mutex<(rusqlite::Connection, AuthDb)>,
-    /// Keyed by a hash of the canonical name, so no typed username (or a
-    /// password typed into the username field) is held. Never held together
-    /// with `state`.
+    /// Keyed by an HMAC of the canonical name under `name_key`, so no typed
+    /// username (or a password typed into the username field) is held or
+    /// stored. Taken before `state` when both are held, never after.
     unknown_failures: Mutex<HashMap<String, UnknownFailures>>,
+    /// The store's random key for `unknown_failures` names.
+    name_key: [u8; 32],
     fresh_bootstrap: std::sync::atomic::AtomicBool,
     clock: Box<dyn Fn() -> f64 + Send + Sync>,
 }
@@ -317,6 +331,18 @@ impl AuthManager {
                 db = rotated;
             }
         }
+        let (name_key, remembered) = sqlite::load_login_failures(&mut connection, UNKNOWN_FAILURE_ENTRIES)?;
+        let remembered = remembered
+            .into_iter()
+            .map(|(key, (count, locked_until_ts, last_ts))| {
+                let failures = UnknownFailures {
+                    count,
+                    locked_until_ts,
+                    last_ts,
+                };
+                (key, failures)
+            })
+            .collect();
         let mgr = Self {
             path: path.to_path_buf(),
             idle_timeout_sec,
@@ -325,7 +351,8 @@ impl AuthManager {
             restricted_absolute_timeout_sec,
             max_sessions_per_account,
             state: Mutex::new((connection, db)),
-            unknown_failures: Mutex::new(HashMap::new()),
+            unknown_failures: Mutex::new(remembered),
+            name_key,
             fresh_bootstrap: std::sync::atomic::AtomicBool::new(fresh),
             clock: Box::new(super::now_ts),
         };
@@ -844,17 +871,18 @@ impl AuthManager {
     /// A sign-in for a name with no account, answered as a wrong password for
     /// a real one would be: refused as locked before any check while its
     /// remembered failures say so, otherwise one check against the dummy
-    /// record and one counted failure. Status, body and lockout timing then
-    /// do not say whether the name exists. It writes nothing to the store, as
-    /// before: a real failure's one store rewrite (a few milliseconds) is the
-    /// remaining difference, measured within sign-in noise.
+    /// record and one counted failure, stored before it is answered as a real
+    /// failure is. Status, body and lockout timing then do not say whether
+    /// the name exists, across restarts too. A real failure rewrites the
+    /// account tables and this writes one row: both are one synchronous
+    /// commit, so the difference is smaller than the earlier no-write path's.
     fn fail_unknown(
         &self,
         canonical: &str,
         password: &str,
         verify: impl Fn(&str, &str) -> (bool, bool),
     ) -> Result<LoginResult> {
-        let key = authn::hash_token(canonical);
+        let key = self.name_hash(canonical);
         let now = self.now();
         if let Some(until) = self.unknown_locked_until(&key, now) {
             return Err(HarnessError::auth_locked((until - now).max(0.0), canonical));
@@ -866,10 +894,16 @@ impl AuthManager {
             return Err(HarnessError::auth_login_failed());
         }
         // A lockout that started while this check ran refuses it.
-        if let Err(retry_after) = self.record_unknown_failure(key) {
+        if let Err(retry_after) = self.record_unknown_failure(key)? {
             return Err(HarnessError::auth_locked(retry_after, canonical));
         }
         Err(HarnessError::auth_login_failed())
+    }
+
+    /// The `unknown_failures` key for a canonical name.
+    fn name_hash(&self, canonical: &str) -> String {
+        let digest = super::audit::hmac_sha256(&self.name_key, canonical.as_bytes());
+        digest.iter().map(|b| format!("{b:02x}")).collect()
     }
 
     /// When the remembered failures of a name with no account lock it out.
@@ -886,11 +920,30 @@ impl AuthManager {
     /// Read before the lock, an attempt could find a later attempt's failure
     /// already recorded, and a failure below the threshold stores a lock that
     /// ends when it was recorded, so that later time would refuse this
-    /// attempt as locked where a real account counts it.
-    fn record_unknown_failure(&self, key: String) -> std::result::Result<(), f64> {
+    /// attempt as locked where a real account counts it. The count is stored
+    /// before either lock is released; a refused write restores the table and
+    /// fails the attempt as a refused account write does.
+    fn record_unknown_failure(&self, key: String) -> Result<std::result::Result<(), f64>> {
         let mut failures = self.unknown_failures.lock().unwrap_or_else(|p| p.into_inner());
+        let mut stored = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let now = self.now();
-        count_unknown_failure(&mut failures, key, now).map_err(|until| (until - now).max(0.0))
+        let before = failures.get(&key).copied();
+        let forgotten = match count_unknown_failure(&mut failures, key.clone(), now) {
+            Ok(forgotten) => forgotten,
+            Err(until) => return Ok(Err((until - now).max(0.0))),
+        };
+        let counted = failures[&key];
+        let names: Vec<String> = forgotten.iter().map(|(k, _)| k.clone()).collect();
+        let row = (counted.count, counted.locked_until_ts, counted.last_ts);
+        if let Err(error) = sqlite::record_login_failure(&mut stored.0, &key, row, &names) {
+            match before {
+                Some(before) => failures.insert(key, before),
+                None => failures.remove(&key),
+            };
+            failures.extend(forgotten);
+            return Err(error);
+        }
+        Ok(Ok(()))
     }
 
     /// Live means: exists, not revoked, within both the absolute expiry and the
@@ -1600,13 +1653,75 @@ mod tests {
         assert!(auth.get_user("nobody").is_none());
         // The table holds a hash of the name, never the name itself.
         let failures = auth.unknown_failures.lock().unwrap();
-        assert!(failures.contains_key(&authn::hash_token("nobody")));
+        assert!(failures.contains_key(&auth.name_hash("nobody")));
         assert!(!failures.contains_key("nobody"));
+        assert!(
+            !failures.contains_key(&authn::hash_token("nobody")),
+            "the name key is keyed"
+        );
     }
 
     /// A flood of made-up names stops growing memory at the cap. Names idle
     /// past the longest lockout go first, then the least recently failed; a
     /// name that is locked right now survives a flood that arrives later.
+    /// A restart keeps the failures of a name with no account as it keeps an
+    /// account's, so after one the two still answer alike: both re-lock on
+    /// the next failure. Memory-only failures once restarted the unknown name
+    /// at zero, answering 401 where the account answered 423.
+    #[test]
+    fn a_name_with_no_account_keeps_its_failures_across_a_restart() {
+        let (dir, mut auth) = store();
+        let path = dir.path().join("auth.db");
+        let clock = std::sync::Arc::new(std::sync::Mutex::new(1_000.0_f64));
+        let read = clock.clone();
+        auth.set_clock(Box::new(move || *read.lock().unwrap()));
+        let [password, wrong] = [(); 2].map(|_| crate::common::random_hex(24));
+        auth.create_user("alice", &password, "operator").unwrap();
+        let tick = |by: f64| *clock.lock().unwrap() += by;
+        // Six counted failures each, stepping past every lockout in between.
+        for _ in 0..6 {
+            assert_eq!(attempt(&auth, "alice", &wrong).code, "AUTH_LOGIN_FAILED");
+            assert_eq!(attempt(&auth, "zed", &wrong).code, "AUTH_LOGIN_FAILED");
+            tick(authn::LOCKOUT_CEILING_SEC);
+        }
+        drop(auth);
+
+        let cfg = AppConfig::from_str("{}", Path::new("config.yaml")).unwrap();
+        let mut auth = AuthManager::open(&path, &cfg).unwrap();
+        let read = clock.clone();
+        auth.set_clock(Box::new(move || *read.lock().unwrap()));
+        assert_eq!(failed_count(&auth, "alice"), 6, "the account's count survived");
+        let seen = |name: &str| -> Vec<Seen> { (0..2).map(|_| attempt(&auth, name, &wrong)).collect() };
+        let real = seen("alice");
+        let codes: Vec<&str> = real.iter().map(|seen| seen.code.as_str()).collect();
+        assert_eq!(codes, ["AUTH_LOGIN_FAILED", "AUTH_ACCOUNT_LOCKED"]);
+        assert_eq!(seen("zed"), real, "the two names must still look the same");
+        assert!(auth.get_user("zed").is_none());
+    }
+
+    /// A refused failure write fails the attempt as a refused account write
+    /// does, and leaves the remembered count where the store has it.
+    #[test]
+    fn a_refused_unknown_failure_write_counts_nothing() {
+        let (_dir, auth) = store();
+        let wrong = crate::common::random_hex(24);
+        assert_eq!(attempt(&auth, "zed", &wrong).code, "AUTH_LOGIN_FAILED");
+        auth.state
+            .lock()
+            .unwrap()
+            .0
+            .execute_batch(
+                "CREATE TRIGGER refuse_failure BEFORE INSERT ON login_failures \
+                 BEGIN SELECT RAISE(ABORT, 'simulated storage failure'); END;",
+            )
+            .unwrap();
+        assert_eq!(attempt(&auth, "zed", &wrong).code, "AUTH_CONFIG_INVALID");
+        assert_eq!(attempt(&auth, "yan", &wrong).code, "AUTH_CONFIG_INVALID");
+        let failures = auth.unknown_failures.lock().unwrap();
+        assert_eq!(failures[&auth.name_hash("zed")].count, 1);
+        assert!(!failures.contains_key(&auth.name_hash("yan")));
+    }
+
     #[test]
     fn remembered_unknown_names_stay_within_the_cap() {
         let (_dir, auth) = store();
@@ -1652,9 +1767,9 @@ mod tests {
     fn a_failure_counted_at_or_after_the_last_one_is_never_refused_below_the_threshold() {
         let key = || authn::hash_token("nobody");
         let mut failures = HashMap::new();
-        assert_eq!(count_unknown_failure(&mut failures, key(), 1_000.002), Ok(()));
-        assert_eq!(count_unknown_failure(&mut failures, key(), 1_000.002), Ok(()));
-        assert_eq!(count_unknown_failure(&mut failures, key(), 1_000.003), Ok(()));
+        assert_eq!(count_unknown_failure(&mut failures, key(), 1_000.002), Ok(vec![]));
+        assert_eq!(count_unknown_failure(&mut failures, key(), 1_000.002), Ok(vec![]));
+        assert_eq!(count_unknown_failure(&mut failures, key(), 1_000.003), Ok(vec![]));
         assert_eq!(failures[&key()].count, 3);
         // The hazard the lock order removes: a time read before a later
         // failure was recorded would be refused, with nothing counted.

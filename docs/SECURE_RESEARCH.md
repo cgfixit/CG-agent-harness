@@ -30,6 +30,8 @@ retry. A harness API key cannot grant account access. See
 Preserve it with `auth.initialized` during offline recovery. A missing
 initialized database, bad schema or unsafe file refuses startup. Legacy
 `auth.json` migration keeps a backup.
+The database also keeps sign-in failures for nonexistent names (HMAC-keyed,
+capped at 16,384 names), so a restart does not reset their lockout.
 `auth.session` sets idle and absolute expiry and the per-account cap.
 A sign-in past `max_per_account` (shipped 8) ends that account's least
 recently used session. Capacity refusals return 409 `AUTH_LIMIT`.
