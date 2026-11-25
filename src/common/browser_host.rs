@@ -2014,7 +2014,9 @@ impl ScriptedOperator {
 /// - the identical POST sent again is a new question, and refused it is held;
 /// - a denied POST and one whose answer comes after the wait never arrive;
 /// - a block rule added while the operator decides stops an approved POST;
-/// - an approved form POST loads its result, a denied one leaves the page.
+/// - an approved form POST loads its result, a denied one leaves the page;
+/// - a form the page submits while it parses is held, never sent, and the
+///   navigate that opened the page still returns it.
 ///
 /// The operator is asked with the method, whole URL, size, SHA-256 and text
 /// of the body that would be sent.
@@ -2032,6 +2034,8 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         ("/api/save", Reply::Html("SAVED".to_string())),
         ("/api/order", Reply::Html(TAKEOVER_RESULT_PAGE.to_string())),
         ("/api/beacon", Reply::Html(String::new())),
+        ("/autosubmit", Reply::Html(GUARD_AUTOSUBMIT_PAGE.to_string())),
+        ("/submitted", Reply::Html("<p>SUBMITTED</p>".to_string())),
     ])?;
     let session = Session::general([&origin]).map_err(|err| format!("{err:?}"))?;
     let base = format!("http://127.0.0.1:{port}");
@@ -2146,6 +2150,26 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         return Err(format!("a denied POST was sent, or not listed as held: {page}"));
     }
     lines.push("denied -> held, not sent".into());
+
+    // A form the page submits while it parses, with takeover on: navigate
+    // still returns the page, the load is held for the operator, and it is
+    // never sent. Whether the operator is asked first is not checked here: a
+    // page's own load may be paused and refused, or held outright.
+    operator.plan([Verdict::Deny]);
+    let (page, _) = guard_call(
+        &mut sidecar,
+        &mut lines,
+        json!({"op":"navigate","url": format!("{base}/autosubmit")}),
+    )?;
+    if rows(&page, "held") != [format!("POST {base}/submitted")]
+        || !page["text"].as_str().unwrap_or("").contains("AUTOSUBMIT-PAGE")
+        || count("POST /submitted") != 0
+    {
+        return Err(format!(
+            "a form submitted while the page parsed was sent, or navigate did not observe the page: {page}"
+        ));
+    }
+    lines.push("page's own submit while parsing -> navigate observed the page, load held, not sent".into());
 
     // A form POST: approved it loads its result, denied the page stays.
     operator.plan([Verdict::Deny]);
