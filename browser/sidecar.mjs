@@ -838,7 +838,27 @@ async function handle(message) {
     case "navigate": {
       const before = blockedLoads;
       const large = oversized;
+      // A failed goto names the starting URL even when a redirect was refused.
+      // Follow only this main-frame navigation's redirect responses.
+      let nextUrl = new URL(message.url);
+      nextUrl.hash = "";
+      let outside;
+      const redirect = (response) => {
+        if (!response.request().isNavigationRequest() || response.frame() !== page.mainFrame() ||
+            response.url() !== nextUrl.href || ![301, 302, 303, 307, 308].includes(response.status())) return;
+        const location = response.headers().location;
+        if (!location) return;
+        try {
+          nextUrl = new URL(location, response.url());
+          nextUrl.hash = "";
+          if (!allowed(nextUrl.href)) outside = originOf(nextUrl.href);
+        } catch {}
+      };
+      page.on("response", redirect);
       await page.goto(message.url, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(async (error) => {
+        if (outside && String(error.message).includes("ERR_BLOCKED_BY_CLIENT")) {
+          throw Object.assign(new Error("Page redirect requires a separate browser grant"), { redirectOrigin: outside });
+        }
         if (blockedLoads === before && oversized === large) throw error;
         // Chrome commits its error page a moment after a refused load; a
         // navigate sent before that would be interrupted by it.
@@ -848,7 +868,7 @@ async function handle(message) {
         }
         // Not the URL: the reason is the operator's rule, and the model has the URL.
         throw new Error("the operator's web block list covers that page");
-      });
+      }).finally(() => page.off("response", redirect));
       // A page that renders from a fetch is still a shell at domcontentloaded.
       await settle();
       return observe();
@@ -923,7 +943,7 @@ async function answer(message) {
   try {
     send({ id: message.id, ok: true, result: await handle(message) });
   } catch (error) {
-    send({ id: message?.id, ok: false, error: String(error.message || error).slice(0, 300) });
+    send({ id: message?.id, ok: false, error: String(error.message || error).slice(0, 300), redirect_origin: error.redirectOrigin });
   } finally {
     acting = false;
   }
