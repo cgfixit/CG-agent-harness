@@ -535,6 +535,11 @@ pub async fn tune(state: Arc<AppState>, model: String) {
             .audit
             .log(json!({"event": "model_tune_skipped", "model": model, "reason": reason}));
     };
+    // The sample loads the model; a signed-in Ollama forwards a cloud tag's to ollama.com.
+    if crate::llm::ollama::cloud_tag(&model) {
+        state.set_tuning(None);
+        return skipped("cloud_tag");
+    }
     let Ok(limits) = InventoryLimits::from_config(&state.cfg) else {
         return skipped("inventory_limits");
     };

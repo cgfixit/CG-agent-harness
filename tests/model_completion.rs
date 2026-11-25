@@ -67,3 +67,41 @@ async fn planner_refuses_a_reply_over_the_shared_body_bound() {
     assert!(err.message.contains("exceeds"), "{err:?}");
     assert!(audit.contains("ResponseTooLarge"), "{audit}");
 }
+
+/// The local planner never sends a prompt under an Ollama cloud tag, whichever
+/// command built it: a signed-in Ollama would forward it to ollama.com.
+#[tokio::test]
+async fn planner_refuses_an_ollama_cloud_tag_before_any_request() {
+    let model = start_mock_model().await;
+    let base = model.base_url();
+    let outcomes = tokio::task::spawn_blocking(move || {
+        let tmp = tempfile::tempdir().unwrap();
+        let audit = Audit::new(tmp.path().join("audit.jsonl"), &config_with(tmp.path(), &[]));
+        let outcomes: Vec<_> = [
+            "glm-4.6:cloud",
+            "gpt-oss:120b-CLOUD",
+            "registry.ollama.ai:443/library/glm-4.6:cloud",
+        ]
+        .into_iter()
+        .map(|name| {
+            let client = LocalProposerClient::new(&audit, &base, name, 5, "", None).unwrap();
+            (name, client.invoke("system", "PLANNER_PROMPT_CANARY", 32, None))
+        })
+        .collect();
+        audit.flush();
+        let log = std::fs::read_to_string(tmp.path().join("audit.jsonl")).unwrap_or_default();
+        (outcomes, log)
+    })
+    .await
+    .unwrap();
+    let (outcomes, log) = outcomes;
+    for (name, outcome) in outcomes {
+        let err = outcome.unwrap_err();
+        assert!(err.message.contains("Ollama cloud model"), "{name}: {err:?}");
+    }
+    assert!(!log.contains("agentic_harness_proposer_model_invoked"), "{log}");
+    assert!(
+        model.requests.lock().unwrap().is_empty(),
+        "a cloud-tag prompt reached the model"
+    );
+}
