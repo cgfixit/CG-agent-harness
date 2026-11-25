@@ -157,6 +157,8 @@ jobs:
           "$bin" browser --sidecar=browser/sidecar.mjs
           echo "== browser-verify"
           "$bin" browser-verify --sidecar=browser/sidecar.mjs
+          echo "== browser run route (stub Ollama)"
+          python3 scripts/test-browser-route.py "$bin"
 
   fmt:
     name: rustfmt
