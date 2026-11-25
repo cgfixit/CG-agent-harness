@@ -345,27 +345,16 @@ impl Sidecar {
         allow_private: bool,
         policy: RequestPolicy,
     ) -> Result<Self, String> {
-        Self::start_with(script, session, headless, allow_private, policy, None)
+        Self::start_with(script, session, headless, allow_private, policy, None, false)
     }
 
     /// `start`, with takeover when `takeover` is given: a request held as the
     /// operator's step stays paused for its verdict instead of failing at once.
-    fn start_with(
-        script: &Path,
-        session: &Session,
-        headless: bool,
-        allow_private: bool,
-        policy: RequestPolicy,
-        takeover: Option<Takeover>,
-    ) -> Result<Self, String> {
-        Self::start_inner(script, session, headless, allow_private, policy, takeover, false)
-    }
-
-    /// `start_with`. `rewrite_approved_body` makes the sidecar release an
-    /// approved request with a body other than the one the operator was
-    /// shown; only the takeover fixture passes true, and only in a
+    /// `rewrite_approved_body` makes the sidecar release an approved request
+    /// with a body other than the one the operator was shown; only the
+    /// takeover fixture passes true, and it reaches the sidecar only in a
     /// test-support build, to prove the network gate refuses it (#1123).
-    fn start_inner(
+    fn start_with(
         script: &Path,
         session: &Session,
         headless: bool,
@@ -888,7 +877,7 @@ pub fn run_task(
     };
     // Only a job started with a wait has someone to ask (#995).
     let takeover = JOB_TAKEOVER.get().cloned();
-    let mut sidecar = Sidecar::start_with(script, &session, headless, allow_private, policy, takeover)?;
+    let mut sidecar = Sidecar::start_with(script, &session, headless, allow_private, policy, takeover, false)?;
     sidecar.deadline = deadline;
     let tools = browser_tools();
     let mut chat = |messages: &[Value]| {
@@ -2248,6 +2237,7 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         private,
         policy(),
         Some(takeover(Duration::from_secs(20))),
+        false,
     )?;
 
     // Approved once: sent once, and the page gets the server's answer.
@@ -2536,6 +2526,7 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         private,
         policy(),
         Some(takeover(Duration::from_secs(1))),
+        false,
     )?;
     operator.plan([Verdict::AllowAfter(Duration::from_secs(3))]);
     let page = click(&mut sidecar, &mut lines, "Save")?;
@@ -2554,7 +2545,7 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
     // meets the network gate with no matching pass: held, and neither body
     // reaches the server.
     drop(sidecar);
-    let mut sidecar = Sidecar::start_inner(
+    let mut sidecar = Sidecar::start_with(
         script,
         &session,
         headless,
