@@ -34,6 +34,8 @@ initialized database, bad schema or unsafe file refuses startup. Legacy
 `auth.json` migration keeps a backup.
 The database also keeps sign-in failures for valid nonexistent names (HMAC-keyed,
 capped at 16,384 names), so a restart does not reset their lockout.
+Account checks read the last committed state: a write in flight never
+delays them, and a change is visible only after commit.
 `auth.session` sets idle and absolute expiry and the per-account cap.
 A sign-in past `max_per_account` (shipped 8) ends that account's least
 recently used session and logs `account.session_evicted`. Capacity refusals
