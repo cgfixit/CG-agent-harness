@@ -551,9 +551,8 @@ async fn run_turns(
         }
         // After the wait, never before it: the wait can last as long as a
         // background model job, and an account disabled or demoted meanwhile
-        // must not get the turn that was queued for it. The account store's
-        // lock is held across its SQLite rewrite, so this reads on the
-        // blocking pool. The revocation count is read first: a role or
+        // must not get the turn that was queued for it, read from the account
+        // store's committed state. The revocation count is read first: a role or
         // password change landing after it is caught when the turn writes,
         // which withholds that turn's reply.
         let checked = {

@@ -436,20 +436,15 @@ const RUN_ACCOUNT_RECHECK: std::time::Duration = std::time::Duration::from_secs(
 /// `sign_in_revocations` count then; `None` without accounts.
 type AskingAccount = Option<(crate::common::auth_store::UserSummary, u64)>;
 
-/// Reads the asking account's revocation count on the blocking pool (the
-/// account store's lock is held across its SQLite rewrite).
+/// Reads the asking account's revocation count from the account store's
+/// committed state, which never waits for a write in flight.
 async fn asking_account(
     state: &Arc<AppState>,
     account: Option<crate::common::auth_store::UserSummary>,
 ) -> AskingAccount {
     let account = account?;
-    let state = state.clone();
-    super::structured_memory::off_worker(move || {
-        let auth = state.auth.as_ref()?;
-        let seen = auth.sign_in_revocations(&account.username);
-        Some((account, seen))
-    })
-    .await
+    let seen = state.auth.as_ref()?.sign_in_revocations(&account.username);
+    Some((account, seen))
 }
 
 /// Whether `owner` may still run coding and its sign-ins have not been
