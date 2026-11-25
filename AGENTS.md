@@ -137,19 +137,19 @@ Enforce corrections highest-level; add rows.
 
 ## Docs policy
 
-Edit the owning section; create no Markdown except folder `README.md` indexes
-(150 words unless budgeted). Link instead of duplicating; evidence belongs in
-PRs; screenshots in `docs/screenshots/`. `tests/invariant_guard.rs` enforces
-`DOCS_BUDGET` (word caps, 1 MiB per file). `wc -w` before committing Markdown;
-new rows or raised caps need operator approval and `// why:`. Lower a trimmed
-file's cap.
+Before pushing feature or core changes, run `python3 scripts/docs-impact.py`.
+Update owning guides for observable changes. For an unaffected guide, use
+the printed `Docs-Impact` trailer with the source-backed reason.
 
-Deleting a doc removes its budget row and every reference; `rg` its basename
-first (`lint-diff.py` CG008). For multi-module or weeks-old syncs use
-`doc-sync` and `dep-sync`, or recheck code, pins, locks and `deny.toml`
-against `origin/main` by hand. Weekly, `cgfixit` reviews
-`git log --since=1.week --stat -- '*.md'` and
-[dependency watches](docs/DEPENDENCIES.md#retained-constraints).
+Edit in place. Only folder README indexes may be new (150 words unless
+budgeted). Link shared facts; evidence goes in PRs, screenshots in
+`docs/screenshots/`. Check `wc -w` and `DOCS_BUDGET` (1 MiB/file).
+Lower trimmed caps. New rows or raises need approval and `// why:`.
+Remove deleted docs from budgets and references (CG008).
+
+For broad syncs use `doc-sync` and `dep-sync` or verify code, pins, locks
+and `deny.toml` against `origin/main`. Weekly, `cgfixit` reviews Markdown
+diffs and [dependency watches](docs/DEPENDENCIES.md#retained-constraints).
 
 After editing a `scripts/build-self-manual.py::INPUTS` source, this file
 included, regenerate `assets/self/MANUAL.md` and commit it when it changes.

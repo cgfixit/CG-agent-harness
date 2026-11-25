@@ -1,25 +1,29 @@
 # .github/workflows
 
-Find a workflow by purpose below; its `name` appears in the Actions sidebar.
-Lint edits with actionlint and zizmor. See [CI expectations](../../docs/INSTALL.md#tests-and-cicd)
-and [release controls](../../docs/RELEASING.md).
+Lint workflow edits with actionlint and zizmor. See [CI expectations](../../docs/INSTALL.md#tests-and-cicd).
 
 ## Checks and reviews
 
 | File | Purpose and trigger |
 |---|---|
 | [`ci.yml`](ci.yml) | Rust formatting, Clippy, dependency policy, browser, sandbox and lifecycle tests; PR, main push, merge queue and release calls. |
-| [`pr-template-check.yml`](pr-template-check.yml) | PR-body requirements (Cursor and trailing Claude Code footers are stripped; verified Dependabot updates are exempt) and base-is-main checks; PR open/edit/sync/reopen/ready events. |
+| [`pr-template-check.yml`](pr-template-check.yml) | PR body and base branch checks; PR open/edit/sync/reopen/ready. |
+| [`docs-impact.yml`](docs-impact.yml) | Check owning guides on PRs. Repair missing reviews on same-repository maintainer PRs. |
 | [`review-gate-request.yml`](review-gate-request.yml) | Unprivileged wake-up signal from PR (body edits included), review and review-comment events, including forks. |
 | [`review-gate.yml`](review-gate.yml) | Trusted dispatcher; validates request-run identity or handles Codex summary comments, then calls the evaluator. |
 | [`review-gate-evaluate.yml`](review-gate-evaluate.yml) | Reusable advisory check: unresolved threads, running reviews and a PR body not edited since an operator's `@codex review` comment are neutral; evaluation errors fail. Re-run the dispatcher after resolving threads. |
 
-The [docs-only classifier](../../scripts/ci-docs-only.sh) skips compile jobs only
-on qualifying PRs; browser, formatting and invariant checks still run.
-[main-protection.json](../rulesets/main-protection.json) is an importable ruleset,
-not evidence of active protection. Required checks, merge queue, auto-merge and
-workflow enablement are separate GitHub settings. Inspect them before relying
-on enforcement; the review gate remains advisory.
+The [docs-only classifier](../../scripts/ci-docs-only.sh) keeps browser,
+formatting and invariant checks. Verify live settings against the
+[importable ruleset](../rulesets/main-protection.json).
+
+Enable hosted docs repair once with Actions secrets
+`DOCS_SYNC_OPENAI_API_KEY` and `DOCS_SYNC_GITHUB_TOKEN` (fine-grained token
+for this repository, Contents write). The worker sends a bounded diff
+and owning guides to OpenAI and can append a docs commit at the exact
+head. `DOCS_SYNC_MODEL` can select another structured-output model.
+Forks use the [author check](../../scripts/docs-impact.py). Docs-impact
+trailers bind unchanged-guide decisions to the production diff.
 
 ## Packages and releases
 
@@ -35,7 +39,7 @@ on enforcement; the review gate remains advisory.
 | File | Purpose and trigger |
 |---|---|
 | [`workflow-lint.yml`](workflow-lint.yml) | actionlint, zizmor and release/review fixtures; pushes/PRs touching workflow or lint config, or manual. |
-| [`diff-lint.yml`](diff-lint.yml) | [`lint-diff.py`](../../scripts/lint-diff.py) on a PR's added lines: DevSkim annotations, self-manual drift, docs caps, deleted-doc rows, CG009 shipped-value prose, timing bounds, CG010 literal test passwords; every PR or manual; advisory until required. |
+| [`diff-lint.yml`](diff-lint.yml) | [`lint-diff.py`](../../scripts/lint-diff.py) checks DevSkim annotations, self-manual drift, docs caps, config prose and assertion patterns; PR or manual. |
 | [`telemetry-contract.yml`](telemetry-contract.yml) | [`check_otel.py`](../../.claude/skills/cgagentharness-otel-hardening/check_otel.py) and its mutation self-test: child-environment opt-outs, telemetry-free lock graphs, classified dependencies and spawn files; every PR, merge queue, main push, weekly (dated inventory review) or manual; a required check in the importable ruleset. |
 | [`script-lint.yml`](script-lint.yml) | ShellCheck, Python compilation, Node syntax and disposable Git-hook behavior checks; filtered pushes/PRs or manual. |
 | [`clippy-sarif.yml`](clippy-sarif.yml) | Clippy findings in Security; separate from CI's Clippy gate; main push, PR, weekly or manual. |
