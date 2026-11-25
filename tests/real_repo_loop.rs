@@ -1379,6 +1379,66 @@ fn cloud_proposer_gates_sanitizes_and_retries() {
     }
 }
 
+/// An Ollama cloud tag as the local planner model would have a signed-in
+/// Ollama forward the planner's prompt to ollama.com: refused as config
+/// (exit 3) before the clone, the run record or any planner request.
+#[cfg(unix)]
+#[test]
+fn a_cloud_tag_local_planner_is_refused_before_the_clone_and_the_run_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let bare = real_bare_repo_on(dir.path(), "trunk");
+    let bin = install_fake_gh(dir.path(), &bare);
+    let path = path_with(&bin);
+    for model in ["glm-4.6:cloud", "gpt-oss:120b-CLOUD"] {
+        let home = dir.path().join(model.replace(':', "-"));
+        std::fs::create_dir_all(&home).unwrap();
+        config_with(
+            &home,
+            &[
+                ("agentic.enabled", "true"),
+                ("agentic.deepagent_github.enabled", "true"),
+                ("agentic.deepagent_github.allow_git_write_tools", "true"),
+                ("agentic.deepagent_github.model", &format!("\"{model}\"")),
+            ],
+        );
+        let checks = home.join("checks.json");
+        std::fs::write(
+            &checks,
+            json!({"checks": [{"name": "true", "argv": ["true"]}]}).to_string(),
+        )
+        .unwrap();
+        let (code, out, err) = run_agentic(
+            &home.join("config.yaml"),
+            &[
+                "real-repo-run",
+                "--instruction=x",
+                "--checks-file",
+                checks.to_str().unwrap(),
+                "--branch=claude/cloud-planner",
+                "--commit-message=m",
+                "--reason=r",
+                "--confirm",
+            ],
+            &[("PATH", &path), ("GROK_API_KEY", ""), ("ANTHROPIC_API_KEY", "")],
+            &home,
+        );
+        assert_eq!(code, 3, "{model}: stdout={out} stderr={err}");
+        assert!(err.contains("Ollama cloud model"), "{model}: stdout={out} stderr={err}");
+        let audit = std::fs::read_to_string(home.join("logs/audit.jsonl")).unwrap_or_default();
+        assert!(
+            !audit.contains("agentic_repo_workspace_cloned")
+                && !audit.contains("agentic_harness_proposer_model_invoked"),
+            "{model}: cloned or called the planner before the refusal: {audit}"
+        );
+        let entries = |sub: &str| std::fs::read_dir(home.join(sub)).map(|rd| rd.count()).unwrap_or(0);
+        assert_eq!(
+            entries("data/agentic/workspaces"),
+            0,
+            "{model}: a clone was left or made"
+        );
+    }
+}
+
 /// An operator `--read-file` on the deny-list is refused from the selector
 /// alone: before the clone, and before a run record exists.
 #[cfg(unix)]

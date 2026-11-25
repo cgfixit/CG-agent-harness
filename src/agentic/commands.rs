@@ -425,6 +425,12 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     } else if ctx.acfg.deepagent.model.trim().is_empty() {
         err("agentic.deepagent_github.model must be configured before real-repo-run");
         return Ok(EXIT_ENV);
+    } else if crate::llm::ollama::cloud_tag(&ctx.acfg.deepagent.model) {
+        err(
+            "agentic.deepagent_github.model is an Ollama cloud model (a :cloud or -cloud tag), which sends the \
+             planner's prompt to ollama.com; the local planner keeps prompts on this machine",
+        );
+        return Ok(EXIT_ENV);
     }
     super::writer::current_repository_policy(ctx, "run", &reason, opts.flag("confirm"))?;
     if let Some(code) = refuse_if_injected(ctx, &instruction, "instruction", "run") {
