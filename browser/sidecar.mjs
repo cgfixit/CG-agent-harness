@@ -50,6 +50,10 @@ const ACTS = new Set(["click", "follow_link", "type", "press_enter", "select", "
 // True while one of ACTS runs, until it loads a new page: that page's own
 // requests are not the model's.
 let acting = false;
+// True once one of ACTS ran on the current page, until it loads another. A
+// page load the page sends after that may be the action's late effect (a
+// submit after a timer or a fetch), so takeover still asks about it.
+let actedOnPage = false;
 // Origins a page asked for that this task was not granted; reported the same way.
 const notGranted = new Set();
 // alert, confirm and prompt text since the last observation. Each was
@@ -548,6 +552,7 @@ async function decideHeld(route, request, method, url) {
     allowances.push({ method, url, sha256, until: Date.now() + ALLOWANCE_MS });
     // The action loaded a new page: what that page requests is its own doing.
     if (topLevelLoad(request)) acting = false;
+    if (loadsThisPage(request)) actedOnPage = false;
     await route.continue().catch(() => {});
     // Still this action's request until it is answered or fails, so the
     // observation that follows shows the page with the answer.
@@ -588,6 +593,16 @@ function takeAllowance(request) {
 function hold(method, url, pageLoad) {
   const rows = pageLoad || acting ? held : heldBackground;
   if (rows.length < 20) rows.push(`${method} ${url.slice(0, 200)}`);
+}
+
+// True for a request that replaces the current page's document. A new tab's
+// first request has no frame yet: not this page.
+function loadsThisPage(request) {
+  try {
+    return request.isNavigationRequest() && request.frame() === page.mainFrame();
+  } catch {
+    return false;
+  }
 }
 
 // True for a request that loads a new top-level page. A new tab's first
@@ -750,10 +765,12 @@ async function start(message) {
     // waits for the operator: every request but GET and HEAD is held here.
     const method = request.method();
     if (method !== "GET" && method !== "HEAD") {
-      // The model's action caused it, with takeover on: pause it and ask. A
-      // page's own request, a page load included, is never asked about. The
-      // whole URL must fit the question, and only one request waits at a time.
-      if (takeoverWaitMs && acting && !pendingApproval && url.length <= MAX_URL) {
+      // The model's action caused it, with takeover on: pause it and ask. So
+      // may a page load once the model acted on this page; one the page sends
+      // before that is its own and never asked about. The whole URL must fit
+      // the question, and only one request waits at a time.
+      const late = actedOnPage && request.isNavigationRequest();
+      if (takeoverWaitMs && (acting || late) && !pendingApproval && url.length <= MAX_URL) {
         const waiting = decideHeld(route, request, method, url).finally(() => {
           if (pendingApproval === waiting) pendingApproval = null;
         });
@@ -769,6 +786,7 @@ async function start(message) {
     }
     // The action loaded a new page: what that page requests is its own doing.
     if (topLevelLoad(request)) acting = false;
+    if (loadsThisPage(request)) actedOnPage = false;
     route.continue();
   });
   await context.routeWebSocket("**/*", (ws) => {
@@ -944,6 +962,7 @@ async function handle(message) {
 
 async function answer(message) {
   acting = ACTS.has(message?.op);
+  if (acting) actedOnPage = true;
   askedThisOp = false;
   try {
     send({ id: message.id, ok: true, result: await handle(message) });

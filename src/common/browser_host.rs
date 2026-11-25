@@ -1906,12 +1906,14 @@ fn guard_holds(sidecar: &mut Sidecar, lines: &mut Vec<String>, base: &str, seen:
 }
 
 /// A shop page for the takeover fixture: a button whose click POSTs, one that
-/// sends the identical POST again once the first is answered, and a form.
+/// sends the identical POST again once the first is answered, a form, and a
+/// button that submits that form only after its click has returned.
 const TAKEOVER_PAGE: &str = r#"
 <p>SHOP</p>
 <button onclick="save()">Save</button>
 <button onclick="saveTwice()">Save twice</button>
 <form method="post" action="/api/order"><input name="item" value="tea"><button>Order</button></form>
+<button onclick="setTimeout(() => document.forms[0].submit(), 3000)">Order later</button>
 <p id="state">idle</p>
 <script>
 const show = (text) => { document.getElementById('state').textContent = text; };
@@ -1984,7 +1986,8 @@ impl ScriptedOperator {
 /// - a denied POST and one whose answer comes after the wait never arrive;
 /// - a block rule added while the operator decides stops an approved POST;
 /// - an approved form POST loads its result, a denied one leaves the page;
-/// - a POST form the page submits on its own is held and never asked about.
+/// - a POST form the page submits on its own is held and never asked about;
+/// - a form a click submits only after the click returned is still asked.
 ///
 /// The operator is asked with the method, whole URL, size, SHA-256 and text
 /// of the body that would be sent.
@@ -2168,6 +2171,22 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         ));
     }
     lines.push("page's own POST page load -> held for the operator, never asked, not sent".into());
+
+    // A click whose form submits after the click has returned (a token fetch,
+    // a "Processing" delay) is still the model's step: asked, then sent once.
+    operator.plan([Verdict::Allow]);
+    let (asked_before, orders_before) = (operator.asked().len(), count("POST /api/order"));
+    click(&mut sidecar, &mut lines, "Order later")?;
+    let (page, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"wait","timeout_ms": 5000}))?;
+    if operator.asked().len() != asked_before + 1
+        || count("POST /api/order") != orders_before + 1
+        || !page["text"].as_str().unwrap_or("").contains("ORDER-PLACED")
+    {
+        return Err(format!(
+            "a click's late form POST was not asked about and sent once: {page}"
+        ));
+    }
+    lines.push("click's late form POST -> asked, approved, sent once".into());
 
     // A block rule added while the operator decides: approved, and still not sent.
     operator.plan([Verdict::BlockThenAllow]);

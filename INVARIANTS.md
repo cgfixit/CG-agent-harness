@@ -668,16 +668,16 @@ a stored report rechecks the block list.
 
 An administrator can let one held request of their own job be sent (takeover,
 #995), behind literal `browser.takeover.enabled` (ships `true`; restart-only).
-Only a job asks; `/api/browser/run` holds every request. The page route pauses only a request the model's action caused; the job
+Only a job asks; `/api/browser/run` holds every request. The page route pauses requests sent during a model action and later page loads from that page; the job
 reads `waiting`, showing method, whole URL, content type, size, body SHA-256 and
 a text preview for at most `browser.takeover.wait_sec`.
 `POST /api/browser/jobs/{job_id}/approve` needs that request's id and hash,
 `confirm: true` and a `reason` (no defaults); it rechecks both gates, the block
 list for that URL and origin, and that the request still waits, then passes the
-verdict on once. The sidecar's CDP gate uses up a pass of `{method, URL, SHA-256}`
-on the first matching request, after asking the block list again. A no, a late
-answer, cancel, a second request while one waits, or a body the gate cannot read
-is held; a page's own requests are never asked about. Each decision
+verdict once. The sidecar's CDP gate uses up a pass of `{method, URL, SHA-256}`
+on the first matching request, after rechecking the block list. A no, a late
+answer, cancel, a second request while one waits, or an unreadable body is held,
+as is anything else the page sends. Each decision
 writes one `browser.approval` audit line (never the path or body).
 
 - Locked by: `browser takeover` (by what its loopback server received),
