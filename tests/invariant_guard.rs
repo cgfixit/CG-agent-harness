@@ -3711,3 +3711,57 @@ fn docs_budget_rejects_unlisted_oversized_and_misplaced_files() {
     )
     .is_empty());
 }
+
+/// No test server reaches the operator's real OS credential store unless the
+/// test opts in and cleans up. `AppOptions::new` leaves the store unset, and
+/// an unset store is the OS store (macOS Keychain, Windows Credential
+/// Manager, Linux Secret Service), so every `/api/keys` save once left an
+/// entry named after a deleted temp home.
+#[test]
+fn test_servers_use_the_os_credential_store_only_when_they_opt_in() {
+    let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let compact = |text: &str| text.chars().filter(|c| !c.is_whitespace()).collect::<String>();
+    for (path, text) in read_tree(&tests) {
+        let normalized = path.replace('\\', "/");
+        if normalized.ends_with("tests/invariant_guard.rs") {
+            continue;
+        }
+        let code = compact(&text);
+        if normalized.ends_with("tests/common/mod.rs") {
+            assert_eq!(
+                code.matches("AppOptions::new(").count(),
+                1,
+                "{path}: only `app_options` may call AppOptions::new"
+            );
+            let start = text.find("pub fn app_options(").expect("app_options helper");
+            let body = &text[start..];
+            let helper = compact(&body[..body.find("\n}").expect("app_options body ends")]);
+            assert!(
+                helper.contains("AppOptions::new(")
+                    && helper.contains(".credential_store=Some(Arc::new(MemoryCredentialStore::default()))"),
+                "{path}: app_options must install a MemoryCredentialStore"
+            );
+            assert!(
+                code.contains("letmutapp_opts=app_options(home);"),
+                "{path}: prepare_server must start from app_options"
+            );
+            continue;
+        }
+        assert!(
+            !code.contains("AppOptions::new("),
+            "{path}: build test options with common::app_options, which keeps keys in memory"
+        );
+        assert!(
+            !code.contains("credential_store=None") && !code.contains("credential_store:None"),
+            "{path}: an unset credential store is the real OS store; set os_credential_store instead"
+        );
+        assert!(
+            !code.contains("OsCredentialStore") || code.contains("OsCredentialCleanup::new("),
+            "{path}: a test that touches the OS store removes its entries with OsCredentialCleanup"
+        );
+        assert!(
+            !code.contains("os_credential_store") || code.contains("OsCredentialCleanup::new("),
+            "{path}: os_credential_store needs an OsCredentialCleanup for every saved name"
+        );
+    }
+}

@@ -205,7 +205,7 @@ async fn reply_budget_that_consumes_prompt_headroom_fails_at_startup() {
         let home = cgagentharness::common::home::Home::at(tmp.path().join("home"));
         home.ensure_layout().unwrap();
         let cfg = config_with(&home.root, &[(path, "25905")]);
-        let mut options = cgagentharness::server::AppOptions::new(home);
+        let mut options = common::app_options(home);
         options.config = Some(cfg);
 
         let err = cgagentharness::server::build_app(options)
@@ -225,7 +225,7 @@ async fn malformed_reply_and_compaction_budgets_fail_at_startup() {
             let tmp = tempfile::tempdir().unwrap();
             let home = cgagentharness::common::home::Home::at(tmp.path().join("home"));
             home.ensure_layout().unwrap();
-            let mut options = cgagentharness::server::AppOptions::new(home.clone());
+            let mut options = common::app_options(home.clone());
             options.config = Some(config_with(&home.root, &[(path, value)]));
 
             let err = cgagentharness::server::build_app(options)
@@ -259,7 +259,7 @@ async fn reasoning_and_compatible_backends_enforce_the_effective_reply_reservati
                     (path, "12953"),
                 ],
             );
-            let mut options = cgagentharness::server::AppOptions::new(home);
+            let mut options = common::app_options(home);
             options.config = Some(cfg);
             let error = cgagentharness::server::build_app(options)
                 .await
@@ -732,7 +732,7 @@ async fn zero_loop_reply_budget_keeps_the_legacy_default() {
     let home = cgagentharness::common::home::Home::at(tmp.path().join("home"));
     home.ensure_layout().unwrap();
     let cfg = config_with(&home.root, &[("api.harness_loop_rate_limit.max_tokens", "0")]);
-    let mut options = cgagentharness::server::AppOptions::new(home);
+    let mut options = common::app_options(home);
     options.config = Some(cfg);
 
     let (_, state) = cgagentharness::server::build_app(options).await.unwrap();

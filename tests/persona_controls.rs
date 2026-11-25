@@ -100,9 +100,9 @@ async fn failed_persona_apply_retains_intent_and_recovery_failures_block_later_w
     assert_eq!(code(&refused), "SOUL_PATH");
     assert!(marker.is_file());
     assert_eq!(std::fs::read_to_string(s.home.join("soul.md")).unwrap(), original);
-    let restart = cgagentharness::server::build_app(cgagentharness::server::AppOptions::new(
-        cgagentharness::common::home::Home::at(s.home.clone()),
-    ))
+    let restart = cgagentharness::server::build_app(common::app_options(cgagentharness::common::home::Home::at(
+        s.home.clone(),
+    )))
     .await;
     assert!(restart.is_err());
     std::fs::remove_dir(&record_path).unwrap();
@@ -159,7 +159,7 @@ async fn interrupted_persona_apply_reconciles_without_replaying_writes() {
                 .unwrap();
             }
             if startup {
-                let (_router, _state) = cgagentharness::server::build_app(cgagentharness::server::AppOptions::new(
+                let (_router, _state) = cgagentharness::server::build_app(common::app_options(
                     cgagentharness::common::home::Home::at(s.home.clone()),
                 ))
                 .await
