@@ -118,10 +118,10 @@ pub(crate) fn actor(state: &AppState, req: &Request<Body>) -> ApiResult<UserSumm
     mgr.get_user(&info.username).ok_or_else(unauthorized)
 }
 
-/// The gate's session lookup, on the blocking pool. `validate_session` takes
-/// the account lock that `persist` holds across a full rewrite, and slides the
-/// idle window with a SQLite write; neither may stall an async worker. The
-/// future borrows nothing from the request, so the gate stays `Send`.
+/// The gate's session lookup, on the blocking pool. `validate_session` slides
+/// the idle window with a SQLite write, waiting for any write in flight
+/// first; neither may stall an async worker. The future borrows nothing from
+/// the request, so the gate stays `Send`.
 pub(crate) fn session_account(
     state: &AppState,
     req: &Request<Body>,
