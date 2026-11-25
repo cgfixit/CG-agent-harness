@@ -84,6 +84,8 @@ const MAX_TAKEOVER_WAIT_MS = 600000;
 let pendingApproval = null;
 // True once a request of the running op has been paused for the operator.
 let askedThisOp = false;
+// Answers the open question no, as its wait running out would.
+let withdrawQuestion = null;
 // One-shot passes for the network gate: {method, url, sha256, until}. The
 // page route asks; only a matching request, once, passes the gate.
 const allowances = [];
@@ -534,15 +536,16 @@ function digest(bytes) {
 function operatorAllows(method, url, contentType, body, sha256) {
   return new Promise((resolve) => {
     const id = (questions += 1);
-    const timer = setTimeout(() => {
-      asked.delete(id);
-      resolve(false);
-    }, takeoverWaitMs);
-    asked.set(id, (allow) => {
+    const decide = (allow) => {
       clearTimeout(timer);
       asked.delete(id);
+      if (withdrawQuestion === refuse) withdrawQuestion = null;
       resolve(allow === true);
-    });
+    };
+    const refuse = () => decide(false);
+    const timer = setTimeout(refuse, takeoverWaitMs);
+    asked.set(id, decide);
+    withdrawQuestion = refuse;
     send({ approve: id, method, url, content_type: contentType.slice(0, 200), size: body.length, sha256, preview: body.toString("utf8").slice(0, MAX_PREVIEW_CHARS) });
   });
 }
@@ -938,6 +941,11 @@ async function handle(message) {
     case "start":
       return start(message);
     case "navigate": {
+      // A question still open here is about the form a click submitted late
+      // on the page being left: the model has moved on, so the answer is no
+      // and that form is held, rather than this navigate waiting on the operator.
+      withdrawQuestion?.();
+      while (pendingApproval) await pendingApproval;
       const before = blockedLoads;
       const large = oversized;
       // A failed goto names the starting URL even when a redirect was refused.

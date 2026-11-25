@@ -2136,7 +2136,10 @@ impl ScriptedOperator {
 /// - the one form a click submits within five seconds after it returned is
 ///   asked about; a second one, one after a refusal during the click, one
 ///   after that window, one after a scroll and one from the page a click
-///   opened are held without a question.
+///   opened are held without a question;
+/// - a navigate while that late question waits withdraws it: the navigate
+///   returns at once, the form is held, and the operator's later yes sends
+///   nothing.
 ///
 /// The operator is asked with the method, whole URL, size, SHA-256 and text
 /// of the body that would be sent.
@@ -2371,6 +2374,44 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         ));
     }
     lines.push("click's form POST 4 s later -> asked, approved, sent once".into());
+
+    // A navigate while that late question waits: the model left the page, so
+    // the question is withdrawn and the form held. The navigate does not wait
+    // for the operator, and their later yes sends nothing.
+    let answer_after = Duration::from_secs(10);
+    operator.plan([Verdict::AllowAfter(answer_after)]);
+    let (asked_before, orders_before) = (operator.asked().len(), count("POST /api/order"));
+    click(&mut sidecar, &mut lines, "Order later")?;
+    thread::sleep(Duration::from_millis(4500));
+    if operator.asked().len() != asked_before + 1 {
+        return Err("the late form POST was not asked about before the navigate".into());
+    }
+    let asked_at = Instant::now();
+    let (page, _) = guard_call(
+        &mut sidecar,
+        &mut lines,
+        json!({"op":"navigate","url": format!("{base}/submitted")}),
+    )?;
+    let took = asked_at.elapsed();
+    if took >= Duration::from_secs(5)
+        || !page["text"].as_str().unwrap_or("").contains("SUBMITTED")
+        || rows(&page, "held") != [order.clone()]
+        || count("POST /api/order") != orders_before
+    {
+        return Err(format!(
+            "a navigate waited {took:?} on a late question, or the form was sent or not held: {page}"
+        ));
+    }
+    // Let the operator's late yes arrive; the one decision is then closed.
+    thread::sleep(answer_after.saturating_sub(asked_at.elapsed()) + Duration::from_millis(500));
+    guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    if count("POST /api/order") != orders_before {
+        return Err("a yes to a question withdrawn by a navigate sent the request".into());
+    }
+    lines.push(format!(
+        "navigate while a late question waits -> returned in {} ms, form held, the later yes sent nothing",
+        took.as_millis()
+    ));
 
     // The window is one question wide: refused, the form the page submits
     // again is held, although the operator would now say yes.

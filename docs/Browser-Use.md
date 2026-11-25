@@ -39,11 +39,12 @@ macOS and Linux use detached jobs. Windows uses the synchronous endpoint.
   checks text fields concurrently. Targeting a secret field or one whose
   attributes could not be read ends the task with a handoff.
 - With `browser.takeover.enabled` (shipped true), the job owner can approve
-  one request sent during a model action, or one form posted within 5s
+  one request sent mid-action, or one form posted within 5s
   after a click or Enter. `POST /api/browser/jobs/{job_id}/approve`
   needs request ID, body SHA-256, confirmation and reason. Approval binds
   method, URL and body under current policy. Waiting ends at
-  `browser.takeover.wait_sec` or the deadline. Other holds get no prompt.
+  `browser.takeover.wait_sec`, the deadline or a `navigate` (held). Other
+  holds get no prompt.
 - Temporary profiles can survive a kill until the next task or server start.
   Ungranted origins, workers and documents over 16 MiB are blocked.
   WebRTC uses proxied TCP. ARIA provides no screenshot.
