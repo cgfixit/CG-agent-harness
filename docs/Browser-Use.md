@@ -44,7 +44,8 @@ macOS and Linux use detached jobs. Windows uses the synchronous endpoint.
   needs request ID, body SHA-256, confirmation and reason. Approval binds
   method, URL and body under current policy. Waiting ends at
   `browser.takeover.wait_sec`, the deadline or a `navigate` (held). Other
-  holds get no prompt.
+  holds get no prompt. Reloading or reopening its session shows it again
+  (the tab stores only IDs); restarting resumes nothing.
 - Temporary profiles can survive a kill until the next task or server start.
   Ungranted origins, workers and documents over 16 MiB are blocked.
   WebRTC uses proxied TCP. ARIA provides no screenshot.
@@ -53,8 +54,8 @@ macOS and Linux use detached jobs. Windows uses the synchronous endpoint.
 [Source](../src/common/browser_host.rs) and
 [fixtures](../.github/workflows/README.md) cover the sidecar, guards,
 takeover, and the synchronous route's window refusal and deadline report.
-`scripts/browse-console-acceptance.mjs` drives a takeover through the real
-console and server with a stand-in model.
+`scripts/browse-console-acceptance.mjs` drives takeover through the real
+console with a stand-in model.
 Run Chrome fixtures as an unprivileged user with its sandbox on.
 
 ## Roadmap: broader browser use

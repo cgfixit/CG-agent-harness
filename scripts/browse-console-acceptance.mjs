@@ -1,5 +1,7 @@
-// #1123 phase 3: /browse takeover through the real console, the real server
-// and real Chrome, with a scripted stand-in for the model so CI needs none.
+// #1123 phases 3 and 4: /browse takeover through the real console, the real
+// server and real Chrome, with a scripted stand-in for the model so CI needs
+// none; then finding a waiting task again after a reload, a session switch,
+// logout and a restart.
 //
 // One loopback server is both the stand-in Ollama and the shop the task
 // browses; a second counts any request a page could leak to it. `serve`
@@ -95,18 +97,25 @@ await writeFile(join(home, 'config.yaml'), JSON.stringify({
 const port = await new Promise(r => { const probe = createServer(); probe.listen(0, '127.0.0.1', () => { const p = probe.address().port; probe.close(() => r(p)); }); });
 const base = 'http://127.0.0.1:' + port;
 const serverLog = [];
-const server = spawn(binary, ['serve', '--host', '127.0.0.1', '--port', String(port)], {
-  cwd: ROOT,
-  env: {PATH: process.env.PATH, HOME: home, CGAGENTHARNESS_HOME: home, CGAH_TEST_PRIVATE_BROWSER_ORIGINS: '1', TMPDIR: home},
-  stdio: ['ignore', 'pipe', 'pipe'],
-});
-for (const stream of [server.stdout, server.stderr]) stream.on('data', chunk => { serverLog.push(String(chunk)); if (serverLog.length > 200) serverLog.shift(); });
+const startServer = () => {
+  const child = spawn(binary, ['serve', '--host', '127.0.0.1', '--port', String(port)], {
+    cwd: ROOT,
+    env: {PATH: process.env.PATH, HOME: home, CGAGENTHARNESS_HOME: home, CGAH_TEST_PRIVATE_BROWSER_ORIGINS: '1', TMPDIR: home},
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  for (const stream of [child.stdout, child.stderr]) stream.on('data', chunk => { serverLog.push(String(chunk)); if (serverLog.length > 200) serverLog.shift(); });
+  return child;
+};
+const stopServer = async child => {
+  if (child.exitCode === null && child.signalCode === null) { child.kill('SIGTERM'); await new Promise(r => { child.once('exit', r); setTimeout(r, 5000); }); }
+};
+let server = startServer();
 
 let chrome, profile, ws;
 const cleanup = async () => {
   try { ws && ws.close(); } catch {}
   if (chrome && chrome.exitCode === null) { chrome.kill('SIGTERM'); await new Promise(r => { chrome.once('exit', r); setTimeout(r, 2000); }); }
-  if (server.exitCode === null) { server.kill('SIGTERM'); await new Promise(r => { server.once('exit', r); setTimeout(r, 5000); }); }
+  await stopServer(server);
   collector.close(); shop.close();
   for (const dir of [profile, home]) if (dir) await rm(dir, {recursive: true, force: true, maxRetries: 10, retryDelay: 200});
 };
@@ -114,12 +123,16 @@ const cleanup = async () => {
 try {
   // Sign in over HTTP as the bootstrap admin and replace its setup code, as
   // a first run does; the console then uses that session's cookie.
-  let csrf;
-  for (let i = 0; i < 200 && !csrf; i++) {
-    if (server.exitCode !== null) throw new Error('serve exited: ' + serverLog.join(''));
-    try { csrf = (await (await fetch(base + '/')).text()).match(/<meta name="csrf-token" content="([^"]+)"/)?.[1]; } catch { await pause(100); }
-  }
-  assert.ok(csrf, 'the console never answered');
+  const answering = async () => {
+    let token;
+    for (let i = 0; i < 200 && !token; i++) {
+      if (server.exitCode !== null) throw new Error('serve exited: ' + serverLog.join(''));
+      try { token = (await (await fetch(base + '/')).text()).match(/<meta name="csrf-token" content="([^"]+)"/)?.[1]; } catch { await pause(100); }
+    }
+    assert.ok(token, 'the console never answered');
+    return token;
+  };
+  const csrf = await answering();
   const headers = {'origin': base, 'x-cyclaw-csrf': csrf, 'content-type': 'application/json'};
   const post = (path, body, cookie) => fetch(base + path, {method: 'POST', headers: {...headers, ...(cookie ? {cookie} : {})}, body: JSON.stringify(body)});
   const setup = (await readFile(join(home, 'setup-code'), 'utf8')).trim();
@@ -129,12 +142,15 @@ try {
   reply = await post('/api/auth/password', {current_password: setup, password: randomBytes(18).toString('hex')}, cookie);
   assert.equal(reply.status, 200, 'setup code replaced');
   cookie = reply.headers.get('set-cookie').split(';')[0];
-  for (let i = 0; ; i++) {
-    const profile = await (await fetch(base + '/api/ollama/profile', {headers: {...headers, cookie}})).json();
-    if (profile.tuning && profile.tuning.window === 32768) break;
-    assert.ok(i < 150, 'the stand-in model was never tuned: ' + JSON.stringify(profile));
-    await pause(100);
-  }
+  const tuned = async () => {
+    for (let i = 0; ; i++) {
+      const profile = await (await fetch(base + '/api/ollama/profile', {headers: {...headers, cookie}})).json();
+      if (profile.tuning && profile.tuning.window === 32768) return;
+      assert.ok(i < 150, 'the stand-in model was never tuned: ' + JSON.stringify(profile));
+      await pause(100);
+    }
+  };
+  await tuned();
 
   // Chrome for the console, sandbox on.
   const chromeBinary = process.env.CHROME_BIN || (process.platform === 'darwin' ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '/usr/bin/google-chrome');
@@ -166,7 +182,8 @@ try {
   await call('Network.setCookie', {name: 'cgagentharness_session', value: cookie.split('=').slice(1).join('='), url: base, httpOnly: true, sameSite: 'Strict'});
   await call('Page.enable'); await call('Runtime.enable');
   await call('Page.navigate', {url: base});
-  await until('typeof onSend === "function" && document.getElementById("hAuthWho").textContent.includes("admin")');
+  const ready = 'typeof onSend === "function" && document.getElementById("hAuthWho").textContent.includes("admin")';
+  await until(ready);
 
   const card = 'Array.from(document.querySelectorAll(".fetch-confirm")).at(-1)';
   const streamText = () => evaluate('document.getElementById("stream").innerText');
@@ -239,8 +256,98 @@ try {
   assert.equal(saves.length, 1, 'a cancelled task, and a yes after it, send nothing');
   console.log('cancel while waiting -> cancelled; the stale card sent nothing');
 
+  // Phase 4: the tab keeps only {session_id, job_id} (sessionStorage), and
+  // finds the task again from the server's record.
+  const KEY = JSON.stringify('cgah.browseJob');
+  const stored = () => evaluate(`sessionStorage.getItem(${KEY})`);
+  const send = line => evaluate(`document.getElementById("input").value = ${JSON.stringify(line)}; onSend()`);
+  const reload = async () => {
+    await call('Page.reload');
+    await pause(300);
+    await until(ready);
+  };
+  const FOLLOWING = 'Following the browser task this tab started.';
+  const approve = reason => evaluate(`(() => { const c = ${card}; const r = c.querySelector("input"); r.value = ${JSON.stringify(reason)}; r.dispatchEvent(new Event("input")); c.querySelectorAll("button")[0].click(); })()`);
+
+  // 6. Reload while waiting: the card comes back from the server, the yes
+  // sends the request once, and the ended task does not come back.
+  await browse();
+  const pair = JSON.parse(await stored());
+  assert.deepEqual(Object.keys(pair).sort(), ['job_id', 'session_id'], 'only the pair is kept: ' + JSON.stringify(pair));
+  assert.equal(pair.session_id, null);
+  assert.match(pair.job_id, /^[0-9a-f]{32}$/);
+  const pending = await evaluate(`${card}.innerText`);
+  await reload();
+  await until(`document.querySelectorAll(".fetch-confirm").length === 1 && ${card}.textContent.includes("It is paused, not sent")`);
+  assert.ok((await streamText()).includes(FOLLOWING), 'the reloaded console says it is following the task');
+  assert.ok((await evaluate(`${card}.innerText`)).includes('SHA-256 ' + BODY_SHA), 'the card shows the same request:\n' + pending);
+  marker = await done();
+  await approve('the order I asked for, after a reload');
+  await finished(marker);
+  assert.equal(saves.length, 2, 'approved after a reload: sent once');
+  assert.equal(await stored(), null, 'an ended task is forgotten');
+  await reload();
+  await pause(2 * 1500 + 500);
+  assert.equal(await cards(), 0, 'an ended task brings back no card');
+  assert.ok(!(await streamText()).includes(FOLLOWING), 'an ended task is not followed again');
+  console.log('reload while waiting -> the card came back; one yes sent it once; the ended task did not come back');
+
+  // 7. Switch sessions while waiting: the card leaves with the session and
+  // comes back with it; a hold there reaches the same request.
+  await send('/session new browse-here');
+  await until('document.getElementById("stream").innerText.includes("session created: ")');
+  const sessionA = await evaluate('currentSession');
+  await browse();
+  assert.equal(JSON.parse(await stored()).session_id, sessionA, 'the pair names the session the task started in');
+  await send('/session new elsewhere');
+  await until(`currentSession && currentSession !== ${JSON.stringify(sessionA)} && document.getElementById("stream").innerText.includes("session created: ")`);
+  await pause(2 * 1500 + 500);
+  assert.equal(await cards(), 0, 'another session shows no card');
+  await send('/session use ' + sessionA);
+  await until(`currentSession === ${JSON.stringify(sessionA)} && document.querySelectorAll(".fetch-confirm").length === 1`);
+  marker = await done();
+  await evaluate(`${card}.querySelectorAll("button")[1].click()`);
+  await finished(marker);
+  assert.equal(saves.length, 2, 'held after a session switch: not sent');
+  assert.ok((await streamText()).includes('Held, not sent: POST ' + shopOrigin + '/api/save'), 'the report lists the held request');
+  assert.equal(await stored(), null, 'an ended task is forgotten');
+  console.log('session switch while waiting -> no card elsewhere; back in its session the card returned; hold reached it');
+
+  // 8. A task the server does not have (never existed, another account's,
+  // or ended and cleared) is forgotten, and nothing is shown or sent.
+  await evaluate(`sessionStorage.setItem(${KEY}, JSON.stringify({session_id: null, job_id: ${JSON.stringify(randomBytes(16).toString('hex'))}}))`);
+  await reload();
+  await until('document.getElementById("stream").innerText.includes("unavailable, nothing was resumed")');
+  assert.equal(await stored(), null, 'an unknown task is forgotten');
+  assert.equal(await cards(), 0);
+  console.log('unknown task id -> "unavailable, nothing was resumed"; forgotten');
+
+  // 9. Restart while waiting: the record is gone, the console says so, and the
+  // held request is never sent.
+  await browse();
+  await stopServer(server);
+  server = startServer();
+  // A new process issues a new CSRF token; the sign-in itself survives.
+  headers['x-cyclaw-csrf'] = await answering();
+  await reload();
+  await until('document.getElementById("stream").innerText.includes("unavailable, nothing was resumed")', 60);
+  assert.equal(await stored(), null, 'a task lost to a restart is forgotten');
+  assert.equal(await cards(), 0, 'no card after a restart');
+  await pause((WAIT_SEC + 2) * 1000);
+  assert.equal(saves.length, 2, 'a restart sends nothing');
+  console.log('restart while waiting -> "unavailable, nothing was resumed"; nothing sent');
+
+  // 10. Logout forgets the pair.
+  await tuned();
+  await browse();
+  assert.ok(await stored(), 'a waiting task is kept');
+  await evaluate('document.getElementById("hAuthLogout").click()');
+  await until('document.body.classList.contains("signed-out")');
+  assert.equal(await stored(), null, 'logout forgets the pair');
+  console.log('logout -> the pair is forgotten');
+
   assert.deepEqual(leaks, [], 'no page-written request reached the collector');
-  console.log('collector received nothing; the shop received exactly one approved POST');
+  console.log('collector received nothing; the shop received exactly the two approved POSTs');
 } catch (error) {
   console.error(error && error.stack || error);
   console.error('--- serve output (tail) ---\n' + serverLog.join('').slice(-4000));
