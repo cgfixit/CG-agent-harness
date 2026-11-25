@@ -590,6 +590,132 @@ async fn a_password_reset_or_change_drops_staged_diag_state() {
     }
 }
 
+/// The blocking task commits a password reset or change even when the client
+/// hangs up and the handler is dropped, so the /diag state and the audit line
+/// go with that commit, not with the handler.
+// Windows builds refuse every read (`DIAG_UNSUPPORTED`); see the windows test above.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_password_reset_or_change_whose_client_hangs_up_still_drops_staged_diag_state() {
+    use axum::extract::{Path, State};
+    use cgagentharness::server::routes::auth;
+    use std::time::Duration;
+
+    let model = start_mock_model().await;
+    let s = server(&model, true).await;
+    let boss = account(&s, "ops-boss", "admin").await;
+    let accounts = s.state.auth.as_ref().unwrap();
+    let request = |cookie: &str, body: Value| {
+        axum::http::Request::post("/")
+            .header("cookie", cookie)
+            .body(axum::body::Body::from(body.to_string()))
+            .unwrap()
+    };
+    for reset in [true, false] {
+        let name = if reset { "ops-hung-reset" } else { "ops-hung-change" };
+        let password = cgagentharness::common::random_hex(24);
+        accounts.create_user(name, &password, "admin").unwrap();
+        let login = s
+            .client
+            .post(s.url("/api/auth/login"))
+            .json(&json!({"username":name,"password":password}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(login.status(), 200);
+        let cookie = login.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap()
+            .to_string();
+        let (_, session) = json_call(
+            &s,
+            &cookie,
+            Method::POST,
+            "/api/sessions",
+            Some(json!({"title":"diag"})),
+        )
+        .await;
+        let sid = session["session_id"].as_str().unwrap().to_string();
+        let (status, _) = json_call(&s, &cookie, Method::GET, "/api/diag/read?file=audit.jsonl&last=3", None).await;
+        assert_eq!(status, 200, "{name}: the log read");
+        let (status, _) = json_call(
+            &s,
+            &cookie,
+            Method::POST,
+            "/api/diag/inject",
+            Some(json!({"session_id": sid})),
+        )
+        .await;
+        assert_eq!(status, 200, "{name}: the excerpt was staged");
+        let owner = staged_owner(&s, name);
+        assert!(s.state.diag.staged(&owner).is_some() && s.state.diag.last(&owner).is_some());
+
+        let fresh = cgagentharness::common::random_hex(24);
+        let state = State(s.state.clone());
+        let handler = if reset {
+            let call = auth::set_password(
+                state,
+                Path(name.to_string()),
+                request(&boss, json!({"password": fresh})),
+            );
+            tokio::spawn(async move { drop(call.await) })
+        } else {
+            let body = json!({"current_password": password, "password": fresh});
+            let call = auth::change_password(state, request(&cookie, body));
+            tokio::spawn(async move { drop(call.await) })
+        };
+        // The permit is taken in the poll that hands the hash to the blocking
+        // pool, so a missing permit means the handler is parked on that task.
+        let permits = s.state.auth_operation_permits.clone();
+        let idle = permits.available_permits();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while permits.available_permits() == idle {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the password operation started");
+        handler.abort();
+        assert!(
+            handler.await.unwrap_err().is_cancelled(),
+            "{name}: the handler was dropped"
+        );
+        // The blocking task cannot be aborted: it returns the permit when done.
+        tokio::time::timeout(Duration::from_secs(30), async {
+            while permits.available_permits() != idle {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the password operation finished");
+
+        assert!(
+            accounts.login(name, &fresh).is_ok(),
+            "{name}: the new password was committed"
+        );
+        assert!(
+            s.state.diag.staged(&owner).is_none(),
+            "{name}: the staged excerpt survived"
+        );
+        assert!(s.state.diag.last(&owner).is_none(), "{name}: the last read survived");
+        s.state.audit.flush();
+        let event = if reset {
+            "account.password_reset"
+        } else {
+            "account.password_changed"
+        };
+        let logged = audit_rows(&s, event);
+        assert_eq!(
+            logged.iter().filter(|row| row["target"] == name).count(),
+            1,
+            "{name}: {event}"
+        );
+    }
+}
+
 #[cfg(unix)]
 fn staged_owner(s: &TestServer, username: &str) -> String {
     s.state.auth.as_ref().unwrap().get_user(username).unwrap().user_id
