@@ -32,9 +32,10 @@ macOS and Linux use detached jobs. Windows uses the synchronous endpoint.
   The host checks each request and redirect against current block policy. The authenticated
   loopback proxy pins public addresses. Private access is fixture-only.
   `navigate` accepts a task URL, granted root, page URL or shown link.
-- Playwright routing holds methods other than GET and HEAD. Browser-wide
-  CDP Fetch repeats the hold as defense in depth, without an independent
-  fixture for that hold. Text outside the task or page is held. Each observation
+- Playwright routing holds methods other than GET and HEAD, even mid-load
+  form posts; `navigate` still returns the page. CDP Fetch repeats it
+  browser-wide (unfixtured backup). Text outside the task or page is
+  held. Each observation
   checks text fields concurrently. Targeting a secret field or one whose
   attributes could not be read ends the task with a handoff.
 - With `browser.takeover.enabled` (shipped true), the job owner can approve

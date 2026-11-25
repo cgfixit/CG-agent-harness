@@ -1724,7 +1724,8 @@ const MAX_GUARDED_REPLY_BYTES: usize = 400_000;
 /// - a block rule on a path holds inside the granted origin (#899): see
 ///   `guard_path_denials`;
 /// - a held POST never reaches the server, whether the page sent it on its
-///   own or the model's click caused it (#894): see `guard_holds`.
+///   own, the model's click caused it (#894) or a form submitted while the
+///   page parsed: see `guard_holds`.
 ///
 /// The session's verdicts come from a policy file through `RequestPolicy`, as
 /// a task's do; only the loopback origin's name is swapped for the rules.
@@ -1863,9 +1864,20 @@ const GUARD_HOLDS_PAGE: &str = r#"
 <script>fetch('/autosave', {method: 'POST', body: 'draft'}).catch(() => {});</script>
 "#;
 
+/// A page whose inline script submits a POST form while the page is still
+/// parsing, before `domcontentloaded`.
+const GUARD_AUTOSUBMIT_PAGE: &str = r#"
+<p>AUTOSUBMIT-PAGE</p>
+<form method="post" action="/submitted"><input name="item" value="tea"></form>
+<script>document.forms[0].submit();</script>
+<p>after the script</p>
+"#;
+
 /// The two kinds of held request (#894), by what the server received: a POST
 /// the page sends on its own is listed as background, a POST the model's click
-/// causes is listed as the operator's step, and neither reaches the server.
+/// causes is listed as the operator's step, and neither reaches the server. A
+/// page load the page starts while it parses is held as the operator's step,
+/// and the navigate that opened the page still returns its observation.
 fn guard_holds(sidecar: &mut Sidecar, lines: &mut Vec<String>, base: &str, seen: &Received) -> Result<(), String> {
     let rows = |page: &Value, key: &str| -> Vec<String> {
         page[key]
@@ -1902,6 +1914,29 @@ fn guard_holds(sidecar: &mut Sidecar, lines: &mut Vec<String>, base: &str, seen:
         return Err(format!("a held request reached the server: {sent:?}"));
     }
     lines.push("holds -> page's own POST listed as background, click's POST as the operator's; neither sent".into());
+
+    let (page, _) = guard_call(
+        sidecar,
+        lines,
+        json!({"op":"navigate","url": format!("{base}/autosubmit")}),
+    )?;
+    if rows(&page, "held") != [format!("POST {base}/submitted")] || !rows(&page, "held_background").is_empty() {
+        return Err(format!(
+            "a form submitted while the page parsed was not held as the operator's step: {page}"
+        ));
+    }
+    if !page["text"].as_str().unwrap_or("").contains("AUTOSUBMIT-PAGE") {
+        return Err(format!("the auto-submitting page was not observed: {page}"));
+    }
+    let posted = seen
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .any(|row| row.starts_with("POST "));
+    if posted {
+        return Err("a form submitted while the page parsed reached the server".into());
+    }
+    lines.push("holds -> a form submitted during parsing held, navigate still observed the page".into());
     Ok(())
 }
 
@@ -2000,6 +2035,8 @@ impl ScriptedOperator {
 /// - an approved POST reaches the server once, and the page gets its answer;
 /// - the identical POST sent again is a new question, and refused it is held;
 /// - a denied POST and one whose answer comes after the wait never arrive;
+/// - a form the page submits while it parses is held, never sent, and the
+///   navigate that opened the page still returns it;
 /// - a block rule added while the operator decides stops an approved POST;
 /// - an approved form POST loads its result, a denied one leaves the page;
 /// - a form the page submits by itself is held without a question;
@@ -2021,6 +2058,8 @@ pub fn run_takeover_demo(script: &Path, headless: bool) -> Result<String, String
 fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Result<String, String> {
     let (origin, port, seen) = serve_recording(vec![
         ("/shop", Reply::Html(TAKEOVER_PAGE.to_string())),
+        ("/autosubmit", Reply::Html(GUARD_AUTOSUBMIT_PAGE.to_string())),
+        ("/submitted", Reply::Html("<p>SUBMITTED</p>".to_string())),
         ("/api/save", Reply::Html("SAVED".to_string())),
         ("/api/order", Reply::Html(TAKEOVER_RESULT_PAGE.to_string())),
         ("/api/beacon", Reply::Html(String::new())),
@@ -2141,6 +2180,26 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         return Err(format!("a denied POST was sent, or not listed as held: {page}"));
     }
     lines.push("denied -> held, not sent".into());
+
+    // A form the page submits while it parses, with takeover on: navigate
+    // still returns the page, the load is held for the operator, and it is
+    // never sent. Whether the operator is asked first is not checked here: a
+    // page's own load may be paused and refused, or held outright.
+    operator.plan([Verdict::Deny]);
+    let (page, _) = guard_call(
+        &mut sidecar,
+        &mut lines,
+        json!({"op":"navigate","url": format!("{base}/autosubmit")}),
+    )?;
+    if rows(&page, "held") != [format!("POST {base}/submitted")]
+        || !page["text"].as_str().unwrap_or("").contains("AUTOSUBMIT-PAGE")
+        || count("POST /submitted") != 0
+    {
+        return Err(format!(
+            "a form submitted while the page parsed was sent, or navigate did not observe the page: {page}"
+        ));
+    }
+    lines.push("page's own submit while parsing -> navigate observed the page, load held, not sent".into());
 
     // A form POST: approved it loads its result, denied the page stays.
     operator.plan([Verdict::Deny]);
@@ -2370,6 +2429,8 @@ fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Resu
         ("/big", Reply::Html(big)),
         ("/huge", Reply::Unsized(huge)),
         ("/holds", Reply::Html(GUARD_HOLDS_PAGE.to_string())),
+        ("/autosubmit", Reply::Html(GUARD_AUTOSUBMIT_PAGE.to_string())),
+        ("/submitted", Reply::Html("<p>SUBMITTED</p>".to_string())),
         ("/docs", Reply::Html(GUARD_DENIALS_PAGE.to_string())),
         ("/to-private", Reply::Redirect("/private/landing")),
         ("/hop", Reply::Redirect("/to-private")),
