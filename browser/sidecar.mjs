@@ -39,6 +39,11 @@ let profileDir;
 let grants = new Set();
 // Only test-support fixtures set this; production refuses non-public literals.
 let allowPrivate = false;
+// Only the test-support takeover fixture sets this: an approved request
+// leaves the page route with a body other than the one the operator was
+// shown, so the network gate must refuse it (#1123). It can only make an
+// approved request fail.
+let rewriteApproved = false;
 // Requests only the operator may send: a page load, or one the model's own
 // action caused. Reported with the next observation; they end the task.
 const held = [];
@@ -563,7 +568,8 @@ async function decideHeld(route, request, method, url) {
     allowances.push({ method, url, sha256, until: Date.now() + ALLOWANCE_MS });
     // The action loaded a new page: what that page requests is its own doing.
     if (topLevelLoad(request)) leavePage();
-    await route.continue().catch(() => {});
+    const changed = rewriteApproved ? { postData: Buffer.concat([body, Buffer.from("&changed=1")]) } : undefined;
+    await route.continue(changed).catch(() => {});
     // Still this action's request until it is answered or fails, so the
     // observation that follows shows the page with the answer.
     await bounded(request.response(), "approved request").catch(() => {});
@@ -755,6 +761,7 @@ async function start(message) {
   if (context) throw new Error("session already started");
   grants = new Set(message.grants || []);
   allowPrivate = message.allow_private === true;
+  rewriteApproved = message.rewrite_approved_body === true;
   takeoverWaitMs = Math.max(0, Math.min(MAX_TAKEOVER_WAIT_MS, Math.trunc(Number(message.takeover_wait_ms) || 0)));
   const proxyPort = await startProxy();
   profileDir = freshProfile();

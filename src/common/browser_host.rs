@@ -358,6 +358,22 @@ impl Sidecar {
         policy: RequestPolicy,
         takeover: Option<Takeover>,
     ) -> Result<Self, String> {
+        Self::start_inner(script, session, headless, allow_private, policy, takeover, false)
+    }
+
+    /// `start_with`. `rewrite_approved_body` makes the sidecar release an
+    /// approved request with a body other than the one the operator was
+    /// shown; only the takeover fixture passes true, and only in a
+    /// test-support build, to prove the network gate refuses it (#1123).
+    fn start_inner(
+        script: &Path,
+        session: &Session,
+        headless: bool,
+        allow_private: bool,
+        policy: RequestPolicy,
+        takeover: Option<Takeover>,
+        rewrite_approved_body: bool,
+    ) -> Result<Self, String> {
         if !script
             .parent()
             .is_some_and(|dir| dir.join("node_modules/playwright").exists())
@@ -385,6 +401,7 @@ impl Sidecar {
             "grants": session.grant_strings(),
             "headless": headless,
             "allow_private": allow_private,
+            "rewrite_approved_body": rewrite_approved_body && cfg!(feature = "test-support"),
             "takeover_wait_ms": wait.as_millis() as u64,
         }))?;
         if started.get("ok") != Some(&Value::Bool(true)) {
@@ -2140,6 +2157,8 @@ impl ScriptedOperator {
 /// - a navigate while that late question waits withdraws it: the navigate
 ///   returns at once, the form is held, and the operator's later yes sends
 ///   nothing.
+/// - an approved request released with a body other than the one shown meets
+///   the network gate with no matching pass: held, and neither body is sent.
 ///
 /// The operator is asked with the method, whole URL, size, SHA-256 and text
 /// of the body that would be sent.
@@ -2520,7 +2539,7 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
     )?;
     operator.plan([Verdict::AllowAfter(Duration::from_secs(3))]);
     let page = click(&mut sidecar, &mut lines, "Save")?;
-    if rows(&page, "held") != [save] {
+    if rows(&page, "held") != [save.clone()] {
         return Err(format!("a POST whose wait ran out was not held: {page}"));
     }
     thread::sleep(Duration::from_secs(3));
@@ -2529,6 +2548,40 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         return Err("a yes that came after the wait sent the request".into());
     }
     lines.push("expired -> held; the late yes sent nothing".into());
+
+    // #1123: the pass names the body the operator was shown. Approved, then
+    // released with another body (this fixture's rewrite seam), the request
+    // meets the network gate with no matching pass: held, and neither body
+    // reaches the server.
+    drop(sidecar);
+    let mut sidecar = Sidecar::start_inner(
+        script,
+        &session,
+        headless,
+        private,
+        policy(),
+        Some(takeover(Duration::from_secs(20))),
+        true,
+    )?;
+    operator.plan([Verdict::Allow]);
+    let (asked_before, saves_before) = (operator.asked().len(), count("POST /api/save"));
+    let page = click(&mut sidecar, &mut lines, "Save")?;
+    let asked = operator.asked();
+    if asked.len() != asked_before + 1
+        || asked.last().map(|question| &question["sha256"]) != Some(&json!(crate::common::sha256_hex("qty=2")))
+    {
+        return Err(format!("the operator was not asked about the shown body: {asked:?}"));
+    }
+    if count("POST /api/save") != saves_before
+        || !rows(&page, "approved").is_empty()
+        || rows(&page, "held") != [save.clone()]
+        || !page["text"].as_str().unwrap_or("").contains("not saved")
+    {
+        return Err(format!(
+            "a request approved for one body was sent with another, or not held: {page}"
+        ));
+    }
+    lines.push("approved, then released with a changed body -> the gate held it, neither body sent".into());
 
     // Without takeover nothing is asked and nothing waits.
     drop(sidecar);
