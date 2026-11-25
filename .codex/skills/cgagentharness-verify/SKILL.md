@@ -3,29 +3,24 @@ name: cgagentharness-verify
 description: Verify changed Harness CLI, research, browser or desktop behavior with scoped checks and isolated fixtures.
 ---
 
-# Verify the harness
+# Verify the Harness
 
-Read `AGENTS.md`, affected invariants, CI and fixture assertions. Record the
-checkout, SHA, dirty state, binary and architecture. Preserve operator homes.
+Follow `AGENTS.md`. Run the changed entrypoint and inspect outputs and side
+effects. Select refusal tests from `cgagentharness-invariant-guard`.
 
-Choose checks by the changed contract:
-- Runtime: run the changed command or route; inspect output and side effects.
-  Select tests from `cgagentharness-invariant-guard`. Use actual Seatbelt or
-  bubblewrap for claims about that backend.
-- Research: select the affected PDF input or goal/loop path. Check extracted
-  text, source citations and refusals as well as successful completion.
-- Browser: `scripts/chat-browser-acceptance.mjs` drives the console;
+- CLI/server: use an owned temporary home and listener. Match process, binary
+  and assets. Exercise benign chat and the changed behavior. Stop owned processes.
+- Isolation: use actual Seatbelt or bubblewrap for claims about that backend.
+- Research: check PDF extraction or goal/loop citations, completion and refusals.
+- Browser: `scripts/chat-browser-acceptance.mjs` drives console Chrome.
   `scripts/browser-use-eval.sh` needs a debug `test-support` build, prepared
-  Chrome/Playwright and local Ollama for its Qwen fixture. Exercise `/browse`
-  itself when its route or UI changes.
-- Desktop: use `cgagentharness-release` for packaged identity. Drive fresh
-  WKWebView and browser UIs when both ship, following `AGENTS.md`.
-- Models: record live tag and allocation. Keep fixtures and live models distinct.
-- Prose: run `invariant_guard::markdown_stays_on_the_docs_budget`. Rebuild the
-  self-manual when its inputs change; if bytes change, run
+  Chrome/Playwright and local Ollama for Qwen. Drive changed `/browse` paths.
+- Desktop: use `cgagentharness-release` for identity and native acceptance.
+- Models: record live tag and allocation. Label fixture results separately.
+- Docs: run `invariant_guard::markdown_stays_on_the_docs_budget`. Regenerate
+  changed self-manual inputs and, if output changes, run
   `self_manual::every_chunk_is_clean_under_the_configured_scanner`.
 
-For live checks, use an owned temporary home and unique listener. Verify the
-running binary and assets; exercise benign chat and the changed behavior. Stop
-only owned processes. Report commands, exits, artifact hashes and gaps;
-zero selected tests means NOT RUN. Compare the baseline when attribution is unclear.
+Record SHA, dirty state, architecture, artifact hashes, commands, exits and
+gaps. Zero selected tests means NOT RUN. Compare the baseline when attribution
+is unclear.

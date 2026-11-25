@@ -5,42 +5,38 @@ description: Build and verify macOS Harness release artifacts, native acceptance
 
 # Release the macOS desktop
 
-Follow `AGENTS.md`; read the README-linked `docs/DESKTOP.md`, `docs/RELEASING.md`,
-`scripts/package-desktop.sh`, `scripts/verify-desktop-bundle.sh` and the current
-desktop, Bundle and release workflows. Package committed source so `Resources/COMMIT`
-is meaningful; identify the release version as well as the source SHA.
-`CGAH_ALLOW_DIRTY=1` is only for marked development artifacts.
+Follow the desktop and release guides linked from `AGENTS.md`. Read
+`scripts/package-desktop.sh`, `scripts/verify-desktop-bundle.sh` and the
+current workflows. Build committed source for `Resources/COMMIT` provenance.
+`CGAH_ALLOW_DIRTY=1` marks development artifacts.
 
-Build on Apple Silicon macOS with installed Xcode CLT and rustup toolchains from
-both toolchain files. Install `aarch64-apple-darwin` and `x86_64-apple-darwin`
-standard libraries for both toolchains before a universal build. Use rustup Cargo
-on PATH. Run `scripts/package-desktop.sh --universal` (optional `--dmg`).
+On Apple Silicon with Xcode CLT, use both pinned rustup toolchains and
+install both Apple targets for each. Run `scripts/package-desktop.sh --universal`
+(optionally `--dmg`). Set `CGAH_RELEASE_VERSION` for a planned version.
 
-The critical order is backend slices -> lipo -> sign universal backend -> compile
-both desktop slices embedding that exact whole-file SHA256 -> lipo desktop -> sign
-shell/bundle. Never re-sign the sidecar after its digest is embedded. The backend
-remains a separate child; native commands must not become browser capabilities.
+Preserve signing order: lipo the backend, sign it, compile the desktop slices
+with that whole-file SHA-256, then lipo and sign the shell/bundle. Re-signing
+the backend after embedding the digest breaks startup identity.
 
-Verify the ZIP checksum, extract to a fresh directory with spaces, and run
-`scripts/verify-desktop-bundle.sh '<extracted app>' universal '<release version>'`.
-Verify the bundled version matches the planned release and both executables
-contain arm64 and x86_64, nested signatures, resources and system-only linkage.
-Run `scripts/test-desktop-backend.py` with `CGAH_TEST_BINARY` set to the packaged
-backend. Check desktop policy and both `cargo deny` configurations.
+Verify the ZIP checksum and extract to a fresh path containing spaces.
+Run `scripts/verify-desktop-bundle.sh '<extracted app>' universal '<release version>'`
+for version, architectures, resources, signatures and linkage. Run
+`scripts/test-desktop-backend.py` with `CGAH_TEST_BINARY` set to the packaged
+backend. Check desktop policy and the root and desktop cargo-deny settings.
 
-Launch the actual app with a disposable `CGAGENTHARNESS_HOME`, distinct from any
-operator home. Record PID, owned backend/listener, chat and shutdown. Exercise
-WKWebView and the external browser console separately. If testing `/browse`,
-point `browser.sidecar` at a prepared absolute path outside the bundle.
-Intel cross-compilation, Rosetta execution and native Intel testing are different
-claims. Do not silently install Rosetta or change TCC settings to fill an evidence gap.
+Launch the bundle with a disposable `CGAGENTHARNESS_HOME`. Record PID and
+listener ownership. Exercise WKWebView and the browser console with setup,
+chat, a guarded action and shutdown. For `/browse`, use a prepared absolute
+`browser.sidecar` path. Report Intel cross-build, Rosetta and native Intel
+evidence separately. Follow operator authority for Rosetta or TCC changes.
 
-Match remote SHA, workflow run, artifact COMMIT and checksums.
-`desktop-check.yml` compiles PRs; Bundle and release call reusable `desktop.yml`.
-Use an authorized desktop dispatch for an unmerged artifact. Automatic/manual
-publication requires main and successful Bundle at that SHA. Inspect runs, tags
-and releases before dispatch; the planner rejects prerelease tags.
-Publication follows explicit user authorization. Never overwrite release assets
-or tags after an ambiguous result.
-Report the trust limit: ad-hoc signing and same-release checksums establish
-integrity without Developer ID, notarization or independent publisher proof.
+Match workflow, source SHA, artifact COMMIT, version and checksum.
+`desktop-check.yml` compiles matching PRs. Use authorized `desktop.yml`
+dispatch for an unmerged artifact. A successful main Bundle triggers release
+planning. Check exact-SHA eligibility, supersession, stable-tag rules and the
+publish environment in `release.yml` and `scripts/release-plan.py`.
+Inspect existing runs, tags and releases before dispatch. Preserve assets
+after ambiguous publication. Use explicit authority to publish.
+
+Report ad-hoc signature and checksum integrity separately from Developer ID,
+notarization and independent publisher identity.
