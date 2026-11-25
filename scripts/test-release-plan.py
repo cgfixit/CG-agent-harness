@@ -63,6 +63,8 @@ class ReleasePlanTests(unittest.TestCase):
             {"commit": {"tree": {"sha": "new"}}},
             {"workflow_runs": [{"head_sha": "b" * 40, "conclusion": "success", "event": "push"}]},
             [{"name": "v0.1.0"}], [{"tag_name": "v0.1.0"}],
+            # Read only by the tip that would release: its workflows and main's.
+            [{"name": "workflows", "type": "dir", "sha": "w1"}], [{"name": "workflows", "type": "dir", "sha": "w1"}],
         ]
         for tip, superseded in (("b" * 40, "false"), ("a" * 40, "true")):
             with self.subTest(tip=tip), tempfile.TemporaryDirectory() as tmp:
@@ -81,6 +83,53 @@ class ReleasePlanTests(unittest.TestCase):
                 self.assertIn("source_sha=" + "b" * 40, text)
                 self.assertIn(f"superseded={superseded}", text)
                 self.assertIn("should_release=" + ("true" if superseded == "false" else "false"), text)
+
+    def test_publish_recheck_skips_once_main_changes_its_workflow_files(self):
+        # Run 221: main gained a ci.yml edit while publish waited on
+        # the environment timer, and GitHub answered the release with HTTP 403.
+        def recheck(event, source_workflows, main_workflows):
+            replies = [
+                {"tag_name": "v0.1.0", "draft": False, "prerelease": False},
+                {"commit": {"tree": {"sha": "old"}}},
+                {"commit": {"tree": {"sha": "new"}}},
+                {"workflow_runs": [{"head_sha": "b" * 40, "conclusion": "success", "event": "push"}]},
+                [{"name": "v0.1.0"}], [{"tag_name": "v0.1.0"}],
+                source_workflows, main_workflows,
+            ]
+            env = {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "example/repo", "GITHUB_SHA": "b" * 40,
+                   "RELEASE_SOURCE_SHA": "b" * 40, "GITHUB_EVENT_NAME": event, "PUBLISH": "true",
+                   "GITHUB_REF": "refs/heads/main"}
+            with patch.dict(os.environ, env, clear=True), \
+                    patch.object(module, "api", side_effect=replies) as api, \
+                    patch("sys.stdout", new_callable=io.StringIO) as out, \
+                    patch("sys.stderr", new_callable=io.StringIO) as err:
+                module.main()
+            result = json.loads(out.getvalue())
+            # The log line says why, and only when the skip happens.
+            self.assertEqual("workflow files" in err.getvalue(), result["superseded"] == "true")
+            return result, [c.args[0] for c in api.call_args_list]
+
+        def listing(sha):
+            return [{"name": "dependabot.yml", "type": "file", "sha": "f"}, {"name": "workflows", "type": "dir", "sha": sha}]
+
+        for event in ("workflow_run", "workflow_dispatch"):
+            with self.subTest(event=event):
+                result, paths = recheck(event, listing("w1"), listing("w2"))
+                self.assertEqual((result["superseded"], result["should_release"]), ("true", "false"))
+                self.assertEqual(paths[-2:], ["repos/example/repo/contents/.github?ref=" + "b" * 40,
+                                              "repos/example/repo/contents/.github?ref=main"])
+                result, _ = recheck(event, listing("w1"), listing("w1"))
+                self.assertEqual((result["superseded"], result["should_release"]), ("false", "true"))
+        # A workflows directory only one side has is a difference too.
+        self.assertEqual(recheck("workflow_run", listing("w1"), [])[0]["should_release"], "false")
+
+    def test_workflows_listing_fails_closed_on_an_unexpected_shape(self):
+        self.assertEqual(module.workflows_tree([{"name": "workflows", "type": "dir", "sha": "w1"}]), "w1")
+        self.assertIsNone(module.workflows_tree([{"name": "workflows", "type": "file", "sha": "w1"}]))
+        for bad in ({"name": "workflows"}, None, [{"name": "workflows", "type": "dir"}],
+                    [{"name": "workflows", "type": "dir", "sha": ""}], ["workflows"]):
+            with self.subTest(listing=bad), self.assertRaises(ValueError):
+                module.workflows_tree(bad)
 
     def test_identical_tree_skips_even_with_different_commit(self):
         self.assertEqual(self.plan(tree="old")["should_release"], "false")
