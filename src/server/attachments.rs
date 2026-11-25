@@ -277,6 +277,7 @@ impl AttachmentStore {
         Ok(whole_file_fence(&verified, MAX_WEB_CHARS, SourceKind::Attachment))
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn owned_blob(&self, owner: &str, id: &str) -> Option<AttachmentBlob> {
         self.owned_blobs(owner, &[id.to_string()]).remove(id)
     }
