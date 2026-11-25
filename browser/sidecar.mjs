@@ -554,23 +554,49 @@ function operatorAllows(method, url, contentType, body, sha256) {
 // ask, then release this same request or hold it as before. Release only
 // lets it leave the page route; the network gate still checks it against the
 // pass recorded here, and against the block list as it is then.
+// A request Chrome cancels or fails first (the page left, say) is never
+// sent: an open question about it ends as a no, as an expired wait does, and
+// a verdict that comes later finds no question. Held either way.
 async function decideHeld(route, request, method, url) {
-  const pageLoad = request.isNavigationRequest();
-  const body = request.postDataBuffer() ?? Buffer.alloc(0);
-  const sha256 = digest(body);
-  const contentType = (await request.headerValue("content-type").catch(() => null)) ?? "";
-  if (await operatorAllows(method, url, contentType, body, sha256)) {
-    allowances.push({ method, url, sha256, until: Date.now() + ALLOWANCE_MS });
-    // The action loaded a new page: what that page requests is its own doing.
-    if (topLevelLoad(request)) leavePage();
-    await route.continue().catch(() => {});
-    // Still this action's request until it is answered or fails, so the
-    // observation that follows shows the page with the answer.
-    await bounded(request.response(), "approved request").catch(() => {});
-    return;
+  let gone = false;
+  let withdraw = null;
+  const failed = (other) => {
+    if (other !== request) return;
+    gone = true;
+    withdraw?.();
+  };
+  context.on("requestfailed", failed);
+  try {
+    const pageLoad = request.isNavigationRequest();
+    const body = request.postDataBuffer() ?? Buffer.alloc(0);
+    const sha256 = digest(body);
+    const contentType = (await request.headerValue("content-type").catch(() => null)) ?? "";
+    let allow = false;
+    if (!gone) {
+      const answer = operatorAllows(method, url, contentType, body, sha256);
+      withdraw = withdrawQuestion;
+      allow = (await answer) && !gone;
+    }
+    if (allow) {
+      const pass = { method, url, sha256, until: Date.now() + ALLOWANCE_MS };
+      allowances.push(pass);
+      // The action loaded a new page: what that page requests is its own doing.
+      if (topLevelLoad(request)) leavePage();
+      await route.continue().catch(() => {});
+      // Still this action's request until it is answered or fails, so the
+      // observation that follows shows the page with the answer.
+      await bounded(request.response(), "approved request").catch(() => {});
+      // The network gate uses the pass up; one still here never reached it.
+      const unused = allowances.indexOf(pass);
+      if (unused < 0) return;
+      allowances.splice(unused, 1);
+    } else if (!gone) {
+      await (pageLoad ? route.fulfill({ status: 204, body: "" }) : route.abort("blockedbyclient")).catch(() => {});
+    }
+    if (held.length < 20) held.push(`${method} ${url.slice(0, 200)}`);
+  } finally {
+    context.off("requestfailed", failed);
   }
-  if (held.length < 20) held.push(`${method} ${url.slice(0, 200)}`);
-  await (pageLoad ? route.fulfill({ status: 204, body: "" }) : route.abort("blockedbyclient")).catch(() => {});
 }
 
 // The body Chrome is about to send, as bytes, or null when Chrome did not

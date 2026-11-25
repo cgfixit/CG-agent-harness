@@ -2049,6 +2049,7 @@ const TAKEOVER_PAGE: &str = r#"
 <button onclick="document.forms[0].submit(); later(4000)">Order and again later</button>
 <button onclick="later(9000)">Order much later</button>
 <a href="/slow">Slow page</a>
+<button onclick="saveAndLeave()">Save and leave</button>
 <p id="state">idle</p>
 <script>
 const show = (text) => { document.getElementById('state').textContent = text; };
@@ -2056,6 +2057,7 @@ const post = () => fetch('/api/save', {method: 'POST', body: 'qty=2'});
 function save() { post().then((r) => show('saved ' + r.status)).catch(() => show('not saved')); }
 function saveTwice() { post().then(() => post()).then(() => show('saved twice')).catch(() => show('second not saved')); }
 function later(ms) { setTimeout(() => document.forms[0].submit(), ms); }
+function saveAndLeave() { fetch('/api/save', {method: 'POST', body: 'qty=9'}).catch(() => {}); location = '/away'; }
 addEventListener('wheel', () => later(4000), {once: true});
 </script>
 "#;
@@ -2128,6 +2130,8 @@ impl ScriptedOperator {
 /// - an approved POST reaches the server once, and the page gets its answer;
 /// - the identical POST sent again is a new question, and refused it is held;
 /// - a denied POST and one whose answer comes after the wait never arrive;
+/// - a POST Chrome cancels while the operator decides (the page left for an
+///   ungranted origin) is held at once, and the yes that comes later sends nothing;
 /// - a form the page submits while it parses is held, never sent, and the
 ///   navigate that opened the page still returns it;
 /// - a block rule added while the operator decides stops an approved POST;
@@ -2162,6 +2166,7 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         ("/auto", Reply::Html(TAKEOVER_AUTO_PAGE.to_string())),
         ("/api/auto", Reply::Html("AUTO-SUBMITTED".to_string())),
         ("/slow", Reply::Html(TAKEOVER_SLOW_PAGE.to_string())),
+        ("/away", Reply::Redirect("https://outside.invalid/x".to_string())),
     ])?;
     let session = Session::general([&origin]).map_err(|err| format!("{err:?}"))?;
     let base = format!("http://127.0.0.1:{port}");
@@ -2498,6 +2503,54 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         ));
     }
     lines.push("form POST after the window, after a scroll, from an opened page -> not asked, held, not sent".into());
+
+    // The page leaves for an origin the task was not granted while its POST
+    // waits for the operator: Chrome's error page cancels the paused POST.
+    // That question ends as a no at once, the POST is held, and the yes that
+    // comes later sends nothing.
+    operator.plan([Verdict::AllowAfter(Duration::from_secs(5))]);
+    let asked_before = operator.asked().len();
+    let (shop, _) = guard_call(
+        &mut sidecar,
+        &mut lines,
+        json!({"op":"navigate","url": format!("{base}/shop")}),
+    )?;
+    let target = shop["elements"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|el| el["name"] == "Save and leave")
+        .and_then(|el| el["ref"].as_str())
+        .ok_or("the Save and leave button was not listed")?
+        .to_string();
+    // The click may fail on the refused redirect; its rows then come with the observe.
+    let started = Instant::now();
+    let reply = sidecar.call(json!({"op":"click","target":{"ref": target}}))?;
+    let page = if reply["ok"] == true {
+        reply["result"].clone()
+    } else {
+        Value::Null
+    };
+    let (later, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    let waited = started.elapsed();
+    let held = [rows(&page, "held"), rows(&later, "held")].concat();
+    if operator.asked().len() != asked_before + 1
+        || held != [save.clone()]
+        || !rows(&page, "approved").is_empty()
+        || !rows(&later, "approved").is_empty()
+        || waited >= Duration::from_secs(4)
+    {
+        return Err(format!(
+            "a POST Chrome cancelled while the operator decided was not held at once ({waited:?}): {page} {later}"
+        ));
+    }
+    thread::sleep(Duration::from_secs(5));
+    let (page, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    if count("POST /api/save") != 2 || !rows(&page, "approved").is_empty() {
+        return Err(format!("the late yes for a cancelled POST sent it: {page}"));
+    }
+    lines
+        .push("POST cancelled by a refused redirect while asked -> no at once, held; the late yes sent nothing".into());
 
     // A block rule added while the operator decides: approved, and still not sent.
     operator.plan([Verdict::BlockThenAllow]);
