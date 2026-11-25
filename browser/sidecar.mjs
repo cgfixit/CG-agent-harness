@@ -618,14 +618,20 @@ async function decideHeld(route, request, method, url) {
       await route.continue().catch(() => {});
       // Still this action's request until it is answered or fails, so the
       // observation that follows shows the page with the answer.
-      await bounded(request.response(), "approved request").catch(() => {});
-      // The network gate uses the pass up; one still here never reached it.
+      const answered = await bounded(request.response(), "approved request").catch(() => null);
+      // The network gate uses the pass up when the body matches.
       const unused = allowances.indexOf(pass);
       if (unused < 0) {
         questioned.splice(questioned.indexOf(entry), 1);
         return;
       }
       allowances.splice(unused, 1);
+      // With the pass unused, a response or a refusal can only have come from
+      // the gate: it found no pass for the body Chrome sent, and held and
+      // listed the request itself (a 204 for a page load). Only a request that
+      // never reached the gate is listed here.
+      const refused = /^net::ERR_BLOCKED_BY_CLIENT/.test(request.failure()?.errorText ?? "");
+      if (answered || refused) return;
     } else if (!gone) {
       await (pageLoad ? route.fulfill({ status: 204, body: "" }) : route.abort("blockedbyclient")).catch(() => {});
     }
