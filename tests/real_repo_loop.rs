@@ -1393,6 +1393,8 @@ fn a_cloud_tag_local_planner_is_refused_before_the_clone_and_the_run_record() {
         "glm-4.6:cloud",
         "gpt-oss:120b-CLOUD",
         "registry.ollama.ai:443/library/glm-4.6:cloud",
+        "glm-4.6:cloud@sha256:0123abcd",
+        "glm-4.6:cl\u{200B}oud",
     ];
     for (i, model) in models.into_iter().enumerate() {
         let home = dir.path().join(format!("home-{i}"));
