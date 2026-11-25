@@ -34,13 +34,6 @@ pub const COMPOSED_URL_REFUSAL: &str = "provenance: navigate only to a URL the t
 pub const TYPED_TEXT_HOLD: &str =
     "provenance: typed text must appear in the task or on this page; held for the operator";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Phase {
-    Live,
-    Takeover,
-    Revoked,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
     Allow,
@@ -61,7 +54,6 @@ pub enum PolicyError {
         role: String,
         name: String,
     },
-    Suspended,
     TooManyOrigins,
     /// A native session's approved list is over its limit or has a blank entry.
     BadDesktopActions,
@@ -195,7 +187,6 @@ struct LiveRef {
 #[derive(Debug, Clone)]
 pub struct Session {
     profile: Profile,
-    phase: Phase,
     generation: u64,
     tabs: Vec<String>,
     refs: BTreeMap<String, LiveRef>,
@@ -275,7 +266,6 @@ impl Session {
     fn new(profile: Profile) -> Self {
         Self {
             profile,
-            phase: Phase::Live,
             generation: 0,
             tabs: Vec::new(),
             refs: BTreeMap::new(),
@@ -345,48 +335,7 @@ impl Session {
         !text.is_empty() && (provenance.task.contains(&text) || provenance.page_text.contains(&text))
     }
 
-    pub fn phase(&self) -> Phase {
-        self.phase
-    }
-
-    pub fn results_open(&self) -> bool {
-        self.phase != Phase::Revoked
-    }
-
-    pub fn begin_takeover(&mut self) {
-        if self.phase == Phase::Live {
-            self.phase = Phase::Takeover;
-        }
-    }
-
-    pub fn end_takeover(&mut self) -> Result<(), PolicyError> {
-        match self.phase {
-            Phase::Takeover => {
-                self.phase = Phase::Live;
-                Ok(())
-            }
-            Phase::Revoked => Err(PolicyError::Suspended),
-            Phase::Live => Ok(()),
-        }
-    }
-
-    pub fn revoke(&mut self) {
-        self.phase = Phase::Revoked;
-        self.refs.clear();
-        self.tabs.clear();
-    }
-
     pub fn authorize_url(&self, raw: &str) -> Decision {
-        if self.phase == Phase::Revoked {
-            return Decision::Refuse {
-                reason: "session revoked".into(),
-            };
-        }
-        if self.phase == Phase::Takeover {
-            return Decision::Refuse {
-                reason: "model suspended during operator takeover".into(),
-            };
-        }
         match parse_origin(raw) {
             Ok(origin) if self.origin_allowed(&origin) => Decision::Allow,
             Ok(origin) => Decision::Refuse {
@@ -400,9 +349,6 @@ impl Session {
     }
 
     pub fn mint(&mut self, tabs: Vec<String>, drafts: Vec<ElementDraft>) -> Result<Observation, PolicyError> {
-        if self.phase != Phase::Live {
-            return Err(PolicyError::Suspended);
-        }
         // A new page invalidates the old refs even when this observation is refused.
         self.generation = self.generation.saturating_add(1);
         self.refs.clear();
@@ -460,16 +406,6 @@ impl Session {
     }
 
     pub fn decide(&self, wire: &Value) -> Decision {
-        if !self.results_open() {
-            return Decision::Refuse {
-                reason: "session revoked".into(),
-            };
-        }
-        if self.phase == Phase::Takeover {
-            return Decision::Refuse {
-                reason: "model suspended during operator takeover".into(),
-            };
-        }
         let action = match parse_wire(wire) {
             Ok(action) => action,
             Err(reason) => return Decision::Refuse { reason },
@@ -1033,26 +969,6 @@ mod tests {
             .map(|n| ("AXButton".to_string(), format!("Button {n}")))
             .collect();
         assert_eq!(Session::desktop(many).err(), Some(PolicyError::BadDesktopActions));
-    }
-
-    #[test]
-    fn takeover_and_revoke_stop_the_model() {
-        let mut session = Session::general(["https://example.com"]).unwrap();
-        let obs = page(&mut session);
-        let filter = obs.elements.iter().find(|el| el.name == "Filter").unwrap();
-        session.begin_takeover();
-        let held = session.decide(&json!({"action":"type","ref_id": filter.ref_id, "text":"open"}));
-        assert!(matches!(held, Decision::Refuse { .. }));
-        session.end_takeover().unwrap();
-        assert!(session
-            .decide(&json!({"action":"type","ref_id": filter.ref_id, "text":"open"}))
-            .is_allow());
-        session.revoke();
-        assert!(!session.results_open());
-        assert!(matches!(
-            session.decide(&json!({"action":"observe"})),
-            Decision::Refuse { .. }
-        ));
     }
 
     #[test]

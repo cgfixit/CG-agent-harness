@@ -103,7 +103,9 @@ checks one-shot approval (#995). CI runs every fixture, sandbox on.
 
 ## Roadmap: broader browser use
 
-1. Takeover, not built: approve a listed held request or hand-off and resume.
+1. Broader takeover: approve one of the page's own listed requests or resume
+   after a hand-off. Jobs already offer one-shot approval for requests caused
+   by a model action.
 2. Subresource policy: let GET subresources load from public origins without
    cookies while navigation stays on granted origins.
 3. Vision: send the latest screenshot to the model (`qwen3.8` lists the

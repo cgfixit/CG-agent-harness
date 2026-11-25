@@ -70,13 +70,6 @@ fn main() {
         &session.decide(&json!({"action":"click","ref_id": tab.ref_id})),
     );
 
-    session.begin_takeover();
-    show(
-        "type during takeover",
-        &session.decide(&json!({"action":"type","ref_id": filter.ref_id, "text":"x"})),
-    );
-    session.end_takeover().unwrap();
-
     let pr = Session::pr_verify("http://127.0.0.1:49152/", &[]).unwrap();
     show("pr owned", &pr.authorize_url("http://127.0.0.1:49152/health"));
     show("pr public", &pr.authorize_url("https://example.com/"));
