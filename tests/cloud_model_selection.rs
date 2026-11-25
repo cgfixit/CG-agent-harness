@@ -2,10 +2,7 @@
 mod common;
 
 use axum::{body::Body, response::IntoResponse, routing::post, Json, Router};
-use cgagentharness::{
-    common::config::AppConfig,
-    server::{build_app, AppOptions},
-};
+use cgagentharness::{common::config::AppConfig, server::build_app};
 use common::*;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -334,7 +331,7 @@ async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secr
     assert_eq!(status, 429);
     assert_eq!(code(&body), "CLOUD_RATE_LIMITED");
     no_secret(&body);
-    let mut options = AppOptions::new(s.state.home.clone());
+    let mut options = common::app_options(s.state.home.clone());
     let mut changed_config = s.state.cfg.as_ref().clone();
     changed_config.raw["models"]["cloud_chat"]["claude"]["model"] =
         serde_yaml_ng::Value::String("renamed-cloud-id".into());

@@ -1338,9 +1338,17 @@ export ANTHROPIC_API_KEY='anthropic-secret-value-2222'\n";
         if std::env::var("CGAGENTHARNESS_KEYRING_TEST").ok().as_deref() != Some("1") {
             return;
         }
+        // Removes the real OS entry on every exit, a failed assert included.
+        struct Cleanup(OsCredentialStore, &'static str);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let _ = self.0.delete(self.1);
+            }
+        }
         let dir = tempfile::tempdir().unwrap();
-        let store = OsCredentialStore::for_home(dir.path());
         let name = "CGAGENTHARNESS_KEYRING_TEST_KEY";
+        let cleanup = Cleanup(OsCredentialStore::for_home(dir.path()), name);
+        let store = &cleanup.0;
         for value in ["os-store-round-trip-value", "pässwörd-é"] {
             store.delete(name).unwrap();
             store.set(name, value).unwrap();
