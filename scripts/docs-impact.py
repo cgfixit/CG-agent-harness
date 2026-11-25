@@ -89,6 +89,16 @@ def guides_for(path):
     return guides
 
 
+def content_changed(numstat):
+    """Paths with lines left to count in `git diff -w --numstat -z` output."""
+    changed = set()
+    for record in filter(None, numstat.split("\0")):
+        added, deleted, path = record.split("\t", 2)
+        if (added, deleted) != ("0", "0"):
+            changed.add(path)
+    return changed
+
+
 def review_plan(base, head):
     paths = git("diff", "--no-renames", "--name-only", "-z", base, head).decode().split("\0")
     affected = {}
@@ -104,11 +114,13 @@ def review_plan(base, head):
         for guide in guides:
             affected.setdefault(f"docs/{guide}.md", set()).add(path)
 
-    # Bind a no-change decision to the exact production diff, including deletions.
-    changed = set(
-        git("diff", "-w", "--no-renames", "--diff-filter=M", "--name-only", "-z", base, head, "--", "docs/")
-        .decode().split("\0")
+    # A guide counts as updated only when lines differ after -w. --numstat
+    # counts those lines on every git; --name-only lists a whitespace-only
+    # edit on git 2.43 and omits it on 2.56.
+    changed = content_changed(
+        git("diff", "-w", "--no-renames", "--diff-filter=M", "--numstat", "-z", base, head, "--", "docs/").decode()
     )
+    # Bind a no-change decision to the exact production diff, including deletions.
     trailers = git("log", "--format=%(trailers:key=Docs-Impact)", f"{base}..{head}").decode().splitlines()
     pending, fingerprints = {}, {}
     for guide, paths in sorted(affected.items()):
