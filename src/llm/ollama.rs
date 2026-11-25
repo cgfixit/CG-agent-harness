@@ -117,7 +117,12 @@ pub fn pull_name_ok(name: &str) -> bool {
 pub fn cloud_tag(name: &str) -> bool {
     // The tag ends the last path segment: a registry host can carry a port
     // (`localhost:5000/library/glm-4.6:cloud`).
-    let last = name.trim().rsplit('/').next().unwrap_or_default();
+    // Ollama names are printable ASCII: anything else (a zero-width space, a
+    // BOM, a soft hyphen, a control) is dropped rather than allowed to split
+    // `cloud`. An `@digest` suffix pins the same tag.
+    let visible: String = name.chars().filter(char::is_ascii_graphic).collect();
+    let last = visible.rsplit('/').next().unwrap_or_default();
+    let last = last.split_once('@').map_or(last, |(named, _)| named);
     last.rsplit_once(':').is_some_and(|(_, tag)| {
         let tag = tag.to_ascii_lowercase();
         tag == "cloud" || tag.ends_with("-cloud")
@@ -497,6 +502,26 @@ mod tests {
             "registry.ollama.ai:443/library/qwen3.8:27b-mlx-cg",
         ] {
             assert!(!cloud_tag(local), "{local}");
+        }
+    }
+
+    /// A digest suffix or a character nobody sees does not hide the tag.
+    #[test]
+    fn a_cloud_tag_survives_a_digest_and_invisible_characters() {
+        for cloud in [
+            "glm-4.6:cloud@sha256:0123abcd",
+            "registry.ollama.ai:443/library/gpt-oss:120b-cloud@sha256:ff",
+            "glm-4.6:cloud\u{200B}",
+            "glm-4.6:cl\u{200B}oud",
+            "\u{FEFF}glm-4.6:cloud",
+            "glm-4.6:clo\u{00AD}ud",
+            "glm-4.6:cloud\u{2060}",
+            "glm-4.6:cloud\t",
+        ] {
+            assert!(cloud_tag(cloud), "{cloud:?}");
+        }
+        for local in ["qwen3:8b@sha256:0123abcd", "cloudy:7b\u{200B}", "big-cloud@sha256:ff"] {
+            assert!(!cloud_tag(local), "{local:?}");
         }
     }
 
