@@ -5,7 +5,7 @@
 # Chat starts without an assigned repository. Select agentic.repo explicitly
 # before enabling coding; master, deepagent and clone-write gates ship closed.
 #
-# Numbers are unquoted. - A quoted, empty, non-finite or wrong-kind number stops
+# Numbers are unquoted. A quoted, empty, non-finite or wrong-kind number stops
 # startup and reload, naming the key; a missing key keeps its default. A value
 # outside a "clamped to" range uses the nearest bound; serve names the key. One
 # outside a "refused outside" range stops startup, reload and every CLI.
