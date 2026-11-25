@@ -179,8 +179,7 @@ async fn prepare(
     let task_file = super::structured_memory::off_worker(move || write_task_file(&task)).await?;
     // After the last wait and before the child exists: an account changed
     // meanwhile gets no task, rather than one stopped a second into its run.
-    let (check_state, check_account) = (state.clone(), account.clone());
-    if super::structured_memory::off_worker(move || account_changed(&check_state, &check_account)).await {
+    if account_changed(state, &account) {
         state.audit.log(json!({
             "event": "browser.withheld",
             "owner": owner,
