@@ -676,7 +676,7 @@ a text preview for at most `browser.takeover.wait_sec`.
 list for that URL and origin, and that the request still waits, then passes the
 verdict on once. The sidecar's CDP gate uses up a pass of `{method, URL, SHA-256}`
 on the first matching request, after rechecking the block list. A no, a late
-answer, cancel, a navigate away, a request while another waits, or a body the gate cannot read
+answer, cancel, a navigate away, a request Chrome cancelled, one while another waits, or an unreadable body
 is held; only a request sent mid-action, or one form posted within 5s of
 a click or Enter, is asked. Each decision
 writes one `browser.approval` audit line (never path or body).
