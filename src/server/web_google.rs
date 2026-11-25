@@ -568,7 +568,7 @@ impl WebTool {
     /// before its request may leave (none when the last public search is older
     /// than the pace), plus one second for the request. Before, the whole pace
     /// (at least 3 s) was held back on every search, which halved a keyed
-    /// provider's share of the shipped 8 s deadline.
+    /// provider's share of an 8 s deadline.
     pub(super) fn public_search_reserve(&self) -> Duration {
         let pace = Duration::from_millis(self.limits.pace_ms.max(PUBLIC_SEARCH_PACE_FLOOR_MS));
         let last = *self.public_search_sent.lock().unwrap_or_else(|p| p.into_inner());
@@ -2206,7 +2206,7 @@ mod tests {
     async fn a_keyed_provider_keeps_the_time_public_google_cannot_use() {
         // The discriminator is each attempt's `budget_ms`, computed from config
         // before any request leaves, so runner load cannot hide a wrong reserve.
-        // The 2.5 s "late" answer then shows the budget is honoured; the shipped
+        // The 2.5 s "late" answer then shows the budget is honoured; this test's
         // 8 s deadline leaves it seconds of slack on a loaded runner.
         //
         // No pacing wait is due: SerpAPI gets 8 - 1 = 7 s. Holding back the whole
@@ -2230,10 +2230,12 @@ mod tests {
 
         // A public search just left: its pacing wait is due, so the reserve is
         // the old one and public Google still gets its turn after a slow hop.
+        // The bounds only tell "pace counted" (about 4 s) from "not counted"
+        // (1 s), so time spent between the two lines below cannot fail them.
         *chain.web.public_search_sent.lock().unwrap() = Some(tokio::time::Instant::now());
         let reserve = chain.web.public_search_reserve();
         assert!(
-            reserve > Duration::from_millis(3900) && reserve <= Duration::from_secs(4),
+            reserve > Duration::from_secs(3) && reserve <= Duration::from_secs(4),
             "{reserve:?}"
         );
 
