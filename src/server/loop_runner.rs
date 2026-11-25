@@ -556,15 +556,11 @@ async fn run_turns(
         // password change landing after it is caught when the turn writes,
         // which withholds that turn's reply.
         let checked = {
-            let state = state.clone();
-            crate::server::routes::structured_memory::off_worker(move || {
-                let sign_ins = match (state.auth.as_ref(), user.as_ref()) {
-                    (Some(auth), Some(user)) => Some(auth.sign_in_revocations(&user.username)),
-                    _ => None,
-                };
-                current_authority(&state, user).map(|user| (user, sign_ins))
-            })
-            .await
+            let sign_ins = match (state.auth.as_ref(), user.as_ref()) {
+                (Some(auth), Some(user)) => Some(auth.sign_in_revocations(&user.username)),
+                _ => None,
+            };
+            current_authority(&state, user).map(|user| (user, sign_ins))
         };
         let (user, sign_ins) = match checked {
             Ok(checked) => checked,

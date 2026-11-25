@@ -448,21 +448,17 @@ async fn asking_account(
 }
 
 /// Whether `owner` may still run coding and its sign-ins have not been
-/// revoked since it asked, read on the blocking pool. Always true without
-/// accounts: the one local user cannot be disabled.
+/// revoked since it asked, read from the account store's committed state.
+/// Always true without accounts: the one local user cannot be disabled.
 async fn owner_still_may_run(state: &Arc<AppState>, owner: &str, account: &AskingAccount) -> bool {
     if state.auth.is_none() {
         return true;
     }
-    let (state, owner, account) = (state.clone(), owner.to_string(), account.clone());
-    super::structured_memory::off_worker(move || {
-        schedule_owner_authorized(&state, &owner)
-            && match (state.auth.as_ref(), &account) {
-                (Some(auth), Some((user, seen))) => auth.account_unchanged(user, Some(*seen)),
-                _ => true,
-            }
-    })
-    .await
+    schedule_owner_authorized(state, owner)
+        && match (state.auth.as_ref(), account) {
+            (Some(auth), Some((user, seen))) => auth.account_unchanged(user, Some(*seen)),
+            _ => true,
+        }
 }
 
 /// Resolves once `owner` may no longer run coding or its sign-ins are
@@ -549,9 +545,7 @@ pub(crate) fn start_job(
         // disabled, deleted or demoted out of `RunCoding` before this job was
         // registered missed `JobStore::cancel_owner`, so it is checked again
         // now that the job is in the store: any later change finds it there.
-        let (check_state, check_owner) = (task_state.clone(), task_owner.clone());
-        let still_allowed =
-            super::structured_memory::off_worker(move || schedule_owner_authorized(&check_state, &check_owner)).await;
+        let still_allowed = schedule_owner_authorized(&task_state, &task_owner);
         // Both gate guards are released before the job reads as settled: a
         // caller that sees it settle may start the next run at once.
         let PreparedRun {
