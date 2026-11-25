@@ -42,7 +42,8 @@ must fit within the run setup deadline. See
    Markdown body with `/agent pr-body <run-id>`. `/agent publish <run-id>
    <reason>` opens a draft.
 
-`/agent cancel` clears staging. `/agent stop` cancels submitted work.
+`/agent cancel` clears staging. `/agent stop` cancels submitted work; a stopped scheduled run is audited
+`agent_schedule_failed`, status `cancelled`.
 `/agent reject` rejects a candidate. `/agent discard` removes terminal work
 from its owned workspace. CLI and API writes require explicit confirm and
 reason. Publication also requires a reviewed body. See
