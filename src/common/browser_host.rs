@@ -1771,11 +1771,12 @@ setInterval(() => fetch("/later/ping").catch(() => {}), 300);
 </script>
 "#;
 
-/// Links to two refused redirects (one in a new tab) and an image from an
-/// ungranted origin.
+/// Links to two refused redirects (one in a new tab), a granted page that only
+/// loads an ungranted image, and an image from an ungranted origin.
 const GUARD_REDIRECT_LINKS_PAGE: &str = r#"
 <p>LINKS-PAGE</p>
 <a href="/outside">Outside link</a>
+<a href="/with-image">Image page link</a>
 <a href="/elsewhere">Elsewhere link</a>
 <a href="/elsewhere" target="_blank">Elsewhere in a new tab</a>
 <img src="https://outside.invalid/pixel.png" alt="">
@@ -1784,7 +1785,8 @@ const GUARD_REDIRECT_LINKS_PAGE: &str = r#"
 /// A refused redirect reached by activating a link (`follow_link`, `click` or
 /// `press_enter`, in this tab or a new one) fails like a direct navigate, naming the origin alone, and
 /// the destination receives nothing. A refused subresource on the same page
-/// still leaves the action `ok`, listed only in `not_granted`.
+/// still leaves the action `ok`, listed only in `not_granted`, whether it comes
+/// with the page the task opened or with one a link opened.
 fn guard_redirect_actions(
     sidecar: &mut Sidecar,
     lines: &mut Vec<String>,
@@ -1827,8 +1829,34 @@ fn guard_redirect_actions(
                 "{op} on {name} did not report its refused redirect by origin: {reply}"
             ));
         }
+        // The origin alone, anywhere in the reply: never the refused target's
+        // path or query.
+        let whole = reply.to_string();
+        if ["/landing", "/private", "from="]
+            .iter()
+            .any(|part| whole.contains(part))
+        {
+            return Err(format!(
+                "{op} on {name} leaked the refused target's path or query: {whole}"
+            ));
+        }
         lines.push(format!("{op} {name} -> redirect refused, {origin}"));
     }
+    // A link to a granted page whose only refusal is a subresource: the action
+    // is ok and the origin stays in Page request details.
+    let page = open(sidecar, lines)?;
+    let reply = sidecar.call(json!({"op": "follow_link", "target": {"ref": link(&page, "Image page link")?}}))?;
+    let shown = reply["result"]["not_granted"].as_array().cloned().unwrap_or_default();
+    if reply["ok"] != true
+        || !reply["redirect_origin"].is_null()
+        || !reply["result"]["text"].as_str().unwrap_or("").contains("IMAGE-PAGE")
+        || !shown.contains(&json!("https://outside.invalid:443"))
+    {
+        return Err(format!(
+            "a link to a page with only a refused image did not stay ok with the image in not_granted: {reply}"
+        ));
+    }
+    lines.push("follow_link Image page link -> ok, image origin in not_granted".to_string());
     let reached = elsewhere_seen.lock().unwrap_or_else(|p| p.into_inner()).clone();
     if !reached.is_empty() {
         return Err(format!("a refused redirect's destination was requested: {reached:?}"));
@@ -2490,6 +2518,10 @@ fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Resu
     let (origin, port, seen) = serve_recording(vec![
         ("/workers", Reply::Html(GUARD_WORKERS_PAGE.to_string())),
         ("/links", Reply::Html(GUARD_REDIRECT_LINKS_PAGE.to_string())),
+        (
+            "/with-image",
+            Reply::Html(r#"<p>IMAGE-PAGE</p><img src="https://outside.invalid/other.png" alt="">"#.to_string()),
+        ),
         ("/elsewhere", Reply::Redirect(format!("{elsewhere}/landing?from=link"))),
         ("/w.js", Reply::Script(GUARD_WORKER_SCRIPT)),
         ("/sw.js", Reply::Script(GUARD_WORKER_SCRIPT)),
