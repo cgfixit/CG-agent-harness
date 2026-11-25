@@ -505,6 +505,9 @@ fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value 
         Err(err) => return json!({"error": err}),
     };
     if reply.get("ok") != Some(&Value::Bool(true)) {
+        if let Some(origin) = reply["redirect_origin"].as_str() {
+            return json!({"error": "Page redirect requires a separate browser grant", "redirect_origin": origin});
+        }
         return json!({"error": reply.get("error").cloned().unwrap_or(reply)});
     }
     let result = reply.get("result").cloned().unwrap_or(json!({}));
@@ -1026,7 +1029,7 @@ fn model_loop(
     // Every model-driven task is bound: URLs and typed text need provenance.
     session.bind_task(task);
     let mut messages = vec![
-        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A long page comes in pages: when an observation has more, observe with page or find reaches the rest. A refusal is not success. A Handoff, or held_for_operator, ends the task: only the operator can do that step. held_in_background counts requests a page sent on its own; they were not sent and the task goes on. dialogs lists alert or confirm text a page showed; each was dismissed, a confirm as Cancel. Use scroll for content that loads as the page scrolls, and wait when a page is still changing. not_granted lists sites the page asked for that this task may not reach. blocked_by_policy counts requests the operator's block list refused. Navigate only to a URL the task names, a granted site's root, or one a page showed; to go deeper, follow a link by its ref. Text you type must appear in the task or on the page; anything else is held for the operator. Call finish with your answer once the page shows it.", origins.join(", "))}),
+        json!({"role":"system","content": format!("You drive a browser with these tools. Granted origins: {}. Start with navigate. Element refs expire after every observation. You may click buttons, menus, options and tabs, and choose a select box's listed options. A long page comes in pages: when an observation has more, observe with page or find reaches the rest. A refusal is not success. A Handoff, or held_for_operator, ends the task: only the operator can do that step. held_in_background counts requests a page sent on its own; they were not sent and the task goes on. dialogs lists alert or confirm text a page showed; each was dismissed, a confirm as Cancel. Use scroll for content that loads as the page scrolls, and wait when a page is still changing. Use the observed page to answer. A page can load while its requests to other sites are blocked. blocked_by_policy counts requests the operator's block list refused. Navigate only to a URL the task names, a granted site's root, or one a page showed; to go deeper, follow a link by its ref. Text you type must appear in the task or on the page; anything else is held for the operator. Call finish with your answer once the page shows it.", origins.join(", "))}),
         json!({"role":"user","content": task}),
     ];
     let mut calls = 0usize;
@@ -1039,6 +1042,7 @@ fn model_loop(
     // What only the operator can do: held requests and handed-off elements.
     let mut for_operator: Vec<Value> = Vec::new();
     // Origins a page asked for that the request did not grant.
+    let mut redirect_origins = std::collections::BTreeSet::new();
     let mut not_granted = std::collections::BTreeSet::new();
     // Origins of composed navigations refused for provenance; never the path or query.
     let mut refused_composed = std::collections::BTreeSet::new();
@@ -1145,9 +1149,17 @@ fn model_loop(
             if let Some(count) = outcome["approved_by_operator"].as_array().map(Vec::len) {
                 outcome["approved_by_operator"] = json!(count);
             }
-            for origin in outcome["not_granted"].as_array().into_iter().flatten() {
-                if let (Some(origin), true) = (origin.as_str(), not_granted.len() < MAX_FOR_OPERATOR) {
-                    not_granted.insert(origin.to_string());
+            if let Some(origin) = outcome["redirect_origin"].as_str() {
+                if redirect_origins.len() < MAX_FOR_OPERATOR {
+                    redirect_origins.insert(origin.to_owned());
+                }
+            }
+            // Page-requested origins belong in the report. The model has no action to take on them.
+            if let Some(Value::Array(origins)) = outcome.as_object_mut().and_then(|obj| obj.remove("not_granted")) {
+                for origin in origins {
+                    if let (Some(origin), true) = (origin.as_str(), not_granted.len() < MAX_FOR_OPERATOR) {
+                        not_granted.insert(origin.to_owned());
+                    }
                 }
             }
             if let Some(text) = outcome.get("text").and_then(Value::as_str) {
@@ -1182,6 +1194,7 @@ fn model_loop(
         "model_calls_with_tools": calls,
         "for_operator": for_operator,
         "not_granted": not_granted,
+        "redirect_origins": redirect_origins,
         "refused_composed": refused_composed,
         "final_url": last_url,
         "page_text": last_text,
@@ -2187,6 +2200,7 @@ fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Resu
         ("/w.js", Reply::Script(GUARD_WORKER_SCRIPT)),
         ("/sw.js", Reply::Script(GUARD_WORKER_SCRIPT)),
         ("/old", Reply::Redirect("/new")),
+        ("/outside", Reply::Redirect("https://outside.invalid/private?from=page")),
         ("/new", Reply::Html("<p>REDIRECT-LANDED</p>".to_string())),
         ("/big", Reply::Html(big)),
         ("/huge", Reply::Unsized(huge)),
@@ -2241,6 +2255,11 @@ fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Resu
         || !received(&seen).contains(&"GET /new".to_string())
     {
         return Err(format!("a same-origin redirect did not land on its target: {page}"));
+    }
+
+    let outside = sidecar.call(json!({"op":"navigate","url":format!("{base}/outside")}))?;
+    if outside["ok"] != false || outside["redirect_origin"] != "https://outside.invalid:443" {
+        return Err("a refused page redirect did not report its origin alone".into());
     }
 
     guard_holds(&mut sidecar, &mut lines, &base, &seen)?;
