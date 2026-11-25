@@ -2141,12 +2141,16 @@ mod tests {
 
     #[tokio::test]
     async fn a_keyed_provider_keeps_the_time_public_google_cannot_use() {
-        // SerpAPI answers after 2.5 s of a 4 s deadline. Holding back the whole
-        // 3 s pace plus 1 s left it 2 s, so a healthy answer timed out and the
-        // search fell to public Google.
+        // The discriminator is each attempt's `budget_ms`, computed from config
+        // before any request leaves, so runner load cannot hide a wrong reserve.
+        // The 2.5 s "late" answer then shows the budget is honoured; the shipped
+        // 8 s deadline leaves it seconds of slack on a loaded runner.
+        //
+        // No pacing wait is due: SerpAPI gets 8 - 1 = 7 s. Holding back the whole
+        // 3 s pace plus 1 s, as before, left it 4 s.
         let serp = chain::serpapi().await;
         let google = chain::google().await;
-        let yaml = "web: {request_seconds: 4, search: {fallback_to_public_google: true}}";
+        let yaml = "web: {request_seconds: 8, search: {fallback_to_public_google: true}}";
         let chain = chain::Chain::new(yaml, "late", &serp, Some(&google)).await;
         assert_eq!(
             chain.web.public_search_reserve(),
@@ -2159,7 +2163,7 @@ mod tests {
         assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
         let attempt = &chain.audit_events("web_search_attempt")[0];
         assert_eq!(attempt["code"], "OK");
-        assert!(attempt["budget_ms"].as_u64().unwrap() >= 2900, "{attempt}");
+        assert!(attempt["budget_ms"].as_u64().unwrap() >= 6000, "{attempt}");
 
         // A public search just left: its pacing wait is due, so the reserve is
         // the old one and public Google still gets its turn after a slow hop.
@@ -2170,11 +2174,12 @@ mod tests {
             "{reserve:?}"
         );
 
-        // Public Google cooling down takes no share at all: a 3 s deadline is
-        // SerpAPI's alone, and its 2.5 s answer arrives.
+        // Public Google cooling down takes no share at all, even with its pacing
+        // wait due: the 8 s deadline is SerpAPI's alone. Counting the cooling hop
+        // would hold back the ~4 s reserve and leave SerpAPI about 4 s.
         let serp = chain::serpapi().await;
         let google = chain::google().await;
-        let yaml = "web: {request_seconds: 3, search: {fallback_to_public_google: true}}";
+        let yaml = "web: {request_seconds: 8, search: {fallback_to_public_google: true}}";
         let chain = chain::Chain::new(yaml, "late", &serp, Some(&google)).await;
         *chain.web.public_search_sent.lock().unwrap() = Some(tokio::time::Instant::now());
         chain
@@ -2191,6 +2196,9 @@ mod tests {
         let value = chain.search("veeam cve").await.unwrap();
         assert_eq!(value["provider"], "google-serpapi");
         assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        let attempt = &chain.audit_events("web_search_attempt")[0];
+        assert_eq!(attempt["code"], "OK");
+        assert!(attempt["budget_ms"].as_u64().unwrap() >= 7000, "{attempt}");
     }
 
     #[tokio::test]
