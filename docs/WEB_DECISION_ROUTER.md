@@ -78,7 +78,8 @@ For a script shell, the local result must be scripted HTML with extracted
 text under 200 characters and under 5% of the markup. Firecrawl sends one
 Markdown scrape with `maxAge: 0`, `storeInCache: false` and
 a 10-page PDF cap. Each fallback reserves 10 units because Firecrawl fetches
-the URL itself. Final URL must match. Failed fallback keeps the local result
+the URL itself, so with Firecrawl enabled, startup refuses a daily ceiling
+under 10. Final URL must match. Failed fallback keeps the local result
 and adds its fallback code in `details.fallback`. Successful excerpts
 carry `via: firecrawl` and contribute no links. See [fetch and research](SECURE_RESEARCH.md#fetch-discovery-and-research).
 

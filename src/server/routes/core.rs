@@ -1758,6 +1758,9 @@ pub(crate) async fn chat_inner(
         }
         ApiError::from_err(llm_status(&e), &e)
     };
+    // A cloud reply's spend row: started with the reply, awaited after the
+    // exchange write, as the local row below is and for the same reason.
+    let mut cloud_spend = None;
     let (mut reply, web_tools) = if cloud_selected {
         require_cloud_consent(&state, &owner, &model)?;
         // The message leaves this machine: secrets, emails, IPs and financial
@@ -1769,23 +1772,22 @@ pub(crate) async fn chat_inner(
                 .audit
                 .log(json!({"event":"cloud_chat_redacted", "owner":owner, "model":model}));
         }
-        (
-            state
-                .cloud_chat
-                .chat_with_source(&model, &outbound, spend_source)
-                .await
-                .map_err(|e| {
-                    if e.code == "CLOUD_CHAT_BUDGET" {
-                        state
-                            .audit
-                            .log(json!({"event":"cloud_chat_budget_refused", "owner":owner, "model":model}));
-                        ApiError::from_err(StatusCode::UNPROCESSABLE_ENTITY, &e)
-                    } else {
-                        ApiError::from_err(llm_status(&e), &e)
-                    }
-                })?,
-            Vec::new(),
-        )
+        let (reply, spend) = state
+            .cloud_chat
+            .chat_with_pending_spend(&model, &outbound, spend_source)
+            .await
+            .map_err(|e| {
+                if e.code == "CLOUD_CHAT_BUDGET" {
+                    state
+                        .audit
+                        .log(json!({"event":"cloud_chat_budget_refused", "owner":owner, "model":model}));
+                    ApiError::from_err(StatusCode::UNPROCESSABLE_ENTITY, &e)
+                } else {
+                    ApiError::from_err(llm_status(&e), &e)
+                }
+            })?;
+        cloud_spend = Some(spend);
+        (reply, Vec::new())
     } else if chat_tools {
         let active_loop = if req.loop_turn { state.loops.active_for_session(&owner, &session.session_id) } else { None };
         crate::server::chat_web::run_stream(
@@ -2140,6 +2142,9 @@ pub(crate) async fn chat_inner(
                 std::panic::resume_unwind(panic);
             }
         }
+    }
+    if let Some(spend) = cloud_spend {
+        spend.landed().await;
     }
     let (updated, owner_live) = written.map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
     if !owner_live {

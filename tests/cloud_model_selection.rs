@@ -502,6 +502,68 @@ async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secr
     assert_eq!(proposals["proposals"][0]["status"], "pending");
     let (_, facts) = memory_server.get_json("/api/structured-memory/facts").await;
     assert!(facts["facts"].as_array().unwrap().is_empty());
+
+    // A cloud turn whose client hangs up while its spend row is written still
+    // stores the exchange it was billed for. Park the ledger append, so the
+    // turn is known to be waiting on it when the client goes away.
+    let (_, created) = memory_server.post_json("/api/sessions", json!({})).await;
+    let session_path = format!("/api/sessions/{}", created["session_id"].as_str().unwrap());
+    let spend_rows = || {
+        std::fs::read_to_string(&memory_server.state.spend_file)
+            .unwrap_or_default()
+            .lines()
+            .count()
+    };
+    let (rows_before, sent_before) = (spend_rows(), requests.lock().unwrap().len());
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        let _appends = cgagentharness::llm::spend::hold_appends();
+        held_tx.send(()).unwrap();
+        let _ = release_rx.recv();
+    });
+    held_rx.recv().unwrap();
+    let turn = tokio::spawn(
+        memory_server
+            .req(reqwest::Method::POST, "/api/chat")
+            .json(&json!({"session_id":created["session_id"],"message":"billed, then the client hangs up"}))
+            .send(),
+    );
+    let stored = || async { memory_server.get_json(&session_path).await.1["tokens"]["exchanges"] == 1 };
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while requests.lock().unwrap().len() == sent_before {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the cloud fixture answered the turn");
+    // The exchange write does not wait for the parked row.
+    for _ in 0..100 {
+        if stored().await {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(spend_rows(), rows_before, "the spend row is still parked");
+    turn.abort();
+    assert!(turn.await.unwrap_err().is_cancelled());
+    // Give the server the moment it needs to see the closed connection.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while spend_rows() == rows_before {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the billed row reached the ledger");
+    assert_eq!(spend_rows(), rows_before + 1, "one row for the one billed turn");
+    assert!(
+        stored().await,
+        "a billed cloud turn lost its exchange when the client hung up"
+    );
+
     budget.state.audit.flush_async().await;
     s.state.audit.flush_async().await;
     for server in [&s, &budget] {
