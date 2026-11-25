@@ -3474,6 +3474,46 @@ fn runtime_markdown(manifest: &Path) -> Vec<String> {
 const DOCS_BUDGET_OWNER_EXEMPT: &[(&str, &str)] = &[];
 
 #[test]
+fn documented_http_methods_and_paths_match_route_caps() {
+    use cgagentharness::server::routes::ROUTE_CAPS;
+    use std::collections::BTreeSet;
+
+    const GUIDE: &str = "docs/API_ROUTES.md";
+    let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(GUIDE)).unwrap();
+    let mut documented = BTreeSet::new();
+    for row in text.lines().filter_map(|line| line.strip_prefix('|')) {
+        let mut cells = row.split('|');
+        let (Some(methods), Some(paths)) = (cells.next(), cells.next()) else {
+            continue;
+        };
+        if !paths.trim_start().starts_with("`/") {
+            continue;
+        }
+        for path in paths.split(',').map(str::trim) {
+            let path = path
+                .strip_prefix('`')
+                .and_then(|cell| cell.strip_suffix('`'))
+                .unwrap_or_else(|| panic!("{GUIDE}: expected a backticked path in {row}"));
+            for method in methods.split(',').map(str::trim) {
+                assert!(documented.insert((method, path)), "{GUIDE}: duplicate {method} {path}");
+            }
+        }
+    }
+
+    // The router unit tests independently compare ROUTE_CAPS to build_router.
+    let registered: BTreeSet<_> = ROUTE_CAPS
+        .iter()
+        .map(|(path, method, _)| (method.as_str(), *path))
+        .collect();
+    let missing: Vec<_> = registered.difference(&documented).collect();
+    let stale: Vec<_> = documented.difference(&registered).collect();
+    assert!(
+        missing.is_empty() && stale.is_empty(),
+        "Update {GUIDE} (method, path). Missing: {missing:?}. Stale: {stale:?}."
+    );
+}
+
+#[test]
 fn markdown_stays_on_the_docs_budget() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let files = checkout_files(manifest);

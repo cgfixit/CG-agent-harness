@@ -3,7 +3,8 @@
 [registered_paths()](../src/server/routes/mod.rs) and route registrations are
 authoritative. `/api/tools` reports wiring. Guards enforce direct loopback,
 same-origin, rate limits, account capability and mutation `X-CyClaw-CSRF`.
-Public login and status retain early guards.
+Public login and status retain early guards. The invariant guard checks the
+method and path columns against `ROUTE_CAPS` in CI.
 
 ## Console and status
 
