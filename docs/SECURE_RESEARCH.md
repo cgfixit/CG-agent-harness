@@ -19,7 +19,9 @@ The last enabled administrator cannot be removed, disabled or demoted.
 | `auditor` | Own local chat and prompt preview, audit and `/diag`; excludes memory, attachments, cloud, web and loops |
 
 Own-password change requires
-the current password and revokes old sessions. Authentication and account
+the current password and revokes old sessions. A committed password change or
+reset also clears the account's staged `/diag` state and logs an audit event,
+even if the client disconnects. Authentication and account
 mutations have distinct deadlines. A timed-out write needs readback before
 retry. A harness API key cannot grant account access. See
 [managed keys](INSTALL.md#supported-managed-keys).
@@ -30,6 +32,8 @@ retry. A harness API key cannot grant account access. See
 Preserve it with `auth.initialized` during offline recovery. A missing
 initialized database, bad schema or unsafe file refuses startup. Legacy
 `auth.json` migration keeps a backup.
+The database also keeps sign-in failures for valid nonexistent names (HMAC-keyed,
+capped at 16,384 names), so a restart does not reset their lockout.
 `auth.session` sets idle and absolute expiry and the per-account cap.
 A sign-in past `max_per_account` (shipped 8) ends that account's least
 recently used session and logs `account.session_evicted`. Capacity refusals
