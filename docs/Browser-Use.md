@@ -53,6 +53,8 @@ macOS and Linux use detached jobs. Windows uses the synchronous endpoint.
 [Source](../src/common/browser_host.rs) and
 [fixtures](../.github/workflows/README.md) cover the sidecar, guards,
 takeover, and the synchronous route's window refusal and deadline report.
+`scripts/browse-console-acceptance.mjs` drives a takeover through the real
+console and server with a stand-in model.
 Run Chrome fixtures as an unprivileged user with its sandbox on.
 
 ## Roadmap: broader browser use
