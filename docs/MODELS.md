@@ -31,7 +31,8 @@ thinking separately. Choose the exact chat tag with `/model use <tag>`.
 Browser tasks follow that local selection. The planner owns its own
 `agentic.deepagent_github` model, provider and endpoint. Local endpoints are
 loopback-only. Ollama cloud tags (`:cloud`, `-cloud`) are refused by local
-inference and pull paths.
+inference, the local planner and pull paths; startup warmup and `auto_tune`
+skip one (audited `cloud_tag`).
 
 ### Exact-model diagnostics and optional fallback
 
