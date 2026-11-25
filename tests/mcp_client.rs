@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use cgagentharness::common::home::Home;
 use cgagentharness::common::mcp_policy::{Containment, NetworkPolicy, StdioCapabilities};
+use cgagentharness::server::build_app;
 use cgagentharness::server::state::AppState;
-use cgagentharness::server::{build_app, AppOptions};
 use common::*;
 use serde_json::{json, Value};
 
@@ -127,7 +127,7 @@ impl McpServer {
         yaml = yaml.replacen("servers: []", &format!("servers:{servers_yaml}"), 1);
         cgagentharness::common::config::AppConfig::write_private(&home.config_path(), &yaml).unwrap();
         let cfg = cgagentharness::common::config::AppConfig::from_str(&yaml, &home.config_path()).unwrap();
-        let mut app_opts = AppOptions::new(home);
+        let mut app_opts = common::app_options(home);
         app_opts.config = Some(cfg);
         app_opts.api_key = Some("test-api-key-0123456789".into());
         app_opts.shim_exe = Some(PathBuf::from(BIN));
