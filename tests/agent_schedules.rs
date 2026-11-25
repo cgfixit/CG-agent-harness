@@ -355,3 +355,39 @@ async fn a_schedule_refuses_a_cloud_planner() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_scheduled_job_stopped_mid_run_still_audits_its_end() {
+    let model = start_mock_model().await;
+    model.set_delay_ms(30_000);
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let req = staged_request(&s).await;
+    let (status, created) = s.post_json("/api/agent/schedules", preview_body(&s, req).await).await;
+    assert_eq!(status, 201, "{created}");
+    let t0 = created["created_at"].as_f64().unwrap();
+    cgagentharness::server::routes::agent::tick_schedules(&s.state, t0 + 60.0).await;
+    let job_id = s.state.jobs.list("local")[0]["job_id"].as_str().unwrap().to_string();
+    assert_eq!(
+        s.state.jobs.get("local", &job_id).unwrap()["status"],
+        "running",
+        "the fixture needs a job that is still running when it is stopped"
+    );
+    let state = s.state.clone();
+    let stopped = tokio::task::spawn_blocking(move || state.jobs.cancel_owner("local"))
+        .await
+        .unwrap();
+    assert_eq!(stopped, 1);
+    let audit = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let audit = s.audit_log();
+            if audit.contains("agent_schedule_failed") {
+                break audit;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("a stopped scheduled job must leave a failure record next to its start record");
+    assert!(audit.contains(&job_id), "{audit}");
+    assert!(audit.contains("cancelled"), "{audit}");
+}
