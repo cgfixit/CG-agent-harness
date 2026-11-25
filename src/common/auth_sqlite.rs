@@ -465,6 +465,117 @@ pub(super) fn touch_session(conn: &Connection, token_hash: &str, last_seen_ts: f
     Ok(())
 }
 
+/// Sign-in failures for usernames with no account (#1069), so they survive a
+/// restart as an account's `failed_count` and `locked_until_ts` do. Rows are
+/// keyed by an HMAC of the name under `login_failure_key`, a random key kept
+/// in this file: it salts the hashes against precomputed tables, but anyone
+/// who reads the file holds it too. Like the `role_migrations` outbox these
+/// tables leave `user_version` alone: an older binary ignores them and
+/// forgets the failures at restart, as it did before.
+const LOGIN_FAILURES: &str = "
+CREATE TABLE IF NOT EXISTS login_failure_key (
+ id INTEGER PRIMARY KEY NOT NULL CHECK(id=0), key BLOB NOT NULL CHECK(length(key)=32)
+) STRICT;
+CREATE TABLE IF NOT EXISTS login_failures (
+ name_hash TEXT PRIMARY KEY NOT NULL, failed_count INTEGER NOT NULL CHECK(failed_count>=0),
+ locked_until_ts REAL NOT NULL, last_ts REAL NOT NULL
+) STRICT;";
+
+/// One remembered name: `(failed_count, locked_until_ts, last_ts)`.
+pub(super) type LoginFailure = (u32, f64, f64);
+/// The name key and every remembered `(name_hash, failure)`.
+pub(super) type LoginFailures = ([u8; 32], Vec<(String, LoginFailure)>);
+
+/// The name key and the remembered failures, creating both tables (and the
+/// key) on first use. A malformed key or row, or more rows than `max`, fails
+/// closed: the store refuses rather than drops a failure.
+pub(super) fn load_login_failures(conn: &mut Connection, max: usize) -> Result<LoginFailures> {
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(sql)?;
+    tx.execute_batch(LOGIN_FAILURES).map_err(sql)?;
+    let mut fresh = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut fresh);
+    tx.execute(
+        "INSERT OR IGNORE INTO login_failure_key VALUES (0, ?1)",
+        params![fresh.as_slice()],
+    )
+    .map_err(sql)?;
+    let key: Vec<u8> = tx
+        .query_row("SELECT key FROM login_failure_key WHERE id=0", [], |r| r.get(0))
+        .map_err(sql)?;
+    let key: [u8; 32] = key
+        .try_into()
+        .map_err(|_| invalid("invalid sign-in failure key in the account database"))?;
+    let rows = {
+        let mut statement = tx
+            .prepare("SELECT name_hash, failed_count, locked_until_ts, last_ts FROM login_failures LIMIT ?1")
+            .map_err(sql)?;
+        let rows = statement
+            .query_map(params![read_limit(max)], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, f64>(2)?,
+                    r.get::<_, f64>(3)?,
+                ))
+            })
+            .map_err(sql)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(sql)?;
+        rows
+    };
+    tx.commit().map_err(sql)?;
+    let timestamp = |v: f64| v.is_finite() && (0.0..1e12).contains(&v);
+    if rows.len() > max {
+        return Err(invalid("too many sign-in failure records in the account database"));
+    }
+    let rows = rows
+        .into_iter()
+        .map(|(name_hash, count, locked_until_ts, last_ts)| {
+            let count = u32::try_from(count).ok().filter(|_| {
+                name_hash.len() == 64
+                    && name_hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+                    && timestamp(locked_until_ts)
+                    && timestamp(last_ts)
+            });
+            match count {
+                Some(count) => Ok((name_hash, (count, locked_until_ts, last_ts))),
+                None => Err(invalid("invalid sign-in failure record in the account database")),
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((key, rows))
+}
+
+/// Stores one name's failures, when `counted` is given, and drops the names
+/// `forgotten` at the cap, in one transaction.
+pub(super) fn record_login_failure(
+    conn: &mut Connection,
+    counted: Option<(&str, LoginFailure)>,
+    forgotten: &[String],
+) -> Result<()> {
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(sql)?;
+    {
+        let mut forget = tx
+            .prepare("DELETE FROM login_failures WHERE name_hash=?1")
+            .map_err(sql)?;
+        for name in forgotten {
+            forget.execute(params![name]).map_err(sql)?;
+        }
+    }
+    if let Some((name_hash, (count, locked_until_ts, last_ts))) = counted {
+        tx.execute(
+            "INSERT OR REPLACE INTO login_failures VALUES (?1,?2,?3,?4)",
+            params![name_hash, count, locked_until_ts, last_ts],
+        )
+        .map_err(sql)?;
+    }
+    tx.commit().map_err(sql)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -472,6 +583,44 @@ mod tests {
         auth_store::{AuthManager, BOOTSTRAP_USERNAME},
         config::AppConfig,
     };
+
+    /// A malformed or excess sign-in failure row refuses the store rather
+    /// than drop a remembered lockout.
+    #[test]
+    fn malformed_sign_in_failure_rows_refuse_the_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join("auth.db");
+        let cfg = AppConfig::from_str("{}", &dir.path().join("config.yaml")).unwrap();
+        drop(AuthManager::open(&legacy, &cfg).unwrap());
+        let database = legacy.with_extension("sqlite3");
+        let good = "a".repeat(64);
+        for row in [
+            format!("('{}', 1, 0.0, 1.0)", "A".repeat(64)),
+            "('abc', 1, 0.0, 1.0)".to_string(),
+            format!("('{good}', 4294967296, 0.0, 1.0)"),
+            format!("('{good}', 1, 1e13, 1.0)"),
+        ] {
+            let conn = connect(&database).unwrap();
+            conn.execute_batch(&format!(
+                "DELETE FROM login_failures; INSERT INTO login_failures VALUES {row};"
+            ))
+            .unwrap();
+            drop(conn);
+            assert!(AuthManager::open(&legacy, &cfg).is_err(), "{row} must refuse");
+        }
+        let mut conn = connect(&database).unwrap();
+        conn.execute_batch(&format!(
+            "DELETE FROM login_failures; INSERT INTO login_failures VALUES ('{good}', 5, 0.0, 1.0);"
+        ))
+        .unwrap();
+        assert_eq!(load_login_failures(&mut conn, 1).unwrap().1.len(), 1);
+        conn.execute_batch(&format!(
+            "INSERT INTO login_failures VALUES ('{}', 5, 0.0, 1.0);",
+            "b".repeat(64)
+        ))
+        .unwrap();
+        assert!(load_login_failures(&mut conn, 1).is_err(), "past the cap must refuse");
+    }
 
     #[test]
     fn migration_preserves_records_and_failures_never_bootstrap_or_publish() {
