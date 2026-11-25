@@ -30,7 +30,7 @@ const classes = () => { const set = new Set(); return {add:n => set.add(n), remo
   toggle:(n, on) => { if (on) set.add(n); else set.delete(n); return on; }}; };
 const page = {getElementById:node, body:{classList:classes()}, documentElement:{classList:classes()}, activeElement:null, listeners:{},
   addEventListener(event, handler) { this.listeners[event] = handler; }};
-const passwordPrompts = [], clearedTimers = []; let transcriptClears = 0, memoryRefreshes = 0;
+const passwordPrompts = [], clearedTimers = [], browseJobForgets = []; let transcriptClears = 0, memoryRefreshes = 0;
 const context = vm.createContext({
   $:node, document:page, window:{}, CSRF_TOKEN:'fixture', sessionRevision:1, sendBtn:{disabled:false}, inflightChat:null,
   api:async path => { probes.push(path); const value = replies[path]; if (value instanceof Error) throw value; return typeof value === 'function' ? value() : value; },
@@ -46,6 +46,7 @@ const context = vm.createContext({
   sessionSearchQuery:'', sessionSearchSeq:0,
   clearTimeout:timer => clearedTimers.push(timer), memoryRefreshTimer:null, memoryViewRevision:0, memoryRefreshBusy:false,
   clearTranscript() { transcriptClears++; }, stopLoop() {}, paintSessionTokens() {}, paintStyle() {}, input:node('input'),
+  forgetBrowseJob(id) { browseJobForgets.push(id); },
   netconnectRevision:0, currentSession:'fixture-session', sessionGoal:'fixture goal', loopAuto:false, retryAttachmentIds:null,
   promptHistory:{}, currentStyle:'off', currentStyleIssue:null,
 });
@@ -210,7 +211,9 @@ htmlSource.value = 'MARKER-BEFORE-LOGOUT';
 const htmlDialog = node('htmlEditorDialog');
 htmlDialog.drafts = new Map([[priorChat, 'MARKER-BEFORE-LOGOUT']]);
 htmlDialog.open = true;
+browseJobForgets.length = 0;
 context.resetAccountView();
+assert.deepEqual(browseJobForgets, [''], 'logout forgets the tab\'s browser-task pair (#1123)');
 assert.equal(htmlDialog.drafts.has(priorChat), false, 'logout drops the stored HTML draft for the prior chat');
 vm.runInContext('currentSession = ' + JSON.stringify(priorChat), context);
 context.openHtmlEditor(node('htmlEditorToggle'));
