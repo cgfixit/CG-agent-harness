@@ -3045,17 +3045,17 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 78 words net of the post-#834 additions; measured 1675 after review restored one row per method and path.
     // why: operator decision (2026-11-12): cap set to 1776, about 100 words of room, so a new route row does not need a cap change.
-    ("docs/API_ROUTES.md", Guide, 1776),
+    ("docs/API_ROUTES.md", Guide, 880),
     // why: operator-requested (2026-11-14) browser- and computer-use status and roadmap; measured 869, about 100 words of room.
     // why: operator-approved (2026-11-15) +200 after #895, #896 and #897 left it at 967 of 970.
     // why: operator-approved (2026-11-17) +100 for #945: the auth requirement and the file-name check left it at 1169 of 1170.
     // why: operator-approved (2026-11-22) +300 after the takeover-deadline sentence left it at 1270 of 1270.
-    ("docs/Browser-Use.md", Guide, 1570),
+    ("docs/Browser-Use.md", Guide, 530),
     // why: #240 folded BOUNDED_EDITS.md, GIT_APPROVAL.md and OFFLINE_CARGO.md in here.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 605 words net of the post-#834 additions; measured 2943, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 2950, within a few words of the file.
-    ("docs/CODING_PIPELINE.md", Guide, 3150),
+    ("docs/CODING_PIPELINE.md", Guide, 1240),
     // why: #246 folded CHAT_WORKFLOWS.md and CHAT_STREAMING.md in here.
     // why: read-only /net panel and slash row; 6605 words, rounded up to the next 100.
     // why: operator-approved +150 (2026-10-18), shared by the same four compaction follow-up PRs.
@@ -3066,7 +3066,7 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the 2026-11-11 trim-and-refresh pass cut 776 words net of the post-#834 additions; measured 5117, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 5120, within a few words of the file.
     // why: operator-requested (2026-11-14) /browse row in the slash quick reference; +30 over 5320.
-    ("docs/CONSOLE.md", Guide, 5350),
+    ("docs/CONSOLE.md", Guide, 2190),
     // why: dependency refresh removed 72 words of retired Tantivy and Reqwest constraints; keep the cut with prior headroom.
     // why: the 2026-10-20 dep-sync folded the dated 2026-09 audit notes into Retained constraints; 944 words, keep the cut.
     // why: operator-approved +200 (2026-10-22) so dated advisory notes such as RUSTSEC-2026-0384 fit without trimming history.
@@ -3076,20 +3076,20 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 980, within a few words of the file.
     // why: the 2026-11-16 sweep merged the two duplicate glib residual notes and added the npm lockfile note; 1157 words, rounded up to the next 10 so the cut stays cut.
     // why: operator-approved (2026-11-17) raise from 1160 to the measured 1220 for the chrono/chrono-tz waiver watch (RUSTSEC-2026-0543/0555).
-    ("docs/DEPENDENCIES.md", Guide, 1220),
+    ("docs/DEPENDENCIES.md", Guide, 400),
     // why: OS credential store replaces the dotenv-only startup note; 2839 words, rounded up to the next 100.
     // why: operator-approved (2026-11-05) raise to the measured count for the opt-in Firecrawl fetch fallback (phase 2 of web search).
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 353 words net of the post-#834 additions; measured 2064, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 2070, within a few words of the file.
     // why: the 2026-11-15 sync-and-trim pass moved the browser sections to docs/Browser-Use.md (2167 words); rounded up to the next 10.
-    ("docs/DESKTOP.md", Guide, 2160),
+    ("docs/DESKTOP.md", Guide, 780),
     // why: operator-approved explainer for the agent-neutral .githooks security gate; 1364 words, rounded up to the next 100.
     // why: hook behavior review trims duplicated reuse instructions; retain the smaller budget.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 154 words net of the post-#834 additions; measured 1128, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 1130, within a few words of the file.
-    ("docs/GITHOOKS.md", Guide, 1330),
+    ("docs/GITHOOKS.md", Guide, 350),
     // why: credentials table now describes the OS store and the plaintext opt-in; 5571 words, rounded up to the next 100.
     // Setup memory guidance replaces repeated setup/verification prose; keep the cut.
     // why: operator-approved (2026-10-14) automated macOS install (section 1) and browser access (section 7); 5188 words plus about 1%, rounded up to the next 50.
@@ -3098,37 +3098,37 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // section; measured count, rounded up to the next 10.
     // why: the 2026-11-11 trim-and-refresh pass cut 1145 words net (now 5666); the cap drops by the same amount, rounded up to the next 10, keeping its earlier headroom.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 5700, within a few words of the file.
-    ("docs/INSTALL.md", Guide, 5900),
+    ("docs/INSTALL.md", Guide, 1800),
     // why: operator-approved (2026-11-08) consolidation of MCP_CLIENT.md (894) and MCP_SERVER.md (951) into one
     // guide with a topology diagram; measured count, rounded up to the next 10.
     // why: the 2026-11-11 trim-and-refresh pass cut 191 words net of the post-#834 additions; measured 1737, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 1740, within a few words of the file.
-    ("docs/MCP.md", Guide, 1940),
+    ("docs/MCP.md", Guide, 690),
     // why: #244 folded MEMORY_SETUP.md and the user manual's memory sections in here.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 210 words net of the post-#834 additions; measured 1474, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 1480, within a few words of the file.
-    ("docs/MEMORY_GUIDE.md", Guide, 1680),
+    ("docs/MEMORY_GUIDE.md", Guide, 580),
     // why: #237 documented refused truncated cloud replies.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 163 words net of the post-#834 additions; measured 820, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 820, within a few words of the file.
-    ("docs/MODELS.md", Guide, 1020),
+    ("docs/MODELS.md", Guide, 470),
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 177 words net (now 973); the cap drops by the same amount, rounded up to the next 10, keeping its earlier headroom.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 990, within a few words of the file.
-    ("docs/PROCESS_LIFECYCLE.md", Guide, 1190),
+    ("docs/PROCESS_LIFECYCLE.md", Guide, 420),
     // why: operator-requested per-file index of docs/ (3-5 sentences each) replaces the 150-word folder stub; 1103 words, rounded up to the next 100.
     // why: operator-requested reading paths plus an owning-code and tests line per doc; size plus about 5%, rounded up to the next 50.
     // why: README audit removes 44 words; retain the existing headroom.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 319 words net of the post-#834 additions; measured 1036, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 1040, within a few words of the file.
-    ("docs/README.md", Guide, 1240),
+    ("docs/README.md", Guide, 300),
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 92 words net of the post-#834 additions; measured 592, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 600, within a few words of the file.
-    ("docs/RELEASING.md", Guide, 800),
+    ("docs/RELEASING.md", Guide, 250),
     // why: #245 folded WEB.md and ACCOUNTS.md in here.
     // why: API Keys and SerpAPI now name the OS credential store; 4014 words, rounded up to the next 100.
     // why: operator-approved (2026-10-24) raise to 4000 so #649 and #651 fit together without trimming contract text.
@@ -3139,34 +3139,34 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 3380, within a few words of the file.
     // why: the 2026-11-22 trim-and-update pass (#772 batch and digest contract) measured 3427; rounded up to the next 10 so the cut stays cut.
     // why: the 2026-11-22 D10 pass (#772 provider-unit ledger) trimmed 167 words and added the ledger contract; measured 3369 with #1072's account-recheck sentence, rounded up to the next 10 so the cut stays cut.
-    ("docs/SECURE_RESEARCH.md", Guide, 3380),
+    ("docs/SECURE_RESEARCH.md", Guide, 1190),
     // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here; 2157 words, cap set to 2750 for room to grow.
     // why: the 2026-11-11 trim-and-refresh pass cut 308 words net (now 1747); the cap drops by the same amount, rounded up to the next 10, keeping its earlier headroom.
-    ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 2450),
+    ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 670),
     // why: #244 made this the one memory contract: a gate table, and the #87
     // closeout facts it lacked.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 562 words net of the post-#834 additions; measured 2880, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 2880, within a few words of the file.
-    ("docs/STRUCTURED_MEMORY.md", Guide, 3080),
+    ("docs/STRUCTURED_MEMORY.md", Guide, 1130),
     // why: operator-approved (2026-10-19) measured count with #546 and #550 together, raised instead of trimming.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 188 words net of the post-#834 additions; measured 1270, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 1270, within a few words of the file.
     // why: operator-approved (2026-11-17) +100: #961 and #966 each added troubleshooting rows, reaching 1495 of 1470.
-    ("docs/TROUBLESHOOTING.md", Guide, 1570),
+    ("docs/TROUBLESHOOTING.md", Guide, 620),
     // why: operator-requested conversion of the routing research TXT, with implementation and measured limits.
     // why: moved out of docs/learning (operator reading material agents never open) into docs/ on 2026-11-08.
     // why: the 2026-11-11 trim-and-refresh pass cut 928 words net (now 3646); the cap drops by the same amount, rounded up to the next 10, keeping its earlier headroom.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 3680, within a few words of the file.
     // why: the 2026-11-22 refresh trimmed measurement narrative and restated config numbers (3871 to 3685 words with the week's provider, digest and loop changes added); the cap drops to the next 10 above it so the cut stays cut.
-    ("docs/WEB_DECISION_ROUTER.md", Guide, 3690),
+    ("docs/WEB_DECISION_ROUTER.md", Guide, 1220),
     // why: operator netconnect user guide; 3293 words after the doc-sync trim and the diag tier, rounded up to the next 100.
     // why: the 2026-11-06 doc sync trimmed stale and duplicated text; set to the measured count so the cut stays cut.
     // why: the 2026-11-11 trim-and-refresh pass cut 577 words net of the post-#834 additions; measured 2538, rounded up to the next 10 so the cut stays cut.
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 2540, within a few words of the file.
-    ("docs/netconnect.md", Guide, 2740),
-    ("docs/screenshots/README.md", Evidence, 387),
+    ("docs/netconnect.md", Guide, 650),
+    ("docs/screenshots/README.md", Evidence, 120),
     // why: the seven folder-README rows below are operator-requested per-file indexes (one line per file);
     // each is its size plus about 10%, rounded up to the next 10.
     // why: operator-approved (2026-10-14) install-macos.sh and start-macos.sh lines, then the operator-requested
@@ -3223,7 +3223,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: operator-approved (2026-11-15) +200 Guide words with the docs/Browser-Use.md row raise (970 to 1170).
 // why: operator-approved (2026-11-17) +100 Guide words with the docs/Browser-Use.md row raise (1170 to 1270, #945).
 // why: operator-approved (2026-11-22) +500 Guide words with the docs/Browser-Use.md row raise (1270 to 1570).
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 12_500), (Guide, 62_100), (Evidence, 700), (Agent, 21_910)];
+// The docs sweep tightened the Guide and Evidence caps to the next 500 words.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 12_500), (Guide, 23_500), (Evidence, 500), (Agent, 21_910)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
