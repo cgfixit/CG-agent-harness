@@ -205,7 +205,7 @@ pub fn known_secret_values(cfg: &AppConfig) -> Vec<String> {
 const MIN_LITERAL_SECRET_CHARS: usize = 12;
 
 /// HMAC-SHA256 (RFC 2104) over the `sha2` dependency already in the tree.
-fn hmac_sha256(key: &[u8; 32], message: &[u8]) -> [u8; 32] {
+pub(crate) fn hmac_sha256(key: &[u8; 32], message: &[u8]) -> [u8; 32] {
     use sha2::{Digest, Sha256};
     let mut block = [0u8; 64];
     block[..32].copy_from_slice(key);
