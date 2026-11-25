@@ -157,9 +157,25 @@ jobs:
           name: rust-clippy-sarif
           path: sarif
 
+      # The artifact can be listed before the service serves it: on PR #1148 a
+      # download 5 s after upload got "No artifacts found" for an artifact the
+      # run still lists. One delayed retry; a second miss still fails closed.
+      - name: Wait before retrying the SARIF download
+        if: steps.download.outcome != 'success'
+        run: sleep 20
+
+      - name: Retry clippy SARIF download
+        id: download-retry
+        if: steps.download.outcome != 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rust-clippy-sarif
+          path: sarif
+
       - name: Select clippy SARIF
         id: sarif
-        if: steps.download.outcome == 'success'
+        if: steps.download.outcome == 'success' || steps.download-retry.outcome == 'success'
         run: |
           set -euo pipefail
           file=$(find sarif -name 'rust-clippy-results.sarif' -type f -print -quit)
