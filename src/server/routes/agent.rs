@@ -520,6 +520,35 @@ pub async fn agent_job_create(
     super::structured_memory::off_worker(move || start_job(state, req, owner, None)).await
 }
 
+/// Closes a scheduled occurrence's audit trail when its task is dropped before
+/// it logs an end: `JobStore::cancel` aborts the task (an account disable,
+/// delete or demotion, a shutdown, a manual cancel), so no code after the
+/// await runs. `agent_schedule_start` would otherwise stand alone.
+struct ScheduleEndAudit {
+    state: Arc<AppState>,
+    schedule_id: Option<String>,
+    job_id: String,
+}
+
+impl ScheduleEndAudit {
+    fn settled(&mut self) {
+        self.schedule_id = None;
+    }
+}
+
+impl Drop for ScheduleEndAudit {
+    fn drop(&mut self) {
+        if let Some(sid) = self.schedule_id.take() {
+            self.state.audit.log(json!({
+                "event": "agent_schedule_failed",
+                "schedule_id": sid,
+                "job_id": self.job_id,
+                "status": crate::server::agent_jobs::CANCELLED,
+            }));
+        }
+    }
+}
+
 pub(crate) fn start_job(
     state: Arc<AppState>,
     req: AgentRunRequest,
@@ -541,6 +570,11 @@ pub(crate) fn start_job(
         if ready.await.is_err() {
             return;
         }
+        let mut end_audit = ScheduleEndAudit {
+            state: task_state.clone(),
+            schedule_id: task_schedule.clone(),
+            job_id: task_job.clone(),
+        };
         // The account was checked when the request arrived. An account
         // disabled, deleted or demoted out of `RunCoding` before this job was
         // registered missed `JobStore::cancel_owner`, so it is checked again
@@ -554,6 +588,7 @@ pub(crate) fn start_job(
             _chat_gate: chat_gate,
         } = prepared;
         if !still_allowed {
+            end_audit.settled();
             drop((run_gate, chat_gate));
             let (refuse_state, refuse_owner, refuse_job) = (task_state.clone(), task_owner.clone(), task_job.clone());
             super::structured_memory::off_worker(move || {
@@ -598,6 +633,7 @@ pub(crate) fn start_job(
             receipt_state.jobs.get(&receipt_owner, &receipt_job)
         })
         .await;
+        end_audit.settled();
         if let Some(job) = finished {
             if let Some(sid) = task_schedule {
                 let event = if job["status"] == crate::server::agent_jobs::FINISHED {
