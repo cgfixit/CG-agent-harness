@@ -103,12 +103,22 @@ pub struct Ceilings {
 
 impl Ceilings {
     pub fn load(cfg: &AppConfig) -> Result<Self> {
-        Ok(Self {
+        let ceilings = Self {
             // Literal keys: the invariant guard checks every numeric read by name.
             tavily: cfg.u64_in("web.search.tavily_units_per_day", 30, CEILING_RANGE)?,
             serpapi: cfg.u64_in("web.search.serpapi_units_per_day", 8, CEILING_RANGE)?,
             firecrawl: cfg.u64_in("web.firecrawl.units_per_day", 30, CEILING_RANGE)?,
-        })
+        };
+        // Every Firecrawl read reserves the PDF cap, so a smaller ceiling admits
+        // none. Refused only while enabled (operator decision, 2026-11-25).
+        let per_read = super::web_firecrawl::PDF_MAX_PAGES;
+        if cfg.flag_is_true("web.firecrawl.enabled") && ceilings.firecrawl < per_read {
+            return Err(HarnessError::config(format!(
+                "web.firecrawl.units_per_day must be at least {per_read} while web.firecrawl.enabled is true: \
+                 every read reserves the {per_read}-page PDF cap"
+            )));
+        }
+        Ok(ceilings)
     }
 
     pub fn of(&self, provider: Paid) -> u64 {
@@ -706,5 +716,34 @@ pub(in crate::server) mod tests {
             .unwrap();
             assert!(Ceilings::load(&cfg).is_err(), "{bad}");
         }
+    }
+
+    /// Every Firecrawl read reserves 10 units, so 1–9 would refuse every read
+    /// as spent. Enabled, that ceiling is refused at load; disabled, it is
+    /// accepted (operator decision, 2026-11-25).
+    #[test]
+    fn an_enabled_firecrawl_ceiling_must_cover_one_read() {
+        let load = |enabled: &str, units: u64| {
+            let yaml = format!("web: {{firecrawl: {{enabled: {enabled}, units_per_day: {units}}}}}");
+            Ceilings::load(&AppConfig::from_str(&yaml, Path::new("config.yaml")).unwrap())
+        };
+        for small in [1, 9] {
+            let refused = load("true", small).unwrap_err().message;
+            assert!(
+                refused.contains("web.firecrawl.units_per_day must be at least 10"),
+                "{small}: {refused}"
+            );
+            assert_eq!(
+                load("false", small).unwrap().firecrawl,
+                small,
+                "disabled keeps its ceiling"
+            );
+            assert_eq!(
+                load("\"true\"", small).unwrap().firecrawl,
+                small,
+                "only literal true enables"
+            );
+        }
+        assert_eq!(load("true", 10).unwrap().firecrawl, 10, "one read's reservation fits");
     }
 }
