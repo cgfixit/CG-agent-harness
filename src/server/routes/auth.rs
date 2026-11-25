@@ -312,30 +312,36 @@ pub async fn login(
 ) -> ApiResult<Response> {
     manager(&state)?;
     let st = state.clone();
-    let result = run_password_operation(state.auth_operation_permits.clone(), move || {
-        manager(&st).and_then(|m| m.login(&req.username, &req.password).map_err(|e| map_auth_error(&e)))
+    // The audit lines go with the commit, as `account_change` keeps them: the
+    // blocking task finishes a sign-in (and any session it ends at the cap)
+    // even when the client hangs up and this handler is dropped.
+    let (result, user) = run_password_operation(state.auth_operation_permits.clone(), move || {
+        let mgr = manager(&st)?;
+        let result = mgr
+            .login(&req.username, &req.password)
+            .map_err(|e| map_auth_error(&e))?;
+        st.audit
+            .log(json!({"event":"account.login", "actor":result.username,"outcome":"success"}));
+        if result.evicted > 0 {
+            // Names the account and how many, so an operator who finds a session
+            // gone can see why; the console has no screen for it.
+            st.audit.log(json!({
+                "event": "account.session_evicted",
+                "actor": result.username,
+                "evicted": result.evicted,
+                "limit": "auth.session.max_per_account",
+            }));
+        }
+        let user = mgr.get_user(&result.username);
+        Ok((result, user))
     })
     .await?;
-    let user = manager(&state)?.get_user(&result.username);
     let role = user
         .as_ref()
         .map(|u| u.role.clone())
         .unwrap_or_else(|| ROLE_OPERATOR.to_string());
     let must_change_password = user.as_ref().is_some_and(|u| u.must_change_password);
     let user_id = user.as_ref().map(|u| u.user_id.clone()).unwrap_or_default();
-    state
-        .audit
-        .log(json!({"event":"account.login", "actor":result.username,"outcome":"success"}));
-    if result.evicted > 0 {
-        // Names the account and how many, so an operator who finds a session
-        // gone can see why; the console has no screen for it.
-        state.audit.log(json!({
-            "event": "account.session_evicted",
-            "actor": result.username,
-            "evicted": result.evicted,
-            "limit": "auth.session.max_per_account",
-        }));
-    }
     let mut resp = Json(json!({
         "username": result.username,
         "role": role,

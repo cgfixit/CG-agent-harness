@@ -32,7 +32,8 @@ initialized database, bad schema or unsafe file refuses startup. Legacy
 `auth.json` migration keeps a backup.
 `auth.session` sets idle and absolute expiry and the per-account cap.
 A sign-in past `max_per_account` (shipped 8) ends that account's least
-recently used session. Capacity refusals return 409 `AUTH_LIMIT`.
+recently used session and logs `account.session_evicted`. Capacity refusals
+return 409 `AUTH_LIMIT`.
 
 ### Session ownership and legacy adoption
 
