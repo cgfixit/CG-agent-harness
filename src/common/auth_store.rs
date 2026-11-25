@@ -930,12 +930,31 @@ impl AuthManager {
             if let Some(last_seen_ts) = seen.write {
                 // Committed before visible, like `persist`, but only this row is written.
                 sqlite::touch_session(&conn, &key, last_seen_ts, seen.expired).ok()?;
+                // Drop this lookup's own snapshot first, so the row is updated
+                // in place unless a reader still holds the old state. Then the
+                // copy is made outside `committed`'s lock, which readers wait
+                // on, and only the pointer swap holds it; `writer` keeps any
+                // other change out meanwhile.
+                drop(db);
+                let slide = |state: &mut AuthDb| {
+                    if let Some(row) = state.sessions.get_mut(&key) {
+                        row.last_seen_ts = last_seen_ts;
+                        row.revoked = seen.expired;
+                    }
+                };
                 let mut committed = self.committed.write().unwrap_or_else(|p| p.into_inner());
-                // Copies the state only while a reader still holds the old snapshot.
-                let row = Arc::make_mut(&mut committed).sessions.get_mut(&key)?;
-                row.last_seen_ts = last_seen_ts;
-                row.revoked = seen.expired;
-                db = committed.clone();
+                if let Some(state) = Arc::get_mut(&mut committed) {
+                    slide(state);
+                    db = committed.clone();
+                } else {
+                    let shared = committed.clone();
+                    drop(committed);
+                    let mut next = (*shared).clone();
+                    drop(shared);
+                    slide(&mut next);
+                    db = Arc::new(next);
+                    *self.committed.write().unwrap_or_else(|p| p.into_inner()) = db.clone();
+                }
             }
         }
         if seen.expired || db.users.get(&seen.username).is_none_or(|user| user.disabled) {
