@@ -91,6 +91,10 @@ let blocked = 0;
 let blockedLoads = 0;
 // Documents the network gate refused at MAX_DOCUMENT_BYTES.
 let oversized = 0;
+// Set while navigate runs: called when a top-level page load is held or
+// paused for the operator. A form the page submits while it is still parsing
+// leaves goto waiting for a domcontentloaded that never comes.
+let loadStopped = null;
 
 // Same rule as the harness web reader (web_policy::is_public_ip): a granted
 // name must resolve to global unicast only. An IP-literal grant skips lookup.
@@ -758,9 +762,11 @@ async function start(message) {
         });
         pendingApproval = waiting;
         askedThisOp = true;
+        if (topLevelLoad(request)) loadStopped?.();
         return;
       }
       hold(method, url, request.isNavigationRequest());
+      if (topLevelLoad(request)) loadStopped?.();
       // A held page load answers 204 so the page stays; a fetch/XHR fails.
       if (request.isNavigationRequest()) route.fulfill({ status: 204, body: "" });
       else route.abort("blockedbyclient");
@@ -796,9 +802,14 @@ async function start(message) {
 
 // Wait for the page to load, script content to render, held requests to
 // register and any tab the page opened to be adopted or closed.
-async function settle() {
+// After a held page load Playwright still counts that load as pending, so its
+// domcontentloaded never comes; `loadHeld` reads the document's own state.
+async function settle(loadHeld = false) {
   for (let pass = 0; pass < 2; pass += 1) {
-    await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => {});
+    const parsed = loadHeld
+      ? page.waitForFunction(() => document.readyState !== "loading", null, { timeout: 5000 })
+      : page.waitForLoadState("domcontentloaded", { timeout: 5000 });
+    await parsed.catch(() => {});
     await page.waitForLoadState("networkidle", { timeout: 2000 }).catch(() => {});
     if (!opening.size) return;
     await Promise.allSettled([...opening]);
@@ -859,7 +870,22 @@ async function handle(message) {
         } catch {}
       };
       page.on("response", redirect);
-      await page.goto(message.url, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(async (error) => {
+      // The page itself loading another page (a form it submits) and that load
+      // held: what is shown now is the observation, not a failed navigate.
+      // Only once this navigate's page committed: the old page's own load is not it.
+      let committed = false;
+      const commit = (frame) => {
+        if (frame === page.mainFrame()) committed = true;
+      };
+      page.on("framenavigated", commit);
+      const stopped = new Promise((resolve) => {
+        loadStopped = () => {
+          if (committed) resolve();
+        };
+      });
+      let stoppedLoad = false;
+      const loaded = page.goto(message.url, { waitUntil: "domcontentloaded", timeout: 10000 }).catch(async (error) => {
+        if (stoppedLoad) return;
         const deniedRedirect = outside && String(error.message).includes("ERR_BLOCKED_BY_CLIENT");
         if (!deniedRedirect && blockedLoads === before && oversized === large) throw error;
         // Wait for Chrome's error page before the model tries another navigation.
@@ -872,9 +898,14 @@ async function handle(message) {
         }
         // Not the URL: the reason is the operator's rule, and the model has the URL.
         throw new Error("the operator's web block list covers that page");
-      }).finally(() => page.off("response", redirect));
+      });
+      await Promise.race([loaded, stopped.then(() => { stoppedLoad = true; })]).finally(() => {
+        loadStopped = null;
+        page.off("response", redirect);
+        page.off("framenavigated", commit);
+      });
       // A page that renders from a fetch is still a shell at domcontentloaded.
-      await settle();
+      await settle(stoppedLoad);
       return observe();
     }
     case "observe":

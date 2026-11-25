@@ -1724,7 +1724,8 @@ const MAX_GUARDED_REPLY_BYTES: usize = 400_000;
 /// - a block rule on a path holds inside the granted origin (#899): see
 ///   `guard_path_denials`;
 /// - a held POST never reaches the server, whether the page sent it on its
-///   own or the model's click caused it (#894): see `guard_holds`.
+///   own, the model's click caused it (#894) or a form submitted while the
+///   page parsed: see `guard_holds`.
 ///
 /// The session's verdicts come from a policy file through `RequestPolicy`, as
 /// a task's do; only the loopback origin's name is swapped for the rules.
@@ -1863,9 +1864,20 @@ const GUARD_HOLDS_PAGE: &str = r#"
 <script>fetch('/autosave', {method: 'POST', body: 'draft'}).catch(() => {});</script>
 "#;
 
+/// A page whose inline script submits a POST form while the page is still
+/// parsing, before `domcontentloaded`.
+const GUARD_AUTOSUBMIT_PAGE: &str = r#"
+<p>AUTOSUBMIT-PAGE</p>
+<form method="post" action="/submitted"><input name="item" value="tea"></form>
+<script>document.forms[0].submit();</script>
+<p>after the script</p>
+"#;
+
 /// The two kinds of held request (#894), by what the server received: a POST
 /// the page sends on its own is listed as background, a POST the model's click
-/// causes is listed as the operator's step, and neither reaches the server.
+/// causes is listed as the operator's step, and neither reaches the server. A
+/// page load the page starts while it parses is held as the operator's step,
+/// and the navigate that opened the page still returns its observation.
 fn guard_holds(sidecar: &mut Sidecar, lines: &mut Vec<String>, base: &str, seen: &Received) -> Result<(), String> {
     let rows = |page: &Value, key: &str| -> Vec<String> {
         page[key]
@@ -1902,6 +1914,29 @@ fn guard_holds(sidecar: &mut Sidecar, lines: &mut Vec<String>, base: &str, seen:
         return Err(format!("a held request reached the server: {sent:?}"));
     }
     lines.push("holds -> page's own POST listed as background, click's POST as the operator's; neither sent".into());
+
+    let (page, _) = guard_call(
+        sidecar,
+        lines,
+        json!({"op":"navigate","url": format!("{base}/autosubmit")}),
+    )?;
+    if rows(&page, "held") != [format!("POST {base}/submitted")] || !rows(&page, "held_background").is_empty() {
+        return Err(format!(
+            "a form submitted while the page parsed was not held as the operator's step: {page}"
+        ));
+    }
+    if !page["text"].as_str().unwrap_or("").contains("AUTOSUBMIT-PAGE") {
+        return Err(format!("the auto-submitting page was not observed: {page}"));
+    }
+    let posted = seen
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .iter()
+        .any(|row| row.starts_with("POST "));
+    if posted {
+        return Err("a form submitted while the page parsed reached the server".into());
+    }
+    lines.push("holds -> a form submitted during parsing held, navigate still observed the page".into());
     Ok(())
 }
 
@@ -2205,6 +2240,8 @@ fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Resu
         ("/big", Reply::Html(big)),
         ("/huge", Reply::Unsized(huge)),
         ("/holds", Reply::Html(GUARD_HOLDS_PAGE.to_string())),
+        ("/autosubmit", Reply::Html(GUARD_AUTOSUBMIT_PAGE.to_string())),
+        ("/submitted", Reply::Html("<p>SUBMITTED</p>".to_string())),
         ("/docs", Reply::Html(GUARD_DENIALS_PAGE.to_string())),
         ("/to-private", Reply::Redirect("/private/landing")),
         ("/hop", Reply::Redirect("/to-private")),
