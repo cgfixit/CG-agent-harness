@@ -3140,7 +3140,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator decision (2026-11-12): +200 after the 2026-11-11 trim left this row at 3380, within a few words of the file.
     // why: the 2026-11-22 trim-and-update pass (#772 batch and digest contract) measured 3427; rounded up to the next 10 so the cut stays cut.
     // why: the 2026-11-22 D10 pass (#772 provider-unit ledger) trimmed 167 words and added the ledger contract; measured 3369 with #1072's account-recheck sentence, rounded up to the next 10 so the cut stays cut.
-    ("docs/SECURE_RESEARCH.md", Guide, 1190),
+    // why: operator-approved (2026-11-25) +200 after #1133, #1134 and #1135 each added 22 or 23 words to the 1165 on main; any two exceed 1190.
+    ("docs/SECURE_RESEARCH.md", Guide, 1390),
     // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here; 2157 words, cap set to 2750 for room to grow.
     // why: the 2026-11-11 trim-and-refresh pass cut 308 words net (now 1747); the cap drops by the same amount, rounded up to the next 10, keeping its earlier headroom.
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 670),
@@ -3226,7 +3227,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
 // why: operator-approved (2026-11-22) +500 Guide words with the docs/Browser-Use.md row raise (1270 to 1570).
 // The docs sweep tightened the Guide and Evidence caps to the next 500 words.
 // The Codex guidance refresh removed 1,613 Agent words. Preserve the group's headroom.
-const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 12_500), (Guide, 23_500), (Evidence, 500), (Agent, 20_297)];
+// why: operator-approved (2026-11-25) +200 Guide words with the docs/SECURE_RESEARCH.md row raise (1190 to 1390); Guide was at 23,459 of 23,500.
+const DOCS_GROUP_CAPS: &[(Kind, usize)] = &[(Root, 12_500), (Guide, 23_700), (Evidence, 500), (Agent, 20_297)];
 
 /// A group cap this far above its words fails too, so a deletion locks in
 /// instead of leaving room to regrow.
