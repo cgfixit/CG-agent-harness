@@ -1,7 +1,7 @@
 # Codex skill index
 
 Start with [project guidance](cgagentharness-project-guidance/SKILL.md).
-The app's `/api/skills` manages runtime skills.
+Harness's `GET /api/skills` lists its own runtime skills.
 
 - [Config guard](cgagentharness-config-guard/SKILL.md) for shipped values and missing keys.
 - [Gotchas](cgagentharness-gotchas/SKILL.md) for misleading results.
@@ -13,4 +13,5 @@ The app's `/api/skills` manages runtime skills.
 - [Fable protocol](fable-protocol/SKILL.md) for contested claims.
 - [Verification specialist](verification-specialist/SKILL.md) for independent patch assessment.
 
-Check which file Codex loads when maintaining user-installed mirrors.
+For Codex discovery, check the loaded path and enabled state to distinguish
+repository skills from user-installed mirrors.

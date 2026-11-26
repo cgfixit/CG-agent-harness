@@ -20,7 +20,7 @@ select the task skill.
 | Command isolation and outbound MCP | `src/agentic/executor/sandbox.rs`, `src/common/process.rs`, `src/common/mcp.rs` |
 | Shipped values and reload | `assets/config.default.yaml`, `src/common/config.rs`, `src/server/config_reload.rs` |
 | Web discovery and goal evidence | `src/server/web_search.rs`, `src/server/web_research.rs`, `src/server/chat_web/evidence.rs` |
-| /browse and held requests | `src/server/routes/browser.rs`, `src/common/browser_host.rs`, `browser/sidecar.mjs` |
+| /browse holds and rediscovery | `src/server/routes/browser.rs`, `src/server/browser_jobs.rs`, `src/common/browser_host.rs`, `browser/sidecar.mjs`, `assets/static/harness.html` |
 | PDF extraction and model context | `src/common/pdf_text.rs`, `src/server/compaction.rs`, `src/llm`. Trace each caller's eligibility and fallback. |
 
 Use `cgagentharness-invariant-guard` for the test map, including ownership,
