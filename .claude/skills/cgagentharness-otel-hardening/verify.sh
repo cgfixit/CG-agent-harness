@@ -15,7 +15,7 @@ checker="$here/check_otel.py"
 # `reviewed`). The strict clean-tree run pins it so this script stays
 # deterministic; the default run uses today so real staleness still surfaces
 # as WARN/exit 0 without breaking the script.
-AS_OF="2026-11-20"
+AS_OF="2026-11-26"
 
 echo "== cgagentharness-otel-hardening verify =="
 
