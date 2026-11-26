@@ -467,15 +467,52 @@ fn authorize_turn(state: &AppState, owner: &str, sign_in: SignIn<'_>) -> Result<
     Ok(())
 }
 
-fn check_evidence(state: &AppState, web: &WebTool, owner: &str, sign_in: SignIn<'_>, sources: &[String]) -> Result<()> {
+/// What one turn's last passing [`check_evidence`] saw: the policy file's
+/// revision (the SHA-256 of its bytes), the granted set and the sources. The
+/// same three authorize the same way, so the walk over every rule for every
+/// source is not repeated while none of them changed. The account, the web
+/// switch and the policy file are still read on every call.
+#[derive(Default)]
+struct Authorized(std::sync::Mutex<Option<AuthorizedFor>>);
+
+struct AuthorizedFor {
+    revision: String,
+    granted: std::sync::Arc<std::collections::BTreeSet<String>>,
+    sources: Vec<String>,
+}
+
+fn check_evidence(
+    state: &AppState,
+    web: &WebTool,
+    owner: &str,
+    sign_in: SignIn<'_>,
+    sources: &[String],
+    authorized: &Authorized,
+) -> Result<()> {
     authorize_turn(state, owner, sign_in)?;
     if !sources.is_empty() {
         // This turn's snapshot: with `web.search.result_reads` on it also
         // carries the URLs the turn's own searches listed.
         let policy = web.require_enabled(true)?;
+        let mut last = authorized.0.lock().unwrap_or_else(|p| p.into_inner());
+        // `granted` is replaced whole when a search adds to it, never changed
+        // in place, and `last` keeps it alive: the same pointer is the same set.
+        if last.as_ref().is_some_and(|seen| {
+            seen.revision == policy.revision
+                && std::sync::Arc::ptr_eq(&seen.granted, &policy.granted)
+                && seen.sources == sources
+        }) {
+            return Ok(());
+        }
+        *last = None;
         for source in sources {
             policy.authorize(source, None)?;
         }
+        *last = Some(AuthorizedFor {
+            revision: policy.revision,
+            granted: policy.granted,
+            sources: sources.to_vec(),
+        });
     }
     Ok(())
 }
@@ -689,6 +726,7 @@ async fn run_inner(
         .collect();
     let mut events = Vec::new();
     let mut sources = Vec::new();
+    let authorized = Authorized::default();
     let mut searches = std::collections::BTreeMap::new();
     let mut used_calls = 0;
     let mut prompt_tokens = 0u64;
@@ -781,7 +819,7 @@ async fn run_inner(
     // One round past the tool-call ceiling: the single ANSWER_NOW retry, which
     // offers no tools and so cannot spend a call.
     for turn in 0..=web.limits.chat_tool_calls + 1 {
-        check_evidence(state, web, owner, sign_in, &sources)?;
+        check_evidence(state, web, owner, sign_in, &sources, &authorized)?;
         let reservation = super::compaction::reply_reservation(&state.backend, cap);
         // Summarize new passages before choosing more tools, not after drafting an answer.
         if loop_turn && evidence_changed && !passages.is_empty() {
@@ -813,7 +851,7 @@ async fn run_inner(
                 state
                     .ensure_window_allows(model, 0, web.limits.total_tokens, sized_tuned)
                     .await?;
-                check_evidence(state, web, owner, sign_in, &sources)?;
+                check_evidence(state, web, owner, sign_in, &sources, &authorized)?;
                 let digest = state
                     .chat
                     .chat_json(
@@ -856,7 +894,7 @@ async fn run_inner(
                     pending: Some(totals.clone()),
                     known_completion_tokens: *known_completion_tokens,
                 };
-                check_evidence(state, web, owner, sign_in, &sources)?;
+                check_evidence(state, web, owner, sign_in, &sources, &authorized)?;
                 let (parsed, drop_reasons) =
                     super::web_research::Answer::parse_with_reasons(&digest.body_text, &selected);
                 match parsed {
@@ -939,7 +977,7 @@ async fn run_inner(
         // definitions, which the final round may no longer carry.
         let extra = appended_tokens(&messages[history.len()..]) + if available.is_empty() { 0 } else { offered_tokens };
         peak_extra = peak_extra.max(extra);
-        let validate = || check_evidence(state, web, owner, sign_in, &sources);
+        let validate = || check_evidence(state, web, owner, sign_in, &sources, &authorized);
         // A tool round may run long: the window must still allow this budget.
         // That check can load the model, so authority is read again after it,
         // before the request carries the conversation and any passages.
@@ -1033,9 +1071,8 @@ async fn run_inner(
             prompt_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("prompt_tokens")));
         completion_tokens =
             completion_tokens.saturating_add(crate::llm::openai_chat::token_count(reported.get("completion_tokens")));
-        check_evidence(state, web, owner, sign_in, &sources)?;
+        check_evidence(state, web, owner, sign_in, &sources, &authorized)?;
         let final_tools = !available.is_empty();
-        check_evidence(state, web, owner, sign_in, &sources)?;
         let choice = &response["choices"][0];
         let message = &choice["message"];
         // `"tool_calls": null` (sent by some servers on a plain answer) is no calls.
@@ -1361,7 +1398,7 @@ async fn run_inner(
                 .ok_or_else(|| error("WEB_TOKEN_BUDGET", "web.total_tokens has no room left for this result")),
                 Err(failure) => Err(failure),
             };
-            check_evidence(state, web, owner, sign_in, &sources)?;
+            check_evidence(state, web, owner, sign_in, &sources, &authorized)?;
             // A refused or failed read is that call's result, not the end of the
             // turn: the model is handed the harness's own code and message (never
             // page text) and answers from the reads that did succeed. A refused
@@ -1431,7 +1468,7 @@ async fn run_inner(
                         sources.push(source.to_string());
                     }
                 }
-                check_evidence(state, web, owner, sign_in, &sources)?;
+                check_evidence(state, web, owner, sign_in, &sources, &authorized)?;
                 events.push(json!({"tool":name,"ok":true,"target":target,"args":call_args,"result":result}));
             }
             messages.push(tool_message(id, &result)?);
