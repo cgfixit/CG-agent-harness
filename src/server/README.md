@@ -45,7 +45,7 @@ The loopback HTTP/HTTPS console. [`guards.rs`](guards.rs),
 - [`schemas.rs`](schemas.rs): request body structs with `validate()`, length caps, the 422 `ValidJson` extractor.
 - [`self_manual.rs`](self_manual.rs): compiled manual chunks in a RAM index; local prompt context, never authority.
 - [`session_export.rs`](session_export.rs): session Markdown export render/parse and `0o600` file write.
-- [`session_search.rs`](session_search.rs): request-local Tantivy search over an owner's transcripts.
+- [`session_search.rs`](session_search.rs): per-owner Tantivy search over an owner's transcripts.
 - [`sessions.rs`](sessions.rs): JSON `SessionStore`: owned sessions, messages, pins, token tallies, quarantine.
 - [`slash.rs`](slash.rs): suggest-don't-guess slash parser; exact commands dispatch, fuzzy ones only suggest.
 - [`state.rs`](state.rs): `AppState` shared by every handler, `OllamaControl`, concurrency tunables.

@@ -849,8 +849,8 @@ Provider errors are not echoed.
 or goals. Normal storage queries require an `OwnedSessionStore`; search, export,
 chat, prompt preview, styles, skills, selected facts and goal bindings use it.
 `GET /api/sessions/{session_id}/export` writes `{home}/exports/{id}.md` at `0600`
-and returns the same bytes. Search uses a request-local Tantivy RAM index of
-owned sessions. It never writes to the web cache or sends transcripts off-machine.
+and returns the same bytes. Search reconciles the owner's RAM Tantivy index before each query.
+It never writes to the web cache or sends transcripts off-machine.
 
 Records without schema/owner are legacy shared data. They stay outside normal
 reads and clear-history. An administrator can inspect metadata at

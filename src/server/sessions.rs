@@ -624,6 +624,34 @@ impl OwnedSessionStore<'_> {
             .filter(|row| row["owner"].as_str() == Some(self.owner.as_str()))
             .collect()
     }
+
+    pub(crate) fn storage_dir(&self) -> &Path {
+        &self.store.dir
+    }
+
+    pub(crate) fn owner_id(&self) -> &str {
+        &self.owner
+    }
+
+    /// Newest-first `(id, mtime, len)` for this owner, in `list` order.
+    /// Transcript search treats a changed stamp as an edited session.
+    pub(crate) fn search_stamps(&self) -> Vec<(String, std::time::SystemTime, u64)> {
+        let mut out = Vec::new();
+        for row in self.list() {
+            let Some(id) = row["session_id"].as_str().filter(|id| session_id_ok(id)) else {
+                continue;
+            };
+            let Ok(meta) = std::fs::metadata(self.store.dir.join(format!("{id}.json"))) else {
+                continue;
+            };
+            out.push((
+                id.to_string(),
+                meta.modified().unwrap_or(std::time::UNIX_EPOCH),
+                meta.len(),
+            ));
+        }
+        out
+    }
     fn write(&self, session: &Session) -> Result<()> {
         if session.schema_version != 1 || session.owner.as_deref() != Some(self.owner.as_str()) {
             return Err(session_error("session ownership changed", &session.session_id));
