@@ -562,7 +562,7 @@ false`, omitted; never raw. `logging.audit_file` stays home-relative: absolute,
 
 Server audit lines go through one ordered writer thread behind a bounded queue
 (`logging.audit_queue_lines`, default 4096; 0 appends inline). A full queue
-does not block. A refused record increments `<audit file>.gaps` (0600).
+does not block. A refused record merges into `<audit file>.gaps` (0600).
 `/api/status` and `/api/diag` show `audit_gap`, and the next process loads it.
 Sign-in, account create, role, disable, delete, keys and adoption return
 `AUDIT_NOT_RECORDED` and do not commit. The server

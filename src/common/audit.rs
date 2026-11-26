@@ -3,7 +3,9 @@
 //! Port of `utils/logger.py::audit_log` + `redact_sensitive`. A record that
 //! cannot be queued or written is never only a tracing warning. [`Audit::log`]
 //! counts it in a gap file beside the audit log (`<path>.gaps`) that
-//! [`Audit::gap_status`] reports and the next process loads. [`Audit::log_required`]
+//! [`Audit::gap_status`] reports and the next process loads. Each process adds
+//! only the drops it has not yet saved, under a lock, so one process cannot
+//! replace another's count with its own snapshot. [`Audit::log_required`]
 //! returns [`AuditRefused`] so a security commit can stop before it lands.
 //! Neither path waits on a full queue.
 //!
@@ -470,6 +472,32 @@ fn gap_path(audit: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+fn gap_lock_path(gap: &Path) -> PathBuf {
+    let mut name = gap.as_os_str().to_os_string();
+    name.push(".lock");
+    PathBuf::from(name)
+}
+
+enum SavedGap {
+    Missing,
+    Count(u64),
+    Unreadable,
+}
+
+fn read_saved_gap(path: &Path) -> SavedGap {
+    match std::fs::read_to_string(path) {
+        Err(error) if error.kind() == ErrorKind::NotFound => SavedGap::Missing,
+        Err(_) => SavedGap::Unreadable,
+        Ok(text) => match serde_json::from_str::<Value>(text.trim()) {
+            Ok(value) => match value.get("dropped").and_then(Value::as_u64) {
+                Some(count) => SavedGap::Count(count),
+                None => SavedGap::Unreadable,
+            },
+            Err(_) => SavedGap::Unreadable,
+        },
+    }
+}
+
 fn gap_line(since: u64, total: u64) -> String {
     let stamp = serde_json::to_string(&super::iso_now()).unwrap_or_else(|_| "\"\"".to_string());
     format!("{{\"event\":\"audit_gap\",\"dropped\":{since},\"total\":{total},\"timestamp\":{stamp}}}")
@@ -482,6 +510,11 @@ fn gap_line(since: u64, total: u64) -> String {
 struct GapLedger {
     audit_path: PathBuf,
     gap_path: PathBuf,
+    /// Count loaded at open. A later save never publishes less than this
+    /// plus the drops this process has not yet merged.
+    baseline: AtomicU64,
+    /// Drops this process has counted and not yet added to the shared file.
+    pending: AtomicU64,
     dropped: AtomicU64,
     durable: AtomicU64,
     /// How many drops an `audit_gap` line has already described.
@@ -494,20 +527,16 @@ struct GapLedger {
 impl GapLedger {
     fn open(audit_path: &Path) -> Self {
         let gap_path = gap_path(audit_path);
-        let (count, unreadable) = match std::fs::read_to_string(&gap_path) {
-            Err(error) if error.kind() == ErrorKind::NotFound => (0, false),
-            Err(_) => (0, true),
-            Ok(text) => match serde_json::from_str::<Value>(text.trim()) {
-                Ok(value) => match value.get("dropped").and_then(Value::as_u64) {
-                    Some(count) => (count, false),
-                    None => (0, true),
-                },
-                Err(_) => (0, true),
-            },
+        let (count, unreadable) = match read_saved_gap(&gap_path) {
+            SavedGap::Missing => (0, false),
+            SavedGap::Count(count) => (count, false),
+            SavedGap::Unreadable => (0, true),
         };
         Self {
             audit_path: audit_path.to_path_buf(),
             gap_path,
+            baseline: AtomicU64::new(count),
+            pending: AtomicU64::new(0),
             dropped: AtomicU64::new(count),
             durable: AtomicU64::new(if unreadable { 0 } else { count }),
             reported: AtomicU64::new(count),
@@ -518,45 +547,100 @@ impl GapLedger {
     }
 
     fn note_drop(&self) -> u64 {
+        self.pending.fetch_add(1, Ordering::Relaxed);
         let count = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
         tracing::warn!(dropped = count, "audit record dropped; drop counted");
         count
     }
 
-    fn persist(&self) {
+    /// One cross-process read/merge/write. `true` when this call is finished
+    /// (the file already holds our drops, the write landed, or it cannot).
+    /// `false` when the lock was busy or a drop arrived during the write.
+    /// The saved total is the file's count, or the count this process loaded,
+    /// plus only the drops this process has not yet merged. A process that
+    /// loaded nothing and dropped nothing does not replace the file.
+    fn persist_once(&self) -> bool {
         let _guard = self.persist_lock.lock().unwrap_or_else(|poison| poison.into_inner());
-        let count = self.dropped.load(Ordering::Relaxed);
-        if count == 0 && self.unreadable.load(Ordering::Relaxed) {
-            return;
-        }
-        if count == 0 && !self.gap_path.exists() {
-            return;
-        }
         if let Some(parent) = self.gap_path.parent() {
             if std::fs::create_dir_all(parent).is_err() {
                 self.persist_error.store(true, Ordering::Relaxed);
+                return true;
+            }
+        }
+        let lease = match super::file_lease::FileLease::acquire(&gap_lock_path(&self.gap_path), true) {
+            Ok(lease) => lease,
+            Err(error) if error.kind() == ErrorKind::WouldBlock => return false,
+            Err(_) => {
+                self.persist_error.store(true, Ordering::Relaxed);
+                return true;
+            }
+        };
+        let (file_count, present) = match read_saved_gap(&self.gap_path) {
+            SavedGap::Missing => (0, false),
+            SavedGap::Count(count) => (count, true),
+            SavedGap::Unreadable => {
+                self.unreadable.store(true, Ordering::Relaxed);
+                self.persist_error.store(true, Ordering::Relaxed);
+                drop(lease);
+                return true;
+            }
+        };
+        let snapshot = self.pending.load(Ordering::Relaxed);
+        let baseline = self.baseline.load(Ordering::Relaxed);
+        let new = file_count.max(baseline).saturating_add(snapshot);
+        if snapshot == 0 && ((present && file_count == new) || (!present && new == 0)) {
+            if present {
+                self.durable.store(file_count, Ordering::Relaxed);
+                self.unreadable.store(false, Ordering::Relaxed);
+            }
+            self.persist_error.store(false, Ordering::Relaxed);
+            drop(lease);
+            return true;
+        }
+        let body = format!("{{\"dropped\":{new}}}\n");
+        match super::atomic::write_atomic(&self.gap_path, body.as_bytes(), Some(0o600)) {
+            Ok(()) => {
+                self.pending.fetch_sub(snapshot, Ordering::Relaxed);
+                self.baseline.store(new, Ordering::Relaxed);
+                self.durable.store(new, Ordering::Relaxed);
+                self.unreadable.store(false, Ordering::Relaxed);
+                let done = self.pending.load(Ordering::Relaxed) == 0;
+                if done {
+                    self.persist_error.store(false, Ordering::Relaxed);
+                }
+                drop(lease);
+                done
+            }
+            Err(_) => {
+                self.persist_error.store(true, Ordering::Relaxed);
+                drop(lease);
+                true
+            }
+        }
+    }
+
+    /// A few tries, without sleeping. The writer calls this after a line; a
+    /// busy lock is left for the next line rather than stalling the queue.
+    fn persist_attempts(&self, attempts: usize) {
+        for _ in 0..attempts {
+            if self.persist_once() {
                 return;
             }
         }
-        for _ in 0..8 {
-            let count = self.dropped.load(Ordering::Relaxed);
-            let body = format!("{{\"dropped\":{count}}}\n");
-            match super::atomic::write_atomic(&self.gap_path, body.as_bytes(), Some(0o600)) {
-                Ok(()) => {
-                    self.durable.store(count, Ordering::Relaxed);
-                    self.unreadable.store(false, Ordering::Relaxed);
-                    if self.dropped.load(Ordering::Relaxed) == count {
-                        self.persist_error.store(false, Ordering::Relaxed);
-                        return;
-                    }
-                }
-                Err(_) => {
-                    self.persist_error.store(true, Ordering::Relaxed);
-                    return;
-                }
+    }
+
+    fn persist_until(&self, deadline: Instant) {
+        loop {
+            if self.persist_once() {
+                return;
             }
+            if Instant::now() >= deadline {
+                self.persist_error.store(true, Ordering::Relaxed);
+                tracing::warn!("audit gap counter lock stayed busy; the saved count may be short");
+                return;
+            }
+            std::thread::sleep(FLUSH_RETRY);
         }
-        self.persist_error.store(true, Ordering::Relaxed);
     }
 
     /// One audit line for the drops not yet described, then the counter file.
@@ -571,10 +655,8 @@ impl GapLedger {
                 self.reported.fetch_max(dropped, Ordering::Relaxed);
             }
         }
-        if self.dropped.load(Ordering::Relaxed) != self.durable.load(Ordering::Relaxed)
-            || self.persist_error.load(Ordering::Relaxed)
-        {
-            self.persist();
+        if self.pending.load(Ordering::Relaxed) != 0 || self.persist_error.load(Ordering::Relaxed) {
+            self.persist_attempts(8);
         }
     }
 
@@ -947,7 +1029,7 @@ fn persist_bounded(ledger: &Arc<GapLedger>, wait: Duration) {
     let ledger = Arc::clone(ledger);
     let thread = match std::thread::Builder::new()
         .name("audit-gap".into())
-        .spawn(move || ledger.persist())
+        .spawn(move || ledger.persist_until(Instant::now() + wait))
     {
         Ok(thread) => thread,
         Err(error) => {
@@ -1596,5 +1678,45 @@ mod tests {
         let reloaded = again.gap_status();
         assert_eq!(reloaded["record_unreadable"], json!(true), "{reloaded}");
         assert_eq!(reloaded["dropped"], json!(0));
+    }
+
+    #[test]
+    fn a_process_that_saved_nothing_does_not_erase_another_process_drops() {
+        let dir = tempfile::tempdir().unwrap();
+        let server = audit(dir.path(), "logging: {}\n");
+        // Opened while the file is still absent, as a child started beside the server.
+        let child = audit(dir.path(), "logging: {}\n");
+        for _ in 0..10 {
+            server.ledger.note_drop();
+        }
+        server.ledger.persist_until(Instant::now() + Duration::from_secs(2));
+        assert_eq!(server.ledger.pending.load(Ordering::Relaxed), 0);
+        child.ledger.persist_until(Instant::now() + Duration::from_secs(2));
+        drop(server);
+        drop(child);
+        let again = audit(dir.path(), "logging: {}\n");
+        assert_eq!(again.dropped(), 10, "a process with no drops replaced the saved count");
+        assert_eq!(again.gap_status()["durable"], json!(10));
+    }
+
+    #[test]
+    fn two_processes_add_only_the_drops_they_have_not_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = audit(dir.path(), "logging: {}\n");
+        let second = audit(dir.path(), "logging: {}\n");
+        for _ in 0..3 {
+            first.ledger.note_drop();
+        }
+        for _ in 0..4 {
+            second.ledger.note_drop();
+        }
+        first.ledger.persist_until(Instant::now() + Duration::from_secs(2));
+        second.ledger.persist_until(Instant::now() + Duration::from_secs(2));
+        // Saving again must not add the same drops a second time.
+        first.ledger.persist_until(Instant::now() + Duration::from_secs(2));
+        second.ledger.persist_until(Instant::now() + Duration::from_secs(2));
+        drop(first);
+        drop(second);
+        assert_eq!(audit(dir.path(), "logging: {}\n").dropped(), 7);
     }
 }

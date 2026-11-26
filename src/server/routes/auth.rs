@@ -321,25 +321,11 @@ pub async fn login(
             .login(&req.username, &req.password)
             .map_err(|e| map_auth_error(&e))?;
         // Fail closed: a sign-in with no audit line is revoked before the cookie is set.
-        if st
-            .audit
-            .log_required(json!({"event":"account.login", "actor":result.username,"outcome":"success"}))
-            .is_err()
-        {
+        // Sessions the cap already ended are counted even on that refusal:
+        // logout removes only the new session and does not bring those back.
+        if let Err(error) = record_sign_in(&st.audit, &result.username, result.evicted) {
             let _ = mgr.logout(&result.session_id);
-            return Err(ApiError::audit_not_recorded());
-        }
-        if result.evicted > 0 {
-            // Names the account and how many, so an operator who finds a session
-            // gone can see why; the console has no screen for it.
-            // Counted: the other sessions are already gone. The sign-in above
-            // was refused and revoked when its own record could not be queued.
-            st.audit.log(json!({
-                "event": "account.session_evicted",
-                "actor": result.username,
-                "evicted": result.evicted,
-                "limit": "auth.session.max_per_account",
-            }));
+            return Err(error);
         }
         let user = mgr.get_user(&result.username);
         Ok((result, user))
@@ -390,6 +376,30 @@ fn account_audit_line(event: &str, actor: &str, target: &str, detail: Value) -> 
         map.extend(detail.clone());
     }
     line
+}
+
+/// The sign-in line is required. Sessions the cap already ended are counted
+/// even when that line is refused: they are already gone, and the caller
+/// revokes only the new session.
+fn record_sign_in(audit: &crate::common::audit::Audit, username: &str, evicted: usize) -> ApiResult<()> {
+    let accepted = audit
+        .log_required(json!({"event":"account.login", "actor":username,"outcome":"success"}))
+        .is_ok();
+    if evicted > 0 {
+        // Names the account and how many, so an operator who finds a session
+        // gone can see why; the console has no screen for it.
+        audit.log(json!({
+            "event": "account.session_evicted",
+            "actor": username,
+            "evicted": evicted,
+            "limit": "auth.session.max_per_account",
+        }));
+    }
+    if accepted {
+        Ok(())
+    } else {
+        Err(ApiError::audit_not_recorded())
+    }
 }
 
 /// Counted. Password changes use this: a wrong current password must not be
@@ -889,6 +899,39 @@ mod tests {
         assert_eq!(events[0]["route"], "/r199");
         assert_eq!(events[99]["route"], "/r100");
         assert_eq!(events[0].as_object().unwrap().len(), 5, "the fixed projection only");
+    }
+
+    #[test]
+    fn a_refused_sign_in_still_counts_sessions_the_cap_already_ended() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("blocked"), b"not a directory").unwrap();
+        let cfg = crate::common::config::AppConfig::from_str("{}", &dir.path().join("config.yaml")).unwrap();
+        let audit = crate::common::audit::Audit::new(dir.path().join("blocked/audit.jsonl"), &cfg);
+        let refused = record_sign_in(&audit, "ada", 1).unwrap_err();
+        assert_eq!(refused.code, "AUDIT_NOT_RECORDED");
+        assert!(
+            audit.dropped() >= 2,
+            "the ended session was not counted when the sign-in record was refused"
+        );
+        let nobody = record_sign_in(&audit, "ada", 0).unwrap_err();
+        assert_eq!(nobody.code, "AUDIT_NOT_RECORDED");
+        assert_eq!(audit.dropped(), 3, "a sign-in that ended nobody recorded an eviction");
+    }
+
+    #[test]
+    fn a_sign_in_that_ends_a_session_records_that_eviction() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = crate::common::config::AppConfig::from_str(
+            "logging:\n  audit_queue_lines: 0\n",
+            &dir.path().join("config.yaml"),
+        )
+        .unwrap();
+        let audit = crate::common::audit::Audit::new(dir.path().join("logs/audit.jsonl"), &cfg);
+        record_sign_in(&audit, "ada", 1).unwrap();
+        let text = std::fs::read_to_string(audit.path()).unwrap();
+        assert!(text.contains("\"event\":\"account.login\""), "{text}");
+        assert!(text.contains("\"event\":\"account.session_evicted\""), "{text}");
+        assert_eq!(audit.dropped(), 0);
     }
 
     #[test]
