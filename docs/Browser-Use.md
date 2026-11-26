@@ -27,9 +27,9 @@ macOS and Linux use detached jobs. Windows uses the synchronous endpoint.
 
 - Each task grants exact public origins independently of the web allowlist.
   An ungranted redirect from `navigate`, a link or Enter fails, naming its origin.
-  Use `/browse https://www.python.org/ read the first sentence` for Python’s
-  homepage. Expand **Page request details** for other origins the page requested.
-  The host checks each request and redirect against current block policy. The authenticated
+  A block-listed main-frame load fails those three the same way, naming no URL.
+  A blocked subresource or iframe stays ok.
+  The host checks each request and redirect against current block policy. The
   loopback proxy pins public addresses. Private access is fixture-only.
   `navigate` accepts a task URL, granted root, page URL or shown link.
 - Playwright routing holds methods other than GET and HEAD, even mid-load

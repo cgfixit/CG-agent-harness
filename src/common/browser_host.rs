@@ -1767,9 +1767,17 @@ fn write_guard_policy(file: &Path, patterns: &[String]) -> Result<(), String> {
 /// A page inside the granted origin that asks for blocked paths every way a
 /// page can without the model: an image, a redirected image, a fetch, a
 /// redirected fetch, and a fetch every 300 ms for the policy-edit check.
+/// The links and the button are how the model reaches a blocked page, a
+/// granted page with a blocked subresource or iframe, or `about:blank`.
 const GUARD_DENIALS_PAGE: &str = r#"
 <p>DOCS-OK</p>
 <a href="/private/page">Private link</a>
+<a href="/hop">Hop link</a>
+<a href="/private/page" target="_blank">Private tab</a>
+<a href="/granted-image">Granted image</a>
+<a href="/granted-frame">Granted frame</a>
+<a href="about:blank">Blank page</a>
+<button onclick="location='/private/page'">Open private</button>
 <img src="/private/pixel"><img src="/to-private">
 <script>
 fetch("/private/api").catch(() => {});
@@ -1871,6 +1879,108 @@ fn guard_redirect_actions(
     Ok(())
 }
 
+/// A block-listed main-frame load reached by `follow_link`, `click` or
+/// `press_enter` fails with the message `navigate` uses and names no URL.
+/// That includes a same-origin redirect chain, a script assigning
+/// `location`, and a new tab. A granted page whose only blocked request is
+/// a subresource or an iframe stays `ok`. The blocked path is still never
+/// requested.
+fn guard_blocked_load_actions(
+    sidecar: &mut Sidecar,
+    lines: &mut Vec<String>,
+    base: &str,
+    seen: &Received,
+) -> Result<(), String> {
+    let link_ref = |page: &Value, name: &str| -> Result<String, String> {
+        page["elements"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|el| el["name"] == name)
+            .and_then(|el| el["ref"].as_str())
+            .map(str::to_string)
+            .ok_or_else(|| format!("{name} was not listed: {page}"))
+    };
+    let open_docs = |sidecar: &mut Sidecar, lines: &mut Vec<String>| -> Result<Value, String> {
+        let (page, _) = guard_call(sidecar, lines, json!({"op":"navigate","url": format!("{base}/docs")}))?;
+        if !page["text"].as_str().unwrap_or("").contains("DOCS-OK") {
+            return Err(format!("the docs page did not render: {page}"));
+        }
+        Ok(page)
+    };
+    let blocked_action = |sidecar: &mut Sidecar, lines: &mut Vec<String>, op: &str, name: &str| -> Result<(), String> {
+        let page = open_docs(sidecar, lines)?;
+        let reply = sidecar.call(json!({"op": op, "target": {"ref": link_ref(&page, name)?}}))?;
+        let error = reply["error"].as_str().unwrap_or("");
+        if reply["ok"] != false
+            || error != "the operator's web block list covers that page"
+            || !reply["redirect_origin"].is_null()
+        {
+            return Err(format!("{op} on {name} was not a block-list refusal: {reply}"));
+        }
+        let whole = reply.to_string();
+        if ["/private", "chrome-error", "from="]
+            .iter()
+            .any(|part| whole.contains(part))
+        {
+            return Err(format!("{op} on {name} named the blocked page: {whole}"));
+        }
+        lines.push(format!("{op} {name} -> {error}"));
+        Ok(())
+    };
+    for (op, name) in [
+        ("follow_link", "Private link"),
+        ("click", "Private link"),
+        ("press_enter", "Private link"),
+        ("follow_link", "Hop link"),
+        ("click", "Open private"),
+        ("follow_link", "Private tab"),
+    ] {
+        blocked_action(sidecar, lines, op, name)?;
+    }
+    let private_rows: Vec<String> = seen
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .iter()
+        .filter(|row| row.contains(" /private/"))
+        .cloned()
+        .collect();
+    if !private_rows.is_empty() {
+        return Err(format!(
+            "a blocked path was requested by a link action: {private_rows:?}"
+        ));
+    }
+
+    let page = open_docs(sidecar, lines)?;
+    let image = sidecar.call(json!({"op":"follow_link","target":{"ref": link_ref(&page, "Granted image")?}}))?;
+    if image["ok"] != true
+        || !image["result"]["text"].as_str().unwrap_or("").contains("GRANTED-IMAGE")
+        || image["result"]["blocked"].as_u64().unwrap_or(0) == 0
+    {
+        return Err(format!(
+            "a granted page with only a blocked image did not stay ok: {image}"
+        ));
+    }
+    lines.push("follow_link Granted image -> ok, blocked subresource counted".to_string());
+
+    let page = open_docs(sidecar, lines)?;
+    let frame = sidecar.call(json!({"op":"follow_link","target":{"ref": link_ref(&page, "Granted frame")?}}))?;
+    if frame["ok"] != true || !frame["result"]["text"].as_str().unwrap_or("").contains("GRANTED-FRAME") {
+        return Err(format!(
+            "a granted page with only a blocked iframe did not stay ok: {frame}"
+        ));
+    }
+    lines.push("follow_link Granted frame -> ok, blocked iframe did not fail the action".to_string());
+
+    let page = open_docs(sidecar, lines)?;
+    let blank = sidecar.call(json!({"op":"follow_link","target":{"ref": link_ref(&page, "Blank page")?}}))?;
+    if blank["ok"] != true || blank["result"]["url"].as_str() != Some("about:blank") {
+        return Err(format!("about:blank was not a successful navigation: {blank}"));
+    }
+    lines.push("follow_link Blank page -> ok, about:blank".to_string());
+    Ok(())
+}
+
 /// Path-level block rules inside a granted origin (#899), by what the server
 /// received:
 /// - no request reaches `/private/` from a page's own subresources, from a
@@ -1929,6 +2039,8 @@ fn guard_path_denials(
     }
     none_private("by a navigation or a redirect chain")?;
     lines.push(format!("blocked navigate -> {why}"));
+    guard_blocked_load_actions(sidecar, lines, base, seen)?;
+    none_private("by a link, Enter, a script, a redirect chain or a new tab")?;
 
     // A rule added while the page is open: no op runs during the sleep, so
     // the page's requests are judged with no model turn in between.
@@ -2714,6 +2826,14 @@ fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Resu
         ("/autosubmit", Reply::Html(GUARD_AUTOSUBMIT_PAGE.to_string())),
         ("/submitted", Reply::Html("<p>SUBMITTED</p>".to_string())),
         ("/docs", Reply::Html(GUARD_DENIALS_PAGE.to_string())),
+        (
+            "/granted-image",
+            Reply::Html("<p>GRANTED-IMAGE</p><img src=\"/private/pixel\">".to_string()),
+        ),
+        (
+            "/granted-frame",
+            Reply::Html("<p>GRANTED-FRAME</p><iframe src=\"/private/page\"></iframe>".to_string()),
+        ),
         ("/to-private", Reply::Redirect("/private/landing".to_string())),
         ("/hop", Reply::Redirect("/to-private".to_string())),
         ("/later/ping", Reply::Html(String::new())),
