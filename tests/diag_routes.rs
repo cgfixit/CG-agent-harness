@@ -1192,7 +1192,7 @@ async fn a_long_diag_session_is_compacted_to_the_web_budget_and_keeps_its_tools(
     let last_prompt = Arc::new(AtomicU64::new(0));
     let offered = Arc::new(AtomicBool::new(false));
     let (prompt_seen, tools_seen) = (last_prompt.clone(), offered.clone());
-    let router = axum::Router::new().route(
+    let router = common::ollama_router().route(
         "/v1/chat/completions",
         axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
             let (prompt_seen, tools_seen) = (prompt_seen.clone(), tools_seen.clone());

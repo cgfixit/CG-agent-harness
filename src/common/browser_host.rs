@@ -1484,7 +1484,36 @@ fn local_model(model: Option<String>) -> Result<(String, String), String> {
             "{model} is an Ollama cloud model (a :cloud or -cloud tag); browser tasks keep prompts on this machine"
         ));
     }
+    // So does an alias of one (`FROM glm-4.6:cloud`), whose name looks local.
+    shown_local(&api, &model)?;
     Ok((model, api))
+}
+
+/// Refuses `model` unless its `/api/show` was read and names no remote host
+/// (`ollama::refuse_unless_shown_local`).
+fn shown_local(api: &str, model: &str) -> Result<(), String> {
+    use crate::llm::ollama::{refuse_unless_shown_local, show_payload, ShowRead};
+    let response = ollama_client(Duration::from_secs(5)).and_then(|client| {
+        client
+            .post(format!("{api}/api/show"))
+            .json(&show_payload(model))
+            .send()
+            .map_err(|err| err.to_string())
+    });
+    let body;
+    let read = match response {
+        Ok(response) if response.status().is_success() => match bounded_json(response) {
+            Ok(value) => {
+                body = value;
+                ShowRead::Body(&body)
+            }
+            Err(_) => ShowRead::Failed,
+        },
+        Ok(response) => ShowRead::Status(response.status().as_u16()),
+        Err(_) => ShowRead::Failed,
+    };
+    refuse_unless_shown_local(read)
+        .map_err(|err| format!("{model}: {}; browser tasks keep prompts on this machine", err.message))
 }
 
 fn coerce_args(value: Value) -> Value {

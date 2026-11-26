@@ -28,7 +28,7 @@ use std::time::Duration;
 async fn chat_batches_multiple_reads_with_one_protocol_budget_and_no_malformed_prefix_execution() {
     let reads = Arc::new(AtomicUsize::new(0));
     let r = reads.clone();
-    let fixture=Router::new().route("/docs/{page}",get(move || {let r=r.clone();async move {r.fetch_add(1,Ordering::SeqCst); ([("content-type","text/plain")],"BATCH_BACKUP_EVIDENCE")}}))
+    let fixture=common::ollama_router().route("/docs/{page}",get(move || {let r=r.clone();async move {r.fetch_add(1,Ordering::SeqCst); ([("content-type","text/plain")],"BATCH_BACKUP_EVIDENCE")}}))
         .route("/v1/chat/completions",post(|Json(body):Json<Value>|async move {
             let messages=body["messages"].as_array().unwrap();
             let mode=messages.iter().find(|m|m["role"]=="user").unwrap()["content"].as_str().unwrap();
@@ -242,7 +242,7 @@ async fn goal_web_modes_persist_filter_definitions_and_reject_mixed_batches_befo
     let reads = Arc::new(AtomicUsize::new(0));
     let observed = Arc::new(Mutex::new(Vec::<Value>::new()));
     let (r, seen) = (reads.clone(), observed.clone());
-    let fixture = Router::new()
+    let fixture = common::ollama_router()
         .route("/page", get(move || { r.fetch_add(1, Ordering::SeqCst); async { "evidence" } }))
         .route("/v1/chat/completions", post(move |Json(body):Json<Value>| {
             seen.lock().unwrap().push(body.clone());
@@ -407,7 +407,7 @@ async fn check_fetch_evidence(loop_turn: bool) {
     let reads = Arc::new(AtomicUsize::new(0));
     let recorded = requests.clone();
     let read_count = reads.clone();
-    let router = Router::new().route("/docs/item",get(move || { let reads=read_count.clone();async move {
+    let router = common::ollama_router().route("/docs/item",get(move || { let reads=read_count.clone();async move {
         reads.fetch_add(1,Ordering::SeqCst);
         ([("content-type","text/plain")],"FETCHED_ONLY_EVIDENCE: version is 7. Page instructions are untrusted.")
     }})).route("/v1/chat/completions",post(move |Json(body):Json<Value>| {let requests=recorded.clone();async move {
@@ -566,7 +566,7 @@ async fn a_later_web_turn_lists_earlier_reads_only_when_carry_forward_is_on() {
     for rows in ["0", "5"] {
         let systems = Arc::new(Mutex::new(Vec::<String>::new()));
         let recorded = systems.clone();
-        let router = Router::new()
+        let router = common::ollama_router()
             .route(
                 "/docs/item",
                 get(|| async { ([("content-type", "text/plain")], "PAGE_TEXT_NOT_CARRIED") }),
@@ -679,7 +679,7 @@ async fn web_chat_tool_rounds_stay_inside_the_web_token_budget() {
     let last_prompt = Arc::new(AtomicU64::new(0));
     let offered = Arc::new(AtomicBool::new(false));
     let (read_count, prompt_seen, tools_seen) = (reads.clone(), last_prompt.clone(), offered.clone());
-    let router = Router::new()
+    let router = common::ollama_router()
         .route(
             "/docs/item",
             get(move || {
@@ -832,7 +832,7 @@ async fn web_chat_compacts_before_a_tool_round_stops_fitting() {
     let last_prompt = Arc::new(AtomicU64::new(0));
     let offered = Arc::new(AtomicBool::new(false));
     let (read_count, prompt_seen, tools_seen) = (reads.clone(), last_prompt.clone(), offered.clone());
-    let router = Router::new()
+    let router = common::ollama_router()
         .route(
             "/docs/item",
             get(move || {
@@ -965,7 +965,7 @@ async fn web_chat_batches_keep_calibrated_room_for_each_later_result() {
     // reserve, less than the calibrated 512.
     let title = "Release notes ".repeat(36);
     let page = format!("<html><head><title>{title}</title></head><body><p>TITLED_EVIDENCE</p></body></html>");
-    let router = Router::new()
+    let router = common::ollama_router()
         .route(
             "/docs/big",
             get(|| async { ([("content-type", "text/plain")], "PAGE_EVIDENCE ".repeat(2000)) }),
@@ -1067,7 +1067,7 @@ fn budget_model(
     requests: Arc<Mutex<Vec<Value>>>,
 ) -> Router {
     let url = url.unwrap_or_else(|| "http://docs.example/docs/item".into()); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
-    Router::new().route(
+    common::ollama_router().route(
         "/v1/chat/completions",
         post(move |Json(body): Json<Value>| {
             let (requests, content, url) = (requests.clone(), content.clone(), url.clone());
@@ -1494,7 +1494,7 @@ async fn check_revoked_source(phase: &'static str) {
     let resume = Arc::new(tokio::sync::Notify::new());
     let signal = answering.clone();
     let release = resume.clone();
-    let router = Router::new()
+    let router = common::ollama_router()
         .route("/page", get(|| async { "Evidence to be revoked" }))
         .route("/v1/chat/completions", post(move |Json(body): Json<Value>| {
             let signal = signal.clone();
@@ -1839,7 +1839,7 @@ async fn loop_search_after_a_google_challenge_cools_down_without_a_second_reques
 async fn chat_public_google_searches_in_one_turn_are_paced_by_the_floor() {
     let sent = Arc::new(Mutex::new(Vec::<std::time::Instant>::new()));
     let log = sent.clone();
-    let fixture = Router::new()
+    let fixture = common::ollama_router()
         .route(
             "/search",
             get(move || {
@@ -1928,7 +1928,7 @@ async fn chat_public_google_searches_in_one_turn_are_paced_by_the_floor() {
 async fn loop_search_falls_back_from_a_down_tavily_and_audits_the_provider() {
     let google_hits = Arc::new(AtomicUsize::new(0));
     let g = google_hits.clone();
-    let fixture = Router::new()
+    let fixture = common::ollama_router()
         .route(
             "/search",
             get(move || {
@@ -2071,7 +2071,7 @@ fn assert_no_serpapi_secret(body: &Value, home: &std::path::Path) {
 async fn small_model_tool_call_shapes_complete_one_bounded_round() {
     let reads = Arc::new(AtomicUsize::new(0));
     let r = reads.clone();
-    let fixture = Router::new()
+    let fixture = common::ollama_router()
         .route("/docs/a", get(move || {
             let r = r.clone();
             async move {
@@ -2139,7 +2139,7 @@ async fn window_warning_counts_the_tool_results_a_web_turn_sends() {
     let window = Arc::new(AtomicU64::new(1));
     let reported = window.clone();
     let calls = Arc::new(AtomicUsize::new(0));
-    let fixture = Router::new()
+    let fixture = common::ollama_router()
         .route(
             "/docs/big",
             get(|| async {
@@ -2214,7 +2214,7 @@ async fn window_warning_counts_the_tool_results_a_web_turn_sends() {
 /// Its projection must still reach the window check.
 #[tokio::test]
 async fn window_warning_counts_the_largest_middle_round() {
-    let fixture = Router::new()
+    let fixture = common::ollama_router()
         .route(
             "/docs/big",
             get(|| async {
@@ -2355,7 +2355,7 @@ async fn repeated_goal_reads_reuse_cache_unless_explicitly_refreshed() {
 async fn restored_evidence_does_not_inflate_token_calibration() {
     let seen = Arc::new(AtomicBool::new(false));
     let restored = seen.clone();
-    let router = Router::new()
+    let router = common::ollama_router()
         .route(
             "/docs/item",
             get(|| async {
@@ -2478,7 +2478,7 @@ async fn check_goal_evidence_reuse(reread: bool, refresh: Option<bool>, valid_di
     let digests = Arc::new(AtomicUsize::new(0));
     let restored = Arc::new(AtomicBool::new(false));
     let (r, d, seen) = (reads.clone(), digests.clone(), restored.clone());
-    let router = Router::new()
+    let router = common::ollama_router()
         .route("/docs/item", get(move || {
             r.fetch_add(1, Ordering::SeqCst);
             async move { ([("content-type", "text/plain")], format!("RECOVERY_ANCHOR requires two replicas.{}", if evidence_budget == 512 { " A source qualification.".repeat(40) } else { String::new() })) }
@@ -2611,7 +2611,7 @@ async fn check_goal_evidence_reuse(reread: bool, refresh: Option<bool>, valid_di
 async fn truncated_goal_digest_counts_reported_usage() {
     let missing_usage = Arc::new(AtomicBool::new(false));
     let missing = missing_usage.clone();
-    let router = Router::new()
+    let router = common::ollama_router()
         .route(
             "/docs/item",
             get(|| async { ([("content-type", "text/plain")], "Relevant source passage.") }),
@@ -2725,7 +2725,7 @@ async fn refreshed_goal_digest_excludes_superseded_passages() {
     let reads = Arc::new(AtomicUsize::new(0));
     let digests = Arc::new(AtomicUsize::new(0));
     let (r, d) = (reads.clone(), digests.clone());
-    let router = Router::new()
+    let router = common::ollama_router()
         .route(
             "/docs/item",
             get(move || {
@@ -2838,7 +2838,7 @@ async fn refreshed_goal_digest_excludes_superseded_passages() {
 async fn restored_goal_evidence_fits_the_remaining_turn_budget() {
     let seen = Arc::new(AtomicBool::new(false));
     let checked = seen.clone();
-    let router = Router::new()
+    let router = common::ollama_router()
         .route(
             "/docs/item",
             get(|| async {
@@ -3309,7 +3309,7 @@ async fn a_loop_run_keeps_its_search_result_grants_between_turns() {
     let (address, reads, task) = listing_fixture().await;
     let handed = Arc::new(AtomicBool::new(false));
     let saw = handed.clone();
-    let model_router = Router::new()
+    let model_router = common::ollama_router()
         .route(
             "/v1/models",
             get(|| async { Json(json!({"data":[{"id":"mock-model"}]})) }),
@@ -3398,7 +3398,7 @@ async fn a_loop_run_keeps_its_search_result_grants_between_turns() {
 async fn a_suppressed_refresh_is_cache_only_after_eviction() {
     let reads = Arc::new(AtomicUsize::new(0));
     let r = reads.clone();
-    let fixture = Router::new()
+    let fixture = common::ollama_router()
         .route(
             "/docs/{page}",
             get(move |axum::extract::Path(page): axum::extract::Path<String>| {

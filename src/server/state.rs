@@ -440,6 +440,16 @@ impl AppState {
             .max(min_keep_alive_sec)
             .min(3600);
         let timeout = Duration::from_secs(self.cfg.limit("models.local_llm.warmup.timeout_sec"));
+        // Ollama forwards a load of an alias of a cloud model to its remote host.
+        let Ok(limits) = crate::llm::inventory::InventoryLimits::from_config(&self.cfg) else {
+            return;
+        };
+        if crate::llm::ollama::refuse_remote_model(&native, model, limits)
+            .await
+            .is_err()
+        {
+            return;
+        }
         if crate::llm::ollama::load_model(&native, model, keep_alive, timeout).await {
             self.probe_window_state(model).await;
         }
