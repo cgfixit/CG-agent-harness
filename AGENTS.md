@@ -86,7 +86,7 @@ Read the feature's guide and `INVARIANTS.md` section first
   `DevSkim: ignore DS126858 because …`.
 - Pinned egress reuses `common::dns::lookup_bounded` and
   `web_search::pinned_client_builder`; callers still authorize destinations;
-  fixture bypasses need `test-support`. reqwest 0.13 trusts the OS store.
+  fixture bypasses need `test-support`. Pinned TLS uses bundled roots; cloud clients keep the OS store.
 - Sidecar fixtures (`cgagentharness browser guards`, …) keep Chrome's
   sandbox on and refuse root: run them unprivileged.
 

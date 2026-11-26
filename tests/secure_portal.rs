@@ -306,6 +306,7 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
 /// retried on a fresh port, a bounded number of times.
 #[cfg(unix)]
 async fn spawn_serve(home: &std::path::Path) -> (tokio::process::Child, u16, reqwest::Client) {
+    // tls-verifier: loopback
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(std::time::Duration::from_secs(2))
@@ -537,6 +538,7 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
     .with("api.rate_limit.max_requests", "1000");
     let server = spawn_server(&model.base_url(), options).await;
     assert!(
+        // tls-verifier: platform-contrast
         reqwest::Client::builder()
             .no_proxy()
             .build()

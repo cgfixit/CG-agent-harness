@@ -357,6 +357,7 @@ impl ChatClient {
             )
             .detail("key", "models.local_llm.base_url"));
         }
+        // tls-verifier: loopback
         let http = reqwest::Client::builder()
             .no_proxy()
             .dns_resolver(std::sync::Arc::new(super::backend::LoopbackOnlyDns))

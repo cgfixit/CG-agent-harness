@@ -136,7 +136,10 @@ listings. A group selects page search in console and CLI.
 
 All exact fetch targets are checked before batch dispatch. Local fetch
 pins checked public DNS, validates TLS hosts, and refuses redirects,
-proxies, cookies and compression. Policy still gates every discovered
+proxies, cookies and compression. That client trusts only the Mozilla roots in `webpki-root-certs`, so
+the OS verifier makes no OCSP, CRL or CA request. Enterprise roots are
+not trusted, and revocation waits for a release that updates the bundle.
+Cloud clients still use the OS verifier. Policy still gates every discovered
 link. Text PDFs are extracted in the [PDF worker](CONSOLE.md#pdf-text).
 Optional Firecrawl sends only an eligible exact URL under the
 [router fallback rules](WEB_DECISION_ROUTER.md#read-authority-and-fallback).

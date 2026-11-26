@@ -164,6 +164,7 @@ pub(crate) fn http_client(timeout: Duration) -> Result<reqwest::Client> {
 }
 
 fn client_builder() -> reqwest::ClientBuilder {
+    // tls-verifier: loopback
     reqwest::Client::builder()
         .no_proxy()
         .dns_resolver(std::sync::Arc::new(super::backend::LoopbackOnlyDns))

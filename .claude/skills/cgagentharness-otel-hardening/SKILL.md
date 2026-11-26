@@ -136,10 +136,11 @@ it actually calls, and an arm's names are never re-pinned at a site.
 - **`cargo deny` bans exact names; T5 matches patterns.** A telemetry crate
   under a name neither `deny.toml` lists passes CI until both list it; T5
   still catches it. Verify a name on crates.io before adding it.
-- **reqwest 0.13 verifies public TLS through the OS** (`rustls-platform-verifier`).
-  On macOS and Windows the trust evaluator may fetch revocation or intermediate
-  data itself: OS egress with no env control, recorded on the cloud-provider
-  row, not a kill pair to invent. Loopback clients pin a certificate
-  (`use_preconfigured_tls`) and skip it.
+- **Pinned web, webhook and MCP clients verify TLS with bundled Mozilla roots**
+  (`tls_certs_only` plus `webpki-root-certs`). The OS verifier does not run for
+  them, so it makes no revocation fetch. Cloud chat and the cloud proposer still
+  use `rustls-platform-verifier`. On macOS and Windows that verifier may fetch
+  revocation data, with no env control and no kill pair to invent. Loopback
+  clients pin a certificate (`use_preconfigured_tls`) or dial loopback only.
 - Both locks resolve one `reqwest` (0.13); a second major would be reported as
   INFO under the warn-only duplicate-version policy.

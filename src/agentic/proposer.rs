@@ -54,6 +54,7 @@ impl<'a> LocalProposerClient<'a> {
         api_key: &str,
         reasoning_effort: Option<String>,
     ) -> Result<Self> {
+        // tls-verifier: loopback
         let http = reqwest::blocking::Client::builder()
             .no_proxy()
             .dns_resolver(std::sync::Arc::new(crate::llm::backend::LoopbackOnlyDns))
