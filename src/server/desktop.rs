@@ -11,7 +11,7 @@ use subtle::ConstantTimeEq;
 
 use crate::common::home::Home;
 use crate::common::home_lock::HomeLock;
-use crate::llm::inventory::{local_endpoint, model_readiness, InventoryLimits};
+use crate::llm::inventory::{local_endpoint, model_readiness_for, InventoryLimits};
 
 pub const PROTOCOL: u32 = 2;
 const MAX_FRAME: u64 = 8192;
@@ -193,9 +193,10 @@ fn start() -> anyhow::Result<()> {
                             continue;
                         }
                     };
-                    let chat = model_readiness(&state.backend.base_url, &state.current_model(), &state.backend.api_key, limits).await;
-                    let planner = if matches!(state.cfg.str_or("agentic.deepagent_github.provider", "ollama").as_str(), "ollama" | "local") {
-                        model_readiness(&state.cfg.str_or("agentic.deepagent_github.base_url", "http://127.0.0.1:11434/v1"),
+                    let chat = model_readiness_for(&state.backend.provider, &state.backend.base_url, &state.current_model(), &state.backend.api_key, limits).await;
+                    let planner_provider = state.cfg.str_or("agentic.deepagent_github.provider", "ollama");
+                    let planner = if matches!(planner_provider.as_str(), "ollama" | "local") {
+                        model_readiness_for(&planner_provider, &state.cfg.str_or("agentic.deepagent_github.base_url", "http://127.0.0.1:11434/v1"),
                             &state.cfg.str_or("agentic.deepagent_github.model", ""),
                             &std::env::var("DEEPAGENT_API_KEY").unwrap_or_default(), limits).await
                     } else { json!({"state":"not_probed","detail":"Configured cloud planner is never probed by desktop readiness."}) };

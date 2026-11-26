@@ -173,7 +173,14 @@ pub async fn resolve_local_backend(cfg: &AppConfig) -> Result<ResolvedLocalBacke
             "models.local_llm.fallback.base_url must be loopback (127.0.0.1 / localhost / ::1)",
         ));
     }
-    if super::inventory::model_readiness(&primary.base_url, &primary.model, &primary_key, limits).await["state"]
+    if super::inventory::model_readiness_for(
+        &primary_provider,
+        &primary.base_url,
+        &primary.model,
+        &primary_key,
+        limits,
+    )
+    .await["state"]
         == "installed"
     {
         tracing::info!("local LLM backend: primary ({primary_provider}) probe ok");
@@ -188,8 +195,14 @@ pub async fn resolve_local_backend(cfg: &AppConfig) -> Result<ResolvedLocalBacke
         degraded: false,
         reasoning_effort: effort_for(&fb_provider),
     };
-    if super::inventory::model_readiness(&secondary.base_url, &secondary.model, &secondary.api_key, limits).await
-        ["state"]
+    if super::inventory::model_readiness_for(
+        &fb_provider,
+        &secondary.base_url,
+        &secondary.model,
+        &secondary.api_key,
+        limits,
+    )
+    .await["state"]
         == "installed"
     {
         tracing::warn!("local LLM backend: primary model unavailable; using configured fallback ({fb_provider})");
@@ -255,6 +268,41 @@ mod tests {
         assert_eq!(other.provider, "lmstudio");
         assert_eq!(other.model, "qwen3.8:27b-mlx-cg");
         assert!(other.reasoning_effort.is_none());
+    }
+
+    /// Ollama lists `llama3.2` as `llama3.2:latest`. With the fallback on, an
+    /// untagged primary that is installed must stay the selection instead of
+    /// reading as missing and handing the turn to the fallback (or `degraded`).
+    #[tokio::test]
+    async fn an_installed_untagged_primary_is_not_passed_over_for_the_fallback() {
+        let app = axum::Router::new().route(
+            "/v1/models",
+            axum::routing::get(|| async { axum::Json(serde_json::json!({"data": [{"id": "llama3.2:latest"}]})) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only ephemeral loopback.
+        let primary = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this fixture uses no credentials and binds only to loopback.
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        // Bound but never listening: the fallback refuses connections.
+        let reserved = tokio::net::TcpSocket::new_v4().unwrap();
+        reserved.bind((Ipv4Addr::LOCALHOST, 0).into()).unwrap(); // DevSkim: ignore DS162092 because this unit test needs a refused loopback port.
+        let fallback = format!("http://127.0.0.1:{}/v1", reserved.local_addr().unwrap().port()); // DevSkim: ignore DS162092 because this unit test needs a refused loopback origin.
+        let picked = resolved(&format!(
+            concat!(
+                "models:\n  local_llm:\n",
+                "    provider: \"ollama\"\n",
+                "    base_url: \"{primary}\"\n",
+                "    model: \"llama3.2\"\n",
+                "    fallback:\n      enabled: true\n      provider: \"lmstudio\"\n",
+                "      base_url: \"{fallback}\"\n      model: \"other\"\n",
+            ),
+            primary = primary,
+            fallback = fallback,
+        ))
+        .await;
+        assert_eq!((picked.source.as_str(), picked.model.as_str()), ("primary", "llama3.2"));
+        assert!(!picked.degraded, "an installed primary is a positive selection");
+        drop(reserved);
+        server.abort();
     }
 
     #[tokio::test]
