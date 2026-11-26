@@ -6,9 +6,9 @@ Lint workflow edits with actionlint and zizmor. See [CI expectations](../../docs
 
 | File | Purpose and trigger |
 |---|---|
-| [`ci.yml`](ci.yml) | Rust formatting, Clippy, dependency policy, browser, sandbox and lifecycle tests; PR, main push, merge queue and release calls. |
+| [`ci.yml`](ci.yml) | Rust formatting, Clippy, dependency policy, browser, sandbox and lifecycle tests; PR, main push, merge queue and release calls. Ruleset requires only `required gate` (fails unexpected skips); `WINDOWS_SUITE_ON_EVERY_PR` adds full Windows to PRs. |
 | [`pr-template-check.yml`](pr-template-check.yml) | PR body and base branch checks; PR open/edit/sync/reopen/ready. |
-| [`docs-impact.yml`](docs-impact.yml) | Required `docs impact` check: owning guides against the PR diff; PR and merge queue. |
+| [`docs-impact.yml`](docs-impact.yml) | Required `docs impact`: owning guides against the PR or queue-candidate diff. |
 | [`docs-impact-repair.yml`](docs-impact-repair.yml) | Repair missing guide updates on same-repository maintainer PRs (`pull_request_target`, base scripts only). |
 | [`review-gate-request.yml`](review-gate-request.yml) | Unprivileged wake-up signal from PR (body edits included), review and review-comment events, including forks. |
 | [`review-gate.yml`](review-gate.yml) | Trusted dispatcher; validates request-run identity or handles Codex summary comments, then calls the evaluator. |

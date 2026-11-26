@@ -283,6 +283,12 @@ impl WebTool {
         crate::common::atomic::write_atomic(&path, &payload, Some(0o600))
     }
 
+    /// `policy` on the blocking pool: it reads, parses and hashes the policy
+    /// file, which an async fn must not do on its worker.
+    async fn policy_off_worker(&self) -> Result<crate::server::web_policy::Policy> {
+        self.off_worker(|web, _| web.policy()).await
+    }
+
     /// `cache_page` on the blocking pool: it takes the policy lock, scans the
     /// cache directory, evicts and ends in an fsync. Returns the page.
     async fn cache_off_worker(&self, page: Page, group: Option<&str>) -> Result<Page> {
@@ -316,7 +322,7 @@ impl WebTool {
         let start = Instant::now();
         let deadline = start + Duration::from_secs(self.limits.run_seconds);
         self.check_enabled()?;
-        let policy = self.policy()?;
+        let policy = self.policy_off_worker().await?;
         let mut queue = VecDeque::new();
         let mut coverage = Coverage::default();
         // Explicit starts narrow this run, never add permissions. Validate all
@@ -382,7 +388,10 @@ impl WebTool {
         let mut robots: BTreeMap<String, Option<String>> = BTreeMap::new();
         while let Some((raw, explicit)) = queue.pop_front() {
             self.check_enabled()?;
-            let url = match self.policy()?.authorize(&raw, group) {
+            // Read again after the last item's waits; nothing awaits between
+            // this check and the robots check below, so one read serves both.
+            let current = self.policy_off_worker().await?;
+            let url = match current.authorize(&raw, group) {
                 Ok(u) => u,
                 Err(e) => {
                     coverage.refused.push(json!({"url":raw,"code":e.code}));
@@ -398,7 +407,7 @@ impl WebTool {
             // body is never cached or returned as evidence.
             if !robots.contains_key(&origin) {
                 let robot_url = format!("{origin}/robots.txt");
-                let body = if self.policy()?.authorize_robots(&robot_url, group).is_ok() {
+                let body = if current.authorize_robots(&robot_url, group).is_ok() {
                     let page = self
                         .crawl_get(
                             &robot_url,
@@ -466,12 +475,16 @@ impl WebTool {
             {
                 let page = self.cache_off_worker(page, group).await?;
                 coverage.searched.push(page.url.clone());
+                // One read for the page's links: nothing awaits between them,
+                // so a read per link was no fresher, only up to 128 more file
+                // reads, parses and hashes on the async worker.
+                let current = self.policy_off_worker().await?;
                 for link in &page.links {
                     if queue.len() >= 256 {
                         coverage.budget_exhausted.get_or_insert("candidate_limit".into());
                         break;
                     }
-                    match self.policy()?.authorize(link, group) {
+                    match current.authorize(link, group) {
                         Ok(next) => {
                             let next_url = next.to_string();
                             if queued.insert(next_url.clone()) {

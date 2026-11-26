@@ -299,7 +299,9 @@ impl CloudChat {
     }
 
     pub async fn chat_with_source(&self, selection: &str, message: &str, source: &str) -> Result<ChatResult> {
-        let (reply, spend) = self.chat_with_pending_spend(selection, message, source).await?;
+        let (reply, spend) = self
+            .chat_with_pending_spend(selection, message, source, &|| Ok(()))
+            .await?;
         spend.landed().await;
         Ok(reply)
     }
@@ -308,16 +310,19 @@ impl CloudChat {
     /// spend row is handed to the blocking pool, not awaited. An await between
     /// the reply and the caller's own write would let a dropped request bill a
     /// turn it never stores, so the caller queues that write first and only
-    /// then awaits [`PendingSpend::landed`].
+    /// then awaits [`PendingSpend::landed`]. `authorize` runs before the token
+    /// count and before the generation; its error is returned unchanged and
+    /// nothing more is sent.
     pub async fn chat_with_pending_spend(
         &self,
         selection: &str,
         message: &str,
         source: &str,
+        authorize: &(dyn Fn() -> Result<()> + Sync),
     ) -> Result<(ChatResult, PendingSpend)> {
         let config = self.ready(selection)?;
         self.reserve_request(config)?;
-        self.cancellable(self.request(config, message, source)).await
+        self.cancellable(self.request(config, message, source, authorize)).await
     }
 
     /// Counts only the explicitly supplied cloud message, without generating or recording spend.
@@ -460,7 +465,11 @@ impl CloudChat {
         config: &ProviderConfig,
         message: &str,
         source: &str,
+        authorize: &(dyn Fn() -> Result<()> + Sync),
     ) -> Result<(ChatResult, PendingSpend)> {
+        // The caller's authority is re-read before each request leaves: the
+        // token count can wait seconds, and the generation is the paid call.
+        authorize()?;
         let prediction = self.predict_request(config, message).await;
         if prediction.budget_exceeded {
             return Err(HarnessError::new(
@@ -477,6 +486,7 @@ impl CloudChat {
         }) {
             return Err(HarnessError::new("CLOUD_CHAT_CONTEXT", "estimated message and reserved output exceed the configured cloud context window; nothing was generated"));
         }
+        authorize()?;
         let response = match config.provider {
             Provider::Grok => {
                 self.client
@@ -812,7 +822,7 @@ mod tests {
     use axum::routing::post;
     use axum::Router;
     use std::sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     };
 
@@ -1213,6 +1223,92 @@ mod tests {
         assert!(chat.inflight.lock().unwrap().is_empty());
         assert_eq!(generated.load(Ordering::SeqCst), 0);
         assert!(chat.predict("grok", "next request").await.is_ok());
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn an_authority_lost_during_the_token_count_sends_no_generation() {
+        let counted = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let (arrived, released) = (counted.clone(), release.clone());
+        let generated = Arc::new(AtomicUsize::new(0));
+        let hits = generated.clone();
+        let (origin, server) = serve(
+            Router::new()
+                .route(
+                    "/messages/count_tokens",
+                    post(move || {
+                        let (arrived, released) = (arrived.clone(), released.clone());
+                        async move {
+                            arrived.notify_one();
+                            released.notified().await;
+                            axum::Json(json!({"input_tokens":25}))
+                        }
+                    }),
+                )
+                .route(
+                    "/messages",
+                    post(move || {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                        async { axum::Json(json!({"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":25,"output_tokens":1}})) }
+                    }),
+                ),
+        )
+        .await;
+        let mut chat = enabled_chat();
+        chat.claude.endpoint = format!("{origin}/messages");
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = dir.path().join("spend.jsonl");
+        chat.attach_spend(ledger.clone());
+        let chat = Arc::new(chat);
+        let changed = Arc::new(AtomicBool::new(false));
+        let (call_chat, revoked) = (chat.clone(), changed.clone());
+        let call = tokio::spawn(async move {
+            let authorize = || {
+                if revoked.load(Ordering::SeqCst) {
+                    Err(HarnessError::new(
+                        "CHAT_ACCOUNT_CHANGED",
+                        "the account changed during this turn",
+                    ))
+                } else {
+                    Ok(())
+                }
+            };
+            call_chat
+                .chat_with_pending_spend("claude", "private", "chat", &authorize)
+                .await
+                .map(|(reply, _)| reply)
+        });
+        tokio::time::timeout(Duration::from_secs(1), counted.notified())
+            .await
+            .unwrap();
+        changed.store(true, Ordering::SeqCst);
+        release.notify_one();
+        let result = tokio::time::timeout(Duration::from_secs(5), call)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            generated.load(Ordering::SeqCst),
+            0,
+            "a generation was sent after authority was lost"
+        );
+        assert_eq!(result.unwrap_err().code, "CHAT_ACCOUNT_CHANGED");
+        // Already lost before the call: not even the count leaves (it would park).
+        let refused = tokio::time::timeout(
+            Duration::from_secs(1),
+            chat.chat_with_pending_spend("claude", "private", "chat", &|| {
+                Err(HarnessError::new("CHAT_ACCOUNT_CHANGED", "changed"))
+            }),
+        )
+        .await
+        .expect("a token count was sent after authority was lost");
+        assert_eq!(
+            refused.map(|(reply, _)| reply).unwrap_err().code,
+            "CHAT_ACCOUNT_CHANGED"
+        );
+        assert!(!ledger.exists());
+        assert!(chat.inflight.lock().unwrap().is_empty());
         server.abort();
     }
 
