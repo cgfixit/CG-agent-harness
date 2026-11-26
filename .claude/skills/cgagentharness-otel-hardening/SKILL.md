@@ -125,7 +125,9 @@ it actually calls, and an arm's names are never re-pinned at a site.
   A test-only item placed mid-file hides the production code after it from
   T7/T8 (false negative, never a false positive). Keep tests last.
 - **`ANONYMIZED_TELEMETRY` is lower-case `false` here, `False` in CyClaw.**
-  Both parse the same; do not "align" one side and break its oracle.
+  Both parse the same; do not "align" one side and break its oracle. Chroma
+  sends no product telemetry from 1.5.4 (`docs/overview/oss`, read 2026-11-26);
+  the pair stays for verified repos pinned below that.
 - **`NO_PROXY=*` bypasses proxies; it does not fail-close networking.** The
   sandbox does. Windows is env-only.
 - **Ollama has no telemetry switch to set.** `POST /api/ollama/pull` asks the
