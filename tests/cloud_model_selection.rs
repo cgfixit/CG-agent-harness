@@ -5,10 +5,17 @@ use axum::{body::Body, response::IntoResponse, routing::post, Json, Router};
 use cgagentharness::{common::config::AppConfig, server::build_app};
 use common::*;
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::Notify;
 
 const KEY: &str = "cgah-test-synthetic-cloud-key";
+
+/// A server reads `CGAH_TEST_CLOUD_BASE_URL` and the provider keys when it is
+/// built, so tests in this target that build one take turns with the process
+/// environment.
+static CLOUD_ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 fn no_secret(value: &Value) {
     let text = value.to_string();
@@ -65,8 +72,9 @@ async fn profiled_server(model: &str, budget: bool) -> TestServer {
 
 #[tokio::test]
 async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secret_disclosure() {
-    // This target has one test, so it owns its process environment. No operator
-    // credential is used, and the guard restores every original value on exit or panic.
+    // No operator credential is used, and the guard restores every original
+    // value on exit or panic.
+    let _env = CLOUD_ENV.lock().await;
     let _cleared = EnvGuard::set(&[
         ("GROK_API_KEY", None),
         ("ANTHROPIC_API_KEY", None),
@@ -571,12 +579,138 @@ async fn cloud_switches_fail_closed_apply_profiles_cancel_and_reset_without_secr
     fixture_task.abort();
 }
 
+/// An admin password reset, a disable or a demotion that lands while a Claude
+/// turn's token count is still out stops the turn: no generation is sent, and
+/// the turn answers as an account change (401 AUTH_REQUIRED), not as a cancel.
+#[tokio::test]
+async fn a_password_reset_during_the_token_count_sends_no_generation() {
+    account_change_during_count("password", json!({"password": cgagentharness::common::random_hex(24)})).await;
+}
+
+#[tokio::test]
+async fn disabling_the_account_during_the_token_count_sends_no_generation() {
+    account_change_during_count("disabled", json!({"disabled": true})).await;
+}
+
+#[tokio::test]
+async fn a_demotion_during_the_token_count_sends_no_generation() {
+    account_change_during_count("role", json!({"role": "operator"})).await;
+}
+
+async fn signed_in(s: &TestServer, name: &str, role: &str) -> (String, String) {
+    let auth = s.state.auth.as_ref().unwrap();
+    let password = cgagentharness::common::random_hex(24);
+    auth.create_user(name, &password, role).unwrap();
+    let response = s
+        .client
+        .post(s.url("/api/auth/login"))
+        .json(&json!({"username":name,"password":password}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let cookie = response.headers()["set-cookie"].to_str().unwrap();
+    let cookie = cookie.split(';').next().unwrap().to_string();
+    (auth.get_user(name).unwrap().user_id, cookie)
+}
+
+async fn as_account(s: &TestServer, cookie: &str, path: &str, body: Value) -> reqwest::Response {
+    s.req(reqwest::Method::POST, path)
+        .header("cookie", cookie)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn account_change_during_count(route: &str, change: Value) {
+    let _env = CLOUD_ENV.lock().await;
+    let counting = Arc::new(Notify::new());
+    let release = Arc::new(Notify::new());
+    let generated = Arc::new(AtomicUsize::new(0));
+    let (started, released, hits) = (counting.clone(), release.clone(), generated.clone());
+    let fixture = Router::new()
+        .route(
+            "/messages/count_tokens",
+            post(move || {
+                let (started, released) = (started.clone(), released.clone());
+                async move {
+                    started.notify_one();
+                    released.notified().await;
+                    Json(json!({"input_tokens":7}))
+                }
+            }),
+        )
+        .route(
+            "/messages",
+            post(move || {
+                hits.fetch_add(1, Ordering::SeqCst);
+                async {
+                    Json(json!({"stop_reason":"end_turn","content":[{"type":"text","text":"cloud reply"}],"usage":{"input_tokens":7,"output_tokens":2}}))
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 - test-only loopback fixture.
+    let fixture_url = format!("http://{}", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 - synthetic loopback fixture.
+    let _fixture = EnvGuard::set(&[
+        ("CGAH_TEST_CLOUD_BASE_URL", Some(fixture_url.as_str())),
+        ("GROK_API_KEY", Some(KEY)),
+        ("ANTHROPIC_API_KEY", Some(KEY)),
+    ]);
+    let fixture_task = tokio::spawn(async { axum::serve(listener, fixture).await.unwrap() });
+    let local = start_mock_model().await;
+    // The count deadline outlasts the test, so only the account change ends the count.
+    let s = spawn_server(
+        &local.base_url(),
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("models.cloud_chat.count_timeout_sec", "10")
+            .with("models.cloud_chat.max_tokens", "16"),
+    )
+    .await;
+    let (_, admin) = signed_in(&s, "boss", "admin").await;
+    let (alice_id, alice) = signed_in(&s, "alice", "admin").await;
+    let selected = as_account(&s, &alice, "/api/model", json!({"model":"claude","confirm":true})).await;
+    assert_eq!(selected.status(), 200, "{route}");
+    let turn = as_account(&s, &alice, "/api/chat", json!({"message":"PRIVATE_PROMPT_CANARY"}));
+    let revoke = async {
+        tokio::time::timeout(Duration::from_secs(5), counting.notified())
+            .await
+            .expect("the turn reached the token count");
+        let changed = as_account(&s, &admin, &format!("/api/auth/users/alice/{route}"), change).await;
+        assert_eq!(changed.status(), 200, "{route}");
+        release.notify_one();
+    };
+    let (response, ()) = tokio::time::timeout(Duration::from_secs(10), async { tokio::join!(turn, revoke) })
+        .await
+        .expect("the turn ended");
+    assert_eq!(
+        generated.load(Ordering::SeqCst),
+        0,
+        "{route}: a generation was sent after the account changed"
+    );
+    let status = response.status();
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(status, 401, "{route}: {body}");
+    assert_eq!(code(&body), "AUTH_REQUIRED", "{route}: {body}");
+    no_secret(&body);
+    assert!(!s.state.spend_file.exists(), "{route}: no generation, no spend row");
+    let stopped = s
+        .audit_log()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .any(|line| line["event"] == "account.work_stopped" && line["owner"] == alice_id && line["chat"] == true);
+    assert!(stopped, "{route}: the account change did not stop the chat turn");
+    fixture_task.abort();
+}
+
 /// An Ollama cloud tag (`:cloud`, `-cloud`) would make the local Ollama
 /// forward the whole local prompt to ollama.com, unredacted and without cloud
 /// consent. It is refused as a local selection, as a chat turn's model and as
 /// a pull; the model is never called, and a plain local name still works.
 #[tokio::test]
 async fn an_ollama_cloud_tag_is_refused_as_a_local_model() {
+    let _env = CLOUD_ENV.lock().await;
     let model = start_mock_model().await;
     let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
     for tag in ["gpt-oss:120b-cloud", "glm-4.6:cloud"] {
@@ -607,6 +741,7 @@ async fn an_ollama_cloud_tag_is_refused_as_a_local_model() {
 /// before it saves the goal or registers a run that could only fail.
 #[tokio::test]
 async fn a_loop_start_on_a_configured_ollama_cloud_tag_saves_no_goal() {
+    let _env = CLOUD_ENV.lock().await;
     let model = start_mock_model().await;
     let mut options = ServerOptions::default();
     options
@@ -641,6 +776,7 @@ async fn a_loop_start_on_a_configured_ollama_cloud_tag_saves_no_goal() {
 /// ollama.com. Each skips with an audited `cloud_tag` reason instead.
 #[tokio::test]
 async fn startup_warmup_and_auto_tune_never_load_a_configured_ollama_cloud_tag() {
+    let _env = CLOUD_ENV.lock().await;
     let seen: Arc<Mutex<Vec<String>>> = Arc::default();
     let record = seen.clone();
     let app = Router::new().fallback(move |req: axum::extract::Request| {
