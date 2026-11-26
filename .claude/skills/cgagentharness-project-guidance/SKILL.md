@@ -44,7 +44,7 @@ approval binding, secrets redaction, detached-run gates.
 | Task | Read first |
 |---|---|
 | Shim / I6 / ACTIONS whitelist | `src/shim`, `INVARIANTS.md` I6, `tests/invariant_guard.rs` |
-| HTTP guards / headers / CSRF | `src/server/guards.rs`, `headers.rs`, `tests/auth_guards.rs`, `tests/security_headers.rs` |
+| HTTP guards / headers / CSRF / ownership | `src/server/guards.rs`, `headers.rs`, `tests/auth_guards.rs`, `tests/security_headers.rs`, `tests/owner_isolation.rs` |
 | Write / publish path | `src/agentic/writer.rs`, write-gate sections of `INVARIANTS.md`, `tests/real_repo_loop.rs` |
 | Clone jail / sandbox | `src/agentic/workspace.rs`, `src/agentic/executor/sandbox.rs`, `tests/agentic_foundations.rs` |
 | Config defaults / gates | `assets/config.default.yaml`, `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` |
@@ -52,7 +52,7 @@ approval binding, secrets redaction, detached-run gates.
 | Install / local verify | `scripts/verify-local.sh`, `scripts/smoke-ollama.sh`, `README.md`, `docs/INSTALL.md`, `docs/MODELS.md` |
 | Packaging / release | `scripts/package-release.sh`, `docs/RELEASING.md`, `docs/DESKTOP.md` |
 | Web search, fetch, research | `src/server/web_*.rs`, `chat_web.rs`, `docs/SECURE_RESEARCH.md`, `docs/WEB_DECISION_ROUTER.md` |
-| PDF text, `/browse` | `src/common/pdf_text.rs`, `src/common/browser_host.rs`, `browser/sidecar.mjs`, `docs/Browser-Use.md` |
+| PDF text, `/browse`, takeover | `src/common/pdf_text.rs`, `src/common/browser_host.rs`, `src/server/browser_jobs.rs`, `browser/sidecar.mjs`, `docs/Browser-Use.md`, INVARIANTS.md "A detached run cannot outlive its gates" |
 | MCP (outbound client, inbound memory gateway) | `src/server/mcp*.rs`, `src/common/mcp*.rs`, `docs/MCP.md` |
 | Memory, notes, facts | `src/server/structured_memory*.rs`, `docs/STRUCTURED_MEMORY.md` |
 | Dependencies, telemetry | `docs/DEPENDENCIES.md`, both `deny.toml`, `browser/package-lock.json` |
@@ -90,8 +90,8 @@ Core paths always require an invariant statement in the PR body when touched:
 - `cargo clippy --all-targets --all-features --locked -- -D warnings`
 - `cargo test --all-targets` (keys blank): CI only; locally, targeted tests
 - `cargo deny --all-features check` (CI's form)
-- New routes → `REGISTERED_PATHS` (+ console views if listed)
-- New shim actions → `shim::ACTIONS` + CLI dispatch + invariant whitelist together
+- New routes → `REGISTERED_PATHS` and `ROUTE_CAPS` (+ console views if listed)
+- New shim actions → `shim::ACTIONS` (+ `JSON_ACTIONS`) + CLI dispatch + invariant whitelist together
 - Draft PRs, driver-prefixed branches (`claude/`, `codex/`, `grok/`, `kimi/`,
   `cyclaw/`, `agent/`), `scripts/check-pr-template.sh`, one concern each
 

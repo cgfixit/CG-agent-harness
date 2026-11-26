@@ -5,8 +5,9 @@ description: Session-tested traps for working on CG-agent-harness. Load before i
 
 # CG-agent-harness gotchas
 
-Session-process traps for this repo. Canonical contracts and the standing traps live in `AGENTS.md` /
-`INVARIANTS.md`; this file holds only what they do not: the "looks green for the wrong reason" list.
+Session-process traps for this repo. Canonical contracts and the standing traps live in `AGENTS.md`,
+`CLAUDE.md` and `INVARIANTS.md` (the otel re-run rule and the root-refusing Chrome fixtures among them);
+this file holds only what they do not: the "looks green for the wrong reason" list.
 Paths are relative to the repo root. Skills are repository guidance,
 not runtime `/api/skills` plugins.
 
@@ -194,23 +195,19 @@ not runtime `/api/skills` plugins.
   (`PostReply::OverStream`, `tests/mcp_client.rs`).
 - **Evidence:** PR #976.
 
-## 14. A checker nobody runs rots green
+## 14. A fixture home's short `config.yaml` turns shipped features off
 
-- **Symptom:** `check_otel.py --strict` had 7 failures on a green `main`:
-  unclassified dependencies and spawn files.
-- **Right fix:** `telemetry-contract.yml` runs the otel oracle. After a
-  network-crate bump, new direct dependency or new `Command::new(` file, ask the
-  operator to run `/cgagentharness-otel-hardening`; its pins need a changelog read.
-- **Evidence:** 2026-11-20 skills sync.
-
-## 15. Sidecar fixtures refuse root
-- Cloud containers run as root; `browser guards` keeps Chrome's sandbox on.
-  Run it as a throwaway user; never add `--no-sandbox`.
+- **Symptom:** a smoke home with only `auth`/`tls` keys refuses `/browse` or
+  memory; it looks like a regression.
+- **Right fix:** a missing key is not the shipped value. `serve` WARNs with
+  every omitted ship-true key; set those, or start from the shipped default.
+- **Evidence:** 2026-11-26 smoke: 34 named, `browser.enabled` among them.
 
 ## Related skills
 
 Load `cgagentharness-project-guidance` for read order; `cgagentharness-config-guard`
-before merging config diffs; `cgagentharness-write-policy-redteam` for write/git/argv/jail
+before merging config diffs; `cgagentharness-runtime-invariant-check` before pushing
+a core-path PR; `cgagentharness-write-policy-redteam` for write/git/argv/jail
 loops; `verification-specialist` to break a supplied patch; `fable-protocol` for
 evidence-first discipline. Before merging core-path diffs, ask the operator to run
 `/cgagentharness-invariant-guard` (it ships `disable-model-invocation: true`).
