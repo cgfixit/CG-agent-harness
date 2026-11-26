@@ -25,14 +25,19 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   RUSTFLAGS: "-D warnings"
+  # The one switch for the full Windows suite on pull requests. "false": only
+  # the merge queue, main pushes and release calls run test (windows-latest);
+  # PRs keep the Windows MCP Job Object job. "true": every PR push runs it too,
+  # and required-gate then requires it on the PR head.
+  WINDOWS_SUITE_ON_EVERY_PR: "false"
 
 jobs:
   # Docs-only pull requests skip the compile jobs below through a job-level
-  # `if`: a skipped check passes branch protection, where `paths-ignore` would
-  # leave a required check pending. A skipped matrix job reports once, under
-  # its unexpanded name. invariant-guard always runs. Every other event,
-  # including merge_group (the merge queue) and release.yml's workflow_call,
-  # runs all jobs, including the full Windows suite.
+  # `if`. A skipped check passes branch protection and a skipped matrix job
+  # reports once, under its unexpanded name, so the ruleset requires only
+  # required-gate from this file: it decides per event which results count.
+  # invariant-guard always runs. Every other event, including merge_group (the
+  # merge queue) and release.yml's workflow_call, runs all jobs.
   changes:
     name: classify changed paths
     runs-on: ubuntu-26.04
@@ -41,6 +46,7 @@ jobs:
       contents: read
     outputs:
       code: ${{ steps.classify.outputs.code }}
+      windows_suite: ${{ steps.windows.outputs.windows_suite }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -62,6 +68,17 @@ jobs:
           fi
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "event=$EVENT_NAME code=$code"
+      - name: Full Windows suite on this event
+        id: windows
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          windows_suite=true
+          if [ "$EVENT_NAME" = pull_request ] && [ "$WINDOWS_SUITE_ON_EVERY_PR" != true ]; then
+            windows_suite=false
+          fi
+          echo "windows_suite=$windows_suite" >> "$GITHUB_OUTPUT"
+          echo "event=$EVENT_NAME windows_suite=$windows_suite"
 
   chat-browser:
     name: chat slash-command browser acceptance
@@ -216,12 +233,20 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+    # One key per leg, set only by that leg's last step: required-gate reads
+    # them to prove each expected leg ran to the end.
+    outputs:
+      ubuntu-latest: ${{ steps.leg.outputs.ubuntu-latest }}
+      macos-latest: ${{ steps.leg.outputs.macos-latest }}
+      windows-latest: ${{ steps.leg.outputs.windows-latest }}
     strategy:
       fail-fast: false
       matrix:
-        # PRs keep the focused Windows lifecycle/credential job below.
+        # Without the Windows leg (WINDOWS_SUITE_ON_EVERY_PR), PRs keep the
+        # focused Windows lifecycle/credential job below. A missing output
+        # runs Windows.
         os: >-
-          ${{ fromJSON(github.event_name == 'pull_request'
+          ${{ fromJSON(needs.changes.outputs.windows_suite == 'false'
             && '["ubuntu-latest","macos-latest"]'
             || '["ubuntu-latest","macos-latest","windows-latest"]') }}
     defaults:
@@ -322,6 +347,12 @@ jobs:
           GROK_API_KEY: ""
           ANTHROPIC_API_KEY: ""
           DEEPAGENT_API_KEY: ""
+      - name: Record this leg's Test outcome for required-gate
+        id: leg
+        env:
+          LEG: ${{ matrix.os }}
+          OUTCOME: ${{ steps.full-test.outcome }}
+        run: echo "$LEG=$OUTCOME" >> "$GITHUB_OUTPUT"
 
   linux-bwrap:
     name: Linux bubblewrap confinement (required)
@@ -527,3 +558,54 @@ jobs:
           command-arguments: advisories bans sources
           manifest-path: tests/fixtures/cargo-sandbox/Cargo.toml
           arguments: --config deny.toml
+
+  # The only ci.yml context .github/rulesets/main-protection.json requires.
+  # always(), not !cancelled(): a skipped gate would pass the ruleset, so it
+  # runs whatever happened above and fails on anything this event did not allow.
+  # tests/ci_docs_only.rs holds `needs` to every other job and runs this script.
+  required-gate:
+    name: required gate (ci.yml jobs per event)
+    needs: [changes, chat-browser, browser-guards, fmt, clippy, test, linux-bwrap, linux-mcp-lifecycle, windows-mcp-lifecycle, invariant-guard, bakeoff-self-test, deny]
+    if: ${{ always() }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every job ran and passed as this event requires
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          NEEDS: ${{ toJSON(needs) }}
+        # A skip passes only on a docs-only pull request (classify set
+        # code=false). Each test leg records its Test outcome; the full Windows
+        # leg is due on every event except a pull request with the switch off,
+        # and only events whose Windows suite is advisory (main pushes, release
+        # calls) accept its failed outcome.
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+
+          event, needs = os.environ["EVENT_NAME"], json.loads(os.environ["NEEDS"])
+          changes = (needs.get("changes") or {}).get("outputs") or {}
+          docs_only = event == "pull_request" and changes.get("code") == "false"
+          bad = [
+              f"{job}: {need['result']}" for job, need in sorted(needs.items())
+              if need["result"] != "success"
+              and not (need["result"] == "skipped" and docs_only and job != "changes")
+          ]
+          test = needs.get("test")
+          if test is None or "changes" not in needs:
+              bad.append("changes and test must both be needs of this job")
+          elif test["result"] == "success":
+              legs = ["ubuntu-latest", "macos-latest"]
+              if event != "pull_request" or changes.get("windows_suite") == "true":
+                  legs.append("windows-latest")
+              for leg in legs:
+                  outcome = (test.get("outputs") or {}).get(leg) or "did not finish"
+                  advisory = leg == "windows-latest" and event not in ("pull_request", "merge_group")
+                  if outcome != "success" and not (advisory and outcome == "failure"):
+                      bad.append(f"test ({leg}): {outcome}")
+          for line in bad:
+              print(f"::error::required gate: {line}")
+          print(f"event={event} docs_only={docs_only} problems={len(bad)}")
+          sys.exit(1 if bad else 0)
+          PY
