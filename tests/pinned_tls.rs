@@ -2,11 +2,11 @@
 //! This binary is its own process, so `SSL_CERT_FILE` cannot change roots
 //! loaded by any other test. macOS and Windows do not consult that variable.
 //! UNVERIFIED there, and this test does not observe OCSP.
+#![cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
 
 use std::io::{Read, Write};
 use std::sync::Arc;
 
-#[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
 #[tokio::test]
 async fn pinned_client_ignores_the_platform_root_file() {
     let ca_key = rcgen::KeyPair::generate().unwrap();
@@ -23,7 +23,7 @@ async fn pinned_client_ignores_the_platform_root_file() {
     let key = rustls::pki_types::PrivateKeyDer::Pkcs8(leaf_key.serialize_der().into());
     let mut server_config =
         rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-            .with_protocol_versions(&[&rustls::version::TLS13, &rustls::version::TLS12])
+            .with_safe_default_protocol_versions()
             .unwrap()
             .with_no_client_auth()
             .with_single_cert(vec![cert], key)
