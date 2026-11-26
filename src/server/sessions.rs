@@ -634,21 +634,34 @@ impl OwnedSessionStore<'_> {
     }
 
     /// Newest-first `(id, mtime, len)` for this owner, in `list` order.
-    /// Transcript search treats a changed stamp as an edited session.
+    /// The stamp is the one `list` just recorded for that file, so a session
+    /// id read from JSON is never joined onto a path. Transcript search
+    /// treats a changed stamp as an edited session.
     pub(crate) fn search_stamps(&self) -> Vec<(String, std::time::SystemTime, u64)> {
-        let mut out = Vec::new();
-        for row in self.list() {
+        let rows = self.list();
+        if rows.is_empty() {
+            return Vec::new();
+        }
+        let cache = self
+            .store
+            .summaries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut by_id = HashMap::<&str, (std::time::SystemTime, u64)>::with_capacity(cache.len());
+        for (mtime, len, summary) in cache.values() {
+            if let Some(id) = summary["session_id"].as_str() {
+                by_id.insert(id, (*mtime, *len));
+            }
+        }
+        let mut out = Vec::with_capacity(rows.len());
+        for row in &rows {
             let Some(id) = row["session_id"].as_str().filter(|id| session_id_ok(id)) else {
                 continue;
             };
-            let Ok(meta) = std::fs::metadata(self.store.dir.join(format!("{id}.json"))) else {
+            let Some((mtime, len)) = by_id.get(id) else {
                 continue;
             };
-            out.push((
-                id.to_string(),
-                meta.modified().unwrap_or(std::time::UNIX_EPOCH),
-                meta.len(),
-            ));
+            out.push((id.to_string(), *mtime, *len));
         }
         out
     }
