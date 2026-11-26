@@ -2997,7 +2997,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator decision (2026-11-12): set to 1776, the cap it had on 2026-11-02; the file sat exactly at 1541, so every added word needed a cut.
     // why: operator-requested (2026-11-22) ~30% trim (1775 to 1248 words): the architecture diagram and
     // restated stack details went, every rule stayed; lowered to 1250.
-    ("AGENTS.md", Agent, 1245),
+    // why: operator-requested (2026-11-26) 10-20% refresh-and-trim (1241 to 1113 words): restatements the
+    // template, CLAUDE.md and INVARIANTS.md already own went, every rule stayed; lowered to 1140.
+    ("AGENTS.md", Agent, 1140),
     // why: the per-session summary moved here from .claude/CLAUDE.md so Claude Code loads one file.
     // why: now `@AGENTS.md` plus Claude-only lines; 183 words, rounded up to the next 100.
     // why: operator-requested (2026-11-22) ~10% trim (377 to 334 words); lowered to 340.
