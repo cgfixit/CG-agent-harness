@@ -8,6 +8,9 @@ the routing table lives in [AGENTS.md](../../AGENTS.md#project-skills). Compare
 [Codex skills](../../.codex/skills/README.md) independently: invocation policies
 and procedures can differ. Claude-only entries are marked.
 
+- [`cg-doc-sync/`](cg-doc-sync/SKILL.md): **operator-only, Claude-only.**
+  Audits `README.md` and `docs/*.md` against `origin/main`, fixes drift and
+  trims each updated file 5-15%; ships `trim_report.py`.
 - [`cgagentharness-config-guard/`](cgagentharness-config-guard/SKILL.md): static
   fail-closed check of `assets/config.default.yaml` (gates, `confirm`, loopback).
 - [`cgagentharness-gotchas/`](cgagentharness-gotchas/SKILL.md): session-tested

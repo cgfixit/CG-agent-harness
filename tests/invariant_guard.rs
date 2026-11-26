@@ -2935,6 +2935,9 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // Rows the 2026-10-13 doc-sync trimmed carry their new size plus about 2%, rounded up to the next 10.
     // why: operator-requested per-file index of the folder (one line per file); size plus about 10%, rounded up to the next 10.
     (".claude/skills/README.md", Agent, 440),
+    // why: operator-requested (2026-11-26) cg-doc-sync skill: whole-tree docs audit plus a 5-15% trim; 797 words,
+    // rounded up to the next 100.
+    (".claude/skills/cg-doc-sync/SKILL.md", Agent, 900),
     (".claude/skills/cgagentharness-config-guard/SKILL.md", Agent, 900),
     (".claude/skills/cgagentharness-gotchas/SKILL.md", Agent, 1700),
     (".claude/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
