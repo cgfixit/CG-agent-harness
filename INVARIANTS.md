@@ -269,7 +269,7 @@ The fetcher resolves once, rejects mixed/special-use answers, then pins
 Reqwest to validated addresses with a refusing fallback. One lookup
 (`common::dns`) serves every pinned client and keeps at most 32 answers; a
 larger answer is refused. Fixture resolvers that skip validation exist only with
-`test-support`. Public TLS stays on;
+`test-support`. TLS uses bundled roots;
 proxies, redirects, retries, compression, and reuse stay off. Deadlines cover
 queueing, DNS, and extraction; headers, bodies, and concurrency are bounded.
 HTML parse/extract runs off async workers, stops on cancel/deadline, and keeps

@@ -342,6 +342,7 @@ mod tests {
         let task = tokio::spawn(first.serve(listener, app));
         let url = format!("https://{address}/");
         assert_eq!(pinned.get(&url).send().await.unwrap().text().await.unwrap(), "https");
+        // tls-verifier: platform-contrast
         assert!(reqwest::Client::builder()
             .no_proxy()
             .build()

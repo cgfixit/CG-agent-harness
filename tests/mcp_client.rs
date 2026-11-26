@@ -146,6 +146,7 @@ impl McpServer {
             base: format!("{scheme}://127.0.0.1:{}", addr.port()), // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
             csrf,
             api_key: "test-api-key-0123456789".into(),
+            // tls-verifier: loopback
             client: reqwest::Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())

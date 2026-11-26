@@ -26,8 +26,8 @@ installed Google Chrome. The daily advisory workflow audits the npm lock.
   and the schedule dependency chain by 2027-02-17. Remove each waiver
   when its crate leaves the lock.
 - Bundled SQLite, bounded Tantivy BM25 and the child PDF parser are
-  intentional. Reqwest uses pinned DNS for public web egress and OS
-  public trust. The locked AWS-LC build needs a C compiler.
+  intentional. Pinned web egress keeps pinned DNS and bundled Mozilla
+  roots. Cloud clients keep OS trust. The locked AWS-LC build needs a C compiler.
   Review feature changes with their call sites. The DOCX reader uses
   ZIP deflate and namespace-aware XML. The PDF crate runs out of process
   with its default features disabled.

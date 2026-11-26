@@ -204,6 +204,24 @@ impl reqwest::dns::Resolve for RefuseDns {
     }
 }
 
+/// Mozilla roots compiled into the binary. `tls_certs_only` makes reqwest build
+/// a webpki verifier and skip `rustls-platform-verifier`, so a pinned fetch
+/// does not ask the OS to retrieve revocation or a missing certificate.
+/// There is no revocation check and no enterprise root. That is the trade for
+/// keeping certificate egress inside this client.
+fn bundled_mozilla_roots() -> &'static [reqwest::Certificate] {
+    static ROOTS: std::sync::OnceLock<Vec<reqwest::Certificate>> = std::sync::OnceLock::new();
+    ROOTS.get_or_init(|| {
+        webpki_root_certs::TLS_SERVER_ROOT_CERTS
+            .iter()
+            .map(|der| {
+                reqwest::Certificate::from_der(der.as_ref())
+                    .expect("webpki-root-certs DER is a certificate reqwest accepts")
+            })
+            .collect()
+    })
+}
+
 /// Callers validate the complete address set against their own egress policy first.
 pub(super) fn pinned_client_builder(host: &str, addresses: &[SocketAddr], timeout: Duration) -> reqwest::ClientBuilder {
     // HTTP/1's finite Hyper header-count/buffer caps precede application header checks.
@@ -216,6 +234,18 @@ pub(super) fn pinned_client_builder(host: &str, addresses: &[SocketAddr], timeou
         .dns_resolver(Arc::new(RefuseDns))
         .resolve_to_addrs(host, addresses)
         .timeout(timeout)
+        .tls_certs_only(bundled_mozilla_roots().iter().cloned())
+}
+
+/// The integration test lives in its own process so `SSL_CERT_FILE` cannot
+/// change roots loaded by any other test.
+#[cfg(any(test, feature = "test-support"))]
+pub fn pinned_client_builder_for_test(
+    host: &str,
+    addresses: &[SocketAddr],
+    timeout: Duration,
+) -> reqwest::ClientBuilder {
+    pinned_client_builder(host, addresses, timeout)
 }
 
 pub fn validate_addresses(addresses: &[SocketAddr]) -> Result<()> {
@@ -2361,5 +2391,31 @@ mod tests {
             turn.grant_search_results(&listing);
             assert!(!turn.search_grants().iter().any(|u| u.contains("/pdf/")), "{yaml}");
         }
+    }
+
+    #[test]
+    fn bundled_roots_match_the_mozilla_certificate_set() {
+        // ISRG Root X1, the certificate SHA-256 published by Let's Encrypt.
+        const ISRG_ROOT_X1: &str = "96bcec06264976f37460779acf28c5a7cfe8a3c0aae11a8ffcee05c0bddf08c6";
+        use sha2::Digest;
+        let roots = super::bundled_mozilla_roots();
+        assert_eq!(roots.len(), webpki_root_certs::TLS_SERVER_ROOT_CERTS.len());
+        assert!(roots.len() > 100, "the Mozilla set is not a handful of certs");
+        let found = webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().any(|der| {
+            let digest = sha2::Sha256::digest(der.as_ref());
+            let mut encoded = String::with_capacity(digest.len() * 2);
+            for byte in digest {
+                encoded.push_str(&format!("{byte:02x}"));
+            }
+            encoded == ISRG_ROOT_X1
+        });
+        assert!(found, "webpki-root-certs is missing ISRG Root X1");
+        super::pinned_client_builder(
+            "example.com",
+            &[std::net::SocketAddr::from(([1, 2, 3, 4], 443))],
+            std::time::Duration::from_secs(1),
+        )
+        .build()
+        .expect("bundled roots must build a client");
     }
 }

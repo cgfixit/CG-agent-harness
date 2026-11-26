@@ -67,8 +67,8 @@ Public receivers need HTTPS. Supported private targets require their exact
 URL in `private_url_allowlist` and can use HTTP. The allowlist has room
 for eight exact URLs. Link-local and mapped IPv6 receivers refuse.
 Subscription, attempt, rate and retention bounds are in
-[shipped config](../assets/config.default.yaml). Each send pins validated DNS
-and disallows redirects or proxies. The worker checks owner, startup revision,
+[shipped config](../assets/config.default.yaml). Each send pins validated DNS,
+verifies TLS with bundled roots and disallows redirects or proxies. The worker checks owner, startup revision,
 subscription, URL and credential before and after DNS. Disk edits revoke
 authority until restart. Disabled or deleted owners stay revoked until
 deliberately regranted. Already-sent requests may finish.

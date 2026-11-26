@@ -215,6 +215,7 @@ impl CloudChat {
             grok,
             claude,
             // Do not delegate paid credentials to ambient HTTP(S)_PROXY.
+            // tls-verifier: platform-public
             client: reqwest::Client::builder()
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())

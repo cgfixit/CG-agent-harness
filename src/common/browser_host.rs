@@ -1442,6 +1442,7 @@ fn ollama_get(api: &str, path: &str) -> Result<Value, String> {
 /// no redirect, and a resolver that refuses any non-loopback answer. A page's
 /// text rides in `messages`, so a redirect must not re-post it elsewhere.
 fn ollama_client(timeout: Duration) -> Result<reqwest::blocking::Client, String> {
+    // tls-verifier: loopback
     reqwest::blocking::Client::builder()
         .no_proxy()
         .dns_resolver(std::sync::Arc::new(crate::llm::backend::LoopbackOnlyDns))

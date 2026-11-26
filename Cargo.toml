@@ -38,6 +38,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 serde_yaml_ng = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "query", "blocking"] }
+# Full Mozilla root certificates for `tls_certs_only`. Trust anchors from
+# `webpki-roots` are not certificates, so reqwest cannot take them. This exact
+# crate is already in the lock through rustls-platform-verifier.
+webpki-root-certs = "=1.0.12"
 clap = { version = "4", features = ["derive"] }
 regex = "1"
 unicode-normalization = "0.1"

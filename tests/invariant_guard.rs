@@ -721,6 +721,72 @@ fn netconnect_dials_only_through_the_budgeted_dialer() {
     );
 }
 
+/// Every reqwest builder names its verifier. A new `Client::builder()` with no
+/// `tls_certs_only`, preconfigured trust, extra root, or `tls-verifier:` marker
+/// is the platform verifier by accident. The pinned builder must pass the
+/// bundled Mozilla roots and nothing else.
+#[test]
+fn every_reqwest_builder_names_its_tls_verifier() {
+    const MARKERS: &[&str] = &[
+        "tls-verifier: loopback",
+        "tls-verifier: platform-public",
+        "tls-verifier: platform-contrast",
+    ];
+    const EXPLICIT: &[&str] = &[
+        "tls_certs_only(",
+        "use_preconfigured_tls(",
+        "tls_backend_preconfigured(",
+        "add_root_certificate(",
+    ];
+    let repo = root().parent().unwrap().to_path_buf();
+    let mut files = Vec::new();
+    for dir in ["src", "desktop/src", "tests"] {
+        for (path, text) in read_tree_raw(&repo.join(dir)) {
+            files.push((path, text));
+        }
+    }
+    let mut builders = 0usize;
+    for (path, text) in &files {
+        let lines: Vec<&str> = text.lines().collect();
+        let spots: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| line.contains("Client::builder()"))
+            .map(|(index, _)| index)
+            .collect();
+        for (nth, line) in spots.iter().copied().enumerate() {
+            builders += 1;
+            let back = spots.get(nth.wrapping_sub(1)).map(|p| p + 1).unwrap_or(0);
+            let back = back.max(line.saturating_sub(15));
+            let forward = spots.get(nth + 1).copied().unwrap_or(lines.len());
+            let forward = forward.min(line + 30);
+            let region = lines[back..forward].join("\n");
+            let marked = MARKERS.iter().any(|marker| region.contains(marker));
+            let explicit = EXPLICIT.iter().any(|token| region.contains(token));
+            assert!(
+                marked || explicit,
+                "{path}:{} builds a reqwest client without a named TLS verifier\n{region}",
+                line + 1
+            );
+        }
+    }
+    assert!(builders > 0, "the verifier scan found no reqwest builders");
+    let pinned = std::fs::read_to_string(root().join("server/web_search.rs")).unwrap();
+    let body = &pinned[..pinned.find("#[cfg(test)]").unwrap_or(pinned.len())];
+    assert!(
+        body.contains(".tls_certs_only(bundled_mozilla_roots().iter().cloned())"),
+        "pinned_client_builder must verify with the bundled Mozilla roots only"
+    );
+    assert!(
+        body.contains("webpki_root_certs::TLS_SERVER_ROOT_CERTS"),
+        "bundled roots must be the webpki-root-certs Mozilla set"
+    );
+    assert!(
+        !body.contains("tls-verifier: platform"),
+        "the pinned client must not opt into the platform verifier"
+    );
+}
+
 #[test]
 fn only_registered_process_owners_construct_commands() {
     const OWNERS: &[&str] = &[
