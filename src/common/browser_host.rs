@@ -499,6 +499,27 @@ fn answer_approval(
     });
 }
 
+/// Copies the requests one action left for the operator from the sidecar's
+/// answer (`from`: an observation, or a failed reply) into its `outcome`.
+/// Empty lists are left out.
+fn note_operator_requests(from: &Value, outcome: &mut Value) {
+    for (reported, named) in [
+        // Held as the operator's step: never sent, and it ends the task.
+        ("held", "held_for_operator"),
+        // Requests a page sent on its own: never sent, listed, and the task goes on.
+        ("held_background", "held_in_background"),
+        // Requests the operator approved and the gate then sent.
+        ("approved", "approved_by_operator"),
+    ] {
+        if let Some(rows) = from
+            .get(reported)
+            .filter(|rows| rows.as_array().is_some_and(|rows| !rows.is_empty()))
+        {
+            outcome[named] = rows.clone();
+        }
+    }
+}
+
 /// Decide, execute and re-mint one action. A refusal or handoff comes back as
 /// `decision` and a sidecar failure as `error`. Neither ends the session.
 fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value {
@@ -511,10 +532,16 @@ fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value 
         Err(err) => return json!({"error": err}),
     };
     if reply.get("ok") != Some(&Value::Bool(true)) {
-        if let Some(origin) = reply["redirect_origin"].as_str() {
-            return json!({"error": "Page redirect requires a separate browser grant", "redirect_origin": origin});
-        }
-        return json!({"error": reply.get("error").cloned().unwrap_or(reply)});
+        let mut outcome = match reply["redirect_origin"].as_str() {
+            Some(origin) => {
+                json!({"error": "Page redirect requires a separate browser grant", "redirect_origin": origin})
+            }
+            None => json!({"error": reply.get("error").cloned().unwrap_or_else(|| reply.clone())}),
+        };
+        // A click can send a request and then fail to load its page: the
+        // request it left held, or that the operator approved, happened.
+        note_operator_requests(&reply, &mut outcome);
+        return outcome;
     }
     let result = reply.get("result").cloned().unwrap_or(json!({}));
     // What the page showed is what a model-driven task may later navigate to
@@ -533,26 +560,7 @@ fn step(session: &mut Session, sidecar: &mut dyn Driver, wire: &Value) -> Value 
         .collect();
     session.saw_page(result["url"].as_str(), &shown);
     let mut outcome = json!({"url": result.get("url"), "text": result.get("text")});
-    if let Some(held) = result
-        .get("held")
-        .filter(|held| held.as_array().is_some_and(|rows| !rows.is_empty()))
-    {
-        outcome["held_for_operator"] = held.clone();
-    }
-    // Requests a page sent on its own: never sent, listed, and the task goes on.
-    if let Some(held) = result
-        .get("held_background")
-        .filter(|held| held.as_array().is_some_and(|rows| !rows.is_empty()))
-    {
-        outcome["held_in_background"] = held.clone();
-    }
-    // Requests the operator approved and the gate then sent.
-    if let Some(sent) = result
-        .get("approved")
-        .filter(|sent| sent.as_array().is_some_and(|rows| !rows.is_empty()))
-    {
-        outcome["approved_by_operator"] = sent.clone();
-    }
+    note_operator_requests(&result, &mut outcome);
     if let Some(origins) = result
         .get("not_granted")
         .filter(|origins| origins.as_array().is_some_and(|rows| !rows.is_empty()))
@@ -1807,6 +1815,8 @@ const GUARD_DENIALS_PAGE: &str = r#"
 <a href="/granted-frame">Granted frame</a>
 <a href="about:blank">Blank page</a>
 <button onclick="location='/private/page'">Open private</button>
+<button onclick="fetch('/save', {method: 'POST', body: 'order'}).catch(() => {}); location='/private/page'">Save then private</button>
+<a href="/closes-itself" target="_blank">Closing tab</a>
 <img src="/private/pixel"><img src="/to-private">
 <script>
 fetch("/private/api").catch(() => {});
@@ -2007,6 +2017,43 @@ fn guard_blocked_load_actions(
         return Err(format!("about:blank was not a successful navigation: {blank}"));
     }
     lines.push("follow_link Blank page -> ok, about:blank".to_string());
+
+    // A click whose POST is held and whose page load is then refused: the
+    // failed reply itself carries the held request, and it is listed once.
+    let page = open_docs(sidecar, lines)?;
+    let reply = sidecar.call(json!({"op":"click","target":{"ref": link_ref(&page, "Save then private")?}}))?;
+    if reply["ok"] != false || reply["held"] != json!([format!("POST {base}/save")]) {
+        return Err(format!(
+            "a failed click did not report the request it left held: {reply}"
+        ));
+    }
+    let (after, _) = guard_call(sidecar, lines, json!({"op":"observe"}))?;
+    if after["held"].as_array().is_some_and(|rows| !rows.is_empty()) {
+        return Err(format!("a held request was reported twice: {after}"));
+    }
+    if seen
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .iter()
+        .any(|row| row.starts_with("POST "))
+    {
+        return Err("a held request reached the server".into());
+    }
+    lines.push("click Save then private -> block-list refusal that carries its held POST".to_string());
+
+    // A new tab the task adopted closes itself: the session keeps a page.
+    let page = open_docs(sidecar, lines)?;
+    let opened = sidecar.call(json!({"op":"follow_link","target":{"ref": link_ref(&page, "Closing tab")?}}))?;
+    if opened["ok"] != true {
+        return Err(format!("the self-closing tab did not open: {opened}"));
+    }
+    // Past the page's own timer, with no op running on the closing tab.
+    thread::sleep(Duration::from_millis(2_000));
+    let back = open_docs(sidecar, lines)?;
+    if back["url"].as_str() != Some(&format!("{base}/docs")) {
+        return Err(format!("the session did not recover its page: {back}"));
+    }
+    lines.push("follow_link Closing tab -> the tab closed itself, the session still navigates".to_string());
     Ok(())
 }
 
@@ -2677,13 +2724,14 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         .and_then(|el| el["ref"].as_str())
         .ok_or("the Save and leave button was not listed")?
         .to_string();
-    // The click may fail on the refused redirect; its rows then come with the observe.
+    // The click may fail on the refused redirect; its rows come with that
+    // failed reply, and the observe after it must not list them again.
     let started = Instant::now();
     let reply = sidecar.call(json!({"op":"click","target":{"ref": target}}))?;
     let page = if reply["ok"] == true {
         reply["result"].clone()
     } else {
-        Value::Null
+        reply.clone()
     };
     let (later, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
     let waited = started.elapsed();
@@ -2862,6 +2910,10 @@ fn guards_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Resu
         (
             "/granted-frame",
             Reply::Html("<p>GRANTED-FRAME</p><iframe src=\"/private/page\"></iframe>".to_string()),
+        ),
+        (
+            "/closes-itself",
+            Reply::Html("<p>CLOSING-TAB</p><script>setTimeout(() => window.close(), 1000);</script>".to_string()),
         ),
         ("/to-private", Reply::Redirect("/private/landing".to_string())),
         ("/hop", Reply::Redirect("/to-private".to_string())),
@@ -3743,6 +3795,84 @@ mod tests {
                 ],
             }}))
         }
+    }
+
+    /// A page whose Save click sends a POST, which is held, and then fails to
+    /// load its next page: the sidecar's failed reply carries what it queued.
+    struct FailsAfterSending;
+
+    impl Driver for FailsAfterSending {
+        fn call(&mut self, op: Value) -> Result<Value, String> {
+            if op["op"] == "click" {
+                return Ok(
+                    json!({"ok": false, "error": "the operator's web block list covers that page",
+                    "held": ["POST https://example.com/save"], "held_background": [],
+                    "approved": ["POST https://example.com/log"]}),
+                );
+            }
+            Ok(
+                json!({"ok": true, "result": {"url": "https://example.com/", "text": "page",
+                "elements": [{"ref": "save", "role": "button", "name": "Save"}]}}),
+            )
+        }
+    }
+
+    #[test]
+    fn a_request_held_by_an_action_that_then_fails_ends_the_task() {
+        let origins = vec!["https://example.com".to_string()];
+        let mut session = Session::general(&origins).unwrap();
+        let mut page = FailsAfterSending;
+        let mut turn = 0;
+        let mut chat = |messages: &[Value]| {
+            turn += 1;
+            let call = match turn {
+                1 => json!({"name": "navigate", "arguments": {"url": "https://example.com/"}}),
+                2 => {
+                    let seen: Value = messages
+                        .iter()
+                        .rev()
+                        .find(|m| m["role"] == "tool")
+                        .and_then(|m| serde_json::from_str(m["content"].as_str()?).ok())
+                        .unwrap();
+                    json!({"name": "click", "arguments": {"ref_id": seen["elements"][0]["ref_id"]}})
+                }
+                // Never reached: the held request ended the task on turn 2.
+                _ => json!({"name": "finish", "arguments": {"answer": "saved"}}),
+            };
+            Ok(json!({"message": {"role": "assistant", "content": "", "tool_calls": [{"function": call}]}}))
+        };
+        let report = model_loop(&mut session, &mut page, &mut chat, &|_| None, "task", &origins, 6).unwrap();
+        assert_eq!(turn, 2, "{report}");
+        assert_eq!(report["finished"], false, "{report}");
+        assert!(
+            report["stopped"].as_str().unwrap().contains("needs the operator"),
+            "{report}"
+        );
+        let rows = report["for_operator"].as_array().unwrap();
+        assert!(
+            rows.contains(&json!({"held": "POST https://example.com/save"})),
+            "{report}"
+        );
+        assert!(
+            rows.contains(&json!({"approved": "POST https://example.com/log"})),
+            "{report}"
+        );
+
+        // A failed reply with nothing queued is a plain error, as before.
+        let mut plain = |_: Value| -> Result<Value, String> { Ok(json!({"ok": false, "error": "timeout"})) };
+        struct Plain<'a>(&'a mut dyn FnMut(Value) -> Result<Value, String>);
+        impl Driver for Plain<'_> {
+            fn call(&mut self, op: Value) -> Result<Value, String> {
+                (self.0)(op)
+            }
+        }
+        let mut session = Session::general(&origins).unwrap();
+        let outcome = step(
+            &mut session,
+            &mut Plain(&mut plain),
+            &json!({"action": "navigate", "url": "https://example.com/"}),
+        );
+        assert_eq!(outcome, json!({"error": "timeout"}));
     }
 
     /// Navigate, then send `batch` (tool name, element name) in one turn.
