@@ -13,7 +13,7 @@ Docs-only classification can skip compile jobs. CI expectations: [docs/INSTALL.m
 - [`contract_locks.rs`](contract_locks.rs): binary exit codes, confirm and reason flags, kill switch, shim redaction, raw listener authority.
 - [`common_layer.rs`](common_layer.rs): `src/common` primitives (not this folder's `common/`): atomic write, rate limit, auth records, redaction, `flag_is_true`.
 - [`child_env.rs`](child_env.rs): `gh` and shim children never inherit provider keys; credentials are action-scoped.
-- [`ci_docs_only.rs`](ci_docs_only.rs), [`pr_template_check.rs`](pr_template_check.rs), [`start_web_script.rs`](start_web_script.rs), [`smoke_wired_count.rs`](smoke_wired_count.rs): lock `scripts/` behavior (docs-only classifier, PR-body gate, `start-web.sh`, the smoke wired count against `HARNESS_SURFACES`).
+- [`ci_docs_only.rs`](ci_docs_only.rs), [`pr_template_check.rs`](pr_template_check.rs), [`start_web_script.rs`](start_web_script.rs), [`smoke_wired_count.rs`](smoke_wired_count.rs): lock `scripts/` behavior (docs-only classifier, `ci.yml`'s required gate and one producer per ruleset context, PR-body gate, `start-web.sh`, the smoke wired count against `HARNESS_SURFACES`).
 
 ## Server, accounts and console
 
