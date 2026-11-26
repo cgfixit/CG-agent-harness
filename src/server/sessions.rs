@@ -590,6 +590,22 @@ impl SessionStore {
         self.write(&session)?;
         Ok(session)
     }
+
+    /// Undo an adoption when its audit record was refused. The session returns
+    /// to unassigned legacy data (`schema_version` 0, no owner). A version-1
+    /// row with no owner is not a readable session. Only the owner that
+    /// adopted it can release it. A goal stage adoption already dropped stays
+    /// dropped.
+    pub fn release_legacy_adoption(&self, id: &str, owner: &str) -> Result<()> {
+        let _g = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        let mut session = self.get_raw(id)?;
+        if session.owner.as_deref() != Some(owner) {
+            return Err(session_error("session ownership changed", id));
+        }
+        session.schema_version = 0;
+        session.owner = None;
+        self.write(&session)
+    }
 }
 
 /// All normal reads and mutations require an owner-bearing storage view. Raw
@@ -1075,6 +1091,33 @@ mod tests {
         symlink(outside.path(), &dir).unwrap();
         assert!(store.clear().is_err());
         assert_eq!(std::fs::read_to_string(private).unwrap(), "keep");
+    }
+
+    #[test]
+    fn releasing_an_adoption_clears_that_owner_and_leaves_the_goal_cleared() {
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join("sessions");
+        let store = SessionStore::new(&dir).unwrap();
+        let created = store.for_owner("local").create("m", "t").unwrap();
+        let id = created.session_id.clone();
+        let path = dir.join(format!("{id}.json"));
+        let mut body = serde_json::to_value(&created).unwrap();
+        body["owner"] = Value::Null;
+        body["schema_version"] = json!(0);
+        std::fs::write(&path, body.to_string()).unwrap();
+        // A fresh store, so a summary cached at create cannot answer the read.
+        let store = SessionStore::new(&dir).unwrap();
+        let adopted = store.adopt_legacy(&id, "user_admin").unwrap();
+        assert_eq!(adopted.owner.as_deref(), Some("user_admin"));
+        assert!(adopted.goal_stage.is_none());
+        store.release_legacy_adoption(&id, "user_admin").unwrap();
+        let released = store.get_raw(&id).unwrap();
+        assert_eq!(released.schema_version, 0);
+        assert!(released.owner.is_none(), "the adoption was not released");
+        assert!(released.goal_stage.is_none(), "release restored a goal stage");
+        store.adopt_legacy(&id, "user_admin").unwrap();
+        assert!(store.release_legacy_adoption(&id, "user_other").is_err());
+        assert_eq!(store.get_raw(&id).unwrap().owner.as_deref(), Some("user_admin"));
     }
 
     #[test]

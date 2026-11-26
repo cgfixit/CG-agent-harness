@@ -383,12 +383,16 @@ pub async fn build_app_with_sources(
     // commit are invisible to every API path, so reclaim them here.
     match attachments.sweep_unreferenced_files() {
         Ok(0) => {}
-        Ok(n) => audit.log(serde_json::json!({"event": "chat_attachments_orphans_removed", "removed": n})),
-        Err(e) => audit.log(serde_json::json!({
-            "event": "chat_attachments_orphan_sweep_incomplete",
-            "code": e.code,
-            "message": e.message,
-        })),
+        Ok(n) => {
+            audit.log(serde_json::json!({"event": "chat_attachments_orphans_removed", "removed": n}));
+        }
+        Err(e) => {
+            audit.log(serde_json::json!({
+                "event": "chat_attachments_orphan_sweep_incomplete",
+                "code": e.code,
+                "message": e.message,
+            }));
+        }
     }
     if let Some(mgr) = auth.as_ref() {
         // Finish any account-deletion cleanup that failed part-way in an
@@ -397,12 +401,16 @@ pub async fn build_app_with_sources(
         let live: BTreeSet<String> = mgr.list_users().into_iter().map(|u| u.user_id).collect();
         match attachments.sweep_dead_owners(&|owner| owner == "local" || live.contains(owner)) {
             Ok(0) => {}
-            Ok(n) => audit.log(serde_json::json!({"event": "chat_attachments_swept", "removed": n})),
-            Err(e) => audit.log(serde_json::json!({
-                "event": "chat_attachments_sweep_incomplete",
-                "code": e.code,
-                "message": e.message,
-            })),
+            Ok(n) => {
+                audit.log(serde_json::json!({"event": "chat_attachments_swept", "removed": n}));
+            }
+            Err(e) => {
+                audit.log(serde_json::json!({
+                    "event": "chat_attachments_sweep_incomplete",
+                    "code": e.code,
+                    "message": e.message,
+                }));
+            }
         }
         match notes_corpus.sweep_dead_owners(&|| {
             let mut owners: BTreeSet<String> = mgr.list_users().into_iter().map(|u| u.user_id).collect();
@@ -410,21 +418,29 @@ pub async fn build_app_with_sources(
             owners
         }) {
             Ok(0) => {}
-            Ok(n) => audit.log(serde_json::json!({"event": "notes_corpus_swept", "removed": n})),
-            Err(e) => audit.log(serde_json::json!({
-                "event": "notes_corpus_sweep_incomplete",
-                "code": e.code,
-                "message": e.message,
-            })),
+            Ok(n) => {
+                audit.log(serde_json::json!({"event": "notes_corpus_swept", "removed": n}));
+            }
+            Err(e) => {
+                audit.log(serde_json::json!({
+                    "event": "notes_corpus_sweep_incomplete",
+                    "code": e.code,
+                    "message": e.message,
+                }));
+            }
         }
         match store.drop_attachment_pins_unless(|owner| owner == "local" || live.contains(owner)) {
             Ok(0) => {}
-            Ok(n) => audit.log(serde_json::json!({"event": "chat_attachment_pins_swept", "removed": n})),
-            Err(e) => audit.log(serde_json::json!({
-                "event": "chat_attachment_pins_sweep_incomplete",
-                "code": e.code,
-                "message": e.message,
-            })),
+            Ok(n) => {
+                audit.log(serde_json::json!({"event": "chat_attachment_pins_swept", "removed": n}));
+            }
+            Err(e) => {
+                audit.log(serde_json::json!({
+                    "event": "chat_attachment_pins_sweep_incomplete",
+                    "code": e.code,
+                    "message": e.message,
+                }));
+            }
         }
     }
     let loops = crate::server::loop_runner::LoopManager::new(&home.root);

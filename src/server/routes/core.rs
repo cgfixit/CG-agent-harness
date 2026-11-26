@@ -85,6 +85,7 @@ pub async fn status(
                 "memory_enabled": false,
                 "chat_tools_available": false,
                 "sessions": sessions.len(),
+                "audit_gap": state.audit.gap_status(),
             }));
         }
         let sessions = state.store.for_owner(&owner).list();
@@ -128,6 +129,7 @@ pub async fn status(
             "server_loop": true,
             "sessions": sessions.len(),
             "total_tokens": total_tokens,
+            "audit_gap": state.audit.gap_status(),
             "layout": {
                 "sessions": state.home.sessions_dir().display().to_string(),
                 "skills": state.home.skills_dir().display().to_string(),

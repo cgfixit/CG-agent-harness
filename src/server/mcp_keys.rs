@@ -467,7 +467,15 @@ pub fn run(command: KeyCommand) -> anyhow::Result<()> {
                 OwnerCheck::LocalOnly
             };
             let (info, token) = store.mint(&owner, &label, owners)?;
-            audit.log(serde_json::json!({"event":"mcp_key_created","key_id":info.key_id}));
+            // Fail closed: the CLI audit appends inline (no server queue). A
+            // refused append revokes the key just minted.
+            if audit
+                .log_required(serde_json::json!({"event":"mcp_key_created","key_id":info.key_id}))
+                .is_err()
+            {
+                let _ = store.revoke(&info.key_id);
+                anyhow::bail!("AUDIT_NOT_RECORDED: the key was revoked because its audit record could not be written");
+            }
             println!("{}", serde_json::json!({"key":info,"token":token}));
         }
         KeyCommand::Revoke {
@@ -476,10 +484,21 @@ pub fn run(command: KeyCommand) -> anyhow::Result<()> {
             reason,
         } => {
             valid(confirm, &reason)?;
+            if !store.list()?.iter().any(|key| key.key_id == key_id) {
+                anyhow::bail!("MCP_KEY_NOT_FOUND");
+            }
+            // Fail closed: the key stays until the inline audit record is written.
+            if audit
+                .log_required(serde_json::json!({"event":"mcp_key_revoked","key_id":key_id}))
+                .is_err()
+            {
+                anyhow::bail!(
+                    "AUDIT_NOT_RECORDED: the key was not revoked because its audit record could not be written"
+                );
+            }
             if !store.revoke(&key_id)? {
                 anyhow::bail!("MCP_KEY_NOT_FOUND");
             }
-            audit.log(serde_json::json!({"event":"mcp_key_revoked","key_id":key_id}));
             println!("Key revoked.");
         }
     }

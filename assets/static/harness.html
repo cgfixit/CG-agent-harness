@@ -4655,6 +4655,14 @@ async function runSlash(line, webCommand) {
       }
 
       case 'status': {
+        function auditGapText(s) {
+          const gap = s && s.audit_gap;
+          if (!gap) return '0';
+          const dropped = Number(gap.dropped) || 0;
+          if (gap.record_unreadable) return dropped + ' (gap file unreadable)';
+          if (gap.persist_failed) return dropped + ' (not saved)';
+          return String(dropped);
+        }
         const s = await api('/api/status');
         if (s.auth_enabled && !('sessions' in s)) {
           const access = window.__cyclawRole && !can('read_panels') ? 'Auditor: read-only status and audit records.' : s.status || 'Sign in to view operational details.';
@@ -4663,7 +4671,7 @@ async function runSlash(line, webCommand) {
         }
         if (!('home' in s)) {
           // The restricted auditor view: no home, tokens or layout to render.
-          sys(table([['version', s.version], ['model', s.model || '(unset)'], ['provider', s.provider], ['sessions', String(s.sessions)], ['access', 'Auditor: read-only status and audit records.']]));
+          sys(table([['version', s.version], ['model', s.model || '(unset)'], ['provider', s.provider], ['sessions', String(s.sessions)], ['audit drops', auditGapText(s)], ['access', 'Auditor: read-only status and audit records.']]));
           break;
         }
         if (s.selection_overrides_config) sys(s.model_status && s.model_status.cloud ? 'Cloud selection resets to local after restart.' : 'Saved selection overrides configured model ' + s.configured_model + '; changing that config model and restarting clears the selection.');
@@ -4677,7 +4685,7 @@ async function runSlash(line, webCommand) {
                    ['style', (currentStyle || 'off') + (currentStyleIssue ? ' (' + currentStyleIssue + ')' : '')],
                    ['memory', s.memory_enabled ? 'on' : 'off'],
                    ['sessions', String(s.sessions)],
-                   ['total tokens', String(s.total_tokens)], ['home', s.home],
+                   ['total tokens', String(s.total_tokens)], ['audit drops', auditGapText(s)], ['home', s.home],
                    ['goal', sessionGoal || '(none)'],
                    ['loop', loopState ? ((loopState.auto ? 'auto ' : '') + (loopState.total - loopState.remaining) + '/' + loopState.total) : (loopAuto ? 'auto' : 'off')]]));
         break;

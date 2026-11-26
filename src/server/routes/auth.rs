@@ -320,11 +320,20 @@ pub async fn login(
         let result = mgr
             .login(&req.username, &req.password)
             .map_err(|e| map_auth_error(&e))?;
-        st.audit
-            .log(json!({"event":"account.login", "actor":result.username,"outcome":"success"}));
+        // Fail closed: a sign-in with no audit line is revoked before the cookie is set.
+        if st
+            .audit
+            .log_required(json!({"event":"account.login", "actor":result.username,"outcome":"success"}))
+            .is_err()
+        {
+            let _ = mgr.logout(&result.session_id);
+            return Err(ApiError::audit_not_recorded());
+        }
         if result.evicted > 0 {
             // Names the account and how many, so an operator who finds a session
             // gone can see why; the console has no screen for it.
+            // Counted: the other sessions are already gone. The sign-in above
+            // was refused and revoked when its own record could not be queued.
             st.audit.log(json!({
                 "event": "account.session_evicted",
                 "actor": result.username,
@@ -375,12 +384,28 @@ pub async fn whoami(State(state): State<Arc<AppState>>, req: Request<Body>) -> A
 
 /// The request line holds only the route template, so an account change names
 /// who made it and whom it changed, as stored (lowercased). Never a password.
-fn audit_account(state: &AppState, event: &str, actor: &str, target: &str, detail: Value) {
+fn account_audit_line(event: &str, actor: &str, target: &str, detail: Value) -> Value {
     let mut line = json!({"event": event, "actor": actor, "target": target});
-    if let (Some(line), Some(detail)) = (line.as_object_mut(), detail.as_object()) {
-        line.extend(detail.clone());
+    if let (Some(map), Some(detail)) = (line.as_object_mut(), detail.as_object()) {
+        map.extend(detail.clone());
     }
-    state.audit.log(line);
+    line
+}
+
+/// Counted. Password changes use this: a wrong current password must not be
+/// recorded as a success, and the route does not hold the previous hash, so
+/// a refused queue cannot roll the change back. The gap report names the hole.
+fn audit_account(state: &AppState, event: &str, actor: &str, target: &str, detail: Value) {
+    state.audit.log(account_audit_line(event, actor, target, detail));
+}
+
+/// Fail closed. The caller has not committed yet, or it undoes the commit
+/// when this returns `Err`.
+fn audit_account_required(state: &AppState, event: &str, actor: &str, target: &str, detail: Value) -> ApiResult<()> {
+    state
+        .audit
+        .log_required(account_audit_line(event, actor, target, detail))
+        .map_err(|_| ApiError::audit_not_recorded())
 }
 
 pub async fn change_password(State(state): State<Arc<AppState>>, req: Request<Body>) -> ApiResult<Response> {
@@ -425,21 +450,26 @@ pub async fn set_disabled(
         if let Some(owner) = &owner_id {
             state.diag.forget_owner(owner);
         }
+        // Fail closed: last-admin refusal is unchanged (no audit line). The
+        // flag flips only after the record is queued.
+        if body.disabled && mgr.is_last_enabled_admin_account(&username) {
+            return Err(map_auth_error(&HarnessError::auth_last_admin()));
+        }
+        if let Some(user) = mgr.get_user(&username) {
+            audit_account_required(
+                &state,
+                "account.disabled_set",
+                &account.username,
+                &user.username,
+                json!({"disabled": body.disabled}),
+            )?;
+        }
         (if body.disabled {
             mgr.disable_user(&username)
         } else {
             mgr.enable_user(&username)
         })
         .map_err(|e| map_auth_error(&e))?;
-        if let Some(user) = mgr.get_user(&username) {
-            audit_account(
-                &state,
-                "account.disabled_set",
-                &account.username,
-                &user.username,
-                json!({"disabled": body.disabled}),
-            );
-        }
         if body.disabled {
             if let Some(owner) = owner_id {
                 retire_disabled_owner(&state, &owner)?;
@@ -482,6 +512,7 @@ fn stop_owner_work(state: &AppState, owner: &str, coding: bool, research: bool) 
     // Err means another account holds the research lease: nothing of ours runs.
     let research = research && state.web_snapshot().research.cancel(owner).unwrap_or(false);
     if jobs > 0 || research {
+        // Counted: the jobs are already stopped. Failing here would not restart them.
         state.audit.log(json!({
             "event": "account.work_stopped",
             "owner": owner,
@@ -590,26 +621,34 @@ pub async fn create_user(State(state): State<Arc<AppState>>, req: Request<Body>)
         .map_err(|e| map_auth_error(&e))?;
     let st = state.clone();
     let checked = account.clone();
-    let created = run_password_operation(state.auth_operation_permits.clone(), move || {
-        manager(&st).and_then(|m| {
-            // The permit wait is shared with sign-ins; authority may have changed.
-            require_current_admin(m, &checked)?;
-            m.create_user(&body.username, &body.password, &role)
-                .map_err(|e| map_auth_error(&e))
-        })
+    // The create, its audit line and the compensating delete share the
+    // unabortable task. A dropped request cannot leave the new account behind
+    // with no record and no rollback.
+    let payload = run_password_operation(state.auth_operation_permits.clone(), move || {
+        let manager = manager(&st)?;
+        // The permit wait is shared with sign-ins; authority may have changed.
+        require_current_admin(manager, &checked)?;
+        let created = manager
+            .create_user(&body.username, &body.password, &role)
+            .map_err(|e| map_auth_error(&e))?;
+        let user = manager
+            .get_user(&created)
+            .ok_or_else(|| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "created user missing"))?;
+        // Fail closed: the new account is removed when its audit line cannot be queued.
+        if let Err(error) = audit_account_required(
+            &st,
+            "account.user_created",
+            &checked.username,
+            &user.username,
+            json!({"role": user.role}),
+        ) {
+            let _ = manager.delete_user(&created);
+            return Err(error);
+        }
+        Ok(user_payload(&user))
     })
     .await?;
-    let user = manager(&state)?
-        .get_user(&created)
-        .ok_or_else(|| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "AUTH_ERROR", "created user missing"))?;
-    audit_account(
-        &state,
-        "account.user_created",
-        &account.username,
-        &user.username,
-        json!({"role": user.role}),
-    );
-    Ok(Json(user_payload(&user)))
+    Ok(Json(payload))
 }
 
 pub async fn set_password(
@@ -661,18 +700,24 @@ pub async fn set_role(
         require_current_admin(manager, &account)?;
         if let Some(user) = manager.get_user(&username) {
             state.diag.forget_owner(&user.user_id);
+            let new_role = validate_role(&body.role).map_err(|e| map_auth_error(&e))?;
+            // Fail closed: a last-admin refusal still writes no account event.
+            // The role changes only after the record is queued.
+            if !authz::is_role(&new_role, authz::Role::Admin) && manager.is_last_enabled_admin_account(&username) {
+                return Err(map_auth_error(&HarnessError::auth_last_admin()));
+            }
+            audit_account_required(
+                &state,
+                "account.role_set",
+                &account.username,
+                &user.username,
+                json!({"role": new_role}),
+            )?;
         }
         manager
             .set_role(&username, &body.role)
             .map_err(|e| map_auth_error(&e))?;
         if let Some(user) = manager.get_user(&username) {
-            audit_account(
-                &state,
-                "account.role_set",
-                &account.username,
-                &user.username,
-                json!({"role": user.role}),
-            );
             // A machine key reads its owner's facts and the gateway checks only
             // the key row, so a role that holds no memory read keeps no key.
             // After the audit line, as disable does: a failed retirement is
@@ -715,16 +760,24 @@ pub async fn delete_user(
         if let Some(owner) = &owner {
             state.diag.forget_owner(owner);
         }
-        manager.delete_user(&username).map_err(|e| map_auth_error(&e))?;
+        // Fail closed: a missing user or the last admin is refused with no
+        // audit line. The delete runs only after the record is queued.
+        if doomed.is_none() {
+            return Err(map_auth_error(&HarnessError::auth_user_not_found(&username)));
+        }
+        if manager.is_last_enabled_admin_account(&username) {
+            return Err(map_auth_error(&HarnessError::auth_last_admin()));
+        }
         if let Some(user) = &doomed {
-            audit_account(
+            audit_account_required(
                 &state,
                 "account.user_deleted",
                 &account.username,
                 &user.username,
                 json!({}),
-            );
+            )?;
         }
+        manager.delete_user(&username).map_err(|e| map_auth_error(&e))?;
         // Cleanup is reported, never swallowed: a blob or uploaded note whose
         // unlink failed keeps its manifest row (still charged to the quota) and
         // is retried by the dead-owner sweeps at the next deletion or server start.

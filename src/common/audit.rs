@@ -1,18 +1,23 @@
 //! Append-only audit JSONL with recursive PII/secret redaction.
 //!
-//! Port of `utils/logger.py::audit_log` + `redact_sensitive`. The audit sink
-//! never raises: a disk-full or serialization failure degrades to a tracing
-//! warning so an already-computed response is never turned into a 500.
+//! Port of `utils/logger.py::audit_log` + `redact_sensitive`. A record that
+//! cannot be queued or written is never only a tracing warning. [`Audit::log`]
+//! counts it in a gap file beside the audit log (`<path>.gaps`) that
+//! [`Audit::gap_status`] reports and the next process loads. [`Audit::log_required`]
+//! returns [`AuditRefused`] so a security commit can stop before it lands.
+//! Neither path waits on a full queue.
 //!
 //! The server moves appends to one writer thread (`with_writer_thread`, sized by
 //! `logging.audit_queue_lines`), so a request never waits on the filesystem or
 //! on the agentic child's lease. Other callers, including the short-lived
 //! agentic child, append inline; the server flushes before it starts a child,
-//! so the child's lines follow the server lines that authorized it.
+//! so the child's lines follow the server lines that authorized it. A refused
+//! inline append is counted the same way.
 
 use std::borrow::Cow;
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -423,6 +428,7 @@ pub struct Audit {
     redactors: Redactors,
     include_query_hash: bool,
     sink: Arc<Sink>,
+    ledger: Arc<GapLedger>,
     queue_lines: usize,
     flush_wait: Duration,
     writer: Option<Writer>,
@@ -458,20 +464,152 @@ enum Job {
     Panic,
 }
 
-fn write_jobs(sink: Arc<Sink>, jobs: Receiver<Job>) {
+fn gap_path(audit: &Path) -> PathBuf {
+    let mut name = audit.as_os_str().to_os_string();
+    name.push(".gaps");
+    PathBuf::from(name)
+}
+
+fn gap_line(since: u64, total: u64) -> String {
+    let stamp = serde_json::to_string(&super::iso_now()).unwrap_or_else(|_| "\"\"".to_string());
+    format!("{{\"event\":\"audit_gap\",\"dropped\":{since},\"total\":{total},\"timestamp\":{stamp}}}")
+}
+
+/// Durable count of records that were not queued or not written.
+/// The writer thread and `Audit`'s drop both persist it; `log` only bumps
+/// the atomic, so a full queue does not wait on this file.
+#[derive(Debug)]
+struct GapLedger {
+    audit_path: PathBuf,
+    gap_path: PathBuf,
+    dropped: AtomicU64,
+    durable: AtomicU64,
+    /// How many drops an `audit_gap` line has already described.
+    reported: AtomicU64,
+    persist_error: AtomicBool,
+    unreadable: AtomicBool,
+    persist_lock: Mutex<()>,
+}
+
+impl GapLedger {
+    fn open(audit_path: &Path) -> Self {
+        let gap_path = gap_path(audit_path);
+        let (count, unreadable) = match std::fs::read_to_string(&gap_path) {
+            Err(error) if error.kind() == ErrorKind::NotFound => (0, false),
+            Err(_) => (0, true),
+            Ok(text) => match serde_json::from_str::<Value>(text.trim()) {
+                Ok(value) => match value.get("dropped").and_then(Value::as_u64) {
+                    Some(count) => (count, false),
+                    None => (0, true),
+                },
+                Err(_) => (0, true),
+            },
+        };
+        Self {
+            audit_path: audit_path.to_path_buf(),
+            gap_path,
+            dropped: AtomicU64::new(count),
+            durable: AtomicU64::new(if unreadable { 0 } else { count }),
+            reported: AtomicU64::new(count),
+            persist_error: AtomicBool::new(false),
+            unreadable: AtomicBool::new(unreadable),
+            persist_lock: Mutex::new(()),
+        }
+    }
+
+    fn note_drop(&self) -> u64 {
+        let count = self.dropped.fetch_add(1, Ordering::Relaxed) + 1;
+        tracing::warn!(dropped = count, "audit record dropped; drop counted");
+        count
+    }
+
+    fn persist(&self) {
+        let _guard = self.persist_lock.lock().unwrap_or_else(|poison| poison.into_inner());
+        let count = self.dropped.load(Ordering::Relaxed);
+        if count == 0 && self.unreadable.load(Ordering::Relaxed) {
+            return;
+        }
+        if count == 0 && !self.gap_path.exists() {
+            return;
+        }
+        if let Some(parent) = self.gap_path.parent() {
+            if std::fs::create_dir_all(parent).is_err() {
+                self.persist_error.store(true, Ordering::Relaxed);
+                return;
+            }
+        }
+        for _ in 0..8 {
+            let count = self.dropped.load(Ordering::Relaxed);
+            let body = format!("{{\"dropped\":{count}}}\n");
+            match super::atomic::write_atomic(&self.gap_path, body.as_bytes(), Some(0o600)) {
+                Ok(()) => {
+                    self.durable.store(count, Ordering::Relaxed);
+                    self.unreadable.store(false, Ordering::Relaxed);
+                    if self.dropped.load(Ordering::Relaxed) == count {
+                        self.persist_error.store(false, Ordering::Relaxed);
+                        return;
+                    }
+                }
+                Err(_) => {
+                    self.persist_error.store(true, Ordering::Relaxed);
+                    return;
+                }
+            }
+        }
+        self.persist_error.store(true, Ordering::Relaxed);
+    }
+
+    /// One audit line for the drops not yet described, then the counter file.
+    /// A failed gap line is not itself counted: the counter already names the hole.
+    fn seal(&self, sink: &Sink) {
+        let dropped = self.dropped.load(Ordering::Relaxed);
+        let reported = self.reported.load(Ordering::Relaxed);
+        if dropped > reported {
+            let line = gap_line(dropped - reported, dropped);
+            let deadline = Instant::now() + sink.retention.lease_wait;
+            if sink.append(&self.audit_path, &line, deadline).is_ok() {
+                self.reported.fetch_max(dropped, Ordering::Relaxed);
+            }
+        }
+        if self.dropped.load(Ordering::Relaxed) != self.durable.load(Ordering::Relaxed)
+            || self.persist_error.load(Ordering::Relaxed)
+        {
+            self.persist();
+        }
+    }
+
+    fn status(&self) -> Value {
+        serde_json::json!({
+            "dropped": self.dropped.load(Ordering::Relaxed),
+            "durable": self.durable.load(Ordering::Relaxed),
+            "persist_failed": self.persist_error.load(Ordering::Relaxed),
+            "record_unreadable": self.unreadable.load(Ordering::Relaxed),
+        })
+    }
+}
+
+fn write_jobs(sink: Arc<Sink>, ledger: Arc<GapLedger>, jobs: Receiver<Job>) {
     for job in jobs {
         match job {
-            Job::Line { path, line, deadline } => sink.append_logged(&path, &line, deadline),
+            Job::Line { path, line, deadline } => {
+                if sink.append(&path, &line, deadline).is_err() {
+                    ledger.note_drop();
+                }
+            }
             Job::Flush(done) => {
+                ledger.seal(&sink);
                 let _ = done.send(());
             }
             Job::FlushAsync(done) => {
+                ledger.seal(&sink);
                 let _ = done.send(());
             }
             #[cfg(test)]
             Job::Panic => panic!("audit writer test panic"),
         }
+        ledger.seal(&sink);
     }
+    ledger.seal(&sink);
 }
 
 /// A required audit record was not accepted. The caller must not commit the
@@ -480,8 +618,8 @@ fn write_jobs(sink: Arc<Sink>, jobs: Receiver<Job>) {
 pub struct AuditRefused;
 
 /// `logging.audit_queue_lines`: lines waiting for the writer thread; 0 keeps
-/// appends inline. A full queue drops the new line with a warning, the same
-/// outcome as a lease that stays busy past its wait.
+/// appends inline. A full queue refuses the new line without waiting, counts
+/// it, and leaves the action to the caller (`log` continues, `log_required` does not).
 fn queue_lines(cfg: &AppConfig) -> usize {
     cfg.limit("logging.audit_queue_lines") as usize
 }
@@ -489,6 +627,7 @@ fn queue_lines(cfg: &AppConfig) -> usize {
 impl Audit {
     pub fn new(path: PathBuf, cfg: &AppConfig) -> Self {
         let include_query_hash = cfg.bool_opt("logging.audit_fields.include_query_hash").unwrap_or(true);
+        let ledger = Arc::new(GapLedger::open(&path));
         Self {
             path,
             redactors: Redactors::from_config(cfg),
@@ -497,6 +636,7 @@ impl Audit {
                 retention: super::bounded_log::retention(cfg),
                 lock: Mutex::new(()),
             }),
+            ledger,
             queue_lines: queue_lines(cfg),
             flush_wait: FLUSH_WAIT,
             writer: None,
@@ -527,9 +667,10 @@ impl Audit {
     fn with_queue(mut self, lines: usize) -> Self {
         let (queue, jobs) = mpsc::sync_channel(lines);
         let sink = self.sink.clone();
+        let ledger = Arc::clone(&self.ledger);
         match std::thread::Builder::new()
             .name("audit-writer".into())
-            .spawn(move || write_jobs(sink, jobs))
+            .spawn(move || write_jobs(sink, ledger, jobs))
         {
             Ok(thread) => {
                 self.writer = Some(Writer {
@@ -625,29 +766,89 @@ impl Audit {
         self.redactors.redact(text).into_owned()
     }
 
-    /// Append one redacted, timestamped record. Never fails.
-    pub fn log(&self, event: Value) {
+    /// Append one redacted, timestamped record.
+    ///
+    /// `true` when the record was accepted (queued, or written inline).
+    /// `false` when it was not. A full queue, a dead writer, or a failed
+    /// inline append is counted in [`Audit::gap_status`]; a non-object event
+    /// is refused and not counted, because there was no record. The caller
+    /// still proceeds. Security commits use [`Audit::log_required`].
+    ///
+    /// Counted, because failing the caller would brick a path that has already
+    /// happened or must stay up: `portal.request` (every request), chat and
+    /// web telemetry, browser results (the child already ran), config reload
+    /// (a tighter limit must still apply), job cancel, notifications, boot
+    /// sweeps, and the agentic child's inline lines (the write gates already
+    /// ran; this process has no HTTP request to fail). Password changes stay
+    /// counted too: a wrong current password must not be stored as a success,
+    /// and the route does not hold the previous hash to undo one.
+    /// Web policy stays counted: a refused change must not add a policy line,
+    /// and this handler has no one-step rollback of the policy file.
+    pub fn log(&self, event: Value) -> bool {
+        self.enqueue(event).is_ok()
+    }
+
+    /// [`Audit::log`] for a commit that must not land without its record.
+    /// `Err` means the record was not accepted. The drop is still counted.
+    ///
+    /// Fail closed at sign-in (the new session is revoked), account create
+    /// (the new account is deleted), role, disable and delete (the store
+    /// change runs only after this returns `Ok`, and a last-admin refusal
+    /// returns before it), managed key writes, legacy session adoption
+    /// (adoption is released again), and machine-key mint or revoke.
+    pub fn log_required(&self, event: Value) -> std::result::Result<(), AuditRefused> {
+        self.enqueue(event)
+    }
+
+    /// Records dropped since the gap file was created, including ones loaded
+    /// at startup.
+    pub fn dropped(&self) -> u64 {
+        self.ledger.dropped.load(Ordering::Relaxed)
+    }
+
+    /// Operator report embedded in `/api/status` and `/api/diag` as `audit_gap`.
+    pub fn gap_status(&self) -> Value {
+        self.ledger.status()
+    }
+
+    fn enqueue(&self, event: Value) -> std::result::Result<(), AuditRefused> {
         let Some(line) = self.line(event) else {
-            return;
+            return Err(AuditRefused);
         };
         // Deadline is stamped at submission, before any in-process wait, so
         // callers that pile up behind a busy sink share one bound.
         let deadline = Instant::now() + self.sink.retention.lease_wait;
         let Some(queue) = self.queue() else {
-            return self.sink.append_logged(&self.path, &line, deadline);
+            return self.write_inline(&self.path, &line, deadline);
         };
         match queue.try_send(Job::Line {
             path: self.path.clone(),
             line,
             deadline,
         }) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) => tracing::warn!("audit queue full; record dropped"),
-            // The writer thread is gone (it never panics on I/O): append inline.
-            Err(TrySendError::Disconnected(Job::Line { path, line, deadline })) => {
-                self.sink.append_logged(&path, &line, deadline)
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                self.ledger.note_drop();
+                Err(AuditRefused)
             }
-            Err(TrySendError::Disconnected(_)) => {}
+            // The writer thread is gone: append inline, and count it if that fails.
+            Err(TrySendError::Disconnected(Job::Line { path, line, deadline })) => {
+                self.write_inline(&path, &line, deadline)
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.ledger.note_drop();
+                Err(AuditRefused)
+            }
+        }
+    }
+
+    fn write_inline(&self, path: &Path, line: &str, deadline: Instant) -> std::result::Result<(), AuditRefused> {
+        match self.sink.append(path, line, deadline) {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                self.ledger.note_drop();
+                Err(AuditRefused)
+            }
         }
     }
 
@@ -661,7 +862,13 @@ impl Audit {
         };
         self.flush();
         let deadline = Instant::now() + self.sink.retention.lease_wait;
-        self.sink.append(&self.path, &line, deadline).is_ok()
+        match self.sink.append(&self.path, &line, deadline) {
+            Ok(()) => true,
+            Err(_) => {
+                self.ledger.note_drop();
+                false
+            }
+        }
     }
 
     /// The redacted, timestamped JSON line for one event; `None` when the
@@ -701,30 +908,6 @@ impl Audit {
         }
     }
 
-    /// Security commits use this. `Err` means the record was not accepted, so
-    /// the action must not proceed. The stub below keeps today's silent drop
-    /// so the regression tests fail until the queue counts and refuses.
-    pub fn log_required(&self, event: Value) -> std::result::Result<(), AuditRefused> {
-        self.log(event);
-        Ok(())
-    }
-
-    /// How many records this process has dropped. Loaded from the gap file
-    /// after a restart. The stub stays at zero until that file exists.
-    pub fn dropped(&self) -> u64 {
-        0
-    }
-
-    /// The object `/api/status` and `/api/diag` embed as `audit_gap`.
-    pub fn gap_status(&self) -> Value {
-        serde_json::json!({
-            "dropped": 0,
-            "durable": 0,
-            "persist_failed": false,
-            "record_unreadable": false,
-        })
-    }
-
     #[cfg(test)]
     fn close_writer(&mut self) {
         let Some(writer) = self.writer.as_mut() else {
@@ -757,11 +940,41 @@ impl Audit {
     }
 }
 
+/// Save the gap counter, but do not let a hung filesystem hold shutdown.
+/// The save runs on its own thread. After `wait` it is left running, the same
+/// way a stalled writer is abandoned: `write_atomic` has no deadline of its own.
+fn persist_bounded(ledger: &Arc<GapLedger>, wait: Duration) {
+    let ledger = Arc::clone(ledger);
+    let thread = match std::thread::Builder::new()
+        .name("audit-gap".into())
+        .spawn(move || ledger.persist())
+    {
+        Ok(thread) => thread,
+        Err(error) => {
+            tracing::warn!("audit gap counter could not be saved ({error})");
+            return;
+        }
+    };
+    let deadline = Instant::now() + wait;
+    while !thread.is_finished() {
+        if Instant::now() >= deadline {
+            tracing::warn!("audit gap counter still writing at shutdown; the saved count may be short");
+            return;
+        }
+        std::thread::sleep(FLUSH_RETRY);
+    }
+    let _ = thread.join();
+}
+
 impl Drop for Audit {
     /// Close the queue and let the writer drain it. Each queued line's wait
     /// ends at its own submission deadline, but a stalled filesystem call has
     /// none: after `FLUSH_WAIT` the writer is left behind with what it holds.
+    /// The gap counter is saved under that same bound, before and after the
+    /// writer, so a stuck writer cannot take the count and a stuck counter
+    /// file cannot hold the process.
     fn drop(&mut self) {
+        persist_bounded(&self.ledger, self.flush_wait);
         let Some(thread) = self.writer.take().and_then(|mut writer| {
             drop(writer.queue.take());
             writer.thread.take()
@@ -777,16 +990,11 @@ impl Drop for Audit {
             std::thread::sleep(FLUSH_RETRY);
         }
         let _ = thread.join();
+        persist_bounded(&self.ledger, self.flush_wait);
     }
 }
 
 impl Sink {
-    fn append_logged(&self, path: &Path, line: &str, deadline: Instant) {
-        if self.append(path, line, deadline).is_err() {
-            tracing::warn!("audit sink unavailable, busy, or record exceeds retention bound");
-        }
-    }
-
     /// Retry a busy lease *outside* `self.lock`. Sleeping under that mutex
     /// serialized every `/api/*` `portal.request` behind the waiter, so the
     /// nth caller both stalled and then dropped the line when the shared
@@ -1142,10 +1350,15 @@ mod tests {
         drop(held);
         audit.flush();
         // At most one line in the writer's hands and one queued; the rest were
-        // dropped, and the first submitted line always lands.
+        // dropped, and the first submitted line always lands. The gap line is
+        // the record of that hole.
         let lines = written(audit.path());
-        assert!((1..=2).contains(&lines.len()), "{lines:?}");
-        assert_eq!(lines[0]["n"], 0);
+        let busy: Vec<_> = lines.iter().filter(|line| line["event"] == "busy").collect();
+        assert!((1..=2).contains(&busy.len()), "{lines:?}");
+        assert_eq!(busy[0]["n"], 0);
+        assert!(lines.iter().any(|line| line["event"] == "audit_gap"), "{lines:?}");
+        assert!(audit.dropped() + busy.len() as u64 <= 50);
+        assert!(audit.dropped() >= 1, "{lines:?}");
     }
 
     #[test]
@@ -1272,10 +1485,7 @@ mod tests {
         let started = Instant::now();
         let mut refused = 0;
         for n in 0..40 {
-            if audit
-                .log_required(json!({"event":"queued","n":n}))
-                .is_err()
-            {
+            if audit.log_required(json!({"event":"queued","n":n})).is_err() {
                 refused += 1;
             }
         }
@@ -1284,10 +1494,7 @@ mod tests {
             "recording waited on the queue or the disk"
         );
         assert!(refused >= 1, "a full queue accepted every required record");
-        assert!(
-            audit.dropped() >= refused as u64,
-            "a refusal was not counted"
-        );
+        assert!(audit.dropped() >= refused as u64, "a refusal was not counted");
         assert_eq!(audit.gap_status()["dropped"], json!(audit.dropped()));
         drop(held);
     }
@@ -1363,5 +1570,31 @@ mod tests {
         assert_eq!(report["durable"], json!(dropped));
         assert_eq!(report["persist_failed"], json!(false));
         assert_eq!(report["record_unreadable"], json!(false));
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn a_gap_file_that_cannot_be_replaced_stays_in_the_report() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("logs")).unwrap();
+        // A directory where the counter file belongs: the save cannot replace it.
+        std::fs::create_dir(dir.path().join("logs/audit.jsonl.gaps")).unwrap();
+        let mut first = audit(dir.path(), "logging:\n  audit_lease_wait_ms: 2000\n").with_queue(1);
+        first.flush_wait = Duration::from_millis(200);
+        let held =
+            super::super::file_lease::FileLease::acquire(&dir.path().join("logs/audit.jsonl.lock"), true).unwrap();
+        for n in 0..20 {
+            let _ = first.log(json!({"event":"disk","n":n}));
+        }
+        drop(held);
+        first.flush();
+        let report = first.gap_status();
+        assert!(report["dropped"].as_u64().unwrap() >= 1, "{report}");
+        assert_eq!(report["persist_failed"], json!(true), "{report}");
+        drop(first);
+        let again = audit(dir.path(), "logging: {}\n");
+        let reloaded = again.gap_status();
+        assert_eq!(reloaded["record_unreadable"], json!(true), "{reloaded}");
+        assert_eq!(reloaded["dropped"], json!(0));
     }
 }
