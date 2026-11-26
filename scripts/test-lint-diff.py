@@ -208,6 +208,15 @@ assert_eq!(status, 200, "{first}"); // lint-diff: allow CG011 until 2001-01-01 a
         unapproved = 'assert_eq!(status, 200, "{first}"); // lint-diff: allow CG011 until 2099-01-01'
         self.assertEqual(module.message_leaks([unapproved], 0, bound, today), ["first"])
 
+    def test_reference_needle_names_shared_basenames_by_folder(self):
+        tracked = ["a/SKILL.md", "b/SKILL.md", "docs/GUIDE.md"]
+        self.assertEqual(module.reference_needle("a/SKILL.md", tracked), "a/")
+        self.assertEqual(module.reference_needle("docs/x/SKILL.md", tracked), "x/")
+        self.assertEqual(module.reference_needle("docs/OLD.md", tracked), "OLD.md")
+        self.assertEqual(module.reference_needle("docs/x/README.md", tracked), "docs/x/")
+        self.assertEqual(module.reference_needle("README.md", tracked), "")
+        self.assertEqual(module.reference_needle("SKILL.md", tracked), "")
+
     def test_owner_exempt_paths_are_read_from_the_guard(self):
         guard = 'const DOCS_BUDGET_OWNER_EXEMPT: &[(&str, &str)] = &[\n    ("docs/a.md", "why"),\n    // ("docs/b.md", "old"),\n];\n'
         self.assertEqual(module.owner_exempt_paths(guard), {"docs/a.md"})
@@ -473,6 +482,25 @@ class RepositoryTests(unittest.TestCase):
         self.write("docs/README.md", "Nothing old.\n")
         code, out = self.lint()
         self.assertNotIn("CG008", out)
+
+    def test_a_deleted_skill_is_named_by_its_folder_not_its_shared_basename(self):
+        # The #1164 shape: deleting one SKILL.md flagged every file naming any skill.
+        self.write(".claude/skills/retired/SKILL.md", "retired\n")
+        self.write(".claude/skills/other/SKILL.md", "other\n")
+        self.write("CLAUDE.md", "Each `.claude/skills/<slug>/SKILL.md` runs as a skill.\n")
+        self.write(".claude/skills/README.md", "- [`retired/`](retired/SKILL.md): gone.\n")
+        self.write(".claude/skills/cg-retired/SKILL.md", "Lives in `.claude/skills/cg-retired/`.\n")
+        self.commit("add skills")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.git("rm", "-q", ".claude/skills/retired/SKILL.md")
+        code, out = self.lint("--staged")
+        self.assertEqual(code, 0, out)
+        self.assertIn(".claude/skills/README.md: warning CG008: still names `retired/`", out)
+        self.assertNotIn("CLAUDE.md: warning CG008", out)
+        self.assertNotIn("other/SKILL.md: warning CG008", out)
+        self.assertNotIn("cg-retired/SKILL.md: warning CG008", out)
+        self.assertNotIn("`SKILL.md`", out)
+        self.assertEqual(out.count("warning CG008"), 1, out)
 
     def test_a_deleted_self_manual_input_is_an_error(self):
         self.write("docs/IN.md", "in\n")

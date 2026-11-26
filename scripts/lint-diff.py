@@ -390,9 +390,28 @@ def owner_exempt_paths(text):
     return set(EXEMPT_ENTRY.findall(body))
 
 
-def check_deleted_docs(report, deleted, guard_text, builder_text, references):
-    """`references(needle)` lists tracked files whose content contains `needle`."""
+def reference_needle(path, tracked):
+    """The text a reference to deleted `path` still carries.
+
+    A folder index (`README.md`) is named by its folder path. A file whose
+    basename another tracked file shares (`SKILL.md`) is named by its own folder
+    (`<slug>/`): its bare basename would match every mention of a namesake.
+    Any other doc is named by its file name, which relative links keep. An empty
+    needle (a root index) names nothing.
+    """
+    base, folder = os.path.basename(path), os.path.dirname(path)
+    if base.lower() == "readme.md":
+        return folder + "/" if folder else ""
+    if any(os.path.basename(other) == base for other in tracked if other != path):
+        return os.path.basename(folder) + "/" if folder else ""
+    return base
+
+
+def check_deleted_docs(report, deleted, guard_text, builder_text, references, tracked=()):
+    """`references(needle)` lists tracked files whose content contains `needle`;
+    `tracked` lists the paths that remain, to tell a shared basename."""
     rows = budget_rows(guard_text)
+    remaining = [other for other in tracked if other not in deleted]
     exempt = owner_exempt_paths(guard_text)
     inputs = self_manual_inputs(builder_text)
     for path in sorted(deleted):
@@ -411,10 +430,8 @@ def check_deleted_docs(report, deleted, guard_text, builder_text, references):
             )
         if path in inputs:
             report.add("error", "CG008", BUILDER, 0, f"`{path}` was deleted; remove it from INPUTS and regenerate {MANUAL}.")
-        # A folder index is named by its folder; any other doc by its file name,
-        # which relative links keep.
-        needle = os.path.dirname(path) + "/" if os.path.basename(path).lower() == "readme.md" else os.path.basename(path)
-        if needle in ("/", ""):
+        needle = reference_needle(path, remaining)
+        if not needle:
             continue
         for holder in references(needle):
             if holder not in (GUARD, BUILDER, MANUAL) and holder not in deleted:
@@ -733,10 +750,14 @@ def main():
         grep_scope = ["--cached"] if args.staged else []
 
         def references(needle):
-            found = git("grep", "-l", "-F", *grep_scope, "-e", needle, check=False)
+            # A name character before the needle makes it part of a longer name
+            # (`cg-<slug>/` is not `<slug>/`, `BOLD.md` is not `OLD.md`).
+            pattern = "(^|[^A-Za-z0-9_-])" + re.sub(r"([].[()*+?{}|^$\\])", r"\\\1", needle)
+            found = git("grep", "-l", "-E", *grep_scope, "-e", pattern, check=False)
             return [line for line in found.splitlines() if line]
 
-        check_deleted_docs(report, deleted, guard_text, read_text(content, BUILDER), references)
+        tracked = git("ls-files", "--cached", check=False).splitlines()
+        check_deleted_docs(report, deleted, guard_text, read_text(content, BUILDER), references, tracked)
     print(f"lint-diff: {report.errors} error(s), {report.warnings} warning(s) against {base[:12]}")
     return 1 if report.errors else 0
 
