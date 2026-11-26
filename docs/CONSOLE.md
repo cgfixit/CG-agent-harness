@@ -47,7 +47,7 @@ Restart does not resume loops. To code from a goal use
 
 **Search my transcripts** uses `POST /api/sessions/search` with a
 query up to 200 characters. It searches bounded owned sessions locally
-for literal case-insensitive phrases. The request-local index bounds
+for literal case-insensitive phrases. The per-owner index bounds
 input at 200 sessions and 2,000,000 bytes. It returns at most 16 hits and
 two per session. A session or account switch discards stale results. **Export .md** uses
 `GET /api/sessions/{session_id}/export` and writes private Markdown under

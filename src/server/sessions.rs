@@ -640,6 +640,47 @@ impl OwnedSessionStore<'_> {
             .filter(|row| row["owner"].as_str() == Some(self.owner.as_str()))
             .collect()
     }
+
+    pub(crate) fn storage_dir(&self) -> &Path {
+        &self.store.dir
+    }
+
+    pub(crate) fn owner_id(&self) -> &str {
+        &self.owner
+    }
+
+    /// Newest-first `(id, mtime, len)` for this owner, in `list` order.
+    /// The stamp is the one `list` just recorded for that file, so a session
+    /// id read from JSON is never joined onto a path. Transcript search
+    /// treats a changed stamp as an edited session.
+    pub(crate) fn search_stamps(&self) -> Vec<(String, std::time::SystemTime, u64)> {
+        let rows = self.list();
+        if rows.is_empty() {
+            return Vec::new();
+        }
+        let cache = self
+            .store
+            .summaries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut by_id = HashMap::<&str, (std::time::SystemTime, u64)>::with_capacity(cache.len());
+        for (mtime, len, summary) in cache.values() {
+            if let Some(id) = summary["session_id"].as_str() {
+                by_id.insert(id, (*mtime, *len));
+            }
+        }
+        let mut out = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let Some(id) = row["session_id"].as_str().filter(|id| session_id_ok(id)) else {
+                continue;
+            };
+            let Some((mtime, len)) = by_id.get(id) else {
+                continue;
+            };
+            out.push((id.to_string(), *mtime, *len));
+        }
+        out
+    }
     fn write(&self, session: &Session) -> Result<()> {
         if session.schema_version != 1 || session.owner.as_deref() != Some(self.owner.as_str()) {
             return Err(session_error("session ownership changed", &session.session_id));

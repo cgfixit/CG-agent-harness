@@ -98,7 +98,7 @@ The initial estimator is UTF-8 `bytes.div_ceil(4)`, not a tokenizer. Successful 
 
 ## invariant: Session export and transcript search stay on the machine
 
-`GET /api/sessions` returns the acting owner's metadata without message bodies or goals. Normal storage queries require an `OwnedSessionStore`; search, export, chat, prompt preview, styles, skills, selected facts and goal bindings use it. `GET /api/sessions/{session_id}/export` writes `{home}/exports/{id}.md` at `0600` and returns the same bytes. Search uses a request-local Tantivy RAM index of owned sessions. It never writes to the web cache or sends transcripts off-machine.
+`GET /api/sessions` returns the acting owner's metadata without message bodies or goals. Normal storage queries require an `OwnedSessionStore`; search, export, chat, prompt preview, styles, skills, selected facts and goal bindings use it. `GET /api/sessions/{session_id}/export` writes `{home}/exports/{id}.md` at `0600` and returns the same bytes. Search reconciles the owner's RAM Tantivy index before each query. It never writes to the web cache or sends transcripts off-machine.
 
 ## invariant: Scheduled agentic runs cannot skip reviewed-goal or write gates
 
