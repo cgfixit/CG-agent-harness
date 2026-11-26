@@ -136,14 +136,16 @@ new direct dependency) also drifts the telemetry oracle (`telemetry-contract.yml
 the operator to run `/cgagentharness-otel-hardening` (operator-only).
 
 Never pipe a pass/fail command into grep or suppress its exit status. A missing
-`cargo-deny` is a missing required check, not a pass. Never change global rustup
+`cargo-deny` is a missing required check, not a pass: install a release the
+pinned Rust builds (`cargo install cargo-deny --locked` names it when the
+newest needs a later rustc). Never change global rustup
 overrides or git identity to make verification succeed.
 
 ## 5. Report
 
 List: base ref, exact diffs applied per file, commands with exit codes, and each
-`docs/DEPENDENCIES.md` pin deliberately left alone and why. Update its dated
-"Last synchronization" section. A stale version number there: fix a one-line
+`docs/DEPENDENCIES.md` pin deliberately left alone and why. That guide keeps no
+dated sync log: the evidence goes in the PR body. A stale version number there: fix a one-line
 change now, or ask the operator for `/doc-sync` (manual-only,
 `disable-model-invocation: true`; never self-load it).
 
