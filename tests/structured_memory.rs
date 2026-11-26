@@ -1763,6 +1763,49 @@ fn auto_consolidation() -> ServerOptions {
         .with("structured_memory.auto_consolidation_idle_ms", "40")
 }
 
+/// A manual run whose summary is the word `facts` (it serializes as `"facts"`)
+/// still runs: the payload's no-recalled-facts check reads its keys, not its
+/// text. A manual run that fails is audited, as an automatic one is.
+#[tokio::test]
+async fn a_summary_cannot_stop_a_manual_run_and_a_failed_one_is_audited() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), consolidation()).await;
+    let episode = stage_store_episode(&s, "local");
+    store_of(&s)
+        .set_episode_summary("local", &episode, "facts", "operator fixture summary")
+        .unwrap();
+    model.set_reply(consolidator_reply(&episode, "Prefer metric units"));
+    let (status, run) = s
+        .post_json(
+            "/api/structured-memory/consolidation",
+            json!({"episode_ids": [episode]}),
+        )
+        .await;
+    assert_eq!(status, 200, "{run}");
+    assert_eq!(s.get_json("/api/structured-memory/proposals").await.1["count"], 1);
+
+    let failing = stage_store_episode(&s, "local");
+    model.set_reply(json!({"__status": 500}));
+    let (status, failed) = s
+        .post_json(
+            "/api/structured-memory/consolidation",
+            json!({"episode_ids": [failing]}),
+        )
+        .await;
+    assert_ne!(status, 200, "{failed}");
+    let audited: Vec<serde_json::Value> = s
+        .audit_log()
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .filter(|line: &serde_json::Value| line["event"] == "structured_memory_consolidation")
+        .collect();
+    assert_eq!(audited.len(), 2, "{audited:?}");
+    assert!(audited[0]["error_class"].is_null(), "{audited:?}");
+    assert_eq!(audited[1]["owner_id"], "local");
+    assert_eq!(audited[1]["episode_count"], 1);
+    assert!(audited[1]["error_class"].is_string(), "{audited:?}");
+}
+
 fn stage_store_episode(s: &TestServer, owner: &str) -> String {
     use cgagentharness::server::structured_memory::EpisodeDraft;
     let store = s.state.structured_memory.as_ref().unwrap();

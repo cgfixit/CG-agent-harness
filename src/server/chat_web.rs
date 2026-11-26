@@ -518,6 +518,17 @@ fn operator_urls(text: &str) -> impl Iterator<Item = String> + '_ {
     })
 }
 
+/// Canonical URLs of a delivered search listing's rows, as `planned_grants`
+/// reads them. A row `canonical_url` refuses is skipped.
+fn listed_urls(listing: &Value) -> impl Iterator<Item = String> + '_ {
+    listing["results"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| row["url"].as_str())
+        .filter_map(|raw| super::web_policy::canonical_url(raw).ok().map(|url| url.to_string()))
+}
+
 /// #901 step 4: a `web_fetch` URL the model composed (only a subtree or
 /// subdomain rule, or denylist mode, permits it; no search listed it and the
 /// operator did not write it) needs the operator. An interactive
@@ -1393,6 +1404,14 @@ async fn run_inner(
                                 passages.push(passage);
                             }
                         }
+                    }
+                    if name == "web_search" {
+                        // A provider chose these URLs, not the model: they are
+                        // not composed (#901), whatever the grant state. This
+                        // skips only the provenance pause; each read still
+                        // needs the URL policy or a grant. Only the rows the
+                        // model was handed, after sizing.
+                        given.extend(listed_urls(&result));
                     }
                     if name == "web_search" && web.grants_search_results() {
                         // Only the rows the model was handed, after sizing.
