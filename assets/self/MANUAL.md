@@ -11,7 +11,7 @@ This manual is static text bundled with the build and indexed at startup. It is 
 - Web research: Search, permitted reads and crawls, `/web research` with checked quotes, PDF text; paid providers have daily caps. Starts: On; one seeded Google rule.
 - Goal loops: `/goal` and `/loop` outlive the tab; a counted run ends on its best answer. Starts: 200 turns, 200,000 tokens, two failures; local only.
 - Memory: Pinned and uploaded notes, account-private facts. Starts: On; proposals need review.
-- Local chat: Sessions, search, export, DOCX/PDF/text attachments, skills, styles; no Ollama cloud tags. Starts: Ollama on loopback.
+- Local chat: Sessions, search, export, DOCX/PDF/text attachments, skills, styles; no Ollama cloud models (tags or aliases). Starts: Ollama on loopback.
 - Browser tasks: `/browse <site> <task>` drives sandboxed Chrome on named sites only, never types passwords, and sends an approved held non-GET/HEAD request once. Starts: On for administrators.
 - Accounts, diagnostics: Administrator, operator and auditor roles, eight sessions per account; token and run history, **Estimate draft**, redacted `/diag` logs. Starts: On; `/diag` admin or auditor.
 - Cloud chat: Optional Grok or Claude; only the new message leaves, redacted. Starts: Needs a key.
