@@ -395,7 +395,7 @@ def reference_needle(path, tracked):
 
     A folder index (`README.md`) is named by its folder path. A file whose
     basename another tracked file shares (`SKILL.md`) is named by its own folder
-    (`doc-sync/`): its bare basename would match every mention of a namesake.
+    (`<slug>/`): its bare basename would match every mention of a namesake.
     Any other doc is named by its file name, which relative links keep. An empty
     needle (a root index) names nothing.
     """
@@ -750,7 +750,10 @@ def main():
         grep_scope = ["--cached"] if args.staged else []
 
         def references(needle):
-            found = git("grep", "-l", "-F", *grep_scope, "-e", needle, check=False)
+            # A name character before the needle makes it part of a longer name
+            # (`cg-<slug>/` is not `<slug>/`, `BOLD.md` is not `OLD.md`).
+            pattern = "(^|[^A-Za-z0-9_-])" + re.sub(r"([].[()*+?{}|^$\\])", r"\\\1", needle)
+            found = git("grep", "-l", "-E", *grep_scope, "-e", pattern, check=False)
             return [line for line in found.splitlines() if line]
 
         tracked = git("ls-files", "--cached", check=False).splitlines()

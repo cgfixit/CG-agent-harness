@@ -485,18 +485,20 @@ class RepositoryTests(unittest.TestCase):
 
     def test_a_deleted_skill_is_named_by_its_folder_not_its_shared_basename(self):
         # The #1164 shape: deleting one SKILL.md flagged every file naming any skill.
-        self.write(".claude/skills/doc-sync/SKILL.md", "doc sync\n")
+        self.write(".claude/skills/retired/SKILL.md", "retired\n")
         self.write(".claude/skills/other/SKILL.md", "other\n")
         self.write("CLAUDE.md", "Each `.claude/skills/<slug>/SKILL.md` runs as a skill.\n")
-        self.write(".claude/skills/README.md", "- [`doc-sync/`](doc-sync/SKILL.md): sync.\n")
+        self.write(".claude/skills/README.md", "- [`retired/`](retired/SKILL.md): gone.\n")
+        self.write(".claude/skills/cg-retired/SKILL.md", "Lives in `.claude/skills/cg-retired/`.\n")
         self.commit("add skills")
         self.git("update-ref", "refs/remotes/origin/main", "HEAD")
-        self.git("rm", "-q", ".claude/skills/doc-sync/SKILL.md")
+        self.git("rm", "-q", ".claude/skills/retired/SKILL.md")
         code, out = self.lint("--staged")
         self.assertEqual(code, 0, out)
-        self.assertIn(".claude/skills/README.md: warning CG008: still names `doc-sync/`", out)
+        self.assertIn(".claude/skills/README.md: warning CG008: still names `retired/`", out)
         self.assertNotIn("CLAUDE.md: warning CG008", out)
         self.assertNotIn("other/SKILL.md: warning CG008", out)
+        self.assertNotIn("cg-retired/SKILL.md: warning CG008", out)
         self.assertNotIn("`SKILL.md`", out)
         self.assertEqual(out.count("warning CG008"), 1, out)
 
