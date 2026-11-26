@@ -1927,7 +1927,7 @@ async fn a_browser_task_asked_by_an_account_demoted_while_the_model_loads_never_
     let loaded = Arc::new(AtomicBool::new(false));
     let (arrived_tx, release_rx, loaded_ps, loaded_gen) =
         (arrived.clone(), release.clone(), loaded.clone(), loaded.clone());
-    let app = axum::Router::new()
+    let app = common::ollama_router()
         .route(
             "/api/ps",
             axum::routing::get(move || {
