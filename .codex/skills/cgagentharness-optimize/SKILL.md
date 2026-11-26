@@ -13,14 +13,13 @@ delivery. Read the affected invariant and production callers.
 - Agentic pipeline: compare exact-edit, reviewed-tree and lifecycle behavior
   along the same command path.
 - Research: trace `src/server/chat_web/evidence.rs`, `src/common/pdf_text.rs`
-  and `src/llm`. Count reads, worker runs, tokens and retained evidence. For
-  repeated reads, distinguish cache reuse, refresh and digest inference.
-  Check retained passages and citations.
-- Desktop: trace native ownership, sidecar identity and packaging provenance.
-- Workflows and tests: inspect coverage, platform boundaries and the commit
-  each gate checked.
-- Guidance: compare claims with current code and move readers to the owner.
-  Check references and lower trimmed Markdown caps.
+  and `src/llm`. Separate cache hits, refreshes, worker runs and digest
+  inference. Check retained passages and citations.
+- Browser: compare `browser/sidecar.mjs` observation latency at equal field
+  coverage; keep input classification fail closed.
+- Desktop: trace ownership, sidecar identity and packaging provenance.
+- Workflows: check platform coverage and trigger on the candidate SHA.
+- Guidance: route readers to owning code. Check references and Markdown caps.
 
 Record each finding's trigger, location, impact and verification. Measure
 equivalent baseline and candidate workloads at the bottleneck before claiming

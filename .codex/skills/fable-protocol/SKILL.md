@@ -26,11 +26,12 @@ Match each claim to its evidence:
 |---|---|
 | Build or health response | Compilation or liveness |
 | Synthetic provider | Protocol handling |
-| Console Chrome, model-driven `/browse`, WKWebView | The specific surface exercised |
+| Real Chrome/server, scripted model | Console and server flow |
+| Live-model `/browse` or WKWebView | Model or native behavior exercised |
 | Cross-build or Rosetta | The named build or translated execution |
 | Exact-head CI, review and thread state | Each observed check and review status |
 
-Record SHA, artifact identity, commands and outcomes. Label observations,
-inferences and unknowns. Keep credentials and operator data out of the record.
+Record SHA, artifact, commands and outcomes. Label observations, inferences
+and unknowns. Omit credentials and operator data.
 Follow `AGENTS.md` for delivery. When asked to monitor, follow the published head
 through terminal checks and report review and mergeability separately.
