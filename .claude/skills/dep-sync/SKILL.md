@@ -146,7 +146,7 @@ overrides or git identity to make verification succeed.
 List: base ref, exact diffs applied per file, commands with exit codes, and each
 `docs/DEPENDENCIES.md` pin deliberately left alone and why. That guide keeps no
 dated sync log: the evidence goes in the PR body. A stale version number there: fix a one-line
-change now, or ask the operator for `/doc-sync` (manual-only,
+change now, or ask the operator for `/cg-doc-sync` (manual-only,
 `disable-model-invocation: true`; never self-load it).
 
 Skill selection does not authorize push/merge: follow the repo's PR conventions
