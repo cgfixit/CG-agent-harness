@@ -37,8 +37,8 @@ initialized database, bad schema or unsafe file refuses startup. Legacy
 `auth.json` migration keeps a backup.
 The database also keeps sign-in failures for valid nonexistent names (HMAC-keyed,
 capped at 16,384 names), so a restart does not reset their lockout.
-Account checks read the last committed state: a write in flight never
-delays them, and a change is visible only after commit.
+Account checks read the last committed state, so a write in flight never
+delays them.
 `auth.session` sets idle and absolute expiry and the per-account cap.
 A sign-in past `max_per_account` (shipped 8) ends that account's least
 recently used session and logs `account.session_evicted`. Capacity refusals
@@ -75,8 +75,8 @@ unsupported.
 `cgagentharness account --url <origin> login <name>` reads the password
 without echo. The private CLI session binds to the exact origin and
 certificate. `cgagentharness web` calls that running server's guarded routes.
-Pass `--url` for desktop and custom ports. Read
-[account and web routes](API_ROUTES.md) for the request contract.
+Pass `--url` for desktop and custom ports. Request contract:
+[account and web routes](API_ROUTES.md).
 
 ## Web permissions
 
@@ -103,9 +103,9 @@ and prompt reuse. Revocation cannot retract text already delivered.
 
 ## Search, fetch and research
 
-Use `/web search` for provider listings, `/web fetch <URL>` for reads,
-`/web pages` for page search and `/web research` for bounded synthesis.
-Use `--group NAME` to narrow scope and repeat `--url URL` for research
+`/web search` lists provider results, `/web fetch <URL>` reads,
+`/web pages` searches pages and `/web research` synthesizes within bounds.
+`--group NAME` narrows scope; repeat `--url URL` for research
 start pages. [Console syntax](CONSOLE.md#78-slash-command-quick-reference).
 
 ### Chat web tools
@@ -121,14 +121,11 @@ The [router](WEB_DECISION_ROUTER.md) owns passage, digest and budget rules.
 
 ### Google search
 
-`web.search.provider` is restart-only. `auto` follows active Tavily,
-SerpAPI, then public Google. Keys can be changed for the next search.
-Keyed providers receive query, count and their own credential. Public
-Google needs the generated search URL permitted (fresh homes seed
-`https://www.google.com/*`). Challenges or blocks cause cooldown. Keyed
-quota exhaustion pauses until the configured quota cooldown or next
-clock hour. Failed eligible hops can fall back within the same deadline.
-See [provider rules and daily units](WEB_DECISION_ROUTER.md#provider-selection).
+`web.search.provider` is restart-only; keys can be changed for the next
+search. Keyed providers receive query, count and their own credential.
+Public Google needs the generated search URL permitted (fresh homes seed
+`https://www.google.com/*`). Provider order, cooldowns, fallback and daily
+units: [provider rules](WEB_DECISION_ROUTER.md#provider-selection).
 The API defaults to permitted page search, and `engine: "google"` requests
 listings. A group selects page search in console and CLI.
 

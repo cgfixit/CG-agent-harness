@@ -3244,7 +3244,8 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: the 2026-11-22 trim-and-update pass (#772 batch and digest contract) measured 3427; rounded up to the next 10 so the cut stays cut.
     // why: the 2026-11-22 D10 pass (#772 provider-unit ledger) trimmed 167 words and added the ledger contract; measured 3369 with #1072's account-recheck sentence, rounded up to the next 10 so the cut stays cut.
     // why: operator-approved (2026-11-25) +200 after #1133, #1134 and #1135 each added 22 or 23 words to the 1165 on main; any two exceed 1190.
-    ("docs/SECURE_RESEARCH.md", Guide, 1390),
+    // why: the 2026-11-26 trim cut 49 words (1306 to 1257) to bring Guide back under its group cap; the row drops by the same amount, rounded to 10, so the cut stays cut and the approved headroom is unchanged.
+    ("docs/SECURE_RESEARCH.md", Guide, 1340),
     // why: operator-approved (2026-10-14) fold of ANALYTICS.md in here; 2157 words, cap set to 2750 for room to grow.
     // why: the 2026-11-11 trim-and-refresh pass cut 308 words net (now 1747); the cap drops by the same amount, rounded up to the next 10, keeping its earlier headroom.
     ("docs/SPEND_AND_NOTIFICATIONS.md", Guide, 670),
