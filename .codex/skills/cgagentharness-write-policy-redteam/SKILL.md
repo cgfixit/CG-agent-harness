@@ -17,7 +17,7 @@ publication intent.
 | Approval binds digest, mode, tree, index, origin and commit | `tests/git_approval.rs`. Include index locks and refused Git extensions. |
 | Exact edits, whole-proposal preflight and rollback quarantine | `tests/exact_edits.rs`, `src/agentic/workspace.rs` |
 | Jail, symlinks and .git equivalence | `tests/agentic_foundations.rs`, `src/agentic/workspace.rs`. Cover read and landed-path judgment. |
-| Local clone retrieval, protected basenames and cloud refusal | `tests/real_repo_loop.rs`, `src/agentic/repo_retrieval.rs` |
+| Clone retrieval, protected basenames and provider scope | `tests/real_repo_loop.rs`, `src/agentic/repo_retrieval.rs`. Refuse a cloud-tagged local planner before cloning or recording a run. |
 | Fixed argv and refused missing confirm | `tests/shim_and_agent_routes.rs`. Check 422 for hostile argv and child exit 4 for missing publish confirm. |
 | Shipped YAML and Rust fallback protections | `invariant_guard::shipped_defaults_protect_rust_check_configuration`, `cgagentharness-config-guard` |
 
@@ -28,9 +28,8 @@ GROK_API_KEY='' ANTHROPIC_API_KEY='' DEEPAGENT_API_KEY='' \
   cargo test --locked --test real_repo_loop writer_gates_in_order_and_plan_integrity -- --exact
 ```
 
-Confirm the output names the intended test. For a full audit, cover all
-applicable rows. Use an owned temporary `CGAGENTHARNESS_HOME` and unique
-listener for live cases.
+Confirm the named test ran. Use a temporary
+`CGAGENTHARNESS_HOME` and unique listener for live cases.
 
 - **New bypasses**: a forbidden mutation succeeds or its refusal assertion is
   removed. Treat as a regression and preserve the assertion.

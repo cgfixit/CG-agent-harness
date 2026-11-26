@@ -19,12 +19,12 @@ its output and use scoped commands for ordinary changes.
 
 ## Console and model-driven browser sessions
 
-Trace console Chrome through `.github/workflows/ci.yml` and
-`scripts/chat-browser-acceptance.mjs`. For `/browse`, check the child, prepared
-Playwright, installed Chrome and local model. Set an absolute `browser.sidecar`
-for a packaged app. Distinguish launch, policy refusal, an owner decision on
-one held request, and the model result. Use the Browser use guide in `AGENTS.md`
-and `cgagentharness-release` for packaged sidecar identity and WKWebView.
+Use the fixture map in `cgagentharness-verify`. For `/browse`, check child
+launch, Playwright, Chrome and the model separately. Distinguish a refused
+redirect from a blocked request on the page. After reload or a session switch,
+the console can rediscover a waiting job. After server restart, its record
+is gone and the console reports it unavailable. Packaged apps need an
+absolute `browser.sidecar`; see `cgagentharness-release`.
 
 ## Sandbox denial and listener races
 
@@ -41,12 +41,13 @@ bounded attempts and retain captured output. Keep a fixture listener open where
 possible, as in `ModelFixture` and `test_unrelated_listener_is_never_adopted`.
 When changing a shared helper, recheck all callers.
 
-## GitHub pagination and reviews
+## GitHub checks and reviews
+
+`docs impact` runs on the PR head; `docs-impact-repair.yml` handles repairs.
 
 `github.rest.issues.listComments` wraps results in `data`.
 `github.paginate(github.rest.issues.listComments, ...)` returns the array.
-Exercise a page-two marker in the extracted script. Find current consumers in
-`.github/workflows/pr-template-check.yml`.
+Exercise pagination in the extracted `pr-template-check.yml` script.
 
 Compare reviewed SHA and unresolved threads with the advisory
 `.github/workflows/review-gate.yml`. Resolving a thread sends no webhook.

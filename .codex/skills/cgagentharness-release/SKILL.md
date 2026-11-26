@@ -33,10 +33,11 @@ evidence separately. Follow operator authority for Rosetta or TCC changes.
 Match workflow, source SHA, artifact COMMIT, version and checksum.
 `desktop-check.yml` compiles matching PRs. Use authorized `desktop.yml`
 dispatch for an unmerged artifact. A successful main Bundle triggers release
-planning. Check exact-SHA eligibility, supersession, stable-tag rules and the
-publish environment in `release.yml` and `scripts/release-plan.py`.
-Inspect existing runs, tags and releases before dispatch. Preserve assets
-after ambiguous publication. Use explicit authority to publish.
+planning. Check SHA eligibility and stable tags in `release.yml` and
+`scripts/release-plan.py`. After the publish wait, the recheck can supersede a
+release if main's workflows changed. Inspect runs, tags and releases
+before dispatch. Preserve assets after ambiguous publication. Publish only
+with explicit authority.
 
 Report ad-hoc signature and checksum integrity separately from Developer ID,
 notarization and independent publisher identity.
