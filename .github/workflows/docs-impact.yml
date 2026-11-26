@@ -32,8 +32,8 @@ jobs:
       - name: Verify docs automation fixtures
         run: python3 scripts/test-docs-impact.py
       # A queue candidate stacks squash commits on the queue base, so the check
-      # covers every queued change ahead of it. A Docs-Impact trailer counts
-      # here only if the squash commit message keeps it as a trailer.
+      # covers every queued change ahead of it. docs-impact.py reads receipts
+      # as message lines, which the squash message keeps from each PR commit.
       - name: Check owning guides against the candidate's source diff
         env:
           BASE_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.pull_request.base.sha }}

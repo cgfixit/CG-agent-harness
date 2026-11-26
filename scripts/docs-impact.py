@@ -121,7 +121,13 @@ def review_plan(base, head):
         git("diff", "-w", "--no-renames", "--diff-filter=M", "--numstat", "-z", base, head, "--", "docs/").decode()
     )
     # Bind a no-change decision to the exact production diff, including deletions.
-    trailers = git("log", "--format=%(trailers:key=Docs-Impact)", f"{base}..{head}").decode().splitlines()
+    # Whole message lines, not git's trailer block: a merge-queue squash commit
+    # lists every PR commit and ends with GitHub's Co-authored-by paragraph,
+    # where git parses no Docs-Impact trailer.
+    trailers = [
+        line for line in git("log", "--format=%B", f"{base}..{head}").decode().splitlines()
+        if line.startswith("Docs-Impact: ")
+    ]
     pending, fingerprints = {}, {}
     for guide, paths in sorted(affected.items()):
         tree_entry = git("ls-tree", head, "--", guide)

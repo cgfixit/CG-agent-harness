@@ -75,6 +75,21 @@ class DocsImpact(unittest.TestCase):
         self.commit("change a previously reviewed feature")
         self.assertEqual(self.plan()[0], {WEB_GUIDE: [WEB]})
 
+    def test_a_squash_candidate_keeps_the_pr_receipt(self):
+        self.write(WEB, "const ENABLED: bool = true;\n")
+        self.commit("change web")
+        receipt = f"Docs-Impact: {WEB_GUIDE} {self.plan()[1][WEB_GUIDE]} The public behavior is unchanged."
+        self.commit(f"review web\n\n{receipt}")
+        self.commit("final trailer-free commit")
+        self.assertFalse(self.plan()[0])
+        # The merge queue's squash commit, as GitHub writes it (COMMIT_MESSAGES).
+        tree = self.git("rev-parse", "HEAD^{tree}")
+        message = (f"[fix] - Change web (#1)\n\n* change web\n\n* review web\n\n{receipt}\n\n"
+                   "* final trailer-free commit\n\n---------\n\nCo-authored-by: Fixture <fixture@example.com>")
+        squash = self.git("commit-tree", tree, "-p", self.base, "-m", message)
+        self.assertEqual(self.git("log", "-1", "--format=%(trailers:key=Docs-Impact)", squash), "")
+        self.assertFalse(self.plan(squash)[0])
+
     def test_a_whitespace_only_guide_edit_is_unchanged_on_every_git(self):
         # git 2.43 prints no numstat record for a whitespace-only edit under -w;
         # a git that prints one with zero counts must read the same way.
