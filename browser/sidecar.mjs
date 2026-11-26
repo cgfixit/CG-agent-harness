@@ -530,9 +530,34 @@ async function adopt(opened) {
   await previous.close().catch(() => {});
 }
 
+// True while `keepPage` opens its own blank tab, which is not a page's popup.
+let openingOwnTab = false;
+
 function track(opened) {
+  if (openingOwnTab) {
+    openingOwnTab = false;
+    return;
+  }
   const verdict = adopt(opened).finally(() => opening.delete(verdict));
   opening.add(verdict);
+}
+
+// A tab can close itself: one a link opened may call window.close(), as
+// sign-in, print and "you can close this window" pages do. Once adopted it
+// was the session's only tab, so every later action would fail on a closed
+// page. The session goes on from a blank tab: what the page showed is gone,
+// and the next navigate loads whatever the grants and holds allow, as before.
+async function keepPage() {
+  if (!context || !page || !page.isClosed()) return;
+  openingOwnTab = true;
+  try {
+    page = await context.newPage();
+  } finally {
+    openingOwnTab = false;
+  }
+  page.on("download", (download) => {
+    download.cancel();
+  });
 }
 
 function digest(bytes) {
@@ -1089,6 +1114,7 @@ async function loadingAction(run) {
 
 async function handle(message) {
   if (opening.size) await Promise.allSettled([...opening]);
+  await keepPage();
   switch (message.op) {
     case "start":
       return start(message);
@@ -1218,7 +1244,23 @@ async function answer(message) {
     done = true;
     send({ id: message.id, ok: true, result });
   } catch (error) {
-    send({ id: message?.id, ok: false, error: String(error.message || error).slice(0, 300), redirect_origin: error.redirectOrigin });
+    // The action failed after it had already caused these: a request held as
+    // the operator's step ends the task, so it is reported with this reply
+    // and not with whichever observation comes next, if one does. A question
+    // the action raised is answered or timed out first (takeover_wait_ms at
+    // most, which the parent's call timeout allows for), so its request is
+    // listed here as held or approved. One wait, not a loop: a later question
+    // is the next reply's.
+    if (pendingApproval) await pendingApproval;
+    send({
+      id: message?.id,
+      ok: false,
+      error: String(error.message || error).slice(0, 300),
+      redirect_origin: error.redirectOrigin,
+      held: held.splice(0),
+      held_background: heldBackground.splice(0),
+      approved: approved.splice(0),
+    });
   } finally {
     // `acting` still set: the action loaded no new page. Nothing asked: its
     // request has not already been put to the operator.
