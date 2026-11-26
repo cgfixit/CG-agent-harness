@@ -27,16 +27,14 @@ This manual is static text bundled with the build and indexed at startup. It is 
  (`src/agentic`) runs only as a child the shim spawns, never in-process.
  `netconnect diag` alone dials, through the budgeted `Dialer`.
 - Exit codes: `agentic`/`netconnect` `0` ok, `2` failed, `3` env/config, `4`
- refused (through the shim a non-zero child is HTTP 200 `ok=false`; shim
- failures 400/502/504, the disabled-layer banner 409). `serve`, `account`,
- `web`, `tls`, `mcp-key` exit `1`; hidden `desktop`/`mcp-stdio-worker` `3`;
- `pdf-text-worker` `0` text, `2` refused, `3` environment; `browser` and
- `browser-verify` `0` passed, `2` failed, `3` bad arguments or config.
-- State lives in `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`); coding writes stay
- in pipeline clones under `data/agentic/workspaces`. Shipped defaults seed new
- homes only: an existing `config.yaml` is never rewritten.
-- Read a feature's guide and owning `INVARIANTS.md` section first;
- Source index locates code.
+ refused (via the shim a non-zero child is HTTP 200 `ok=false`; shim
+ failures 400/502/504, disabled-layer banner 409). `serve`, `account`,
+ `web`, `tls`, `mcp-key` `1`; hidden `desktop`/`mcp-stdio-worker` `3`;
+ `pdf-text-worker` `0` text/`2` refused/`3` environment; `browser`,
+ `browser-verify` `0` passed/`2` failed/`3` bad args or config.
+- State: `~/.CGagentHarness` (`CGAGENTHARNESS_HOME`); coding writes stay in
+ pipeline clones under `data/agentic/workspaces`. Shipped defaults seed new
+ homes only; an existing `config.yaml` is never rewritten.
 
 ## invariant: I6 — process isolation between the console and the agentic pipeline
 

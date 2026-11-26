@@ -46,4 +46,4 @@ to Claude Code.
 Lint (fmt, clippy), then run the changed code. Never the full suite locally; CI
 runs it with `GROK_API_KEY`, `ANTHROPIC_API_KEY` and `DEEPAGENT_API_KEY` blanked.
 After any `.md` edit, `wc -w` it against its `DOCS_BUDGET` cap (`CLAUDE.md` 340,
-`AGENTS.md` 1250).
+`AGENTS.md` 1140).

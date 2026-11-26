@@ -22,12 +22,13 @@ or PyYAML companion checker is INFERENCE only and never replaces cargo evidence.
 | ID | Severity | Contract |
 |---|---|---|
 | H1 | FAIL | `flag_is_true`: unquoted YAML `true` only; quoted `"true"` / `"false"` / other strings are **OFF** |
-| H2 | FAIL | Shipped gates closed: `agentic.enabled`, `agentic.deepagent_github.enabled`, `agentic.deepagent_github.allow_git_write_tools`, `unslop.enabled`, `mcp.enabled`, `mcp.sse_allow_loopback`, `mcp.server.enabled`, `diagnostics.model_tool`, every `netconnect.*` gate; inbound MCP tools stay empty. `diagnostics.logs_enabled`, `diagnostics.self_knowledge` and `diagnostics.live_state` ship as literal true; self-knowledge and live state do not open `/diag`. Fresh web settings start enabled with one seeded allow rule, `https://www.google.com/*`, and nothing else; existing choices and missing/invalid legacy web values stay unchanged/off. Fresh `auth.enabled` and `tls.enabled` must be true. Config gates are locked by `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`; web seeding and legacy preservation by the home/settings tests in `tests/common_layer.rs`. `security.api_key_optional` remains true but is deprecated metadata, not an account bypass |
+| H2 | FAIL | Shipped as **literal `false`** (`bool_opt == Some(false)`, so a renamed or dropped key fails too): `agentic.enabled`, `agentic.deepagent_github.enabled`, `agentic.deepagent_github.allow_git_write_tools`, `agentic.sandbox.allow_linux_netns_fallback`, `unslop.enabled`, `mcp.enabled`, `mcp.sse_allow_loopback`, `mcp.server.enabled`, `notifications.enabled`, `diagnostics.model_tool`, `computer.enabled`, every `netconnect.*` gate; inbound MCP tools stay empty. Shipped true: `auth.enabled`, `tls.enabled`, `tls.auto_generate`, `agentic.deepagent_github.retrieval.enabled` (read-only, separate from writes), `web.search.fallback_to_public_google`, `web.search.fallback_to_serpapi`, `web.search.result_reads.enabled`, `diagnostics.logs_enabled`, `diagnostics.self_knowledge`, `diagnostics.live_state` (none opens `/diag` or grants a tool). All locked by `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`. Fresh web settings start enabled with one seeded allow rule, `https://www.google.com/*`; existing choices and missing/invalid legacy web values stay unchanged/off (`tests/common_layer.rs`). `security.api_key_optional` stays true but is deprecated metadata, not an account bypass |
+| H12 | WARN | Not pinned by the shipped-config test, so diff-read them: `web.firecrawl.enabled` ships false (opt-in egress to api.firecrawl.dev); `browser.enabled` and `browser.takeover.enabled` ship true but are administrator-only, need literal `auth.enabled`, and every takeover approval needs `confirm` + `reason` (`tests/auth_guards.rs`, `tests/secure_portal.rs`). `config::MISSING_MEANS_ON` keys read a missing key as on; adding one is an operator decision |
 | H11 | FAIL | Fresh `memory.enabled` and all nine `structured_memory` feature gates are true; persisted explicit off choices still win. Proposals never auto-apply facts. Memory defaults do not arm repository execution/write gates |
 | H10 | FAIL | Invalid auth/TLS switch types refuse configuration; missing legacy fields remain off. Do not apply the generic quoted-gate OFF behavior to these security switches |
 | H3 | FAIL | Literal YAML needles: `api_key_optional: true` and `allow_git_write_tools: false`; shipped YAML must not contain `allow_git_write_tools: true` (string forms hide mistakes) |
 | H4 | FAIL | Write path still requires human `reason` + per-call `confirm` (never defaulted) — behavior locked in writer + `real_repo_loop` / shim routes; config must not document or enable a bypass |
-| H5 | FAIL | Kill switch remains disable-only env `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` (AND-ed); `EXECUTION_ENABLED` does not flip itself closed |
+| H5 | FAIL | Kill switch remains disable-only env `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` (AND-ed); `EXECUTION_ENABLED` does not flip itself closed (`tests/write_kill_switch.rs`) |
 | H6 | FAIL | Loopback posture: serve binds loopback only; model `base_url` examples stay `127.0.0.1`; non-loopback refused in code |
 | H7 | WARN | `writes_enabled: true` in shipped agentic block is **armed-by-construction** and held closed by `agentic.enabled` + kill switch — changing either without an invariant statement is conscious risk |
 | H8 | WARN | `policy.prompt_filter.banned_patterns` length stays aligned with the documentary CyClaw-port count (asserted 40 in `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`) |
@@ -41,11 +42,12 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
 
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
   cargo test --test common_layer -- quoted_true_is_off security_switches_require_boolean_values --nocapture
+
+GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
+  cargo test --test write_kill_switch --test shipped_config
 ```
 
-Check `notifications.enabled` remains false and
-`agentic.deepagent_github.retrieval.enabled` remains true in shipped YAML
-(retrieval is read-only and separate from the write gates; see `AGENTS.md`). When the change is load-bearing for writes/jails,
+When the change is load-bearing for writes/jails,
 also run `real_repo_loop` writer tests and `agentic_foundations`. Diff-read
 `assets/config.default.yaml` for accidental quoted booleans or opened gates.
 
@@ -64,7 +66,7 @@ also run `real_repo_loop` writer tests and `agentic_foundations`. Diff-read
 ```text
 Config Guard: PASS|FAIL
 Evidence: <test names + results>
-Gates: <each H1–H11 one line>
+Gates: <each H1–H12 one line>
 Re-tune: <none | list>
 Verdict: safe to merge / fix required: ...
 ```
