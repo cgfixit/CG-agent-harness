@@ -681,6 +681,19 @@ pub async fn model_select(
     if cloud.is_none() && crate::llm::ollama::cloud_tag(selected) {
         return Err(ollama_cloud_refusal());
     }
+    // A local name Ollama serves from another host is refused here as well as
+    // at each call, so `/model use` says so instead of the first chat turn.
+    // No answer, or an unreadable one, leaves the decision to the call.
+    if cloud.is_none()
+        && !selected.eq_ignore_ascii_case("local")
+        && state.chat.backing(selected).await == Some(crate::llm::ollama::Backing::Remote)
+    {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "MODEL_SELECTION_REJECTED",
+            crate::llm::ollama::remote_refusal(crate::llm::ollama::Backing::Remote).unwrap_or_default(),
+        ));
+    }
     let mut from_provider = state.current_provider();
     let model = cloud
         .as_ref()
@@ -2278,6 +2291,10 @@ fn llm_status(error: &crate::common::errors::HarnessError) -> StatusCode {
         StatusCode::UNPROCESSABLE_ENTITY
     } else if error.code == crate::server::state::WINDOW_CHANGED {
         StatusCode::CONFLICT
+    } else if error.code == "MODEL_SELECTION_REJECTED" {
+        // The local client refused the model itself (a cloud model behind a
+        // local name): the same answer as selecting a cloud tag.
+        StatusCode::UNPROCESSABLE_ENTITY
     } else {
         StatusCode::BAD_GATEWAY
     }

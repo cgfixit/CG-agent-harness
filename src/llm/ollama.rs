@@ -113,7 +113,8 @@ pub fn pull_name_ok(name: &str) -> bool {
 /// so the harness would send a local turn's whole prompt (memory, notes,
 /// attachments, history) off the machine unredacted and without the cloud
 /// consent and spend checks. Local selection, pulls and memory work refuse
-/// them; cloud chat goes through `cloud_chat` instead.
+/// them; cloud chat goes through `cloud_chat` instead. A name without the
+/// tag can still be a cloud model: see [`Backing`].
 pub fn cloud_tag(name: &str) -> bool {
     // The tag ends the last path segment: a registry host can carry a port
     // (`localhost:5000/library/glm-4.6:cloud`).
@@ -127,6 +128,124 @@ pub fn cloud_tag(name: &str) -> bool {
         let tag = tag.to_ascii_lowercase();
         tag == "cloud" || tag.ends_with("-cloud")
     })
+}
+
+/// Where Ollama runs a model it serves under a name [`cloud_tag`] accepts.
+///
+/// A name does not say. `ollama create notes -f Modelfile` with
+/// `FROM glm-4.6:cloud` stores a stub whose config carries `remote_host` and
+/// `remote_model`; a chat that names `notes` is then forwarded to that host
+/// exactly as a `:cloud` name is (Ollama `server/create.go`, and the
+/// `m.Config.RemoteHost != ""` branch of its chat and generate handlers).
+/// `POST /api/show` reports both fields, so the backing is read, not guessed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backing {
+    /// `/api/show` described the model and named no other host.
+    Local,
+    /// Ollama forwards this model's requests to another host.
+    Remote,
+    /// A 4xx: the server has no such model, or no `/api/show`. Ollama answers
+    /// a chat for the same name the same way, so nothing is forwarded.
+    Absent,
+    /// The answer, with this HTTP status, was a 5xx or a redirect, oversized,
+    /// or not a JSON object.
+    Unknown(u16),
+}
+
+/// One `/api/show` read gets this long, on the caller's own client.
+pub const BACKING_TIMEOUT: Duration = Duration::from_secs(5);
+/// A non-verbose `/api/show` is a license, a Modelfile, a template and a few
+/// typed fields: well under this. Larger is refused as unreadable.
+const BACKING_MAX_BYTES: usize = 1 << 20;
+
+/// Why a model call is not sent for `backing`, or `None` when it may be.
+pub fn remote_refusal(backing: Backing) -> Option<String> {
+    match backing {
+        Backing::Local | Backing::Absent => None,
+        Backing::Remote => Some(
+            "Ollama serves this model from another host (a cloud model behind a local name) and would send the \
+             prompt there; local model calls keep prompts on this machine"
+                .into(),
+        ),
+        Backing::Unknown(status) => Some(format!(
+            "Ollama did not say whether this model runs on this machine (/api/show answered HTTP {status} with \
+             nothing readable); nothing was sent"
+        )),
+    }
+}
+
+fn show_payload(model: &str) -> Value {
+    json!({"model": model, "name": model})
+}
+
+/// Reads a `/api/show` status and body. A remote field of any shape but an
+/// empty string counts: Ollama forwards on the pair, this refuses on either.
+fn classify_show(status: u16, body: &[u8]) -> Backing {
+    match status {
+        200..=299 => match serde_json::from_slice::<Value>(body) {
+            Ok(Value::Object(show)) => {
+                let named = |key: &str| show.get(key).is_some_and(|v| !v.is_null() && v.as_str() != Some(""));
+                if named("remote_host") || named("remote_model") {
+                    Backing::Remote
+                } else {
+                    Backing::Local
+                }
+            }
+            _ => Backing::Unknown(status),
+        },
+        400..=499 => Backing::Absent,
+        _ => Backing::Unknown(status),
+    }
+}
+
+/// Asks Ollama at `native` where it runs `model`. `Err` means no response
+/// arrived (refused, unreachable, timed out): the caller reports its own
+/// "model server unreachable" and sends nothing. `http` is the caller's
+/// loopback-only client; this read gets [`BACKING_TIMEOUT`], not its timeout.
+pub async fn backing(http: &reqwest::Client, native: &str, model: &str) -> reqwest::Result<Backing> {
+    let mut response = http
+        .post(format!("{native}/api/show"))
+        .timeout(BACKING_TIMEOUT)
+        .json(&show_payload(model))
+        .send()
+        .await?;
+    let status = response.status().as_u16();
+    let mut body = Vec::new();
+    if response.status().is_success() {
+        loop {
+            match response.chunk().await {
+                Ok(Some(chunk)) if chunk.len() <= BACKING_MAX_BYTES.saturating_sub(body.len()) => {
+                    body.extend_from_slice(&chunk);
+                }
+                Ok(None) => break,
+                _ => return Ok(Backing::Unknown(status)),
+            }
+        }
+    }
+    Ok(classify_show(status, &body))
+}
+
+/// [`backing`] for the callers that run outside an async runtime (the coding
+/// run's local planner and the browser task, each in its own child process).
+pub fn backing_blocking(http: &reqwest::blocking::Client, native: &str, model: &str) -> reqwest::Result<Backing> {
+    use std::io::Read;
+    let response = http
+        .post(format!("{native}/api/show"))
+        .timeout(BACKING_TIMEOUT)
+        .json(&show_payload(model))
+        .send()?;
+    let status = response.status().as_u16();
+    let mut body = Vec::new();
+    if response.status().is_success()
+        && (response
+            .take(BACKING_MAX_BYTES as u64 + 1)
+            .read_to_end(&mut body)
+            .is_err()
+            || body.len() > BACKING_MAX_BYTES)
+    {
+        return Ok(Backing::Unknown(status));
+    }
+    Ok(classify_show(status, &body))
 }
 
 fn tag_token(s: &str) -> bool {
@@ -277,6 +396,13 @@ pub async fn load_model(native: &str, model: &str, keep_alive_sec: u64, timeout:
     let Ok(client) = http_client(timeout) else {
         return false;
     };
+    // A load of a remote-backed name is forwarded like a `:cloud` one.
+    if !matches!(
+        backing(&client, native, model).await,
+        Ok(Backing::Local | Backing::Absent)
+    ) {
+        return false;
+    }
     client
         .post(format!("{native}/api/generate"))
         .json(&warmup_payload(model, keep_alive_sec))
@@ -559,6 +685,99 @@ mod tests {
         assert_eq!(pull["stream"], true);
         assert!(pull.get("num_ctx").is_none());
         assert!(!pull.to_string().contains("num_ctx"));
+    }
+
+    /// Ollama's `ShowResponse` carries `remote_host` and `remote_model` for a
+    /// stub whose requests it forwards; a name says nothing about them.
+    #[test]
+    fn a_show_answer_that_names_a_remote_host_is_a_remote_model() {
+        let show = |body: Value| classify_show(200, body.to_string().as_bytes());
+        let local = json!({"details": {"family": "qwen38"}, "capabilities": ["completion"]});
+        assert_eq!(show(local), Backing::Local);
+        assert_eq!(show(json!({"remote_host": "", "remote_model": ""})), Backing::Local);
+        assert_eq!(show(json!({"remote_host": null})), Backing::Local);
+        for remote in [
+            json!({"remote_host": "https://ollama.com:443", "remote_model": "glm-4.6"}),
+            json!({"remote_host": "https://ollama.com:443"}),
+            json!({"remote_model": "glm-4.6"}),
+            json!({"remote_host": 7}),
+            json!({"remote_host": {"url": "x"}}),
+        ] {
+            assert_eq!(show(remote.clone()), Backing::Remote, "{remote}");
+        }
+        // Not an object, not JSON, a redirect or a server error: unreadable, so refused.
+        for unreadable in ["[]", "\"local\"", "", "<html>"] {
+            assert_eq!(
+                classify_show(200, unreadable.as_bytes()),
+                Backing::Unknown(200),
+                "{unreadable}"
+            );
+        }
+        for status in [301, 307, 500, 503] {
+            assert_eq!(classify_show(status, b"{}"), Backing::Unknown(status), "{status}");
+        }
+        // A 4xx is Ollama's answer for a name it has no model for, and any
+        // other server's for a path it does not serve; the body is not read.
+        for status in [400, 403, 404, 405] {
+            let body = br#"{"remote_host":"https://ollama.com:443"}"#;
+            assert_eq!(classify_show(status, body), Backing::Absent, "{status}");
+        }
+        assert!(remote_refusal(Backing::Local).is_none() && remote_refusal(Backing::Absent).is_none());
+        assert!(remote_refusal(Backing::Remote).is_some());
+        // The status Ollama gave is the operator's lead, so it is named.
+        assert!(remote_refusal(Backing::Unknown(503)).is_some_and(|why| why.contains("HTTP 503")));
+    }
+
+    /// Both readers against one fixture: a local model, an alias of a cloud
+    /// model, an unknown name, an oversized answer and a refused connection.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_backing_is_read_from_api_show_by_both_clients() {
+        let app = axum::Router::new().route(
+            "/api/show",
+            axum::routing::post(|axum::Json(body): axum::Json<Value>| async move {
+                use axum::response::IntoResponse;
+                assert_eq!(body["model"], body["name"]);
+                match body["model"].as_str().unwrap_or("") {
+                    "qwen3.8:27b" => axum::Json(json!({"details": {"family": "qwen38"}})).into_response(),
+                    "notes-cg" => {
+                        axum::Json(json!({"remote_host": "https://ollama.com:443", "remote_model": "glm-4.6"}))
+                            .into_response()
+                    }
+                    "huge" => format!("{{\"license\":\"{}\"}}", "x".repeat(BACKING_MAX_BYTES)).into_response(),
+                    _ => (axum::http::StatusCode::NOT_FOUND, "{\"error\":\"model not found\"}").into_response(),
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only ephemeral loopback.
+        let native = format!("http://{}", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this fixture uses no credentials and binds only to loopback.
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let http = http_client(Duration::from_secs(30)).unwrap();
+        let expected = [
+            ("qwen3.8:27b", Backing::Local),
+            ("notes-cg", Backing::Remote),
+            ("missing", Backing::Absent),
+            ("huge", Backing::Unknown(200)),
+        ];
+        for (model, want) in expected {
+            assert_eq!(backing(&http, &native, model).await.unwrap(), want, "{model}");
+        }
+        let blocking_native = native.clone();
+        let blocking = tokio::task::spawn_blocking(move || {
+            let http = reqwest::blocking::Client::builder().no_proxy().build().unwrap();
+            expected.map(|(model, _)| backing_blocking(&http, &blocking_native, model).unwrap())
+        })
+        .await
+        .unwrap();
+        assert_eq!(blocking, expected.map(|(_, want)| want));
+        server.abort();
+        // Bound but never listening: no response is an error, not a verdict.
+        let reserved = tokio::net::TcpSocket::new_v4().unwrap();
+        reserved.bind((std::net::Ipv4Addr::LOCALHOST, 0).into()).unwrap(); // DevSkim: ignore DS162092 because this unit test needs a refused loopback port.
+        let refused = format!("http://127.0.0.1:{}", reserved.local_addr().unwrap().port()); // DevSkim: ignore DS162092 because this unit test needs a refused loopback origin.
+        assert!(backing(&http, &refused, "qwen3.8:27b").await.is_err());
+        // A load that cannot be shown local is not sent.
+        assert!(!load_model(&refused, "qwen3.8:27b", 60, Duration::from_secs(2)).await);
+        drop(reserved);
     }
 
     #[test]

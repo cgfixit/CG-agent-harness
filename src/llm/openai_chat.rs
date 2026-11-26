@@ -63,6 +63,9 @@ pub struct ChatClient {
     /// `models.local_llm.repeat_abort_lines`: a streamed reply that repeats one
     /// line this many times in a row is stopped (#941). `0` is off.
     repeat_limit: std::sync::atomic::AtomicUsize,
+    /// The native Ollama origin behind `base_url` when the provider is Ollama
+    /// ([`Self::refusing_remote_models`]); `None` asks nothing before a call.
+    ollama_native: Option<String>,
 }
 
 /// The shipped `models.local_llm.repeat_abort_lines`, also the row default.
@@ -374,7 +377,38 @@ impl ChatClient {
             inflight: Mutex::new(BTreeMap::new()),
             timeout_override: Mutex::new(None),
             repeat_limit: std::sync::atomic::AtomicUsize::new(DEFAULT_REPEAT_ABORT_LINES),
+            ollama_native: None,
         })
+    }
+
+    /// For `provider` "ollama": before each call, ask Ollama where it runs the
+    /// model and refuse one it serves from another host
+    /// ([`super::ollama::Backing`]). Other providers have no such read.
+    pub fn refusing_remote_models(mut self, provider: &str) -> Self {
+        self.ollama_native = (provider == "ollama")
+            .then(|| super::ollama::native_base_url(&self.base_url))
+            .flatten();
+        self
+    }
+
+    /// Whether Ollama serves `model` from another host. `None` when this
+    /// client asks nothing (not Ollama) or no answer arrived.
+    pub async fn backing(&self, model: &str) -> Option<super::ollama::Backing> {
+        let native = self.ollama_native.as_deref()?;
+        super::ollama::backing(&self.http, native, model).await.ok()
+    }
+
+    fn unreachable(&self, error: &reqwest::Error) -> HarnessError {
+        let kind = if error.is_timeout() {
+            "ReadTimeout"
+        } else if error.is_connect() {
+            "ConnectError"
+        } else {
+            "TransportError"
+        };
+        llm_err("model server unreachable - is the model server running?")
+            .detail("base_url", self.base_url.clone())
+            .detail("error", kind)
     }
 
     /// Set `models.local_llm.repeat_abort_lines` (`0` turns the guard off).
@@ -635,6 +669,22 @@ impl ChatClient {
                 "Ollama cloud models (a :cloud or -cloud tag) send the prompt to ollama.com; local model calls keep prompts on this machine",
             ));
         }
+        // The tag is only a name: a Modelfile alias of a cloud model is
+        // forwarded the same way, so Ollama is asked where the model runs.
+        if let Some(native) = &self.ollama_native {
+            let model = payload["model"].as_str().unwrap_or(&self.model);
+            let backing = super::ollama::backing(&self.http, native, model)
+                .await
+                .map_err(|e| self.unreachable(&e))?;
+            if let Some(reason) = super::ollama::remote_refusal(backing) {
+                let code = if backing == super::ollama::Backing::Remote {
+                    "MODEL_SELECTION_REJECTED"
+                } else {
+                    LLM_ERROR_CODE
+                };
+                return Err(HarnessError::new(code, reason));
+            }
+        }
         // A per-request timeout replaces the client-wide one, so a measured
         // deadline can be longer or shorter than the configured timeout_sec.
         let mut req = self
@@ -645,20 +695,8 @@ impl ChatClient {
         if !self.api_key.is_empty() {
             req = req.bearer_auth(&self.api_key);
         }
-        let base_url = self.base_url.clone();
         async {
-            let resp = req.send().await.map_err(|e| {
-                let kind = if e.is_timeout() {
-                    "ReadTimeout"
-                } else if e.is_connect() {
-                    "ConnectError"
-                } else {
-                    "TransportError"
-                };
-                llm_err("model server unreachable - is the model server running?")
-                    .detail("base_url", base_url.clone())
-                    .detail("error", kind)
-            })?;
+            let resp = req.send().await.map_err(|e| self.unreachable(&e))?;
             let status = resp.status();
             if !status.is_success() {
                 // Error bodies can echo credentials or never finish; drop them unread.
@@ -725,6 +763,93 @@ mod tests {
             err.code, "MODEL_SELECTION_REJECTED",
             "a name that only contains cloud is local"
         );
+    }
+
+    /// A Modelfile alias of a cloud model has a local-looking name, and Ollama
+    /// forwards its chat to the remote host. The client asks `/api/show` first
+    /// and sends nothing for it, for the default model and a per-call one; a
+    /// local model, and a server with no `/api/show`, are called as before.
+    #[tokio::test]
+    async fn a_local_name_ollama_serves_from_another_host_is_refused_before_the_prompt_is_sent() {
+        let chats = std::sync::Arc::new(Mutex::new(Vec::<String>::new()));
+        let seen = chats.clone();
+        let app = axum::Router::new()
+            .route(
+                "/api/show",
+                axum::routing::post(|axum::Json(body): axum::Json<Value>| async move {
+                    use axum::response::IntoResponse;
+                    match body["model"].as_str().unwrap_or("") {
+                        "notes-cg" => {
+                            axum::Json(json!({"remote_host": "https://ollama.com:443", "remote_model": "glm-4.6"}))
+                                .into_response()
+                        }
+                        "broken" => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "{}").into_response(),
+                        "qwen3.8:27b" => axum::Json(json!({"details": {"family": "qwen38"}})).into_response(),
+                        _ => (axum::http::StatusCode::NOT_FOUND, "{}").into_response(),
+                    }
+                }),
+            )
+            .route(
+                "/v1/chat/completions",
+                axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+                    let seen = seen.clone();
+                    async move {
+                        seen.lock()
+                            .unwrap()
+                            .push(body["model"].as_str().unwrap_or("").to_string());
+                        axum::Json(reply("ok"))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only ephemeral loopback.
+        let url = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this fixture uses no credentials and binds only to loopback.
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = |model: &str| {
+            ChatClient::new(&url, model, 5.0, "", None)
+                .unwrap()
+                .refusing_remote_models("ollama")
+        };
+        let alias = client("notes-cg");
+        let err = alias.chat("private notes", &[], None, 16, 0.0).await.unwrap_err();
+        assert_eq!(err.code, "MODEL_SELECTION_REJECTED");
+        assert_eq!(
+            alias.backing("notes-cg").await,
+            Some(crate::llm::ollama::Backing::Remote)
+        );
+        let local = client("qwen3.8:27b");
+        let err = local
+            .chat("private notes", &[], Some("notes-cg"), 16, 0.0)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.code, "MODEL_SELECTION_REJECTED",
+            "a per-call model is asked about too"
+        );
+        // An answer that cannot be read is not a yes.
+        let err = local
+            .chat("private notes", &[], Some("broken"), 16, 0.0)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, LLM_ERROR_CODE);
+        assert!(err.message.contains("nothing was sent"), "{}", err.message);
+        assert!(chats.lock().unwrap().is_empty(), "a refused call reached the model");
+        // A local model, and a name the server has no show answer for, are called.
+        assert_eq!(local.chat("s", &[], None, 16, 0.0).await.unwrap().body_text, "ok");
+        assert_eq!(
+            local.chat("s", &[], Some("unlisted"), 16, 0.0).await.unwrap().body_text,
+            "ok"
+        );
+        // Another provider is never asked: its alias-shaped name goes straight to the model.
+        let other = ChatClient::new(&url, "notes-cg", 5.0, "", None)
+            .unwrap()
+            .refusing_remote_models("lmstudio");
+        assert_eq!(other.backing("notes-cg").await, None);
+        assert_eq!(other.chat("s", &[], None, 16, 0.0).await.unwrap().body_text, "ok");
+        assert_eq!(*chats.lock().unwrap(), ["qwen3.8:27b", "unlisted", "notes-cg"]);
+        server.abort();
+        // With the server gone the refusal is the usual unreachable error.
+        let err = local.chat("s", &[], None, 16, 0.0).await.unwrap_err();
+        assert!(err.message.contains("model server unreachable"), "{}", err.message);
     }
 
     #[test]

@@ -121,6 +121,19 @@ impl ProposerClient for LocalProposerClient<'_> {
                  planner's prompt to ollama.com",
             ));
         }
+        // A name without the tag can still be a cloud model (a Modelfile alias
+        // keeps the remote host), so Ollama is asked where this one runs. With
+        // no answer at all, the invocation below fails the same way.
+        if let Some(native) = crate::llm::ollama::native_base_url(&self.base_url) {
+            let refused = crate::llm::ollama::backing_blocking(&self.http, &native, &self.model)
+                .ok()
+                .and_then(crate::llm::ollama::remote_refusal);
+            if let Some(reason) = refused {
+                return Err(HarnessError::agentic(format!(
+                    "the local proposer model was not called: {reason}"
+                )));
+            }
+        }
         self.audit.log(json!({
             "event": "agentic_harness_proposer_model_invoked", "provider": "ollama", "model": self.model,
             "system_prompt_hash": crate::common::sha256_hex(system_prompt), "user_prompt_hash": crate::common::sha256_hex(user_prompt),

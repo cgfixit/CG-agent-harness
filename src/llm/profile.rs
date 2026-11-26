@@ -268,6 +268,13 @@ pub async fn measure(
         return None;
     }
     let client = http_client(timeout).ok()?;
+    // The sample loads the model: a remote-backed name is forwarded like a `:cloud` one.
+    if !matches!(
+        crate::llm::ollama::backing(&client, &native, model).await,
+        Ok(crate::llm::ollama::Backing::Local | crate::llm::ollama::Backing::Absent)
+    ) {
+        return None;
+    }
     let marker = uuid::Uuid::new_v4().simple().to_string();
     let request = client
         .post(format!("{native}/api/generate"))

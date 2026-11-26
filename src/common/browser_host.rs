@@ -1487,6 +1487,22 @@ fn local_model(model: Option<String>) -> Result<(String, String), String> {
     Ok((model, api))
 }
 
+/// A name without a cloud tag can still be a cloud model: a Modelfile alias
+/// keeps the remote host (`llm::ollama::Backing`), and Ollama would forward
+/// the task and every page observation there. Asked once, before the task
+/// starts. With no answer at all the task goes on to its first model call,
+/// which fails the same way and sends nothing.
+fn refuse_remote_model((model, api): (String, String)) -> Result<(String, String), String> {
+    let client = ollama_client(crate::llm::ollama::BACKING_TIMEOUT)?;
+    let refused = crate::llm::ollama::backing_blocking(&client, &api, &model)
+        .ok()
+        .and_then(crate::llm::ollama::remote_refusal);
+    match refused {
+        Some(reason) => Err(format!("{model} was not used for this browser task: {reason}")),
+        None => Ok((model, api)),
+    }
+}
+
 fn coerce_args(value: Value) -> Value {
     match value {
         Value::String(text) => serde_json::from_str(&text).unwrap_or(json!({})),
@@ -2916,7 +2932,7 @@ fn dispatch(args: &[OsString], browse: bool) -> u8 {
         eprintln!("cgagentharness: --takeover-wait-sec needs --job");
         return 3;
     }
-    let local = |model| match local_model(model) {
+    let local = |model| match local_model(model).and_then(refuse_remote_model) {
         Ok(pair) => Ok(pair),
         Err(err) => {
             eprintln!("cgagentharness: {err}");

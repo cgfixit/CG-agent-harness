@@ -156,7 +156,7 @@ fn web_err(e: &HarnessError) -> ApiError {
         "WEB_POLICY_UNAVAILABLE" => "The shared URL policy file is missing or unreadable, so web reads are refused. An administrator's /web allow creates it; an unreadable file is never reset.",
         "WEB_POLICY_CHANGED" => "The URL policy changed during this request; nothing was delivered. Retry.",
         "WEB_BAD_QUERY" => "The query, result count or --group was refused. Use 1–200 characters with searchable words (research: 1–2,000), --count 1–10 and a group /web status lists.",
-        "MODEL_SELECTION_REJECTED" => "The selected model is an Ollama cloud model (a :cloud or -cloud tag), which sends the prompt to ollama.com. Web research needs a local model: choose one with /model use.",
+        "MODEL_SELECTION_REJECTED" => "The selected model is an Ollama cloud model (a :cloud or -cloud tag, or a local name Ollama serves from another host), which sends the prompt off this machine. Web research needs a local model: choose one with /model use.",
         crate::server::state::WINDOW_CHANGED => "The local model's loaded window changed or could not be read; nothing was sent. Check that Ollama is running, then run the research again.",
         _ => &e.code,
     };

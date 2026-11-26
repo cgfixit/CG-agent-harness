@@ -691,3 +691,110 @@ async fn startup_warmup_and_auto_tune_never_load_a_configured_ollama_cloud_tag()
         "the cloud tag reached Ollama: {sent:?}"
     );
 }
+
+/// A fixture Ollama that serves `notes-cg`, a Modelfile alias of a cloud model
+/// (`FROM glm-4.6:cloud`): its `/api/show` names the remote host, as Ollama's
+/// does, and every other path answers like a local model. Records
+/// `METHOD path model` for each request.
+async fn start_ollama_with_a_cloud_alias() -> (String, Arc<Mutex<Vec<String>>>) {
+    let seen: Arc<Mutex<Vec<String>>> = Arc::default();
+    let record = seen.clone();
+    let app = Router::new().fallback(move |req: axum::extract::Request| {
+        let record = record.clone();
+        async move {
+            let (parts, body) = req.into_parts();
+            let bytes = axum::body::to_bytes(body, 1 << 20).await.unwrap_or_default();
+            let sent: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+            let model = sent["model"].as_str().unwrap_or("").to_string();
+            let path = parts.uri.path().to_string();
+            record.lock().unwrap().push(format!("{} {path} {model}", parts.method));
+            match path.as_str() {
+                "/api/show" if model == "notes-cg" => {
+                    Json(json!({"remote_host": "https://ollama.com:443", "remote_model": "glm-4.6"})).into_response()
+                }
+                "/api/show" => Json(json!({"details": {"family": "qwen38"}})).into_response(),
+                "/v1/chat/completions" => Json(ok_reply("pong", 10, 2)).into_response(),
+                _ => Json(json!({})).into_response(),
+            }
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (format!("http://127.0.0.1:{port}/v1"), seen)
+}
+
+/// A cloud model behind a local name: no tag gives it away, and Ollama would
+/// forward the prompt to the remote host all the same. Selecting it and a
+/// chat turn naming it are refused like a cloud tag, nothing but the
+/// `/api/show` question reaches Ollama for it, and a local turn still runs.
+#[tokio::test]
+async fn a_cloud_model_behind_a_local_name_is_refused_as_a_local_model() {
+    let (url, seen) = start_ollama_with_a_cloud_alias().await;
+    let s = spawn_server(&url, ServerOptions::default()).await;
+    let (status, body) = s.post_json("/api/model", json!({"model": "notes-cg"})).await;
+    assert_eq!(status, 422, "{body}");
+    assert_eq!(body["detail"]["code"], "MODEL_SELECTION_REJECTED", "{body}");
+    let (status, body) = s
+        .post_json(
+            "/api/chat",
+            json!({"message": "private notes canary", "model": "notes-cg"}),
+        )
+        .await;
+    assert_eq!(status, 422, "{body}");
+    assert_eq!(body["detail"]["code"], "MODEL_SELECTION_REJECTED", "{body}");
+    let for_alias: Vec<String> = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|row| row.ends_with(" notes-cg"))
+        .cloned()
+        .collect();
+    assert!(!for_alias.is_empty(), "Ollama was never asked about the alias");
+    assert!(
+        for_alias.iter().all(|row| row == "POST /api/show notes-cg"),
+        "the alias reached Ollama beyond the show question: {for_alias:?}"
+    );
+    let (status, body) = s.post_json("/api/chat", json!({"message": "hello"})).await;
+    assert_eq!(status, 200, "a local turn still runs: {body}");
+}
+
+/// A configured alias is still the model a server starts on. The startup
+/// warmup and auto_tune both load the model with `/api/generate`, which
+/// Ollama forwards for it; neither is sent, and the first turn is refused.
+#[tokio::test]
+async fn a_configured_cloud_alias_is_never_loaded_or_chatted_with() {
+    let (url, seen) = start_ollama_with_a_cloud_alias().await;
+    let mut options = ServerOptions::default();
+    for (key, value) in [
+        ("models.local_llm.model", "notes-cg"),
+        ("models.local_llm.warmup.enabled", "true"),
+        ("models.local_llm.auto_tune", "true"),
+    ] {
+        options.overrides.push((key.into(), value.into()));
+    }
+    let s = spawn_server(&url, options).await;
+    let settled = |log: &str| {
+        log.contains(r#""event":"ollama_warmup_degraded""#) && log.contains(r#""event":"model_tune_skipped""#)
+    };
+    for _ in 0..50 {
+        if settled(&s.audit_log()) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let log = s.audit_log();
+    assert!(settled(&log), "warmup and auto_tune did not both stand down: {log}");
+    let (status, body) = s
+        .post_json("/api/chat", json!({"message": "private notes canary"}))
+        .await;
+    assert_eq!(status, 422, "{body}");
+    assert_eq!(body["detail"]["code"], "MODEL_SELECTION_REJECTED", "{body}");
+    let sent = seen.lock().unwrap().clone();
+    assert!(
+        !sent
+            .iter()
+            .any(|row| row.contains("/api/generate") || row.contains("/v1/chat/completions")),
+        "the alias was loaded or called: {sent:?}"
+    );
+}
