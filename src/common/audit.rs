@@ -452,6 +452,10 @@ enum Job {
     /// Barriers: answered once every earlier line is written or refused.
     Flush(mpsc::Sender<()>),
     FlushAsync(tokio::sync::oneshot::Sender<()>),
+    /// Test-only: the writer thread dies while the sender stays up, so the
+    /// next `try_send` is `Disconnected`.
+    #[cfg(test)]
+    Panic,
 }
 
 fn write_jobs(sink: Arc<Sink>, jobs: Receiver<Job>) {
@@ -464,9 +468,16 @@ fn write_jobs(sink: Arc<Sink>, jobs: Receiver<Job>) {
             Job::FlushAsync(done) => {
                 let _ = done.send(());
             }
+            #[cfg(test)]
+            Job::Panic => panic!("audit writer test panic"),
         }
     }
 }
+
+/// A required audit record was not accepted. The caller must not commit the
+/// action. Counted callers ignore this and leave the gap report instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuditRefused;
 
 /// `logging.audit_queue_lines`: lines waiting for the writer thread; 0 keeps
 /// appends inline. A full queue drops the new line with a warning, the same
@@ -686,6 +697,54 @@ impl Audit {
             Err(e) => {
                 tracing::warn!("audit_log failed to serialize event: {e}");
                 None
+            }
+        }
+    }
+
+    /// Security commits use this. `Err` means the record was not accepted, so
+    /// the action must not proceed. The stub below keeps today's silent drop
+    /// so the regression tests fail until the queue counts and refuses.
+    pub fn log_required(&self, event: Value) -> std::result::Result<(), AuditRefused> {
+        self.log(event);
+        Ok(())
+    }
+
+    /// How many records this process has dropped. Loaded from the gap file
+    /// after a restart. The stub stays at zero until that file exists.
+    pub fn dropped(&self) -> u64 {
+        0
+    }
+
+    /// The object `/api/status` and `/api/diag` embed as `audit_gap`.
+    pub fn gap_status(&self) -> Value {
+        serde_json::json!({
+            "dropped": 0,
+            "durable": 0,
+            "persist_failed": false,
+            "record_unreadable": false,
+        })
+    }
+
+    #[cfg(test)]
+    fn close_writer(&mut self) {
+        let Some(writer) = self.writer.as_mut() else {
+            return;
+        };
+        writer.queue.take();
+        if let Some(thread) = writer.thread.take() {
+            let _ = thread.join();
+        }
+    }
+
+    #[cfg(test)]
+    fn panic_writer(&mut self) {
+        let Some(queue) = self.queue().cloned() else {
+            return;
+        };
+        let _ = queue.try_send(Job::Panic);
+        if let Some(writer) = self.writer.as_mut() {
+            if let Some(thread) = writer.thread.take() {
+                let _ = thread.join();
             }
         }
     }
@@ -1199,5 +1258,110 @@ mod tests {
         std::fs::write(blocked.path().join("logs"), b"not a directory").unwrap();
         assert!(!audit(blocked.path(), "logging: {}\n").log_confirmed(json!({"event":"refused"})));
         assert!(!queued.log_confirmed(json!("not an object")));
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn a_full_queue_refuses_a_required_record_and_counts_the_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut audit = audit(dir.path(), "logging:\n  audit_lease_wait_ms: 2000\n").with_queue(1);
+        audit.flush_wait = Duration::from_millis(200);
+        std::fs::create_dir_all(dir.path().join("logs")).unwrap();
+        let held =
+            super::super::file_lease::FileLease::acquire(&dir.path().join("logs/audit.jsonl.lock"), true).unwrap();
+        let started = Instant::now();
+        let mut refused = 0;
+        for n in 0..40 {
+            if audit
+                .log_required(json!({"event":"queued","n":n}))
+                .is_err()
+            {
+                refused += 1;
+            }
+        }
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "recording waited on the queue or the disk"
+        );
+        assert!(refused >= 1, "a full queue accepted every required record");
+        assert!(
+            audit.dropped() >= refused as u64,
+            "a refusal was not counted"
+        );
+        assert_eq!(audit.gap_status()["dropped"], json!(audit.dropped()));
+        drop(held);
+    }
+
+    #[test]
+    fn a_stopped_writer_that_cannot_append_refuses_and_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("logs"), b"not a directory").unwrap();
+        let mut audit = audit(dir.path(), "logging: {}\n").with_queue(2);
+        audit.close_writer();
+        assert!(
+            audit.log_required(json!({"event":"closed"})).is_err(),
+            "a stopped writer that cannot append still accepted the record"
+        );
+        assert!(audit.dropped() >= 1, "the refused record was not counted");
+        assert!(audit.gap_status()["dropped"].as_u64().unwrap() >= 1);
+    }
+
+    #[test]
+    fn a_dead_writer_that_cannot_append_refuses_and_counts() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("logs"), b"not a directory").unwrap();
+        let mut audit = audit(dir.path(), "logging: {}\n").with_queue(2);
+        audit.panic_writer();
+        assert!(
+            audit.log_required(json!({"event":"after_writer"})).is_err(),
+            "a dead writer that cannot append still accepted the record"
+        );
+        assert!(audit.dropped() >= 1, "the refused record was not counted");
+        assert!(audit.gap_status()["dropped"].as_u64().unwrap() >= 1);
+    }
+
+    #[test]
+    fn a_dead_writer_appends_inline_when_the_file_can_be_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut audit = audit(dir.path(), "logging: {}\n").with_queue(2);
+        audit.panic_writer();
+        assert!(audit.log_required(json!({"event":"inline_after"})).is_ok());
+        assert_eq!(written(audit.path())[0]["event"], "inline_after");
+        assert_eq!(audit.dropped(), 0);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn a_drop_count_survives_restart_and_stays_in_the_operator_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = "logging:\n  audit_lease_wait_ms: 2000\n";
+        let dropped = {
+            let mut audit = audit(dir.path(), yaml).with_queue(1);
+            audit.flush_wait = Duration::from_millis(200);
+            std::fs::create_dir_all(dir.path().join("logs")).unwrap();
+            let held =
+                super::super::file_lease::FileLease::acquire(&dir.path().join("logs/audit.jsonl.lock"), true).unwrap();
+            for n in 0..20 {
+                let _ = audit.log_required(json!({"event":"spill","n":n}));
+            }
+            let n = audit.dropped();
+            assert!(n >= 1, "the queue did not drop");
+            drop(held);
+            audit.flush();
+            let holes: Vec<Value> = written(audit.path())
+                .into_iter()
+                .filter(|row| row["event"] == "audit_gap")
+                .collect();
+            assert!(!holes.is_empty(), "the audit log has no record of the hole");
+            assert_eq!(audit.gap_status()["dropped"], json!(n));
+            n
+        };
+        let again = audit(dir.path(), yaml);
+        assert_eq!(again.dropped(), dropped, "restart forgot the drops");
+        let report = again.gap_status();
+        assert_eq!(report["dropped"], json!(dropped));
+        assert_eq!(report["durable"], json!(dropped));
+        assert_eq!(report["persist_failed"], json!(false));
+        assert_eq!(report["record_unreadable"], json!(false));
     }
 }
