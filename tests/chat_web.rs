@@ -3302,6 +3302,60 @@ async fn only_an_administrators_turn_may_read_its_search_results() {
     task.abort();
 }
 
+/// #901: a URL this turn's own search listed is not composed, whether or not
+/// the turn holds a result-reads grant. With `result_reads` off (as for an
+/// operator), a listed page a subtree rule permits is read as listed; a URL on
+/// the same site that no search listed still needs a live confirmation, which
+/// a JSON turn cannot give.
+#[tokio::test]
+async fn a_listed_url_is_not_composed_without_a_result_reads_grant() {
+    let (address, reads, task) = listing_fixture().await;
+    let model = common::start_mock_model().await;
+    let options = common::ServerOptions::default()
+        .with("web.carry_forward_sources", "0")
+        .with("web.search.result_reads.enabled", "false");
+    let s = listing_spawn(&model, address, options).await;
+    let search_rule = "http://google.fixture/*"; // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+    let page_rule = "http://docs.example/*"; // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+    for rule in [search_rule, page_rule] {
+        assert_eq!(
+            s.post_json("/api/web/allow", json!({"url":rule})).await.0,
+            200,
+            "{rule}"
+        );
+    }
+    // Both reads in one batch, so neither result withdraws the other's tools.
+    let unlisted = r#"{"url":"http://docs.example/other"}"#; // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+    let mut reads_batch = tool_call_reply("web_fetch", LISTED_PAGE, "listed_fetch");
+    reads_batch["choices"][0]["message"]["tool_calls"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"unlisted_fetch","type":"function","function":{"name":"web_fetch","arguments":unlisted}}));
+    model.set_reply(json!([
+        tool_call_reply("web_search", r#"{"query":"listed page"}"#, "listed_search"),
+        reads_batch,
+        common::ok_reply("Answered.", 20, 6)
+    ]));
+    let (status, reply) = s.post_json("/api/chat", json!({"message":"Search and read"})).await;
+    assert_eq!(status, 200, "{reply}");
+    let tools = reply["web_tools"].as_array().expect("web tools ran");
+    assert_eq!(tools[0]["ok"], true, "{reply}");
+    assert_eq!(tools[1]["ok"], true, "the listed page is read: {reply}");
+    assert!(
+        tools[1]["result"].get("granted_by").is_none(),
+        "read under the URL policy, not a grant: {reply}"
+    );
+    assert_eq!(tools[2]["code"], "WEB_FETCH_COMPOSED", "{reply}");
+    assert_eq!(reads.load(Ordering::SeqCst), 1, "only the listed page was contacted");
+    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    assert_eq!(
+        audit.matches(r#""event":"web_fetch_provenance""#).count(),
+        1,
+        "only the unlisted URL is judged composed: {audit}"
+    );
+    task.abort();
+}
+
 /// A server-run `/loop` carries its search-result grants from one turn to the
 /// next: turn 1 searches, turn 2 reads the page that search listed.
 #[tokio::test]
