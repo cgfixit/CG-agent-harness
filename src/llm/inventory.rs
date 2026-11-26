@@ -80,11 +80,50 @@ pub async fn model_readiness(endpoint: &str, model: &str, key: &str, limits: Inv
                 .as_array()
                 .unwrap()
                 .iter()
-                .any(|row| row["id"].as_str() == Some(model));
+                // Ollama lists `name` as `name:latest` and drops `library/`; a
+                // server that lists exact ids only is matched exactly as before.
+                .filter_map(|row| row["id"].as_str())
+                .any(|listed| listed == model || super::profile::same_model(listed, model));
             json!({"endpoint":endpoint,"model":model,"state":if found {"installed"} else {"tag_missing"},
                 "detail":"Inventory only; use an explicit console chat to test inference. No model was downloaded."})
         }
         _ => json!({"endpoint":endpoint,"model":model,"state":"unavailable",
             "detail":"Start the configured local model service and retry. No runtime was switched."}),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Ollama lists `llama3.2` as `llama3.2:latest`; both name the same model.
+    #[tokio::test]
+    async fn an_untagged_model_is_installed_when_ollama_lists_its_latest_tag() {
+        let app = axum::Router::new().route(
+            "/v1/models",
+            axum::routing::get(|| async {
+                axum::Json(json!({"data": [{"id": "llama3.2:latest"}, {"id": "qwen3.8:27b-mlx-cg"}]}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only ephemeral loopback.
+        let endpoint = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this fixture uses no credentials and binds only to loopback.
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let limits = InventoryLimits {
+            timeout: Duration::from_secs(5),
+            max_bytes: 1 << 16,
+        };
+        for (model, state) in [
+            ("llama3.2", "installed"),
+            ("llama3.2:latest", "installed"),
+            ("library/llama3.2", "installed"),
+            ("qwen3.8:27b-mlx-cg", "installed"),
+            ("llama3.2:3b", "tag_missing"),
+            ("qwen3.8", "tag_missing"),
+            ("", "tag_missing"),
+        ] {
+            let readiness = model_readiness(&endpoint, model, "", limits).await;
+            assert_eq!(readiness["state"], state, "{model}");
+        }
+        server.abort();
     }
 }

@@ -257,6 +257,41 @@ mod tests {
         assert!(other.reasoning_effort.is_none());
     }
 
+    /// Ollama lists `llama3.2` as `llama3.2:latest`. With the fallback on, an
+    /// untagged primary that is installed must stay the selection instead of
+    /// reading as missing and handing the turn to the fallback (or `degraded`).
+    #[tokio::test]
+    async fn an_installed_untagged_primary_is_not_passed_over_for_the_fallback() {
+        let app = axum::Router::new().route(
+            "/v1/models",
+            axum::routing::get(|| async { axum::Json(serde_json::json!({"data": [{"id": "llama3.2:latest"}]})) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only ephemeral loopback.
+        let primary = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this fixture uses no credentials and binds only to loopback.
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        // Bound but never listening: the fallback refuses connections.
+        let reserved = tokio::net::TcpSocket::new_v4().unwrap();
+        reserved.bind((Ipv4Addr::LOCALHOST, 0).into()).unwrap(); // DevSkim: ignore DS162092 because this unit test needs a refused loopback port.
+        let fallback = format!("http://127.0.0.1:{}/v1", reserved.local_addr().unwrap().port()); // DevSkim: ignore DS162092 because this unit test needs a refused loopback origin.
+        let picked = resolved(&format!(
+            concat!(
+                "models:\n  local_llm:\n",
+                "    provider: \"ollama\"\n",
+                "    base_url: \"{primary}\"\n",
+                "    model: \"llama3.2\"\n",
+                "    fallback:\n      enabled: true\n      provider: \"lmstudio\"\n",
+                "      base_url: \"{fallback}\"\n      model: \"other\"\n",
+            ),
+            primary = primary,
+            fallback = fallback,
+        ))
+        .await;
+        assert_eq!((picked.source.as_str(), picked.model.as_str()), ("primary", "llama3.2"));
+        assert!(!picked.degraded, "an installed primary is a positive selection");
+        drop(reserved);
+        server.abort();
+    }
+
     #[tokio::test]
     async fn missing_base_url_keeps_the_configured_model_and_effort() {
         let sparse = resolved("models:\n  local_llm:\n    model: \"llama3.2\"\n    reasoning_effort: \"none\"\n").await;

@@ -85,27 +85,45 @@ pub fn parse_show(body: &Value) -> Value {
     })
 }
 
-/// True when two Ollama model names are the same model: an untagged name is
-/// its implicit `:latest` tag, as in [`row_is`].
-pub fn same_model(a: &str, b: &str) -> bool {
-    let tagged = |m: &str| {
-        let m = m.trim();
-        if m.contains(':') {
-            m.to_string()
-        } else {
-            format!("{m}:latest")
+/// The name Ollama lists a model under (`Name::DisplayShortest`): the default
+/// registry host and `library` namespace dropped, and the tag always present,
+/// `latest` when none was written. Names are read from the right, as Ollama
+/// does (`host/namespace/model:tag`), and a registry host can carry a port, so
+/// the tag is the last path segment's.
+pub fn listed_name(model: &str) -> String {
+    let name = model.trim();
+    let segments: Vec<&str> = name.split('/').collect();
+    let shortest = match segments.as_slice() {
+        [host, namespace, model] if host.eq_ignore_ascii_case("registry.ollama.ai") => {
+            if namespace.eq_ignore_ascii_case("library") {
+                (*model).to_string()
+            } else {
+                format!("{namespace}/{model}")
+            }
         }
+        [namespace, model] if namespace.eq_ignore_ascii_case("library") => (*model).to_string(),
+        _ => name.to_string(),
     };
-    !a.trim().is_empty() && tagged(a) == tagged(b)
+    if segments.last().is_some_and(|last| last.contains(':')) {
+        shortest
+    } else {
+        format!("{shortest}:latest")
+    }
 }
 
-/// Ollama lists an untagged selection under its implicit `:latest` tag.
+/// True when two Ollama model names are the same model: both are compared as
+/// Ollama lists them ([`listed_name`]), so an untagged name is its implicit
+/// `:latest` tag and `library/name` is `name`.
+pub fn same_model(a: &str, b: &str) -> bool {
+    !a.trim().is_empty() && !b.trim().is_empty() && listed_name(a) == listed_name(b)
+}
+
+/// Ollama lists a selection the way [`listed_name`] writes it.
 fn row_is(row: &Value, model: &str) -> bool {
-    let latest = (!model.contains(':')).then(|| format!("{model}:latest"));
     ["name", "model"]
         .iter()
         .filter_map(|key| row.get(*key).and_then(Value::as_str))
-        .any(|listed| listed == model || latest.as_deref() == Some(listed))
+        .any(|listed| same_model(listed, model))
 }
 
 /// The loaded window and memory for `model` from a `GET /api/ps` body, or
@@ -392,6 +410,45 @@ mod tests {
         assert_eq!(declared["modelfile_num_ctx"], 32_768);
         assert_eq!(declared["native_context"], 262_144);
         assert_eq!(declared["thinking"], true);
+    }
+
+    /// `Name::DisplayShortest` in Ollama's `types/model/name.go`: default host
+    /// and `library` dropped, the tag always written.
+    #[test]
+    fn a_name_is_matched_the_way_ollama_lists_it() {
+        for (written, listed) in [
+            ("llama3.2", "llama3.2:latest"),
+            ("llama3.2:3b", "llama3.2:3b"),
+            ("library/tinyllama", "tinyllama:latest"),
+            ("Library/tinyllama:latest", "tinyllama:latest"),
+            ("registry.ollama.ai/library/tinyllama:1b", "tinyllama:1b"),
+            ("registry.ollama.ai/acme/tinyllama", "acme/tinyllama:latest"),
+            ("acme/tinyllama:q8", "acme/tinyllama:q8"),
+            ("hf.co/user/repo:Q4_K_M", "hf.co/user/repo:Q4_K_M"),
+            // A registry port is not a tag; another host keeps its namespace.
+            ("localhost:5000/library/big", "localhost:5000/library/big:latest"),
+            ("localhost:5000/library/big:q8", "localhost:5000/library/big:q8"),
+        ] {
+            assert_eq!(listed_name(written), listed, "{written}");
+            assert!(same_model(written, listed) && same_model(listed, written), "{written}");
+        }
+        // `library` is a namespace only in second place; a tag still tells models apart.
+        assert!(!same_model("library/a/b", "a/b"));
+        assert!(!same_model("library/tinyllama", "acme/tinyllama"));
+        assert!(!same_model("tinyllama", ""));
+        let body = json!({"models": [{"name": "tinyllama:latest", "context_length": 4096, "size": 2, "size_vram": 2}]});
+        for selection in [
+            "tinyllama",
+            "library/tinyllama",
+            "registry.ollama.ai/library/tinyllama:latest",
+        ] {
+            assert_eq!(
+                parse_ps(&body, selection).unwrap()["context_length"],
+                4096,
+                "{selection}"
+            );
+        }
+        assert!(parse_ps(&body, "tinyllama:1b").is_none());
     }
 
     #[test]
