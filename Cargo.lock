@@ -600,6 +600,7 @@ dependencies = [
  "url",
  "uuid",
  "walkdir",
+ "webpki-root-certs",
  "windows-native-keyring-store",
  "windows-sys 0.59.0",
  "x509-parser",

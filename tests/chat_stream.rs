@@ -5,7 +5,7 @@ use axum::{
         sse::{Event, KeepAlive},
         IntoResponse, Sse,
     },
-    Json, Router,
+    Json,
 };
 use common::*;
 use serde_json::{json, Value};
@@ -18,7 +18,7 @@ use std::time::Duration;
 async fn model() -> (String, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
     let active = Arc::new(AtomicUsize::new(0));
     let count = active.clone();
-    let app = Router::new().route("/v1/chat/completions", axum::routing::post(move |Json(request): Json<Value>| {
+    let app = common::ollama_router().route("/v1/chat/completions", axum::routing::post(move |Json(request): Json<Value>| {
         let count = count.clone();
         async move {
             // Only the tool-free call after a batch that failed entirely is
@@ -73,7 +73,7 @@ async fn start(s: &TestServer, id: &str, message: &str) -> reqwest::Response {
 async fn multiple_streamed_tools_then_buffered_synthesis_keep_the_total_call_budget() {
     let reads = Arc::new(AtomicUsize::new(0));
     let read_counter = reads.clone();
-    let fixture = Router::new()
+    let fixture = common::ollama_router()
         .route(
             "/docs/{page}",
             axum::routing::get(move || {
@@ -181,7 +181,7 @@ async fn multiple_streamed_tools_then_buffered_synthesis_keep_the_total_call_bud
 async fn a_composed_fetch_waits_for_the_operator_and_reads_only_on_approval() {
     let reads = Arc::new(AtomicUsize::new(0));
     let read_counter = reads.clone();
-    let fixture = Router::new()
+    let fixture = common::ollama_router()
         .route(
             "/docs/{page}",
             axum::routing::get(move || {

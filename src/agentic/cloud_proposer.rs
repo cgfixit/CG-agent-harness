@@ -140,6 +140,7 @@ impl<'a> CloudProposerClient<'a> {
         // Do not delegate paid credentials to ambient HTTP(S)_PROXY, and never
         // follow a redirect: reqwest keeps custom headers such as `x-api-key`
         // on a cross-host hop, stripping only Authorization and cookies.
+        // tls-verifier: platform-public
         let http = reqwest::blocking::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())

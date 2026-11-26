@@ -43,6 +43,9 @@ pub struct LocalProposerClient<'a> {
     pub timeout_measured: bool,
     audit: &'a Audit,
     http: reqwest::blocking::Client,
+    /// Set for an Ollama planner: the loopback native origin whose `/api/show`
+    /// every invocation reads first, so an alias of a cloud model is refused.
+    ollama_native: Option<String>,
 }
 
 impl<'a> LocalProposerClient<'a> {
@@ -54,6 +57,7 @@ impl<'a> LocalProposerClient<'a> {
         api_key: &str,
         reasoning_effort: Option<String>,
     ) -> Result<Self> {
+        // tls-verifier: loopback
         let http = reqwest::blocking::Client::builder()
             .no_proxy()
             .dns_resolver(std::sync::Arc::new(crate::llm::backend::LoopbackOnlyDns))
@@ -70,6 +74,58 @@ impl<'a> LocalProposerClient<'a> {
             timeout_measured: false,
             audit,
             http,
+            ollama_native: None,
+        })
+    }
+
+    /// The planner endpoint is Ollama: refuse, before every invocation, a model
+    /// whose `/api/show` names a remote host or cannot be read.
+    pub fn refuse_remote_ollama_models(&mut self) -> Result<()> {
+        let native = crate::llm::ollama::native_base_url(&self.base_url).ok_or_else(|| {
+            HarnessError::agentic("agentic.deepagent_github.base_url is not a plain loopback Ollama origin")
+        })?;
+        self.ollama_native = Some(native);
+        Ok(())
+    }
+
+    /// Ollama routes by the remote host stored in the model's config, not its
+    /// name: a Modelfile `FROM glm-4.6:cloud` alias forwards like the tag.
+    fn refuse_unless_shown_local(&self) -> Result<()> {
+        use crate::llm::ollama::{refuse_unless_shown_local, show_payload, ShowRead};
+        let Some(native) = &self.ollama_native else {
+            return Ok(());
+        };
+        let mut request = self
+            .http
+            .post(format!("{native}/api/show"))
+            .json(&show_payload(&self.model));
+        // The same origin and credential the planner's chat requests use.
+        if !self.api_key.is_empty() {
+            request = request.bearer_auth(&self.api_key);
+        }
+        let response = request.send();
+        let cap = crate::llm::MAX_RESPONSE_BYTES;
+        let mut bytes = Vec::new();
+        let body;
+        let read = match response {
+            Ok(response) if response.status().is_success() => {
+                match response.take(cap as u64 + 1).read_to_end(&mut bytes) {
+                    Ok(_) if bytes.len() <= cap => match serde_json::from_slice::<Value>(&bytes) {
+                        Ok(value) => {
+                            body = value;
+                            ShowRead::Body(&body)
+                        }
+                        Err(_) => ShowRead::Failed,
+                    },
+                    _ => ShowRead::Failed,
+                }
+            }
+            Ok(response) => ShowRead::Status(response.status().as_u16()),
+            Err(_) => ShowRead::Failed,
+        };
+        refuse_unless_shown_local(read).map_err(|err| {
+            HarnessError::agentic(format!("the local proposer model is refused: {}", err.message))
+                .detail("reason", err.details["reason"].clone())
         })
     }
 
@@ -121,6 +177,7 @@ impl ProposerClient for LocalProposerClient<'_> {
                  planner's prompt to ollama.com",
             ));
         }
+        self.refuse_unless_shown_local()?;
         self.audit.log(json!({
             "event": "agentic_harness_proposer_model_invoked", "provider": "ollama", "model": self.model,
             "system_prompt_hash": crate::common::sha256_hex(system_prompt), "user_prompt_hash": crate::common::sha256_hex(user_prompt),

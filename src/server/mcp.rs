@@ -1010,6 +1010,7 @@ mod config_tests {
             ..McpRuntime::disabled()
         };
         let endpoint = Url::parse(&format!("http://127.0.0.1:{port}/m")).unwrap(); // DevSkim: ignore DS137138,DS162092 because this is a loopback test fixture.
+                                                                                   // tls-verifier: loopback
         let client = reqwest::Client::builder().no_proxy().build().unwrap();
         jsonrpc_post(&client, &runtime, &endpoint, None, "tools/call", json!({})).await
     }

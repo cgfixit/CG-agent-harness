@@ -306,6 +306,7 @@ async fn configuration_reload_is_admin_csrf_guarded_atomic_and_effective() {
 /// retried on a fresh port, a bounded number of times.
 #[cfg(unix)]
 async fn spawn_serve(home: &std::path::Path) -> (tokio::process::Child, u16, reqwest::Client) {
+    // tls-verifier: loopback
     let client = reqwest::Client::builder()
         .no_proxy()
         .timeout(std::time::Duration::from_secs(2))
@@ -537,6 +538,7 @@ async fn https_bootstrap_roles_revocation_and_private_web_context() {
     .with("api.rate_limit.max_requests", "1000");
     let server = spawn_server(&model.base_url(), options).await;
     assert!(
+        // tls-verifier: platform-contrast
         reqwest::Client::builder()
             .no_proxy()
             .build()
@@ -1927,7 +1929,7 @@ async fn a_browser_task_asked_by_an_account_demoted_while_the_model_loads_never_
     let loaded = Arc::new(AtomicBool::new(false));
     let (arrived_tx, release_rx, loaded_ps, loaded_gen) =
         (arrived.clone(), release.clone(), loaded.clone(), loaded.clone());
-    let app = axum::Router::new()
+    let app = common::ollama_router()
         .route(
             "/api/ps",
             axum::routing::get(move || {

@@ -597,6 +597,13 @@ impl AuthManager {
         count_enabled_admins(&db)
     }
 
+    /// Whether demoting, disabling or deleting `username` would remove the last
+    /// enabled admin. Reads the committed snapshot and does not change it.
+    pub fn is_last_enabled_admin_account(&self, username: &str) -> bool {
+        let canonical = Self::canonical(username);
+        Self::is_last_enabled_admin(&self.snapshot(), &canonical)
+    }
+
     fn is_last_enabled_admin(db: &AuthDb, username: &str) -> bool {
         match db.users.get(username) {
             Some(u) if authz::is_role(&u.role, authz::Role::Admin) && !u.disabled => count_enabled_admins(db) <= 1,

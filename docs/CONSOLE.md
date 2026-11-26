@@ -47,7 +47,7 @@ Restart does not resume loops. To code from a goal use
 
 **Search my transcripts** uses `POST /api/sessions/search` with a
 query up to 200 characters. It searches bounded owned sessions locally
-for literal case-insensitive phrases. The request-local index bounds
+for literal case-insensitive phrases. The per-owner index bounds
 input at 200 sessions and 2,000,000 bytes. It returns at most 16 hits and
 two per session. A session or account switch discards stale results. **Export .md** uses
 `GET /api/sessions/{session_id}/export` and writes private Markdown under
@@ -135,7 +135,7 @@ at the last `::`. For web queries, `--` ends flag parsing.
 | `/memory remember <sentence> :: <reason>` | Confirm human summary on latest completed episode. |
 | `/memory facts`, `/memory retrieve <query>`, `/memory search <query>` | List facts, retrieve for one turn or search without injection. |
 | `/memory save <text> :: <reason>` | Confirm an immediate private fact write |
-| `/model [status]`, `profile`, `list`, `use <name>` | Inspect or select chat model. |
+| `/model [status]`, `profile`, `list`, `use <name>` | Inspect or select chat model; `use` refuses Ollama cloud tags and aliases ([models](MODELS.md)). |
 | `/net status`, `/net devices`, `/net diag` | LAN panel or budgeted diagnostics. |
 | `/prompt` | Private preview of the next local chat turn's prompt |
 | `/registry` | Combined skill, tool and connector catalog |

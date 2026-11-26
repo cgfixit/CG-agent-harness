@@ -85,6 +85,7 @@ pub async fn status(
                 "memory_enabled": false,
                 "chat_tools_available": false,
                 "sessions": sessions.len(),
+                "audit_gap": state.audit.gap_status(),
             }));
         }
         let sessions = state.store.for_owner(&owner).list();
@@ -128,6 +129,7 @@ pub async fn status(
             "server_loop": true,
             "sessions": sessions.len(),
             "total_tokens": total_tokens,
+            "audit_gap": state.audit.gap_status(),
             "layout": {
                 "sessions": state.home.sessions_dir().display().to_string(),
                 "skills": state.home.skills_dir().display().to_string(),
@@ -663,6 +665,26 @@ pub(super) fn ollama_cloud_refusal() -> ApiError {
     )
 }
 
+/// An Ollama model whose `/api/show` names a remote host (an alias such as a
+/// Modelfile `FROM glm-4.6:cloud`), or whose show cannot be read, is refused
+/// for local use like a cloud tag. A non-Ollama backend has no `/api/show`.
+pub(super) async fn refuse_remote_ollama(state: &AppState, model: &str) -> ApiResult<()> {
+    if state.backend.provider != "ollama" {
+        return Ok(());
+    }
+    let refused = |e: &crate::common::errors::HarnessError| ApiError::from_err(StatusCode::UNPROCESSABLE_ENTITY, e);
+    let native = crate::llm::ollama::native_base_url(&state.backend.base_url).ok_or_else(|| {
+        refused(&crate::common::errors::HarnessError::new(
+            crate::llm::ollama::MODEL_SELECTION_REJECTED,
+            "the Ollama backend is not a loopback Ollama origin, so the model cannot be confirmed local",
+        ))
+    })?;
+    let limits = crate::llm::inventory::InventoryLimits::from_config(&state.cfg).map_err(|e| refused(&e))?;
+    crate::llm::ollama::refuse_remote_model(&native, model, limits, &state.backend.api_key)
+        .await
+        .map_err(|e| refused(&e))
+}
+
 pub async fn model_select(
     State(state): State<Arc<AppState>>,
     user: Caller,
@@ -696,6 +718,9 @@ pub async fn model_select(
         .and_then(|c| c["provider"].as_str())
         .unwrap_or(&state.backend.provider)
         .to_string();
+    if cloud.is_none() {
+        refuse_remote_ollama(&state, &model).await?;
+    }
     // The settings save is fsync'd under the settings lock: run it, with the
     // checks and publication it orders, off the async workers (as
     // `panels::commit_setting` does), so other settings readers never park a

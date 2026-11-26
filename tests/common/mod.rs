@@ -547,6 +547,18 @@ pub fn ok_reply(text: &str, prompt: u64, completion: u64) -> Value {
     })
 }
 
+/// The `/api/show` body a local Ollama model returns: no `remote_host`, so the
+/// harness's remote-host check lets chat through (`ollama::show_names_remote`).
+pub async fn local_show() -> Json<Value> {
+    Json(json!({"details": {"family": "mock"}, "capabilities": ["completion"]}))
+}
+
+/// A fake Ollama router: the default `models.local_llm.provider` is `ollama`,
+/// whose every chat request first reads `/api/show`. Add chat routes to it.
+pub fn ollama_router<S: Clone + Send + Sync + 'static>() -> Router<S> {
+    Router::new().route("/api/show", post(local_show))
+}
+
 /// A minimal OpenAI-compatible server on 127.0.0.1:0.
 pub async fn start_mock_model() -> MockModel {
     let reply = Arc::new(std::sync::Mutex::new(ok_reply("pong", 10, 2)));
@@ -555,7 +567,7 @@ pub async fn start_mock_model() -> MockModel {
     let r2 = reply.clone();
     let q2 = requests.clone();
     let d2 = delay.clone();
-    let app = Router::new()
+    let app = ollama_router()
         .route(
             "/v1/models",
             get(|| async { Json(json!({"data": [{"id": "mock-model"}]})) }),

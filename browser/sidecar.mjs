@@ -1002,18 +1002,89 @@ function redirectRefused(origin) {
   return Object.assign(new Error("Page redirect requires a separate browser grant"), { redirectOrigin: origin });
 }
 
-// An action that can load a page: a refused redirect on the way fails it with
-// the redirect's origin, as navigate does, rather than reading as done.
+// Chrome's page for a document the network gate failed. An iframe's error
+// stays inside the granted page, so only a top-level page counts.
+function blockedErrorPage() {
+  return context.pages().some((open) => open.url().startsWith("chrome-error:"));
+}
+
+// A main-frame document navigation the block list refused. frame() throws
+// for a new tab's first load, which is that tab's main frame. An iframe has
+// a parent, so it does not count: blockedLoads moves for it too.
+function watchBlockedNavigation() {
+  let topLevel = false;
+  const blockedByClient = (request) => (request.failure()?.errorText || "").includes("ERR_BLOCKED_BY_CLIENT");
+  const seen = (request) => {
+    try {
+      if (topLevel || !request.isNavigationRequest() || !blockedByClient(request)) return;
+      let frame = null;
+      try {
+        frame = request.frame();
+      } catch {
+        topLevel = true;
+        return;
+      }
+      if (frame.parentFrame() === null) topLevel = true;
+    } catch {}
+  };
+  context.on("requestfailed", seen);
+  return {
+    seen: () => topLevel,
+    stop: () => context.off("requestfailed", seen),
+  };
+}
+
+// The refusal navigate reports. `failed` is the evidence it was a main-frame
+// load: goto rejected, or a click, link or Enter left that frame on the error
+// page. The counter alone also moves for a blocked iframe.
+function blockedLoadError(before, failed) {
+  if (!failed || blockedLoads === before) return null;
+  // Not the URL: the reason is the operator's rule, and the model has the URL.
+  return new Error("the operator's web block list covers that page");
+}
+
+// A new tab can still be about:blank while its blocked navigation commits.
+async function waitForBlockedTab() {
+  const pending = context.pages().filter((open) => {
+    const url = open.url();
+    return url === "about:blank" || url === "";
+  });
+  if (!pending.length) return;
+  await Promise.all(
+    pending.map((open) => open.waitForLoadState("domcontentloaded", { timeout: 1000 }).catch(() => {})),
+  );
+}
+
+// An action that can load a page. A refused redirect fails it with the
+// redirect's origin, as navigate does. A block-listed main-frame load fails
+// it with the same refusal. Either way it does not read as done.
 async function loadingAction(run) {
+  const before = blockedLoads;
   const redirect = watchRedirect();
+  const blockedNav = watchBlockedNavigation();
+  let failure;
   try {
-    await run();
+    try {
+      await run();
+    } catch (error) {
+      failure = error;
+    }
+    const outside = redirect.origin();
+    if (outside) throw redirectRefused(outside);
+    const actionBlocked = failure && String(failure.message || failure).includes("ERR_BLOCKED_BY_CLIENT");
+    let failed = blockedNav.seen() || blockedErrorPage() || actionBlocked;
+    if (!failed && blockedLoads !== before) {
+      await waitForBlockedTab();
+      failed = blockedNav.seen() || blockedErrorPage();
+    }
+    const blocked = blockedLoadError(before, failed);
+    if (blocked) throw blocked;
+    if (failure) throw failure;
+    return observe();
   } finally {
     redirect.stop();
+    blockedNav.stop();
   }
-  const outside = redirect.origin();
-  if (outside) throw redirectRefused(outside);
-  return observe();
 }
 
 async function handle(message) {
@@ -1049,15 +1120,16 @@ async function handle(message) {
         if (stoppedLoad) return;
         const outside = redirect.origin();
         const deniedRedirect = outside && String(error.message).includes("ERR_BLOCKED_BY_CLIENT");
-        if (!deniedRedirect && blockedLoads === before && oversized === large) throw error;
+        const blocked = blockedLoadError(before, true);
+        if (!deniedRedirect && !blocked && oversized === large) throw error;
         // Wait for Chrome's error page before the model tries another navigation.
         await page.waitForEvent("framenavigated", { predicate: (frame) => frame === page.mainFrame(), timeout: 1000 }).catch(() => {});
         if (deniedRedirect) throw redirectRefused(outside);
         if (oversized !== large) {
           throw new Error(`that page is larger than the ${MAX_DOCUMENT_BYTES / 1048576} MiB a browser task reads`);
         }
-        // Not the URL: the reason is the operator's rule, and the model has the URL.
-        throw new Error("the operator's web block list covers that page");
+        if (blocked) throw blocked;
+        throw error;
       });
       await Promise.race([loaded, stopped.then(() => { stoppedLoad = true; })]).finally(() => {
         loadStopped = null;

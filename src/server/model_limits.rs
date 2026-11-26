@@ -543,6 +543,18 @@ pub async fn tune(state: Arc<AppState>, model: String) {
     let Ok(limits) = InventoryLimits::from_config(&state.cfg) else {
         return skipped("inventory_limits");
     };
+    // So would an alias of one (`FROM glm-4.6:cloud`): its `/api/show` names the remote host.
+    let checked = match crate::llm::ollama::native_base_url(&state.backend.base_url) {
+        Some(native) => crate::llm::ollama::refuse_remote_model(&native, &model, limits, &state.backend.api_key).await,
+        None => return skipped("endpoint"),
+    };
+    if let Err(err) = checked {
+        // The read awaited: a newer selection may have tuned meanwhile, and its tuning stays.
+        if state.current_model() == model {
+            state.set_tuning(None);
+        }
+        return skipped(err.details["reason"].as_str().unwrap_or("show_unreadable"));
+    }
     let keep_alive = state.cfg.limit("models.local_llm.warmup.keep_alive_sec");
     let mut speed = None;
     for _ in 0..GATE_ATTEMPTS {

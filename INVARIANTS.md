@@ -269,7 +269,7 @@ The fetcher resolves once, rejects mixed/special-use answers, then pins
 Reqwest to validated addresses with a refusing fallback. One lookup
 (`common::dns`) serves every pinned client and keeps at most 32 answers; a
 larger answer is refused. Fixture resolvers that skip validation exist only with
-`test-support`. Public TLS stays on;
+`test-support`. TLS uses bundled roots;
 proxies, redirects, retries, compression, and reuse stay off. Deadlines cover
 queueing, DNS, and extraction; headers, bodies, and concurrency are bounded.
 HTML parse/extract runs off async workers, stops on cancel/deadline, and keeps
@@ -561,13 +561,14 @@ false`, omitted; never raw. `logging.audit_file` stays home-relative: absolute,
 `..` and Windows-prefixed paths fall back to `logs/audit.jsonl`.
 
 Server audit lines go through one ordered writer thread behind a bounded queue
-(`logging.audit_queue_lines`, default 4096; 0 appends inline). A full queue drops
-the new line with a warning and never blocks a request. The server flushes (at
-most 10 s) before spawning an agentic child, before `GET /api/audit` and
-`GET /api/diag/read` reads, and on Ctrl-C/SIGTERM or desktop sidecar shutdown,
-so a child's lines follow the server lines the flush
-landed; a dropped line or an expired flush does not stop the spawn. Other
-callers append inline.
+(`logging.audit_queue_lines`, default 4096; 0 appends inline). A full queue
+does not block. A refused record merges into `<audit file>.gaps` (0600).
+`/api/status` and `/api/diag` show `audit_gap`, and the next process loads it.
+Sign-in, account create, role, disable, delete, keys and adoption return
+`AUDIT_NOT_RECORDED` and do not commit. The server
+flushes (at most 10 s) before an agentic child, `GET /api/audit`,
+`GET /api/diag/read`, and Ctrl-C/SIGTERM or desktop shutdown. An expired
+flush does not stop the spawn.
 
 - Locked by: `tests/common_layer.rs`, `tests/panels.rs`, `tests/chat_and_sessions.rs`,
   `src/common/audit.rs` units,
@@ -849,8 +850,8 @@ Provider errors are not echoed.
 or goals. Normal storage queries require an `OwnedSessionStore`; search, export,
 chat, prompt preview, styles, skills, selected facts and goal bindings use it.
 `GET /api/sessions/{session_id}/export` writes `{home}/exports/{id}.md` at `0600`
-and returns the same bytes. Search uses a request-local Tantivy RAM index of
-owned sessions. It never writes to the web cache or sends transcripts off-machine.
+and returns the same bytes. Search reconciles the owner's RAM Tantivy index before each query.
+It never writes to the web cache or sends transcripts off-machine.
 
 Records without schema/owner are legacy shared data. They stay outside normal
 reads and clear-history. An administrator can inspect metadata at

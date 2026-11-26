@@ -119,6 +119,7 @@ pub async fn status(
         "files": files,
         "last": last,
         "staged": state.diag.staged(&owner),
+        "audit_gap": state.audit.gap_status(),
         "surfaces": "staged excerpts reach the next local chat turn of their session only; cloud chat and /agent refuse while one is staged; /loop never receives it",
     })))
 }
