@@ -355,6 +355,7 @@ jobs:
                     cargo test --test real_repo_loop an_indeterminate_approve_settles_the_run_record --locked -- --nocapture
                     cargo test --test real_repo_loop a_killed_approve_settles_the_run_record_when_decided_again --locked -- --nocapture
                     cargo test --test linux_bwrap --test mcp_client --locked -- --nocapture
+                    cargo test --test agentic_foundations sandbox_runs_checks_kills_on_timeout_and_scrubs_env --locked -- --nocapture
                     cargo test --test real_repo_loop real_repo_run_smoke_end_to_end --locked -- --nocapture
                     cargo test --test real_repo_loop a_failure_after_acceptance_settles_the_run_record --locked -- --nocapture
                     cargo test --test process_lifecycle mcp_stdio_child_leads_its_own_session --locked -- --nocapture'

@@ -153,6 +153,7 @@ fn path_filters_cover_both_events_and_actions_are_pinned_shas() {
         "src/common/config.rs",
         "src/common/credential_store.rs",
         "src/common/errors.rs",
+        "src/common/mod.rs",
         "src/common/home.rs",
         "src/common/process.rs",
         "src/common/process/**",

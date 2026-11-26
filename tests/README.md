@@ -35,7 +35,7 @@ Docs-only classification can skip compile jobs. CI expectations: [docs/INSTALL.m
 - [`chat_stream.rs`](chat_stream.rs): streaming chat shares guards, tools, session commit and the generation gate with JSON chat.
 - [`chat_attachments.rs`](chat_attachments.rs): text and DOCX attachments and the notes corpus: limits, magic, prompt fence.
 - [`chat_web.rs`](chat_web.rs): chat `web_fetch`/`web_search` rounds: URL permission, token budgets, cancel, revoked sources.
-- [`web_commands.rs`](web_commands.rs), [`web_research.rs`](web_research.rs), [`web_phase2_redteam.rs`](web_phase2_redteam.rs): `/web` grammar, the deterministic research controller and detached research jobs, and the non-empty allowlist red-team.
+- [`web_commands.rs`](web_commands.rs), [`web_research.rs`](web_research.rs), [`web_phase2_redteam.rs`](web_phase2_redteam.rs): `/web` grammar, the deterministic research controller and detached research jobs, and the non-empty allowlist red-team; [`research_baseline_corpus.rs`](research_baseline_corpus.rs) checks the #772 baseline corpus shape.
 - [`session_export.rs`](session_export.rs), [`retrieval_ranking.rs`](retrieval_ranking.rs): export is CSRF-guarded and 0600; golden BM25 ranking order.
 - [`self_manual.rs`](self_manual.rs): generator drift, scanner cleanliness and local-only manual/live-state prompt context.
 - [`cloud_model_selection.rs`](cloud_model_selection.rs): guarded cloud switching, profiles, budgets, cancellation and restart reset with synthetic loopback providers.
@@ -60,7 +60,7 @@ Docs-only classification can skip compile jobs. CI expectations: [docs/INSTALL.m
 
 - [`shim_and_agent_routes.rs`](shim_and_agent_routes.rs): shim argv builder, `/api/agent/run` and `/api/agent/jobs` against the real child, the 409 banner; its self-test cannot report a missing hard sandbox under `CGAH_REQUIRE_CHECK_SANDBOX`.
 - [`agent_schedules.rs`](agent_schedules.rs), [`goal_workflow.rs`](goal_workflow.rs): unreviewed schedules fail closed, at-most-once firing; goal staging never executes.
-- [`agentic_foundations.rs`](agentic_foundations.rs): agentic config, run store, clone jail, sandbox, manifest, registry lock, `gh` argv. With `CGAH_REQUIRE_CHECK_SANDBOX` an unavailable production sandbox fails instead of skipping; CI sets it on macOS for the full run and in the bubblewrap job. It is the required-sandbox gate #782 3B asked for (proposed as `CGAH_REQUIRE_MACOS_SANDBOX`).
+- [`agentic_foundations.rs`](agentic_foundations.rs): agentic config, run store, clone jail, sandbox, manifest, registry lock, `gh` argv. With `CGAH_REQUIRE_CHECK_SANDBOX` an unavailable production sandbox fails instead of skipping; CI sets it on macOS for the full run and, for the production-sandbox test, in the bubblewrap job. It is the required-sandbox gate #782 3B asked for (proposed as `CGAH_REQUIRE_MACOS_SANDBOX`).
 - [`write_policy.rs`](write_policy.rs), [`write_kill_switch.rs`](write_kill_switch.rs), [`git_approval.rs`](git_approval.rs): real git write gates reload per mutation; `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE` still disables; approval integrity.
 - [`exact_edits.rs`](exact_edits.rs), [`real_repo_loop.rs`](real_repo_loop.rs), [`exhausted_run.rs`](exhausted_run.rs): exact-edit proposals (Unix), the loop end to end (`CGAH_REQUIRE_CHECK_SANDBOX`), exhausted-run records.
 - [`linux_bwrap.rs`](linux_bwrap.rs), [`macos_cargo.rs`](macos_cargo.rs): bubblewrap acceptance (`CGAH_REQUIRE_LINUX_BWRAP`); the macOS Seatbelt cargo build never skips.

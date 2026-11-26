@@ -8,7 +8,8 @@ Lint workflow edits with actionlint and zizmor. See [CI expectations](../../docs
 |---|---|
 | [`ci.yml`](ci.yml) | Rust formatting, Clippy, dependency policy, browser, sandbox and lifecycle tests; PR, main push, merge queue and release calls. |
 | [`pr-template-check.yml`](pr-template-check.yml) | PR body and base branch checks; PR open/edit/sync/reopen/ready. |
-| [`docs-impact.yml`](docs-impact.yml) | Check owning guides on PRs. Repair missing reviews on same-repository maintainer PRs. |
+| [`docs-impact.yml`](docs-impact.yml) | Required `docs impact` check: owning guides against the PR diff; PR and merge queue. |
+| [`docs-impact-repair.yml`](docs-impact-repair.yml) | Repair missing guide updates on same-repository maintainer PRs (`pull_request_target`, base scripts only). |
 | [`review-gate-request.yml`](review-gate-request.yml) | Unprivileged wake-up signal from PR (body edits included), review and review-comment events, including forks. |
 | [`review-gate.yml`](review-gate.yml) | Trusted dispatcher; validates request-run identity or handles Codex summary comments, then calls the evaluator. |
 | [`review-gate-evaluate.yml`](review-gate-evaluate.yml) | Reusable advisory check: unresolved threads, running reviews and a PR body not edited since an operator's `@codex review` comment are neutral; evaluation errors fail. Re-run the dispatcher after resolving threads. |
@@ -31,7 +32,7 @@ trailers bind unchanged-guide decisions to the production diff.
 |---|---|
 | [`bundle.yml`](bundle.yml) | CLI archives and universal macOS app artifacts on main pushes; does not publish releases. |
 | [`desktop.yml`](desktop.yml) | Reusable universal macOS build, dependency policy and bundle verification; Bundle, release or manual. |
-| [`desktop-check.yml`](desktop-check.yml) | Desktop crate fmt, Clippy, tests and dependency policy when `desktop/`, `local_tls.rs` or `scripts/start-web.sh` change; PR, merge queue and manual dispatch, skipped otherwise; advisory until required. |
+| [`desktop-check.yml`](desktop-check.yml) | Desktop crate fmt, Clippy, tests and dependency policy when `desktop/`, `local_tls.rs`, `start-web.sh`, `package-desktop.sh`, `prepare-cargo.py` or the workflow change; PR, merge queue and manual dispatch, skipped otherwise; advisory until required. |
 | [`release.yml`](release.yml) | Plan, probe release permission, verify, package and publish; stable tags, each green Bundle on main, or manual preview/publish. Only `publish` uses the `release` environment (wait timer). |
 
 ## Lint, security and targeted checks
@@ -41,7 +42,7 @@ trailers bind unchanged-guide decisions to the production diff.
 | [`workflow-lint.yml`](workflow-lint.yml) | actionlint, zizmor and release/review fixtures; pushes/PRs touching workflow or lint config, or manual. |
 | [`diff-lint.yml`](diff-lint.yml) | [`lint-diff.py`](../../scripts/lint-diff.py) checks DevSkim annotations, self-manual drift, docs caps, config prose and assertion patterns; PR or manual. |
 | [`telemetry-contract.yml`](telemetry-contract.yml) | [`check_otel.py`](../../.claude/skills/cgagentharness-otel-hardening/check_otel.py) and its mutation self-test: child-environment opt-outs, telemetry-free lock graphs, classified dependencies and spawn files; every PR, merge queue, main push, weekly (dated inventory review) or manual; a required check in the importable ruleset. |
-| [`script-lint.yml`](script-lint.yml) | ShellCheck, Python compilation, Node syntax and disposable Git-hook behavior checks; filtered pushes/PRs or manual. |
+| [`script-lint.yml`](script-lint.yml) | ShellCheck, Python compilation, Node syntax, and disposable-repository Git-hook and `cg-doc-sync` trim-report checks; filtered pushes/PRs or manual. |
 | [`clippy-sarif.yml`](clippy-sarif.yml) | Clippy findings in Security; separate from CI's Clippy gate; main push, PR, weekly or manual. |
 | [`codeql.yml`](codeql.yml) | Rust and Actions code scanning; main push, PR, weekly or manual. |
 | [`devskim.yml`](devskim.yml) | Source security patterns; main push, PR targeting main, weekly or manual. |

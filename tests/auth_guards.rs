@@ -681,7 +681,7 @@ async fn approving_a_held_browser_request_is_refused_while_takeover_is_off() {
 #[tokio::test]
 async fn browser_tasks_refuse_without_accounts_even_when_enabled() {
     let model = start_mock_model().await;
-    // The test defaults turn accounts off; browser.enabled keeps its shipped true.
+    // The test defaults turn accounts off; browser.enabled is set to true explicitly.
     let s = spawn_server(
         &model.base_url(),
         ServerOptions::default().with("browser.enabled", "true"),

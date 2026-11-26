@@ -1326,6 +1326,12 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         "computer.enabled",
         // #782 S2: the network-only Linux backend is an explicit operator opt-in.
         "agentic.sandbox.allow_linux_netns_fallback",
+        // Opt-in egress and spend switches no test pinned before 2026-11-26: Firecrawl
+        // sends URLs to api.firecrawl.dev, the budget cap must not trust bytes/4
+        // estimates, and the LM Studio failover is a second local endpoint.
+        "web.firecrawl.enabled",
+        "models.cloud_chat.budget_on_heuristic",
+        "models.local_llm.fallback.enabled",
     ] {
         // A missing key also reads as off, so `!flag_is_true` alone would stay green
         // after a gate is renamed or dropped. Require the literal shipped `false`.
@@ -1361,6 +1367,12 @@ fn shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed() {
         cfg.flag_is_true("web.search.result_reads.enabled"),
         "web.search.result_reads.enabled must ship true"
     );
+    // Browser tasks ship on but stay administrator-only and need literal auth.enabled
+    // (tests/auth_guards.rs); every takeover approval needs confirm and a reason
+    // (tests/secure_portal.rs). Pinned so a flipped default is a visible decision.
+    for key in ["browser.enabled", "browser.takeover.enabled"] {
+        assert_eq!(cfg.bool_opt(key), Some(true), "{key} must ship as literal true");
+    }
     // Context about the harness itself ships on as literal booleans; it grants no tool.
     // why: 2026-11-01, new homes ship /diag log reads on. model_tool stays closed above.
     let knowledge = cgagentharness::server::self_manual::SelfKnowledgeConfig::from_config(&cfg).unwrap();
