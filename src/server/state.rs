@@ -444,7 +444,7 @@ impl AppState {
         let Ok(limits) = crate::llm::inventory::InventoryLimits::from_config(&self.cfg) else {
             return;
         };
-        if crate::llm::ollama::refuse_remote_model(&native, model, limits)
+        if crate::llm::ollama::refuse_remote_model(&native, model, limits, &self.chat.api_key)
             .await
             .is_err()
         {

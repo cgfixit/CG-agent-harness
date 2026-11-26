@@ -94,11 +94,15 @@ impl<'a> LocalProposerClient<'a> {
         let Some(native) = &self.ollama_native else {
             return Ok(());
         };
-        let response = self
+        let mut request = self
             .http
             .post(format!("{native}/api/show"))
-            .json(&show_payload(&self.model))
-            .send();
+            .json(&show_payload(&self.model));
+        // The same origin and credential the planner's chat requests use.
+        if !self.api_key.is_empty() {
+            request = request.bearer_auth(&self.api_key);
+        }
+        let response = request.send();
         let cap = crate::llm::MAX_RESPONSE_BYTES;
         let mut bytes = Vec::new();
         let body;

@@ -678,7 +678,7 @@ pub(super) async fn refuse_remote_ollama(state: &AppState, model: &str) -> ApiRe
         ))
     })?;
     let limits = crate::llm::inventory::InventoryLimits::from_config(&state.cfg).map_err(|e| refused(&e))?;
-    crate::llm::ollama::refuse_remote_model(&native, model, limits)
+    crate::llm::ollama::refuse_remote_model(&native, model, limits, &state.backend.api_key)
         .await
         .map_err(|e| refused(&e))
 }

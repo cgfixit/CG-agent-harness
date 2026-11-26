@@ -653,7 +653,7 @@ impl ChatClient {
         }
         // An alias of one (`FROM glm-4.6:cloud`) has a local-looking name.
         if let (Some((native, limits)), Some(model)) = (self.ollama_show.get(), payload["model"].as_str()) {
-            super::ollama::refuse_remote_model(native, model, *limits).await?;
+            super::ollama::refuse_remote_model(native, model, *limits, &self.api_key).await?;
         }
         // A per-request timeout replaces the client-wide one, so a measured
         // deadline can be longer or shorter than the configured timeout_sec.
@@ -830,23 +830,33 @@ mod tests {
         let app = axum::Router::new()
             .route(
                 "/api/show",
-                axum::routing::post(|axum::Json(body): axum::Json<Value>| async move {
-                    match body["model"].as_str() {
-                        // Ollama 0.40.18 shape for a Modelfile `FROM glm-4.6:cloud`.
-                        Some("glm-local") => (
-                            reqwest::StatusCode::OK,
-                            axum::Json(json!({"remote_host": "https://ollama.com:443", "remote_model": "glm-4.6"})),
-                        ),
-                        Some("qwen3:8b") => (
-                            reqwest::StatusCode::OK,
-                            axum::Json(json!({"details": {"family": "qwen3"}})),
-                        ),
-                        _ => (
-                            reqwest::StatusCode::NOT_FOUND,
-                            axum::Json(json!({"error": "not found"})),
-                        ),
-                    }
-                }),
+                axum::routing::post(
+                    |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>| async move {
+                        let keyed = headers.get("authorization").and_then(|v| v.to_str().ok())
+                            == Some("Bearer fixture-proxy-key");
+                        match body["model"].as_str() {
+                            // A loopback proxy that requires the backend's key, as chat sends it.
+                            Some("proxied:1b") if !keyed => (
+                                reqwest::StatusCode::UNAUTHORIZED,
+                                axum::Json(json!({"error": "unauthorized"})),
+                            ),
+                            Some("proxied:1b") => (reqwest::StatusCode::OK, axum::Json(json!({"details": {}}))),
+                            // Ollama 0.40.18 shape for a Modelfile `FROM glm-4.6:cloud`.
+                            Some("glm-local") => (
+                                reqwest::StatusCode::OK,
+                                axum::Json(json!({"remote_host": "https://ollama.com:443", "remote_model": "glm-4.6"})),
+                            ),
+                            Some("qwen3:8b") => (
+                                reqwest::StatusCode::OK,
+                                axum::Json(json!({"details": {"family": "qwen3"}})),
+                            ),
+                            _ => (
+                                reqwest::StatusCode::NOT_FOUND,
+                                axum::Json(json!({"error": "not found"})),
+                            ),
+                        }
+                    },
+                ),
             )
             .route(
                 "/v1/chat/completions",
@@ -888,6 +898,15 @@ mod tests {
         assert_eq!(chats.load(std::sync::atomic::Ordering::SeqCst), 1);
         // Without the Ollama guard the same name is sent: the name alone looks local.
         assert_eq!(unguarded.chat("s", &[], None, 16, 0.0).await.unwrap().body_text, "ok");
+        // The show read carries the backend key, so an authenticated proxy answers it.
+        let proxied = ChatClient::new(&url, "proxied:1b", 5.0, "fixture-proxy-key", None).unwrap();
+        proxied.refuse_remote_ollama_models(limits).unwrap();
+        assert_eq!(proxied.chat("s", &[], None, 16, 0.0).await.unwrap().body_text, "ok");
+        let keyless = client.chat("s", &[], Some("proxied:1b"), 16, 0.0).await.unwrap_err();
+        assert_eq!(
+            reason(keyless),
+            ("MODEL_SELECTION_REJECTED".into(), "show_unreadable".into())
+        );
         server.abort();
         let _ = server.await;
         let unreadable = client.chat("s", &[], Some("qwen3:8b"), 16, 0.0).await.unwrap_err();

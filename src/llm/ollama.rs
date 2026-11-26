@@ -155,16 +155,17 @@ pub enum ShowRead<'a> {
 /// Local use of `model` is refused unless its `/api/show` was read and names
 /// no remote host: a model that cannot be shown cannot be shown to be local.
 /// The code matches [`cloud_tag`]'s refusals; `reason` says which check failed.
+/// A body that is not a JSON object carries no model facts, so it is unreadable.
 pub fn refuse_unless_shown_local(read: ShowRead<'_>) -> Result<()> {
     let (reason, message) = match read {
-        ShowRead::Body(show) if !show_names_remote(show) => return Ok(()),
-        ShowRead::Body(_) => (
+        ShowRead::Body(show) if show.is_object() && !show_names_remote(show) => return Ok(()),
+        ShowRead::Body(show) if show.is_object() => (
             "remote_host",
             "this Ollama model forwards to a remote host (its /api/show names remote_host or remote_model), \
              like a :cloud tag under another name, so a signed-in Ollama would send the prompt off this machine",
         ),
         ShowRead::Status(404) => ("tag_missing", "Ollama has no model with this exact tag"),
-        ShowRead::Status(_) | ShowRead::Failed => (
+        ShowRead::Body(_) | ShowRead::Status(_) | ShowRead::Failed => (
             "show_unreadable",
             "Ollama's /api/show for this model could not be read (is Ollama running?), so the harness cannot confirm \
              it runs on this machine; nothing was sent",
@@ -184,9 +185,14 @@ pub fn show_payload(model: &str) -> Value {
 
 /// Reads `/api/show` for `model` on the loopback `native` origin and refuses it
 /// unless the body names no remote host ([`refuse_unless_shown_local`]).
-pub async fn refuse_remote_model(native: &str, model: &str, limits: InventoryLimits) -> Result<()> {
+/// `api_key` is the backend's own credential (`models.local_llm.api_key`), sent
+/// as chat sends it: `native` is the same origin as the chat endpoint.
+pub async fn refuse_remote_model(native: &str, model: &str, limits: InventoryLimits, api_key: &str) -> Result<()> {
     let client = http_client(limits.timeout)?;
-    let request = client.post(format!("{native}/api/show")).json(&show_payload(model));
+    let mut request = client.post(format!("{native}/api/show")).json(&show_payload(model));
+    if !api_key.trim().is_empty() {
+        request = request.bearer_auth(api_key.trim());
+    }
     match bounded_json(request, limits.max_bytes).await {
         Bounded::Json(body) => refuse_unless_shown_local(ShowRead::Body(&body)),
         Bounded::Status(code) => refuse_unless_shown_local(ShowRead::Status(code)),
@@ -396,7 +402,7 @@ pub async fn run_warmup(backend: &ResolvedLocalBackend, model: &str, cfg: &AppCo
     }
     // An alias of a cloud model (`FROM glm-4.6:cloud`) forwards the same way.
     let checked = match InventoryLimits::from_config(cfg) {
-        Ok(limits) => refuse_remote_model(&native, model, limits).await,
+        Ok(limits) => refuse_remote_model(&native, model, limits, &backend.api_key).await,
         Err(err) => Err(err),
     };
     if let Err(err) = checked {
@@ -625,6 +631,10 @@ mod tests {
         assert_eq!(reason(ShowRead::Status(404)), "tag_missing");
         assert_eq!(reason(ShowRead::Status(500)), "show_unreadable");
         assert_eq!(reason(ShowRead::Failed), "show_unreadable");
+        // A 200 whose body is not an object carries no model facts: unreadable, not local.
+        for shapeless in [json!(null), json!([]), json!("glm-local"), json!(7)] {
+            assert_eq!(reason(ShowRead::Body(&shapeless)), "show_unreadable", "{shapeless}");
+        }
         let err = refuse_unless_shown_local(ShowRead::Failed).unwrap_err();
         assert_eq!(err.code, MODEL_SELECTION_REJECTED);
         assert!(!show_payload("glm-local").to_string().contains("num_ctx"));
