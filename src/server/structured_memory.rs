@@ -766,6 +766,61 @@ fn fts_insert(tx: &rusqlite::Transaction<'_>, rowid: i64, category: &str, conten
     Ok(())
 }
 
+/// The most active facts one owner can hold: the upper clamp of
+/// `structured_memory.max_facts_per_owner` (`common::config`), which every
+/// path that activates a fact enforces.
+const OWNER_RANKED_FACTS: usize = 256;
+
+/// The shared index's columns and tokenizer, for an index of one owner's
+/// facts only. `fts_ddl_and_owner_ranking_agree` keeps the two the same.
+const OWNER_RANK_DDL: &str = "CREATE VIRTUAL TABLE owner_fts USING fts5(
+  title,
+  value,
+  tags,
+  tokenize='unicode61 remove_diacritics 2',
+  content=''
+);";
+
+/// `matched` facts scored by FTS5's own bm25() over an in-memory index of
+/// `facts` (one owner's active facts) alone, lower first as bm25() ranks.
+/// The shared `facts_fts` holds every owner's rows, so its row count,
+/// average length and term counts would let one account's scores and order
+/// say whether another account's facts contain a word. Nothing is written
+/// to disk; the index is gone when this returns.
+fn owner_ranked(
+    facts: &[(i64, Fact)],
+    expr: &str,
+    matched: &std::collections::HashSet<i64>,
+) -> Result<Vec<(Fact, f64)>> {
+    let mut conn = Connection::open_in_memory().map_err(sql)?;
+    // One transaction: FTS5 writes a segment per commit.
+    let tx = conn.transaction().map_err(sql)?;
+    tx.execute_batch(OWNER_RANK_DDL).map_err(sql)?;
+    {
+        let mut insert = tx
+            .prepare("INSERT INTO owner_fts(rowid, title, value, tags) VALUES(?1, ?2, ?3, '')")
+            .map_err(sql)?;
+        for (rowid, fact) in facts {
+            insert
+                .execute(params![rowid, fact.category, fact.content])
+                .map_err(sql)?;
+        }
+    }
+    tx.commit().map_err(sql)?;
+    let scores = conn
+        .prepare("SELECT rowid, bm25(owner_fts) FROM owner_fts WHERE owner_fts MATCH ?1")
+        .map_err(sql)?
+        .query_map(params![expr], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?)))
+        .map_err(sql)?
+        .collect::<std::result::Result<std::collections::HashMap<_, _>, _>>()
+        .map_err(sql)?;
+    Ok(facts
+        .iter()
+        .filter(|(rowid, _)| matched.contains(rowid))
+        .filter_map(|(rowid, fact)| scores.get(rowid).map(|score| (fact.clone(), *score)))
+        .collect())
+}
+
 fn fts_delete(tx: &rusqlite::Transaction<'_>, rowid: i64, category: &str, content: &str) -> Result<()> {
     tx.execute(
         "INSERT INTO facts_fts(facts_fts, rowid, title, value, tags) VALUES('delete', ?1, ?2, ?3, '')",
@@ -1259,31 +1314,51 @@ impl StructuredMemoryStore {
                     "facts FTS index is unavailable",
                 ));
             }
-            let mut stmt = conn
+            // Which of this owner's active facts match. No score here: the
+            // shared table's bm25() counts every owner's facts.
+            let matched = conn
                 .prepare(
-                    "SELECT f.public_id, f.owner_id, f.content, f.category, f.content_digest, f.revision, f.active,
-                            f.created_ts, f.updated_ts, bm25(facts_fts) AS score
-                     FROM facts_fts
+                    "SELECT f.id FROM facts_fts
                      JOIN facts f ON f.id = facts_fts.rowid
-                     WHERE facts_fts MATCH ?1 AND f.owner_id=?2 AND f.active=1
-                     ORDER BY score ASC, f.updated_ts DESC, f.public_id ASC
-                     LIMIT ?3",
+                     WHERE facts_fts MATCH ?1 AND f.owner_id=?2 AND f.active=1",
                 )
+                .map_err(sql)?
+                .query_map(params![expr, owner], |r| r.get::<_, i64>(0))
+                .map_err(sql)?
+                .collect::<std::result::Result<std::collections::HashSet<_>, _>>()
                 .map_err(sql)?;
-            let rows = stmt
-                .query_map(params![expr, owner, limit as i64], |r| {
-                    Ok((Self::map_fact(r)?, r.get::<_, f64>(9)?))
+            if matched.is_empty() {
+                return Ok(Vec::new());
+            }
+            // Every active fact of this owner: its scores come from these alone.
+            let facts = conn
+                .prepare(
+                    "SELECT public_id, owner_id, content, category, content_digest, revision, active,
+                            created_ts, updated_ts, id
+                     FROM facts WHERE owner_id=?1 AND active=1 LIMIT ?2",
+                )
+                .map_err(sql)?
+                .query_map(params![owner, OWNER_RANKED_FACTS as i64], |r| {
+                    Ok((r.get::<_, i64>(9)?, Self::map_fact(r)?))
                 })
                 .map_err(sql)?
                 .collect::<std::result::Result<Vec<_>, _>>()
                 .map_err(sql)?;
+            drop(conn);
+            let mut hits = owner_ranked(&facts, &expr, &matched)?;
+            hits.sort_by(|a, b| {
+                a.1.total_cmp(&b.1)
+                    .then(b.0.updated_ts.total_cmp(&a.0.updated_ts))
+                    .then_with(|| a.0.id.cmp(&b.0.id))
+            });
+            hits.truncate(limit);
             if started.elapsed() > std::time::Duration::from_millis(self.limits.max_search_time_ms) {
                 return Err(HarnessError::new(
                     "STRUCTURED_MEMORY_FTS",
                     "facts FTS search exceeded the configured time bound",
                 ));
             }
-            Ok(rows
+            Ok(hits
                 .into_iter()
                 .map(|(fact, score)| SearchHit {
                     fact,
@@ -4940,6 +5015,68 @@ mod tests {
         let selected = store.recall_selected("user_alice", &picks);
         assert_eq!(selected.injected.len(), 1);
         assert_eq!(selected.dropped.iter().filter(|d| d.reason == "over_limit").count(), 3);
+    }
+
+    /// One FTS5 table holds every owner's facts, and `bm25()` reads its row
+    /// count, average length and term counts from the whole table. A score
+    /// or an order built from those would tell one account whether another's
+    /// facts contain a word. Scores and order come from this owner's facts.
+    #[test]
+    fn fact_search_scores_and_order_ignore_other_owners_facts() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        store.add_fact("user_alice", "zqxjcontrol", "probe", "add").unwrap();
+        store.add_fact("user_alice", "smith", "probe", "add").unwrap();
+        store
+            .add_fact("user_alice", "smith zqxjcontrol notes", "probe", "add")
+            .unwrap();
+        let seen = |query: &str| -> Vec<(String, String)> {
+            store
+                .search_facts_fts("user_alice", query, 8)
+                .unwrap()
+                .iter()
+                .map(|hit| (hit.fact.content.clone(), format!("{:.12}", hit.score)))
+                .collect()
+        };
+        let prompt = |message: &str| -> Vec<String> {
+            store
+                .search_prompt_facts_fts("user_alice", message, 8)
+                .unwrap()
+                .iter()
+                .map(|hit| format!("{} {:.12}", hit.fact.content, hit.score))
+                .collect()
+        };
+        let before = (seen("smith"), seen("zqxjcontrol"), prompt("smith or zqxjcontrol?"));
+        assert_eq!(before.0.len(), 2, "{before:?}");
+        for word in ["smith", "smith rules", "agent smith", "smith again", "smith once more"] {
+            store.add_fact("user_bob", word, "other", "add").unwrap();
+        }
+        let after = (seen("smith"), seen("zqxjcontrol"), prompt("smith or zqxjcontrol?"));
+        assert_eq!(
+            before, after,
+            "another account's facts changed this account's scores or order"
+        );
+        assert!(store.search_facts_fts("user_bob", "zqxjcontrol", 8).unwrap().is_empty());
+    }
+
+    /// The owner-only ranking index and the shared one tokenize the same way,
+    /// and the ranked-fact bound is the fact cap's upper clamp.
+    #[test]
+    fn fts_ddl_and_owner_ranking_agree() {
+        let spec = |ddl: &str| {
+            let body = &ddl[ddl.find("fts5(").unwrap()..];
+            body[..=body.find(')').unwrap()].to_string()
+        };
+        assert_eq!(spec(FTS_DDL), spec(OWNER_RANK_DDL));
+        let over = AppConfig::from_str(
+            "structured_memory: {max_facts_per_owner: 100000}",
+            std::path::Path::new("config.yaml"),
+        )
+        .unwrap();
+        assert_eq!(
+            over.limit("structured_memory.max_facts_per_owner") as usize,
+            OWNER_RANKED_FACTS
+        );
     }
 
     #[test]
