@@ -1,8 +1,8 @@
 # Static checks for the repository's helper scripts: shellcheck on every
 # tracked shell script (and the root init.command and uninstall.command launchers) and git hook, a full compile of every Python script,
 # and `node --check` on every .mjs script, the browser sidecar and the scripts the console and the
-# desktop setup page load (assets/static/*.js, desktop/ui/*.js). Hook behavior runs in disposable
-# repositories; application contract tests live in ci.yml. Lists use `git ls-files`
+# desktop setup page load (assets/static/*.js, desktop/ui/*.js). Hook behavior and the cg-doc-sync
+# trim report run in disposable repositories; application contract tests live in ci.yml. Lists use `git ls-files`
 # so a new script is linted without editing this workflow.
 name: Scripts - Shell, Python and Node lint
 
@@ -78,6 +78,8 @@ jobs:
           '
       - name: Git hook behavior in disposable repositories
         run: python3 scripts/test-githooks.py
+      - name: cg-doc-sync trim report in disposable repositories
+        run: python3 -I .claude/skills/cg-doc-sync/test_trim_report.py -v
       - name: Node scripts parse
         run: |
           set -euo pipefail

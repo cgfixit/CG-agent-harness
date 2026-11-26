@@ -1,10 +1,12 @@
 name: Docs impact
 
+# The repair job lives in docs-impact-repair.yml: a pull_request_target run
+# here skipped `check` and posted a second, skipped "docs impact" status on the
+# PR head beside the real one, and a skipped required check reads as passing.
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review] # zizmor: ignore[dangerous-triggers] -- runs only trusted base scripts; PRs are read as Git objects and model output is data
   merge_group:
 
 permissions: {}
@@ -33,29 +35,3 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 scripts/docs-impact.py --base "$BASE_SHA" --head "$HEAD_SHA"
-
-  repair:
-    name: repair missing owning-guide updates
-    if: >-
-      github.event_name == 'pull_request_target' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.base.ref == github.event.repository.default_branch &&
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
-          fetch-depth: 0
-      - name: Review and repair the exact PR head
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DOCS_SYNC_OPENAI_API_KEY: ${{ secrets.DOCS_SYNC_OPENAI_API_KEY }}
-          DOCS_SYNC_GITHUB_TOKEN: ${{ secrets.DOCS_SYNC_GITHUB_TOKEN }}
-          DOCS_SYNC_MODEL: ${{ vars.DOCS_SYNC_MODEL }}
-        run: python3 scripts/repair-docs-impact.py
