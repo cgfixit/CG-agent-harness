@@ -23,7 +23,6 @@ const MAX_SESSIONS: usize = 200;
 const MAX_BYTES: usize = 2_000_000;
 const CHUNK_CHARS: usize = 1200;
 const MAX_QUERY_CHARS: usize = 200;
-const CANDIDATES: usize = 64;
 const MAX_HITS: usize = 16;
 const SNIPPET_CHARS: usize = 160;
 const PER_SESSION: usize = 2;
@@ -288,6 +287,11 @@ fn apply_delta(index: &mut OwnerIndex, store: &OwnedSessionStore<'_>) -> Result<
             }
         }
         writer.commit().map_err(|_| failed("could not commit session index"))?;
+        // `IndexWriter`'s drop kills the merger. Wait, or deleted segments
+        // stay in this process-lifetime index.
+        writer
+            .wait_merging_threads()
+            .map_err(|_| failed("could not merge session index"))?;
     }
     if let Err(error) = index.reader.reload() {
         index.expected_docs = u64::MAX;
@@ -395,8 +399,12 @@ fn run_query(
     let parsed = parser
         .parse_query(expression)
         .map_err(|_| failed("query cannot be indexed"))?;
+    // A short query can match only in the chunk tail. Those documents are
+    // discarded below, and they outscore the chunk that owns the same text.
+    // Cap hits after that discard, not before it.
+    let limit = usize::try_from(searcher.num_docs()).unwrap_or(usize::MAX).max(1);
     let top = searcher
-        .search(&parsed, &TopDocs::with_limit(CANDIDATES).order_by_score())
+        .search(&parsed, &TopDocs::with_limit(limit).order_by_score())
         .map_err(|_| failed("session search failed"))?;
 
     let mut hits = Vec::new();
@@ -504,6 +512,17 @@ fn testing_forget_session_index(dir: &Path, owner: &str) {
 }
 
 #[cfg(test)]
+fn testing_segment_count(dir: &Path, owner: &str) -> usize {
+    let slot = slot_for(dir, owner);
+    let guard = slot.inner.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard
+        .as_ref()
+        .and_then(|index| index.index.searchable_segments().ok())
+        .map(|segments| segments.len())
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
 fn testing_corrupt_session_index(dir: &Path, owner: &str) {
     let slot = slot_for(dir, owner);
     let mut guard = slot.inner.lock().unwrap_or_else(|poison| poison.into_inner());
@@ -519,6 +538,10 @@ mod tests {
     use super::*;
     use crate::server::sessions::{SessionStore, TokenTally};
     use std::hint::black_box;
+
+    /// The old per-search index kept this many BM25 candidates. The bench
+    /// still does. Production walks every live document, then caps hits.
+    const CANDIDATES: usize = 64;
     use std::time::Instant;
 
     fn say(owned: &OwnedSessionStore<'_>, session_id: &str, text: &str) {
@@ -757,6 +780,55 @@ mod tests {
         );
         assert!(testing_trace().rebuild);
         assert_eq!(after_missing[0].session_id, session.session_id);
+    }
+
+    #[test]
+    fn overlap_tails_do_not_hide_a_real_needle() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path()).unwrap();
+        let owned = store.for_owner("user_search_overlap_crowd");
+        let heavy = format!(
+            "{}{}{}",
+            "x".repeat(CHUNK_CHARS),
+            " needle ".repeat(40),
+            "z ".repeat(1_000)
+        );
+        for n in 0..CANDIDATES {
+            let session = owned.create("test", &format!("heavy {n}")).unwrap();
+            say(&owned, &session.session_id, &heavy);
+        }
+        let hits = search_sessions(&owned, "needle").unwrap();
+        assert!(
+            !hits.is_empty(),
+            "a needle past the first chunk must survive the candidate walk"
+        );
+        assert!(hits.iter().all(|hit| hit.snippet.to_lowercase().contains("needle")));
+    }
+
+    #[test]
+    fn repeated_edits_merge_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SessionStore::new(dir.path()).unwrap();
+        let owner = "user_search_merge";
+        let owned = store.for_owner(owner);
+        let session = owned.create("test", "merge").unwrap();
+        say(&owned, &session.session_id, "mergeneedle seed");
+        let updates = 12;
+        for n in 0..updates {
+            let mut edited = owned.get(&session.session_id).unwrap();
+            edited.messages[0].text = format!("mergeneedle {n} {}", "m".repeat(8_000));
+            std::fs::write(
+                dir.path().join(format!("{}.json", session.session_id)),
+                serde_json::to_vec(&edited).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(search_sessions(&owned, &format!("mergeneedle {n}")).unwrap().len(), 1);
+        }
+        let segments = testing_segment_count(dir.path(), owner);
+        assert!(
+            segments < updates,
+            "merges should collapse commits, found {segments} segments after {updates} edits"
+        );
     }
 
     #[test]
