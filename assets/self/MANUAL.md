@@ -157,11 +157,11 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/memory remember <sentence> :: <reason>`: Confirm human summary on latest completed episode.
 - `/memory facts`, `/memory retrieve <query>`, `/memory search <query>`: List facts, retrieve for one turn or search without injection.
 - `/memory save <text> :: <reason>`: Confirm an immediate private fact write
-- `/model [status]`, `profile`, `list`, `use <name>`: Inspect or select chat model.
-- `/net status`, `/net devices`, `/net diag`: LAN panel or budgeted diagnostics.
+- `/model [status]`, `profile`, `list`, `use <name>`: Inspect or select chat model; `use` refuses Ollama cloud tags and aliases (models).
 
 ## console: slash-command quick reference (part 3)
 
+- `/net status`, `/net devices`, `/net diag`: LAN panel or budgeted diagnostics.
 - `/prompt`: Private preview of the next local chat turn's prompt
 - `/registry`: Combined skill, tool and connector catalog
 - `/session`, `list`, `info`, `new [title]`, `rename <title>`, `unpin`, `use <id>`: List, inspect, create, rename or reopen sessions; `unpin` clears attachment pins
@@ -173,10 +173,10 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/status`: Runtime status and unlimited-loop warning; account access required
 - `/style`, `/style <name>`, `/style off`: Inspect/select a session output style, or clear it without changing soul.md
 - `/tokens`: Current session token tally
-- `/tools [all|help|mcp|<name>]`: Collect tool and capability metadata.
 
 ## console: slash-command quick reference (part 4)
 
+- `/tools [all|help|mcp|<name>]`: Collect tool and capability metadata.
 - `/users`: Administrator account panel; accounts
 - `/web [status|help]`, `/web on`, `/web off`: Inspect shared-home rules; administrators enable/disable web
 - `/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]`, `/web deny <id-or-pattern>`: Admin grant/remove. Repeat seeds as needed.
