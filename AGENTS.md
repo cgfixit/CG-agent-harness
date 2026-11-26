@@ -147,7 +147,7 @@ budgeted). Link shared facts; evidence goes in PRs, screenshots in
 Lower trimmed caps. New rows or raises need approval and `// why:`.
 Remove deleted docs from budgets and references (CG008).
 
-For broad syncs use `doc-sync` and `dep-sync` or verify code, pins, locks
+For broad syncs use `cg-doc-sync` and `dep-sync` or verify code, pins, locks
 and `deny.toml` against `origin/main`. Weekly, `cgfixit` reviews Markdown
 diffs and [dependency watches](docs/DEPENDENCIES.md#retained-constraints).
 
