@@ -2833,12 +2833,29 @@ fn console_asset_is_verbatim_with_both_placeholders() {
     assert!(html.contains("__CYCLAW_CSP_NONCE__"));
     assert!(html.contains("/static/auth_admin.js"));
     // The asset mentions localStorage once, in a comment saying it never uses it; the API call shape is what matters.
-    for api in ["localStorage.", "sessionStorage.", "document.cookie"] {
+    for api in ["localStorage.", "document.cookie"] {
         assert!(
             !html.contains(api),
             "the console keeps the API key out of storage ({api})"
         );
     }
+    // why: #1123 (operator decision) keeps one tab-scoped pair, {session_id,
+    // job_id}, so a reload finds a waiting /browse task. Every mention of
+    // sessionStorage is one of these three calls on that one key.
+    let keyed: usize = [
+        "sessionStorage.getItem(BROWSE_JOB_KEY)",
+        "sessionStorage.setItem(BROWSE_JOB_KEY, JSON.stringify({ session_id: session || null, job_id: id }))",
+        "sessionStorage.removeItem(BROWSE_JOB_KEY)",
+    ]
+    .iter()
+    .map(|call| html.matches(call).count())
+    .sum();
+    assert_eq!(
+        html.matches("sessionStorage").count(),
+        keyed,
+        "sessionStorage holds only the browser-task pair, through BROWSE_JOB_KEY"
+    );
+    assert_eq!(html.matches("const BROWSE_JOB_KEY = ").count(), 1);
 }
 
 /// The bypass this guard exists to close, pinned as a fixture.

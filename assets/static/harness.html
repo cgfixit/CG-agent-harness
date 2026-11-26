@@ -3028,16 +3028,69 @@ function showBrowseApproval(jobId, pending) {
 /* The browser task this page started, while it runs: /browse cancel stops it. */
 let browseJobId = '';
 let browseWatchGeneration = 0;
+let browseWatchRevision = -1;
 const BROWSE_POLL_MS = 1500;
-async function watchBrowseJob(id) {
+/* #1123: the tab keeps only which task it started and in which session
+   (null: none), never the task, a URL, a body or a reason, so a reload or a
+   return to that session finds the task again. What is shown always comes
+   from the server's record. */
+const BROWSE_JOB_KEY = 'cgah.browseJob';
+/* The task no longer exists for this account: it ended and was cleared, it is
+   another account's, or the harness restarted. */
+const BROWSE_JOB_GONE = ['BROWSER_JOB_NOT_FOUND', 'INVALID_JOB_ID'];
+function storedBrowseJob() {
+  try {
+    const pair = JSON.parse(sessionStorage.getItem(BROWSE_JOB_KEY) || 'null');
+    if (pair && typeof pair.job_id === 'string' && (pair.session_id === null || typeof pair.session_id === 'string')) return pair;
+  } catch (e) {}
+  return null;
+}
+function rememberBrowseJob(id, session) {
+  try { sessionStorage.setItem(BROWSE_JOB_KEY, JSON.stringify({ session_id: session || null, job_id: id })); } catch (e) {}
+}
+function forgetBrowseJob(id) {
+  try {
+    const pair = storedBrowseJob();
+    if (!id || !pair || pair.job_id === id) sessionStorage.removeItem(BROWSE_JOB_KEY);
+  } catch (e) {}
+}
+function browseJobGone() {
+  sys('The browser task this tab started is unavailable, nothing was resumed.',
+    'it ended and was cleared, or the harness restarted; a request it held was not sent');
+}
+/* Follow this tab's task again when its session is the one shown. At load, a
+   task left running in another session is pointed to; one the server no
+   longer has is forgotten. */
+async function resumeBrowseJob(atLoad) {
+  const pair = storedBrowseJob();
+  /* A watcher from before the last navigation stops at its next poll; only
+     one started for the view now shown is already following the task. */
+  if (!pair || (pair.job_id === browseJobId && browseWatchRevision === sessionRevision)) return;
+  if (pair.session_id === currentSession) { watchBrowseJob(pair.job_id, true); return; }
+  if (!atLoad) return;
+  const revision = sessionRevision;
+  try {
+    const job = await api('/api/browser/jobs/' + encodeURIComponent(pair.job_id));
+    if (revision !== sessionRevision) return;
+    if (['running', 'waiting', 'cancelling'].includes(job.status)) {
+      sys('A browser task started in session ' + pair.session_id + ' is ' + String(job.status) + '.',
+        '/session use ' + pair.session_id + ' to follow it');
+    }
+  } catch (e) {
+    if (revision !== sessionRevision) return;
+    if (BROWSE_JOB_GONE.includes(e && e.code)) { forgetBrowseJob(pair.job_id); browseJobGone(); }
+  }
+}
+async function watchBrowseJob(id, resumed = false) {
   const generation = ++browseWatchGeneration, revision = sessionRevision;
   const stale = () => generation !== browseWatchGeneration || revision !== sessionRevision;
-  browseJobId = id;
+  browseJobId = id; browseWatchRevision = revision;
   let asked = 0;
   try {
     while (!stale()) {
       const job = await api('/api/browser/jobs/' + encodeURIComponent(id));
       if (stale()) return;
+      if (resumed) { resumed = false; sys('Following the browser task this tab started.', 'its state comes from the server'); }
       /* One card per paused request: a request's number is never reused in a task. */
       if (job.status === 'waiting' && job.pending && Number(job.pending.request) !== asked) {
         asked = Number(job.pending.request);
@@ -3047,15 +3100,20 @@ async function watchBrowseJob(id) {
         await new Promise(resolve => setTimeout(resolve, BROWSE_POLL_MS));
         continue;
       }
+      forgetBrowseJob(id);
       if (job.result) renderBrowseResult(job.result);
       if (job.status === 'cancelled') sys('The browser task was cancelled.');
       if (job.error) sys(String(job.error.code) + ': ' + String(job.error.message));
       return;
     }
   } catch (e) {
-    if (!stale()) sys((e && e.message) || String(e));
+    if (stale()) return;
+    if (BROWSE_JOB_GONE.includes(e && e.code)) { forgetBrowseJob(id); browseJobGone(); }
+    /* A first read at load can fail before sign-in; the pair is kept. */
+    else if (!resumed) sys((e && e.message) || String(e));
   } finally {
-    if (browseJobId === id) browseJobId = '';
+    /* A newer watcher may already follow the same task. */
+    if (generation === browseWatchGeneration) browseJobId = '';
   }
 }
 
@@ -3369,6 +3427,7 @@ async function runSlash(line, webCommand) {
             stream.scrollTop = stream.scrollHeight;
             /* Not awaited: the stream lives as long as the run, and the send gate must reopen. */
             if (typeof reattachServerLoop === 'function') reattachServerLoop(s.session_id, revision);
+            resumeBrowseJob(false);
             refreshMemoryProposals();
           } catch (e) {
             if (revision === sessionRevision) throw e;
@@ -4522,7 +4581,12 @@ async function runSlash(line, webCommand) {
         try { job = await api('/api/browser/jobs', 'POST', {task, origins}, BROWSE_START_MS); }
         catch (e) { if (!e || e.code !== 'BROWSER_JOBS_UNSUPPORTED') throw e; }
         if (staleReview()) break;
-        if (job) { watchBrowseJob(String(job.job_id || '')); break; }
+        if (job) {
+          /* Kept only once the server has the job; a newer task replaces it. */
+          rememberBrowseJob(String(job.job_id || ''), currentSession);
+          watchBrowseJob(String(job.job_id || ''));
+          break;
+        }
         const r = await api('/api/browser/run', 'POST', {task, origins}, BROWSE_WAIT_MS);
         if (staleReview()) break;
         renderBrowseResult(r);
@@ -6321,6 +6385,7 @@ function resetAccountView() {
   clearTranscript(); sessionSearchQuery = ''; sessionSearchSeq++; $('pane-sessions').replaceChildren(); $('pane-api-keys').replaceChildren(); $('memoryReview').replaceChildren(); $('usersPanelBody').replaceChildren();
   netconnectRevision++; $('pane-netconnect').replaceChildren();
   setCurrentSession(null); sessionGoal = ''; loopAuto = false; stopLoop();
+  forgetBrowseJob('');
   paintSessionTokens({total:0});
   $('sSession').textContent = 'none'; input.value = ''; retryAttachmentIds = null;
   promptHistory = {session:null, prompts:[], index:0, draft:'', loading:false};
@@ -6595,7 +6660,11 @@ if (hAuthLogin) {
       showSignIn(null, initialPassword && data.must_change_password === true);
       refreshHeaderFeatures(!data.must_change_password);
       if (data.must_change_password) openPasswordChange(true);
-      else { await refreshMemoryProposals(); await refreshStatus(); await refreshSessions(); }
+      else {
+        await refreshMemoryProposals(); await refreshStatus(); await refreshSessions();
+        /* A reload before sign-in could not read this tab's browser task. */
+        resumeBrowseJob(true).catch(() => {});
+      }
     } catch (e) {
       pass.value = '';
       error.textContent = "Can't reach the harness. Check that it is still running, then try again.";
@@ -7194,6 +7263,7 @@ applyCapabilityUI(); // fail closed until whoami reports the caller's grants
 refreshStatus();
 refreshSessions().catch(() => {});
 resumeResearchJob().catch(() => {});
+resumeBrowseJob(true).catch(() => {});
 
 sys('CG Agent Harness — local chat with optional governed coding.');
 sys('Chat starts without an assigned repository or automatic coding skills. /prompt previews context; /skill use selects optional skills.');
