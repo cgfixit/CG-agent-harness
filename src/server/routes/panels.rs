@@ -156,7 +156,7 @@ fn web_err(e: &HarnessError) -> ApiError {
         "WEB_POLICY_UNAVAILABLE" => "The shared URL policy file is missing or unreadable, so web reads are refused. An administrator's /web allow creates it; an unreadable file is never reset.",
         "WEB_POLICY_CHANGED" => "The URL policy changed during this request; nothing was delivered. Retry.",
         "WEB_BAD_QUERY" => "The query, result count or --group was refused. Use 1–200 characters with searchable words (research: 1–2,000), --count 1–10 and a group /web status lists.",
-        "MODEL_SELECTION_REJECTED" => "The selected model is an Ollama cloud model (a :cloud or -cloud tag), which sends the prompt to ollama.com. Web research needs a local model: choose one with /model use.",
+        "MODEL_SELECTION_REJECTED" => "The selected model could not be confirmed local: an Ollama cloud model (a :cloud or -cloud tag, or an alias whose /api/show names a remote host) sends the prompt off this machine, and an unreadable /api/show is refused too. Web research needs a local model: choose one with /model use.",
         crate::server::state::WINDOW_CHANGED => "The local model's loaded window changed or could not be read; nothing was sent. Check that Ollama is running, then run the research again.",
         _ => &e.code,
     };
@@ -235,6 +235,10 @@ pub async fn web_toggle(
 
 /// Who changed the shared URL policy, how, and by how many rules. Counts only:
 /// the patterns stay in the policy file.
+///
+/// Counted, not fail-closed: a refused change must not add a policy line, and
+/// this handler cannot roll the policy file back in one step. A dropped line
+/// is in `audit_gap`.
 fn audit_web_rules(state: &AppState, owner: &str, action: &str, rules: usize, changed: bool) {
     if changed {
         state
@@ -298,6 +302,8 @@ pub async fn web_mode(
     .map(Json)
     .map_err(|e| web_err(&e));
     if result.is_ok() {
+        // Counted for the same reason as `audit_web_rules`: the change is
+        // already saved, and a refused attempt must not grow this event.
         state
             .audit
             .log(json!({"event": "web.policy_mode", "owner": owner, "mode": req.mode, "confirmed": req.confirm}));
@@ -782,19 +788,33 @@ pub async fn api_keys_set(
     let worker = Arc::clone(&state);
     let written = super::structured_memory::off_worker(move || {
         let path = worker.home.env_path();
+        // Fail closed: names only, never values. The store write runs only
+        // after the record is queued, so a full queue leaves the keys untouched.
+        let mut names: Vec<String> = req.keys.keys().cloned().chain(req.clear.iter().cloned()).collect();
+        names.sort();
+        names.dedup();
+        if worker
+            .audit
+            .log_required(json!({"event": "harness_api_keys_updated", "keys": names}))
+            .is_err()
+        {
+            return Err(HarnessError::new(
+                "AUDIT_NOT_RECORDED",
+                "the action was not committed because its audit record could not be queued",
+            ));
+        }
         let written = if plaintext_keys(&worker) {
             env_keys::update_keys(&path, &req.keys, &req.clear)
         } else {
             with_key_store(&worker, |store| env_keys::update_os_keys(store, &req.keys, &req.clear))
         }?;
-        worker
-            .audit
-            .log(json!({"event": "harness_api_keys_updated", "keys": written["written"]}));
         Ok::<_, crate::common::errors::HarnessError>(written)
     })
     .await
     .map_err(|e| {
-        if e.code == env_keys::ENV_KEY_ERROR {
+        if e.code == "AUDIT_NOT_RECORDED" {
+            ApiError::audit_not_recorded()
+        } else if e.code == env_keys::ENV_KEY_ERROR {
             ApiError::new(StatusCode::BAD_REQUEST, "ENV_KEY_REJECTED", e.message.clone())
         } else {
             tracing::warn!("saving a managed key failed");

@@ -14,7 +14,7 @@ async fn start_counting_mock() -> (String, std::sync::Arc<std::sync::atomic::Ato
     use std::sync::Arc;
     let count = Arc::new(AtomicU64::new(0));
     let c2 = count.clone();
-    let app = axum::Router::new().route(
+    let app = common::ollama_router().route(
         "/v1/chat/completions",
         axum::routing::post(move |_body: axum::Json<Value>| {
             let c2 = c2.clone();
@@ -86,7 +86,7 @@ async fn window_check_fixture() -> (
     let inferred = Arc::new(AtomicBool::new(false));
     let completed = inferred.clone();
     let first_check = Arc::new(AtomicBool::new(true));
-    let app = axum::Router::new()
+    let app = common::ollama_router()
         .route(
             "/v1/chat/completions",
             axum::routing::post(move || {
@@ -253,7 +253,7 @@ async fn failed_loop_turn_counts_compaction_before_the_rejected_reply() {
     ] {
         let count = Arc::new(AtomicUsize::new(0));
         let calls = count.clone();
-        let app = axum::Router::new().route(
+        let app = common::ollama_router().route(
             "/v1/chat/completions",
             axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
                 calls.fetch_add(1, Ordering::SeqCst);
@@ -356,7 +356,7 @@ async fn loop_budget_counts_failed_inference_without_successful_exchanges() {
         let expected_requests = replies.len();
         let count = Arc::new(AtomicUsize::new(0));
         let calls = count.clone();
-        let app = axum::Router::new().route(
+        let app = common::ollama_router().route(
             "/v1/chat/completions",
             axum::routing::post(move || {
                 let n = calls.fetch_add(1, Ordering::SeqCst);
@@ -536,7 +536,7 @@ async fn changed_goal_stops_the_run_before_another_model_request() {
     let (requests, mut received) = tokio::sync::mpsc::unbounded_channel();
     let release = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
     let model_release = release.clone();
-    let app = axum::Router::new().route(
+    let app = common::ollama_router().route(
         "/v1/chat/completions",
         axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
             let requests = requests.clone();
@@ -1117,7 +1117,7 @@ async fn a_failed_turn_keeps_its_number_so_the_last_counted_turn_asks_for_the_an
     ];
     let bodies: Arc<Mutex<Vec<Value>>> = Arc::default();
     let seen = bodies.clone();
-    let app = axum::Router::new().route(
+    let app = common::ollama_router().route(
         "/v1/chat/completions",
         axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
             let reply = {
@@ -1196,7 +1196,7 @@ async fn a_plain_loop_turn_withholds_its_reply_when_the_account_is_demoted_mid_t
         Arc::new(tokio::sync::Notify::new()),
     );
     let (arrived_tx, release_rx) = (arrived.clone(), release.clone());
-    let app = axum::Router::new().route(
+    let app = common::ollama_router().route(
         "/v1/chat/completions",
         axum::routing::post(move || {
             let (arrived_tx, release_rx) = (arrived_tx.clone(), release_rx.clone());

@@ -73,7 +73,7 @@ OS protections are unavailable. Invocation deadlines report `MCP_TIMEOUT`.
 `mcp.timeout_sec` and `mcp.max_result_bytes` bound overall call time and
 newline-delimited response size. `MCP_ROLE_REFUSED` identifies the denied
 server without including arguments.
-SSE uses the 2024-11-05 HTTP+SSE transport, pinned DNS and distinct
+SSE uses the 2024-11-05 HTTP+SSE transport, pinned DNS, bundled roots and distinct
 `sse_allow_loopback` opt-in. Audit records authority and coarse outcomes.
 
 ## Private read-only memory gateway

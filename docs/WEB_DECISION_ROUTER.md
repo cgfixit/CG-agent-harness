@@ -69,7 +69,7 @@ redirect and account rechecks. Operators use URL policy only. A model-composed
 URL allowed solely by a wildcard requires live administrator approval under
 `web.fetch_provenance`. See [chat web tools](SECURE_RESEARCH.md#chat-web-tools).
 
-Local reads use pinned egress and handle text-bearing PDFs in
+Local reads use pinned egress, bundled roots and handle text-bearing PDFs in
 `pdf-text-worker`. Opt-in Firecrawl sees only an exact eligible URL after
 403, 429, 503, a qualifying script shell, oversize body or a PDF classified
 textless, over limit or malformed. Busy, encrypted, timed-out or failed PDF

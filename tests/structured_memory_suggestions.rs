@@ -35,7 +35,7 @@ async fn model() -> Model {
         delay.clone(),
         reply.clone(),
     );
-    let app = axum::Router::new().route("/v1/chat/completions", axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+    let app = common::ollama_router().route("/v1/chat/completions", axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
         let (seen, events, invalid, latency, response) =
             (seen.clone(), events.clone(), invalid.clone(), latency.clone(), response.clone());
         async move {

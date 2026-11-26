@@ -74,7 +74,16 @@ pub async fn adopt_session(
             .store
             .adopt_legacy(&id, &owner)
             .map_err(|e| ApiError::from_err(session_status(&e), &e))?;
-        state.audit.log(json!({"event":"session_legacy_adopted","owner_id":owner,"session_id":id,"reason_chars":request.reason.trim().chars().count()}));
+        // Fail closed: adoption is released when the record cannot be queued,
+        // so a dropped handler still cannot leave an owner without the line.
+        if state
+            .audit
+            .log_required(json!({"event":"session_legacy_adopted","owner_id":owner,"session_id":id,"reason_chars":request.reason.trim().chars().count()}))
+            .is_err()
+        {
+            let _ = state.store.release_legacy_adoption(&id, &owner);
+            return Err(ApiError::audit_not_recorded());
+        }
         Ok(Json(json!({"session":session.summary(),"goal_approval_cleared":true})))
     })
     .await

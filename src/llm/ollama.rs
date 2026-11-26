@@ -129,6 +129,77 @@ pub fn cloud_tag(name: &str) -> bool {
     })
 }
 
+/// Whether an Ollama `/api/show` body says the model runs elsewhere. Ollama
+/// routes a model by the `remote_host`/`remote_model` stored in its config,
+/// not by its name: `FROM glm-4.6:cloud` in a Modelfile, a copy of that
+/// alias, or an `/api/create` with `remote_host` gives a plain name that
+/// [`cloud_tag`] calls local while every prompt still goes to the remote host.
+/// Any non-empty value counts; an unexpected shape is not evidence of local.
+pub fn show_names_remote(show: &Value) -> bool {
+    ["remote_host", "remote_model"].iter().any(|key| match show.get(*key) {
+        None | Some(Value::Null) => false,
+        Some(Value::String(text)) => !text.trim().is_empty(),
+        Some(_) => true,
+    })
+}
+
+/// The `/api/show` read of a model about to run locally, as the gates see it.
+pub enum ShowRead<'a> {
+    Body(&'a Value),
+    /// Ollama answered with this non-2xx status (404: no such tag).
+    Status(u16),
+    /// Unreachable, timed out, oversized or not JSON.
+    Failed,
+}
+
+/// Local use of `model` is refused unless its `/api/show` was read and names
+/// no remote host: a model that cannot be shown cannot be shown to be local.
+/// The code matches [`cloud_tag`]'s refusals; `reason` says which check failed.
+/// A body that is not a JSON object carries no model facts, so it is unreadable.
+pub fn refuse_unless_shown_local(read: ShowRead<'_>) -> Result<()> {
+    let (reason, message) = match read {
+        ShowRead::Body(show) if show.is_object() && !show_names_remote(show) => return Ok(()),
+        ShowRead::Body(show) if show.is_object() => (
+            "remote_host",
+            "this Ollama model forwards to a remote host (its /api/show names remote_host or remote_model), \
+             like a :cloud tag under another name, so a signed-in Ollama would send the prompt off this machine",
+        ),
+        ShowRead::Status(404) => ("tag_missing", "Ollama has no model with this exact tag"),
+        ShowRead::Body(_) | ShowRead::Status(_) | ShowRead::Failed => (
+            "show_unreadable",
+            "Ollama's /api/show for this model could not be read (is Ollama running?), so the harness cannot confirm \
+             it runs on this machine; nothing was sent",
+        ),
+    };
+    Err(HarnessError::new(MODEL_SELECTION_REJECTED, message).detail("reason", reason))
+}
+
+/// The refusal code shared by every "this model is not local" gate.
+pub const MODEL_SELECTION_REJECTED: &str = "MODEL_SELECTION_REJECTED";
+
+/// The `/api/show` body request every remote-host check sends. No `verbose`,
+/// so tokenizer arrays stay out of the bounded body.
+pub fn show_payload(model: &str) -> Value {
+    json!({"model": model, "name": model})
+}
+
+/// Reads `/api/show` for `model` on the loopback `native` origin and refuses it
+/// unless the body names no remote host ([`refuse_unless_shown_local`]).
+/// `api_key` is the backend's own credential (`models.local_llm.api_key`), sent
+/// as chat sends it: `native` is the same origin as the chat endpoint.
+pub async fn refuse_remote_model(native: &str, model: &str, limits: InventoryLimits, api_key: &str) -> Result<()> {
+    let client = http_client(limits.timeout)?;
+    let mut request = client.post(format!("{native}/api/show")).json(&show_payload(model));
+    if !api_key.trim().is_empty() {
+        request = request.bearer_auth(api_key.trim());
+    }
+    match bounded_json(request, limits.max_bytes).await {
+        Bounded::Json(body) => refuse_unless_shown_local(ShowRead::Body(&body)),
+        Bounded::Status(code) => refuse_unless_shown_local(ShowRead::Status(code)),
+        Bounded::Failed => refuse_unless_shown_local(ShowRead::Failed),
+    }
+}
+
 fn tag_token(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 64
@@ -164,6 +235,7 @@ pub(crate) fn http_client(timeout: Duration) -> Result<reqwest::Client> {
 }
 
 fn client_builder() -> reqwest::ClientBuilder {
+    // tls-verifier: loopback
     reqwest::Client::builder()
         .no_proxy()
         .dns_resolver(std::sync::Arc::new(super::backend::LoopbackOnlyDns))
@@ -327,6 +399,16 @@ pub async fn run_warmup(backend: &ResolvedLocalBackend, model: &str, cfg: &AppCo
     // Loading a cloud tag makes a signed-in Ollama forward the request to ollama.com.
     if cloud_tag(model) {
         audit.log(json!({"event":"ollama_warmup_degraded","reason":"cloud_tag"}));
+        return;
+    }
+    // An alias of a cloud model (`FROM glm-4.6:cloud`) forwards the same way.
+    let checked = match InventoryLimits::from_config(cfg) {
+        Ok(limits) => refuse_remote_model(&native, model, limits, &backend.api_key).await,
+        Err(err) => Err(err),
+    };
+    if let Err(err) = checked {
+        let reason = err.details.get("reason").cloned().unwrap_or(json!("inventory_limits"));
+        audit.log(json!({"event":"ollama_warmup_degraded","reason":reason}));
         return;
     }
     let keep_alive = cfg.limit("models.local_llm.warmup.keep_alive_sec");
@@ -523,6 +605,40 @@ mod tests {
         for local in ["qwen3:8b@sha256:0123abcd", "cloudy:7b\u{200B}", "big-cloud@sha256:ff"] {
             assert!(!cloud_tag(local), "{local:?}");
         }
+    }
+
+    /// Only a readable show that names no remote host lets a model run locally.
+    #[test]
+    fn a_model_is_local_only_when_its_show_names_no_remote_host() {
+        let reason = |read: ShowRead<'_>| refuse_unless_shown_local(read).unwrap_err().details["reason"].clone();
+        for local in [
+            json!({"details": {"family": "qwen3"}}),
+            json!({"remote_host": "", "remote_model": "  "}),
+            json!({"remote_host": null}),
+        ] {
+            assert!(!show_names_remote(&local), "{local}");
+            assert!(refuse_unless_shown_local(ShowRead::Body(&local)).is_ok(), "{local}");
+        }
+        for remote in [
+            json!({"remote_host": "https://ollama.com:443", "remote_model": "glm-4.6"}),
+            json!({"remote_host": "http://192.0.2.7:11434"}), // DevSkim: ignore DS137138 because this unit test fixture is a TEST-NET remote host Ollama would forward to.
+            json!({"remote_model": "gpt-oss:120b"}),
+            json!({"remote_host": {"unexpected": true}}),
+            json!({"remote_host": 1}),
+        ] {
+            assert!(show_names_remote(&remote), "{remote}");
+            assert_eq!(reason(ShowRead::Body(&remote)), "remote_host", "{remote}");
+        }
+        assert_eq!(reason(ShowRead::Status(404)), "tag_missing");
+        assert_eq!(reason(ShowRead::Status(500)), "show_unreadable");
+        assert_eq!(reason(ShowRead::Failed), "show_unreadable");
+        // A 200 whose body is not an object carries no model facts: unreadable, not local.
+        for shapeless in [json!(null), json!([]), json!("glm-local"), json!(7)] {
+            assert_eq!(reason(ShowRead::Body(&shapeless)), "show_unreadable", "{shapeless}");
+        }
+        let err = refuse_unless_shown_local(ShowRead::Failed).unwrap_err();
+        assert_eq!(err.code, MODEL_SELECTION_REJECTED);
+        assert!(!show_payload("glm-local").to_string().contains("num_ctx"));
     }
 
     #[test]

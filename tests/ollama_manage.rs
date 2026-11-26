@@ -266,8 +266,14 @@ async fn profile_reports_declared_and_loaded_facts_without_side_effects() {
         "{inventory}"
     );
 
-    let (status, _) = s.post_json("/api/model", json!({"model": "missing:latest"})).await;
-    assert_eq!(status, 200);
+    // `/model use` reads `/api/show` first: a tag Ollama cannot show is refused,
+    // since it cannot be confirmed local (an alias of a cloud model can look local).
+    let (status, refused) = s.post_json("/api/model", json!({"model": "missing:latest"})).await;
+    assert_eq!(status, 422, "{refused}");
+    assert_eq!(refused["detail"]["code"], "MODEL_SELECTION_REJECTED", "{refused}");
+    assert_eq!(refused["detail"]["details"]["reason"], "tag_missing", "{refused}");
+    // A legacy saved selection can still name it; profiling reports it missing.
+    s.state.settings.lock().unwrap().selected_model = "missing:latest".into();
     let (_, body) = s.get_json("/api/ollama/profile").await;
     assert_eq!(body["state"], "tag_missing", "{body}");
     assert!(!body.to_string().contains("fixture-private"), "{body}");

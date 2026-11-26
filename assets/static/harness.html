@@ -3030,6 +3030,14 @@ let browseJobId = '';
 let browseWatchGeneration = 0;
 let browseWatchRevision = -1;
 const BROWSE_POLL_MS = 1500;
+/* A read that got no answer (no connection, a timeout, the rate limit, a 5xx)
+   is tried again, each time a poll later, at most this many times in a row:
+   the task keeps running on the server, and a request it holds would
+   otherwise wait out its time with no card shown. About a minute in all. */
+const BROWSE_POLL_RETRIES = 8;
+function browsePollUnanswered(e) {
+  return !!e && (e.code === 'NETWORK' || e.status === 429 || (e.status >= 500 && e.status <= 599));
+}
 /* #1123: the tab keeps only which task it started and in which session
    (null: none), never the task, a URL, a body or a reason, so a reload or a
    return to that session finds the task again. What is shown always comes
@@ -3085,11 +3093,21 @@ async function watchBrowseJob(id, resumed = false) {
   const generation = ++browseWatchGeneration, revision = sessionRevision;
   const stale = () => generation !== browseWatchGeneration || revision !== sessionRevision;
   browseJobId = id; browseWatchRevision = revision;
-  let asked = 0;
+  let asked = 0, unanswered = 0;
   try {
     while (!stale()) {
-      const job = await api('/api/browser/jobs/' + encodeURIComponent(id));
+      let job;
+      try {
+        job = await api('/api/browser/jobs/' + encodeURIComponent(id));
+      } catch (e) {
+        if (stale() || !browsePollUnanswered(e) || ++unanswered > BROWSE_POLL_RETRIES) throw e;
+        if (unanswered === 1) sys('Lost contact with the browser task; trying again.', 'it keeps running on the server');
+        const wait = Math.max(BROWSE_POLL_MS * unanswered, apiRetryDelay(), (e.retryAfter || 0) * 1000);
+        await new Promise(resolve => setTimeout(resolve, wait));
+        continue;
+      }
       if (stale()) return;
+      if (unanswered) { unanswered = 0; sys('Following the browser task again.'); }
       if (resumed) { resumed = false; sys('Following the browser task this tab started.', 'its state comes from the server'); }
       /* One card per paused request: a request's number is never reused in a task. */
       if (job.status === 'waiting' && job.pending && Number(job.pending.request) !== asked) {
@@ -3109,6 +3127,9 @@ async function watchBrowseJob(id, resumed = false) {
   } catch (e) {
     if (stale()) return;
     if (BROWSE_JOB_GONE.includes(e && e.code)) { forgetBrowseJob(id); browseJobGone(); }
+    /* The pair is kept, so a reload follows the task again. */
+    else if (browsePollUnanswered(e)) sys('Stopped following the browser task: ' + ((e && e.message) || String(e)),
+      'it keeps running on the server; reload this page to follow it again');
     /* A first read at load can fail before sign-in; the pair is kept. */
     else if (!resumed) sys((e && e.message) || String(e));
   } finally {
@@ -4655,6 +4676,14 @@ async function runSlash(line, webCommand) {
       }
 
       case 'status': {
+        function auditGapText(s) {
+          const gap = s && s.audit_gap;
+          if (!gap) return '0';
+          const dropped = Number(gap.dropped) || 0;
+          if (gap.record_unreadable) return dropped + ' (gap file unreadable)';
+          if (gap.persist_failed) return dropped + ' (not saved)';
+          return String(dropped);
+        }
         const s = await api('/api/status');
         if (s.auth_enabled && !('sessions' in s)) {
           const access = window.__cyclawRole && !can('read_panels') ? 'Auditor: read-only status and audit records.' : s.status || 'Sign in to view operational details.';
@@ -4663,7 +4692,7 @@ async function runSlash(line, webCommand) {
         }
         if (!('home' in s)) {
           // The restricted auditor view: no home, tokens or layout to render.
-          sys(table([['version', s.version], ['model', s.model || '(unset)'], ['provider', s.provider], ['sessions', String(s.sessions)], ['access', 'Auditor: read-only status and audit records.']]));
+          sys(table([['version', s.version], ['model', s.model || '(unset)'], ['provider', s.provider], ['sessions', String(s.sessions)], ['audit drops', auditGapText(s)], ['access', 'Auditor: read-only status and audit records.']]));
           break;
         }
         if (s.selection_overrides_config) sys(s.model_status && s.model_status.cloud ? 'Cloud selection resets to local after restart.' : 'Saved selection overrides configured model ' + s.configured_model + '; changing that config model and restarting clears the selection.');
@@ -4677,7 +4706,7 @@ async function runSlash(line, webCommand) {
                    ['style', (currentStyle || 'off') + (currentStyleIssue ? ' (' + currentStyleIssue + ')' : '')],
                    ['memory', s.memory_enabled ? 'on' : 'off'],
                    ['sessions', String(s.sessions)],
-                   ['total tokens', String(s.total_tokens)], ['home', s.home],
+                   ['total tokens', String(s.total_tokens)], ['audit drops', auditGapText(s)], ['home', s.home],
                    ['goal', sessionGoal || '(none)'],
                    ['loop', loopState ? ((loopState.auto ? 'auto ' : '') + (loopState.total - loopState.remaining) + '/' + loopState.total) : (loopAuto ? 'auto' : 'off')]]));
         break;

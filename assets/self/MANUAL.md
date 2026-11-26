@@ -11,7 +11,7 @@ This manual is static text bundled with the build and indexed at startup. It is 
 - Web research: Search, permitted reads and crawls, `/web research` with checked quotes, PDF text; paid providers have daily caps. Starts: On; one seeded Google rule.
 - Goal loops: `/goal` and `/loop` outlive the tab; a counted run ends on its best answer. Starts: 200 turns, 200,000 tokens, two failures; local only.
 - Memory: Pinned and uploaded notes, account-private facts. Starts: On; proposals need review.
-- Local chat: Sessions, search, export, DOCX/PDF/text attachments, skills, styles; no Ollama cloud tags. Starts: Ollama on loopback.
+- Local chat: Sessions, search, export, DOCX/PDF/text attachments, skills, styles; no Ollama cloud models (tags or aliases). Starts: Ollama on loopback.
 - Browser tasks: `/browse <site> <task>` drives sandboxed Chrome on named sites only, never types passwords, and sends an approved held non-GET/HEAD request once. Starts: On for administrators.
 - Accounts, diagnostics: Administrator, operator and auditor roles, eight sessions per account; token and run history, **Estimate draft**, redacted `/diag` logs. Starts: On; `/diag` admin or auditor.
 - Cloud chat: Optional Grok or Claude; only the new message leaves, redacted. Starts: Needs a key.
@@ -98,7 +98,7 @@ The initial estimator is UTF-8 `bytes.div_ceil(4)`, not a tokenizer. Successful 
 
 ## invariant: Session export and transcript search stay on the machine
 
-`GET /api/sessions` returns the acting owner's metadata without message bodies or goals. Normal storage queries require an `OwnedSessionStore`; search, export, chat, prompt preview, styles, skills, selected facts and goal bindings use it. `GET /api/sessions/{session_id}/export` writes `{home}/exports/{id}.md` at `0600` and returns the same bytes. Search uses a request-local Tantivy RAM index of owned sessions. It never writes to the web cache or sends transcripts off-machine.
+`GET /api/sessions` returns the acting owner's metadata without message bodies or goals. Normal storage queries require an `OwnedSessionStore`; search, export, chat, prompt preview, styles, skills, selected facts and goal bindings use it. `GET /api/sessions/{session_id}/export` writes `{home}/exports/{id}.md` at `0600` and returns the same bytes. Search reconciles the owner's RAM Tantivy index before each query. It never writes to the web cache or sends transcripts off-machine.
 
 ## invariant: Scheduled agentic runs cannot skip reviewed-goal or write gates
 
@@ -157,11 +157,11 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/memory remember <sentence> :: <reason>`: Confirm human summary on latest completed episode.
 - `/memory facts`, `/memory retrieve <query>`, `/memory search <query>`: List facts, retrieve for one turn or search without injection.
 - `/memory save <text> :: <reason>`: Confirm an immediate private fact write
-- `/model [status]`, `profile`, `list`, `use <name>`: Inspect or select chat model.
-- `/net status`, `/net devices`, `/net diag`: LAN panel or budgeted diagnostics.
+- `/model [status]`, `profile`, `list`, `use <name>`: Inspect or select chat model; `use` refuses Ollama cloud tags and aliases (models).
 
 ## console: slash-command quick reference (part 3)
 
+- `/net status`, `/net devices`, `/net diag`: LAN panel or budgeted diagnostics.
 - `/prompt`: Private preview of the next local chat turn's prompt
 - `/registry`: Combined skill, tool and connector catalog
 - `/session`, `list`, `info`, `new [title]`, `rename <title>`, `unpin`, `use <id>`: List, inspect, create, rename or reopen sessions; `unpin` clears attachment pins
@@ -173,10 +173,10 @@ The exact non-secret allowlist in `src/server/config_reload.rs::RELOADABLE` hold
 - `/status`: Runtime status and unlimited-loop warning; account access required
 - `/style`, `/style <name>`, `/style off`: Inspect/select a session output style, or clear it without changing soul.md
 - `/tokens`: Current session token tally
-- `/tools [all|help|mcp|<name>]`: Collect tool and capability metadata.
 
 ## console: slash-command quick reference (part 4)
 
+- `/tools [all|help|mcp|<name>]`: Collect tool and capability metadata.
 - `/users`: Administrator account panel; accounts
 - `/web [status|help]`, `/web on`, `/web off`: Inspect shared-home rules; administrators enable/disable web
 - `/web allow <pattern> [pattern ...] [--group name] [--seed URL ...]`, `/web deny <id-or-pattern>`: Admin grant/remove. Repeat seeds as needed.

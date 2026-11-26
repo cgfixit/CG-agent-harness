@@ -565,12 +565,12 @@ async fn loop_prompt_refusals_name_the_loop_reply_budget() {
 
 #[tokio::test]
 async fn observed_cjk_usage_compacts_repeatedly_and_persists_only_successful_calibration() {
-    use axum::{routing::post, Json, Router};
+    use axum::{routing::post, Json};
     use cgagentharness::server::{compaction, routes::core::prompt_history, sessions::TokenTally};
     use std::sync::{Arc, Mutex};
     let requests = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
     let captured = requests.clone();
-    let router = Router::new().route(
+    let router = common::ollama_router().route(
         "/v1/chat/completions",
         post(move |Json(body): Json<serde_json::Value>| {
             let captured = captured.clone();
@@ -894,11 +894,11 @@ async fn summary_model_finishing(
     summary: &'static str,
     finish_reason: &'static str,
 ) -> (String, std::sync::Arc<std::sync::Mutex<Vec<serde_json::Value>>>) {
-    use axum::{routing::post, Json, Router};
+    use axum::{routing::post, Json};
     use std::sync::{Arc, Mutex};
     let requests = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
     let captured = requests.clone();
-    let router = Router::new().route(
+    let router = common::ollama_router().route(
         "/v1/chat/completions",
         post(move |Json(body): Json<serde_json::Value>| {
             let captured = captured.clone();
@@ -1683,9 +1683,23 @@ async fn upstream_error_headers_release_chat_without_waiting_for_the_body() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/v1", listener.local_addr().unwrap());
     let upstream = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.unwrap();
-        let mut request = [0; 8192];
-        assert!(stream.read(&mut request).await.unwrap() > 0);
+        // The Ollama backend reads `/api/show` before the chat request.
+        let mut stream = loop {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 8192];
+            let read = stream.read(&mut request).await.unwrap();
+            assert!(read > 0);
+            if !request[..read].starts_with(b"POST /api/show ") {
+                break stream;
+            }
+            let show = br#"{"details":{"family":"mock"}}"#;
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                show.len()
+            );
+            stream.write_all(head.as_bytes()).await.unwrap();
+            stream.write_all(show).await.unwrap();
+        };
         stream
             .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 1000000\r\n\r\n")
             .await
@@ -1781,7 +1795,7 @@ async fn clear_session_history_requires_intent_and_cannot_be_resurrected() {
 async fn chat_warns_when_the_turn_exceeds_the_loaded_ollama_window() {
     let window = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(2048));
     let reported = window.clone();
-    let app = axum::Router::new()
+    let app = common::ollama_router()
         .route(
             "/v1/chat/completions",
             axum::routing::post(|| async { axum::Json(common::ok_reply("pong", 10, 2)) }),
@@ -1845,7 +1859,7 @@ async fn window_warning_uses_this_turns_calibration() {
     let window = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1));
     let reported = window.clone();
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let app = axum::Router::new()
+    let app = common::ollama_router()
         .route(
             "/v1/chat/completions",
             axum::routing::post(move || {
@@ -1891,7 +1905,7 @@ async fn window_warning_uses_this_turns_calibration() {
 async fn chat_caches_a_failed_loaded_window_read() {
     let probes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let counted = probes.clone();
-    let app = axum::Router::new()
+    let app = common::ollama_router()
         .route(
             "/v1/chat/completions",
             axum::routing::post(|| async { axum::Json(common::ok_reply("pong", 10, 2)) }),

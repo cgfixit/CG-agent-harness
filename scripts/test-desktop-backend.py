@@ -155,6 +155,17 @@ class ModelFixture:
 
             def do_POST(self):
                 paths.append((self.command, self.path))
+                if self.path == '/api/show':
+                    # A local model: no remote_host, so the Ollama backend's
+                    # remote-host check (ollama::refuse_unless_shown_local) passes.
+                    self.rfile.read(int(self.headers.get('Content-Length') or 0))
+                    body = json.dumps({'details': {'family': 'fixture'}}).encode()
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 if self.path != '/v1/chat/completions':
                     self.send_error(404)
                     return

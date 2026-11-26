@@ -487,14 +487,16 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "enforcement": "provider key present (OS credential store or inherited env) + model selection; "
                        "spend ledger records tokens; no vendor-SDK telemetry switch exists -- the only "
                        "egress IS the model call",
-        "scope": "console chat and coding runs", "reviewed": "2026-11-20",
+        "scope": "console chat and coding runs", "reviewed": "2026-11-26",
         "evidence": "feature traffic, not telemetry; never block with an env pair. reqwest "
                     "0.12.28->0.13.5 changelog read 2026-11-20: no telemetry or update check; 0.13.0 "
-                    "made the OS platform verifier the default for public TLS, so on macOS and Windows "
-                    "the OS trust evaluator may fetch revocation or intermediate data on its own "
-                    "(rustls-platform-verifier 0.7.1 apple.rs says it does not limit that). No env "
-                    "control exists; loopback clients pin a certificate through "
-                    "use_preconfigured_tls and never reach the verifier",
+                    "made the OS platform verifier the default for public TLS. Re-read 2026-11-26: "
+                    "pinned web, webhook and MCP clients call tls_certs_only with webpki-root-certs "
+                    "and do not build that verifier. Cloud chat and the cloud proposer still do, so "
+                    "on macOS and Windows the OS trust evaluator may fetch revocation or intermediate "
+                    "data on its own (rustls-platform-verifier 0.7.1 apple.rs says it does not limit "
+                    "that). No env control exists for those clients; loopback portal clients pin a "
+                    "certificate through use_preconfigured_tls and never reach the verifier",
     },
     {
         "name": "agentic cloud proposer", "category": 3, "controls": {},
@@ -520,13 +522,15 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "url": "docs/SECURE_RESEARCH.md",
         "versions": "src/server/web_search.rs, web_provider.rs, web_tavily.rs, web_google.rs, "
                     "web_firecrawl.rs, web_policy.rs, web_research.rs",
-        "enforcement": "web.enabled + exact/wildcard URL allowlist + DNS-pinned SSRF checks; proxies, "
-                       "redirects, compression, retries and connection reuse disabled on the client. "
+        "enforcement": "web.enabled + exact/wildcard URL allowlist + DNS-pinned SSRF checks; TLS "
+                       "uses only bundled Mozilla roots (tls_certs_only + webpki-root-certs), not the "
+                       "OS verifier; proxies, redirects, compression, retries and connection reuse "
+                       "disabled on the client. "
                        "web.search.provider auto prefers a saved Tavily key (api.tavily.com), then "
                        "SerpAPI; search.result_reads grants admin-turn exact-URL reads of listed "
                        "results (a listed arXiv abstract also its PDF); web.firecrawl.enabled ships "
                        "false and sends only the same exact URL to api.firecrawl.dev",
-        "scope": "chat web_search/web_fetch tools, /api/web research jobs", "reviewed": "2026-11-20",
+        "scope": "chat web_search/web_fetch tools, /api/web research jobs", "reviewed": "2026-11-26",
         "evidence": "policy-gated feature traffic, hosts and gates re-read in "
                     "assets/config.default.yaml 2026-11-20; html5ever 0.39 (scraper's own parser, "
                     "pinned directly for cancellable bounded parsing) has no network code",
@@ -535,9 +539,9 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "name": "completion webhooks", "category": 3, "controls": {},
         "url": "docs/SPEND_AND_NOTIFICATIONS.md",
         "versions": "src/server/notifications.rs",
-        "enforcement": "default-off, restart-only, exact owned destination grants, DNS pinning, no "
-                       "redirects, metadata-only payloads",
-        "scope": "job completion notices", "reviewed": "2026-10-03",
+        "enforcement": "default-off, restart-only, exact owned destination grants, DNS pinning, "
+                       "bundled Mozilla roots via the pinned client, no redirects, metadata-only payloads",
+        "scope": "job completion notices", "reviewed": "2026-11-26",
         "evidence": "policy-gated feature traffic",
     },
     {
@@ -547,8 +551,9 @@ INVENTORY: tuple[dict[str, object], ...] = (
                     "server-only here (features server, transport-streamable-http-server) behind the "
                     "inbound memory server in src/server/mcp_server.rs",
         "enforcement": "mcp.enabled literal true, declared mcp.servers only, DNS-pinned SSRF, "
-                       "sse_allow_loopback ships false, confirm: true per call",
-        "scope": "declared MCP servers", "reviewed": "2026-11-20",
+                       "bundled Mozilla roots via the pinned client, sse_allow_loopback ships false, "
+                       "confirm: true per call",
+        "scope": "declared MCP servers", "reviewed": "2026-11-26",
         "evidence": "policy-gated feature traffic; rmcp 3.5.0->3.9.0 release notes read 2026-11-20: "
                     "no telemetry or update check; the 3.6.0 same-origin redirect following is in "
                     "the Streamable HTTP *client*, which is not compiled here (the enabled server "
@@ -677,6 +682,7 @@ INVENTORY_ALIASES: dict[str, str] = {
     "tracing-subscriber": "local stores and logs",
     "axum": "loopback console + sidecar transport", "axum-server": "loopback console + sidecar transport",
     "rustls": "loopback console + sidecar transport", "rcgen": "loopback console + sidecar transport",
+    "webpki-root-certs": "web search / fetch (Tavily, SerpAPI, public Google, Firecrawl, permitted URLs)",
     "x509-parser": "loopback console + sidecar transport",
     "rmcp": "mcp clients (SSE / streamable HTTP)",
     "reqwest": "pure library crates", "url": "pure library crates",
