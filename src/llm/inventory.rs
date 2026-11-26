@@ -60,7 +60,29 @@ pub fn local_endpoint(raw: &str) -> bool {
 
 /// Never probes external endpoints or downloads models. Provider bodies are not
 /// diagnostics; errors return a static category without echoing response text.
+/// A listed id must equal `model` exactly: what an OpenAI-compatible server
+/// lists is what a request must send.
 pub async fn model_readiness(endpoint: &str, model: &str, key: &str, limits: InventoryLimits) -> Value {
+    readiness(endpoint, model, key, limits, false).await
+}
+
+/// [`model_readiness`] for a configured `provider`. Only "ollama" lists names
+/// its own way (`name` as `name:latest`, `library/` dropped), and resolves the
+/// configured spelling to the same model when called, so only there is the
+/// name compared as Ollama lists it. Every other provider stays exact: a
+/// near-miss id reported as installed would keep an unusable primary selected
+/// over a working fallback.
+pub async fn model_readiness_for(
+    provider: &str,
+    endpoint: &str,
+    model: &str,
+    key: &str,
+    limits: InventoryLimits,
+) -> Value {
+    readiness(endpoint, model, key, limits, provider == "ollama").await
+}
+
+async fn readiness(endpoint: &str, model: &str, key: &str, limits: InventoryLimits, ollama_names: bool) -> Value {
     if !local_endpoint(endpoint) {
         return json!({"model":model,"state":"not_probed","detail":"Only a configured loopback model endpoint can be checked here."});
     }
@@ -80,10 +102,8 @@ pub async fn model_readiness(endpoint: &str, model: &str, key: &str, limits: Inv
                 .as_array()
                 .unwrap()
                 .iter()
-                // Ollama lists `name` as `name:latest` and drops `library/`; a
-                // server that lists exact ids only is matched exactly as before.
                 .filter_map(|row| row["id"].as_str())
-                .any(|listed| listed == model || super::profile::same_model(listed, model));
+                .any(|listed| listed == model || (ollama_names && super::profile::same_model(listed, model)));
             json!({"endpoint":endpoint,"model":model,"state":if found {"installed"} else {"tag_missing"},
                 "detail":"Inventory only; use an explicit console chat to test inference. No model was downloaded."})
         }
@@ -121,8 +141,22 @@ mod tests {
             ("qwen3.8", "tag_missing"),
             ("", "tag_missing"),
         ] {
-            let readiness = model_readiness(&endpoint, model, "", limits).await;
+            let readiness = model_readiness_for("ollama", &endpoint, model, "", limits).await;
             assert_eq!(readiness["state"], state, "{model}");
+        }
+        // Another provider lists the ids a request must send: only an exact id
+        // is installed, with or without a provider named.
+        for (model, state) in [
+            ("llama3.2:latest", "installed"),
+            ("qwen3.8:27b-mlx-cg", "installed"),
+            ("llama3.2", "tag_missing"),
+            ("library/llama3.2", "tag_missing"),
+            ("library/qwen3.8:27b-mlx-cg", "tag_missing"),
+        ] {
+            let named = model_readiness_for("lmstudio", &endpoint, model, "", limits).await;
+            assert_eq!(named["state"], state, "lmstudio {model}");
+            let unnamed = model_readiness(&endpoint, model, "", limits).await;
+            assert_eq!(unnamed["state"], state, "exact {model}");
         }
         server.abort();
     }

@@ -173,7 +173,14 @@ pub async fn resolve_local_backend(cfg: &AppConfig) -> Result<ResolvedLocalBacke
             "models.local_llm.fallback.base_url must be loopback (127.0.0.1 / localhost / ::1)",
         ));
     }
-    if super::inventory::model_readiness(&primary.base_url, &primary.model, &primary_key, limits).await["state"]
+    if super::inventory::model_readiness_for(
+        &primary_provider,
+        &primary.base_url,
+        &primary.model,
+        &primary_key,
+        limits,
+    )
+    .await["state"]
         == "installed"
     {
         tracing::info!("local LLM backend: primary ({primary_provider}) probe ok");
@@ -188,8 +195,14 @@ pub async fn resolve_local_backend(cfg: &AppConfig) -> Result<ResolvedLocalBacke
         degraded: false,
         reasoning_effort: effort_for(&fb_provider),
     };
-    if super::inventory::model_readiness(&secondary.base_url, &secondary.model, &secondary.api_key, limits).await
-        ["state"]
+    if super::inventory::model_readiness_for(
+        &fb_provider,
+        &secondary.base_url,
+        &secondary.model,
+        &secondary.api_key,
+        limits,
+    )
+    .await["state"]
         == "installed"
     {
         tracing::warn!("local LLM backend: primary model unavailable; using configured fallback ({fb_provider})");

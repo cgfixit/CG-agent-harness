@@ -12,7 +12,7 @@ use crate::common::audit::Audit;
 use crate::common::config::AppConfig;
 use crate::common::errors::{HarnessError, Result};
 use crate::llm::backend::ResolvedLocalBackend;
-use crate::llm::inventory::{local_endpoint, model_readiness, InventoryLimits};
+use crate::llm::inventory::{local_endpoint, model_readiness_for, InventoryLimits};
 
 pub const OLLAMA_ERROR: &str = "OLLAMA_UNAVAILABLE";
 const MAX_MODEL_NAME: usize = 128;
@@ -368,7 +368,8 @@ pub async fn snapshot(endpoint: &str, model: &str, key: &str, cfg: &AppConfig) -
         }));
     };
     let limits = InventoryLimits::from_config(cfg)?;
-    let readiness = model_readiness(endpoint, model, key, limits).await;
+    // `snapshot` runs only for provider "ollama" (`routes::ollama::refresh_inventory`).
+    let readiness = model_readiness_for("ollama", endpoint, model, key, limits).await;
     let models = list_tags(&native, limits).await;
     Ok(json!({
         "endpoint": native,
