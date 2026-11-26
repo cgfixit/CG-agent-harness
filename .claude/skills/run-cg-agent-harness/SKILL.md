@@ -24,6 +24,25 @@ browser suite uses installed Chrome and a Node runtime with WebSocket; it serves
 mock APIs and checks the real console/CSP. `CHROME_BIN` selects Chrome. Neither
 suite establishes actual-model or native WebKit acceptance.
 
+For `/browse` (Playwright sidecar plus installed Chrome), mirror CI's
+`browser-guards` job as an unprivileged user; Chrome keeps its sandbox, so the
+fixtures refuse root:
+
+```bash
+(cd browser && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm ci --ignore-scripts)
+cargo build --locked --features test-support --bin cgagentharness
+for mode in guards takeover enter reach; do
+  target/debug/cgagentharness browser "$mode" --sidecar=browser/sidecar.mjs
+done
+target/debug/cgagentharness browser --sidecar=browser/sidecar.mjs
+target/debug/cgagentharness browser-verify --sidecar=browser/sidecar.mjs
+python3 scripts/test-browser-route.py target/debug/cgagentharness
+node scripts/browse-console-acceptance.mjs target/debug/cgagentharness
+```
+
+A smoke home with a hand-written `config.yaml` reads every omitted ship-true
+key as off; `serve` logs one WARN naming them.
+
 For a real disposable Chrome/model coding workflow, follow
 `docs/CODING_PIPELINE.md` and `scripts/browser-fixture.py`. That fixture explicitly
 opts into HTTP, retains account login, uses a local bare remote and mocks GitHub

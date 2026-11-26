@@ -25,6 +25,7 @@ end-to-end success test alone does not establish those boundaries.
 | Retrieval / sensitive reads / cloud refusal | `tests/real_repo_loop.rs` repository-retrieval and denied-basename cases |
 | Clone / read jail | `agentic_foundations::apply_proposal_refuses_jail_escapes_and_oversize_content`, `read_jail_refuses_symlink_escapes_without_following_the_leaf` |
 | Hostile argv / confirm never manufactured | `tests/shim_and_agent_routes.rs` hostile-argv matrix, `a_request_can_never_carry_an_argv`, publish-missing-confirm → child exit 4 |
+| `confirm` is a flag, blank `reason` never writes, exit codes, policy re-read from disk | `tests/contract_locks.rs` (`confirm_is_a_flag_and_a_blank_reason_never_writes`, `kill_switch_is_and_only_and_disk_policy_is_reread`) |
 | Kill switch AND-only / shipped gates | `invariant_guard::writer_kill_switch_is_and_not_or`, `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` |
 
 **Done** means executed refusal cases and a regression assert for each newly
@@ -46,7 +47,7 @@ GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
 
 GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
   cargo test --test invariant_guard --test write_policy --test write_kill_switch \
-    --test git_approval --test exact_edits -- --nocapture
+    --test git_approval --test exact_edits --test contract_locks -- --nocapture
 ```
 
 Narrow with filter strings only after checking that each selects the intended
