@@ -1,11 +1,11 @@
 ---
 name: cg-doc-sync
 description: |
-  Audit README.md and docs/*.md against the current origin/main codebase,
-  rewrite what drifted, and trim each updated file by 5-15% (stale, duplicated
-  or insignificant text). Whole-tree pass, not diff-scoped. Manual-only; run
-  it when asked to "cg-doc-sync", "resync the docs to the code" or "refresh and
-  trim the README".
+  Make README.md and docs/*.md say what origin/main does. Full mode audits
+  every doc against the code and trims each updated file by 5-15%; diff mode
+  (`/cg-doc-sync <ref>`) fixes only sections a diff made stale. Edit-only.
+  Manual-only; run it when asked to "cg-doc-sync", "sync the docs", "fix doc
+  drift" or "refresh and trim the README".
 compatibility: |
   Requires: git, ripgrep, python3, cargo (focused tests only)
 disable-model-invocation: true
@@ -13,10 +13,19 @@ disable-model-invocation: true
 
 # cg-doc-sync: docs that say what main does, in fewer words
 
-`doc-sync` fixes sections a diff made stale. This skill reads the whole
-product on `origin/main`, compares every in-scope doc to it, and leaves each
-file it touches truer and 5-15% shorter. Code wins; the order is in
-`AGENTS.md` ("Where truth lives").
+Two modes, one rule set. Code wins; the order is in `AGENTS.md` ("Where
+truth lives").
+
+- **Full** (no argument): read the whole product on `origin/main`, compare
+  every in-scope doc to it, and leave each file you touch truer and 5-15%
+  shorter. Steps 1-7.
+- **Diff** (`/cg-doc-sync <ref>`, or on a feature branch): diff `<ref>...HEAD`
+  (on `main`, from the last commit that touched the doc). List changed routes
+  (`REGISTERED_PATHS`), shim `ACTIONS`, config keys, CLI flags, exit codes,
+  gate names and moved paths; grep the docs for each and fix only the
+  sections naming it, or the section owning the topic when none does. Skip
+  step 2's full inventory and the band: each edit must fit by cutting words,
+  so no file grows.
 
 **Scope:** `README.md` and `docs/*.md`. Never open `docs/learning/*`. Leave
 `AGENTS.md`, `INVARIANTS.md`, `CLAUDE.md` and skills alone unless the
@@ -58,7 +67,10 @@ own notes.
 ## 4. Update and trim
 
 - Fix STALE in place. Add MISSING only to the owning guide, briefly.
-- Replace DUPLICATE text with a link to its owner.
+- Replace DUPLICATE text with a link to its owner. One home per fact: never
+  fan an edit out to mirrors; replace a stale copy with a link, or name it in
+  the report.
+- Quote code and config values from `rg`, never from memory or a report.
 - Then cut 5-15% of the file's words: stale history, repeated caveats,
   restated config values, filler ("note that", "in order to"), long examples
   a link covers. Never cut a security limit, a refusal, a "not a gate"
@@ -90,13 +102,16 @@ not exist, no roadmap promises. Relative links only.
 ## 6. Verify
 
 ```bash
-python3 .claude/skills/cg-doc-sync/trim_report.py --base origin/main
+python3 .claude/skills/cg-doc-sync/trim_report.py --base origin/main  # diff mode: add --min 0
 python3 scripts/lint-diff.py
 python3 scripts/docs-impact.py
 python3 scripts/build-self-manual.py
-cargo test --locked --test invariant_guard markdown_stays_on_the_docs_budget
+cargo test --locked --test invariant_guard
 cargo test --locked --test self_manual the_checked_in_manual_matches_the_generator
+cargo test --locked registered_paths_are_unique_and_cover_every_router_route
 ```
+
+Keep `--locked` on every cargo command you write.
 
 `trim_report.py` prints base and current words, the trim percent and broken
 relative links per changed doc, and exits 1 out of band. `build-self-manual.py`
@@ -104,7 +119,7 @@ rewrites `assets/self/MANUAL.md` from its `INPUTS` (`README.md`, `CONSOLE.md`,
 `API_ROUTES.md`, `TROUBLESHOOTING.md`, `MCP.md` among them); commit it when it
 changes. Lower each trimmed file's `DOCS_BUDGET` row and, if
 the group's slack test fails, its group cap: lowering needs no approval,
-raising does. Re-grep every name you wrote.
+raising does. Re-grep every name you wrote and open every link you touched.
 
 ## 7. Report and PR
 

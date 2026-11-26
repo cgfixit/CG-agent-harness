@@ -9,8 +9,8 @@ the routing table lives in [AGENTS.md](../../AGENTS.md#project-skills). Compare
 and procedures can differ. Claude-only entries are marked.
 
 - [`cg-doc-sync/`](cg-doc-sync/SKILL.md): **operator-only, Claude-only.**
-  Audits `README.md` and `docs/*.md` against `origin/main`, fixes drift and
-  trims each updated file 5-15%; ships `trim_report.py`.
+  Makes `README.md` and `docs/*.md` match `origin/main`: a full audit that
+  trims each updated file 5-15%, or a diff mode; ships `trim_report.py`.
 - [`cgagentharness-config-guard/`](cgagentharness-config-guard/SKILL.md): static
   fail-closed check of `assets/config.default.yaml` (gates, `confirm`, loopback).
 - [`cgagentharness-gotchas/`](cgagentharness-gotchas/SKILL.md): session-tested
@@ -30,8 +30,6 @@ and procedures can differ. Claude-only entries are marked.
   attack write gates, `confirm`+`reason`, clone jail and shim argv.
 - [`dep-sync/`](dep-sync/SKILL.md): Claude-only. Fixes Cargo, npm sidecar,
   toolchain, deny and CI drift against `origin/main`.
-- [`doc-sync/`](doc-sync/SKILL.md): **operator-only, Claude-only.** Rewrites
-  stale doc sections to match the code; edit-only.
 - [`fable-protocol/`](fable-protocol/SKILL.md): evidence-first reasoning before
   costly code, security or CI claims.
 - [`run-cg-agent-harness/`](run-cg-agent-harness/SKILL.md): **operator-only,
