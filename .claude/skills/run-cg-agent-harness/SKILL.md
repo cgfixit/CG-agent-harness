@@ -34,8 +34,10 @@ cargo build --locked --features test-support --bin cgagentharness
 for mode in guards takeover enter reach; do
   target/debug/cgagentharness browser "$mode" --sidecar=browser/sidecar.mjs
 done
+target/debug/cgagentharness browser --sidecar=browser/sidecar.mjs
 target/debug/cgagentharness browser-verify --sidecar=browser/sidecar.mjs
 python3 scripts/test-browser-route.py target/debug/cgagentharness
+node scripts/browse-console-acceptance.mjs target/debug/cgagentharness
 ```
 
 A smoke home with a hand-written `config.yaml` reads every omitted ship-true
