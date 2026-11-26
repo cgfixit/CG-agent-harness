@@ -561,13 +561,14 @@ false`, omitted; never raw. `logging.audit_file` stays home-relative: absolute,
 `..` and Windows-prefixed paths fall back to `logs/audit.jsonl`.
 
 Server audit lines go through one ordered writer thread behind a bounded queue
-(`logging.audit_queue_lines`, default 4096; 0 appends inline). A full queue drops
-the new line with a warning and never blocks a request. The server flushes (at
-most 10 s) before spawning an agentic child, before `GET /api/audit` and
-`GET /api/diag/read` reads, and on Ctrl-C/SIGTERM or desktop sidecar shutdown,
-so a child's lines follow the server lines the flush
-landed; a dropped line or an expired flush does not stop the spawn. Other
-callers append inline.
+(`logging.audit_queue_lines`, default 4096; 0 appends inline). A full queue
+does not block. A refused record merges into `<audit file>.gaps` (0600).
+`/api/status` and `/api/diag` show `audit_gap`, and the next process loads it.
+Sign-in, account create, role, disable, delete, keys and adoption return
+`AUDIT_NOT_RECORDED` and do not commit. The server
+flushes (at most 10 s) before an agentic child, `GET /api/audit`,
+`GET /api/diag/read`, and Ctrl-C/SIGTERM or desktop shutdown. An expired
+flush does not stop the spawn.
 
 - Locked by: `tests/common_layer.rs`, `tests/panels.rs`, `tests/chat_and_sessions.rs`,
   `src/common/audit.rs` units,

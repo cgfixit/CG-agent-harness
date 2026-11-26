@@ -27,6 +27,15 @@ impl ApiError {
         }
     }
 
+    /// The audited action was not committed because its record was not queued.
+    pub fn audit_not_recorded() -> Self {
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "AUDIT_NOT_RECORDED",
+            "the action was not committed because its audit record could not be queued",
+        )
+    }
+
     pub fn from_err(status: StatusCode, err: &HarnessError) -> Self {
         Self {
             status,
