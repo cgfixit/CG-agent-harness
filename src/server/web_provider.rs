@@ -210,10 +210,12 @@ pub(super) fn hop_budget(
 }
 
 /// Whether a hop's failure moves the search to the next hop. A hop that cannot
-/// answer does: an unusable provider and a keyed quota that is spent (the next
-/// hop costs less or nothing). A clean zero-result answer, a refused query and a
+/// answer does: an unusable provider (no connection, no answer in time, or a
+/// name that does not resolve) and a keyed quota that is spent (the next hop
+/// costs less or nothing). A clean zero-result answer, a refused query and a
 /// rejected key (the operator's error, loud on every search) do not. A keyed
-/// provider's cooldown is skipped without a request.
+/// provider's cooldown is skipped without a request. A provider name that
+/// resolves to a private address (`WEB_SSRF_DENIED`) stays loud too.
 pub(super) fn falls_through(hop: Hop, code: &str) -> bool {
     match hop {
         // A spent daily unit ceiling or an unusable unit ledger (#772 D10) moves
@@ -222,6 +224,7 @@ pub(super) fn falls_through(hop: Hop, code: &str) -> bool {
             code,
             "WEB_SEARCH_PROVIDER"
                 | "WEB_TIMEOUT"
+                | "WEB_DNS"
                 | "WEB_SEARCH_COOLDOWN"
                 | "WEB_SEARCH_QUOTA"
                 | "WEB_SEARCH_DAILY_CAP"
@@ -486,6 +489,7 @@ mod tests {
             for code in [
                 "WEB_SEARCH_PROVIDER",
                 "WEB_TIMEOUT",
+                "WEB_DNS",
                 "WEB_SEARCH_COOLDOWN",
                 "WEB_SEARCH_QUOTA",
             ] {

@@ -36,19 +36,7 @@
         "do_not_enforce_on_create": false,
         "required_status_checks": [
           { "context": "docs impact", "integration_id": 15368 },
-          { "context": "rustfmt", "integration_id": 15368 },
-          { "context": "clippy (-D warnings)", "integration_id": 15368 },
-          { "context": "test (ubuntu-latest)", "integration_id": 15368 },
-          { "context": "test (macos-latest)", "integration_id": 15368 },
-          { "context": "test (windows-latest)", "integration_id": 15368 },
-          { "context": "Linux bubblewrap confinement (required)", "integration_id": 15368 },
-          { "context": "Linux MCP service lifecycle (required)", "integration_id": 15368 },
-          { "context": "Windows MCP Job Object lifecycle (required)", "integration_id": 15368 },
-          { "context": "invariant guard (I6 source scan)", "integration_id": 15368 },
-          { "context": "bakeoff harness self-test (fake Ollama)", "integration_id": 15368 },
-          { "context": "cargo deny (advisories, licenses, bans)", "integration_id": 15368 },
-          { "context": "chat slash-command browser acceptance", "integration_id": 15368 },
-          { "context": "browser sidecar guards (fixtures, Chrome sandbox on)", "integration_id": 15368 },
+          { "context": "required gate (ci.yml jobs per event)", "integration_id": 15368 },
           { "context": "check_otel (oracle, mutation self-test)", "integration_id": 15368 }
         ]
       }

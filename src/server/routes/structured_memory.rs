@@ -973,7 +973,20 @@ pub async fn start_consolidation(
     // finishes or records its failure, and its audit line is still written.
     let task = tokio::spawn(async move {
         let _gate = _gate;
-        let run = crate::server::structured_memory_consolidate::run_manual(&state, &owner, &req.episode_ids).await?;
+        let run = match crate::server::structured_memory_consolidate::run_manual(&state, &owner, &req.episode_ids).await
+        {
+            Ok(run) => run,
+            Err(err) => {
+                // A failed run is audited too, as the automatic worker does.
+                audit(
+                    &state,
+                    "structured_memory_consolidation",
+                    &owner,
+                    json!({"episode_count": req.episode_ids.len(), "error_class": err.code}),
+                );
+                return Err(err);
+            }
+        };
         audit(
             &state,
             "structured_memory_consolidation",
