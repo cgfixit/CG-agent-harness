@@ -55,6 +55,17 @@ fn isolated_parent(test: &str) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    assert_fixture_ran(test, &output.stdout);
+}
+
+/// libtest exits 0 with "0 passed" when `--exact` matches nothing, so a renamed
+/// fixture would leave its parent green while checking nothing.
+fn assert_fixture_ran(test: &str, stdout: &[u8]) {
+    let stdout = String::from_utf8_lossy(stdout);
+    assert!(
+        stdout.contains("test result: ok. 1 passed"),
+        "fixture {test} did not run exactly one test:\n{stdout}"
+    );
 }
 
 fn assert_no_provider_keys() {
@@ -195,6 +206,7 @@ fn provider_credentials_are_action_scoped() {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
+        assert_fixture_ran("action_parent_fixture", &output.stdout);
     }
 }
 
