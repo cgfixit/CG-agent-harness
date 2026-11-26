@@ -30,7 +30,7 @@ const classes = () => { const set = new Set(); return {add:n => set.add(n), remo
   toggle:(n, on) => { if (on) set.add(n); else set.delete(n); return on; }}; };
 const page = {getElementById:node, body:{classList:classes()}, documentElement:{classList:classes()}, activeElement:null, listeners:{},
   addEventListener(event, handler) { this.listeners[event] = handler; }};
-const passwordPrompts = [], clearedTimers = [], browseJobForgets = []; let transcriptClears = 0, memoryRefreshes = 0;
+const passwordPrompts = [], clearedTimers = [], browseJobForgets = []; let transcriptClears = 0, memoryRefreshes = 0, browseJobResumes = 0;
 const context = vm.createContext({
   $:node, document:page, window:{}, CSRF_TOKEN:'fixture', sessionRevision:1, sendBtn:{disabled:false}, inflightChat:null,
   api:async path => { probes.push(path); const value = replies[path]; if (value instanceof Error) throw value; return typeof value === 'function' ? value() : value; },
@@ -46,7 +46,7 @@ const context = vm.createContext({
   sessionSearchQuery:'', sessionSearchSeq:0,
   clearTimeout:timer => clearedTimers.push(timer), memoryRefreshTimer:null, memoryViewRevision:0, memoryRefreshBusy:false,
   clearTranscript() { transcriptClears++; }, stopLoop() {}, paintSessionTokens() {}, paintStyle() {}, input:node('input'),
-  forgetBrowseJob(id) { browseJobForgets.push(id); },
+  forgetBrowseJob(id) { browseJobForgets.push(id); }, resumeBrowseJob:async atLoad => { assert.equal(atLoad, true); browseJobResumes++; },
   netconnectRevision:0, currentSession:'fixture-session', sessionGoal:'fixture goal', loopAuto:false, retryAttachmentIds:null,
   promptHistory:{}, currentStyle:'off', currentStyleIssue:null,
 });
@@ -142,6 +142,7 @@ await node('hAuthLogin').listeners.click(); await settle();
 assert.deepEqual(shown(), buttons);
 assert.equal(memoryRefreshes, 1, 'successful login refreshes the retained Memory pane');
 assert.equal(node('hAuthError').textContent, '', 'successful login completes without a swallowed fixture error');
+assert.equal(browseJobResumes, 1, 'a sign-in looks for the tab\'s browser task again (#1123)');
 context.refreshHeaderFeatures(false); await settle();
 // The login form path locks too, and keeps Reload limits hidden for an initial-password admin.
 auth.login = reply(200, {username:'admin', role:'admin', must_change_password:true});
@@ -151,6 +152,7 @@ assert.deepEqual(shown(), []);
 assert.ok(page.body.classList.contains('password-required'));
 assert.equal(node('reloadLimits').hidden, true, 'an initial-password login never offers Reload limits');
 assert.equal(passwordPrompts.at(-1), true);
+assert.equal(browseJobResumes, 1, 'an initial-password login reads no browser task before the password is set');
 // Signing out (or any return to the sign-in card) ends the lock.
 auth.whoami = reply(401);
 await context.refreshHarnessAuth(); await settle();

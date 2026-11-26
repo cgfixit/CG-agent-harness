@@ -139,7 +139,8 @@ try {
   let reply = await post('/api/auth/login', {username: 'admin', password: setup});
   assert.equal(reply.status, 200, 'bootstrap sign-in');
   let cookie = reply.headers.get('set-cookie').split(';')[0];
-  reply = await post('/api/auth/password', {current_password: setup, password: randomBytes(18).toString('hex')}, cookie);
+  const password = randomBytes(18).toString('hex');
+  reply = await post('/api/auth/password', {current_password: setup, password}, cookie);
   assert.equal(reply.status, 200, 'setup code replaced');
   cookie = reply.headers.get('set-cookie').split(';')[0];
   const tuned = async () => {
@@ -305,13 +306,18 @@ try {
   assert.equal(await cards(), 0, 'another session shows no card');
   await send('/session use ' + sessionA);
   await until(`currentSession === ${JSON.stringify(sessionA)} && document.querySelectorAll(".fetch-confirm").length === 1`);
+  // Opening it again at once, while the watcher sleeps between polls, brings
+  // the card back too.
+  await evaluate(`window.OLD_CARD = ${card}`);
+  await send('/session use ' + sessionA);
+  await until(`document.querySelectorAll(".fetch-confirm").length === 1 && ${card} !== window.OLD_CARD`);
   marker = await done();
   await evaluate(`${card}.querySelectorAll("button")[1].click()`);
   await finished(marker);
   assert.equal(saves.length, 2, 'held after a session switch: not sent');
   assert.ok((await streamText()).includes('Held, not sent: POST ' + shopOrigin + '/api/save'), 'the report lists the held request');
   assert.equal(await stored(), null, 'an ended task is forgotten');
-  console.log('session switch while waiting -> no card elsewhere; back in its session the card returned; hold reached it');
+  console.log('session switch while waiting -> no card elsewhere; back in its session (and again at once) the card returned; hold reached it');
 
   // 8. A task the server does not have (never existed, another account's,
   // or ended and cleared) is forgotten, and nothing is shown or sent.
@@ -321,6 +327,21 @@ try {
   assert.equal(await stored(), null, 'an unknown task is forgotten');
   assert.equal(await cards(), 0);
   console.log('unknown task id -> "unavailable, nothing was resumed"; forgotten');
+
+  // 8b. A reload signed out (the cookie is gone): signing in finds the task.
+  await browse();
+  await call('Network.deleteCookies', {name: 'cgagentharness_session', url: base});
+  await call('Page.reload');
+  await pause(300);
+  await until('typeof onSend === "function" && document.body.classList.contains("signed-out") && !document.getElementById("signInScreen").hidden');
+  assert.ok(await stored(), 'a read refused before sign-in keeps the pair');
+  await evaluate(`(() => { document.getElementById("hAuthUser").value = "admin"; document.getElementById("hAuthPass").value = ${JSON.stringify(password)}; document.getElementById("hAuthLogin").click(); })()`);
+  await until(`!document.body.classList.contains("signed-out") && document.querySelectorAll(".fetch-confirm").length === 1 && ${card}.textContent.includes("It is paused, not sent")`);
+  marker = await done();
+  await evaluate(`${card}.querySelectorAll("button")[1].click()`);
+  await finished(marker);
+  assert.equal(saves.length, 2, 'held after signing in again: not sent');
+  console.log('signed-out reload -> after sign-in the card returned; hold reached it');
 
   // 9. Restart while waiting: the record is gone, the console says so, and the
   // held request is never sent.

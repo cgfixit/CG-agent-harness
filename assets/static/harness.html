@@ -3028,6 +3028,7 @@ function showBrowseApproval(jobId, pending) {
 /* The browser task this page started, while it runs: /browse cancel stops it. */
 let browseJobId = '';
 let browseWatchGeneration = 0;
+let browseWatchRevision = -1;
 const BROWSE_POLL_MS = 1500;
 /* #1123: the tab keeps only which task it started and in which session
    (null: none), never the task, a URL, a body or a reason, so a reload or a
@@ -3062,23 +3063,28 @@ function browseJobGone() {
    longer has is forgotten. */
 async function resumeBrowseJob(atLoad) {
   const pair = storedBrowseJob();
-  if (!pair || pair.job_id === browseJobId) return;
+  /* A watcher from before the last navigation stops at its next poll; only
+     one started for the view now shown is already following the task. */
+  if (!pair || (pair.job_id === browseJobId && browseWatchRevision === sessionRevision)) return;
   if (pair.session_id === currentSession) { watchBrowseJob(pair.job_id, true); return; }
   if (!atLoad) return;
+  const revision = sessionRevision;
   try {
     const job = await api('/api/browser/jobs/' + encodeURIComponent(pair.job_id));
+    if (revision !== sessionRevision) return;
     if (['running', 'waiting', 'cancelling'].includes(job.status)) {
       sys('A browser task started in session ' + pair.session_id + ' is ' + String(job.status) + '.',
         '/session use ' + pair.session_id + ' to follow it');
     }
   } catch (e) {
+    if (revision !== sessionRevision) return;
     if (BROWSE_JOB_GONE.includes(e && e.code)) { forgetBrowseJob(pair.job_id); browseJobGone(); }
   }
 }
 async function watchBrowseJob(id, resumed = false) {
   const generation = ++browseWatchGeneration, revision = sessionRevision;
   const stale = () => generation !== browseWatchGeneration || revision !== sessionRevision;
-  browseJobId = id;
+  browseJobId = id; browseWatchRevision = revision;
   let asked = 0;
   try {
     while (!stale()) {
@@ -3106,7 +3112,8 @@ async function watchBrowseJob(id, resumed = false) {
     /* A first read at load can fail before sign-in; the pair is kept. */
     else if (!resumed) sys((e && e.message) || String(e));
   } finally {
-    if (browseJobId === id) browseJobId = '';
+    /* A newer watcher may already follow the same task. */
+    if (generation === browseWatchGeneration) browseJobId = '';
   }
 }
 
@@ -6653,7 +6660,11 @@ if (hAuthLogin) {
       showSignIn(null, initialPassword && data.must_change_password === true);
       refreshHeaderFeatures(!data.must_change_password);
       if (data.must_change_password) openPasswordChange(true);
-      else { await refreshMemoryProposals(); await refreshStatus(); await refreshSessions(); }
+      else {
+        await refreshMemoryProposals(); await refreshStatus(); await refreshSessions();
+        /* A reload before sign-in could not read this tab's browser task. */
+        resumeBrowseJob(true).catch(() => {});
+      }
     } catch (e) {
       pass.value = '';
       error.textContent = "Can't reach the harness. Check that it is still running, then try again.";
