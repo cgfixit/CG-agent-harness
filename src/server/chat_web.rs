@@ -487,18 +487,29 @@ pub struct UsageSnapshot {
     pub(crate) known_completion_tokens: u64,
 }
 
-/// Canonical http(s) URLs the operator wrote in `text`, as typed and with trailing punctuation trimmed.
+/// Canonical http(s) URLs the operator wrote in `text`, as typed and with
+/// trailing punctuation or markup trimmed. The scheme is found in any case
+/// (`HTTPS://`), as `canonical_url` reads it.
 fn operator_urls(text: &str) -> impl Iterator<Item = String> + '_ {
     text.split_whitespace().flat_map(|word| {
-        let typed = word
+        // ASCII lowercasing keeps every byte offset.
+        let lower = word.to_ascii_lowercase();
+        let typed = lower
             .find("https://")
-            .or_else(|| word.find("http://"))
+            .or_else(|| lower.find("http://"))
             .map(|start| &word[start..]);
         // Both the URL as typed and without trailing punctuation are the
         // operator's own text: `Function_(mathematics)` and `?q=hello!` keep
         // their last character, and `(https://a/b).` still yields `https://a/b`.
+        // A URL pasted from markdown or prose ends in a backtick, emphasis
+        // marks or a typographic quote (`web_command::with_https` strips the
+        // same wrappers from a command's argument).
         let trimmed = typed
-            .map(|url| url.trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', '\'']))
+            .map(|url| {
+                url.trim_end_matches([
+                    '.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', '\'', '`', '*', '_', '~', '”', '’', '»',
+                ])
+            })
             .filter(|url| Some(*url) != typed);
         typed
             .into_iter()
@@ -1455,6 +1466,29 @@ mod tests {
         for url in [
             "https://example.com/wiki/Function_(mathematics)",
             "https://example.com/s?q=hello!",
+        ] {
+            assert!(urls.iter().any(|u| u == url), "{url} in {urls:?}");
+        }
+        // A URL pasted with markdown or prose around it, or with the scheme in
+        // capitals, is still the URL the operator named: without it the
+        // model's fetch of that page reads as composed (#901) and pauses for
+        // an Approve, or is refused on a turn that cannot pause.
+        let urls: Vec<String> = operator_urls(concat!(
+            "Summarise `https://docs.example.org/guide` and **https://docs.example.org/bold**, ",
+            "then “https://docs.example.org/quoted” and _https://docs.example.org/emph_. ",
+            "Also HTTPS://Docs.Example.org/Upper and Http://docs.example.org/mixed`. ",
+            "Keep https://docs.example.org/snake_case_ as typed too.",
+        ))
+        .collect();
+        for url in [
+            "https://docs.example.org/guide",
+            "https://docs.example.org/bold",
+            "https://docs.example.org/quoted",
+            "https://docs.example.org/emph",
+            "https://docs.example.org/Upper",
+            "http://docs.example.org/mixed", // DevSkim: ignore DS137138 because this synthetic URL is test text never fetched.
+            "https://docs.example.org/snake_case_",
+            "https://docs.example.org/snake_case",
         ] {
             assert!(urls.iter().any(|u| u == url), "{url} in {urls:?}");
         }
