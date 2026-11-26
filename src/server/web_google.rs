@@ -1627,6 +1627,18 @@ mod tests {
                 self
             }
 
+            /// Point the Tavily hop at a name that never resolves (`.invalid`,
+            /// RFC 6761): its DNS lookup fails before anything is sent.
+            pub(super) fn with_unresolvable_tavily(self, key: &str) -> Self {
+                let mut chain = self.with_tavily_at(key, "127.0.0.1:9".parse().unwrap());
+                chain
+                    .web
+                    .test_resolve_extra
+                    .retain(|(host, _)| host != "tavily.fixture");
+                chain.web.test_tavily_search = Some(url::Url::parse("http://tavily.invalid/search").unwrap()); // DevSkim: ignore DS137138 because this name never resolves.
+                chain
+            }
+
             pub(super) async fn search(&self, query: &str) -> Result<Value> {
                 self.web
                     .google_search_at(query, 3, true, &self.audit, self.endpoint.clone())
@@ -2028,6 +2040,28 @@ mod tests {
         assert!(
             !text.contains("veeam cve") && !text.contains("\"good\""),
             "audit lines carry codes, never the query or a key"
+        );
+    }
+
+    /// A keyed provider whose name does not resolve (NXDOMAIN, a resolver
+    /// that blocks it) cannot answer, as a refused connection cannot: the
+    /// search moves on instead of failing while the next hop could answer.
+    #[tokio::test]
+    async fn an_unresolvable_tavily_falls_back_to_serpapi() {
+        let serp = chain::serpapi().await;
+        let chain = chain::Chain::new(&chain::yaml(", fallback_to_serpapi: true"), "good", &serp, None)
+            .await
+            .with_unresolvable_tavily("good");
+        let value = chain.search("veeam cve").await.unwrap();
+        assert_eq!(value["provider"], "google-serpapi");
+        assert_eq!(value["fallback_from"], json!(["tavily"]));
+        let lines = chain.audit_events("web_search_fallback");
+        assert_eq!(lines.len(), 1);
+        // A resolver slower than the hop's budget times out instead, which
+        // falls through too; `falls_through` pins WEB_DNS itself.
+        assert!(
+            matches!(lines[0]["code"].as_str(), Some("WEB_DNS" | "WEB_TIMEOUT")),
+            "{lines:?}"
         );
     }
 

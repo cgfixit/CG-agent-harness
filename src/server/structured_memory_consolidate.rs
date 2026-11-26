@@ -126,6 +126,16 @@ pub fn episode_prompt_payload(episodes: &[Episode]) -> String {
     .to_string()
 }
 
+/// Whether `payload` is JSON with no `facts` key at its top or in an episode.
+fn no_facts_key(payload: &str) -> bool {
+    serde_json::from_str::<Value>(payload).is_ok_and(|payload| {
+        payload.get("facts").is_none()
+            && payload["episodes"]
+                .as_array()
+                .is_some_and(|episodes| episodes.iter().all(|episode| episode.get("facts").is_none()))
+    })
+}
+
 pub fn bind_candidates(
     output: &ConsolidatorOutput,
     selected_ids: &[String],
@@ -384,7 +394,8 @@ async fn generate_and_finish(
     .await?;
     let user = episode_prompt_payload(episodes);
     // Recalled facts must never appear in this payload (self-confirm fence).
-    debug_assert!(!user.contains("\"facts\""));
+    // Its keys, not its text: a summary that says "facts" is episode data.
+    debug_assert!(no_facts_key(&user));
     let messages = [ChatMessage {
         role: "user".to_string(),
         content: user,
@@ -595,7 +606,17 @@ mod tests {
             semantic_summary: None,
             ..episode
         };
-        let payload = episode_prompt_payload(&[metadata_only]);
+        let payload = episode_prompt_payload(std::slice::from_ref(&metadata_only));
+        assert!(no_facts_key(&payload));
+        // A summary that is the word "facts" is episode text, not a key.
+        let worded = Episode {
+            semantic_summary: Some("facts".to_string()),
+            ..metadata_only.clone()
+        };
+        assert!(no_facts_key(&episode_prompt_payload(&[worded])));
+        assert!(!no_facts_key(r#"{"episodes":[],"facts":["recalled"]}"#));
+        assert!(!no_facts_key(r#"{"episodes":[{"facts":[]}]}"#));
+        assert!(!no_facts_key("not json"));
         let parsed: Value = serde_json::from_str(&payload).unwrap();
         assert!(parsed.get("facts").is_none());
         assert!(parsed["episodes"][0]["semantic_summary"].is_null());

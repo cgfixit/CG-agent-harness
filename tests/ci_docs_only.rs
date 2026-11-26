@@ -238,13 +238,323 @@ fn ci_changes_job_keeps_no_renames_and_fail_closed() {
 
     let jobs_map = jobs.as_mapping().unwrap_or_else(|| panic!("{name} jobs map"));
     for (job_name, job) in jobs_map {
-        if !needs_changes(job) {
+        if !needs_changes(job) || job_name.as_str() == Some(GATE) {
             continue;
         }
         let gate = job.get("if").and_then(Value::as_str).unwrap_or("");
         assert!(
             gate.contains("needs.changes.outputs.code != 'false'"),
             "{name} job {job_name:?} must run unless classify set code=false, got {gate:?}"
+        );
+    }
+}
+
+const GATE: &str = "required-gate";
+
+fn ci_jobs() -> serde_yaml_ng::Mapping {
+    let text = std::fs::read_to_string(repo_root().join(".github/workflows/ci.yml")).expect("ci.yml");
+    let doc: Value = serde_yaml_ng::from_str(&text).expect("ci.yml yaml");
+    doc.get("jobs")
+        .and_then(Value::as_mapping)
+        .cloned()
+        .expect("ci.yml jobs")
+}
+
+/// A job left out of `needs` is a job the ruleset no longer requires.
+#[test]
+fn required_gate_needs_every_ci_job_and_always_runs() {
+    let jobs = ci_jobs();
+    let gate = jobs.get(GATE).expect("ci.yml required-gate job");
+    assert_eq!(gate.get("if").and_then(Value::as_str), Some("${{ always() }}"));
+    let mut needs: Vec<&str> = gate
+        .get("needs")
+        .and_then(Value::as_sequence)
+        .expect("required-gate needs list")
+        .iter()
+        .map(|need| need.as_str().expect("job id"))
+        .collect();
+    needs.sort_unstable();
+    let mut others: Vec<&str> = jobs.keys().filter_map(Value::as_str).filter(|id| *id != GATE).collect();
+    others.sort_unstable();
+    assert_eq!(needs, others, "required-gate must need every other ci.yml job");
+
+    let test = jobs.get("test").expect("test job");
+    let matrix = test["strategy"]["matrix"]["os"].as_str().expect("test matrix");
+    assert!(
+        matrix.contains("needs.changes.outputs.windows_suite == 'false'"),
+        "{matrix}"
+    );
+    for leg in ["ubuntu-latest", "macos-latest", "windows-latest"] {
+        assert!(matrix.contains(&format!("\"{leg}\"")), "{leg} missing from {matrix}");
+        let expected = format!("${{{{ steps.leg.outputs.{leg} }}}}");
+        assert_eq!(
+            test["outputs"][leg].as_str(),
+            Some(expected.as_str()),
+            "test output {leg}"
+        );
+    }
+    let last = test["steps"]
+        .as_sequence()
+        .and_then(|steps| steps.last())
+        .expect("test steps");
+    assert_eq!(
+        last["id"].as_str(),
+        Some("leg"),
+        "the leg record must be the test job's last step"
+    );
+}
+
+#[cfg(unix)]
+fn gate_script() -> String {
+    let gate = ci_jobs().get(GATE).cloned().expect("required-gate");
+    gate["steps"][0]["run"].as_str().expect("required-gate run").to_string()
+}
+
+#[cfg(unix)]
+fn ok_need() -> serde_json::Value {
+    serde_json::json!({"result": "success", "outputs": {}})
+}
+
+/// Every ci.yml job passed, with `code`, `windows_suite` and the given legs.
+#[cfg(unix)]
+fn needs_with(code: &str, windows_suite: &str, legs: &[(&str, &str)]) -> serde_json::Value {
+    let mut needs = serde_json::Map::new();
+    for id in ci_jobs().keys().filter_map(Value::as_str).filter(|id| *id != GATE) {
+        needs.insert(id.to_string(), ok_need());
+    }
+    needs.insert(
+        "changes".into(),
+        serde_json::json!({"result": "success", "outputs": {"code": code, "windows_suite": windows_suite}}),
+    );
+    let legs: serde_json::Map<String, serde_json::Value> = legs
+        .iter()
+        .map(|(leg, outcome)| (leg.to_string(), (*outcome).into()))
+        .collect();
+    needs.insert("test".into(), serde_json::json!({"result": "success", "outputs": legs}));
+    serde_json::Value::Object(needs)
+}
+
+#[cfg(unix)]
+fn gate_exit(event: &str, needs: &serde_json::Value) -> (i32, String) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("gate.sh");
+    std::fs::write(&path, gate_script()).expect("write gate script");
+    let out = Command::new("bash")
+        .arg(&path)
+        .env("EVENT_NAME", event)
+        .env("NEEDS", needs.to_string())
+        .output()
+        .expect("run required-gate script");
+    let log = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.code().unwrap_or(-1), log)
+}
+
+/// The gate's real script, against each result GitHub can hand it.
+#[cfg(unix)]
+#[test]
+fn required_gate_fails_every_result_its_event_does_not_allow() {
+    const U: (&str, &str) = ("ubuntu-latest", "success");
+    const M: (&str, &str) = ("macos-latest", "success");
+    const W: (&str, &str) = ("windows-latest", "success");
+    let set = |mut needs: serde_json::Value, job: &str, result: &str| {
+        needs[job]["result"] = result.into();
+        needs
+    };
+    let docs_only_pr = || {
+        let mut needs = needs_with("false", "false", &[]);
+        for job in [
+            "browser-guards",
+            "clippy",
+            "test",
+            "linux-bwrap",
+            "linux-mcp-lifecycle",
+            "windows-mcp-lifecycle",
+            "bakeoff-self-test",
+        ] {
+            needs[job]["result"] = "skipped".into();
+        }
+        needs
+    };
+    let cases: Vec<(&str, &str, serde_json::Value, i32)> = vec![
+        (
+            "PR, switch off: no Windows leg",
+            "pull_request",
+            needs_with("true", "false", &[U, M]),
+            0,
+        ),
+        (
+            "PR, switch on: Windows leg due",
+            "pull_request",
+            needs_with("true", "true", &[U, M]),
+            1,
+        ),
+        (
+            "PR, switch on, Windows passed",
+            "pull_request",
+            needs_with("true", "true", &[U, M, W]),
+            0,
+        ),
+        (
+            "queue without the Windows leg",
+            "merge_group",
+            needs_with("true", "false", &[U, M]),
+            1,
+        ),
+        (
+            "queue with every leg",
+            "merge_group",
+            needs_with("true", "true", &[U, M, W]),
+            0,
+        ),
+        (
+            "queue, Windows advisory outcome",
+            "merge_group",
+            needs_with("true", "true", &[U, M, ("windows-latest", "failure")]),
+            1,
+        ),
+        (
+            "queue, macOS leg never finished",
+            "merge_group",
+            needs_with("true", "true", &[U, W]),
+            1,
+        ),
+        (
+            "main push, Windows advisory outcome",
+            "push",
+            needs_with("true", "true", &[U, M, ("windows-latest", "failure")]),
+            0,
+        ),
+        (
+            "main push without the Windows leg",
+            "push",
+            needs_with("true", "true", &[U, M]),
+            1,
+        ),
+        ("docs-only PR skips code jobs", "pull_request", docs_only_pr(), 0),
+        (
+            "docs-only PR, changes skipped",
+            "pull_request",
+            set(docs_only_pr(), "changes", "skipped"),
+            1,
+        ),
+        (
+            "docs-only PR, fmt failed",
+            "pull_request",
+            set(docs_only_pr(), "fmt", "failure"),
+            1,
+        ),
+        (
+            "code PR, skipped job",
+            "pull_request",
+            set(needs_with("true", "false", &[U, M]), "linux-bwrap", "skipped"),
+            1,
+        ),
+        (
+            "queue, code=false skip",
+            "merge_group",
+            set(needs_with("false", "true", &[U, M, W]), "clippy", "skipped"),
+            1,
+        ),
+        (
+            "queue, cancelled job",
+            "merge_group",
+            set(
+                needs_with("true", "true", &[U, M, W]),
+                "windows-mcp-lifecycle",
+                "cancelled",
+            ),
+            1,
+        ),
+        (
+            "PR, failed test job",
+            "pull_request",
+            set(needs_with("true", "false", &[U]), "test", "failure"),
+            1,
+        ),
+    ];
+    for (name, event, needs, expected) in cases {
+        let (code, log) = gate_exit(event, &needs);
+        assert_eq!(code, expected, "{name}\n{log}");
+    }
+    let mut missing = needs_with("true", "true", &[U, M, W]);
+    missing.as_object_mut().unwrap().remove("test");
+    assert_eq!(gate_exit("merge_group", &missing).0, 1, "a gate without test in needs");
+}
+
+/// Each required context has one producer that runs, unskippable, on pull
+/// requests and merge-queue candidates: a skipped required check passes.
+#[test]
+fn ruleset_contexts_have_one_unskippable_producer_on_prs_and_the_queue() {
+    let ruleset: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(repo_root().join(".github/rulesets/main-protection.json")).expect("ruleset"),
+    )
+    .expect("ruleset json");
+    let contexts: Vec<String> = ruleset["rules"]
+        .as_array()
+        .expect("rules")
+        .iter()
+        .filter(|rule| rule["type"] == "required_status_checks")
+        .flat_map(|rule| {
+            rule["parameters"]["required_status_checks"]
+                .as_array()
+                .expect("checks")
+                .clone()
+        })
+        .map(|check| check["context"].as_str().expect("context").to_string())
+        .collect();
+    assert!(!contexts.is_empty());
+
+    let mut producers: Vec<(String, String, Value, Value)> = Vec::new();
+    for entry in std::fs::read_dir(repo_root().join(".github/workflows")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("yml") {
+            continue;
+        }
+        let file = path.file_name().unwrap().to_string_lossy().to_string();
+        let doc: Value = serde_yaml_ng::from_str(&std::fs::read_to_string(&path).unwrap())
+            .unwrap_or_else(|err| panic!("{file}: {err}"));
+        let on = doc
+            .get("on")
+            .or_else(|| doc.get(Value::Bool(true)))
+            .cloned()
+            .unwrap_or(Value::Null);
+        for (id, job) in doc.get("jobs").and_then(Value::as_mapping).into_iter().flatten() {
+            let name = job.get("name").or(Some(id)).and_then(Value::as_str).unwrap_or_default();
+            producers.push((file.clone(), name.to_string(), on.clone(), job.clone()));
+        }
+    }
+    for context in &contexts {
+        let found: Vec<_> = producers.iter().filter(|(_, name, _, _)| name == context).collect();
+        assert_eq!(
+            found.len(),
+            1,
+            "{context:?} needs exactly one producing job, found {}",
+            found.len()
+        );
+        let (file, _, on, job) = found[0];
+        for event in ["pull_request", "merge_group"] {
+            let trigger = on
+                .get(event)
+                .unwrap_or_else(|| panic!("{file} ({context:?}) must run on {event}"));
+            for filter in ["paths", "paths-ignore", "branches", "branches-ignore"] {
+                assert!(
+                    trigger.get(filter).is_none(),
+                    "{file}: {event} {filter} can leave {context:?} pending"
+                );
+            }
+        }
+        let gate = job.get("if").and_then(Value::as_str);
+        assert!(
+            gate.is_none() || gate == Some("${{ always() }}"),
+            "{file} ({context:?}) carries a skip condition: {gate:?}"
+        );
+        assert!(
+            job.get("strategy").is_none(),
+            "{file} ({context:?}): a matrix name is not a fixed context"
         );
     }
 }

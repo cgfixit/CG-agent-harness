@@ -10,6 +10,9 @@ The private `<home>/setup-code` bootstraps `admin`. Replace it with a
 password of at least 12 characters. Bootstrap sessions allow identity,
 password change and logout. Administrators manage accounts in **USERS**.
 Password reset, role change, disablement and deletion revoke sessions.
+They also stop the account's running chat turn (401 `AUTH_REQUIRED`); a
+cloud turn rechecks its account and consent before the token count and the
+generation, so nothing more is sent.
 The last enabled administrator cannot be removed, disabled or demoted.
 
 | Role | Capabilities |

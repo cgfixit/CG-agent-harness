@@ -16,9 +16,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'merge_group' }}
 
 jobs:
+  # No job-level `if`: a skipped required check passes, so the merge queue's
+  # candidate runs the same check against the queue base.
   check:
     name: docs impact
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -30,8 +31,16 @@ jobs:
           fetch-depth: 0
       - name: Verify docs automation fixtures
         run: python3 scripts/test-docs-impact.py
-      - name: Check owning guides against the PR source diff
+      # A queue candidate stacks squash commits on the queue base, so the check
+      # covers every queued change ahead of it. docs-impact.py reads receipts
+      # as message lines, which the squash message keeps from each PR commit.
+      - name: Check owning guides against the candidate's source diff
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python3 scripts/docs-impact.py --base "$BASE_SHA" --head "$HEAD_SHA"
+          BASE_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event.pull_request.head.sha }}
+        run: |
+          if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
+            echo "docs impact: no base or head SHA for $GITHUB_EVENT_NAME" >&2
+            exit 1
+          fi
+          python3 scripts/docs-impact.py --base "$BASE_SHA" --head "$HEAD_SHA"

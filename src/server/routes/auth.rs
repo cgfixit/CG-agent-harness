@@ -475,16 +475,23 @@ fn disable_machine_keys(state: &AppState, owner: &str) -> ApiResult<()> {
 }
 
 /// Work the owner already started keeps no authority the account lost: its
-/// running coding jobs are aborted (child and gates dropped) and, when asked,
-/// its research run is cancelled. Audited only when something stopped.
+/// chat turn is stopped (every caller's change revokes the sign-in the turn
+/// runs under, so its reply would be withheld anyway), its running coding jobs
+/// are aborted (child and gates dropped) and, when asked, its research run is
+/// cancelled. Audited only when something stopped.
 fn stop_owner_work(state: &AppState, owner: &str, coding: bool, research: bool) {
+    // Err means another account holds the lease: nothing of ours runs.
+    let chat = state
+        .chat_owner
+        .cancel_with(owner, || state.abort_chat())
+        .unwrap_or(false);
     let jobs = if coding { state.jobs.cancel_owner(owner) } else { 0 };
-    // Err means another account holds the research lease: nothing of ours runs.
     let research = research && state.web_snapshot().research.cancel(owner).unwrap_or(false);
-    if jobs > 0 || research {
+    if chat || jobs > 0 || research {
         state.audit.log(json!({
             "event": "account.work_stopped",
             "owner": owner,
+            "chat": chat,
             "coding_jobs": jobs,
             "research": research,
         }));
@@ -641,6 +648,7 @@ pub async fn set_password(
             &target.username,
             json!({}),
         );
+        stop_owner_work(&st, &target.user_id, false, false);
         Ok(())
     })
     .await?;
@@ -678,7 +686,8 @@ pub async fn set_role(
             // After the audit line, as disable does: a failed retirement is
             // returned, with the role change already on record.
             // A running coding job or research run started under the old
-            // role stops when the new one could not have started it.
+            // role stops when the new one could not have started it; the
+            // chat turn always stops.
             use crate::common::authz::{grants_stored, Capability};
             stop_owner_work(
                 &state,
