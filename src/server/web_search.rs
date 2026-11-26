@@ -509,6 +509,20 @@ pub(super) async fn run_web_cpu<T: Send + 'static>(
     .map_err(|_| error("WEB_FETCH_FAILED", "extraction failed"))?
 }
 
+/// The policy file's bytes as last read, and the policy parsed from them.
+struct PolicySnapshot {
+    bytes: Vec<u8>,
+    policy: Policy,
+}
+
+impl std::fmt::Debug for PolicySnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PolicySnapshot")
+            .field("revision", &self.policy.revision)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WebTool {
     pub(super) tools_dir: PathBuf,
@@ -559,6 +573,10 @@ pub struct WebTool {
     /// chat turn asked for it (`for_search_grants`); `policy` then lays them
     /// over the saved policy, in memory, for that turn's reads alone.
     pub(super) search_grants: Option<Arc<std::sync::Mutex<Arc<std::collections::BTreeSet<String>>>>>,
+    /// The policy file's bytes as last read and the policy parsed from them,
+    /// shared by every snapshot. The file is still read on every `policy`
+    /// call; only bytes that differ are parsed again (`saved_policy`).
+    policy_snapshot: Arc<std::sync::Mutex<Option<PolicySnapshot>>>,
     /// Test hook replacing the public Google search URL with a fixture.
     /// Compiled only with `test-support`.
     #[cfg(any(test, feature = "test-support"))]
@@ -610,6 +628,7 @@ impl WebTool {
             search_cooldown: Arc::default(),
             result_reads: super::web_provider::ResultReads::load(cfg)?,
             search_grants: None,
+            policy_snapshot: Arc::default(),
             #[cfg(any(test, feature = "test-support"))]
             test_public_search: None,
             #[cfg(any(test, feature = "test-support"))]
@@ -637,8 +656,31 @@ impl WebTool {
     pub fn policy_file(&self) -> (PathBuf, usize) {
         (self.allow_path(), self.limits.max_rules)
     }
+    /// The saved policy file, as `Policy::load` reads it. The file's bytes are
+    /// read on every call, so an edit, a revocation or a removed file is seen
+    /// by the very next check. Parsing them (every rule validated, the
+    /// revision hashed) happens only when they differ from the last read: a
+    /// streamed web answer asks once per text delta, and its rules rarely
+    /// change mid-answer. Bytes that do not parse are an error every time.
+    fn saved_policy(&self) -> Result<Policy> {
+        let bytes = Policy::read(&self.allow_path(), self.limits.max_rules)?;
+        let mut snapshot = self.policy_snapshot.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(seen) = snapshot.as_ref().filter(|seen| seen.bytes == bytes) {
+            return Ok(seen.policy.clone());
+        }
+        *snapshot = None;
+        #[cfg(test)]
+        POLICY_PARSES.with(|parses| parses.set(parses.get() + 1));
+        let policy = Policy::parse(&bytes, self.limits.max_rules)?;
+        *snapshot = Some(PolicySnapshot {
+            bytes,
+            policy: policy.clone(),
+        });
+        Ok(policy)
+    }
+
     pub fn policy(&self) -> Result<Policy> {
-        let mut policy = Policy::load(&self.allow_path(), self.limits.max_rules)?;
+        let mut policy = self.saved_policy()?;
         if let Some(grants) = &self.search_grants {
             policy.granted = grants.lock().unwrap_or_else(|p| p.into_inner()).clone();
         }
@@ -765,7 +807,8 @@ impl WebTool {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .contains(target.as_str())
-            && Policy::load(&self.allow_path(), self.limits.max_rules)
+            && self
+                .saved_policy()
                 .is_ok_and(|saved| !saved.blocks(&target) && !saved.permits(&target, None))
     }
 
@@ -1511,8 +1554,73 @@ fn site_patterns(raw: &str) -> Vec<String> {
     }
 }
 
+// How many times this thread parsed the policy file's bytes.
+#[cfg(test)]
+thread_local! {
+    static POLICY_PARSES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 #[cfg(test)]
 mod tests {
+
+    /// The parsed policy is reused only while the file's bytes are the same.
+    /// A grant, a revocation, an edit in place that keeps the file's length,
+    /// bytes that do not parse and a removed file are each seen by the very
+    /// next read, on the tool and on a turn's snapshot of it alike.
+    #[test]
+    fn an_unchanged_policy_file_is_parsed_once_and_every_change_is_seen() {
+        use super::{WebTool, POLICY_PARSES};
+        let parses = || POLICY_PARSES.with(std::cell::Cell::get);
+        let reads = |web: &WebTool, url: &str| web.policy().is_ok_and(|policy| policy.authorize(url, None).is_ok());
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = crate::common::config::AppConfig::from_str("{}", std::path::Path::new("config.yaml")).unwrap();
+        let web = WebTool::new(dir.path(), &cfg).unwrap();
+        web.allow("https://example.com/*", true).unwrap();
+        let turn = web.for_search_grants(&[]).unwrap();
+
+        let before = parses();
+        let first = web.require_enabled(true).unwrap();
+        for _ in 0..50 {
+            assert_eq!(web.require_enabled(true).unwrap().revision, first.revision);
+            assert!(reads(&turn, "https://example.com/a"));
+            assert!(!turn.read_by_search_grant("https://example.com/a"));
+        }
+        assert!(
+            parses() - before <= 1,
+            "an unchanged file was parsed {} times",
+            parses() - before
+        );
+
+        // A grant, then its revocation: the next read has each.
+        web.allow("https://example.org/*", true).unwrap();
+        assert!(reads(&web, "https://example.org/a") && reads(&turn, "https://example.org/a"));
+        web.deny("https://example.org/*", true).unwrap();
+        assert!(!reads(&web, "https://example.org/a") && !reads(&turn, "https://example.org/a"));
+        assert!(reads(&turn, "https://example.com/a"));
+
+        // An edit in place that keeps the length: bytes are compared, not a size or a time.
+        let path = web.allow_path();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        let edited = saved.replace("example.com", "example.net");
+        assert!(edited != saved && edited.len() == saved.len());
+        std::fs::write(&path, &edited).unwrap();
+        assert!(!reads(&turn, "https://example.com/a") && reads(&turn, "https://example.net/a"));
+
+        // Bytes that do not parse refuse on every read; the last good policy is not served.
+        std::fs::write(&path, "{\"version\":1,\"rules\":").unwrap();
+        for _ in 0..2 {
+            assert_eq!(web.policy().unwrap_err().code, "WEB_POLICY_INVALID");
+            assert!(turn.require_enabled(true).is_err());
+        }
+        // The earlier bytes again are that policy again.
+        std::fs::write(&path, &saved).unwrap();
+        assert!(reads(&turn, "https://example.com/a") && !reads(&turn, "https://example.net/a"));
+
+        // A removed file: reads refuse, as an empty allowlist does.
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(web.policy().unwrap_err().code, "WEB_POLICY_UNAVAILABLE");
+        assert_eq!(turn.require_enabled(true).unwrap_err().code, "WEB_ALLOWLIST_EMPTY");
+    }
 
     #[test]
     fn a_pathless_block_names_the_site_and_its_subdomains() {
