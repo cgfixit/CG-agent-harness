@@ -410,21 +410,27 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "enforcement": "executor-runner scrubbed_env() via the builder's verifier arm "
                        "(child_env Child::VerificationCheck); the hard sandbox already denies network, so "
                        "this is the second layer for a repo whose pytest imports huggingface_hub",
-        "scope": "caller-declared verification checks", "reviewed": "2026-10-03",
+        "scope": "caller-declared verification checks", "reviewed": "2026-11-26",
         "evidence": "child_env.rs VerificationCheck arm read 2026-10-03; three-name OR "
                     "(HF_HUB_DISABLE_TELEMETRY / DISABLE_TELEMETRY / DO_NOT_TRACK) per CyClaw's "
-                    "2026-09-28 read of v1.32.0 constants.py",
+                    "2026-09-28 read of v1.32.0 constants.py; the environment-variables page "
+                    "re-read 2026-11-26 still documents HF_HUB_DISABLE_TELEMETRY and DO_NOT_TRACK",
     },
     {
         "name": "chromadb posthog telemetry (inside verified repositories)", "category": 1,
         "controls": {"ANONYMIZED_TELEMETRY": "false"},
-        "url": "https://docs.trychroma.com/docs/overview/telemetry",
-        "versions": "not a harness dependency; a verified repo's own pin",
+        "url": "https://docs.trychroma.com/docs/overview/oss",
+        "versions": "not a harness dependency; a verified repo's own pin (the pair matters "
+                    "only below 1.5.4)",
         "enforcement": "executor-runner scrubbed_env() via the builder's verifier arm (lower-case "
                        "`false`, which chromadb's pydantic settings parse the same as CyClaw's `False`); "
                        "network denied by the sandbox first",
-        "scope": "caller-declared verification checks", "reviewed": "2026-10-03",
-        "evidence": "child_env.rs VerificationCheck arm read 2026-10-03",
+        "scope": "caller-declared verification checks", "reviewed": "2026-11-26",
+        "evidence": "child_env.rs VerificationCheck arm read 2026-10-03. Re-read 2026-11-26: the "
+                    "old docs/overview/telemetry URL is 404; docs/overview/oss now says Chroma "
+                    "no longer collects product telemetry as of 1.5.4, and its migration guide "
+                    "still shows Settings(anonymized_telemetry=False) for older clients. Kept: a "
+                    "verified repo may pin a pre-1.5.4 chromadb",
     },
     {
         "name": "gh update notifier", "category": 2,
@@ -445,8 +451,10 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "controls": {"PIP_NO_INDEX": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1"},
         "url": "https://pip.pypa.io/en/stable/cli/pip/#cmdoption-disable-pip-version-check",
         "versions": "any", "enforcement": "executor-runner scrubbed_env()",
-        "scope": "caller-declared verification checks", "reviewed": "2026-10-03",
-        "evidence": "documented pip options; PIP_NO_INDEX also refuses an accidental install step",
+        "scope": "caller-declared verification checks", "reviewed": "2026-11-26",
+        "evidence": "documented pip options; PIP_NO_INDEX also refuses an accidental install step. "
+                    "`pip help` (pip 24.0) re-read 2026-11-26 still lists --no-index and "
+                    "--disable-pip-version-check",
     },
     {
         "name": "cargo registry fetch", "category": 2,
@@ -454,17 +462,21 @@ INVENTORY: tuple[dict[str, object], ...] = (
         "url": "https://doc.rust-lang.org/cargo/reference/config.html#netoffline",
         "versions": "any", "enforcement": "executor-runner scrubbed_env(); prepared CargoInputs supply "
                                           "the vendored sources (executor/prepared.rs)",
-        "scope": "cargo checks inside the sandbox", "reviewed": "2026-10-03",
-        "evidence": "cargo has no telemetry; the only egress is index/crate download, refused offline",
+        "scope": "cargo checks inside the sandbox", "reviewed": "2026-11-26",
+        "evidence": "cargo has no telemetry; the only egress is index/crate download, refused "
+                    "offline. The config reference re-read 2026-11-26 still maps net.offline to "
+                    "CARGO_NET_OFFLINE",
     },
     {
         "name": "rustup toolchain auto-install", "category": 2,
         "controls": {"RUSTUP_AUTO_INSTALL": "0"},
         "url": "https://rust-lang.github.io/rustup/environment-variables.html",
         "versions": "any", "enforcement": "desktop-sidecar and desktop-prepare-helper sites",
-        "scope": "desktop shell children", "reviewed": "2026-10-03",
+        "scope": "desktop shell children", "reviewed": "2026-11-26",
         "evidence": "rustup removed its own telemetry in 1.18 (2019); the remaining egress is a "
-                    "toolchain download, which this pins off for the sidecar and helper",
+                    "toolchain download, which this pins off for the sidecar and helper. "
+                    "2026-11-26: the docs host was unreachable from the cloud session, so the "
+                    "rustup 1.28.2 binary was checked instead; it still reads RUSTUP_AUTO_INSTALL",
     },
     {
         "name": "cloud chat providers (xAI Grok, Anthropic Claude, OpenAI-compatible)", "category": 3,
