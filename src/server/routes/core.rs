@@ -1172,7 +1172,29 @@ pub(crate) async fn chat_inner(
         }));
         ApiError::new(StatusCode::CONFLICT, "CHAT_BUSY", message).details(details)
     };
-    let cancelled = || ApiError::new(StatusCode::BAD_GATEWAY, "WEB_CANCELLED", "chat cancelled");
+    let account_live = || match (state.auth.as_ref(), user.as_ref()) {
+        (Some(auth), Some(user)) if !auth.account_unchanged(&user.0, sign_ins) => Err(
+            crate::common::errors::HarnessError::new(CHAT_ACCOUNT_CHANGED, "the account changed during this turn"),
+        ),
+        _ => Ok(()),
+    };
+    // Losing the account mid-turn is an account change, not a model-server
+    // failure or a cancel: same status and code as a turn whose account was
+    // revoked after the model answered, and nothing is stored.
+    let account_changed = |web: bool| {
+        state.audit.log(json!({"event":"chat_reply_withheld","owner_id":owner,
+            "session_id":session.session_id,"reason":"account_changed","web":web}));
+        ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "AUTH_REQUIRED",
+            "the account was disabled, deleted, demoted or had its password reset during this turn; the reply is withheld and nothing was saved",
+        )
+    };
+    // An account change stops the owner's turn (`auth::stop_owner_work`).
+    let cancelled = || match account_live() {
+        Err(_) => account_changed(false),
+        Ok(()) => ApiError::new(StatusCode::BAD_GATEWAY, "WEB_CANCELLED", "chat cancelled"),
+    };
     // Register the turn before waiting for the model, so /api/chat/cancel reaches
     // it while a preempted suggestion is still letting go. The lease is held by
     // one turn at a time, like the generation gate.
@@ -1740,21 +1762,12 @@ pub(crate) async fn chat_inner(
         }
         // A web turn re-reads the account before each read and before its
         // answer (`web_research::authorize_owner`); a plain or log-tool turn
-        // before each streamed chunk. Losing it mid-turn is an account change,
-        // not a model-server failure: same status and code as a turn whose
-        // account was revoked after the model answered, and nothing is stored.
+        // before each streamed chunk.
         if matches!(
             e.code.as_str(),
             "WEB_PERMISSION_DENIED" | CHAT_ACCOUNT_CHANGED | "DIAG_PERMISSION_DENIED"
         ) {
-            state.audit.log(json!({"event":"chat_reply_withheld","owner_id":owner,
-                "session_id":session.session_id,"reason":"account_changed",
-                "web":e.code == "WEB_PERMISSION_DENIED"}));
-            return ApiError::new(
-                StatusCode::UNAUTHORIZED,
-                "AUTH_REQUIRED",
-                "the account was disabled, deleted, demoted or had its password reset during this turn; the reply is withheld and nothing was saved",
-            );
+            return account_changed(e.code == "WEB_PERMISSION_DENIED");
         }
         ApiError::from_err(llm_status(&e), &e)
     };
@@ -1772,9 +1785,29 @@ pub(crate) async fn chat_inner(
                 .audit
                 .log(json!({"event":"cloud_chat_redacted", "owner":owner, "model":model}));
         }
+        // Re-read before the token count and before the paid generation: a
+        // turn whose account changed or whose consent was withdrawn since it
+        // began sends nothing more.
+        let provider = state.provider_for(&model);
+        let authorize = || {
+            account_live()?;
+            if state
+                .cloud_consents
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .contains(&(owner.clone(), provider.clone()))
+            {
+                Ok(())
+            } else {
+                Err(crate::common::errors::HarnessError::new(
+                    "CLOUD_CHAT_CONFIRM_REQUIRED",
+                    "cloud chat consent was withdrawn during this turn; nothing more was sent",
+                ))
+            }
+        };
         let (reply, spend) = state
             .cloud_chat
-            .chat_with_pending_spend(&model, &outbound, spend_source)
+            .chat_with_pending_spend(&model, &outbound, spend_source, &authorize)
             .await
             .map_err(|e| {
                 if e.code == "CLOUD_CHAT_BUDGET" {
@@ -1782,6 +1815,10 @@ pub(crate) async fn chat_inner(
                         .audit
                         .log(json!({"event":"cloud_chat_budget_refused", "owner":owner, "model":model}));
                     ApiError::from_err(StatusCode::UNPROCESSABLE_ENTITY, &e)
+                } else if e.code == CHAT_ACCOUNT_CHANGED {
+                    account_changed(false)
+                } else if e.code == "CLOUD_CHAT_CONFIRM_REQUIRED" {
+                    ApiError::from_err(StatusCode::CONFLICT, &e)
                 } else {
                     ApiError::from_err(llm_status(&e), &e)
                 }
@@ -1836,15 +1873,6 @@ pub(crate) async fn chat_inner(
         // (persona, memory, attachments, a staged /diag excerpt): the account is
         // re-read before every chunk reaches the client, as web and log-tool
         // chat do, not only once the reply is complete.
-        let account_live = || match (state.auth.as_ref(), user.as_ref()) {
-            (Some(auth), Some(user)) if !auth.account_unchanged(&user.0, sign_ins) => Err(
-                crate::common::errors::HarnessError::new(
-                    CHAT_ACCOUNT_CHANGED,
-                    "the account changed during this turn",
-                ),
-            ),
-            _ => Ok(()),
-        };
         let result = state
             .chat
             .chat_stream(
@@ -2246,7 +2274,8 @@ pub(crate) async fn chat_inner(
 }
 
 /// A plain turn's account was disabled, deleted, demoted or had its sign-ins
-/// revoked while its reply streamed. Internal: answered as `AUTH_REQUIRED`.
+/// revoked while its reply streamed, or a cloud turn's before one of its
+/// provider requests. Internal: answered as `AUTH_REQUIRED`.
 const CHAT_ACCOUNT_CHANGED: &str = "CHAT_ACCOUNT_CHANGED";
 
 /// Keep window, quota and context refusals distinct from upstream failures (502).
