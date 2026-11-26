@@ -24,28 +24,20 @@ Core paths that always trigger this skill:
 
 1. **Read the contracts.** Open `INVARIANTS.md` end-to-end and the core-path
    list in `AGENTS.md`. Note I6, guard chain, browser-never-supplies-command,
-   write gates, clone jail, judged-before-land, approval binding, secrets
-   redaction, detached-run gates, and weaker-than-name signals. Code wins if
+   write gates, clone jail, judged-before-land, approval binding (including
+   `/browse` takeover), secrets redaction, detached-run gates, and
+   weaker-than-name signals. Code wins if
    prose disagrees — then the doc must be fixed, not the test deleted.
 
 2. **Run the locking tests that apply.** Prefer the narrowest set that covers
    the diff; expand when the change is shared routing/config/security:
 
    ```text
-   GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-     cargo test --locked --test invariant_guard -- --nocapture
-
-   GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-     cargo test --locked --test shim_and_agent_routes -- --nocapture
-
-   GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-     cargo test --locked --test real_repo_loop -- --nocapture
-
-   GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-     cargo test --locked --test agentic_foundations -- --nocapture
-
-   GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY="" \
-     cargo test --locked --test auth_guards --test security_headers -- --nocapture
+   export GROK_API_KEY="" ANTHROPIC_API_KEY="" DEEPAGENT_API_KEY=""
+   cargo test --locked --test invariant_guard
+   cargo test --locked --test shim_and_agent_routes --test contract_locks
+   cargo test --locked --test real_repo_loop --test agentic_foundations --test write_kill_switch
+   cargo test --locked --test auth_guards --test security_headers --test secure_portal --test owner_isolation
    ```
 
    Map areas to evidence (non-exhaustive):
@@ -54,7 +46,10 @@ Core paths that always trigger this skill:
    |---|---|
    | I6 import / spawn boundary | `invariant_guard::server_side_never_references_agentic`, `only_registered_process_owners_construct_commands`, `agentic_side_never_references_server_or_shim`, ACTIONS whitelist assertions |
    | Shipped gates closed | `invariant_guard::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` |
-   | Write-policy / kill switch | `real_repo_loop::writer_gates_in_order_and_plan_integrity`, `invariant_guard::writer_kill_switch_is_and_not_or` |
+   | Write-policy / kill switch | `real_repo_loop::writer_gates_in_order_and_plan_integrity`, `invariant_guard::writer_kill_switch_is_and_not_or`, `write_kill_switch` |
+   | Exit codes, `confirm` flag, blank `reason` | `contract_locks` |
+   | `/browse` takeover binding | `secure_portal::approving_a_held_request_rechecks_policy_and_expiry_after_the_wait`, `auth_guards::approving_a_held_browser_request_is_refused_while_takeover_is_off`, `src/server/browser_jobs.rs` unit tests; the `browser takeover` fixture and `scripts/browse-console-acceptance.mjs` run in CI (non-root Chrome); the console keeps only the `{session_id, job_id}` pair in `sessionStorage` (`console_asset_is_verbatim_with_both_placeholders`) |
+   | Owner-bound sessions, jobs, schedules | `owner_isolation` |
    | Git / approval binding | `real_repo_loop::loop_iterates_on_feedback_then_accepts_and_finalizes`, `agentic_foundations::manifest_digest_binds_files_and_head` |
    | Clone / read jail | `agentic_foundations::apply_proposal_refuses_jail_escapes_and_oversize_content`, `read_jail_refuses_symlink_escapes_without_following_the_leaf` |
    | Argv / confirm / run_id | `shim_and_agent_routes` hostile-argv matrix |

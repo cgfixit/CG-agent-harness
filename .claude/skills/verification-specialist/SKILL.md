@@ -34,6 +34,7 @@ HEAD/base and scope.
 | Write refused paths | `tests/real_repo_loop.rs` writer/publish paths; missing confirm → 4; reason required; kill switch AND-only |
 | Clone / Seatbelt sandbox | `tests/agentic_foundations.rs` jail + `sandbox_*`; no backend ⇒ exit 3 remains correct |
 | Config / shipped gates | `shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed`; `flag_is_true` (quoted `"true"` OFF) |
+| `/browse` / takeover | `src/common/browser_host.rs` and `src/server/browser_jobs.rs` unit tests, `secure_portal`/`auth_guards` `approving_a_held*`; probe: approve with another hash, blank `reason` or after the wait. The `browser` Chrome fixtures refuse root: PARTIAL if you cannot run them unprivileged |
 | Live serve / smoke | Owned temp `CGAGENTHARNESS_HOME` + **unique port**; never assume default `:8790` is this binary (`scripts/smoke-ollama.sh` pattern) |
 | Chrome chat-browser | Acceptance is flake-prone (issue **#43**); do not hollow asserts; PARTIAL if environment cannot run Chrome |
 | Desktop package | Packaging/signing evidence ≠ HTTP console proof; WKWebView ≠ fetch/CSRF semantics; ad-hoc ≠ Developer ID |
