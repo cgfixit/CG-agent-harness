@@ -21,7 +21,8 @@ the active `config.yaml`. Choose the exact installed local tag, provider
 and endpoint under `agentic.deepagent_github`. Restart after changing planner
 or retrieval settings. Console, jobs and schedules bind to startup planner
 settings. The child refuses drift before repository work, and an Ollama
-cloud tag (`:cloud`, `-cloud`) as the local planner model.
+cloud model (a `:cloud`/`-cloud` tag or `/api/show` `remote_host`) as the local
+planner model.
 Leave the cloud-provider parent and child flags closed unless the
 explicit cloud path is needed. Local and cloud planners have independent
 provider settings and endpoints. `gh_timeout_sec` and `gh_retries`

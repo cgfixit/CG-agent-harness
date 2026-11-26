@@ -26,7 +26,7 @@ async fn research_accounts_for_all_calls_checks_citations_and_keeps_state_reques
     let holding = hold.clone();
     let entering = entered.clone();
     let releasing = release.clone();
-    let model = Router::new().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
+    let model = common::ollama_router().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
         let called = called.clone(); let mode = mode.clone(); let expected_question = expected_question.clone();
         let hold=holding.clone();let entered=entering.clone();let release=releasing.clone();
         async move {
@@ -228,7 +228,7 @@ async fn research_accounts_for_all_calls_checks_citations_and_keeps_state_reques
 /// `synthesis_seconds` keeps the passages and says so.
 #[tokio::test]
 async fn synthesis_has_its_own_deadline_after_discovery() {
-    let model = Router::new().route("/v1/chat/completions", post(|Json(request): Json<Value>| async move {
+    let model = common::ollama_router().route("/v1/chat/completions", post(|Json(request): Json<Value>| async move {
         let user: Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
         let planning = request["messages"][0]["content"].as_str().unwrap().starts_with("Return only JSON");
         let answer = match user["evidence"].as_array().and_then(|e| e.first()).filter(|_| !planning) {
@@ -302,7 +302,7 @@ async fn synthesis_has_its_own_deadline_after_discovery() {
 async fn synthesis_trims_evidence_to_the_remaining_token_budget() {
     let sent = Arc::new(AtomicUsize::new(0));
     let seen = sent.clone();
-    let model = Router::new().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
+    let model = common::ollama_router().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
         let seen = seen.clone();
         async move {
             let user: Value = serde_json::from_str(request["messages"][1]["content"].as_str().unwrap()).unwrap();
@@ -380,7 +380,7 @@ async fn synthesis_trims_evidence_to_the_remaining_token_budget() {
 async fn a_transient_planner_failure_keeps_the_next_round() {
     let plans = Arc::new(AtomicUsize::new(0));
     let planned = plans.clone();
-    let model = Router::new().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
+    let model = common::ollama_router().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
         let planned = planned.clone();
         async move {
             let system = request["messages"][0]["content"].as_str().unwrap().to_string();
@@ -437,7 +437,7 @@ async fn a_selection_change_mid_run_keeps_the_starting_model() {
     let entered = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Notify::new());
     let (record, entering, released) = (seen.clone(), entered.clone(), release.clone());
-    let model = Router::new().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
+    let model = common::ollama_router().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
         let (record, entering, released) = (record.clone(), entering.clone(), released.clone());
         async move {
             let first = {
@@ -516,7 +516,7 @@ async fn a_detached_research_job_outlives_its_request_and_refuses_like_the_route
     let entered = Arc::new(tokio::sync::Notify::new());
     let release = Arc::new(tokio::sync::Notify::new());
     let (holding, entering, releasing) = (hold.clone(), entered.clone(), release.clone());
-    let model = Router::new().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
+    let model = common::ollama_router().route("/v1/chat/completions", post(move |Json(request): Json<Value>| {
         let (hold, entered, release) = (holding.clone(), entering.clone(), releasing.clone());
         async move {
             let system = request["messages"][0]["content"].as_str().unwrap();

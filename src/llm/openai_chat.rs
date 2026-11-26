@@ -63,6 +63,10 @@ pub struct ChatClient {
     /// `models.local_llm.repeat_abort_lines`: a streamed reply that repeats one
     /// line this many times in a row is stopped (#941). `0` is off.
     repeat_limit: std::sync::atomic::AtomicUsize,
+    /// Set when the backend is Ollama: the loopback native origin and bounds for
+    /// the `/api/show` read that refuses an alias of a cloud model before any
+    /// prompt is sent (`ollama::refuse_remote_model`).
+    ollama_show: std::sync::OnceLock<(String, super::inventory::InventoryLimits)>,
 }
 
 /// The shipped `models.local_llm.repeat_abort_lines`, also the row default.
@@ -375,7 +379,19 @@ impl ChatClient {
             inflight: Mutex::new(BTreeMap::new()),
             timeout_override: Mutex::new(None),
             repeat_limit: std::sync::atomic::AtomicUsize::new(DEFAULT_REPEAT_ABORT_LINES),
+            ollama_show: std::sync::OnceLock::new(),
         })
+    }
+
+    /// The backend is Ollama: before every request, read `/api/show` for the
+    /// requested model and refuse one that names a remote host, or whose show
+    /// cannot be read. Only the first call takes effect.
+    pub fn refuse_remote_ollama_models(&self, limits: super::inventory::InventoryLimits) -> Result<()> {
+        let native = super::ollama::native_base_url(&self.base_url).ok_or_else(|| {
+            llm_err("an Ollama backend needs a loopback Ollama origin").detail("key", "models.local_llm.base_url")
+        })?;
+        let _ = self.ollama_show.set((native, limits));
+        Ok(())
     }
 
     /// Set `models.local_llm.repeat_abort_lines` (`0` turns the guard off).
@@ -636,6 +652,10 @@ impl ChatClient {
                 "Ollama cloud models (a :cloud or -cloud tag) send the prompt to ollama.com; local model calls keep prompts on this machine",
             ));
         }
+        // An alias of one (`FROM glm-4.6:cloud`) has a local-looking name.
+        if let (Some((native, limits)), Some(model)) = (self.ollama_show.get(), payload["model"].as_str()) {
+            super::ollama::refuse_remote_model(native, model, *limits, &self.api_key).await?;
+        }
         // A per-request timeout replaces the client-wide one, so a measured
         // deadline can be longer or shorter than the configured timeout_sec.
         let mut req = self
@@ -800,6 +820,101 @@ mod tests {
             .unwrap_err();
         assert_eq!(streamed.message, "model response exceeds limit");
         server.abort();
+    }
+
+    /// Ollama forwards a model whose config names a remote host whatever its
+    /// name, so the Ollama backend reads `/api/show` before each request.
+    #[tokio::test]
+    async fn an_alias_of_an_ollama_cloud_model_is_refused_before_any_prompt_is_sent() {
+        let chats = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = chats.clone();
+        let app = axum::Router::new()
+            .route(
+                "/api/show",
+                axum::routing::post(
+                    |headers: axum::http::HeaderMap, axum::Json(body): axum::Json<Value>| async move {
+                        let keyed = headers.get("authorization").and_then(|v| v.to_str().ok())
+                            == Some("Bearer fixture-proxy-key");
+                        match body["model"].as_str() {
+                            // A loopback proxy that requires the backend's key, as chat sends it.
+                            Some("proxied:1b") if !keyed => (
+                                reqwest::StatusCode::UNAUTHORIZED,
+                                axum::Json(json!({"error": "unauthorized"})),
+                            ),
+                            Some("proxied:1b") => (reqwest::StatusCode::OK, axum::Json(json!({"details": {}}))),
+                            // Ollama 0.40.18 shape for a Modelfile `FROM glm-4.6:cloud`.
+                            Some("glm-local") => (
+                                reqwest::StatusCode::OK,
+                                axum::Json(json!({"remote_host": "https://ollama.com:443", "remote_model": "glm-4.6"})),
+                            ),
+                            Some("qwen3:8b") => (
+                                reqwest::StatusCode::OK,
+                                axum::Json(json!({"details": {"family": "qwen3"}})),
+                            ),
+                            _ => (
+                                reqwest::StatusCode::NOT_FOUND,
+                                axum::Json(json!({"error": "not found"})),
+                            ),
+                        }
+                    },
+                ),
+            )
+            .route(
+                "/v1/chat/completions",
+                axum::routing::post(move || {
+                    counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    async { axum::Json(reply("ok")) }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the fixture binds only ephemeral loopback.
+        let url = format!("http://{}/v1", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this fixture uses no credentials and binds only to loopback.
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let limits = super::super::inventory::InventoryLimits {
+            timeout: Duration::from_secs(2),
+            max_bytes: 1 << 16,
+        };
+        let unguarded = ChatClient::new(&url, "glm-local", 5.0, "", None).unwrap();
+        let client = ChatClient::new(&url, "glm-local", 5.0, "", None).unwrap();
+        client.refuse_remote_ollama_models(limits).unwrap();
+        let reason = |err: HarnessError| (err.code, err.details["reason"].as_str().unwrap_or_default().to_string());
+        let refused = client.chat("s", &[], None, 16, 0.0).await.unwrap_err();
+        assert_eq!(
+            reason(refused),
+            ("MODEL_SELECTION_REJECTED".into(), "remote_host".into())
+        );
+        let missing = client.chat("s", &[], Some("missing:1b"), 16, 0.0).await.unwrap_err();
+        assert_eq!(
+            reason(missing),
+            ("MODEL_SELECTION_REJECTED".into(), "tag_missing".into())
+        );
+        assert_eq!(chats.load(std::sync::atomic::Ordering::SeqCst), 0, "no prompt was sent");
+        assert_eq!(
+            client
+                .chat("s", &[], Some("qwen3:8b"), 16, 0.0)
+                .await
+                .unwrap()
+                .body_text,
+            "ok"
+        );
+        assert_eq!(chats.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // Without the Ollama guard the same name is sent: the name alone looks local.
+        assert_eq!(unguarded.chat("s", &[], None, 16, 0.0).await.unwrap().body_text, "ok");
+        // The show read carries the backend key, so an authenticated proxy answers it.
+        let proxied = ChatClient::new(&url, "proxied:1b", 5.0, "fixture-proxy-key", None).unwrap();
+        proxied.refuse_remote_ollama_models(limits).unwrap();
+        assert_eq!(proxied.chat("s", &[], None, 16, 0.0).await.unwrap().body_text, "ok");
+        let keyless = client.chat("s", &[], Some("proxied:1b"), 16, 0.0).await.unwrap_err();
+        assert_eq!(
+            reason(keyless),
+            ("MODEL_SELECTION_REJECTED".into(), "show_unreadable".into())
+        );
+        server.abort();
+        let _ = server.await;
+        let unreadable = client.chat("s", &[], Some("qwen3:8b"), 16, 0.0).await.unwrap_err();
+        assert_eq!(
+            reason(unreadable),
+            ("MODEL_SELECTION_REJECTED".into(), "show_unreadable".into())
+        );
     }
 
     #[tokio::test]

@@ -309,6 +309,9 @@ pub async fn build_app_with_sources(
         backend.reasoning_effort.clone(),
     )?;
     chat.set_repeat_limit(usize::try_from(cfg.limit("models.local_llm.repeat_abort_lines")).unwrap_or(usize::MAX));
+    if backend.provider == "ollama" {
+        chat.refuse_remote_ollama_models(crate::llm::inventory::InventoryLimits::from_config(&cfg)?)?;
+    }
     let spend_file = crate::llm::spend::spend_path(&home.root, &cfg);
     #[cfg(feature = "test-support")]
     if cloud_chat.test_fixture_mode() {

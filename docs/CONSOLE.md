@@ -135,7 +135,7 @@ at the last `::`. For web queries, `--` ends flag parsing.
 | `/memory remember <sentence> :: <reason>` | Confirm human summary on latest completed episode. |
 | `/memory facts`, `/memory retrieve <query>`, `/memory search <query>` | List facts, retrieve for one turn or search without injection. |
 | `/memory save <text> :: <reason>` | Confirm an immediate private fact write |
-| `/model [status]`, `profile`, `list`, `use <name>` | Inspect or select chat model. |
+| `/model [status]`, `profile`, `list`, `use <name>` | Inspect or select chat model; `use` refuses Ollama cloud tags and aliases ([models](MODELS.md)). |
 | `/net status`, `/net devices`, `/net diag` | LAN panel or budgeted diagnostics. |
 | `/prompt` | Private preview of the next local chat turn's prompt |
 | `/registry` | Combined skill, tool and connector catalog |

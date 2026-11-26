@@ -11,7 +11,7 @@ use std::time::Duration;
 async fn fixture() -> (String, Arc<Mutex<Vec<Value>>>) {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let seen = requests.clone();
-    let app = axum::Router::new().route(
+    let app = common::ollama_router().route(
         "/v1/chat/completions",
         axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
             let seen = seen.clone();

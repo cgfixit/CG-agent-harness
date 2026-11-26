@@ -565,6 +565,13 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
                 Ok(built) => {
                     local_client = built;
                     local_client.timeout_measured = opts.get("planner-timeout-sec").is_some();
+                    if ctx.acfg.deepagent.provider == "ollama" {
+                        if let Err(e) = local_client.refuse_remote_ollama_models() {
+                            settle_failed(&runs_dir, &mut record, &e);
+                            tools.close();
+                            return Err(e);
+                        }
+                    }
                     &local_client
                 }
                 Err(e) => {

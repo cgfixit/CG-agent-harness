@@ -277,7 +277,7 @@ async fn local_upstream_http_error_does_not_invent_spend() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this fixture must bind only to loopback.
     let address = listener.local_addr().unwrap();
     let task = tokio::spawn(async move {
-        let app = axum::Router::new().route(
+        let app = common::ollama_router().route(
             "/v1/chat/completions",
             axum::routing::post(|| async { axum::http::StatusCode::BAD_GATEWAY }),
         );

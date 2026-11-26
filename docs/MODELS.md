@@ -30,9 +30,10 @@ and planner default. `models.local_llm.reasoning_effort: none` controls
 thinking separately. Choose the exact chat tag with `/model use <tag>`.
 Browser tasks follow that local selection. The planner owns its own
 `agentic.deepagent_github` model, provider and endpoint. Local endpoints are
-loopback-only. Ollama cloud tags (`:cloud`, `-cloud`, also behind an `@digest`
-or invisible characters) are refused by local inference, the local planner and pull paths; startup warmup and `auto_tune`
-skip one (audited `cloud_tag`).
+loopback-only. Inference and the local planner refuse Ollama cloud models, pulls
+their tags; warmup and `auto_tune` skip them: `:cloud`/`-cloud` tags (behind
+`@digest` or invisible characters), and models whose `/api/show` names
+`remote_host` or fails.
 
 ### Exact-model diagnostics and optional fallback
 
