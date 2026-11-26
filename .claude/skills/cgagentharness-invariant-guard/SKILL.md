@@ -48,7 +48,7 @@ Core paths that always trigger this skill:
    | Shipped gates closed | `invariant_guard::shipped_config_enforces_accounts_tls_and_keeps_execution_gates_closed` |
    | Write-policy / kill switch | `real_repo_loop::writer_gates_in_order_and_plan_integrity`, `invariant_guard::writer_kill_switch_is_and_not_or`, `write_kill_switch` |
    | Exit codes, `confirm` flag, blank `reason` | `contract_locks` |
-   | `/browse` takeover binding | `secure_portal::approving_a_held_request_rechecks_policy_and_expiry_after_the_wait`, `auth_guards::approving_a_held_browser_request_is_refused_while_takeover_is_off`, `src/server/browser_jobs.rs` unit tests; the `browser takeover` fixture and `scripts/browse-console-acceptance.mjs` run in CI (non-root Chrome) |
+   | `/browse` takeover binding | `secure_portal::approving_a_held_request_rechecks_policy_and_expiry_after_the_wait`, `auth_guards::approving_a_held_browser_request_is_refused_while_takeover_is_off`, `src/server/browser_jobs.rs` unit tests; the `browser takeover` fixture and `scripts/browse-console-acceptance.mjs` run in CI (non-root Chrome); the console keeps only the `{session_id, job_id}` pair in `sessionStorage` (`console_asset_is_verbatim_with_both_placeholders`) |
    | Owner-bound sessions, jobs, schedules | `owner_isolation` |
    | Git / approval binding | `real_repo_loop::loop_iterates_on_feedback_then_accepts_and_finalizes`, `agentic_foundations::manifest_digest_binds_files_and_head` |
    | Clone / read jail | `agentic_foundations::apply_proposal_refuses_jail_escapes_and_oversize_content`, `read_jail_refuses_symlink_escapes_without_following_the_leaf` |

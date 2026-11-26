@@ -45,7 +45,7 @@ Read the feature's guide and `INVARIANTS.md` section first
 | Provider keys | [Credential storage](docs/INSTALL.md#supported-managed-keys): an inherited environment value (even empty) wins. |
 | Memory, notes | [Memory contract](docs/STRUCTURED_MEMORY.md#two-memory-systems): pinned notes, notes corpus and structured facts are distinct. |
 | Coding pipeline, jobs, `/loop` | [Pipeline](docs/CODING_PIPELINE.md), [jobs](docs/INSTALL.md#retained-jobs-and-runs), [loops](docs/CONSOLE.md#71-sessions-and-bounded-chat-continuation): retrieval and publication have separate gates. |
-| MCP, subprocesses | [MCP](docs/MCP.md), [lifetimes](docs/PROCESS_LIFECYCLE.md): process groups are not containment; the inbound gateway is read-only, owner-bound. |
+| MCP, subprocesses | [MCP](docs/MCP.md), [lifetimes](docs/PROCESS_LIFECYCLE.md): process groups are not strict containment; the inbound gateway is read-only, owner-bound. |
 | Models, compaction | [Models](docs/MODELS.md): never send `num_ctx`. |
 | Spend, webhooks | [Spend/notifications](docs/SPEND_AND_NOTIFICATIONS.md): estimates are not charges. |
 | Config reload | [Reloadable limits](docs/INSTALL.md#reload-limits-without-a-restart): `config_reload.rs::RELOADABLE`; authority needs a restart. |
@@ -64,8 +64,8 @@ Read the feature's guide and `INVARIANTS.md` section first
   `config::MISSING_MEANS_ON`): a missing key is not the shipped value.
   `AppConfig::load` refuses malformed numbers (`FLOAT_KEYS` may be floats).
   The guard enforces literal-key accessors and `load` for operator text.
-- Malformed input is refused at parsing, naming the field, never its value;
-  missing means default. Leniency needs an operator decision.
+- Unspecified malformed input is refused at parsing, naming the field, never
+  its value; missing means default. Leniency needs an operator decision.
 - Write gates `agentic.enabled`, `deepagent_github.enabled` and
   `allow_git_write_tools` ship false. `confirm` is never defaulted; `reason`
   is never optional. Retrieval has its own gate
@@ -76,9 +76,9 @@ Read the feature's guide and `INVARIANTS.md` section first
   and the `X-CyClaw-CSRF` header stay verbatim; replies check
   `sessionRevision` before rendering.
 - Operator machines set `GROK_API_KEY` and
-  `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE`: tests never assert on the key (CI
-  blanks it, `ANTHROPIC_API_KEY` and `DEEPAGENT_API_KEY`) and isolate the kill
-  switch. Never flip `EXECUTION_ENABLED` or OR the switch to go green.
+  `CGAGENTHARNESS_AGENTIC_WRITE_DISABLE`: tests never assert on the key, CI
+  blanks it with `ANTHROPIC_API_KEY` and `DEEPAGENT_API_KEY`, and tests isolate
+  the kill switch. Never flip `EXECUTION_ENABLED` or OR the switch to go green.
 - Publish a live setting only after its save (`panels::commit_setting`);
   refuse before changing state.
 - `[profile.dev.package."*"] opt-level=3` is load-bearing (scrypt).
@@ -121,7 +121,7 @@ Read the feature's guide and `INVARIANTS.md` section first
 
 ## Rule enforcers
 
-Enforce corrections at the highest level; add rows.
+Enforce corrections highest-level; add rows.
 
 | Rule | Enforcer |
 |------|-------------|
@@ -152,6 +152,6 @@ Regenerate `assets/self/MANUAL.md`; commit it if it changed.
 
 Start with `cgagentharness-project-guidance`; pick by task from the
 [Codex](.codex/skills/README.md), [Claude](.claude/skills/README.md) or
-[Copilot](.github/skills/README.md) index; each keeps its own inventory. Keep
+[Copilot](.github/skills/README.md) index (separate inventories). Keep
 operator-only skills and authority limits; check frontmatter, references,
 budgets and runtime discovery. Releases: [release controls](docs/RELEASING.md).
