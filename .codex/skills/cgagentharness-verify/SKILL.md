@@ -8,19 +8,19 @@ description: Verify changed Harness CLI, research, browser or desktop behavior w
 Follow `AGENTS.md`. Run the changed entrypoint and inspect outputs and side
 effects. Select refusal tests from `cgagentharness-invariant-guard`.
 
-- CLI/server: use an owned temporary home and listener. Match process, binary
-  and assets. Exercise benign chat and the changed behavior. Stop owned processes.
-- Isolation: use actual Seatbelt or bubblewrap for claims about that backend.
-- Research: check PDF extraction or goal/loop citations, completion and refusals.
-- Browser: `scripts/chat-browser-acceptance.mjs` drives console Chrome.
-  `scripts/browser-use-eval.sh` needs a debug `test-support` build, prepared
-  Chrome/Playwright and local Ollama for Qwen. Drive changed `/browse` paths.
+- CLI/server: isolate home and listener. Match process, binary and assets.
+- Isolation: verify the actual Seatbelt or bubblewrap backend.
+- Research: inspect extraction, citations, completion and refusals.
+- Browser: `scripts/chat-browser-acceptance.mjs` uses a mock API.
+  `node scripts/browse-console-acceptance.mjs <test-support-binary>` drives
+  takeover and rediscovery with real Chrome/server and a scripted model.
+  Use `scripts/browser-use-eval.sh` for sidecar fixtures and local-model
+  acceptance. Prepare Playwright/Chrome; run unprivileged with sandbox on.
 - Desktop: use `cgagentharness-release` for identity and native acceptance.
-- Models: record live tag and allocation. Label fixture results separately.
-- Docs: run `invariant_guard::markdown_stays_on_the_docs_budget`. Regenerate
-  changed self-manual inputs and, if output changes, run
+- Models: record live tag and allocation.
+- Docs: run `invariant_guard::markdown_stays_on_the_docs_budget`. Rebuild
+  the manual after input edits. If output changes, run
   `self_manual::every_chunk_is_clean_under_the_configured_scanner`.
 
-Record SHA, dirty state, architecture, artifact hashes, commands, exits and
-gaps. Zero selected tests means NOT RUN. Compare the baseline when attribution
-is unclear.
+Record SHA, artifact hashes, commands, exits and gaps. Zero selected tests
+means NOT RUN.
