@@ -49,7 +49,7 @@ Each row is a fact you can point at with `rg`, never memory or a report:
 |---|---|
 | CLI faces, hidden workers, exit codes | `src/main.rs` `enum Command`, `AGENTS.md` map |
 | HTTP routes and roles | `src/server/routes/mod.rs` `REGISTERED_PATHS`, `ROUTE_CAPS` |
-| Console slash commands | `src/server/views.rs` help lines, `assets/static/harness.html` |
+| Console slash commands | `src/server/slash.rs` `COMMANDS`, `src/server/views.rs` `HARNESS_SURFACES`, `assets/static/harness.html` help table |
 | Pipeline actions | `src/shim/mod.rs` `ACTIONS`, `JSON_ACTIONS` |
 | Gates, tunables, shipped values | `assets/config.default.yaml` (read, never copied) |
 | Contracts and limits | `INVARIANTS.md` |
