@@ -20,7 +20,7 @@ to Claude Code.
   start, read `${TMPDIR:-/tmp}/cgah-session-start.log` first.
 - `.claude/skills/<slug>/SKILL.md` runs as `/<slug>`. Four are operator-only
   (`disable-model-invocation: true`): `cgagentharness-invariant-guard`,
-  `cgagentharness-otel-hardening`, `doc-sync`, `run-cg-agent-harness`. Ask the
+  `cgagentharness-otel-hardening`, `cg-doc-sync`, `run-cg-agent-harness`. Ask the
   operator to run them; never self-load them.
 - Branch prefix is `claude/`. Never comment `@codex review` without the
   operator's approval.

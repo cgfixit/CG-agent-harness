@@ -142,7 +142,7 @@ budgeted). Link shared facts; evidence goes in PRs, screenshots in
 trimmed caps; new rows or raises need approval and `// why:`. Remove deleted
 docs from budgets and references (CG008).
 
-Broad syncs: `doc-sync` and `dep-sync`. `cgfixit` reviews Markdown diffs and
+Broad syncs: `cg-doc-sync` and `dep-sync`. `cgfixit` reviews Markdown diffs and
 [dependency watches](docs/DEPENDENCIES.md#retained-constraints) weekly.
 
 Editing a `scripts/build-self-manual.py::INPUTS` source (this file too)?

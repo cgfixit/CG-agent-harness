@@ -141,7 +141,7 @@ not runtime `/api/skills` plugins.
 - **Right fix:** Every audited claim is a *hypothesis*. Before editing, `grep`
   the quoted anchor in the named file; skip the finding if it does not match.
   Quote code values (config defaults, ranges, alias spellings) from `rg`, never
-  from the report. The `doc-sync` skill's "grep it" rule exists for this.
+  from the report. The `cg-doc-sync` skill's "quote from `rg`" rule exists for this.
 - **Evidence:** 2026-09-16 docs refresh (PR #131): 1 of ~20 findings was
   fabricated; the other 19 were verbatim-verifiable.
 

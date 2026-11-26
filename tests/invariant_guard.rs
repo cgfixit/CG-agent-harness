@@ -2952,6 +2952,11 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // Rows the 2026-10-13 doc-sync trimmed carry their new size plus about 2%, rounded up to the next 10.
     // why: operator-requested per-file index of the folder (one line per file); size plus about 10%, rounded up to the next 10.
     (".claude/skills/README.md", Agent, 440),
+    // why: operator-requested (2026-11-26) cg-doc-sync skill: whole-tree docs audit plus a 5-15% trim; 797 words,
+    // rounded up to the next 100.
+    // why: operator-requested (2026-11-26) merge of doc-sync's diff mode and rules into cg-doc-sync, whose 800-word
+    // row is removed with it; 945 words, rounded up to the next 100.
+    (".claude/skills/cg-doc-sync/SKILL.md", Agent, 1000),
     (".claude/skills/cgagentharness-config-guard/SKILL.md", Agent, 900),
     (".claude/skills/cgagentharness-gotchas/SKILL.md", Agent, 1700),
     (".claude/skills/cgagentharness-invariant-guard/SKILL.md", Agent, 600),
@@ -2974,7 +2979,6 @@ const DOCS_BUDGET: &[(&str, Kind, usize)] = &[
     // why: operator decision (2026-11-21): +130 words so dep-sync can name every cargo deny
     // command CI runs (all features, the cargo-sandbox fixture lock, the cargo-deny floor).
     (".claude/skills/dep-sync/SKILL.md", Agent, 1100),
-    (".claude/skills/doc-sync/SKILL.md", Agent, 800),
     (".claude/skills/fable-protocol/SKILL.md", Agent, 990),
     (".claude/skills/run-cg-agent-harness/SKILL.md", Agent, 500),
     (".claude/skills/verification-specialist/SKILL.md", Agent, 740),
