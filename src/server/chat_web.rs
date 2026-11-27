@@ -540,20 +540,44 @@ fn operator_urls(text: &str) -> impl Iterator<Item = String> + '_ {
         // their last character, and `(https://a/b).` still yields `https://a/b`.
         // A URL pasted from markdown or prose ends in a backtick, emphasis
         // marks or a typographic quote (`web_command::with_https` strips the
-        // same wrappers from a command's argument).
-        let trimmed = typed
-            .map(|url| {
-                url.trim_end_matches([
-                    '.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', '\'', '`', '*', '_', '~', '”', '’', '»',
-                ])
-            })
-            .filter(|url| Some(*url) != typed);
-        typed
+        // same wrappers from a command's argument). A wrapper can end in the
+        // URL's own last character (`` `…/Function_(mathematics)` ``,
+        // `[x](…/Set_(mathematics))`, `**…/snake_case_**`), so each prefix
+        // with one more trailing mark stripped is a candidate too, up to
+        // MAX_TRAILING_STRIPS, then the fully trimmed one. Every candidate is
+        // a prefix of what the operator typed.
+        let candidates = typed.map(|url| {
+            let full = url.trim_end_matches(TRAILING_MARKS);
+            let mut prefixes = vec![url];
+            let mut rest = url;
+            while prefixes.len() <= MAX_TRAILING_STRIPS {
+                let Some(next) = rest.strip_suffix(TRAILING_MARKS) else {
+                    break;
+                };
+                prefixes.push(next);
+                rest = next;
+            }
+            if prefixes.last() != Some(&full) {
+                prefixes.push(full);
+            }
+            prefixes
+        });
+        candidates
             .into_iter()
-            .chain(trimmed)
+            .flatten()
             .filter_map(|url| super::web_policy::canonical_url(url).ok().map(|url| url.to_string()))
     })
 }
+
+/// Marks a URL pasted from markdown or prose can end in that are not its own.
+const TRAILING_MARKS: [char; 19] = [
+    '.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', '\'', '`', '*', '_', '~', '”', '’', '»',
+];
+
+/// One-at-a-time strips per word; a longer run of marks still yields the
+/// fully trimmed URL, so a word of thousands of `)` parses a bounded number
+/// of candidates.
+const MAX_TRAILING_STRIPS: usize = 8;
 
 /// Canonical URLs of a delivered search listing's rows, as `planned_grants`
 /// reads them. A row `canonical_url` refuses is skipped.
@@ -1548,6 +1572,27 @@ mod tests {
         ] {
             assert!(urls.iter().any(|u| u == url), "{url} in {urls:?}");
         }
+        // A wrapper around a URL whose own last character is one a wrapper
+        // uses: stripping only the wrapper is the URL the operator named.
+        let urls: Vec<String> = operator_urls(concat!(
+            "Read `https://en.wikipedia.org/wiki/Function_(mathematics)` and ",
+            "[set](https://en.wikipedia.org/wiki/Set_(mathematics)) and ",
+            "**https://docs.example.org/snake_case_**.",
+        ))
+        .collect();
+        for url in [
+            "https://en.wikipedia.org/wiki/Function_(mathematics)",
+            "https://en.wikipedia.org/wiki/Set_(mathematics)",
+            "https://docs.example.org/snake_case_",
+        ] {
+            assert!(urls.iter().any(|u| u == url), "{url} in {urls:?}");
+        }
+        // Every candidate is the typed URL or a prefix of it, and a run of
+        // trailing marks yields a bounded number of candidates.
+        let typed = format!("https://example.com/a{}", ")".repeat(5_000));
+        let urls: Vec<String> = operator_urls(&typed).collect();
+        assert!(urls.len() <= MAX_TRAILING_STRIPS + 2, "{}", urls.len());
+        assert!(urls.iter().any(|u| u == "https://example.com/a"), "fully trimmed");
     }
 
     #[test]
