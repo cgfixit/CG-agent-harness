@@ -461,6 +461,7 @@ pub async fn build_app_with_sources(
         cfg: cfg.clone(),
         runtime: std::sync::RwLock::new(Arc::new(runtime)),
         settings,
+        settings_save: Mutex::new(()),
         store,
         attachments,
         notes_corpus,

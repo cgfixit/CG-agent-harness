@@ -368,10 +368,18 @@ impl LoopManager {
         }
     }
     pub fn new(home: &std::path::Path) -> Self {
+        let dir = home.join("loops");
+        let tightened = make_records_owner_only(&dir);
+        if tightened > 0 {
+            tracing::info!(
+                tightened,
+                "loop run records written before they were owner-only are now 0600"
+            );
+        }
         Self {
             runs: Mutex::new(HashMap::new()),
             starting: Mutex::new(Default::default()),
-            dir: home.join("loops"),
+            dir,
         }
     }
 
@@ -522,6 +530,52 @@ fn current_authority(
 async fn persist(dir: &std::path::Path, run: &LoopRun) {
     let (dir, run) = (dir.to_path_buf(), run.clone());
     crate::server::routes::structured_memory::off_worker(move || persist_blocking(&dir, &run)).await
+}
+
+/// Records written before loop records were owner-only (0644 in a 0755
+/// `loops/` under the usual umask) are tightened once at startup: `loops/` to
+/// 0700 and each regular file in it to 0600. A `loops/` that is a symlink is
+/// left alone, as is every entry that is not a regular file (no link is
+/// followed). Returns how many files changed. Unix only, as the modes are.
+fn make_records_owner_only(dir: &std::path::Path) -> usize {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let Ok(meta) = std::fs::symlink_metadata(dir) else {
+            return 0;
+        };
+        if !meta.is_dir() {
+            return 0;
+        }
+        if meta.permissions().mode() & 0o077 != 0 {
+            if let Err(e) = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)) {
+                tracing::warn!(error = %e, "loop run persistence directory could not be made owner-only");
+            }
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return 0;
+        };
+        let mut tightened = 0;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if !meta.is_file() || meta.permissions().mode() & 0o077 == 0 {
+                continue;
+            }
+            match std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)) {
+                Ok(()) => tightened += 1,
+                Err(e) => tracing::warn!(error = %e, "a loop run record could not be made owner-only"),
+            }
+        }
+        tightened
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        0
+    }
 }
 
 fn persist_blocking(dir: &std::path::Path, run: &LoopRun) {
@@ -821,6 +875,38 @@ async fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Records written before they were owner-only are tightened at startup;
+    /// a symlinked entry and an already-private file are left as they are.
+    #[cfg(unix)]
+    #[test]
+    fn startup_makes_old_loop_records_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let dir = home.path().join("loops");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mode = |path: &std::path::Path| std::fs::symlink_metadata(path).unwrap().permissions().mode() & 0o777;
+        let old = dir.join("old.json");
+        std::fs::write(&old, "{}").unwrap();
+        std::fs::set_permissions(&old, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let private = dir.join("private.json");
+        std::fs::write(&private, "{}").unwrap();
+        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let outside = home.path().join("outside.txt");
+        std::fs::write(&outside, "x").unwrap();
+        std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join("link.json")).unwrap();
+        assert_eq!(
+            make_records_owner_only(&dir),
+            1,
+            "only the world-readable record changes"
+        );
+        let _ = LoopManager::new(home.path());
+        assert_eq!((mode(&dir), mode(&old), mode(&private)), (0o700, 0o600, 0o600));
+        assert_eq!(mode(&outside), 0o644, "a link's target is never changed");
+        assert_eq!(make_records_owner_only(&home.path().join("missing")), 0);
+    }
 
     /// A second start for a session is refused while the first holds its
     /// claim (before either saves a goal), and again once its run is live.

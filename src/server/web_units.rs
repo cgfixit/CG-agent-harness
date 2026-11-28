@@ -229,15 +229,19 @@ impl Ledger {
             }
             return Ok(conn);
         }
+        // One transaction: the table and its index cost one commit's fsyncs on
+        // a new home, not two, and never exist one without the other.
         conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS units (
+            "BEGIN IMMEDIATE;
+            CREATE TABLE IF NOT EXISTS units (
                 id INTEGER PRIMARY KEY,
                 provider TEXT NOT NULL,
                 day INTEGER NOT NULL,
                 units INTEGER NOT NULL CHECK (units > 0),
                 at INTEGER NOT NULL
             );
-            CREATE INDEX IF NOT EXISTS units_by_day ON units (provider, day);",
+            CREATE INDEX IF NOT EXISTS units_by_day ON units (provider, day);
+            COMMIT;",
         )
         .map_err(sql)?;
         crate::common::atomic::write_atomic(&marker, b"provider-unit ledger established\n", Some(0o600))
