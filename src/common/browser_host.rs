@@ -1002,26 +1002,46 @@ fn hold_until(now: Instant, wait: Duration, deadline: Option<Instant>) -> Instan
 enum JobAnswer {
     /// The owner's verdict on the question with this number.
     Verdict(u64, bool),
-    /// The sidecar answered this question no by itself.
-    Withdrawn(u64),
+    /// The sidecar withdrew a question: its number is in the withdrawn set.
+    Withdrawn,
     /// The job's input ended or asked for a cancel.
     Closed,
+}
+
+/// Numbers of questions the sidecar withdrew while a job approver had not yet
+/// finished with them. Kept apart from the answer channel: approvers run one
+/// at a time but not in question order, so a withdrawal read off the channel
+/// by another question's approver would be lost to its own.
+type WithdrawnSet = std::sync::Mutex<std::collections::BTreeSet<u64>>;
+
+/// True, once, when question `id` was withdrawn.
+fn take_withdrawn(withdrawn: &WithdrawnSet, id: u64) -> bool {
+    withdrawn.lock().unwrap_or_else(|p| p.into_inner()).remove(&id)
 }
 
 /// How question `id` ends: the owner's verdict, the sidecar's withdrawal, the
 /// wait running out at `until`, or the job's input closing (`cancelled` is
 /// set before `Closed` is sent, so a later question reads it). An answer to
-/// another question is not this one's.
-fn await_verdict(answers: &Receiver<JobAnswer>, cancelled: &AtomicBool, id: u64, until: Instant) -> &'static str {
+/// another question is not this one's. A withdrawal is read from `withdrawn`,
+/// whichever approver its wake-up message reached.
+fn await_verdict(
+    answers: &Receiver<JobAnswer>,
+    cancelled: &AtomicBool,
+    withdrawn: &WithdrawnSet,
+    id: u64,
+    until: Instant,
+) -> &'static str {
     loop {
         if cancelled.load(Ordering::Acquire) {
             return "cancelled";
         }
+        if take_withdrawn(withdrawn, id) {
+            return "withdrawn";
+        }
         match answers.recv_timeout(until.saturating_duration_since(Instant::now())) {
             Ok(JobAnswer::Verdict(answered, true)) if answered == id => return "approved",
             Ok(JobAnswer::Verdict(answered, false)) if answered == id => return "denied",
-            Ok(JobAnswer::Withdrawn(answered)) if answered == id => return "withdrawn",
-            Ok(JobAnswer::Verdict(..) | JobAnswer::Withdrawn(_)) => continue,
+            Ok(JobAnswer::Verdict(..) | JobAnswer::Withdrawn) => continue,
             Ok(JobAnswer::Closed) | Err(RecvTimeoutError::Disconnected) => return "cancelled",
             Err(RecvTimeoutError::Timeout) => return "expired",
         }
@@ -1039,6 +1059,8 @@ fn watch_job_input(wait: Option<Duration>, deadline: Option<Instant>) {
     let (verdicts, answers) = mpsc::channel::<JobAnswer>();
     if let Some(wait) = wait {
         let answers = std::sync::Mutex::new(answers);
+        let gone = std::sync::Arc::new(WithdrawnSet::default());
+        let withdrawn_ids = gone.clone();
         let approver: Approver = std::sync::Arc::new(move |question: &Value| {
             let Some(id) = question["approve"].as_u64() else {
                 return false;
@@ -1047,6 +1069,11 @@ fn watch_job_input(wait: Option<Duration>, deadline: Option<Instant>) {
             // after a withdrawn one is announced only once that one's
             // `resumed` line is out, so the server never clears the new one.
             let answers = answers.lock().unwrap_or_else(|p| p.into_inner());
+            // Withdrawn while an earlier question's approver held the
+            // channel: it was never announced, and is not announced now.
+            if take_withdrawn(&gone, id) {
+                return false;
+            }
             let now = Instant::now();
             // The sidecar says how long this question waits: an action's
             // later question has only the time its earlier ones left.
@@ -1056,16 +1083,18 @@ fn watch_job_input(wait: Option<Duration>, deadline: Option<Instant>) {
             let until = hold_until(now, wait, deadline);
             let wait_sec = until.saturating_duration_since(now).as_secs();
             job_event(json!({"event": "waiting", "wait_sec": wait_sec, "question": question}));
-            let decision = await_verdict(&answers, &JOB_CANCELLED, id, until);
+            let decision = await_verdict(&answers, &JOB_CANCELLED, &gone, id, until);
             job_event(json!({"event": "resumed", "id": id, "decision": decision}));
             decision == "approved"
         });
         let withdrawals = std::sync::Mutex::new(verdicts.clone());
         let withdrawn: Withdrawn = std::sync::Arc::new(move |id: u64| {
+            // Recorded first, then whichever approver is waiting is woken.
+            withdrawn_ids.lock().unwrap_or_else(|p| p.into_inner()).insert(id);
             let _ = withdrawals
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .send(JobAnswer::Withdrawn(id));
+                .send(JobAnswer::Withdrawn);
         });
         let _ = JOB_TAKEOVER.set(Takeover {
             wait,
@@ -3848,26 +3877,45 @@ mod tests {
 
     /// A job's waiting question ends on its own verdict or withdrawal, never
     /// on another question's, and on a closed input for this and later ones.
+    /// Approvers do not run in question order: a withdrawal whose wake-up
+    /// another question's approver read is still its own question's.
     #[test]
     fn a_waiting_job_question_ends_on_its_own_answer_withdrawal_or_closed_input() {
         let (send, answers) = mpsc::channel();
         let cancelled = AtomicBool::new(false);
+        let gone = WithdrawnSet::default();
+        let withdraw = |id: u64| {
+            gone.lock().unwrap().insert(id);
+            send.send(JobAnswer::Withdrawn).unwrap();
+        };
         let soon = || Instant::now() + Duration::from_secs(30);
         send.send(JobAnswer::Verdict(4, true)).unwrap();
-        send.send(JobAnswer::Withdrawn(4)).unwrap();
-        send.send(JobAnswer::Withdrawn(5)).unwrap();
-        assert_eq!(await_verdict(&answers, &cancelled, 5, soon()), "withdrawn");
+        withdraw(5);
+        assert_eq!(await_verdict(&answers, &cancelled, &gone, 5, soon()), "withdrawn");
         send.send(JobAnswer::Verdict(6, true)).unwrap();
-        assert_eq!(await_verdict(&answers, &cancelled, 6, soon()), "approved");
+        assert_eq!(await_verdict(&answers, &cancelled, &gone, 6, soon()), "approved");
         send.send(JobAnswer::Verdict(7, false)).unwrap();
-        assert_eq!(await_verdict(&answers, &cancelled, 7, soon()), "denied");
-        assert_eq!(await_verdict(&answers, &cancelled, 8, Instant::now()), "expired");
+        assert_eq!(await_verdict(&answers, &cancelled, &gone, 7, soon()), "denied");
+        assert_eq!(await_verdict(&answers, &cancelled, &gone, 8, Instant::now()), "expired");
+
+        // Question 1 is withdrawn before its approver runs, and question 2's
+        // approver runs first: it reads 1's wake-up, keeps waiting for its
+        // own answer, and question 1 is still found withdrawn afterwards.
+        withdraw(1);
+        send.send(JobAnswer::Verdict(2, true)).unwrap();
+        assert_eq!(await_verdict(&answers, &cancelled, &gone, 2, soon()), "approved");
+        assert!(
+            take_withdrawn(&gone, 1),
+            "question 1's withdrawal was lost to question 2's approver"
+        );
+        assert!(!take_withdrawn(&gone, 1), "a withdrawal is taken once");
+
         send.send(JobAnswer::Closed).unwrap();
-        assert_eq!(await_verdict(&answers, &cancelled, 9, soon()), "cancelled");
+        assert_eq!(await_verdict(&answers, &cancelled, &gone, 9, soon()), "cancelled");
         // The sender is still alive (the withdrawal hook keeps one): the flag
         // answers a question asked after the input closed.
         cancelled.store(true, Ordering::Release);
-        assert_eq!(await_verdict(&answers, &cancelled, 10, soon()), "cancelled");
+        assert_eq!(await_verdict(&answers, &cancelled, &gone, 10, soon()), "cancelled");
     }
 
     #[test]
