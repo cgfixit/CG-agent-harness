@@ -27,8 +27,8 @@ time and resource budgets. A prompt asking for no web is advisory. Standalone
 
 `web.search.provider: auto` chooses active Tavily, then SerpAPI, then public
 Google. Explicit values are `tavily`, `serpapi` and `google-public`.
-When enabled, fallback follows Tavily → keyed SerpAPI → public Google.
-Both fallback switches ship true. Hops share one search slot and
+Fallback follows that order, SerpAPI only when keyed; both switches ship
+true. Hops share one search slot and
 `web.request_seconds` deadline. Cooling hops give up their time share.
 The public hop gets its outstanding pacing wait plus one second when possible.
 Transport/DNS failure (a 0.0.0.0/:: block counts), timeout,
@@ -53,8 +53,7 @@ Listings carry rank, title, URL, snippet and bounded optional metadata.
 SerpAPI spelling and related queries grant no reads. Provider answer boxes,
 AI overviews, knowledge graphs and Tavily answers are excluded. Recognized
 `site:` and `-site:` operators constrain results. A provider key anywhere in
-a listing refuses it. Separate availability of a paid key from permission
-to read listed content. Search sends the query and count. Firecrawl sends
+a listing refuses it. Search sends the query and count. Firecrawl sends
 a qualifying URL only. Neither receives the conversation as a search input.
 
 ### Read authority and fallback
