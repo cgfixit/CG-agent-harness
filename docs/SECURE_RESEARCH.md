@@ -90,15 +90,14 @@ and prompt reuse. Revocation cannot retract text already delivered.
   and their queries. `*.example.com` excludes the apex. Exact URLs include
   the exact query. Schemes, nondefault ports and hostnames matter.
 - An administrator can confirm `/web mode denylist` to allow unblocked
-  public URLs. Blocks win in either mode and across HTTP/HTTPS. Block matching strips
-  path parameters without rewriting the requested URL. A host-only block
-  includes subdomains. Named groups stay limited to their allow rules.
+  public URLs. Blocks win in either mode, across HTTP/HTTPS and `;` path
+  parameters. A host-only block includes subdomains. Named groups stay
+  limited to their allow rules.
 - `/web allow` validates the batch and each seed before writing
   `tools/web_allowlist.json`. `/web deny` removes an allow rule.
   `/web check` checks without networking. A missing or invalid policy
-  refuses reads. Ambiguous authorities, credentials, dot segments (including those with
-  path parameters), encoded separators and unsupported escapes refuse
-  canonicalization.
+  refuses reads. Ambiguous authorities, credentials, dot segments (even
+  `..;`), encoded separators and unsupported escapes refuse canonicalization.
 - `--group` narrows reads and discovery. Repeat `--seed` when granting
   concrete start pages. Seeds must fit a requested rule. A lowered
   `web.max_rules` below the stored count refuses the policy whole.
