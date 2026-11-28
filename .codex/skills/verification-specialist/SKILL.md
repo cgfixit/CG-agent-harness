@@ -10,10 +10,10 @@ for ordinary smoke and acceptance work.
 
 ## Hard rules
 
-- Keep the checkout and Git state read-only. Clean up temporary probes and
-  set `CARGO_TARGET_DIR` outside the checkout. Use installed dependencies.
-- Overall PASS requires executed output and at least one applicable negative
-  probe. For prose or checkers, exercise a broken reference or invalid input.
+- Keep checkout and Git state read-only. Put probes and `CARGO_TARGET_DIR`
+  in scratch storage. Use installed dependencies.
+- PASS requires executed output and an applicable negative check. For prose,
+  put the broken reference or invalid metadata in a disposable copy.
 
 ## Assess the patch
 
@@ -28,14 +28,12 @@ for ordinary smoke and acceptance work.
      cargo test --locked --test <target> <filter> -- --nocapture
    ```
 
-3. Exercise the affected refusal: CSRF, owner, argv, confirm, clone jail or
-   malformed config. For PDF, separate worker refusal from Firecrawl fallback.
-   For `/browse`, pick the origin, policy/expiry recheck, body binding or
-   rediscovery case from `cgagentharness-invariant-guard`.
-4. Check the actual surface. Isolate home and listener; test servers default
-   to in-memory credentials (`tests/common/mod.rs`). Verify the isolation
-   backend. Separate Chrome, model, WKWebView and signing evidence. For
-   prose, check frontmatter, references and budget.
+3. Select refusals from the owning test map. For PDF, check worker refusal
+   and fallback separately. For coding and browser work, verify the relevant
+   authority recheck and its side effects.
+4. Check the real surface with an isolated home and listener. For skills,
+   validate frontmatter, references and budget. Confirm discovery by path
+   and enabled state. For CI, verify expected jobs on the SHA and event.
 5. For each finding, state the expected behavior, reachable trigger, impact
    and whether the patch introduced it. Record environment and platform gaps
    separately.
