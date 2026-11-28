@@ -248,9 +248,9 @@ home whose rules are all removed refuses reads (`WEB_ALLOWLIST_EMPTY`). Only an 
 (`/api/web/mode`, `confirm: true`) selects block-list mode, which reads any
 public URL no blocked rule covers; a named group still narrows to its allow
 rules. Blocked rules cover HTTP and HTTPS and win in both modes, and match
-target and pattern with unreserved escapes decoded and `/` runs merged
-(RFC 3986 6.2.2.2; nginx and Apache defaults), so `/priv%61te/` and
-`//private/` stay covered; path case is kept. Private
+target and pattern with unreserved escapes decoded, `;` parameters dropped,
+`/` runs merged (RFC 3986 6.2.2.2; Tomcat, nginx defaults): `/priv%61te/`,
+`/private;x/`, `//private/` stay covered; path case is kept. Private
 addresses stay refused, with no exception for any search provider. Existing choices persist; absent/invalid legacy
 `web_enabled` stays off. `tools/web_allowlist.json` is versioned and bounded by
 restart-only `web.max_rules` (default 256); over-cap, malformed, missing,
