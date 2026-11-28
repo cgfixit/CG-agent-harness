@@ -35,7 +35,7 @@ Docs-only classification can skip compile jobs. CI expectations: [docs/INSTALL.m
 - [`chat_stream.rs`](chat_stream.rs): streaming chat shares guards, tools, session commit and the generation gate with JSON chat.
 - [`chat_attachments.rs`](chat_attachments.rs): text and DOCX attachments and the notes corpus: limits, magic, prompt fence.
 - [`chat_web.rs`](chat_web.rs): chat `web_fetch`/`web_search` rounds: URL permission, token budgets, cancel, revoked sources.
-- [`web_commands.rs`](web_commands.rs), [`web_research.rs`](web_research.rs), [`web_phase2_redteam.rs`](web_phase2_redteam.rs): `/web` grammar, the deterministic research controller and detached research jobs, and the non-empty allowlist red-team; [`research_baseline_corpus.rs`](research_baseline_corpus.rs) checks the #772 baseline corpus, run manifest and replay captures.
+- [`web_commands.rs`](web_commands.rs), [`web_research.rs`](web_research.rs), [`web_phase2_redteam.rs`](web_phase2_redteam.rs): `/web` grammar, the deterministic research controller and detached research jobs, and the non-empty allowlist red-team; [`research_baseline_corpus.rs`](research_baseline_corpus.rs) checks #772's corpus, manifest and replays.
 - [`session_export.rs`](session_export.rs), [`retrieval_ranking.rs`](retrieval_ranking.rs): export is CSRF-guarded and 0600; golden BM25 ranking order.
 - [`self_manual.rs`](self_manual.rs): generator drift, scanner cleanliness and local-only manual/live-state prompt context.
 - [`cloud_model_selection.rs`](cloud_model_selection.rs): guarded cloud switching, profiles, budgets, cancellation and restart reset with synthetic loopback providers.
