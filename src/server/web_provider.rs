@@ -215,9 +215,14 @@ pub(super) fn hop_budget(
 /// costs less or nothing). A clean zero-result answer, a refused query and a
 /// rejected key (the operator's error, loud on every search) do not. A keyed
 /// provider's cooldown is skipped without a request. A provider name that
-/// resolves to a private address (`WEB_SSRF_DENIED`) stays loud too.
-pub(super) fn falls_through(hop: Hop, code: &str) -> bool {
+/// resolves to a private address (`WEB_SSRF_DENIED`) stays loud, except an
+/// answer of only 0.0.0.0 and ::, which is how a blocking resolver answers
+/// a name it blocks (`validate_addresses` marks it `dns_block`): that
+/// provider is unreachable from this network, as for a lookup that fails.
+pub(super) fn falls_through(hop: Hop, failure: &HarnessError) -> bool {
+    let code = failure.code.as_str();
     match hop {
+        Hop::Tavily | Hop::Serpapi if code == "WEB_SSRF_DENIED" => failure.details["dns_block"] == true,
         // A spent daily unit ceiling or an unusable unit ledger (#772 D10) moves
         // on too: the next paid hop checks its own ceiling, public Google has none.
         Hop::Tavily | Hop::Serpapi => matches!(
@@ -485,6 +490,7 @@ mod tests {
 
     #[test]
     fn only_an_unusable_provider_or_a_spent_quota_falls_through() {
+        let failed = |code: &str| crate::common::errors::HarnessError::new(code, "x");
         for hop in [Hop::Serpapi, Hop::Tavily] {
             for code in [
                 "WEB_SEARCH_PROVIDER",
@@ -493,7 +499,7 @@ mod tests {
                 "WEB_SEARCH_COOLDOWN",
                 "WEB_SEARCH_QUOTA",
             ] {
-                assert!(falls_through(hop, code), "{hop:?} {code}");
+                assert!(falls_through(hop, &failed(code)), "{hop:?} {code}");
             }
             for code in [
                 "WEB_SEARCH_KEY_REJECTED",
@@ -502,12 +508,23 @@ mod tests {
                 "WEB_SEARCH_KEY_UNAVAILABLE",
                 "WEB_BAD_QUERY",
                 "WEB_BUSY",
+                "WEB_SSRF_DENIED",
             ] {
-                assert!(!falls_through(hop, code), "{hop:?} {code}");
+                assert!(!falls_through(hop, &failed(code)), "{hop:?} {code}");
             }
+            // A blocking resolver's 0.0.0.0/:: answer, and only that private answer.
+            let blocked = failed("WEB_SSRF_DENIED").detail("dns_block", true);
+            assert!(falls_through(hop, &blocked), "{hop:?}");
+            let quoted = failed("WEB_SSRF_DENIED").detail("dns_block", "true");
+            assert!(!falls_through(hop, &quoted), "{hop:?}: only a literal true");
         }
-        assert!(!falls_through(Hop::GooglePublic, "WEB_GOOGLE_CHALLENGE"));
-        assert!(!falls_through(Hop::GooglePublic, "WEB_TIMEOUT"));
+        assert!(!falls_through(Hop::GooglePublic, &failed("WEB_GOOGLE_CHALLENGE")));
+        assert!(!falls_through(Hop::GooglePublic, &failed("WEB_TIMEOUT")));
+        let blocked = failed("WEB_SSRF_DENIED").detail("dns_block", true);
+        assert!(
+            !falls_through(Hop::GooglePublic, &blocked),
+            "the last hop has nowhere to go"
+        );
     }
 
     #[test]

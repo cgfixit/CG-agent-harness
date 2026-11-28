@@ -31,9 +31,10 @@ When enabled, fallback follows Tavily → keyed SerpAPI → public Google.
 Both fallback switches ship true. Hops share one search slot and
 `web.request_seconds` deadline. Cooling hops give up their time share.
 The public hop gets its outstanding pacing wait plus one second when possible.
-Transport failure, timeout, non-200, paid quota or unavailable units can move
-to a fallback. Clean zero results, valid rows and missing or rejected keys
-end the search. A cooling keyed hop may be skipped.
+Transport/DNS failure (a 0.0.0.0/:: block counts), timeout,
+non-200, paid quota or unavailable units can move to a fallback. Clean zero
+results, valid rows, other private answers and missing or rejected keys end
+the search. A cooling keyed hop may be skipped.
 Public Google requires its generated search URL to be permitted and
 applies a three-second pacing floor. Challenge/block cooldown ships
 600 seconds. Paid quota cooldown defaults to the next clock hour.
