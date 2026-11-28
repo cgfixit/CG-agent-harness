@@ -648,24 +648,37 @@ pub async fn memory_status(State(state): State<Arc<AppState>>) -> ApiResult<Json
     super::structured_memory::off_worker(move || memory_payload(&state).map(Json)).await
 }
 
+// Pinned notes and their inclusion are shared by every account: each change
+// is audited with who made it, as `web.enabled_set` is. Ids and counts only,
+// never note text.
 pub async fn memory_toggle(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<ToggleRequest>,
 ) -> ApiResult<Json<Value>> {
-    commit_setting(&state, move |s| s.memory_enabled = req.enabled).await?;
+    let owner = super::auth::context_owner(user);
+    let snapshot = commit_setting(&state, move |s| s.memory_enabled = req.enabled).await?;
+    state
+        .audit
+        .log(json!({"event": "memory.enabled_set", "owner": owner, "enabled": snapshot.memory_enabled}));
     super::structured_memory::off_worker(move || memory_payload(&state).map(Json)).await
 }
 
 pub async fn memory_add(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<MemoryNoteRequest>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
     // The note file write is fsync'd: keep it and the status read off the worker.
     super::structured_memory::off_worker(move || {
         let added = state
             .notes
             .add(&req.text)
             .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
+        state
+            .audit
+            .log(json!({"event": "memory.note_added", "owner": owner, "id": added["id"]}));
         let mut payload = memory_payload(&state)?;
         payload["added"] = added;
         Ok(Json(payload))
@@ -675,13 +688,17 @@ pub async fn memory_add(
 
 pub async fn memory_forget(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<MemoryForgetRequest>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
     super::structured_memory::off_worker(move || {
         let forgotten = state
             .notes
             .forget(&req.id)
             .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
+        state.audit.log(json!({"event": "memory.note_forgotten", "owner": owner,
+            "id": forgotten["forgotten"], "remaining": forgotten["count"]}));
         let mut payload = memory_payload(&state)?;
         merge(&mut payload, forgotten);
         Ok(Json(payload))
@@ -689,12 +706,19 @@ pub async fn memory_forget(
     .await
 }
 
-pub async fn memory_clear(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
+pub async fn memory_clear(
+    State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
+) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
     super::structured_memory::off_worker(move || {
         let cleared = state
             .notes
             .clear()
             .map_err(|e| ApiError::from_err(StatusCode::BAD_REQUEST, &e))?;
+        state
+            .audit
+            .log(json!({"event": "memory.notes_cleared", "owner": owner}));
         let mut payload = memory_payload(&state)?;
         merge(&mut payload, cleared);
         Ok(Json(payload))

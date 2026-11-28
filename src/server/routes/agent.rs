@@ -797,9 +797,14 @@ pub async fn schedule_cancel(
         .await
         .map_err(|e| ApiError::from_err(StatusCode::INTERNAL_SERVER_ERROR, &e))?
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "SCHEDULE_NOT_FOUND", "no such schedule"))?;
-    state
-        .audit
-        .log(json!({"event": "agent_schedule_cancelled", "schedule_id": id}));
+    let (v, cancelled) = v;
+    // Only a cancellation is audited as one: an exhausted or already
+    // cancelled row is returned unchanged.
+    if cancelled {
+        state
+            .audit
+            .log(json!({"event": "agent_schedule_cancelled", "schedule_id": id}));
+    }
     Ok(Json(v.to_json()))
 }
 
@@ -914,7 +919,11 @@ pub async fn agent_job_cancel(
     let v = super::structured_memory::off_worker(move || cancel_state.jobs.cancel(&owner, &cancel_id))
         .await
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "JOB_NOT_FOUND", "no such job"))?;
-    state.audit.log(json!({"event": "agent_job_cancelled", "job_id": id}));
+    let (v, cancelled) = v;
+    // A job that had already ended is returned as it is, not audited as cancelled.
+    if cancelled {
+        state.audit.log(json!({"event": "agent_job_cancelled", "job_id": id}));
+    }
     Ok(Json(v))
 }
 

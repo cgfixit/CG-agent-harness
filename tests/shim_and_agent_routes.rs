@@ -1044,6 +1044,34 @@ async fn cancelling_a_running_job_aborts_it_and_a_finish_after_cancel_does_not_r
     }
 }
 
+/// A cancel of a job that already ended returns it as it is and is not
+/// audited as a cancellation.
+#[tokio::test]
+async fn cancelling_an_ended_job_changes_and_audits_nothing() {
+    let model = start_mock_model().await;
+    let s = spawn_server(&model.base_url(), ServerOptions::default()).await;
+    let (status, created) = s.post_json("/api/agent/jobs", run_body()).await;
+    assert_eq!(status, 202, "the job starts");
+    let job_id = created["job_id"].as_str().unwrap().to_string();
+    let mut ended = serde_json::Value::Null;
+    for _ in 0..200 {
+        ended = s.get_json(&format!("/api/agent/jobs/{job_id}")).await.1;
+        if ended["status"] != "running" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert_eq!(ended["status"], "failed", "the disabled layer ends the job");
+    let (status, cancelled) = s
+        .post_json(&format!("/api/agent/jobs/{job_id}/cancel"), json!({}))
+        .await;
+    assert_eq!((status, cancelled["status"].as_str()), (200, Some("failed")));
+    assert!(
+        !s.audit_log().contains("agent_job_cancelled"),
+        "an ended job is not audited as cancelled"
+    );
+}
+
 #[tokio::test]
 async fn unknown_and_malformed_job_ids_are_rejected() {
     let model = start_mock_model().await;

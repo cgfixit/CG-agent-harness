@@ -267,6 +267,29 @@ async fn memory_notes_are_bounded_scanned_and_injected_only_when_on() {
     let (status, body) = s.post_json("/api/memory/clear", json!({})).await;
     assert_eq!(status, 200);
     assert_eq!(body["count"], 0);
+    let (status, _) = s.post_json("/api/soul", json!({"enabled": false})).await;
+    assert_eq!(status, 200);
+    // Every change to the shared notes, their inclusion and the persona
+    // switch is audited, by id and flag, never by note text.
+    let audit = s.audit_log();
+    for (event, count) in [
+        ("memory.note_added", 20),
+        ("memory.enabled_set", 1),
+        ("memory.note_forgotten", 1),
+        ("memory.notes_cleared", 1),
+        ("soul.enabled_set", 1),
+    ] {
+        let rows = audit
+            .lines()
+            .filter(|line| line.contains(&format!("\"event\":\"{event}\"")))
+            .count();
+        assert_eq!(rows, count, "{event} audit rows");
+    }
+    assert!(
+        audit.contains(&format!("\"id\":\"{id}\"")),
+        "the forgotten note is named by id"
+    );
+    assert!(!audit.contains("prefer tabs"), "note text never reaches the audit log");
     // Corrupt file: status fails closed, chat still works.
     std::fs::write(s.home.join("memory").join("notes.json"), "{oops").unwrap();
     let (status, body) = s.get_json("/api/memory").await;

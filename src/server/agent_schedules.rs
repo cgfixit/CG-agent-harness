@@ -375,9 +375,13 @@ impl ScheduleStore {
         v
     }
 
-    pub fn cancel(&self, owner: &str, id: &str) -> Result<Option<Schedule>> {
+    /// Cancel an active schedule. Returns the row and whether this call
+    /// cancelled it: an exhausted or already-cancelled row is returned as it
+    /// is, unchanged and unsaved, or None if unknown.
+    pub fn cancel(&self, owner: &str, id: &str) -> Result<Option<(Schedule, bool)>> {
         let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
         let (previous, out) = match g.get_mut(id).filter(|s| !owner.is_empty() && s.owner == owner) {
+            Some(s) if s.status != ACTIVE => return Ok(Some((s.clone(), false))),
             Some(s) => {
                 let previous = s.status.clone();
                 s.status = CANCELLED.into();
@@ -391,7 +395,7 @@ impl ScheduleStore {
             }
             return Err(e);
         }
-        Ok(Some(out))
+        Ok(Some((out, true)))
     }
 
     /// Cancel every active row for this owner. A foreign owner is left alone.
@@ -711,6 +715,24 @@ mod tests {
         let again = ScheduleStore::open(&path).unwrap();
         again.create(60, req(), "local", 5.0).unwrap();
         assert!(ScheduleStore::open_at(&path, 10.0, lowered(1)).is_err());
+    }
+
+    /// Only an active row is cancelled: an exhausted or already-cancelled
+    /// row is returned as it is, with nothing saved, and says so.
+    #[test]
+    fn cancel_changes_only_an_active_row() {
+        let store = ScheduleStore::new();
+        let id = store.create(60, req(), "local", 0.0).unwrap().schedule_id;
+        let (row, changed) = store.cancel("local", &id).unwrap().unwrap();
+        assert_eq!((row.status.as_str(), changed), (CANCELLED, true));
+        let (row, changed) = store.cancel("local", &id).unwrap().unwrap();
+        assert_eq!((row.status.as_str(), changed), (CANCELLED, false));
+        let spent = store.create(60, req(), "local", 1.0).unwrap().schedule_id;
+        store.inner.lock().unwrap().get_mut(&spent).unwrap().status = "exhausted".into();
+        let (row, changed) = store.cancel("local", &spent).unwrap().unwrap();
+        assert_eq!((row.status.as_str(), changed), ("exhausted", false));
+        assert_eq!(store.get("local", &spent).unwrap().status, "exhausted");
+        assert!(store.cancel("someone-else", &spent).unwrap().is_none());
     }
 
     #[test]

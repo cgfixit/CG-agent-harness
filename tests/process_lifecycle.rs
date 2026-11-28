@@ -212,7 +212,8 @@ async fn job_cancel_stops_observed_nested_sandbox_groups_and_preserves_a_sibling
     // SAFETY: process-group queries only, for test-owned processes.
     assert_ne!(unsafe { libc::getpgid(check) }, unsafe { libc::getpgid(wrapper) });
     assert!(running(check) && running(wrapper));
-    assert_eq!(store.cancel("local", "fixture").unwrap()["status"], "cancelled");
+    let (cancelled, changed) = store.cancel("local", "fixture").unwrap();
+    assert_eq!((cancelled["status"].as_str(), changed), (Some("cancelled"), true));
     let deadline = Instant::now() + Duration::from_secs(2);
     while (running(check) || running(wrapper)) && Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(10)).await;
