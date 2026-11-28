@@ -10,7 +10,7 @@
 use serde_json::{json, Value};
 
 use crate::llm::inventory::InventoryLimits;
-use crate::llm::ollama::{bounded_json, http_client, model_name_ok, native_base_url, Bounded};
+use crate::llm::ollama::{bounded_json, http_client, model_name_ok, native_base_url, with_backend_key, Bounded};
 
 const MAX_FIELD: usize = 64;
 const MAX_CAPABILITIES: usize = 16;
@@ -177,7 +177,7 @@ fn unavailable(model: &str, native: &str) -> Value {
 }
 
 /// Never loads, pulls or reconfigures the model, and sends no `num_ctx`.
-pub async fn probe(endpoint: &str, model: &str, limits: InventoryLimits) -> Value {
+pub async fn probe(endpoint: &str, model: &str, limits: InventoryLimits, api_key: &str) -> Value {
     let Some(native) = native_base_url(endpoint) else {
         return not_probed(model, "Only a configured loopback Ollama endpoint can be profiled.");
     };
@@ -187,13 +187,12 @@ pub async fn probe(endpoint: &str, model: &str, limits: InventoryLimits) -> Valu
     let Ok(client) = http_client(limits.timeout) else {
         return unavailable(model, &native);
     };
-    let show = client
-        .post(format!("{native}/api/show"))
-        .json(&json!({"model": model, "name": model}));
+    let keyed = |request| with_backend_key(request, api_key);
+    let show = keyed(client.post(format!("{native}/api/show"))).json(&json!({"model": model, "name": model}));
     let (show, ps, tags) = tokio::join!(
         bounded_json(show, limits.max_bytes),
-        bounded_json(client.get(format!("{native}/api/ps")), limits.max_bytes),
-        bounded_json(client.get(format!("{native}/api/tags")), limits.max_bytes),
+        bounded_json(keyed(client.get(format!("{native}/api/ps"))), limits.max_bytes),
+        bounded_json(keyed(client.get(format!("{native}/api/tags"))), limits.max_bytes),
     );
     let declared = match show {
         Bounded::Json(body) => parse_show(&body),
@@ -282,6 +281,7 @@ pub async fn measure(
     keep_alive_sec: u64,
     timeout: std::time::Duration,
     max_bytes: usize,
+    api_key: &str,
 ) -> Option<Value> {
     let native = native_base_url(endpoint)?;
     if !model_name_ok(model) {
@@ -289,9 +289,11 @@ pub async fn measure(
     }
     let client = http_client(timeout).ok()?;
     let marker = uuid::Uuid::new_v4().simple().to_string();
-    let request = client
-        .post(format!("{native}/api/generate"))
-        .json(&measure_payload(model, keep_alive_sec, &marker));
+    let request = with_backend_key(client.post(format!("{native}/api/generate")), api_key).json(&measure_payload(
+        model,
+        keep_alive_sec,
+        &marker,
+    ));
     match bounded_json(request, max_bytes).await {
         Bounded::Json(body) => parse_speed(&body),
         _ => None,

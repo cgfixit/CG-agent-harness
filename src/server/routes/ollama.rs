@@ -40,7 +40,7 @@ pub async fn profile(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value
     }
     let limits =
         InventoryLimits::from_config(&state.cfg).map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-    let mut value = profile::probe(&state.backend.base_url, &model, limits).await;
+    let mut value = profile::probe(&state.backend.base_url, &model, limits, &state.backend.api_key).await;
     let tuning = state.tuning_for(&model);
     if value["state"] == "profiled" {
         let speed = tuning.as_ref().and_then(|t| t.speed.as_ref());
@@ -181,11 +181,18 @@ async fn pull_inner(
         .log(json!({"event":"ollama_pull_started","model":req.model}));
     let limits = PullLimits::from_config(&state.cfg);
     let send = sender.cloned();
-    let result = ollama::pull_model(&native, &req.model, limits, cancel.clone(), |progress| {
-        if let Some(tx) = &send {
-            let _ = tx.try_send(json!({"type":"progress","data":progress}));
-        }
-    })
+    let result = ollama::pull_model(
+        &native,
+        &req.model,
+        limits,
+        &state.backend.api_key,
+        cancel.clone(),
+        |progress| {
+            if let Some(tx) = &send {
+                let _ = tx.try_send(json!({"type":"progress","data":progress}));
+            }
+        },
+    )
     .await;
     match result {
         Ok(()) => {
