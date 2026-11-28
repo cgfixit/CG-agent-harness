@@ -90,6 +90,99 @@ class DocsImpact(unittest.TestCase):
         self.assertEqual(self.git("log", "-1", "--format=%(trailers:key=Docs-Impact)", squash), "")
         self.assertFalse(self.plan(squash)[0])
 
+    def lines(self, changed=None):
+        """A twelve-line source file; `changed` maps a line number to new text."""
+        return "".join((changed or {}).get(n, f"const L{n}: u8 = {n};\n") for n in range(12))
+
+    def reviewed_change(self, branch, file, text):
+        """A branch off the baseline that changes `file`, with its receipt."""
+        self.git("checkout", "-q", "-b", branch, self.base)
+        self.write(file, text)
+        self.commit(f"change {file}")
+        receipt = f"Docs-Impact: {WEB_GUIDE} {self.plan()[1][WEB_GUIDE]} The public behavior is unchanged."
+        self.commit(f"review\n\n{receipt}")
+        self.assertFalse(self.plan()[0])
+        return receipt
+
+    def squash(self, parent, receipt):
+        message = f"[fix] - Change web (#1)\n\n* change web\n\n{receipt}\n\n---------\n\nCo-authored-by: Fixture <fixture@example.com>"
+        return self.git("commit-tree", self.git("rev-parse", "HEAD^{tree}"), "-p", parent, "-m", message)
+
+    def test_a_receipt_survives_main_changing_the_same_file_elsewhere(self):
+        self.write(WEB, self.lines())
+        self.base = self.commit("a longer source file")
+        receipt = self.reviewed_change("pr", WEB, self.lines({0: "const L0: u8 = 100;\n"}))
+        # Another pull request lands first and edits the last line of that file.
+        self.git("checkout", "-q", "main")
+        self.write(WEB, self.lines({11: "const L11: u8 = 111;\n"}))
+        moved_main = self.commit("another pull request lands")
+        # The author merges main in: the same change, on a base that moved.
+        self.git("checkout", "-q", "pr")
+        self.git("merge", "-q", "--no-edit", "main")
+        self.assertFalse(IMPACT["review_plan"](moved_main, "HEAD")[0])
+        # So does the merge queue's squash candidate on the new main.
+        candidate = self.squash(moved_main, receipt)
+        self.assertFalse(IMPACT["review_plan"](moved_main, candidate)[0])
+        moved, exact = IMPACT["change_fingerprints"](moved_main, candidate, [WEB])
+        self.assertIn(f" {moved} ", receipt)
+        self.assertNotIn(exact, receipt)
+        # A line the change adds is still bound: editing it needs a new review.
+        self.write(WEB, self.lines({0: "const L0: u8 = 101;\n", 11: "const L11: u8 = 111;\n"}))
+        self.commit("change the reviewed line again")
+        self.assertEqual(IMPACT["review_plan"](moved_main, "HEAD")[0], {WEB_GUIDE: [WEB]})
+
+    def test_a_receipt_written_with_the_exact_fingerprint_still_counts(self):
+        self.write(WEB, "const ENABLED: bool = true;\n")
+        self.commit("change web")
+        moved, exact = IMPACT["change_fingerprints"](self.base, "HEAD", [WEB])
+        self.assertNotEqual(moved, exact)
+        self.assertEqual(self.plan()[1][WEB_GUIDE], moved)
+        self.commit(f"review web\n\nDocs-Impact: {WEB_GUIDE} {exact} The public behavior is unchanged.")
+        self.assertFalse(self.plan()[0])
+        # A contributor's diff settings do not change either fingerprint.
+        for key, value in (("diff.noprefix", "true"), ("diff.algorithm", "histogram"), ("diff.context", "9")):
+            self.git("config", key, value)
+        self.assertEqual(IMPACT["change_fingerprints"](self.base, "HEAD", [WEB]), (moved, exact))
+
+    def test_the_same_lines_at_another_place_keep_the_receipt(self):
+        # The limit of the position-free fingerprint, stated as a test: it binds
+        # the lines a change removes and adds, not where in the file they sit.
+        self.write(WEB, self.lines())
+        self.base = self.commit("a longer source file")
+        added = "const NEW: u8 = 1;\n"
+        at_top = IMPACT["change_fingerprints"](self.base, self.commit_file(WEB, added + self.lines()), [WEB])
+        at_end = IMPACT["change_fingerprints"](self.base, self.commit_file(WEB, self.lines() + added), [WEB])
+        self.assertEqual(at_top[0], at_end[0])
+        self.assertNotEqual(at_top[1], at_end[1])
+
+    def commit_file(self, file, text):
+        self.write(file, text)
+        return self.commit(f"write {file}")
+
+    def test_a_queue_candidate_is_judged_one_pull_request_at_a_time(self):
+        other = "src/server/web_intent.rs"
+        self.assertIn("WEB_DECISION_ROUTER", IMPACT["guides_for"](other))
+        self.write(other, "const A: u8 = 0;\n")
+        self.base = self.commit("a second file of the same guide")
+        first = self.reviewed_change("first", WEB, "const ENABLED: bool = true;\n")
+        second = self.reviewed_change("second", other, "const A: u8 = 1;\n")
+        # The queue stacks one squash commit per pull request on main.
+        self.git("checkout", "-q", "first")
+        ahead = self.squash(self.base, first)
+        self.git("checkout", "-q", "--detach", ahead)
+        self.git("merge", "-q", "--no-edit", "second")
+        candidate = self.squash(ahead, second)
+        steps = IMPACT["review_steps"](self.base, candidate, True)
+        self.assertEqual(steps, [(self.base, ahead), (ahead, candidate)])
+        self.assertEqual([IMPACT["review_plan"](*step)[0] for step in steps], [{}, {}])
+        # As one range the two files share a fingerprint neither receipt holds.
+        self.assertEqual(IMPACT["review_steps"](self.base, candidate, False), [(self.base, candidate)])
+        self.assertEqual(self.plan(candidate)[0], {WEB_GUIDE: sorted([other, WEB])})
+        # A queued change with no receipt and no guide edit still fails its own step.
+        self.write(WEB, "const ENABLED: bool = false; // unreviewed\n")
+        unreviewed = self.commit("[fix] - Unreviewed (#3)")
+        self.assertEqual(IMPACT["review_plan"](candidate, unreviewed)[0], {WEB_GUIDE: [WEB]})
+
     def test_a_whitespace_only_guide_edit_is_unchanged_on_every_git(self):
         # git 2.43 prints no numstat record for a whitespace-only edit under -w;
         # a git that prints one with zero counts must read the same way.

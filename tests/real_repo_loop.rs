@@ -917,6 +917,72 @@ fn loop_refuses_blind_overwrites_critical_content_and_budget() {
     );
 }
 
+/// A cloud planner is sent file text with addresses, emails and secret-shaped
+/// values replaced by a label. What it returns whole has the label where the
+/// clone has the value: applying it would overwrite the value. The proposal is
+/// refused, the planner is told why, and an exact edit of another line lands.
+#[cfg(unix)]
+#[test]
+fn a_cloud_proposal_that_writes_a_redaction_placeholder_is_refused() {
+    let original = "const HOST: &str = \"192.0.2.7\";\nconst PORT: u16 = 80;\n";
+    // The file as the provider was shown it, with the port changed.
+    let as_shown = block(
+        "net.rs",
+        "const HOST: &str = \"[REDACTED_IP]\";\nconst PORT: u16 = 8080;",
+    );
+    let exact_edit = format!(
+        "=== EDITS ===\n{}\n=== END EDITS ===\n",
+        serde_json::json!({"edits": [{"path": "net.rs", "sha256": cgagentharness::common::sha256_hex(original),
+            "old": "const PORT: u16 = 80;", "new": "const PORT: u16 = 8080;"}]})
+    );
+    let checks = vec![Check::new("has-port", vec!["sh".into(), "-c".into(), "grep -q 8080 net.rs".into()]).unwrap()];
+    let read_paths: Vec<String> = vec!["net.rs".into()];
+    let seeded = |dir: &Path| {
+        let ctx = loop_ctx(dir);
+        let clone = clone_into_workspace(&ctx, dir);
+        std::fs::write(clone.join("net.rs"), original).unwrap();
+        (ctx, clone)
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let (ctx, clone) = seeded(dir.path());
+    let ws = RepoWorkspace::attach(&ctx, &clone).unwrap();
+    let cloud = ScriptedProposer {
+        provider: "claude",
+        ..ScriptedProposer::new(&[&as_shown, &exact_edit])
+    };
+    assert!(cloud.is_cloud());
+    let result = run_real_repo_loop(&ctx, &ws, &cloud, &params(&checks, &[], &read_paths)).unwrap();
+    assert_eq!(
+        result.iterations[0].decision.rejected_gates,
+        vec!["no_files_changed", "file_write_failed"]
+    );
+    let told = cloud.prompts.borrow()[1].clone();
+    assert!(
+        told.contains("net.rs would be written with a redaction placeholder"),
+        "{told}"
+    );
+    assert!(result.accepted, "the exact edit of the other line is accepted");
+    assert_eq!(
+        std::fs::read_to_string(clone.join("net.rs")).unwrap(),
+        "const HOST: &str = \"192.0.2.7\";\nconst PORT: u16 = 8080;\n",
+        "the address the provider never saw is still in the file"
+    );
+
+    // The local planner is shown the file as it is: the same text from it is
+    // its own choice, and is applied as before.
+    let dir = tempfile::tempdir().unwrap();
+    let (ctx, clone) = seeded(dir.path());
+    let ws = RepoWorkspace::attach(&ctx, &clone).unwrap();
+    let local = ScriptedProposer::new(&[&as_shown]);
+    assert!(!local.is_cloud());
+    let result = run_real_repo_loop(&ctx, &ws, &local, &params(&checks, &[], &read_paths)).unwrap();
+    assert!(result.accepted);
+    assert!(std::fs::read_to_string(clone.join("net.rs"))
+        .unwrap()
+        .contains("[REDACTED_IP]"));
+}
+
 // ---------------------------------------------------------------- writer gates
 
 #[test]
