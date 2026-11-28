@@ -99,6 +99,35 @@ def content_changed(numstat):
     return changed
 
 
+def change_fingerprints(base, head, paths):
+    """Two fingerprints of what `base..head` does to `paths`: (moved, exact).
+
+    `exact` is the raw diff: each path's mode and its blob id on both sides. It
+    is the same only while the base's copy of every path is the same, so main
+    changing one of those paths anywhere, or a merge-queue candidate built on
+    another pull request that did, gives a reviewed change a new one.
+
+    `moved` survives that. It is the patch without positions: per path, in
+    order, its header (mode, creation, deletion) and every removed and added
+    line. Blob ids and hunk line numbers are left out. It changes when a line
+    the change removes or adds changes; it does not change when the same
+    lines land at another place in the file, which `exact` would catch.
+    """
+    paths = sorted(paths)
+    exact = git("diff", "--raw", "--no-abbrev", "--no-renames", "-z", base, head, "--", *paths)
+    # Pinned so a contributor's git config cannot change the patch text.
+    patch = git("-c", "diff.algorithm=myers", "-c", "core.quotepath=true", "diff", "--no-renames", "--no-color",
+                "--no-ext-diff", "--no-textconv", "--text", "--indent-heuristic", "--src-prefix=a/",
+                "--dst-prefix=b/", "-U0", base, head, "--", *paths)
+    kept = []
+    for line in patch.split(b"\n"):
+        # Header lines carry no +, - or space prefix, so content cannot match.
+        if line.startswith(b"index "):
+            continue
+        kept.append(b"@@" if line.startswith(b"@@ ") else line)
+    return hashlib.sha256(b"\n".join(kept)).hexdigest(), hashlib.sha256(exact).hexdigest()
+
+
 def review_plan(base, head):
     paths = git("diff", "--no-renames", "--name-only", "-z", base, head).decode().split("\0")
     affected = {}
@@ -133,12 +162,13 @@ def review_plan(base, head):
         tree_entry = git("ls-tree", head, "--", guide)
         if not tree_entry.startswith(b"100644 blob "):
             raise ValueError(f"{guide} must remain a regular guide in this change.")
-        diff = git("diff", "--raw", "--no-abbrev", "--no-renames", "-z", base, head, "--", *sorted(paths))
-        fingerprint = hashlib.sha256(diff).hexdigest()
-        fingerprints[guide] = fingerprint
-        receipt = f"Docs-Impact: {guide} {fingerprint} "
+        moved, exact = change_fingerprints(base, head, paths)
+        # New receipts carry `moved`. One written with `exact` still counts
+        # wherever it matched before.
+        fingerprints[guide] = moved
         reviewed = any(
             line.startswith(receipt) and (reason := line[len(receipt):].strip()) and not reason.startswith("<")
+            for receipt in (f"Docs-Impact: {guide} {moved} ", f"Docs-Impact: {guide} {exact} ")
             for line in trailers
         )
         if guide not in changed and not reviewed:
@@ -146,21 +176,40 @@ def review_plan(base, head):
     return pending, fingerprints
 
 
+def review_steps(base, head, each_commit):
+    """The (base, head) pairs to judge. One for a pull request. For a
+    merge-queue candidate, one per first-parent commit: each is one queued
+    pull request's squash, whose message holds only that request's receipts
+    and whose guide edits are its own. Judged as one range, two requests that
+    change different files of one guide would need a receipt neither wrote."""
+    if not each_commit:
+        return [(base, head)]
+    commits = git("rev-list", "--first-parent", "--reverse", f"{base}..{head}").decode().split()
+    return list(zip([base, *commits], commits))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", default="origin/main")
     parser.add_argument("--head", default="HEAD")
+    parser.add_argument("--each-commit", action="store_true",
+                        help="judge each first-parent commit of base..head on its own: a merge-queue "
+                             "candidate stacks one squash commit per queued pull request")
     args = parser.parse_args()
     base = git("merge-base", args.base, args.head).decode().strip()
-    pending, fingerprints = review_plan(base, args.head)
-    if not pending:
-        print("Docs impact check passed.")
-        return 0
-    for guide, paths in pending.items():
-        print(f"{guide} needs review for {json.dumps(paths)}.")
-        print(f"Update its owning section or add this trailer to the final commit:")
-        print(f"Docs-Impact: {guide} {fingerprints[guide]} <specific reason the guide remains accurate>")
-    return 1
+    failed = False
+    for step_base, step_head in review_steps(base, args.head, args.each_commit):
+        pending, fingerprints = review_plan(step_base, step_head)
+        for guide, paths in pending.items():
+            failed = True
+            where = f" in {step_head[:12]}" if args.each_commit else ""
+            print(f"{guide} needs review for {json.dumps(paths)}{where}.")
+            print(f"Update its owning section or add this trailer to the final commit:")
+            print(f"Docs-Impact: {guide} {fingerprints[guide]} <specific reason the guide remains accurate>")
+    if failed:
+        return 1
+    print("Docs impact check passed.")
+    return 0
 
 
 if __name__ == "__main__":

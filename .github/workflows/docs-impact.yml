@@ -34,13 +34,19 @@ jobs:
       # A queue candidate stacks squash commits on the queue base, so the check
       # covers every queued change ahead of it. docs-impact.py reads receipts
       # as message lines, which the squash message keeps from each PR commit.
+      # Each squash commit is judged on its own (--each-commit): its message
+      # holds only its own pull request's receipts, and two queued requests
+      # that change different files of one guide share no receipt.
       - name: Check owning guides against the candidate's source diff
         env:
           BASE_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event_name == 'merge_group' && github.event.merge_group.head_sha || github.event.pull_request.head.sha }}
+          EACH_COMMIT: ${{ github.event_name == 'merge_group' && '--each-commit' || '' }}
         run: |
           if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
             echo "docs impact: no base or head SHA for $GITHUB_EVENT_NAME" >&2
             exit 1
           fi
-          python3 scripts/docs-impact.py --base "$BASE_SHA" --head "$HEAD_SHA"
+          # Unquoted on purpose: empty on a pull request, one fixed flag in the queue.
+          # shellcheck disable=SC2086
+          python3 scripts/docs-impact.py --base "$BASE_SHA" --head "$HEAD_SHA" $EACH_COMMIT
