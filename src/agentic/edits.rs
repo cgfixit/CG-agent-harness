@@ -123,6 +123,33 @@ pub struct Proposal {
     pub originals: BTreeMap<String, Option<String>>,
 }
 
+/// How every label the outbound redactor writes in place of a value begins
+/// (`[REDACTED_IP]`, `[REDACTED_EMAIL]`, `[REDACTED_SECRET]`).
+const REDACTION_LABEL_START: &str = "[REDACTED_";
+
+impl Proposal {
+    /// The first path whose proposed text holds more redaction labels than the
+    /// text it replaces, if any.
+    ///
+    /// A cloud planner is sent the files with addresses, emails and
+    /// secret-shaped values replaced by a label. A file it returns whole, or an
+    /// edit that repeats a line it was shown, then has the label where the
+    /// clone has the value, and applying it would overwrite the value with the
+    /// label. Labels the file already held are its own text: only a count that
+    /// grew is refused. A planner that swaps a label for some other text is
+    /// not caught here; the review diff's per-value tags show that line.
+    pub fn writes_redaction_label(&self) -> Option<&str> {
+        let labels = |text: &str| text.matches(REDACTION_LABEL_START).count();
+        self.files
+            .iter()
+            .find(|(path, proposed)| {
+                let before = self.originals.get(*path).and_then(Option::as_deref).map_or(0, labels);
+                labels(proposed) > before
+            })
+            .map(|(path, _)| path.as_str())
+    }
+}
+
 pub fn parse(response: &str, context: &ReadContext, max_bytes: usize) -> Result<Proposal> {
     let fail = |why: &str| HarnessError::agentic(format!("proposal refused: {why}; no files applied"));
     if response.len() > max_bytes {
@@ -211,6 +238,77 @@ mod tests {
         assert!(stale.snapshots.is_empty());
         assert!(stale.rendered.is_empty());
         assert!(collect(&tools, &selected).rendered.contains("new text"));
+    }
+
+    /// A redaction label counts only where the proposal adds one.
+    #[test]
+    fn a_proposal_is_flagged_only_when_it_adds_a_redaction_label() {
+        let original = "host = \"192.0.2.7\"\nnote = \"[REDACTED_SECRET] is the label\"\nport = 80\n";
+        let mut snapshots = BTreeMap::new();
+        snapshots.insert(
+            "net.cfg".to_string(),
+            Snapshot {
+                original: original.into(),
+                visible: original.into(),
+                complete: true,
+            },
+        );
+        let context = ReadContext {
+            rendered: String::new(),
+            snapshots,
+        };
+        let whole = |body: &str| {
+            parse(
+                &format!("=== FILE net.cfg ===\n{body}=== END FILE ===\n"),
+                &context,
+                10_000,
+            )
+            .unwrap()
+        };
+        let edit = |old: &str, new: &str| {
+            let edits = serde_json::json!({"edits": [{"path": "net.cfg", "sha256": crate::common::sha256_hex(original), "old": old, "new": new}]});
+            parse(
+                &format!("=== EDITS ===\n{edits}\n=== END EDITS ===\n"),
+                &context,
+                10_000,
+            )
+            .unwrap()
+        };
+        // The file as a cloud planner was shown it: the address is a label now.
+        let shown = original
+            .replace("192.0.2.7", "[REDACTED_IP]")
+            .replace("port = 80", "port = 8080");
+        assert_eq!(whole(&shown).writes_redaction_label(), Some("net.cfg"));
+        // An edit that repeats a shown line.
+        assert_eq!(
+            edit("port = 80", "port = 8080\nfallback = \"[REDACTED_IP]\"").writes_redaction_label(),
+            Some("net.cfg")
+        );
+        // The label the file already held is its own text, whole or edited.
+        assert_eq!(
+            whole(&original.replace("port = 80", "port = 8080")).writes_redaction_label(),
+            None
+        );
+        assert_eq!(edit("port = 80", "port = 8080").writes_redaction_label(), None);
+        // Removing one is fine; a new file that holds one is not.
+        assert_eq!(
+            edit("[REDACTED_SECRET] is the label", "plain").writes_redaction_label(),
+            None
+        );
+        let fresh = parse(
+            "=== FILE new.cfg ===\npeer = \"[REDACTED_EMAIL]\"\n=== END FILE ===\n",
+            &context,
+            10_000,
+        )
+        .unwrap();
+        assert_eq!(fresh.writes_redaction_label(), Some("new.cfg"));
+        let clean = parse(
+            "=== FILE new.cfg ===\npeer = \"none\"\n=== END FILE ===\n",
+            &context,
+            10_000,
+        )
+        .unwrap();
+        assert_eq!(clean.writes_redaction_label(), None);
     }
 
     #[test]
