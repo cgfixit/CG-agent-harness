@@ -25,19 +25,10 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   RUSTFLAGS: "-D warnings"
-  # The one switch for the full Windows suite on pull requests. "false": only
-  # the merge queue, main pushes and release calls run test (windows-latest);
-  # PRs keep the Windows MCP Job Object job. "true": every PR push runs it too,
-  # and required-gate then requires it on the PR head.
-  WINDOWS_SUITE_ON_EVERY_PR: "false"
 
 jobs:
-  # Docs-only pull requests skip the compile jobs below through a job-level
-  # `if`. A skipped check passes branch protection and a skipped matrix job
-  # reports once, under its unexpanded name, so the ruleset requires only
-  # required-gate from this file: it decides per event which results count.
-  # invariant-guard always runs. Every other event, including merge_group (the
-  # merge queue) and release.yml's workflow_call, runs all jobs.
+  # The required gate checks individual matrix outcomes, including the Windows
+  # suite on docs-only PRs. Only Linux and macOS can drop out of the matrix.
   changes:
     name: classify changed paths
     runs-on: ubuntu-26.04
@@ -46,7 +37,6 @@ jobs:
       contents: read
     outputs:
       code: ${{ steps.classify.outputs.code }}
-      windows_suite: ${{ steps.windows.outputs.windows_suite }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,7 +44,7 @@ jobs:
           # A pull_request checkout is GitHub's test merge commit; depth 2
           # brings its parents, and HEAD^1 is the base it merges into.
           fetch-depth: 2
-      - name: Docs-only pull requests skip compile jobs
+      - name: Classify docs-only pull requests
         id: classify
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -68,17 +58,6 @@ jobs:
           fi
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "event=$EVENT_NAME code=$code"
-      - name: Full Windows suite on this event
-        id: windows
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          windows_suite=true
-          if [ "$EVENT_NAME" = pull_request ] && [ "$WINDOWS_SUITE_ON_EVERY_PR" != true ]; then
-            windows_suite=false
-          fi
-          echo "windows_suite=$windows_suite" >> "$GITHUB_OUTPUT"
-          echo "event=$EVENT_NAME windows_suite=$windows_suite"
 
   chat-browser:
     name: chat slash-command browser acceptance
@@ -227,7 +206,6 @@ jobs:
   test:
     name: test (${{ matrix.os }})
     needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # Keep the existing matrix check name while exercising the new image.
     runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-26.04' || matrix.os }}
     timeout-minutes: 45
@@ -242,12 +220,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Without the Windows leg (WINDOWS_SUITE_ON_EVERY_PR), PRs keep the
-        # focused Windows lifecycle/credential job below. A missing output
-        # runs Windows.
         os: >-
-          ${{ fromJSON(needs.changes.outputs.windows_suite == 'false'
-            && '["ubuntu-latest","macos-latest"]'
+          ${{ fromJSON(needs.changes.outputs.code == 'false'
+            && '["windows-latest"]'
             || '["ubuntu-latest","macos-latest","windows-latest"]') }}
     defaults:
       run:
@@ -424,8 +399,6 @@ jobs:
 
   windows-mcp-lifecycle:
     name: Windows MCP Job Object lifecycle (required)
-    needs: changes
-    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: windows-2025
     timeout-minutes: 30
     permissions:
@@ -551,7 +524,7 @@ jobs:
       # tests/macos_cargo.rs compiles its crates, so they get the same RustSec,
       # bans and sources policy from the root deny.toml. Licenses are skipped
       # because the unpublished fixture crate has no license field. A second
-      # step, not a matrix: the main ruleset requires this job by name.
+      # step, not a matrix: required-gate checks this job.
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
@@ -575,11 +548,8 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           NEEDS: ${{ toJSON(needs) }}
-        # A skip passes only on a docs-only pull request (classify set
-        # code=false). Each test leg records its Test outcome; the full Windows
-        # leg is due on every event except a pull request with the switch off,
-        # and only events whose Windows suite is advisory (main pushes, release
-        # calls) accept its failed outcome.
+        # Docs-only PRs skip only the jobs gated by the classifier. Windows
+        # must finish its full suite and the dedicated lifecycle job on every PR.
         run: |
           python3 - <<'PY'
           import json, os, sys
@@ -587,18 +557,17 @@ jobs:
           event, needs = os.environ["EVENT_NAME"], json.loads(os.environ["NEEDS"])
           changes = (needs.get("changes") or {}).get("outputs") or {}
           docs_only = event == "pull_request" and changes.get("code") == "false"
+          docs_skips = {"browser-guards", "clippy", "linux-bwrap", "linux-mcp-lifecycle", "bakeoff-self-test"}
           bad = [
               f"{job}: {need['result']}" for job, need in sorted(needs.items())
               if need["result"] != "success"
-              and not (need["result"] == "skipped" and docs_only and job != "changes")
+              and not (need["result"] == "skipped" and docs_only and job in docs_skips)
           ]
           test = needs.get("test")
           if test is None or "changes" not in needs:
               bad.append("changes and test must both be needs of this job")
           elif test["result"] == "success":
-              legs = ["ubuntu-latest", "macos-latest"]
-              if event != "pull_request" or changes.get("windows_suite") == "true":
-                  legs.append("windows-latest")
+              legs = ["windows-latest"] if docs_only else ["ubuntu-latest", "macos-latest", "windows-latest"]
               for leg in legs:
                   outcome = (test.get("outputs") or {}).get(leg) or "did not finish"
                   advisory = leg == "windows-latest" and event not in ("pull_request", "merge_group")
