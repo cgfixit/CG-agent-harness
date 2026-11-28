@@ -3391,6 +3391,96 @@ async fn a_wrapped_operator_url_ending_in_a_paren_is_not_composed() {
     task.abort();
 }
 
+/// The page `a_link_inside_a_read_page_is_never_granted` reads: it names another.
+const LINKING_PAGE: &str = "LINKING_PAGE: the details are at http://docs.example/other"; // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+
+/// #772 provenance matrix: a link a read page names is the page's text, not a
+/// listing, an exact rule or the operator's. Read under a search-result grant
+/// with no rule for the site, the linked page is not permitted; under a
+/// subtree rule, after the operator named the first page, it is composed and a
+/// JSON turn refuses it. The linked page is never contacted.
+#[tokio::test]
+async fn a_link_inside_a_read_page_is_never_granted() {
+    let (pages, linked) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let (page_count, linked_count) = (pages.clone(), linked.clone());
+    let router = Router::new()
+        .route(
+            "/search",
+            get(|| async { "<a href='/url?q=http%3A%2F%2Fdocs.example%2Fpage'><h3>Listed page</h3></a>" }),
+        )
+        .route(
+            "/page",
+            get(move || {
+                let count = page_count.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    ([("content-type", "text/plain")], LINKING_PAGE)
+                }
+            }),
+        )
+        .route(
+            "/other",
+            get(move || {
+                let count = linked_count.clone();
+                async move {
+                    count.fetch_add(1, Ordering::SeqCst);
+                    ([("content-type", "text/plain")], "LINKED_PAGE")
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let linked_read = r#"{"url":"http://docs.example/other"}"#; // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+    let site_rule = "http://docs.example/*"; // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+    let named_page = "Read http://docs.example/page"; // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+    for (rule, message, code) in [
+        // A search lists the page; the turn reads it under that grant.
+        ("http://google.fixture/*", "Search and read", "WEB_HOST_DENIED"), // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+        // The operator names the page; a subtree rule permits the whole site.
+        (site_rule, named_page, "WEB_FETCH_COMPOSED"),
+    ] {
+        let model = common::start_mock_model().await;
+        let s = listing_spawn(
+            &model,
+            address,
+            common::ServerOptions::default().with("web.carry_forward_sources", "0"),
+        )
+        .await;
+        assert_eq!(
+            s.post_json("/api/web/allow", json!({"url":rule})).await.0,
+            200,
+            "{rule}"
+        );
+        let mut script = vec![];
+        if code == "WEB_HOST_DENIED" {
+            script.push(tool_call_reply("web_search", r#"{"query":"listed page"}"#, "search"));
+        }
+        script.push(tool_call_reply("web_fetch", LISTED_PAGE, "page_fetch"));
+        script.push(tool_call_reply("web_fetch", linked_read, "linked_fetch"));
+        script.push(common::ok_reply("Answered.", 20, 6));
+        model.set_reply(Value::Array(script));
+        let before = pages.load(Ordering::SeqCst);
+        let (status, reply) = s.post_json("/api/chat", json!({ "message": message })).await;
+        assert_eq!(status, 200, "{rule}: {reply}");
+        let tools = reply["web_tools"].as_array().expect("web tools ran");
+        let (page, link) = (&tools[tools.len() - 2], &tools[tools.len() - 1]);
+        assert_eq!(page["ok"], true, "{rule}: the page is read: {reply}");
+        assert!(
+            page["result"].to_string().contains("docs.example/other"),
+            "{rule}: the model saw the link: {reply}"
+        );
+        assert_eq!(link["code"], code, "{rule}: {reply}");
+        assert_eq!(pages.load(Ordering::SeqCst), before + 1, "{rule}");
+        assert_eq!(
+            linked.load(Ordering::SeqCst),
+            0,
+            "{rule}: the linked page is never contacted"
+        );
+    }
+    task.abort();
+}
+
 /// A server-run `/loop` carries its search-result grants from one turn to the
 /// next: turn 1 searches, turn 2 reads the page that search listed.
 #[tokio::test]

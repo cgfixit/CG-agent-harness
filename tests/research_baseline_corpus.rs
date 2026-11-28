@@ -1,9 +1,11 @@
 //! #772 baseline corpus shape. While the corpus is a proposal no label exists;
 //! once frozen, a sha256 pin replaces the second test, as for d7/corpus.json.
+//! The provenance matrix names, per read path, the test that locks it.
 use serde_json::Value;
 use std::collections::BTreeSet;
 
 const CORPUS: &str = include_str!("fixtures/research-baseline/corpus.json");
+const PROVENANCE: &str = include_str!("fixtures/research-baseline/provenance.json");
 
 fn corpus() -> Value {
     serde_json::from_str(CORPUS).expect("the corpus is valid JSON")
@@ -54,5 +56,37 @@ fn a_proposal_carries_no_label_and_no_approval() {
             "{}: labels come from an independent labeler",
             q["id"]
         );
+    }
+}
+
+#[test]
+fn every_provenance_row_names_a_test_that_exists_or_what_it_waits_on() {
+    let matrix: Value = serde_json::from_str(PROVENANCE).expect("the matrix is valid JSON");
+    let rows = matrix["rows"].as_array().expect("rows");
+    let ids: BTreeSet<_> = rows.iter().map(|row| row["id"].as_str().expect("id")).collect();
+    assert_eq!(ids.len(), rows.len(), "ids are unique");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for row in rows {
+        let id = row["id"].as_str().expect("id");
+        for field in ["path", "expected"] {
+            assert!(
+                row[field].as_str().is_some_and(|text| !text.is_empty()),
+                "{id}: {field}"
+            );
+        }
+        let locked_by = strings(&row["locked_by"]);
+        assert_ne!(
+            locked_by.is_empty(),
+            row["pending_on"].as_str().is_none(),
+            "{id}: a row is locked by a test, or says what it waits on, not both"
+        );
+        for reference in locked_by {
+            let (file, name) = reference.split_once("::").expect("file::test");
+            let source = std::fs::read_to_string(root.join(file)).unwrap_or_default();
+            assert!(
+                source.contains(&format!("fn {name}(")),
+                "{id}: {reference} does not exist"
+            );
+        }
     }
 }

@@ -671,7 +671,13 @@ async fn confirm_provenance(
     // Permission checked before the wait is stale (AGENTS.md): reload the
     // account, the web switch and the policy.
     if let Err(failure) = authorize_turn(state, owner, sign_in) {
-        audit("account_changed");
+        // `authorize_turn` reads the web switch before the account: web
+        // turned off is a policy change, as it is below.
+        audit(if failure.code == "WEB_DISABLED" {
+            "policy_changed"
+        } else {
+            "account_changed"
+        });
         return Err(failure);
     }
     let web_on = state.settings.lock().unwrap_or_else(|p| p.into_inner()).web_enabled;
