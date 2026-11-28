@@ -546,27 +546,40 @@ pub async fn agent_job_create(
 /// it logs an end: `JobStore::cancel` aborts the task (an account disable,
 /// delete or demotion, a shutdown, a manual cancel), so no code after the
 /// await runs. `agent_schedule_start` would otherwise stand alone.
+///
+/// It is made before the task is spawned and armed once the job is registered:
+/// a cancel that aborts the task before its first poll drops it too. A start
+/// that fails before registering leaves it unarmed, and the schedule tick
+/// audits that failure itself.
 struct ScheduleEndAudit {
     state: Arc<AppState>,
     schedule_id: Option<String>,
     job_id: String,
+    armed: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ScheduleEndAudit {
     fn settled(&mut self) {
         self.schedule_id = None;
     }
-}
 
-impl Drop for ScheduleEndAudit {
-    fn drop(&mut self) {
+    /// Ends the occurrence as failed with `status`, once.
+    fn fail(&mut self, status: &str) {
         if let Some(sid) = self.schedule_id.take() {
             self.state.audit.log(json!({
                 "event": "agent_schedule_failed",
                 "schedule_id": sid,
                 "job_id": self.job_id,
-                "status": crate::server::agent_jobs::CANCELLED,
+                "status": status,
             }));
+        }
+    }
+}
+
+impl Drop for ScheduleEndAudit {
+    fn drop(&mut self) {
+        if self.armed.load(std::sync::atomic::Ordering::Acquire) {
+            self.fail(crate::server::agent_jobs::CANCELLED);
         }
     }
 }
@@ -588,15 +601,17 @@ pub(crate) fn start_job(
     let task_schedule = schedule_id.clone();
     let task_owner = owner.clone();
     let (registered, ready) = tokio::sync::oneshot::channel();
+    let registered_job = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut end_audit = ScheduleEndAudit {
+        state: task_state.clone(),
+        schedule_id: task_schedule.clone(),
+        job_id: task_job.clone(),
+        armed: registered_job.clone(),
+    };
     let handle = tokio::spawn(async move {
         if ready.await.is_err() {
             return;
         }
-        let mut end_audit = ScheduleEndAudit {
-            state: task_state.clone(),
-            schedule_id: task_schedule.clone(),
-            job_id: task_job.clone(),
-        };
         // The account was checked when the request arrived. An account
         // disabled, deleted or demoted out of `RunCoding` before this job was
         // registered missed `JobStore::cancel_owner`, so it is checked again
@@ -610,7 +625,8 @@ pub(crate) fn start_job(
             _chat_gate: chat_gate,
         } = prepared;
         if !still_allowed {
-            end_audit.settled();
+            // The occurrence was audited as started: it ends here as failed.
+            end_audit.fail(crate::server::agent_jobs::FAILED);
             drop((run_gate, chat_gate));
             let (refuse_state, refuse_owner, refuse_job) = (task_state.clone(), task_owner.clone(), task_job.clone());
             super::structured_memory::off_worker(move || {
@@ -701,6 +717,7 @@ pub(crate) fn start_job(
             return Err(ApiError::from_err(StatusCode::CONFLICT, &error));
         }
     }
+    registered_job.store(true, std::sync::atomic::Ordering::Release);
     let _ = registered.send(());
     state
         .audit
@@ -839,6 +856,18 @@ pub fn start_job_for_owner(
     owner: String,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     start_job(state, req, owner, None)
+}
+
+/// Test seam: [`start_job_for_owner`] as one occurrence of `schedule_id`, as the
+/// schedule tick starts it after auditing `agent_schedule_start`.
+#[cfg(any(test, feature = "test-support"))]
+pub fn start_scheduled_job_for_owner(
+    state: Arc<AppState>,
+    req: AgentRunRequest,
+    owner: String,
+    schedule_id: &str,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    start_job(state, req, owner, Some(schedule_id.to_string()))
 }
 
 /// Whether `owner` may run coding now: an enabled account holding
