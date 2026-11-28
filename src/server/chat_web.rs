@@ -531,48 +531,66 @@ pub struct UsageSnapshot {
 
 /// Canonical http(s) URLs the operator wrote in `text`, as typed and with
 /// trailing punctuation or markup trimmed. The scheme is found in any case
-/// (`HTTPS://`), as `canonical_url` reads it.
+/// (`HTTPS://`), as `canonical_url` reads it. A word can hold more than one
+/// URL (`[https://a/x](https://a/x)`, `https://a/x,https://b/y`,
+/// `http://a/go?to=https://b/y`): each scheme start is read, up to
+/// MAX_URLS_PER_WORD, both to the word's end and cut where the next starts.
 fn operator_urls(text: &str) -> impl Iterator<Item = String> + '_ {
     text.split_whitespace().flat_map(|word| {
         // ASCII lowercasing keeps every byte offset.
         let lower = word.to_ascii_lowercase();
-        let typed = lower
-            .find("https://")
-            .or_else(|| lower.find("http://"))
-            .map(|start| &word[start..]);
-        // Both the URL as typed and without trailing punctuation are the
-        // operator's own text: `Function_(mathematics)` and `?q=hello!` keep
-        // their last character, and `(https://a/b).` still yields `https://a/b`.
-        // A URL pasted from markdown or prose ends in a backtick, emphasis
-        // marks or a typographic quote (`web_command::with_https` strips the
-        // same wrappers from a command's argument). A wrapper can end in the
-        // URL's own last character (`` `…/Function_(mathematics)` ``,
-        // `[x](…/Set_(mathematics))`, `**…/snake_case_**`), so each prefix
-        // with one more trailing mark stripped is a candidate too, up to
-        // MAX_TRAILING_STRIPS, then the fully trimmed one. Every candidate is
-        // a prefix of what the operator typed.
-        let candidates = typed.map(|url| {
-            let full = url.trim_end_matches(TRAILING_MARKS);
-            let mut prefixes = vec![url];
-            let mut rest = url;
-            while prefixes.len() <= MAX_TRAILING_STRIPS {
-                let Some(next) = rest.strip_suffix(TRAILING_MARKS) else {
-                    break;
-                };
-                prefixes.push(next);
-                rest = next;
+        let starts: Vec<usize> = lower
+            .match_indices("http")
+            .map(|(at, _)| at)
+            .filter(|&at| lower[at..].starts_with("https://") || lower[at..].starts_with("http://"))
+            .take(MAX_URLS_PER_WORD)
+            .collect();
+        let mut typed = Vec::with_capacity(starts.len() * 2);
+        for (i, &at) in starts.iter().enumerate() {
+            typed.push(&word[at..]);
+            if let Some(&next) = starts.get(i + 1) {
+                // What opens the next URL is not this one's: `](`, `,`, `=`.
+                typed.push(word[at..next].trim_end_matches(['(', '[', '<', '{', '=']));
             }
-            if prefixes.last() != Some(&full) {
-                prefixes.push(full);
-            }
-            prefixes
-        });
-        candidates
+        }
+        typed
             .into_iter()
-            .flatten()
+            .flat_map(trimmed_candidates)
             .filter_map(|url| super::web_policy::canonical_url(url).ok().map(|url| url.to_string()))
+            .collect::<Vec<_>>()
     })
 }
+
+/// Both the URL as typed and without trailing punctuation are the operator's
+/// own text: `Function_(mathematics)` and `?q=hello!` keep their last
+/// character, and `(https://a/b).` still yields `https://a/b`. A URL pasted
+/// from markdown or prose ends in a backtick, emphasis marks or a typographic
+/// quote (`web_command::with_https` strips the same wrappers from a command's
+/// argument). A wrapper can end in the URL's own last character
+/// (`` `…/Function_(mathematics)` ``, `[x](…/Set_(mathematics))`,
+/// `**…/snake_case_**`), so each prefix with one more trailing mark stripped
+/// is a candidate too, up to MAX_TRAILING_STRIPS, then the fully trimmed one.
+/// Every candidate is a prefix of what the operator typed.
+fn trimmed_candidates(url: &str) -> Vec<&str> {
+    let full = url.trim_end_matches(TRAILING_MARKS);
+    let mut prefixes = vec![url];
+    let mut rest = url;
+    while prefixes.len() <= MAX_TRAILING_STRIPS {
+        let Some(next) = rest.strip_suffix(TRAILING_MARKS) else {
+            break;
+        };
+        prefixes.push(next);
+        rest = next;
+    }
+    if prefixes.last() != Some(&full) {
+        prefixes.push(full);
+    }
+    prefixes
+}
+
+/// Scheme starts read per word: a word of thousands of `https://` still parses
+/// a bounded number of candidates.
+const MAX_URLS_PER_WORD: usize = 8;
 
 /// Marks a URL pasted from markdown or prose can end in that are not its own.
 const TRAILING_MARKS: [char; 19] = [
@@ -860,7 +878,10 @@ async fn run_inner(
     };
     // #901 step 4: URLs the operator wrote, and evidence this goal already
     // read under its authority, are given; a composed URL needs confirmation.
-    let mut given: std::collections::BTreeSet<String> = operator_urls(user_message)
+    // A loop turn's message is harness framing whose goal reminder is cut at
+    // LOOP_GOAL_REMINDER_CHARS: a URL across the cut would add a prefix the
+    // operator never named. Its URLs come from the whole goal instead.
+    let mut given: std::collections::BTreeSet<String> = operator_urls(question)
         .chain(operator_urls(goal))
         .chain(passages.iter().map(|p| p.url.clone()))
         .collect();
@@ -1648,6 +1669,51 @@ async fn run_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_url_in_a_word_is_the_operators() {
+        // Markdown's auto-linked form, URLs joined by a comma, and a URL that
+        // carries another in its query: each URL as typed is the operator's.
+        let urls: Vec<String> = operator_urls(concat!(
+            "Read [https://docs.example.org/guide](https://docs.example.org/guide) and ",
+            "https://a.example.org/x,https://b.example.org/y then ",
+            "http://example.org/go?to=https://docs.example.org/x", // DevSkim: ignore DS137138 because this synthetic URL is test text never fetched.
+        ))
+        .collect();
+        for url in [
+            "https://docs.example.org/guide",
+            "https://a.example.org/x",
+            "https://b.example.org/y",
+            "http://example.org/go?to=https://docs.example.org/x", // DevSkim: ignore DS137138 because this synthetic URL is test text never fetched.
+            "https://docs.example.org/x",
+        ] {
+            assert!(urls.iter().any(|u| u == url), "{url} in {urls:?}");
+        }
+        // Every candidate is still a prefix of what was typed: nothing after a
+        // URL's own text is joined to it.
+        assert!(!urls.iter().any(|u| u.ends_with("guide%5D")), "{urls:?}");
+        // A word of many scheme starts parses a bounded number of them.
+        let many = "https://a.example.org/".repeat(10_000);
+        assert!(operator_urls(&many).count() <= MAX_URLS_PER_WORD * 2 * (MAX_TRAILING_STRIPS + 2));
+    }
+
+    /// A loop turn's framing cuts its goal reminder: a URL across the cut is a
+    /// prefix the operator never named, which is why a loop turn's URLs come
+    /// from the whole goal (`question`), not from the framed message.
+    #[test]
+    fn a_loop_reminders_cut_url_is_not_one_the_goal_names() {
+        // 40 characters short of the 2000-character reminder (`LOOP_GOAL_REMINDER_CHARS`).
+        let lead = "x".repeat(2000 - 40);
+        let goal = format!("{lead} https://docs.example.org/reports/annual/secret-plan");
+        let framed = crate::server::loop_runner::loop_turn_prompt(1, Some(1), &goal);
+        let from_goal: Vec<String> = operator_urls(&goal).collect();
+        let cut: Vec<String> = operator_urls(&framed).filter(|u| !from_goal.contains(u)).collect();
+        assert!(
+            !cut.is_empty(),
+            "the framed reminder no longer cuts this URL; drop the test"
+        );
+        assert!(from_goal.contains(&"https://docs.example.org/reports/annual/secret-plan".to_string()));
+    }
 
     #[test]
     fn operator_urls_are_canonical_as_typed_and_without_trailing_punctuation() {

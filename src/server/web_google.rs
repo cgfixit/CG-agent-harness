@@ -256,11 +256,21 @@ fn api_results(body: &[u8], limit: usize) -> Result<Vec<SearchResult>> {
 fn api_listing(query: &str, body: &[u8], limit: usize) -> Result<(Vec<SearchResult>, Extras)> {
     let value: Value =
         serde_json::from_slice(body).map_err(|_| error("WEB_SEARCH_RESPONSE", "invalid search response"))?;
-    if value.get("error").is_some() {
+    let items = value.get("organic_results").and_then(Value::as_array);
+    // A search Google answered with no results is HTTP 200, status "Success",
+    // `organic_results_state: "Fully empty"`, no `organic_results`, and an
+    // `error` ("Google hasn't returned any results for this query.";
+    // serpapi.com/api-status-and-error-codes). That is a clean zero-result
+    // answer, which ends the search (`web_provider::falls_through`), not a
+    // provider error that sends the query on to public Google.
+    let fully_empty = items.is_none()
+        && value["search_information"]["organic_results_state"]
+            .as_str()
+            .is_some_and(|state| state.eq_ignore_ascii_case("fully empty"));
+    if value.get("error").is_some() && !(fully_empty && value["search_metadata"]["status"] != "Error") {
         return Err(error("WEB_SEARCH_PROVIDER", "search provider returned an error"));
     }
-    let items = value.get("organic_results").and_then(Value::as_array);
-    if items.is_none() && value["search_information"]["organic_results_state"] != "Fully empty" {
+    if items.is_none() && !fully_empty {
         return Err(error("WEB_SEARCH_RESPONSE", "search result listing is missing"));
     }
     let mut rows = Vec::new();
@@ -1485,6 +1495,17 @@ mod tests {
                         if q.get("api_key").is_some_and(|key| key == "late") {
                             tokio::time::sleep(Duration::from_millis(2500)).await;
                         }
+                        // "empty": SerpAPI's documented answer to a search Google found nothing for.
+                        if q.get("api_key").is_some_and(|key| key == "empty") {
+                            return (
+                                axum::http::StatusCode::OK,
+                                Json(json!({
+                                    "search_metadata":{"status":"Success"},
+                                    "search_information":{"organic_results_state":"Fully empty"},
+                                    "error":"Google hasn't returned any results for this query."
+                                })),
+                            );
+                        }
                         let status = match q.get("api_key").map(String::as_str) {
                             Some("bad") => axum::http::StatusCode::UNAUTHORIZED,
                             Some("quota") => axum::http::StatusCode::TOO_MANY_REQUESTS,
@@ -2135,6 +2156,28 @@ mod tests {
         assert_eq!(value["results"], json!([]));
         assert!(value.get("fallback_from").is_none());
         assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    /// SerpAPI's zero-result answer carries an `error` beside
+    /// `organic_results_state: "Fully empty"`: it is an empty listing that ends
+    /// the search, not a provider error that falls through to public Google.
+    #[tokio::test]
+    async fn a_fully_empty_serpapi_answer_is_an_answer_not_a_fallback() {
+        let serp = chain::serpapi().await;
+        let google = chain::google().await;
+        let chain = chain::Chain::new(
+            &chain::yaml(", fallback_to_serpapi: true, fallback_to_public_google: true"),
+            "empty",
+            &serp,
+            Some(&google),
+        )
+        .await
+        .with_tavily_at("good", chain::refused_addr().await);
+        let value = chain.search("nothing matches").await.unwrap();
+        assert_eq!(value["provider"], "google-serpapi");
+        assert_eq!(value["results"], json!([]));
+        assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
@@ -2941,5 +2984,21 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("secret"));
+        // A zero-result answer is empty; a failed search with the same state
+        // (status "Error") and an error beside listed rows stay errors.
+        let empty = r#"{"search_metadata":{"status":"Success"},"search_information":{"organic_results_state":"Fully empty"},"error":"Google hasn't returned any results for this query."}"#;
+        assert_eq!(api_results(empty.as_bytes(), 5).unwrap().len(), 0);
+        for failed in [
+            empty.replace("Success", "Error"),
+            r#"{"search_information":{"organic_results_state":"Fully empty"},"organic_results":[],"error":"x"}"#
+                .to_string(),
+            r#"{"error":"We couldn't get valid results for this search."}"#.to_string(),
+        ] {
+            assert_eq!(
+                api_results(failed.as_bytes(), 5).unwrap_err().code,
+                "WEB_SEARCH_PROVIDER",
+                "{failed}"
+            );
+        }
     }
 }
