@@ -70,7 +70,7 @@
     "providers": ["tavily", "serpapi", "firecrawl"]
   },
   "replay": {
-    "format": "one capture file per question under replay/, named <question id>.json: question, captured_at, listings (provider, query, captured_at, results of url, title, snippet) and documents (url, captured_at, status, content_type, sha256, and body or body_file). sha256 is of the exact served bytes",
+    "format": "one capture file per question under replay/, named <question id>.json: question, captured_at, listings (provider, query, captured_at, results of url, title, snippet) and documents (url, captured_at, status, content_type, and an inline body or a body_file with the sha256 of its exact bytes). An inline body is pinned by the capture's own replay_sha256",
     "rule": "Baseline and candidate are served the same capture files. A changed capture is a new replay_sha256 and a new baseline"
   },
   "metrics": [

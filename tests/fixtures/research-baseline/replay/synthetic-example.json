@@ -24,7 +24,6 @@
       "captured_at": "2026-11-28T00:00:00Z",
       "status": 200,
       "content_type": "text/plain",
-      "sha256": "f9d1ce8cdfa8334f80da6115a9c67f6bbb6b1552c10ab80142c5445a644a4f9b",
       "body": "SYNTHETIC_DOCUMENT: shows the capture format only; it answers no corpus question."
     }
   ]

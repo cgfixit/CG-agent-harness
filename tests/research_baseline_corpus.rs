@@ -121,8 +121,8 @@ fn the_run_manifest_names_only_settings_events_and_fields_that_exist() {
 }
 
 /// Each replay capture names a corpus question (or is the one synthetic format
-/// example), and every served document's sha256 is of its exact bytes, so a
-/// capture cannot change without changing its hash.
+/// example), and every body_file document's sha256 is of its exact bytes, so a
+/// capture cannot change without changing a hash.
 #[test]
 fn every_replay_capture_matches_its_hashes() {
     use sha2::{Digest, Sha256};
@@ -166,20 +166,31 @@ fn every_replay_capture_matches_its_hashes() {
         for document in capture["documents"].as_array().expect("documents") {
             let url = document["url"].as_str().unwrap_or("");
             assert!(web_url(url), "{file}: document URL {url}");
-            let bytes = match (document["body"].as_str(), document["body_file"].as_str()) {
-                (Some(body), None) => body.as_bytes().to_vec(),
+            // An inline body is pinned by the capture file's own replay_sha256,
+            // so only a body_file names the sha256 of its bytes (and a 64-hex
+            // literal in an inline capture would read as a key to DevSkim).
+            match (document["body"].as_str(), document["body_file"].as_str()) {
+                (Some(_), None) => {
+                    assert!(
+                        document.get("sha256").is_none(),
+                        "{file}: {url}: an inline body has no sha256"
+                    );
+                }
                 (None, Some(name)) => {
-                    assert!(!name.contains(".."), "{file}: {name} stays in replay/");
-                    std::fs::read(dir.join(name)).unwrap_or_else(|_| panic!("{file}: {name} is missing"))
+                    assert!(
+                        !name.contains("..") && !name.contains('/'),
+                        "{file}: {name} stays in replay/"
+                    );
+                    let bytes = std::fs::read(dir.join(name)).unwrap_or_else(|_| panic!("{file}: {name} is missing"));
+                    let actual: String = Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
+                    assert_eq!(
+                        document["sha256"].as_str(),
+                        Some(actual.as_str()),
+                        "{file}: {url} sha256"
+                    );
                 }
                 _ => panic!("{file}: {url} has exactly one of body or body_file"),
-            };
-            let actual: String = Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
-            assert_eq!(
-                document["sha256"].as_str(),
-                Some(actual.as_str()),
-                "{file}: {url} sha256"
-            );
+            }
         }
     }
     assert!(seen > 0, "replay/ holds at least the synthetic format example");
