@@ -30,11 +30,11 @@ not runtime `/api/skills` plugins.
   test.
 - **Also seen:** a *non*-startup flake where a saved key's `type="password"`
   input in `chat-browser-acceptance.mjs` still held the typed value after a
-  refresh (once in eleven runs; the same commit then passed ten straight). It
+  refresh (once in eleven runs). It
   now checks `visibleKeys` only.
   First suspect: Chrome launched without `--password-store=basic` or any
   autofill-disabling flag. Confirm before "fixing" it.
-- **Evidence:** CI gotcha / #43.
+- **Evidence:** #43.
 
 ## 3. Desktop packaging: lipo / sign / embed-SHA256 order
 
@@ -64,27 +64,26 @@ not runtime `/api/skills` plugins.
   checkout or build.
 - **Wrong fix:** Hit the default port and assume it's your binary.
 - **Right fix:** Owned temp `CGAGENTHARNESS_HOME`, unique port, kill/own the
-  process you started (`scripts/smoke-ollama.sh` pattern).
+  process you started.
 - **Evidence:** `scripts/smoke-ollama.sh`.
 
 ## 6. `github.paginate` result consumed as `{data}`
 
 - **Symptom:** A workflow step dies with
-  `TypeError: Cannot read properties of undefined (reading 'find')`, and the
-  check fails on *every* PR rather than intermittently.
-- **Wrong fix:** Wrap the access in `?.` and move on, or revert to the
-  unpaginated call that only ever saw page 1 of 30.
+  `TypeError: Cannot read properties of undefined (reading 'find')`, on
+  *every* PR, not intermittently.
+- **Wrong fix:** Wrap the access in `?.`, or revert to the unpaginated call
+  that saw only page 1.
 - **Right fix:** `github.rest.issues.listComments(...)` resolves to `{data: [...]}`;
   `github.paginate(github.rest.issues.listComments, ...)` resolves to the **array
-  itself**. When switching to `paginate`, change the consumer too —
-  `comments.find(...)`, not `comments.data.find(...)`. Audit every
+  itself**. Change the consumer too: `comments.find(...)`, not
+  `comments.data.find(...)`. Audit every
   `await github.paginate` call site in `.github/workflows/` at once
   (`pr-template-check.yml`, `review-gate*.yml`); all must read the array directly.
-- **How to check before pushing:** the `github-script` block can be extracted
-  from the YAML and run under stubs (`github`, `context`, `core` are just
-  arguments), with `listComments` honouring the 30-per-page default and a marker
-  planted on page 2. Cheaper than a CI round trip, and it reproduces both the
-  original duplicate-comment bug and the `TypeError`.
+- **Check before pushing:** extract the `github-script` block and run it under
+  stubs (`github`, `context`, `core` are arguments), with `listComments` paging
+  by 30 and a marker on page 2. It reproduces the duplicate-comment bug and
+  the `TypeError`.
 - **Evidence:** `.github/workflows/pr-template-check.yml` — its comment jobs
   (`comment-base`, `comment-template`) paginate `listComments`; an unpaginated
   read missed a marker on page 2.
@@ -93,25 +92,23 @@ not runtime `/api/skills` plugins.
 
 - **Symptom:** Intermittent red in `scripts/test-desktop-backend.py` with
   `AssertionError: 0 is not None : headless startup exited`, or
-  `AssertionError: 0 == 0` — neither of which mentions ports.
+  `AssertionError: 0 == 0`; neither mentions ports.
 - **Wrong fix:** Widen a timeout, retry the whole job, or call it a runner
   problem.
-- **Right fix:** Binding `:0`, reading the port back and closing the socket is
-  inherently advisory — the reservation *must* be released before the child can
-  bind, so anything on the runner can take it in between. Retry on a fresh port.
-  Two traps make this worse than it looks:
+- **Right fix:** A port bound on `:0`, read back and closed is only advisory:
+  it must be released before the child binds, so anything can take it in
+  between. Retry on a fresh port. Two traps:
   - **`serve` exits 0 on port-in-use**, printing "CGagentHarness may already be
     running on 127.0.0.1:PORT" to **stdout** (stderr empty), because
-    `port_in_use` is checked *before* `.env` is read. So a test asserting a
-    non-zero refusal fails, and the path it meant to exercise never runs.
+    `port_in_use` is checked *before* `.env` is read. A test asserting a
+    non-zero refusal then fails without exercising its path.
   - **Do not truncate captured output between attempts** if a later assertion
-    reads that file. The credential-disclosure `assertNotIn` checks in that
-    suite read the child's captured stdout/stderr; truncating means a leak on a
-    failed attempt is erased and the check passes on a clean retry.
-- **Related discipline:** when you fix one instance of a race, re-audit every
-  site you *refactored* as well as the one that was failing. Converting a second
-  site to the shared helper without its retry leaves the bug live at a site your
-  own commit touched.
+    reads that file. That suite's credential-disclosure `assertNotIn` checks
+    read the child's captured output; truncating erases a leak from a failed
+    attempt, and a clean retry passes.
+- **Related discipline:** after fixing one race, re-audit every site you
+  *refactored* too: a second site moved to the shared helper without its retry
+  keeps the bug.
 - **Evidence:** `scripts/test-desktop-backend.py` (`free_port`,
   `await_headless`, `serve_expecting_refusal`); `ModelFixture` and
   `test_unrelated_listener_is_never_adopted` show the keep-the-listener-open
@@ -119,31 +116,30 @@ not runtime `/api/skills` plugins.
 
 ## 8. A push does **not** re-trigger the Codex review
 
-- **Symptom:** You address review findings, push, see the PR go green, and merge
-  — with the fixes themselves never reviewed.
+- **Symptom:** You address review findings, push, see the PR go green, and merge,
+  the fixes never reviewed.
 - **Wrong fix:** Assume the green check covers the new commits, or read a stale
   "Completed" summary row as a verdict on the current head.
 - **Right fix:** Codex reviews trigger on *open for review*, *mark draft ready*,
   and an explicit `@codex review` comment, **not** on a push. After pushing a
   fix, tell the operator the fixes are unreviewed and let them decide: never
   comment `@codex review` without their approval. If they approve, check that
-  the **Reviewed commit** SHA matches your head. A superseded run can be reported
-  as `cancelled` by `cancel-in-progress` concurrency; that is not a failure, but
-  it is also not a verdict.
+  the **Reviewed commit** SHA matches your head. A superseded run reads
+  `cancelled` (`cancel-in-progress`): not a failure, and not a verdict.
 - **Evidence:** the Codex "About Codex in GitHub" block on any PR in this repo.
 
 ## 9. The docs audit agent can cite lines that do not exist
 
 - **Symptom:** A drift report says "CONSOLE.md line 15 says sessions are
   written to `sessions/*.json`"; the file has no such line. Applying the edit
-  blindly fails, or worse, inserts prose at a guessed location.
+  fails, or inserts prose at a guessed location.
 - **Wrong fix:** Trust a subagent's line numbers or quoted text as evidence.
 - **Right fix:** Every audited claim is a *hypothesis*. Before editing, `grep`
   the quoted anchor in the named file; skip the finding if it does not match.
   Quote code values (config defaults, ranges, alias spellings) from `rg`, never
-  from the report. The `cg-doc-sync` skill's "quote from `rg`" rule exists for this.
+  from the report (the `cg-doc-sync` "quote from `rg`" rule).
 - **Evidence:** 2026-09-16 docs refresh (PR #131): 1 of ~20 findings was
-  fabricated; the other 19 were verbatim-verifiable.
+  fabricated.
 
 ## 10. Memory gate slash aliases are not the config key names
 
@@ -168,7 +164,7 @@ not runtime `/api/skills` plugins.
   tag push (`push` event, `head_branch: vX.Y.Z`) or a pending
   `workflow_dispatch` on the same SHA means the release is already in flight;
   watch that run instead. The planner (`scripts/release-plan.py`) fails closed
-  on collisions by design. Also note: a green `Bundle` run on the exact main
+  on collisions. A green `Bundle` run on the exact main
   SHA is a hard precondition for `workflow_run`/`workflow_dispatch` releases.
 - **Evidence:** 2026-09-16, `v0.1.14` tag push started run 26 while the docs
   PR was being drafted; dispatch run 27 queued behind it.
@@ -200,6 +196,25 @@ not runtime `/api/skills` plugins.
 - **Right fix:** a missing key is not the shipped value. `serve` WARNs with
   every omitted ship-true key; set those, or start from the shipped default.
 - **Evidence:** 2026-11-26 smoke: 34 named, `browser.enabled` among them.
+
+## 15. One `CARGO_TARGET_DIR` shared by worktrees links a stale binary
+
+- **Symptom:** a fix "does nothing", or a fixture passes on code it lacks;
+  `cargo build` takes a second.
+- **Right fix:** worktrees write the same artifact names and freshness is by
+  mtime, so another worktree's newer build reads as yours. Use one target
+  directory per worktree, or `touch` sources first; `grep -c <new string>
+  <binary>` before trusting a run. A stale `invariant_guard` reads the other
+  tree's files (`CARGO_MANIFEST_DIR`).
+- **Evidence:** 2026-11-27, PR #1205.
+
+## 16. `docs-impact.py` passes before the commit exists
+
+- **Symptom:** local `Docs impact check passed`; CI's `docs impact` is red.
+- **Right fix:** it compares `--head HEAD` with the base, so uncommitted edits
+  are not in it. Commit, then run it; a missing receipt goes in a
+  trailer-only commit.
+- **Evidence:** PRs #1204 and #1210.
 
 ## Related skills
 
