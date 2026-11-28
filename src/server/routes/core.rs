@@ -649,9 +649,15 @@ pub async fn soul_state(State(state): State<Arc<AppState>>) -> Json<Value> {
 
 pub async fn soul_toggle(
     State(state): State<Arc<AppState>>,
+    user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     ValidJson(req): ValidJson<ToggleRequest>,
 ) -> ApiResult<Json<Value>> {
+    let owner = super::auth::context_owner(user);
     let snapshot = super::panels::commit_setting(&state, move |s| s.soul_enabled = req.enabled).await?;
+    // The persona is shared by every account: audited with who switched it.
+    state
+        .audit
+        .log(json!({"event": "soul.enabled_set", "owner": owner, "enabled": snapshot.soul_enabled}));
     Ok(super::structured_memory::off_worker(move || Json(soul_status(&state, snapshot.soul_enabled))).await)
 }
 

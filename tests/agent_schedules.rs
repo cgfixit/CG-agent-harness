@@ -144,6 +144,17 @@ async fn schedule_create_list_cancel_round_trip() {
         s.get_json(&format!("/api/agent/schedules/{id}")).await.1["status"],
         "cancelled"
     );
+    // A second cancel changes nothing, so it is not audited as a cancellation.
+    let (status, again) = s
+        .post_json(&format!("/api/agent/schedules/{id}/cancel"), json!({}))
+        .await;
+    assert_eq!((status, again["status"].as_str()), (200, Some("cancelled")));
+    s.state.audit.flush_async().await;
+    assert_eq!(
+        s.audit_log().matches("agent_schedule_cancelled").count(),
+        1,
+        "one cancellation, one audit line"
+    );
 }
 
 #[tokio::test]

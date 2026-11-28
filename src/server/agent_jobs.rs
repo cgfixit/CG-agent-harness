@@ -407,10 +407,12 @@ impl JobStore {
             .collect()
     }
 
-    /// Abort a running job. Returns the job's new state, or None if unknown.
-    /// Blocking: persists the job file (fsync) and may enqueue a notification.
-    pub fn cancel(&self, owner: &str, job_id: &str) -> Option<Value> {
-        let (value, completion) = {
+    /// Abort a running job. Returns the job's state and whether this call
+    /// cancelled it (false: it had already ended, and nothing changed), or
+    /// None if unknown. Blocking: persists the job file (fsync) and may
+    /// enqueue a notification, only when it changed.
+    pub fn cancel(&self, owner: &str, job_id: &str) -> Option<(Value, bool)> {
+        let value = {
             let mut g = self.inner.lock().unwrap_or_else(|p| p.into_inner());
             let j = g.get_mut(job_id).filter(|j| j.owner.as_deref() == Some(owner))?;
             let changed = j.status == RUNNING;
@@ -422,18 +424,19 @@ impl JobStore {
                 j.finished_at = Some(crate::common::now_ts());
             }
             let value = j.to_json();
-            if self.persist(&g).is_err() {
+            if changed && self.persist(&g).is_err() {
                 tracing::error!("job cancellation could not be persisted; restart will report interrupted work");
             }
             let completion = changed
                 .then(|| g.get(job_id).and_then(|job| self.completion(job)))
                 .flatten();
-            (value, completion)
+            (value, completion, changed)
         };
+        let (value, completion, changed) = value;
         if let Some(completion) = completion {
             self.notify(completion);
         }
-        Some(value)
+        Some((value, changed))
     }
 
     /// Abort every running job `owner` holds and return how many stopped.
@@ -451,7 +454,7 @@ impl JobStore {
             .collect();
         running
             .iter()
-            .filter(|id| self.cancel(owner, id).is_some_and(|job| job["status"] == CANCELLED))
+            .filter(|id| self.cancel(owner, id).is_some_and(|(_, changed)| changed))
             .count()
     }
 
@@ -648,8 +651,14 @@ mod tests {
         assert_eq!(b["error"]["detail"]["code"], "AGENTIC_DISABLED");
 
         store.insert_running("local", "c", "real-repo-run", tokio::spawn(std::future::pending()));
-        let c = store.cancel("local", "c").unwrap();
+        let (c, changed) = store.cancel("local", "c").unwrap();
         assert_eq!(c["status"], CANCELLED);
+        assert!(changed, "a running job is cancelled by this call");
+        // Cancelling a job that already ended changes nothing and says so.
+        let (again, changed) = store.cancel("local", "c").unwrap();
+        assert_eq!((again["status"].as_str(), changed), (Some(CANCELLED), false));
+        let (finished, changed) = store.cancel("local", "a").unwrap();
+        assert_eq!((finished["status"].as_str(), changed), (Some(FINISHED), false));
         // A late finish after cancel does not resurrect the job.
         let mut completed = false;
         store.finish("c", Ok(json!({})));

@@ -929,6 +929,11 @@ impl Audit {
             Ok(()) => Ok(()),
             Err(_) => {
                 self.ledger.note_drop();
+                // No writer thread seals after this line, and `Drop` never runs
+                // in a killed process (the agentic child on cancel or timeout):
+                // save the count now, without sleeping, as the writer does
+                // after each line. A busy counter lock is retried by `Drop`.
+                self.ledger.persist_attempts(8);
                 Err(AuditRefused)
             }
         }
@@ -1652,6 +1657,31 @@ mod tests {
         assert_eq!(report["durable"], json!(dropped));
         assert_eq!(report["persist_failed"], json!(false));
         assert_eq!(report["record_unreadable"], json!(false));
+    }
+
+    /// An inline audit (no writer thread, as the agentic child runs) saves a
+    /// drop's count when it counts it: a process killed before its `Drop`
+    /// runs still leaves the hole for the next process to load.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn an_inline_drop_survives_a_killed_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = "logging:\n  audit_lease_wait_ms: 100\n";
+        std::fs::create_dir_all(dir.path().join("logs")).unwrap();
+        let inline = audit(dir.path(), yaml);
+        assert!(inline.queue().is_none(), "the fixture has no writer thread");
+        let held =
+            super::super::file_lease::FileLease::acquire(&dir.path().join("logs/audit.jsonl.lock"), true).unwrap();
+        assert!(inline.log_required(json!({"event":"child_line"})).is_err());
+        assert_eq!(inline.dropped(), 1);
+        drop(held);
+        // SIGKILL runs no destructor.
+        std::mem::forget(inline);
+        assert_eq!(
+            audit(dir.path(), yaml).dropped(),
+            1,
+            "the counted drop died with the process"
+        );
     }
 
     #[cfg(any(unix, windows))]
