@@ -278,7 +278,7 @@ when desktop behavior changes.
 [Workflow index](../.github/workflows/README.md) owns the matrix.
 Backend CI exercises process, policy, fixture and platform checks.
 Bundle packages Linux and macOS CLI targets and the universal app on main.
-Windows full-suite requirements vary by event. The Windows MCP lifecycle
-check remains required. See [release controls](RELEASING.md). Release packaging,
+Every PR requires the full Windows suite and the Windows MCP lifecycle check,
+including docs-only changes. See [release controls](RELEASING.md). Release packaging,
 browser fixtures, native GUI interaction and live providers have separate
 evidence.
