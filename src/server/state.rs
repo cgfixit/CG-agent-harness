@@ -77,6 +77,10 @@ pub struct AppState {
     pub cfg: SharedConfig,
     pub runtime: std::sync::RwLock<Arc<super::config_reload::RuntimeLimits>>,
     pub settings: Arc<Mutex<HarnessSettings>>,
+    /// Orders settings writers (`panels::commit_setting`, `model_select`)
+    /// across copy, save and publish, so `settings` is never held across the
+    /// fsync'd save and readers never wait for one.
+    pub settings_save: Mutex<()>,
     pub store: SessionStore,
     pub chat_owner: super::web_research::ResearchState,
     /// Native control shutdown/EOF, distinct from an owner's request cancellation.
