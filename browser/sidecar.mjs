@@ -91,6 +91,9 @@ let pendingApproval = null;
 let askedThisOp = false;
 // Answers the open question no, as its wait running out would.
 let withdrawQuestion = null;
+// True when the parent reads `withdrawn` lines (its `start` says so). An
+// older parent takes any line it does not know for the reply it is waiting on.
+let reportWithdrawn = false;
 // One op's questions share one wait. The parent allows each op its own time
 // plus takeover_wait_ms, once; a click whose page sends one request after
 // another would otherwise wait that long for each and outlast the parent,
@@ -598,7 +601,7 @@ function operatorAllows(method, url, contentType, body, sha256, waitMs) {
     // it would show a request nobody can approve, and refuse the next
     // question as a second one, until its own wait ran out.
     const refuse = () => {
-      if (asked.has(id)) send({ withdrawn: id });
+      if (reportWithdrawn && asked.has(id)) send({ withdrawn: id });
       decide(false);
     };
     const timer = setTimeout(refuse, waitMs);
@@ -891,6 +894,7 @@ async function start(message) {
   allowPrivate = message.allow_private === true;
   rewriteApproved = message.rewrite_approved_body === true;
   takeoverWaitMs = Math.max(0, Math.min(MAX_TAKEOVER_WAIT_MS, Math.trunc(Number(message.takeover_wait_ms) || 0)));
+  reportWithdrawn = message.report_withdrawn === true;
   const proxyPort = await startProxy();
   profileDir = freshProfile();
   context = await chromium.launchPersistentContext(profileDir, {
