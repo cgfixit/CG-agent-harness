@@ -91,7 +91,7 @@ focused query. A single page yields up to three passages. Multi-page ranking
 keeps up to two per page. Deliver receipt IDs and offsets only for complete
 passages. Omitted `refresh` can reuse fresh active-goal evidence. Outside
 that case reads default fresh. `true` refreshes at most once per page per turn
-and `false` permits policy-checked cache reuse.
+and `false` permits policy-checked cache reuse. See [offline capture](SECURE_RESEARCH.md#chat-capture-for-offline-evaluation).
 
 A useful changed batch generates a digest of up to 1,024 tokens before the
 next decision. Invalid digest JSON leaves valid passages and a visible

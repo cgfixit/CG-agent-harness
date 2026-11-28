@@ -62,6 +62,7 @@ pub mod style;
 pub mod tool_inventory;
 pub mod transport;
 pub mod views;
+mod web_capture;
 mod web_command;
 mod web_firecrawl;
 mod web_google;

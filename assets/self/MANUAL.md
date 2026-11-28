@@ -8,7 +8,7 @@ This manual is static text bundled with the build and indexed at startup. It is 
 
 ## readme: capability overview
 
-- Web research: Search, permitted reads and crawls, `/web research` with checked quotes, PDF text; paid providers have daily caps. Starts: On; one seeded Google rule.
+- Web research: Search, permitted reads and crawls, `/web research` with checked quotes, PDF text, evaluation capture; paid providers have daily caps. Starts: On; one seeded Google rule.
 - Goal loops: `/goal` and `/loop` outlive the tab; a counted run ends on its best answer. Starts: 200 turns, 200,000 tokens, two failures; local only.
 - Memory: Pinned and uploaded notes, account-private facts. Starts: On; proposals need review.
 - Local chat: Sessions, search, export, DOCX/PDF/text attachments, skills, styles; no Ollama cloud models (tags or aliases). Starts: Ollama on loopback.
@@ -365,6 +365,7 @@ Bounds and failures: Request, response, rate, concurrency and deadline bounds ar
   - loop.max_failures: 1–100
   - loop.cooldown_ms: 0–300000
 - web: Bounded public content reads; a fresh home enables web with one seeded allow rule, https://www.google.com/* (public Google search); /web deny removes it. Missing values in existing homes use these…
+  - web.capture
   - web.chat_tool_calls: 1–30 read-only calls per chat or local /loop turn; web.total_tokens usually binds first
   - web.carry_forward_sources: 0 (off) or 1–50 earlier reads (URL/query only, no page text) listed in web turns, cited when used; reloadable
   - web.goal_web_default: off|fetch|all; restart-only. The mode a /goal gets without --web.

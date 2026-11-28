@@ -1425,7 +1425,7 @@ pub(crate) mod macos_acl {
     /// `Some(true)` when the open file has at least one extended ACL entry,
     /// `Some(false)` when it has none (or the filesystem has no ACLs), and
     /// `None` when the ACL could not be read; callers refuse on `None`.
-    pub(super) fn fd_has_acl_entries(fd: c_int) -> Option<bool> {
+    pub(crate) fn fd_has_acl_entries(fd: c_int) -> Option<bool> {
         // SAFETY: `fd` is a live descriptor owned by the caller for this call.
         let raw = unsafe { acl_get_fd_np(fd, ACL_TYPE_EXTENDED) };
         if raw.is_null() {
