@@ -2330,37 +2330,62 @@ mod tests {
         // left: Tavily gets (8 - 6) / 2 = 1 s, SerpAPI (7 - 5) = 2 s, public
         // Google waits out the pace and gets ~3 s. With no reserve the two keyed
         // hops get 4 s each and public Google nothing. `budget_ms` is the
-        // discriminator, computed before any request leaves.
-        let tv = chain::tavily().await;
-        let serp = chain::serpapi().await;
-        let google = chain::google().await;
-        let chain = chain::Chain::new(
-            "web: {request_seconds: 8, pace_ms: 5000, search: {provider: tavily, fallback_to_serpapi: true, fallback_to_public_google: true}}",
-            "slow", &serp, Some(&google),
-        ).await.with_tavily("slow", &tv);
-        *chain.web.public_search_sent.lock().unwrap() = Some(tokio::time::Instant::now());
-        let started = tokio::time::Instant::now();
-        let result = chain.search("veeam cve").await;
-        let attempts = chain.audit_events("web_search_attempt");
-        assert_eq!(attempts.len(), 3, "{attempts:?}");
-        let budget = |index: usize| attempts[index]["budget_ms"].as_u64().unwrap();
-        for (index, provider) in ["tavily", "google-serpapi"].into_iter().enumerate() {
-            assert_eq!(attempts[index]["provider"], provider);
-            assert_eq!(attempts[index]["code"], "WEB_TIMEOUT");
+        // discriminator, computed before any request leaves, and it is checked
+        // on every try.
+        //
+        // Whether a keyed hop's request left inside its 1 s or 2 s is wall
+        // clock: a paid hop reserves its unit in the ledger first, and on a new
+        // home that is the schema, the marker and the reservation, 13 fsyncs
+        // (measured). At 100 ms each the Tavily hop times out with nothing
+        // sent, which is correct for the search and was a failure here. So the
+        // ledger is established before the clock starts (4 fsyncs remain), and
+        // a try where a hop ran out of wall clock before it sent, or public
+        // Google ran out of its own, is repeated on a fresh chain. A hop that
+        // sends twice fails at once; one that never sends fails the last try.
+        const TRIES: usize = 3;
+        let yaml = "web: {request_seconds: 8, pace_ms: 5000, search: {provider: tavily, fallback_to_serpapi: true, fallback_to_public_google: true}}";
+        let hits = |fixture: &chain::Fixture| fixture.hits.load(std::sync::atomic::Ordering::SeqCst);
+        for attempt in 1..=TRIES {
+            let tv = chain::tavily().await;
+            let serp = chain::serpapi().await;
+            let google = chain::google().await;
+            let chain = chain::Chain::new(yaml, "slow", &serp, Some(&google))
+                .await
+                .with_tavily("slow", &tv);
+            assert_eq!(
+                chain.web.units.used(super::super::web_units::Paid::Tavily, 0).unwrap(),
+                0
+            );
+            *chain.web.public_search_sent.lock().unwrap() = Some(tokio::time::Instant::now());
+            let started = tokio::time::Instant::now();
+            let result = chain.search("veeam cve").await;
+            let elapsed = started.elapsed();
+            let attempts = chain.audit_events("web_search_attempt");
+            assert_eq!(attempts.len(), 3, "{attempts:?}");
+            let budget = |index: usize| attempts[index]["budget_ms"].as_u64().unwrap();
+            for (index, provider) in ["tavily", "google-serpapi"].into_iter().enumerate() {
+                assert_eq!(attempts[index]["provider"], provider);
+                assert_eq!(attempts[index]["code"], "WEB_TIMEOUT");
+            }
+            assert!(
+                budget(0) + budget(1) <= 7000,
+                "the keyed hops must leave public Google its reserve: {attempts:?}"
+            );
+            assert_eq!(attempts[2]["provider"], "google-public");
+            assert!(budget(2) > 0, "{attempts:?}");
+            assert!(elapsed < Duration::from_secs(8), "{elapsed:?}");
+            assert!(hits(&tv) <= 1 && hits(&serp) <= 1 && hits(&google) <= 1, "{attempts:?}");
+            let stalled = hits(&tv) == 0 || hits(&serp) == 0 || attempts[2]["code"] == "WEB_TIMEOUT";
+            if stalled && attempt < TRIES {
+                eprintln!("try {attempt}: a hop ran out of wall clock; retrying: {attempts:?}");
+                continue;
+            }
+            let value = result.unwrap();
+            assert_eq!(value["provider"], "google-public");
+            assert_eq!(value["fallback_from"], json!(["tavily", "google-serpapi"]));
+            assert_eq!((hits(&tv), hits(&serp), hits(&google)), (1, 1, 1), "{attempts:?}");
+            return;
         }
-        assert!(
-            budget(0) + budget(1) <= 7000,
-            "the keyed hops must leave public Google its reserve: {attempts:?}"
-        );
-        assert_eq!(attempts[2]["provider"], "google-public");
-        assert!(budget(2) > 0, "{attempts:?}");
-        let value = result.unwrap();
-        assert_eq!(value["provider"], "google-public");
-        assert_eq!(value["fallback_from"], json!(["tavily", "google-serpapi"]));
-        assert_eq!(tv.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert_eq!(google.hits.load(std::sync::atomic::Ordering::SeqCst), 1);
-        assert!(started.elapsed() < Duration::from_secs(8));
     }
 
     #[tokio::test]
