@@ -67,7 +67,8 @@ within the same URL cap, with a separate literal-true gate. These are
 ephemeral grants, subject to policy, DNS,
 redirect and account rechecks. Operators use URL policy only. A model-composed
 URL allowed solely by a wildcard requires live administrator approval under
-`web.fetch_provenance`. See [chat web tools](SECURE_RESEARCH.md#chat-web-tools).
+`web.fetch_provenance`. A URL the message or goal wrote is not composed,
+whatever its scheme case or trailing punctuation and markdown marks. See [chat web tools](SECURE_RESEARCH.md#chat-web-tools).
 
 Local reads use pinned egress, bundled roots and handle text-bearing PDFs in
 `pdf-text-worker`. Opt-in Firecrawl sees only an exact eligible URL after
@@ -132,8 +133,5 @@ web enablement rechecks after waits limit both dispatch and delivery. See
 [config](../assets/config.default.yaml) for active defaults and ranges.
 
 Fixtures exercise provider fallback, malformed batches, policy revocation,
-late passages, refresh, digest rejection and two-turn receipt reuse. A
-historical 32K MLX run retrieved a late RFC section with one read across two
-turns. Another run quoted IANA correctly but overstated what the text
-established. Use separate receipts for authenticated-provider availability,
+late passages, refresh, digest rejection and two-turn receipt reuse. Use separate receipts for authenticated-provider availability,
 credit usage and semantic accuracy. See [invariants](../INVARIANTS.md#public-web-evidence-requires-current-content-permission).
