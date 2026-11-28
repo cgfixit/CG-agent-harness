@@ -194,23 +194,26 @@ pub async fn web_status(
     Ok(Json(status))
 }
 
-/// Change one console setting the way `model_select` does: mutate a copy under
-/// the settings lock, save it, and publish it only after the save succeeded, so
-/// a failed save leaves the live value unchanged and concurrent toggles cannot
-/// save out of order. The fsync'd write runs off the async workers.
+/// Change one console setting the way `model_select` does: mutate a copy, save
+/// it, and publish it only after the save succeeded, so a failed save leaves the
+/// live value unchanged. `settings_save` orders the writers, so concurrent
+/// toggles cannot save out of order or lose one another's change; the settings
+/// lock is held only to copy and to publish, never across the fsync'd write, so
+/// readers (`current_model`, the web switch) never wait for a save. The write
+/// runs off the async workers.
 pub(crate) async fn commit_setting(
     state: &Arc<AppState>,
     change: impl FnOnce(&mut crate::common::home::HarnessSettings) + Send + 'static,
 ) -> ApiResult<crate::common::home::HarnessSettings> {
     let state = state.clone();
     super::structured_memory::off_worker(move || {
-        let mut s = state.settings.lock().unwrap_or_else(|p| p.into_inner());
-        let mut snapshot = s.clone();
+        let _order = state.settings_save.lock().unwrap_or_else(|p| p.into_inner());
+        let mut snapshot = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
         change(&mut snapshot);
         snapshot
             .save(&state.home)
             .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-        *s = snapshot.clone();
+        *state.settings.lock().unwrap_or_else(|p| p.into_inner()) = snapshot.clone();
         Ok(snapshot)
     })
     .await
@@ -892,4 +895,94 @@ fn harness_runs_report(state: &AppState) -> Json<Value> {
         .map(|(_, stem)| json!({"run_id": stem}))
         .collect();
     Json(json!({"count": runs.len(), "runs": runs}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A settings save holds the save order, not the settings lock: a reader
+    /// on another thread gets the current value while the save is in flight.
+    /// `change` stands in for the fsync'd write, which runs in the same window.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn settings_readers_do_not_wait_for_a_save_in_flight() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = crate::common::home::Home::at(dir.path().to_path_buf());
+        let (_, state) = crate::server::build_app(crate::server::AppOptions::new(home))
+            .await
+            .unwrap();
+        let before = state.settings.lock().unwrap().web_enabled;
+        let (entered, in_save) = std::sync::mpsc::channel::<()>();
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let save = tokio::spawn({
+            let state = state.clone();
+            async move {
+                commit_setting(&state, move |s| {
+                    entered.send(()).unwrap();
+                    held.recv().unwrap();
+                    s.web_enabled = !s.web_enabled;
+                })
+                .await
+            }
+        });
+        in_save.recv().unwrap();
+        // Timed on an OS thread: a tokio timer stalled here on the old design,
+        // where the runtime's own workers can wait on the same lock.
+        let (read_tx, read_rx) = std::sync::mpsc::channel();
+        let reader = state.clone();
+        std::thread::spawn(move || {
+            let _ = read_tx.send(reader.settings.lock().unwrap().web_enabled);
+        });
+        let read = read_rx.recv_timeout(std::time::Duration::from_secs(2));
+        release.send(()).unwrap();
+        let saved = save.await.unwrap().unwrap();
+        assert_eq!(read.ok(), Some(before), "a reader waited for the save");
+        assert_eq!(saved.web_enabled, !before);
+        assert_eq!(
+            state.settings.lock().unwrap().web_enabled,
+            !before,
+            "published after the save"
+        );
+    }
+
+    /// Writers are still ordered: concurrent changes to different fields all
+    /// land, in memory and on disk, though none holds the settings lock while
+    /// it saves.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_setting_changes_are_not_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = crate::common::home::Home::at(dir.path().to_path_buf());
+        let (_, state) = crate::server::build_app(crate::server::AppOptions::new(home.clone()))
+            .await
+            .unwrap();
+        let start = state.settings.lock().unwrap().clone();
+        let mut writers = Vec::new();
+        for round in 0..10 {
+            for field in 0..2 {
+                let state = state.clone();
+                writers.push(tokio::spawn(async move {
+                    commit_setting(&state, move |s| match field {
+                        0 => s.web_enabled = !s.web_enabled,
+                        _ => s.memory_enabled = !s.memory_enabled,
+                    })
+                    .await
+                    .map(|_| round)
+                }));
+            }
+        }
+        for writer in writers {
+            writer.await.unwrap().unwrap();
+        }
+        // Ten flips each: back where they started, only if no flip was lost.
+        let live = state.settings.lock().unwrap().clone();
+        assert_eq!(
+            (live.web_enabled, live.memory_enabled),
+            (start.web_enabled, start.memory_enabled)
+        );
+        let saved = crate::common::home::HarnessSettings::load(&home).unwrap();
+        assert_eq!(
+            (saved.web_enabled, saved.memory_enabled),
+            (start.web_enabled, start.memory_enabled)
+        );
+    }
 }

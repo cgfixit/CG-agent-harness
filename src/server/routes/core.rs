@@ -727,10 +727,10 @@ pub async fn model_select(
     if cloud.is_none() {
         refuse_remote_ollama(&state, &model).await?;
     }
-    // The settings save is fsync'd under the settings lock: run it, with the
-    // checks and publication it orders, off the async workers (as
-    // `panels::commit_setting` does), so other settings readers never park a
-    // worker behind it.
+    // The settings save is fsync'd: run it, with the checks and publication it
+    // orders, off the async workers. As in `panels::commit_setting`,
+    // `settings_save` orders it against other writers and the settings lock is
+    // held only to copy and to publish, so readers never wait for the write.
     let (from_provider, result) = {
         let (state, owner, cloud) = (Arc::clone(&state), owner.clone(), cloud.clone());
         let (selected, model, to_provider, confirm) =
@@ -751,9 +751,9 @@ pub async fn model_select(
                         StatusCode::CONFLICT,
                         "change the model after it finishes",
                     ))?;
-                let mut s = state.settings.lock().unwrap_or_else(|p| p.into_inner());
-                from_provider = state.provider_for(&s.selected_model);
-                let mut snapshot = s.clone();
+                let _order = state.settings_save.lock().unwrap_or_else(|p| p.into_inner());
+                let mut snapshot = state.settings.lock().unwrap_or_else(|p| p.into_inner()).clone();
+                from_provider = state.provider_for(&snapshot.selected_model);
                 snapshot.selected_model = if selected.eq_ignore_ascii_case("local") {
                     String::new()
                 } else if cloud.is_some() {
@@ -772,7 +772,10 @@ pub async fn model_select(
                 snapshot
                     .save(&state.home)
                     .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-                *s = snapshot;
+                // Published with its consent change under one settings lock, as
+                // before: no reader sees the new selection without its consent.
+                let mut live = state.settings.lock().unwrap_or_else(|p| p.into_inner());
+                *live = snapshot;
                 let mut consents = state.cloud_consents.lock().unwrap_or_else(|p| p.into_inner());
                 if cloud.is_some() {
                     consents.insert((owner.clone(), to_provider.clone()));
