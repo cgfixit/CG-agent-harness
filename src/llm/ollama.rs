@@ -68,44 +68,60 @@ pub fn native_base_url(endpoint: &str) -> Option<String> {
     }
 }
 
-/// Ollama library names: `name`, `ns/name`, optional `:tag`. No URLs or paths.
+/// A name's body and tag. The tag ends the last path segment: a registry host
+/// may carry a port (`localhost:5000/library/big:q8`), so the first `:` is not
+/// always the tag's.
+fn split_tag(name: &str) -> (&str, Option<&str>) {
+    let last = name.rfind('/').map_or(0, |slash| slash + 1);
+    match name[last..].find(':') {
+        Some(colon) => (&name[..last + colon], Some(&name[last + colon + 1..])),
+        None => (name, None),
+    }
+}
+
+/// Ollama names: `name`, `ns/name` or `host/ns/name`, optional `:tag`. Only a
+/// three-segment name's host may carry a `:port` (`localhost:5000/library/big`),
+/// as `ollama pull` writes one. No URLs or paths.
 pub fn model_name_ok(name: &str) -> bool {
     let name = name.trim();
     if name.is_empty() || name.len() > MAX_MODEL_NAME {
         return false;
     }
-    let (body, tag) = match name.split_once(':') {
-        Some((body, tag)) => (body, Some(tag)),
-        None => (name, None),
-    };
+    let (body, tag) = split_tag(name);
     if let Some(tag) = tag {
         if tag.is_empty() || !tag_token(tag) {
             return false;
         }
     }
-    let mut parts = body.split('/');
-    let Some(first) = parts.next() else {
+    let segments: Vec<&str> = body.split('/').collect();
+    let Some((first, rest)) = segments.split_first() else {
         return false;
     };
-    if !tag_token(first) {
-        return false;
-    }
-    parts.all(tag_token)
+    let first_ok = match first.split_once(':') {
+        Some((host, port)) => segments.len() == 3 && tag_token(host) && port.parse::<u16>().is_ok_and(|port| port > 0),
+        None => tag_token(first),
+    };
+    first_ok && rest.iter().all(|segment| tag_token(segment))
 }
 
 /// A name `/api/pull` may fetch: [`model_name_ok`] with at most `ns/name`.
 /// Ollama reads a third segment as `host/ns/name` and dials that host, so a
 /// pull of such a name reaches any registry, loopback or LAN address
 /// included. Inventory and warmup keep host-qualified names an operator
-/// pulled outside the harness; neither contacts a registry.
+/// pulled outside the harness; neither contacts a registry. Segments are
+/// counted before the last segment's tag, so a host's `:port` cannot hide one.
 pub fn pull_name_ok(name: &str) -> bool {
-    model_name_ok(name)
-        && !cloud_tag(name)
-        && name
-            .trim()
-            .split(':')
-            .next()
-            .is_some_and(|body| body.split('/').count() <= 2)
+    model_name_ok(name) && !cloud_tag(name) && split_tag(name.trim()).0.split('/').count() <= 2
+}
+
+/// The backend's own credential (`models.local_llm.api_key`), sent as chat
+/// sends it on every native call: `native` is the same loopback origin as the
+/// chat endpoint, so an authenticated loopback proxy answers each of them.
+pub(crate) fn with_backend_key(request: reqwest::RequestBuilder, api_key: &str) -> reqwest::RequestBuilder {
+    match api_key.trim() {
+        "" => request,
+        key => request.bearer_auth(key),
+    }
 }
 
 /// Whether `name` is an Ollama cloud model (`gpt-oss:120b-cloud`,
@@ -189,10 +205,7 @@ pub fn show_payload(model: &str) -> Value {
 /// as chat sends it: `native` is the same origin as the chat endpoint.
 pub async fn refuse_remote_model(native: &str, model: &str, limits: InventoryLimits, api_key: &str) -> Result<()> {
     let client = http_client(limits.timeout)?;
-    let mut request = client.post(format!("{native}/api/show")).json(&show_payload(model));
-    if !api_key.trim().is_empty() {
-        request = request.bearer_auth(api_key.trim());
-    }
+    let request = with_backend_key(client.post(format!("{native}/api/show")), api_key).json(&show_payload(model));
     match bounded_json(request, limits.max_bytes).await {
         Bounded::Json(body) => refuse_unless_shown_local(ShowRead::Body(&body)),
         Bounded::Status(code) => refuse_unless_shown_local(ShowRead::Status(code)),
@@ -288,9 +301,10 @@ pub(crate) async fn bounded_json(request: reqwest::RequestBuilder, max_bytes: us
 /// Installed tags from `GET /api/tags`; never echoes provider text. `None`
 /// when the query fails, times out, or returns an oversized or malformed body,
 /// so an outage is not reported as an empty install.
-pub async fn list_tags(native: &str, limits: InventoryLimits) -> Option<Vec<Value>> {
+pub async fn list_tags(native: &str, limits: InventoryLimits, api_key: &str) -> Option<Vec<Value>> {
     let client = http_client(limits.timeout).ok()?;
-    let Bounded::Json(value) = bounded_json(client.get(format!("{native}/api/tags")), limits.max_bytes).await else {
+    let request = with_backend_key(client.get(format!("{native}/api/tags")), api_key);
+    let Bounded::Json(value) = bounded_json(request, limits.max_bytes).await else {
         return None;
     };
     let rows = value.get("models")?.as_array()?;
@@ -321,11 +335,12 @@ pub enum LoadedWindow {
     Unknown,
 }
 
-pub async fn loaded_window_state(native: &str, model: &str, limits: InventoryLimits) -> LoadedWindow {
+pub async fn loaded_window_state(native: &str, model: &str, limits: InventoryLimits, api_key: &str) -> LoadedWindow {
     let Ok(client) = http_client(limits.timeout) else {
         return LoadedWindow::Unknown;
     };
-    let Bounded::Json(body) = bounded_json(client.get(format!("{native}/api/ps")), limits.max_bytes).await else {
+    let request = with_backend_key(client.get(format!("{native}/api/ps")), api_key);
+    let Bounded::Json(body) = bounded_json(request, limits.max_bytes).await else {
         return LoadedWindow::Unknown;
     };
     if !body["models"].is_array() {
@@ -342,15 +357,14 @@ pub async fn loaded_window_state(native: &str, model: &str, limits: InventoryLim
 
 /// Load `model` with an empty generate (the `keep_alive` warmup request; never
 /// `num_ctx`), so Ollama picks the window it will serve it with. True on a 2xx.
-pub async fn load_model(native: &str, model: &str, keep_alive_sec: u64, timeout: Duration) -> bool {
+pub async fn load_model(native: &str, model: &str, keep_alive_sec: u64, timeout: Duration, api_key: &str) -> bool {
     if !model_name_ok(model) {
         return false;
     }
     let Ok(client) = http_client(timeout) else {
         return false;
     };
-    client
-        .post(format!("{native}/api/generate"))
+    with_backend_key(client.post(format!("{native}/api/generate")), api_key)
         .json(&warmup_payload(model, keep_alive_sec))
         .send()
         .await
@@ -370,7 +384,7 @@ pub async fn snapshot(endpoint: &str, model: &str, key: &str, cfg: &AppConfig) -
     let limits = InventoryLimits::from_config(cfg)?;
     // `snapshot` runs only for provider "ollama" (`routes::ollama::refresh_inventory`).
     let readiness = model_readiness_for("ollama", endpoint, model, key, limits).await;
-    let models = list_tags(&native, limits).await;
+    let models = list_tags(&native, limits, key).await;
     Ok(json!({
         "endpoint": native,
         "configured_model": model,
@@ -414,7 +428,7 @@ pub async fn run_warmup(backend: &ResolvedLocalBackend, model: &str, cfg: &AppCo
     }
     let keep_alive = cfg.limit("models.local_llm.warmup.keep_alive_sec");
     let timeout = Duration::from_secs(cfg.limit("models.local_llm.warmup.timeout_sec"));
-    if load_model(&native, model, keep_alive, timeout).await {
+    if load_model(&native, model, keep_alive, timeout, &backend.api_key).await {
         tracing::info!(model = model, "ollama keep_alive warmup ok");
         audit.log(json!({"event":"ollama_warmup_ok","model":model}));
     } else {
@@ -430,6 +444,7 @@ pub async fn pull_model(
     native: &str,
     model: &str,
     limits: PullLimits,
+    api_key: &str,
     cancel: CancellationToken,
     mut on_event: impl FnMut(Value),
 ) -> Result<()> {
@@ -439,7 +454,7 @@ pub async fn pull_model(
     let payload = pull_payload(model);
     debug_assert!(!payload.to_string().contains("num_ctx"));
     let client = pull_client(limits.timeout)?;
-    let request = client.post(format!("{native}/api/pull")).json(&payload);
+    let request = with_backend_key(client.post(format!("{native}/api/pull")), api_key).json(&payload);
     let response = tokio::select! {
         _ = cancel.cancelled() => return Err(static_err("pull aborted")),
         response = tokio::time::timeout(limits.timeout, request.send()) => response
@@ -530,8 +545,113 @@ mod tests {
             max_bytes: 1 << 16,
         };
         let native = format!("http://127.0.0.1:{port}"); // DevSkim: ignore DS162092 because this unit test needs a refused loopback origin.
-        assert!(list_tags(&native, limits).await.is_none());
+        assert!(list_tags(&native, limits, "").await.is_none());
         drop(reserved);
+    }
+
+    /// Every native call carries the backend's own key, as the `/api/show`
+    /// check does: an authenticated loopback proxy that answers 401 without it
+    /// otherwise lists nothing, loads nothing and pulls nothing.
+    #[tokio::test]
+    async fn native_calls_carry_the_backend_key() {
+        use axum::{http::HeaderMap, routing::get, routing::post, Json, Router};
+        fn keyed(headers: &HeaderMap) -> bool {
+            headers.get("authorization").and_then(|v| v.to_str().ok()) == Some("Bearer k")
+        }
+        let deny = || {
+            (
+                axum::http::StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "unauthorized"})),
+            )
+        };
+        let ok = |body: Value| (axum::http::StatusCode::OK, Json(body));
+        let app = Router::new()
+            .route(
+                "/api/tags",
+                get(move |h: HeaderMap| async move {
+                    if keyed(&h) { ok(json!({"models":[{"name":"tinyllama:latest","size":1}]})) } else { deny() }
+                }),
+            )
+            .route(
+                "/api/ps",
+                get(move |h: HeaderMap| async move {
+                    if keyed(&h) { ok(json!({"models":[{"name":"tinyllama:latest","model":"tinyllama:latest","context_length":8192}]})) } else { deny() }
+                }),
+            )
+            .route(
+                "/api/generate",
+                post(move |h: HeaderMap| async move { if keyed(&h) { ok(json!({"done":true})) } else { deny() } }),
+            )
+            .route(
+                "/api/pull",
+                post(move |h: HeaderMap| async move { if keyed(&h) { ok(json!({"status":"success"})) } else { deny() } }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because this unit test serves a loopback Ollama fixture.
+        let native = format!("http://{}", listener.local_addr().unwrap()); // DevSkim: ignore DS137138 because this unit test reaches only its own loopback fixture.
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let limits = InventoryLimits {
+            timeout: Duration::from_secs(5),
+            max_bytes: 1 << 16,
+        };
+        let pull = PullLimits {
+            timeout: Duration::from_secs(5),
+            max_bytes: 1 << 16,
+        };
+        let timeout = Duration::from_secs(5);
+        let token = CancellationToken::new;
+        assert!(
+            list_tags(&native, limits, "").await.is_none(),
+            "the fixture refuses an unkeyed read"
+        );
+        assert!(!load_model(&native, "tinyllama", 60, timeout, "").await);
+        assert!(pull_model(&native, "tinyllama", pull, "", token(), |_| {})
+            .await
+            .is_err());
+        assert_eq!(list_tags(&native, limits, "k").await.map(|rows| rows.len()), Some(1));
+        assert_eq!(
+            loaded_window_state(&native, "tinyllama:latest", limits, "k").await,
+            LoadedWindow::Loaded(8192)
+        );
+        assert!(load_model(&native, "tinyllama", 60, timeout, " k ").await);
+        assert!(pull_model(&native, "tinyllama", pull, "k", token(), |_| {})
+            .await
+            .is_ok());
+    }
+
+    /// A registry host may carry a port (`ollama pull localhost:5000/library/big`):
+    /// inventory and warmup keep that name, a pull still refuses any host.
+    #[test]
+    fn a_registry_host_with_a_port_is_a_model_name_but_never_a_pull() {
+        for name in [
+            "localhost:5000/library/big:q8",
+            "localhost:5000/library/big",
+            "registry.example.invalid:443/ns/model:tag",
+        ] {
+            assert!(model_name_ok(name), "{name}");
+            assert!(!pull_name_ok(name), "{name}");
+        }
+        for name in [
+            "localhost:5000/big",
+            "localhost:5000/a/b/c",
+            "localhost:/library/big",
+            "localhost:0/library/big",
+            "localhost:99999/library/big",
+            "localhost:x/library/big",
+            "a:b:c",
+            "library/big:q8:x",
+        ] {
+            assert!(!model_name_ok(name), "{name}");
+            assert!(!pull_name_ok(name), "{name}");
+        }
+        assert_eq!(
+            split_tag("localhost:5000/library/big:q8"),
+            ("localhost:5000/library/big", Some("q8"))
+        );
+        assert_eq!(
+            split_tag("localhost:5000/library/big"),
+            ("localhost:5000/library/big", None)
+        );
+        assert_eq!(split_tag("qwen3.8:27b"), ("qwen3.8", Some("27b")));
     }
 
     #[test]

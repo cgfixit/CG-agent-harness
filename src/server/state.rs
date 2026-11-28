@@ -454,7 +454,7 @@ impl AppState {
         {
             return;
         }
-        if crate::llm::ollama::load_model(&native, model, keep_alive, timeout).await {
+        if crate::llm::ollama::load_model(&native, model, keep_alive, timeout, &self.chat.api_key).await {
             self.probe_window_state(model).await;
         }
     }
@@ -478,7 +478,7 @@ impl AppState {
         // A turn may hold the generation gate here: a loopback /api/ps answers in
         // milliseconds, so a slow one is skipped (and cached) rather than waited on.
         limits.timeout = limits.timeout.min(WINDOW_PROBE_TIMEOUT);
-        let state = crate::llm::ollama::loaded_window_state(&native, model, limits).await;
+        let state = crate::llm::ollama::loaded_window_state(&native, model, limits, &self.chat.api_key).await;
         let window = match state {
             LoadedWindow::Loaded(window) => Some(window),
             _ => None,

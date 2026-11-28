@@ -569,13 +569,14 @@ pub async fn tune(state: Arc<AppState>, model: String) {
                 keep_alive,
                 MEASURE_TIMEOUT,
                 limits.max_bytes,
+                &state.backend.api_key,
             )
             .await;
             break;
         }
         tokio::time::sleep(GATE_RETRY).await;
     }
-    let probed = profile::probe(&state.backend.base_url, &model, limits).await;
+    let probed = profile::probe(&state.backend.base_url, &model, limits, &state.backend.api_key).await;
     if probed["state"] != "profiled" {
         return skipped(probed["state"].as_str().unwrap_or("unavailable"));
     }
