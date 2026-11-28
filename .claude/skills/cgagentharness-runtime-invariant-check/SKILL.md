@@ -14,7 +14,7 @@ checks the supplied implementation; it authorizes no policy change.
 
 | Boundary | Current contract | Runnable evidence |
 |---|---|---|
-| I6 | Server/common/LLM/shim never call pipeline code; only shim spawns the whitelisted child | `cargo test --locked --test invariant_guard` |
+| I6 | Server, shim, LLM, common and netconnect never reference pipeline code (`SERVER_SIDE`); only shim spawns the whitelisted child | `cargo test --locked --test invariant_guard` |
 | Requests | Exact origin, direct loopback/no proxy, rate, mutation CSRF; account roles resolve through `routes::ROUTE_CAPS` and `common::authz`, an unlisted route or method is denied, and a handler role check calls `authz` or is pinned | `cargo test --locked --test auth_guards --test secure_portal --test security_headers`; `cargo test --locked --lib -- route_cap authz`; `cargo test --locked --test invariant_guard account_role_comparisons_stay_pinned_to_authz` |
 | Browser arguments | Fixed check-profile names, bounded arguments, no arbitrary command; reason/confirm explicit | `cargo test --locked --test shim_and_agent_routes` |
 | Default configuration | Master/deepagent/clone-write gates false; fresh auth/TLS and web settings true, URL allowlist seeded with only `https://www.google.com/*`; existing choices retained; quoted security switches invalid | `cargo test --locked --test invariant_guard --test common_layer` |

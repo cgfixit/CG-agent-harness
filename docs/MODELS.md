@@ -9,8 +9,7 @@ derived tag. For Ollama.app, use `launchctl setenv OLLAMA_CONTEXT_LENGTH 32768`,
 then quit and relaunch. After a short generate on the exact tag, check
 `context_length` in `/api/ps`. Inventory and tag names alone prove neither
 loaded context nor inference backend. For a smaller manually managed
-window, reduce the web budgets and inspect `/model profile` before using
-long research turns.
+window, reduce the web budgets and inspect `/model profile` first.
 
 ```bash
 curl --fail --silent --show-error http://127.0.0.1:11434/api/generate \
@@ -38,16 +37,19 @@ their tags; warmup and `auto_tune` skip them: `:cloud`/`-cloud` tags (behind
 ### Exact-model diagnostics and optional fallback
 
 **Setup and recovery → Check installed chat and planner models** probes
-`/models`. `installed` means the exact tag was listed. `tag_missing` means
-inventory answered without it. `unavailable` means the probe failed.
+`/models`. `installed` means the tag was listed: exactly, or for an Ollama
+provider as Ollama lists it (`llama3.2` is `llama3.2:latest`; `library/` and
+`registry.ollama.ai/` are dropped). `tag_missing` means inventory answered
+without it. `unavailable` means the probe failed.
 `not_probed` means the endpoint or provider is ineligible. The console offers
 terminal pull commands. `POST /api/ollama/pull` uses an idle deadline.
 
 `/model profile` reports declared and loaded context and effective limits.
-`auto_tune` measures a short local generate at startup and on selection.
+`auto_tune` measures a short local generate at startup and on selection:
+latency and the loaded window.
 It tightens token budgets below 32768, tunes eligible timeouts and suppresses
 tools for models declaring no support. Larger windows allow configured
-increases. The short sample measures latency and reads the loaded window.
+increases.
 Chat and eligible synthesis deadlines can scale up to one hour. Discovery
 planning accounts for cold load, planning rounds and one bounded crawl.
 `/model use local` restores the configured backend. Optional
@@ -58,9 +60,8 @@ primary. Re-evaluation requires restart.
 Cloud chat (`grok|xai`, `claude|anthropic`) needs an enabled provider, active
 key and per-account confirmation each server run. It sends only the new
 message, resets to local at restart and is unavailable in `/loop`. Optional
-cloud profiles tighten shared limits. A truncated response fails without
+cloud profiles (restart settings) tighten shared limits. A truncated response fails without
 saving the turn. `/model status` reports provider and key presence.
 The model service performs inference under the exact resolved tag.
-Cloud profiles and the optional local fallback are restart settings.
 See [config](../assets/config.default.yaml) and
 [spend](SPEND_AND_NOTIFICATIONS.md).
