@@ -5,10 +5,10 @@ description: Build and verify macOS Harness release artifacts, native acceptance
 
 # Release the macOS desktop
 
-Follow the desktop and release guides linked from `AGENTS.md`. Read
-`scripts/package-desktop.sh`, `scripts/verify-desktop-bundle.sh` and the
-current workflows. Build committed source for `Resources/COMMIT` provenance.
-`CGAH_ALLOW_DIRTY=1` marks development artifacts.
+Follow the desktop and release guides in `AGENTS.md`. Package committed
+source for `Resources/COMMIT` provenance. `CGAH_ALLOW_DIRTY=1` marks development
+artifacts. CLI archives use `scripts/package-release.sh`, which checks
+extracted payload hashes and runs `scripts/smoke-packaged-cli.py`.
 
 On Apple Silicon with Xcode CLT, use both pinned rustup toolchains and
 install both Apple targets for each. Run `scripts/package-desktop.sh --universal`
@@ -31,13 +31,12 @@ chat, a guarded action and shutdown. For `/browse`, use a prepared absolute
 evidence separately. Follow operator authority for Rosetta or TCC changes.
 
 Match workflow, source SHA, artifact COMMIT, version and checksum.
-`desktop-check.yml` compiles matching PRs. Use authorized `desktop.yml`
-dispatch for an unmerged artifact. A successful main Bundle triggers release
-planning. Check SHA eligibility and stable tags in `release.yml` and
-`scripts/release-plan.py`. After the publish wait, the recheck can supersede a
-release if main's workflows changed. Inspect runs, tags and releases
-before dispatch. Preserve assets after ambiguous publication. Publish only
-with explicit authority.
+Check the path selector and compile steps in `desktop-check.yml`. Use
+authorized `desktop.yml` dispatch for an unmerged artifact. Check
+`release.yml` and `scripts/release-plan.py` for main Bundle eligibility,
+tag collisions and the post-wait supersession check. Inspect runs, tags
+and releases before dispatch. Preserve assets after ambiguous publication.
+Publish only with explicit authority.
 
 Report ad-hoc signature and checksum integrity separately from Developer ID,
 notarization and independent publisher identity.

@@ -10,17 +10,18 @@ effects. Select refusal tests from `cgagentharness-invariant-guard`.
 
 - CLI/server: isolate home and listener. Match process, binary and assets.
 - Isolation: verify the actual Seatbelt or bubblewrap backend.
-- Research: inspect extraction, citations, completion and refusals.
-- Browser: `scripts/chat-browser-acceptance.mjs` uses a mock API.
-  `node scripts/browse-console-acceptance.mjs <test-support-binary>` drives
-  takeover and rediscovery with real Chrome/server and a scripted model.
-  Use `scripts/browser-use-eval.sh` for sidecar fixtures and local-model
-  acceptance. Prepare Playwright/Chrome; run unprivileged with sandbox on.
+- Research: verify URL provenance, extraction, citations and refusals.
+- Browser: `node scripts/test-browse-watch.mjs` exercises retry and job
+  recovery in the console script. `scripts/chat-browser-acceptance.mjs`
+  mocks the API. `node scripts/browse-console-acceptance.mjs <test-support-binary>`
+  tests takeover and rediscovery with Chrome/server and a scripted model.
+  For sidecar or local-model runs,
+  use `scripts/browser-use-eval.sh`. Keep Chrome sandboxed and unprivileged.
 - Desktop: use `cgagentharness-release` for identity and native acceptance.
-- Models: record live tag and allocation.
+- Models: record the live tag and allocation. Exercise `/api/show`
+  responses when verifying Ollama locality.
 - Docs: run `invariant_guard::markdown_stays_on_the_docs_budget`. Rebuild
   the manual after input edits. If output changes, run
   `self_manual::every_chunk_is_clean_under_the_configured_scanner`.
 
-Record SHA, artifact hashes, commands, exits and gaps. Zero selected tests
-means NOT RUN.
+Record SHA, artifacts, commands, exits and gaps. Zero tests is NOT RUN.
