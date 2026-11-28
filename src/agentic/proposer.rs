@@ -10,6 +10,14 @@ use serde_json::{json, Value};
 use crate::common::audit::Audit;
 use crate::common::errors::{HarnessError, Result};
 
+/// The longest one `/api/show` read may take. The read comes before every
+/// planner request and once before the clone, on a loopback origin that
+/// answers in milliseconds. Without its own bound it shared the planner
+/// timeout, which the shim's `real-repo-run` budget counts once per iteration:
+/// a stalled read then spent a second planner timeout the budget never held.
+/// `tests/shim_and_agent_routes.rs` adds this to the child's bounds.
+pub const OLLAMA_SHOW_TIMEOUT_SEC: u64 = 5;
+
 /// What the loop reads off a planner response: only `content`.
 pub trait ProposerClient {
     fn invoke(
@@ -106,6 +114,7 @@ impl<'a> LocalProposerClient<'a> {
         let mut request = self
             .http
             .post(format!("{native}/api/show"))
+            .timeout(Duration::from_secs(OLLAMA_SHOW_TIMEOUT_SEC))
             .json(&show_payload(&self.model));
         // The same origin and credential the planner's chat requests use.
         if !self.api_key.is_empty() {
