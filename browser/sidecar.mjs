@@ -91,6 +91,19 @@ let pendingApproval = null;
 let askedThisOp = false;
 // Answers the open question no, as its wait running out would.
 let withdrawQuestion = null;
+// True when the parent reads `withdrawn` lines (its `start` says so). An
+// older parent takes any line it does not know for the reply it is waiting on.
+let reportWithdrawn = false;
+// One op's questions share one wait. The parent allows each op its own time
+// plus takeover_wait_ms, once; a click whose page sends one request after
+// another would otherwise wait that long for each and outlast the parent,
+// which then stops the session. So a later question of the same op is asked
+// with the time the earlier ones left, and with under a second left the
+// request is held unasked. Between ops a question has the whole wait.
+// `opStartedAt` is zero between ops.
+let opStartedAt = 0;
+let opWaitedMs = 0;
+const MIN_QUESTION_MS = 1000;
 // Requests asked about, open or decided in the last ALLOWANCE_MS:
 // {method, url, listed, until, withdraw}. A page that closes can let its
 // paused request reach the network gate undecided; the gate matches it
@@ -568,21 +581,40 @@ function digest(bytes) {
 // parent sees what would be sent: method, whole URL, content type, size, the
 // body's SHA-256 and its first characters as text. Anything but a clear yes
 // inside the window is a refusal.
-function operatorAllows(method, url, contentType, body, sha256) {
+function operatorAllows(method, url, contentType, body, sha256, waitMs) {
   return new Promise((resolve) => {
     const id = (questions += 1);
+    const askedAt = performance.now();
     const decide = (allow) => {
+      // Decided once: by the parent's verdict, or here.
+      if (!asked.delete(id)) return;
       clearTimeout(timer);
-      asked.delete(id);
+      // The running op waited on this question since it was asked, or since
+      // the op began when the question was already open then.
+      if (opStartedAt) opWaitedMs += performance.now() - Math.max(askedAt, opStartedAt);
       if (withdrawQuestion === refuse) withdrawQuestion = null;
       resolve(allow === true);
     };
-    const refuse = () => decide(false);
-    const timer = setTimeout(refuse, takeoverWaitMs);
+    // The answer is no without the parent having given one: the wait ran out,
+    // or the request is gone (cancelled, its page closed, or a navigate left
+    // it). The parent is still asking its operator, so it is told: otherwise
+    // it would show a request nobody can approve, and refuse the next
+    // question as a second one, until its own wait ran out.
+    const refuse = () => {
+      if (reportWithdrawn && asked.has(id)) send({ withdrawn: id });
+      decide(false);
+    };
+    const timer = setTimeout(refuse, waitMs);
     asked.set(id, decide);
     withdrawQuestion = refuse;
-    send({ approve: id, method, url, content_type: contentType.slice(0, 200), size: body.length, sha256, preview: body.toString("utf8").slice(0, MAX_PREVIEW_CHARS) });
+    send({ approve: id, wait_ms: waitMs, method, url, content_type: contentType.slice(0, 200), size: body.length, sha256, preview: body.toString("utf8").slice(0, MAX_PREVIEW_CHARS) });
   });
+}
+
+// How long a question asked now may wait, in whole milliseconds: the session's
+// wait, less what the running op has already spent waiting.
+function questionWindow() {
+  return Math.max(0, Math.trunc(takeoverWaitMs - (opStartedAt ? opWaitedMs : 0)));
 }
 
 // Lists a questioned request as the operator's step, once.
@@ -607,7 +639,7 @@ function questionFor(method, url) {
 // left, or a click's new tab was adopted), is never sent by this route: an
 // open question about it ends as a no, as an expired wait does, and a
 // verdict that comes later finds no question. It is listed once.
-async function decideHeld(route, request, method, url) {
+async function decideHeld(route, request, method, url, waitMs) {
   const now = Date.now();
   for (let at = questioned.length - 1; at >= 0; at -= 1) {
     if (questioned[at].until && questioned[at].until <= now) questioned.splice(at, 1);
@@ -635,7 +667,7 @@ async function decideHeld(route, request, method, url) {
     const contentType = (await request.headerValue("content-type").catch(() => null)) ?? "";
     let allow = false;
     if (!gone && !entry.listed) {
-      const answer = operatorAllows(method, url, contentType, body, sha256);
+      const answer = operatorAllows(method, url, contentType, body, sha256, waitMs);
       entry.withdraw = withdrawQuestion;
       allow = (await answer) && !gone && !entry.listed;
     }
@@ -862,6 +894,7 @@ async function start(message) {
   allowPrivate = message.allow_private === true;
   rewriteApproved = message.rewrite_approved_body === true;
   takeoverWaitMs = Math.max(0, Math.min(MAX_TAKEOVER_WAIT_MS, Math.trunc(Number(message.takeover_wait_ms) || 0)));
+  reportWithdrawn = message.report_withdrawn === true;
   const proxyPort = await startProxy();
   profileDir = freshProfile();
   context = await chromium.launchPersistentContext(profileDir, {
@@ -895,11 +928,13 @@ async function start(message) {
       // The model's own action, with takeover on: pause it and ask. So is the
       // one form its click or Enter submits a moment after the op returned.
       // Any other form a page submits by itself is not asked about; it is
-      // held below. The whole URL must fit the question, and only one request
-      // waits at a time.
+      // held below. The whole URL must fit the question, only one request
+      // waits at a time, and the op must have wait left to spend on it.
       const late = lateSubmit(request);
-      if (takeoverWaitMs && (acting || late) && !pendingApproval && url.length <= MAX_URL) {
-        const waiting = decideHeld(route, request, method, url).finally(() => {
+      const waitMs = questionWindow();
+      const worthAsking = waitMs >= Math.min(MIN_QUESTION_MS, takeoverWaitMs);
+      if (takeoverWaitMs && (acting || late) && !pendingApproval && worthAsking && url.length <= MAX_URL) {
+        const waiting = decideHeld(route, request, method, url, waitMs).finally(() => {
           if (pendingApproval === waiting) pendingApproval = null;
         });
         pendingApproval = waiting;
@@ -1238,6 +1273,8 @@ async function answer(message) {
   // A new action or a navigate ends the window the last action left open.
   if (acting || op === "navigate") lateSubmitUntil = 0;
   askedThisOp = false;
+  opStartedAt = performance.now();
+  opWaitedMs = 0;
   let done = false;
   try {
     const result = await handle(message);
@@ -1247,10 +1284,10 @@ async function answer(message) {
     // The action failed after it had already caused these: a request held as
     // the operator's step ends the task, so it is reported with this reply
     // and not with whichever observation comes next, if one does. A question
-    // the action raised is answered or timed out first (takeover_wait_ms at
-    // most, which the parent's call timeout allows for), so its request is
-    // listed here as held or approved. One wait, not a loop: a later question
-    // is the next reply's.
+    // the action raised is answered or timed out first (the op's questions
+    // wait takeover_wait_ms in all, which the parent's call timeout allows
+    // for), so its request is listed here as held or approved. One wait, not
+    // a loop: a later question is the next reply's.
     if (pendingApproval) await pendingApproval;
     send({
       id: message?.id,
@@ -1266,6 +1303,7 @@ async function answer(message) {
     // request has not already been put to the operator.
     if (done && acting && !askedThisOp && SUBMITS.has(op)) lateSubmitUntil = performance.now() + LATE_SUBMIT_MS;
     acting = false;
+    opStartedAt = 0;
   }
 }
 

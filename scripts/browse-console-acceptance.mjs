@@ -40,7 +40,7 @@ const collectorOrigin = 'http://127.0.0.1:' + collector.address().port;
 const BODY = `qty=2 <img src="${collectorOrigin}/leak" onerror="window.BROWSE_INJECTED=1">`;
 const BODY_SHA = createHash('sha256').update(BODY).digest('hex');
 const SHOP = `<!doctype html><h1>SHOP</h1>
-<button onclick="save()">Save order</button><p id="state">idle</p>
+<button onclick="save()">Save order</button><p id="state">idle</p><a href="/late">Late page</a>
 <script>
 function save() {
   fetch('/api/save', {method: 'POST', headers: {'content-type': 'text/plain'}, body: ${JSON.stringify(BODY)}})
@@ -48,13 +48,39 @@ function save() {
     .catch(() => { document.getElementById('state').textContent = 'not saved'; });
 }
 </script>`;
+// A page whose button posts its form 1.5 s after the click: the one late
+// form the task is asked about once the click has returned. Its link loads
+// slowly, so a navigate that leaves the page is still running while the
+// console is checked.
+const LATE = `<!doctype html><h1>LATE</h1>
+<form method="post" action="/api/order"><input name="item" value="tea"></form>
+<button onclick="setTimeout(() => document.forms[0].submit(), 1500)">Order later</button>
+<a href="/slow">Slow page</a>`;
+const THINK_MS = 6000, SLOW_MS = 6000;
+const orders = [];
+let slowAsked = false;
 const saves = [];
 const json = (res, body) => { const data = JSON.stringify(body); res.writeHead(200, {'content-type': 'application/json', 'content-length': Buffer.byteLength(data)}); res.end(data); };
 // The model's next step depends only on what it has seen so far: open the
 // shop (the granted root: provenance refuses a composed URL), click "Save
 // order", then finish. Every job runs the same script.
+// The late case (its task says "order it later"): open the shop, follow its
+// link to the late page, click "Order later", think while the form posts and
+// the question opens, then navigate away.
+const lateCase = messages => messages.some(m => m.role === 'user' && typeof m.content === 'string' && m.content.includes('order it later'));
 const nextStep = messages => {
   const results = messages.filter(m => m.role === 'tool');
+  if (lateCase(messages)) {
+    if (results.length === 0) return {name: 'navigate', arguments: {url: shopOrigin + '/'}};
+    if (results.length === 1) return {name: 'navigate', arguments: {url: shopOrigin + '/late'}};
+    if (results.length === 2) {
+      const seen = JSON.parse(results[1].content || '{}');
+      const button = (seen.elements || []).find(el => el.name === 'Order later');
+      if (button) return {name: 'click', arguments: {ref_id: button.ref_id}};
+    }
+    if (results.length === 3) return {name: 'navigate', arguments: {url: shopOrigin + '/slow'}};
+    return {name: 'finish', arguments: {answer: 'LATE-TASK-DONE'}};
+  }
   if (results.length === 0) return {name: 'navigate', arguments: {url: shopOrigin + '/'}};
   if (results.length === 1) {
     const seen = JSON.parse(results[0].content || '{}');
@@ -73,9 +99,19 @@ const shop = createServer((req, res) => {
     if (req.method === 'POST' && req.url === '/api/show') return json(res, {capabilities: ['completion', 'tools']});
     if (req.method === 'POST' && req.url === '/api/generate') return json(res, {done: true});
     if (req.method === 'POST' && req.url === '/api/chat') {
-      const call = nextStep(JSON.parse(raw).messages || []);
-      return json(res, {message: {role: 'assistant', tool_calls: [{function: call}]}, done: true});
+      const messages = JSON.parse(raw).messages || [];
+      const call = nextStep(messages);
+      const answer = () => json(res, {message: {role: 'assistant', tool_calls: [{function: call}]}, done: true});
+      // The model "thinks" after the click, so the late form's question is open when it navigates.
+      if (lateCase(messages) && messages.filter(m => m.role === 'tool').length === 3) return void setTimeout(answer, THINK_MS);
+      return answer();
     }
+    if (req.method === 'GET' && req.url === '/late') { res.writeHead(200, {'content-type': 'text/html'}); return res.end(LATE); }
+    if (req.method === 'GET' && req.url === '/slow') {
+      slowAsked = true;
+      return void setTimeout(() => { res.writeHead(200, {'content-type': 'text/html'}); res.end('<!doctype html><h1>SLOW</h1>'); }, SLOW_MS);
+    }
+    if (req.method === 'POST' && req.url === '/api/order') { orders.push(raw); res.writeHead(200, {'content-type': 'text/plain'}); return res.end('ORDERED'); }
     if (req.method === 'GET' && req.url === '/') { res.writeHead(200, {'content-type': 'text/html'}); return res.end(SHOP); }
     if (req.method === 'POST' && req.url === '/api/save') { saves.push(raw); res.writeHead(200, {'content-type': 'text/plain'}); return res.end('SAVED'); }
     res.writeHead(404); res.end();
@@ -256,6 +292,33 @@ try {
   await pause(1500);
   assert.equal(saves.length, 1, 'a cancelled task, and a yes after it, send nothing');
   console.log('cancel while waiting -> cancelled; the stale card sent nothing');
+
+  // 5b. A question the task withdrew: the model navigates away while the late
+  // form's question is open, and the next page is still loading. The job is
+  // running again at once, not waiting on a request nobody can approve, and
+  // a yes for that request is refused, not recorded as approved.
+  marker = await done();
+  const cardsBefore = await cards();
+  await evaluate(`document.getElementById("input").value = ${JSON.stringify('/browse ' + shopOrigin + '/ order it later')}; onSend()`);
+  await until(`document.querySelectorAll(".fetch-confirm").length > ${cardsBefore} && ${card}.textContent.includes("It is paused, not sent")`);
+  const lateJob = base + '/api/browser/jobs/' + JSON.parse(await evaluate('sessionStorage.getItem("cgah.browseJob")')).job_id;
+  const readJob = async () => (await fetch(lateJob, {headers: {...headers, cookie}})).json();
+  const asked = await readJob();
+  assert.equal(asked.status, 'waiting', 'the late form is asked about: ' + JSON.stringify(asked));
+  assert.ok(String(asked.pending.url).endsWith('/api/order'), JSON.stringify(asked.pending));
+  for (let i = 0; i < 150 && !slowAsked; i++) await pause(100);
+  assert.ok(slowAsked, 'the model never navigated away');
+  let moved = await readJob();
+  for (let i = 0; i < 20 && moved.status === 'waiting'; i++) { await pause(100); moved = await readJob(); }
+  assert.equal(moved.status, 'running', 'a withdrawn question must not leave the job waiting: ' + JSON.stringify(moved));
+  const lateYes = await post(lateJob.slice(base.length) + '/approve', {request: asked.pending.request, sha256: asked.pending.sha256, confirm: true, reason: 'after the task moved on'}, cookie);
+  const lateYesText = await lateYes.text();
+  assert.equal(lateYes.status, 409, 'a yes to a withdrawn question is refused: ' + lateYesText);
+  assert.ok(lateYesText.includes('BROWSER_NOTHING_WAITING'), lateYesText);
+  await finished(marker);
+  assert.deepEqual(orders, [], 'a withdrawn question sends nothing');
+  assert.ok((await streamText()).includes('Held, not sent: POST ' + shopOrigin + '/api/order'), 'the report lists the withdrawn request as held');
+  console.log('navigate while a late question waits -> job running again at once; a yes is refused (409); held, not sent');
 
   // Phase 4: the tab keeps only {session_id, job_id} (sessionStorage), and
   // finds the task again from the server's record.
