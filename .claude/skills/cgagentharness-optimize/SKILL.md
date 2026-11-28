@@ -140,7 +140,7 @@ from `desktop/`, and `cargo deny` as `desktop.yml` runs it. A Linux
 host cannot compile `desktop/` (objc2): verify the logic in a standalone repro
 and say the compile is `desktop-check.yml`'s. Windows-only behaviour: cross-check
 with `--target x86_64-pc-windows-gnu` and a `CARGO_TARGET_DIR` outside the repo;
-PR CI runs only the focused Windows MCP and credential job, not the full Windows test leg. Workflow edits:
+PR CI requires full Windows and the focused MCP and credential job. Workflow edits:
 `scripts/lint-workflows.sh`. Script edits: the matching contract test in
 `scripts/verify-local.sh`.
 
