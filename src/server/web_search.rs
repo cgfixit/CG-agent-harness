@@ -253,6 +253,17 @@ pub fn validate_addresses(addresses: &[SocketAddr]) -> Result<()> {
         return Err(error("WEB_DNS", "DNS returned no addresses"));
     }
     if addresses.len() > crate::common::dns::MAX_PINNED_ADDRESSES || addresses.iter().any(|a| !is_public_ip(a.ip())) {
+        // Refused either way. An answer of only 0.0.0.0 and :: is how a
+        // blocking resolver (Pi-hole, NextDNS) answers a name it blocks; the
+        // detail lets a search provider hop treat that as unreachable
+        // (`web_provider::falls_through`). Any other private answer stays loud.
+        if addresses.iter().all(|a| a.ip().is_unspecified()) {
+            return Err(error(
+                "WEB_SSRF_DENIED",
+                "DNS answered only 0.0.0.0 or ::, as a resolver answers a name it blocks",
+            )
+            .detail("dns_block", true));
+        }
         return Err(error("WEB_SSRF_DENIED", "DNS answer includes prohibited addresses"));
     }
     Ok(())
@@ -2335,6 +2346,21 @@ mod tests {
     fn mixed_dns_special_ranges_and_unproven_context_are_refused() {
         let public: SocketAddr = "8.8.8.8:443".parse().unwrap();
         assert!(validate_addresses(&[public]).is_ok());
+        // Only an answer made of nothing but 0.0.0.0 and :: is a resolver's
+        // block; still refused, and marked so a search hop can move on.
+        let any4: SocketAddr = "0.0.0.0:443".parse().unwrap();
+        let any6: SocketAddr = "[::]:443".parse().unwrap();
+        for answer in [vec![any4], vec![any6], vec![any4, any6]] {
+            let refused = validate_addresses(&answer).unwrap_err();
+            assert_eq!(refused.code, "WEB_SSRF_DENIED", "{answer:?}");
+            assert_eq!(refused.details["dns_block"], true, "{answer:?}");
+        }
+        let loopback: SocketAddr = "127.0.0.1:443".parse().unwrap();
+        for answer in [vec![any4, public], vec![any4, loopback], vec![loopback]] {
+            let refused = validate_addresses(&answer).unwrap_err();
+            assert_eq!(refused.code, "WEB_SSRF_DENIED", "{answer:?}");
+            assert!(refused.details.get("dns_block").is_none(), "{answer:?}");
+        }
         for ip in [
             "127.0.0.1",
             "10.0.0.1",

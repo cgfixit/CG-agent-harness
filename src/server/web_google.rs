@@ -759,10 +759,13 @@ impl WebTool {
                     return Ok(value);
                 }
                 Err(failure) => match next {
-                    Some(next) if falls_through(hop, &failure.code) => {
+                    Some(next) if falls_through(hop, &failure) => {
                         // Codes only: never the query, a key or provider text.
+                        // `dns_block` tells a blocking resolver's answer apart
+                        // from the private answers that never fall through.
                         audit.log(json!({"event":"web_search_fallback","from":hop.name(),
-                            "to":next.name(),"code":failure.code}));
+                            "to":next.name(),"code":failure.code,
+                            "dns_block":failure.details["dns_block"] == true}));
                         fallback_from.push(hop.name());
                     }
                     _ => return Err(failure),
@@ -1630,12 +1633,19 @@ mod tests {
             /// Point the Tavily hop at a name that never resolves (`.invalid`,
             /// RFC 6761): its DNS lookup fails before anything is sent.
             pub(super) fn with_unresolvable_tavily(self, key: &str) -> Self {
+                self.with_tavily_endpoint(key, "http://tavily.invalid/search") // DevSkim: ignore DS137138 because this name never resolves.
+            }
+
+            /// Point the Tavily hop at `endpoint` with no fixture address, so
+            /// its lookup and address checks run as in production. An IP
+            /// literal "resolves" to itself without touching the network.
+            pub(super) fn with_tavily_endpoint(self, key: &str, endpoint: &str) -> Self {
                 let mut chain = self.with_tavily_at(key, "127.0.0.1:9".parse().unwrap());
                 chain
                     .web
                     .test_resolve_extra
                     .retain(|(host, _)| host != "tavily.fixture");
-                chain.web.test_tavily_search = Some(url::Url::parse("http://tavily.invalid/search").unwrap()); // DevSkim: ignore DS137138 because this name never resolves.
+                chain.web.test_tavily_search = Some(url::Url::parse(endpoint).unwrap());
                 chain
             }
 
@@ -2063,6 +2073,48 @@ mod tests {
             matches!(lines[0]["code"].as_str(), Some("WEB_DNS" | "WEB_TIMEOUT")),
             "{lines:?}"
         );
+    }
+
+    /// A blocking resolver (Pi-hole, NextDNS) answers a name it blocks with
+    /// 0.0.0.0 and ::. Still refused, never dialled, but the provider is
+    /// unreachable from here, so the search moves on. The audit line names
+    /// the block.
+    #[tokio::test]
+    async fn a_blocking_resolver_answer_falls_back_to_serpapi() {
+        let any4 = "http://0.0.0.0/search"; // DevSkim: ignore DS137138 because this IP-literal endpoint is never dialled; the address check refuses it.
+        let any6 = "http://[::]/search"; // DevSkim: ignore DS137138 because this IP-literal endpoint is never dialled; the address check refuses it.
+        for endpoint in [any4, any6] {
+            let serp = chain::serpapi().await;
+            let chain = chain::Chain::new(&chain::yaml(", fallback_to_serpapi: true"), "good", &serp, None)
+                .await
+                .with_tavily_endpoint("good", endpoint);
+            let value = chain.search("veeam cve").await.unwrap();
+            assert_eq!(value["provider"], "google-serpapi", "{endpoint}");
+            assert_eq!(value["fallback_from"], json!(["tavily"]), "{endpoint}");
+            let lines = chain.audit_events("web_search_fallback");
+            assert_eq!(lines.len(), 1, "{endpoint}");
+            assert_eq!(lines[0]["code"], "WEB_SSRF_DENIED", "{endpoint}");
+            assert_eq!(lines[0]["dns_block"], true, "{endpoint}");
+        }
+    }
+
+    /// Any other private answer for a fixed provider host stays loud: the
+    /// search ends there and the next hop is never asked.
+    #[tokio::test]
+    async fn a_private_provider_answer_does_not_fall_back() {
+        let loopback = "http://127.0.0.1:9/search"; // DevSkim: ignore DS137138 because this loopback endpoint is never dialled; the address check refuses it.
+        let private = "http://10.0.0.1/search"; // DevSkim: ignore DS137138 because this private endpoint is never dialled; the address check refuses it.
+        for endpoint in [loopback, private] {
+            let serp = chain::serpapi().await;
+            let chain = chain::Chain::new(&chain::yaml(", fallback_to_serpapi: true"), "good", &serp, None)
+                .await
+                .with_tavily_endpoint("good", endpoint);
+            let failure = chain.search("veeam cve").await.unwrap_err();
+            assert_eq!(failure.code, "WEB_SSRF_DENIED", "{endpoint}");
+            assert!(failure.details.get("dns_block").is_none(), "{endpoint}");
+            assert_eq!(serp.hits.load(std::sync::atomic::Ordering::SeqCst), 0, "{endpoint}");
+            assert!(chain.audit_events("web_search_fallback").is_empty(), "{endpoint}");
+        }
     }
 
     #[tokio::test]
