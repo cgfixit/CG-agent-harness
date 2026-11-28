@@ -43,9 +43,9 @@ macOS and Linux use detached jobs. Windows uses the synchronous endpoint.
   after a click or Enter. `POST /api/browser/jobs/{job_id}/approve`
   needs request ID, body SHA-256, confirmation and reason. Approval binds
   method, URL and body under current policy. Waiting ends at
-  `browser.takeover.wait_sec`, the deadline or a `navigate` (held). A
+  `browser.takeover.wait_sec` (one per action), the deadline or a `navigate` (held). A
   request Chrome cancels while waiting (the page left or closed) ends as
-  a no and is held; a later yes sends nothing. Other holds get no prompt.
+  a no, closes its prompt and is held. Other holds get no prompt.
   Reloading or reopening its session shows it again (the tab stores only
   IDs); restarting resumes nothing.
 - Temporary profiles can survive a kill until the next task or server start.

@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -228,11 +228,17 @@ impl RequestPolicy {
 /// It may block for as long as the session's wait; `true` sends the request.
 pub type Approver = std::sync::Arc<dyn Fn(&Value) -> bool + Send + Sync>;
 
+/// Told the number of a question the sidecar answered no by itself while its
+/// [`Approver`] was still deciding: the wait ran out, or the request is gone.
+pub type Withdrawn = std::sync::Arc<dyn Fn(u64) + Send + Sync>;
+
 /// Takeover for one session: how long a paused request waits, and who decides.
 #[derive(Clone)]
 pub struct Takeover {
     pub wait: Duration,
     pub approver: Approver,
+    /// Lets a blocked `approver` stop waiting; `None` when it cannot.
+    pub withdrawn: Option<Withdrawn>,
 }
 
 /// The longest wait a session may ask the sidecar for; it clamps to the same.
@@ -267,14 +273,16 @@ impl Sidecar {
     /// a time and stops at end of file, an error or an oversized line. It
     /// answers the sidecar's `check` lines itself, from `policy`, so a page's
     /// requests get a verdict while the task waits on the model too. An
-    /// `approve` line is answered on its own thread by `approver`, so block-list
-    /// questions keep being answered while the operator decides. Without an
-    /// approver, or while one decision is already open, the answer is no.
+    /// `approve` line is answered on its own thread by the operator's approver,
+    /// so block-list questions keep being answered while the operator decides.
+    /// Without an approver, or while one decision is already open, the answer
+    /// is no. A `withdrawn` line closes the open decision it names: the
+    /// sidecar already answered that question no, so the next one can be asked.
     fn attach(
         mut child: Child,
         call_timeout: Duration,
         mut policy: RequestPolicy,
-        approver: Option<Approver>,
+        operator: Option<(Approver, Option<Withdrawn>)>,
     ) -> Result<Self, String> {
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             let _ = child.kill();
@@ -283,7 +291,9 @@ impl Sidecar {
         };
         let stdin = std::sync::Arc::new(std::sync::Mutex::new(Some(stdin)));
         let verdicts = stdin.clone();
-        let deciding = std::sync::Arc::new(AtomicBool::new(false));
+        // The number of the question being decided; zero when none is.
+        let deciding = std::sync::Arc::new(AtomicU64::new(0));
+        let (approver, withdrawn) = operator.map_or((None, None), |(approver, withdrawn)| (Some(approver), withdrawn));
         let (send, replies) = mpsc::channel();
         thread::spawn(move || {
             let mut reader = BufReader::new(stdout);
@@ -305,6 +315,18 @@ impl Sidecar {
                         }
                         if let Some(question) = approval_question(&line) {
                             answer_approval(question, approver.clone(), deciding.clone(), verdicts.clone());
+                            continue;
+                        }
+                        if let Some(id) = withdrawn_question(&line) {
+                            // Only the open decision closes; its approver is told to stop waiting.
+                            if deciding
+                                .compare_exchange(id, 0, Ordering::AcqRel, Ordering::Acquire)
+                                .is_ok()
+                            {
+                                if let Some(withdrawn) = &withdrawn {
+                                    withdrawn(id);
+                                }
+                            }
                             continue;
                         }
                         Ok(line)
@@ -384,7 +406,8 @@ impl Sidecar {
             .map_or(Duration::ZERO, |takeover| takeover.wait.min(MAX_TAKEOVER_WAIT));
         // An op whose request is paused answers only after the verdict or the wait.
         let call_timeout = SIDECAR_CALL_TIMEOUT + wait;
-        let mut sidecar = Self::attach(child, call_timeout, policy, takeover.map(|takeover| takeover.approver))?;
+        let operator = takeover.map(|takeover| (takeover.approver, takeover.withdrawn));
+        let mut sidecar = Self::attach(child, call_timeout, policy, operator)?;
         let started = sidecar.call(json!({
             "op": "start",
             "grants": session.grant_strings(),
@@ -473,13 +496,25 @@ fn approval_question(line: &str) -> Option<Value> {
     serde_json::from_str(line).ok()
 }
 
+/// The number of a question the sidecar answered no by itself, or `None` when
+/// `line` is anything else. The sidecar writes `withdrawn` first on these
+/// lines, as it does `approve` on a question.
+fn withdrawn_question(line: &str) -> Option<u64> {
+    if !line.starts_with("{\"withdrawn\":") {
+        return None;
+    }
+    serde_json::from_str::<Value>(line).ok()?["withdrawn"].as_u64()
+}
+
 /// Answer one approval question off the reader thread. One decision is open
-/// at a time; a second question, or any question with no approver, is refused
-/// at once. A lost answer is a refusal: the sidecar stops waiting by itself.
+/// at a time, under its question's number; a second question, one with no
+/// number, or any question with no approver, is refused at once. A lost answer
+/// is a refusal: the sidecar stops waiting by itself. A decision the sidecar
+/// withdrew is already closed when its approver returns, and stays closed.
 fn answer_approval(
     question: Value,
     approver: Option<Approver>,
-    deciding: std::sync::Arc<AtomicBool>,
+    deciding: std::sync::Arc<AtomicU64>,
     stdin: std::sync::Arc<std::sync::Mutex<Option<ChildStdin>>>,
 ) {
     let write = |allow: bool, id: &Value, stdin: &std::sync::Mutex<Option<ChildStdin>>| {
@@ -488,13 +523,19 @@ fn answer_approval(
             let _ = writeln!(stdin, "{verdict}").and_then(|()| stdin.flush());
         }
     };
-    let Some(approver) = approver.filter(|_| !deciding.swap(true, Ordering::AcqRel)) else {
+    let id = question["approve"].as_u64().filter(|id| *id != 0);
+    let open = |id: u64| {
+        deciding
+            .compare_exchange(0, id, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    };
+    let (Some(approver), Some(id)) = (approver, id.filter(|id| open(*id))) else {
         write(false, &question["approve"], &stdin);
         return;
     };
     thread::spawn(move || {
         let allow = approver(&question);
-        deciding.store(false, Ordering::Release);
+        let _ = deciding.compare_exchange(id, 0, Ordering::AcqRel, Ordering::Acquire);
         write(allow, &question["approve"], &stdin);
     });
 }
@@ -955,6 +996,36 @@ fn hold_until(now: Instant, wait: Duration, deadline: Option<Instant>) -> Instan
     deadline.map_or(now + wait, |deadline| deadline.min(now + wait))
 }
 
+/// What reaches a job's waiting approver.
+enum JobAnswer {
+    /// The owner's verdict on the question with this number.
+    Verdict(u64, bool),
+    /// The sidecar answered this question no by itself.
+    Withdrawn(u64),
+    /// The job's input ended or asked for a cancel.
+    Closed,
+}
+
+/// How question `id` ends: the owner's verdict, the sidecar's withdrawal, the
+/// wait running out at `until`, or the job's input closing (`cancelled` is
+/// set before `Closed` is sent, so a later question reads it). An answer to
+/// another question is not this one's.
+fn await_verdict(answers: &Receiver<JobAnswer>, cancelled: &AtomicBool, id: u64, until: Instant) -> &'static str {
+    loop {
+        if cancelled.load(Ordering::Acquire) {
+            return "cancelled";
+        }
+        match answers.recv_timeout(until.saturating_duration_since(Instant::now())) {
+            Ok(JobAnswer::Verdict(answered, true)) if answered == id => return "approved",
+            Ok(JobAnswer::Verdict(answered, false)) if answered == id => return "denied",
+            Ok(JobAnswer::Withdrawn(answered)) if answered == id => return "withdrawn",
+            Ok(JobAnswer::Verdict(..) | JobAnswer::Withdrawn(_)) => continue,
+            Ok(JobAnswer::Closed) | Err(RecvTimeoutError::Disconnected) => return "cancelled",
+            Err(RecvTimeoutError::Timeout) => return "expired",
+        }
+    }
+}
+
 /// Job mode for this process: read stdin on a thread until a `cancel` line
 /// or end of input. Either ends the task before its next model turn, so a
 /// task whose server is gone does not keep driving Chrome. With `wait`, a
@@ -963,45 +1034,56 @@ fn hold_until(now: Instant, wait: Duration, deadline: Option<Instant>) -> Instan
 /// and silence all mean no.
 fn watch_job_input(wait: Option<Duration>, deadline: Option<Instant>) {
     JOB_MODE.store(true, Ordering::Release);
-    let (verdicts, answers) = mpsc::channel::<(u64, bool)>();
+    let (verdicts, answers) = mpsc::channel::<JobAnswer>();
     if let Some(wait) = wait {
         let answers = std::sync::Mutex::new(answers);
         let approver: Approver = std::sync::Arc::new(move |question: &Value| {
             let Some(id) = question["approve"].as_u64() else {
                 return false;
             };
+            // Taken before the question is announced: a question asked right
+            // after a withdrawn one is announced only once that one's
+            // `resumed` line is out, so the server never clears the new one.
+            let answers = answers.lock().unwrap_or_else(|p| p.into_inner());
             let now = Instant::now();
+            // The sidecar says how long this question waits: an action's
+            // later question has only the time its earlier ones left.
+            let wait = question["wait_ms"]
+                .as_u64()
+                .map_or(wait, |ms| wait.min(Duration::from_millis(ms)));
             let until = hold_until(now, wait, deadline);
             let wait_sec = until.saturating_duration_since(now).as_secs();
             job_event(json!({"event": "waiting", "wait_sec": wait_sec, "question": question}));
-            let answers = answers.lock().unwrap_or_else(|p| p.into_inner());
-            let decision = loop {
-                match answers.recv_timeout(until.saturating_duration_since(Instant::now())) {
-                    // An answer to an earlier question is not this one's.
-                    Ok((answered, _)) if answered != id => continue,
-                    Ok((_, true)) => break "approved",
-                    Ok((_, false)) => break "denied",
-                    Err(RecvTimeoutError::Timeout) => break "expired",
-                    Err(RecvTimeoutError::Disconnected) => break "cancelled",
-                }
-            };
+            let decision = await_verdict(&answers, &JOB_CANCELLED, id, until);
             job_event(json!({"event": "resumed", "id": id, "decision": decision}));
             decision == "approved"
         });
-        let _ = JOB_TAKEOVER.set(Takeover { wait, approver });
+        let withdrawals = std::sync::Mutex::new(verdicts.clone());
+        let withdrawn: Withdrawn = std::sync::Arc::new(move |id: u64| {
+            let _ = withdrawals
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .send(JobAnswer::Withdrawn(id));
+        });
+        let _ = JOB_TAKEOVER.set(Takeover {
+            wait,
+            approver,
+            withdrawn: Some(withdrawn),
+        });
     }
     std::thread::spawn(move || {
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             match job_input(&line) {
                 Some(JobInput::Cancel) => break,
                 Some(JobInput::Verdict { id, allow }) => {
-                    let _ = verdicts.send((id, allow));
+                    let _ = verdicts.send(JobAnswer::Verdict(id, allow));
                 }
                 None => {}
             }
         }
         JOB_CANCELLED.store(true, Ordering::Release);
-        // Dropping the sender tells a waiting approver the answer is no.
+        // Tells a waiting approver the answer is no; a later one reads the flag.
+        let _ = verdicts.send(JobAnswer::Closed);
     });
 }
 
@@ -2341,7 +2423,10 @@ impl ScriptedOperator {
 ///   opened are held without a question;
 /// - a navigate while that late question waits withdraws it: the navigate
 ///   returns at once, the form is held, and the operator's later yes sends
-///   nothing.
+///   nothing; the next request is asked about at once, because the sidecar
+///   reported the withdrawal and the decision closed with it;
+/// - one action's questions share one wait: the second of two is asked with
+///   the time the first left, and held when that runs out.
 /// - an approved request released with a body other than the one shown meets
 ///   the network gate with no matching pass: held, and neither body is sent.
 ///
@@ -2392,6 +2477,7 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         Takeover {
             wait,
             approver: std::sync::Arc::new(move |question: &Value| operator.decide(question)),
+            withdrawn: None,
         }
     };
     let count = |row: &str| {
@@ -2608,7 +2694,19 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
             "a navigate waited {took:?} on a late question, or the form was sent or not held: {page}"
         ));
     }
-    // Let the operator's late yes arrive; the one decision is then closed.
+    // The sidecar said it withdrew the question, so the decision is closed on
+    // this side at once: the next request is asked about while the first
+    // question's approver has still not answered.
+    operator.plan([Verdict::Deny]);
+    let asked_now = operator.asked().len();
+    let page = click(&mut sidecar, &mut lines, "Save")?;
+    if operator.asked().len() != asked_now + 1 || rows(&page, "held") != [save.clone()] {
+        return Err(format!(
+            "a withdrawn question kept the one decision open: the next request was refused unasked: {page}"
+        ));
+    }
+    lines.push("request after a withdrawn question -> asked at once, not refused unasked".into());
+    // Let the operator's late yes arrive: it answers a question that is gone.
     thread::sleep(answer_after.saturating_sub(asked_at.elapsed()) + Duration::from_millis(500));
     guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
     if count("POST /api/order") != orders_before {
@@ -2821,6 +2919,56 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
     }
     lines.push("expired -> held; the late yes sent nothing".into());
 
+    // One action's questions share one wait. Two POSTs in a row, each answered
+    // yes after 4 s of a 6 s wait: the first is sent, the second is asked with
+    // the 2 s that are left and held when they run out. The second request
+    // can leave the page just after the click answered, so the observation
+    // that follows is read too: the two calls together take the one wait.
+    drop(sidecar);
+    let mut sidecar = Sidecar::start_with(
+        script,
+        &session,
+        headless,
+        private,
+        policy(),
+        Some(takeover(Duration::from_secs(6))),
+        false,
+    )?;
+    let slow_yes = Duration::from_secs(4);
+    operator.plan([Verdict::AllowAfter(slow_yes), Verdict::AllowAfter(slow_yes)]);
+    let (asked_before, saves_before) = (operator.asked().len(), count("POST /api/save"));
+    let started = Instant::now();
+    let page = click(&mut sidecar, &mut lines, "Save twice")?;
+    let (later, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    let took = started.elapsed();
+    let asked = operator.asked();
+    let windows: Vec<u64> = asked[asked_before.min(asked.len())..]
+        .iter()
+        .filter_map(|question| question["wait_ms"].as_u64())
+        .collect();
+    if windows.len() != 2
+        || windows[0] != 6000
+        || !(1000..=2500).contains(&windows[1])
+        || count("POST /api/save") != saves_before + 1
+        || [rows(&page, "approved"), rows(&later, "approved")].concat() != [save.clone()]
+        || [rows(&page, "held"), rows(&later, "held")].concat() != [save.clone()]
+        || took >= Duration::from_secs(9)
+    {
+        return Err(format!(
+            "one action waited on the operator past its one wait ({took:?}, windows {windows:?}): {page} {later}"
+        ));
+    }
+    thread::sleep(slow_yes);
+    guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    if count("POST /api/save") != saves_before + 1 {
+        return Err("a yes that came after the action's one wait sent the request".into());
+    }
+    lines.push(format!(
+        "two questions in one action -> one 6 s wait in all ({} ms), second asked with {} ms and held",
+        took.as_millis(),
+        windows[1]
+    ));
+
     // #1123: the pass names the body the operator was shown. Approved, then
     // released with another body (this fixture's rewrite seam), the request
     // meets the network gate with no matching pass: held, and neither body
@@ -2857,10 +3005,10 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
 
     // Without takeover nothing is asked and nothing waits.
     drop(sidecar);
-    let before = operator.asked().len();
+    let (before, saves_before) = (operator.asked().len(), count("POST /api/save"));
     let mut sidecar = Sidecar::start(script, &session, headless, private, policy())?;
     let page = click(&mut sidecar, &mut lines, "Save")?;
-    if operator.asked().len() != before || rows(&page, "held").len() != 1 || count("POST /api/save") != 2 {
+    if operator.asked().len() != before || rows(&page, "held").len() != 1 || count("POST /api/save") != saves_before {
         return Err(format!("a session without takeover asked or sent: {page}"));
     }
     lines.push(format!(
@@ -3562,7 +3710,8 @@ mod tests {
                 .stdout(Stdio::piped())
                 .spawn()
                 .unwrap();
-            let mut sidecar = Sidecar::attach(child, Duration::from_secs(30), RequestPolicy::open(), approver).unwrap();
+            let operator = approver.map(|approver| (approver, None));
+            let mut sidecar = Sidecar::attach(child, Duration::from_secs(30), RequestPolicy::open(), operator).unwrap();
             sidecar.call(json!({"op":"click"})).unwrap()["result"].clone()
         };
         assert_eq!(ask(None), json!({"verdict": 4, "allow": false}));
@@ -3601,13 +3750,89 @@ mod tests {
             thread::sleep(Duration::from_millis(400));
             true
         });
-        let mut sidecar = Sidecar::attach(child, Duration::from_secs(30), RequestPolicy::open(), Some(slow)).unwrap();
+        let mut sidecar = Sidecar::attach(
+            child,
+            Duration::from_secs(30),
+            RequestPolicy::open(),
+            Some((slow, None)),
+        )
+        .unwrap();
         let reply = sidecar.call(json!({"op":"click"})).unwrap();
         assert_eq!(
             reply["result"],
             json!([{"verdict": 2, "allow": false}, {"verdict": 1, "allow": true}])
         );
         assert_eq!(calls.load(Ordering::Acquire), 1);
+    }
+
+    /// A question the sidecar withdrew is closed here too: its approver is
+    /// told, and the next question is asked although that approver has not
+    /// returned. Before, the decision stayed open for the approver's whole
+    /// wait and the next question was refused unasked.
+    #[cfg(unix)]
+    #[test]
+    fn a_withdrawn_question_closes_its_decision_so_the_next_one_is_asked() {
+        // Question 1, its withdrawal, question 2, then a withdrawal that names
+        // no open decision; both verdicts come back in the reply.
+        let script = r#"read op; printf '{"approve":1}\n{"withdrawn":1}\n{"approve":2}\n{"withdrawn":7}\n'; read first; read second; printf '{"id":1,"ok":true,"result":[%s,%s]}\n' "$first" "$second""#;
+        let child = Command::new("sh")
+            .args(["-c", script])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // Question 1's operator answers late; question 2's at once.
+        let approver: Approver = std::sync::Arc::new(move |question: &Value| {
+            if question["approve"] == 1 {
+                thread::sleep(Duration::from_millis(400));
+            }
+            true
+        });
+        let told = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let log = told.clone();
+        let withdrawn: Withdrawn = std::sync::Arc::new(move |id: u64| log.lock().unwrap().push(id));
+        let mut sidecar = Sidecar::attach(
+            child,
+            Duration::from_secs(30),
+            RequestPolicy::open(),
+            Some((approver, Some(withdrawn))),
+        )
+        .unwrap();
+        let reply = sidecar.call(json!({"op":"click"})).unwrap();
+        assert_eq!(
+            reply["result"],
+            json!([{"verdict": 2, "allow": true}, {"verdict": 1, "allow": true}])
+        );
+        assert_eq!(*told.lock().unwrap(), [1], "only the open decision is withdrawn");
+
+        assert_eq!(withdrawn_question("{\"withdrawn\":3}"), Some(3));
+        let reply = json!({"id": 1, "ok": true, "result": {"text": "{\"withdrawn\":3}"}}).to_string();
+        assert_eq!(withdrawn_question(&reply), None);
+        assert_eq!(withdrawn_question("{\"withdrawn\":\"3\"}"), None);
+    }
+
+    /// A job's waiting question ends on its own verdict or withdrawal, never
+    /// on another question's, and on a closed input for this and later ones.
+    #[test]
+    fn a_waiting_job_question_ends_on_its_own_answer_withdrawal_or_closed_input() {
+        let (send, answers) = mpsc::channel();
+        let cancelled = AtomicBool::new(false);
+        let soon = || Instant::now() + Duration::from_secs(30);
+        send.send(JobAnswer::Verdict(4, true)).unwrap();
+        send.send(JobAnswer::Withdrawn(4)).unwrap();
+        send.send(JobAnswer::Withdrawn(5)).unwrap();
+        assert_eq!(await_verdict(&answers, &cancelled, 5, soon()), "withdrawn");
+        send.send(JobAnswer::Verdict(6, true)).unwrap();
+        assert_eq!(await_verdict(&answers, &cancelled, 6, soon()), "approved");
+        send.send(JobAnswer::Verdict(7, false)).unwrap();
+        assert_eq!(await_verdict(&answers, &cancelled, 7, soon()), "denied");
+        assert_eq!(await_verdict(&answers, &cancelled, 8, Instant::now()), "expired");
+        send.send(JobAnswer::Closed).unwrap();
+        assert_eq!(await_verdict(&answers, &cancelled, 9, soon()), "cancelled");
+        // The sender is still alive (the withdrawal hook keeps one): the flag
+        // answers a question asked after the input closed.
+        cancelled.store(true, Ordering::Release);
+        assert_eq!(await_verdict(&answers, &cancelled, 10, soon()), "cancelled");
     }
 
     #[test]
