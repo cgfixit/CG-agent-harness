@@ -693,6 +693,36 @@ async fn confirm_provenance(
     Ok(())
 }
 
+/// #772 D4: charge one web tool call to `web.run_limits` before it runs. A
+/// server-run loop turn charges its run (`LoopManager::charge_web_attempt`);
+/// any other turn charges `turn_spend`. A refusal is audited with the limit
+/// that refused it; the call's result is that refusal.
+#[allow(clippy::too_many_arguments)]
+fn charge_attempt(
+    state: &AppState,
+    owner: &str,
+    run_id: Option<&str>,
+    goal: &str,
+    name: &str,
+    turn_spend: &mut super::web_run_budget::RunSpend,
+    web: &WebTool,
+    loop_turn: bool,
+) -> Result<()> {
+    use super::web_run_budget::Attempt;
+    let (attempt, limits) = (Attempt::of(name), web.limits.run_limits);
+    let charged = match run_id {
+        Some(id) => state.loops.charge_web_attempt(owner, id, goal, attempt, limits),
+        None => turn_spend.charge(attempt, limits),
+    };
+    if let Err(refused) = &charged {
+        if refused.code == "WEB_RUN_BUDGET" {
+            state.audit.log(json!({"event":"web_run_budget","kind":attempt.label(),
+                "limit":limits.of(attempt),"loop_turn":loop_turn,"server_run":run_id.is_some()}));
+        }
+    }
+    charged
+}
+
 /// Cancellation covers model calls AND reads. The caller owns the generation gate.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_stream(
@@ -770,6 +800,8 @@ async fn run_inner(
     let authorized = Authorized::default();
     let mut searches = std::collections::BTreeMap::new();
     let mut used_calls = 0;
+    // `web.run_limits` spent by this turn when it is not a server-run loop's.
+    let mut turn_spend = super::web_run_budget::RunSpend::default();
     let mut prompt_tokens = 0u64;
     let mut completion_tokens = 0u64;
     let mut initial_prompt_tokens = None;
@@ -1305,7 +1337,11 @@ async fn run_inner(
             let mut selected = Vec::new();
             assert_allowed(name, &argv, &chat_callable_names(web_mode), &state.audit)
                 .map_err(|e| error("WEB_TOOL_DENIED", &e.message))?;
-            let result = if is_web_search_name(name) && !route.allows_web_search() {
+            // #772 D4: counted before it runs, whatever it returns.
+            let charged = charge_attempt(state, owner, run_id, goal, name, &mut turn_spend, web, loop_turn);
+            let result = if let Err(spent) = charged {
+                Err(spent)
+            } else if is_web_search_name(name) && !route.allows_web_search() {
                 Err(error("WEB_TOOL_DENIED", WEB_SEARCH_CLOSED))
             } else {
                 match name {

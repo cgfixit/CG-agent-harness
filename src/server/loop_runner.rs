@@ -288,6 +288,9 @@ struct LoopEntry {
     /// after [`current_authority`] re-reads it before each turn.
     user: Option<axum::Extension<crate::common::auth_store::UserSummary>>,
     web_evidence: super::chat_web::evidence::RunEvidence,
+    /// Web tool calls this run has made against `web.run_limits` (#772 D4),
+    /// charged before each call runs, so a turn that errors keeps them.
+    web_spend: super::web_run_budget::RunSpend,
 }
 
 /// Active and recently finished runs, plus the persistence directory.
@@ -326,6 +329,25 @@ impl LoopManager {
             .filter(|e| e.owner == owner && e.run.goal == goal && !e.run.state.terminal() && !e.cancel.is_cancelled())
             .map(|e| e.web_evidence.clone())
             .unwrap_or_default()
+    }
+
+    /// Charge one web tool call to a live run's `web.run_limits` (#772 D4).
+    /// A run that is not live (another owner's, ended, cancelled or on another
+    /// goal) dispatches nothing.
+    pub(crate) fn charge_web_attempt(
+        &self,
+        owner: &str,
+        run_id: &str,
+        goal: &str,
+        attempt: super::web_run_budget::Attempt,
+        limits: super::web_run_budget::RunLimits,
+    ) -> Result<()> {
+        let mut runs = self.runs.lock().unwrap_or_else(|p| p.into_inner());
+        let entry = runs
+            .get_mut(run_id)
+            .filter(|e| e.owner == owner && e.run.goal == goal && !e.run.state.terminal() && !e.cancel.is_cancelled())
+            .ok_or_else(|| HarnessError::new("WEB_CANCELLED", "this loop run has ended; nothing more is read"))?;
+        entry.web_spend.charge(attempt, limits)
     }
 
     pub(crate) fn save_web_evidence(
@@ -412,6 +434,7 @@ impl LoopManager {
             owner,
             user,
             web_evidence: Default::default(),
+            web_spend: Default::default(),
         };
         let cancel = entry.cancel.clone();
         let sender = entry.events.clone();
@@ -836,6 +859,7 @@ mod tests {
             owner: "alice".into(),
             user: None,
             web_evidence: Default::default(),
+            web_spend: Default::default(),
         };
         manager
             .runs
@@ -884,6 +908,7 @@ mod tests {
                 owner: "alice".into(),
                 user: None,
                 web_evidence: Default::default(),
+                web_spend: Default::default(),
             },
         );
         let mut evidence = super::super::chat_web::evidence::RunEvidence::default();

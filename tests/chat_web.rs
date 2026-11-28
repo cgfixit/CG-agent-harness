@@ -3481,6 +3481,184 @@ async fn a_link_inside_a_read_page_is_never_granted() {
     task.abort();
 }
 
+/// #772 D4: `web.run_limits` counts each call before it runs, whatever it
+/// returns. A refused read spends the one read, so the permitted read after it
+/// in the batch is `WEB_RUN_BUDGET` and never contacted; a repeated search,
+/// which the turn would answer from its own listing, still spends the one
+/// search. A later chat turn is a run of its own and reads again.
+#[tokio::test]
+async fn run_limits_count_failed_and_repeated_calls_before_they_run() {
+    let (address, reads, task) = listing_fixture().await;
+    let model = common::start_mock_model().await;
+    let options = legacy_options()
+        .with("web.run_limits.searches", "1")
+        .with("web.run_limits.reads", "1");
+    let s = listing_spawn(&model, address, options).await;
+    let page_rule = "http://docs.example/*"; // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+    let search_rule = "http://google.fixture/*"; // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+    for rule in [page_rule, search_rule] {
+        assert_eq!(
+            s.post_json("/api/web/allow", json!({"url":rule})).await.0,
+            200,
+            "{rule}"
+        );
+    }
+    let denied = r#"{"url":"http://denied.example/page"}"#; // DevSkim: ignore DS137138 because denied.example is never permitted or contacted.
+    let batch =
+        |calls: &[(&str, &str)]| {
+            let mut reply = tool_call_reply(calls[0].0, calls[0].1, "call_0");
+            for (index, (name, args)) in calls.iter().enumerate().skip(1) {
+                reply["choices"][0]["message"]["tool_calls"].as_array_mut().unwrap().push(
+                json!({"id":format!("call_{index}"),"type":"function","function":{"name":name,"arguments":args}}),
+            );
+            }
+            reply
+        };
+    let search = r#"{"query":"listed page"}"#;
+    model.set_reply(json!([
+        batch(&[
+            ("web_fetch", denied),
+            ("web_fetch", LISTED_PAGE),
+            ("web_search", search),
+            ("web_search", search)
+        ]),
+        common::ok_reply("Answered.", 20, 6)
+    ]));
+    let (status, reply) = s.post_json("/api/chat", json!({"message":"Read and search"})).await;
+    assert_eq!(status, 200, "{reply}");
+    let tools = reply["web_tools"].as_array().expect("web tools ran");
+    let codes: Vec<_> = tools.iter().map(|tool| tool["code"].as_str().unwrap_or("ok")).collect();
+    assert_eq!(
+        codes,
+        ["WEB_HOST_DENIED", "WEB_RUN_BUDGET", "ok", "WEB_RUN_BUDGET"],
+        "{reply}"
+    );
+    assert_eq!(reads.load(Ordering::SeqCst), 0, "the refused read was never contacted");
+    let audit = s.audit_log();
+    let refusals: Vec<Value> = audit
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|line| line["event"] == "web_run_budget")
+        .collect();
+    assert_eq!(refusals.len(), 2, "{refusals:?}");
+    assert_eq!(
+        (&refusals[0]["kind"], &refusals[0]["limit"], &refusals[0]["server_run"]),
+        (&json!("reads"), &json!(1), &json!(false))
+    );
+    assert_eq!(refusals[1]["kind"], "searches");
+    // A new chat turn spends its own limits.
+    model.set_reply(json!([
+        tool_call_reply("web_fetch", LISTED_PAGE, "again"),
+        common::ok_reply("Read it.", 20, 6)
+    ]));
+    let (status, reply) = s.post_json("/api/chat", json!({"message":"Read it"})).await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["web_tools"][0]["ok"], true, "{reply}");
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    task.abort();
+}
+
+/// #772 D4: a server-run `/loop` spends `web.run_limits` across its turns.
+/// Turn 1's search spends the one search; turn 2's is `WEB_RUN_BUDGET`, and
+/// the model is handed that refusal instead of a second listing.
+#[tokio::test]
+async fn a_server_loop_run_spends_its_run_limits_across_turns() {
+    let (address, _reads, task) = listing_fixture().await;
+    let refused = Arc::new(AtomicBool::new(false));
+    let saw = refused.clone();
+    let model_router = common::ollama_router()
+        .route(
+            "/v1/models",
+            get(|| async { Json(json!({"data":[{"id":"mock-model"}]})) }),
+        )
+        .route(
+            "/v1/chat/completions",
+            post(move |Json(body): Json<Value>| {
+                let saw = saw.clone();
+                async move {
+                    let messages = body["messages"].as_array().unwrap();
+                    let results: Vec<_> = messages.iter().filter(|m| m["role"] == "tool").collect();
+                    let second = messages.iter().any(|m| {
+                        m["role"] == "user" && m["content"].as_str().is_some_and(|c| c.starts_with("Loop turn 2"))
+                    });
+                    if second
+                        && results
+                            .iter()
+                            .any(|m| m["content"].as_str().is_some_and(|c| c.contains("WEB_RUN_BUDGET")))
+                    {
+                        saw.store(true, Ordering::SeqCst);
+                    }
+                    Json(if results.is_empty() {
+                        tool_call_reply("web_search", r#"{"query":"listed page"}"#, "loop_search")
+                    } else {
+                        common::ok_reply("Noted.", 10, 3)
+                    })
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let model_address = listener.local_addr().unwrap();
+    let model_task = tokio::spawn(async move { axum::serve(listener, model_router).await.unwrap() });
+    let model = common::MockModel {
+        base: format!("http://{model_address}"), // DevSkim: ignore DS137138 because this test-only model binds only to loopback.
+        reply: Arc::default(),
+        requests: Arc::default(),
+        delay_ms: Arc::default(),
+    };
+    let s = listing_spawn(&model, address, legacy_options().with("web.run_limits.searches", "1")).await;
+    let search_rule = "http://google.fixture/*"; // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+    assert_eq!(s.post_json("/api/web/allow", json!({"url":search_rule})).await.0, 200);
+    let (_, session) = s.post_json("/api/sessions", json!({"title":"loop"})).await;
+    let sid = session["session_id"].as_str().unwrap().to_string();
+    let (status, goal) = s
+        .post_json(
+            &format!("/api/sessions/{sid}/goal"),
+            json!({"goal":"find the listed page"}),
+        )
+        .await;
+    assert_eq!(status, 200, "{goal}");
+    let (status, started) = s
+        .post_json(
+            "/api/loop/start",
+            json!({"session_id":sid, "max_turns":2, "cooldown_ms":0}),
+        )
+        .await;
+    assert_eq!(status, 200, "{started}");
+    let run_id = started["run"]["run_id"].as_str().unwrap().to_string();
+    let mut run = Value::Null;
+    for _ in 0..400 {
+        run = s.get_json(&format!("/api/loop/status?run_id={run_id}")).await.1["run"].clone();
+        if run["stats"]["turns_completed"] == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(run["stats"]["turns_completed"], 2, "{run}");
+    assert!(refused.load(Ordering::SeqCst), "turn 2's search was refused, not run");
+    let audit = s.audit_log();
+    let refusals: Vec<Value> = audit
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|line| line["event"] == "web_run_budget")
+        .collect();
+    assert_eq!(refusals.len(), 1, "{refusals:?}");
+    assert_eq!(
+        (
+            &refusals[0]["kind"],
+            &refusals[0]["server_run"],
+            &refusals[0]["loop_turn"]
+        ),
+        (&json!("searches"), &json!(true), &json!(true))
+    );
+    assert_eq!(
+        audit.matches(r#""event":"web_search_sent""#).count() + audit.matches(r#""event": "web_search_sent""#).count(),
+        1,
+        "one search left the harness"
+    );
+    task.abort();
+    model_task.abort();
+}
+
 /// A server-run `/loop` carries its search-result grants from one turn to the
 /// next: turn 1 searches, turn 2 reads the page that search listed.
 #[tokio::test]
