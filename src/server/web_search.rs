@@ -97,6 +97,13 @@ pub struct Limits {
     /// restart-only). Ships `all`: search is a read-only listing that grants no URL
     /// permission, so unattended loop turns may search; fetches stay policy-gated.
     pub goal_web_default: super::sessions::GoalWebMode,
+    /// `web.run_limits` (#772 D4, restart-only): web tool calls one run may
+    /// make. Ships 0 (off) for both, a trial profile rather than a default.
+    pub run_limits: super::web_run_budget::RunLimits,
+    /// `web.tool_offer` (#772, from #941; restart-only): ships `always`.
+    pub tool_offer: super::web_select::ToolOffer,
+    /// `web.typed_selection` (#772; literal true, restart-only): ships off.
+    pub typed_selection: bool,
 }
 
 impl Limits {
@@ -135,6 +142,16 @@ impl Limits {
             chat_tool_calls: bound("chat_tool_calls", 30, 1, crate::llm::openai_stream::MAX_TOOL_CALLS)? as usize,
             stale_seconds: bound("stale_seconds", 604800, 60, 31_536_000)?,
             carry_forward_sources: bound("carry_forward_sources", 0, 0, 50)? as usize,
+            run_limits: super::web_run_budget::RunLimits {
+                searches: cfg.u64_in("web.run_limits.searches", 0, 0..=1000)?,
+                reads: cfg.u64_in("web.run_limits.reads", 0, 0..=1000)?,
+            },
+            tool_offer: match cfg.get("web.tool_offer") {
+                None => super::web_select::ToolOffer::Always,
+                Some(serde_yaml_ng::Value::String(s)) => s.parse()?,
+                Some(_) => return Err(HarnessError::config("web.tool_offer must be always or when_asked")),
+            },
+            typed_selection: cfg.flag_is_true("web.typed_selection"),
             goal_web_default: match cfg.get("web.goal_web_default") {
                 None => super::sessions::GoalWebMode::All,
                 Some(serde_yaml_ng::Value::String(s)) => s
@@ -1785,6 +1802,38 @@ mod tests {
         assert!(web.context_text(true, "local").is_empty());
         assert_eq!(fixture.requests.load(Ordering::SeqCst), 2);
         server.abort();
+    }
+
+    /// #772 D4: `web.run_limits` ships and defaults off, and a value outside
+    /// 0–1000 or of the wrong type refuses the configuration, naming the key.
+    #[test]
+    fn run_limits_default_off_and_refuse_values_outside_their_range() {
+        use super::super::web_run_budget::RunLimits;
+        for yaml in ["{}", include_str!("../../assets/config.default.yaml")] {
+            let cfg = AppConfig::from_str(yaml, Path::new("config.yaml")).unwrap();
+            assert_eq!(Limits::load(&cfg).unwrap().run_limits, RunLimits::default());
+        }
+        for (value, ok) in [
+            ("0", true),
+            ("1", true),
+            ("1000", true),
+            ("1001", false),
+            ("-1", false),
+            ("\"3\"", false),
+            ("2.5", false),
+        ] {
+            for key in ["searches", "reads"] {
+                let yaml = format!("web: {{run_limits: {{{key}: {value}}}}}");
+                let cfg = AppConfig::from_str(&yaml, Path::new("config.yaml")).unwrap();
+                match Limits::load(&cfg) {
+                    Ok(limits) => assert!(ok, "{key}: {value} was accepted as {:?}", limits.run_limits),
+                    Err(e) => {
+                        assert!(!ok, "{key}: {value} was refused");
+                        assert!(e.message.contains(&format!("web.run_limits.{key}")), "{}", e.message);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

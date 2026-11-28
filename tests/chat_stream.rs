@@ -173,12 +173,11 @@ async fn multiple_streamed_tools_then_buffered_synthesis_keep_the_total_call_bud
     assert_eq!(rows[1]["usage_missing"], false);
     task.abort();
 }
-/// #901 step 4: a URL only a subtree rule permits, that no search listed and
-/// the operator did not write, pauses a live administrator turn on a
-/// `confirm_fetch` event. Approve reads it once; decline refuses it with
-/// `WEB_FETCH_COMPOSED`; a non-streaming turn cannot be asked and is refused.
-#[tokio::test]
-async fn a_composed_fetch_waits_for_the_operator_and_reads_only_on_approval() {
+/// A docs site whose `/docs/{page}` reads are counted, and a model that
+/// streams one `web_fetch` of a URL only the `http://docs.example/docs/*`
+/// subtree rule permits (composed: no search lists it, no exact rule names
+/// it), then answers once it holds the tool result. The rule is installed.
+async fn composed_fetch_server() -> (Arc<TestServer>, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
     let reads = Arc::new(AtomicUsize::new(0));
     let read_counter = reads.clone();
     let fixture = common::ollama_router()
@@ -234,23 +233,50 @@ async fn a_composed_fetch_waits_for_the_operator_and_reads_only_on_approval() {
             .0,
         200
     );
+    (s, reads, task)
+}
+
+/// Reads `response` until its `confirm_fetch` event and returns that event.
+async fn confirm_question(response: &mut reqwest::Response, text: &mut String) -> Value {
+    loop {
+        let chunk = tokio::time::timeout(Duration::from_secs(20), response.chunk())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        text.push_str(std::str::from_utf8(&chunk).unwrap());
+        if let Some(event) = events(text).into_iter().find(|event| event["type"] == "confirm_fetch") {
+            return event;
+        }
+    }
+}
+
+/// The `outcome` of every `web_fetch_provenance` audit line, in order.
+async fn provenance_outcomes(s: &TestServer) -> Vec<String> {
+    s.state.audit.flush_async().await;
+    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    audit
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|row| row["event"] == "web_fetch_provenance")
+        .map(|row| row["outcome"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// #901 step 4: a URL only a subtree rule permits, that no search listed and
+/// the operator did not write, pauses a live administrator turn on a
+/// `confirm_fetch` event. Approve reads it once; decline refuses it with
+/// `WEB_FETCH_COMPOSED`; a non-streaming turn cannot be asked and is refused.
+#[tokio::test]
+async fn a_composed_fetch_waits_for_the_operator_and_reads_only_on_approval() {
+    let (s, reads, task) = composed_fetch_server().await;
     // Decline first, so the read count shows the declined read never ran.
     for approve in [false, true] {
         let (_, session) = s.post_json("/api/sessions", json!({})).await;
         let id = session["session_id"].as_str().unwrap().to_string();
         let mut response = start(&s, &id, "read the docs").await;
         let mut text = String::new();
-        let question = loop {
-            let chunk = tokio::time::timeout(Duration::from_secs(20), response.chunk())
-                .await
-                .unwrap()
-                .unwrap()
-                .unwrap();
-            text.push_str(std::str::from_utf8(&chunk).unwrap());
-            if let Some(event) = events(&text).into_iter().find(|event| event["type"] == "confirm_fetch") {
-                break event;
-            }
-        };
+        let question = confirm_question(&mut response, &mut text).await;
         assert_eq!(question["url"], "http://docs.example/docs/page?d=private-memo"); // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
         assert_eq!(reads.load(Ordering::SeqCst), 0, "nothing is read before the answer");
         let answer = json!({"id": question["id"], "approve": approve});
@@ -298,6 +324,102 @@ async fn a_composed_fetch_waits_for_the_operator_and_reads_only_on_approval() {
     assert!(
         !audit.contains("private-memo"),
         "audit names the origin, never the path or query"
+    );
+    task.abort();
+}
+
+/// #772 provenance matrix: a session goal (`/goal`) does not make a turn
+/// detached. A typed streamed turn under the goal still pauses for the
+/// operator; a streamed `/loop` turn toward the same goal is refused at once,
+/// with no question, and nothing is read.
+#[tokio::test]
+async fn a_composed_fetch_in_a_streamed_loop_turn_is_refused_without_a_question() {
+    let (s, reads, task) = composed_fetch_server().await;
+    let (_, session) = s.post_json("/api/sessions", json!({})).await;
+    let id = session["session_id"].as_str().unwrap().to_string();
+    let (status, goal) = s
+        .post_json(&format!("/api/sessions/{id}/goal"), json!({"goal":"read the docs"}))
+        .await;
+    assert_eq!(status, 200, "{goal}");
+    let mut typed = start(&s, &id, "read the docs").await;
+    let mut text = String::new();
+    let question = confirm_question(&mut typed, &mut text).await;
+    let answer = json!({"id": question["id"], "approve": false});
+    assert_eq!(s.post_json("/api/chat/fetch-confirm", answer).await.0, 200);
+    text.push_str(&typed.text().await.unwrap());
+    assert_eq!(events(&text).pop().unwrap()["type"], "done", "{text}");
+    let response = s
+        .req(reqwest::Method::POST, "/api/chat")
+        .header("Accept", "text/event-stream")
+        .json(&json!({"message":"read the docs","session_id":id,"loop":true}))
+        .send()
+        .await
+        .unwrap();
+    let text = tokio::time::timeout(Duration::from_secs(20), response.text())
+        .await
+        .expect("a loop turn never waits for an answer")
+        .unwrap();
+    let all = events(&text);
+    assert!(
+        all.iter().all(|event| event["type"] != "confirm_fetch"),
+        "a loop turn asks nobody: {text}"
+    );
+    let last = all.last().unwrap();
+    assert_eq!(last["type"], "done", "{text}");
+    assert_eq!(last["data"]["web_tools"][0]["code"], "WEB_FETCH_COMPOSED", "{text}");
+    assert_eq!(reads.load(Ordering::SeqCst), 0, "nothing was read");
+    assert_eq!(provenance_outcomes(&s).await, ["asked", "denied", "refused"]);
+    task.abort();
+}
+
+/// #772 provenance matrix: an approval given after the URL policy or the web
+/// switch changed is stale, and nothing is read. Blocking the URL while the
+/// question is open makes the approved read `WEB_POLICY_CHANGED`; turning web
+/// off also ends the turn, unsaved, with `WEB_DISABLED`.
+#[tokio::test]
+async fn a_policy_change_while_a_composed_fetch_waits_reads_nothing() {
+    let (s, reads, task) = composed_fetch_server().await;
+    // Web off first: a URL still blocked would never be asked about.
+    for change in ["web_off", "block"] {
+        let (_, session) = s.post_json("/api/sessions", json!({})).await;
+        let id = session["session_id"].as_str().unwrap().to_string();
+        let mut response = start(&s, &id, "read the docs").await;
+        let mut text = String::new();
+        let question = confirm_question(&mut response, &mut text).await;
+        let (status, body) = match change {
+            "block" => {
+                s.post_json(
+                    "/api/web/block",
+                    json!({"urls":["http://docs.example/docs/*"]}), // DevSkim: ignore DS137138 because this synthetic block rule names only the loopback fixture.
+                )
+                .await
+            }
+            _ => s.post_json("/api/web", json!({"enabled": false})).await,
+        };
+        assert_eq!(status, 200, "{change}: {body}");
+        let answer = json!({"id": question["id"], "approve": true});
+        assert_eq!(s.post_json("/api/chat/fetch-confirm", answer).await.0, 200, "{change}");
+        text.push_str(&response.text().await.unwrap());
+        let last = events(&text).pop().unwrap();
+        if change == "web_off" {
+            // The refused read is the call's result, and the turn's next
+            // evidence check then ends the whole turn: nothing is saved.
+            assert_eq!(last["type"], "error", "{text}");
+            assert_eq!(last["error"]["detail"]["code"], "WEB_DISABLED", "{text}");
+            let (_, saved) = s.get_json(&format!("/api/sessions/{id}")).await;
+            assert!(!saved.to_string().contains("Answered."), "{saved}");
+        } else {
+            assert_eq!(last["type"], "done", "{text}");
+            assert_eq!(last["data"]["web_tools"][0]["code"], "WEB_POLICY_CHANGED", "{text}");
+        }
+        assert_eq!(reads.load(Ordering::SeqCst), 0, "{change}: nothing was read");
+        if change == "web_off" {
+            assert_eq!(s.post_json("/api/web", json!({"enabled": true})).await.0, 200);
+        }
+    }
+    assert_eq!(
+        provenance_outcomes(&s).await,
+        ["asked", "policy_changed", "asked", "policy_changed"]
     );
     task.abort();
 }

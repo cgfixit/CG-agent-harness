@@ -1,0 +1,30 @@
+{
+  "issue": 772,
+  "question": "SYNTHETIC",
+  "synthetic": true,
+  "note": "Shows the capture format and exercises its validator. Not evidence, and never replayed in a baseline or candidate run.",
+  "captured_at": "2026-11-28T00:00:00Z",
+  "listings": [
+    {
+      "provider": "tavily",
+      "query": "synthetic capture format",
+      "captured_at": "2026-11-28T00:00:00Z",
+      "results": [
+        {
+          "url": "https://synthetic.invalid/doc",
+          "title": "Synthetic document",
+          "snippet": "Shows the capture format."
+        }
+      ]
+    }
+  ],
+  "documents": [
+    {
+      "url": "https://synthetic.invalid/doc",
+      "captured_at": "2026-11-28T00:00:00Z",
+      "status": 200,
+      "content_type": "text/plain",
+      "body": "SYNTHETIC_DOCUMENT: shows the capture format only; it answers no corpus question."
+    }
+  ]
+}

@@ -71,7 +71,9 @@ pub mod web_ledger;
 pub mod web_policy;
 mod web_provider;
 pub mod web_research;
+pub mod web_run_budget;
 pub mod web_search;
+pub mod web_select;
 mod web_tavily;
 mod web_units;
 

@@ -1,0 +1,81 @@
+{
+  "issue": 772,
+  "status": "acceptance dimension: what each read path must do; a baseline or candidate run records these outcomes beside quality and budget, and an expected refusal is not a quality failure",
+  "source": "src/server/chat_web.rs confirm_provenance and the interactive_admin condition in run_inner; web.fetch_provenance and web.search.result_reads as shipped",
+  "rows": [
+    {
+      "id": "P1",
+      "path": "a URL this turn's own search listed, for an administrator with web.search.result_reads on",
+      "expected": "read under the turn's result grant, marked granted_by; no question",
+      "locked_by": ["tests/chat_web.rs::a_turn_may_read_the_exact_urls_its_own_search_listed"]
+    },
+    {
+      "id": "P2",
+      "path": "a URL this turn's own search listed, with no result grant (result_reads off, or not an administrator)",
+      "expected": "not composed: read only if the URL policy permits it, with no grant",
+      "locked_by": ["tests/chat_web.rs::a_listed_url_is_not_composed_without_a_result_reads_grant"]
+    },
+    {
+      "id": "P3",
+      "path": "a URL the operator wrote in the message or the goal, including one pasted in backticks or markup",
+      "expected": "given: read under the URL policy without a question",
+      "locked_by": [
+        "tests/chat_web.rs::a_wrapped_operator_url_ending_in_a_paren_is_not_composed",
+        "tests/chat_stream.rs::a_composed_fetch_waits_for_the_operator_and_reads_only_on_approval"
+      ]
+    },
+    {
+      "id": "P4",
+      "path": "a URL an exact rule names",
+      "expected": "read under the rule; not composed",
+      "locked_by": ["src/server/web_policy.rs::read_authority_separates_listed_exact_and_composed_reads"]
+    },
+    {
+      "id": "P5",
+      "path": "a URL the model composed (only a subtree or subdomain rule, or denylist mode, permits it) in an administrator's live streamed chat turn",
+      "expected": "pause on confirm_fetch; read once only on approval; a decline is WEB_FETCH_COMPOSED and reads nothing",
+      "locked_by": ["tests/chat_stream.rs::a_composed_fetch_waits_for_the_operator_and_reads_only_on_approval"]
+    },
+    {
+      "id": "P6",
+      "path": "a composed URL in a typed streamed turn of a session with a goal (/goal)",
+      "expected": "as P5: a session goal does not make a turn detached",
+      "locked_by": ["tests/chat_stream.rs::a_composed_fetch_in_a_streamed_loop_turn_is_refused_without_a_question"]
+    },
+    {
+      "id": "P7",
+      "path": "a composed URL in a non-streaming (JSON) chat turn",
+      "expected": "refused WEB_FETCH_COMPOSED without a question; nothing read",
+      "locked_by": [
+        "tests/chat_stream.rs::a_composed_fetch_waits_for_the_operator_and_reads_only_on_approval",
+        "tests/chat_web.rs::a_listed_url_is_not_composed_without_a_result_reads_grant"
+      ]
+    },
+    {
+      "id": "P8",
+      "path": "a composed URL in a /loop turn, even one that streams",
+      "expected": "refused WEB_FETCH_COMPOSED without a question; nothing read",
+      "locked_by": ["tests/chat_stream.rs::a_composed_fetch_in_a_streamed_loop_turn_is_refused_without_a_question"],
+      "note": "Exercised as a console loop turn (loop: true). A server-run loop turn (a run id) takes the same branch of interactive_admin; no test drives a composed read through one."
+    },
+    {
+      "id": "P9",
+      "path": "a link a read page names",
+      "expected": "never granted: not permitted without a rule, composed under a subtree rule; the linked page is not contacted",
+      "locked_by": ["tests/chat_web.rs::a_link_inside_a_read_page_is_never_granted"]
+    },
+    {
+      "id": "P10",
+      "path": "the web switch or the URL policy changes while a composed read waits for its answer",
+      "expected": "an approval is stale and nothing is read: a changed URL policy makes the read WEB_POLICY_CHANGED; web turned off also ends the turn, unsaved, WEB_DISABLED",
+      "locked_by": ["tests/chat_stream.rs::a_policy_change_while_a_composed_fetch_waits_reads_nothing"]
+    },
+    {
+      "id": "P11",
+      "path": "an invalid, stale or invented candidate id",
+      "expected": "nothing dispatched",
+      "locked_by": [],
+      "pending_on": "typed read/skip/insufficient_signal selection, not on main"
+    }
+  ]
+}
