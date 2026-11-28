@@ -415,6 +415,8 @@ impl Sidecar {
             "allow_private": allow_private,
             "rewrite_approved_body": rewrite_approved_body && cfg!(feature = "test-support"),
             "takeover_wait_ms": wait.as_millis() as u64,
+            // This host reads `withdrawn` lines; one that does not never asks for them.
+            "report_withdrawn": true,
         }))?;
         if started.get("ok") != Some(&Value::Bool(true)) {
             return Err(format!("sidecar refused start: {started}"));
