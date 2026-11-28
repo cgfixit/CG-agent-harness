@@ -801,6 +801,7 @@ async fn run_inner(
         .map(|m| json!({"role":m.role,"content":m.content}))
         .collect();
     let mut events = Vec::new();
+    let mut captures = Vec::new();
     let mut sources = Vec::new();
     let authorized = Authorized::default();
     let mut searches = std::collections::BTreeMap::new();
@@ -1127,6 +1128,7 @@ async fn run_inner(
                 return Err(err);
             }
         };
+        super::web_capture::delivered(state, std::mem::take(&mut captures)).await;
         let totals = usage.get_or_insert_with(|| crate::llm::spend::UsageTokens {
             input_tokens: Some(0),
             output_tokens: Some(0),
@@ -1622,7 +1624,24 @@ async fn run_inner(
                 check_evidence(state, web, owner, sign_in, &sources, &authorized)?;
                 events.push(json!({"tool":name,"ok":true,"target":target,"args":call_args,"result":result}));
             }
-            messages.push(tool_message(id, &result)?);
+            let tool = tool_message(id, &result)?;
+            if state.cfg.flag_is_true("web.capture.enabled") && result.get("error").is_none() {
+                let channel = match name {
+                    "web_search" => Some("search-listing"),
+                    "web_fetch" => Some("fetched-passages"),
+                    _ => None,
+                };
+                if let Some(channel) = channel {
+                    captures.push(super::web_capture::Pending {
+                        channel,
+                        text: tool["content"]
+                            .as_str()
+                            .expect("tool_message serializes content")
+                            .to_owned(),
+                    });
+                }
+            }
+            messages.push(tool);
         }
         if insufficient_signal {
             // #772: a legitimate stop, not a failure: no further round is

@@ -13,7 +13,7 @@
 
 | Capability | What it provides | Fresh home |
 |---|---|---|
-| **Web research** | Search, permitted reads and crawls, `/web research` with checked quotes, PDF text; paid providers have daily caps. | On; one seeded Google rule. |
+| **Web research** | Search, permitted reads and crawls, `/web research` with checked quotes, PDF text, [evaluation capture](docs/SECURE_RESEARCH.md#chat-capture-for-offline-evaluation); paid providers have daily caps. | On; one seeded Google rule. |
 | **Goal loops** | `/goal` and `/loop` outlive the tab; a counted run ends on its best answer. | 200 turns, 200,000 tokens, two failures; local only. |
 | **Memory** | Pinned and [uploaded notes](docs/CONSOLE.md#text-file-attachments-and-prompt-preview), account-private facts. | On; proposals need review. |
 | **Local chat** | Sessions, search, export, DOCX/PDF/text attachments, skills, styles; no Ollama cloud models (tags or aliases). | Ollama on loopback. |

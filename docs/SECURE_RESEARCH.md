@@ -119,6 +119,14 @@ live administrator approval (`web.fetch_provenance`). Otherwise it
 refuses. Empty allowlists, blocks and private-address checks still apply.
 The [router](WEB_DECISION_ROUTER.md) owns passage, digest and budget rules.
 
+### Chat capture for offline evaluation
+
+Set `web.capture.enabled: true` and restart a disposable single-account macOS
+or Linux home. `data/web-capture/capture.jsonl` holds exact fitted chat search
+and fetch tool strings after successful model calls. Keep the mode-0600 file
+private. Writes stop at 128 MiB. Audit receipts carry IDs, hashes, channels
+and status. See [offline replay](https://github.com/cgfixit/yara-gate/issues/294).
+
 ### Google search
 
 `web.search.provider` is restart-only; keys can be changed for the next
@@ -131,29 +139,21 @@ listings. A group selects page search in console and CLI.
 
 ### Fetch, discovery and research
 
-All exact fetch targets are checked before batch dispatch. Local fetch
-pins checked public DNS, validates TLS hosts, and refuses redirects,
-proxies, cookies and compression. That client trusts only the Mozilla roots in `webpki-root-certs`, so
-the OS verifier makes no OCSP, CRL or CA request. Enterprise roots are
-not trusted, and revocation waits for a release that updates the bundle.
-Cloud clients still use the OS verifier. Policy still gates every discovered
-link. Text PDFs are extracted in the [PDF worker](CONSOLE.md#pdf-text).
-Optional Firecrawl sends only an eligible exact URL under the
-[router fallback rules](WEB_DECISION_ROUTER.md#read-authority-and-fallback).
-Its hourly slot is returned if cancelled or otherwise refused before send.
-The local HTML parser discards scripts, styles, forms and marked-hidden
-content. CSS-only hiding is outside extraction. HTML complexity limits
-can refuse a result without saving partial evidence. Extract receipts
-bind canonical URL, content hash, fetch time and passage offsets.
+Local fetch checks exact targets before dispatch, pins public DNS and
+validates TLS names. It refuses redirects, proxies, cookies and compression.
+Its bundled Mozilla roots exclude enterprise roots and update on release.
+Local verification makes no OCSP, CRL or CA request. Cloud uses OS trust.
+Policy gates discovered links. See [PDF extraction](CONSOLE.md#pdf-text)
+and [Firecrawl eligibility and slot refunds](WEB_DECISION_ROUTER.md#read-authority-and-fallback).
+HTML extraction skips scripts, styles, forms and marked-hidden content.
+CSS-only hiding is outside its scope. Complexity refusals save no partial
+result. Receipts bind canonical URL, digest, time and passage offsets.
 
-Research uses permitted start URLs, group seeds, literal prefixes or
-bounded matching cached pages. Unseeded wildcards may report
-`WEB_SEED_REQUIRED`. Robots reads follow current scope and count toward
-budgets. Unreadable robots prevents link traversal while seeds remain
-eligible. A bounded Tantivy BM25 index ranks permitted extracts. Discovery
-and local synthesis have separate deadlines. Citation validation drops
-unknown IDs and quotes absent from their passage. Read counts and partial
-coverage matter when assessing answers.
+Research accepts permitted start URLs, group seeds, literal prefixes and
+bounded cache matches. Unseeded wildcards may return `WEB_SEED_REQUIRED`.
+Scoped robots reads spend budget. Unreadable robots limits traversal to
+seeds. Tantivy BM25 ranks permitted extracts. Discovery and synthesis have
+separate deadlines. Citations drop unknown IDs and unsupported quotes.
 
 `/web job` and `/web jobs` inspect owner-bound work that survives the tab.
 `/web cancel` stops research. Restart does not resume it.
