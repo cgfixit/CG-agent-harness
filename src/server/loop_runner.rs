@@ -293,7 +293,28 @@ struct LoopEntry {
 /// Active and recently finished runs, plus the persistence directory.
 pub struct LoopManager {
     runs: Mutex<HashMap<String, LoopEntry>>,
+    /// Sessions whose start is between its refusals and `start`: a goal is
+    /// saved in that window, so a second start must be refused before it saves
+    /// its own (which would end the first run with `LOOP_GOAL_CHANGED`).
+    starting: Mutex<std::collections::HashSet<String>>,
     dir: PathBuf,
+}
+
+/// A session's claim on its next start, from `LoopManager::reserve`. Dropped
+/// on any refusal, or once `start` has registered the run.
+pub struct StartReservation<'a> {
+    manager: &'a LoopManager,
+    session_id: String,
+}
+
+impl Drop for StartReservation<'_> {
+    fn drop(&mut self) {
+        self.manager
+            .starting
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&self.session_id);
+    }
 }
 
 impl LoopManager {
@@ -327,8 +348,33 @@ impl LoopManager {
     pub fn new(home: &std::path::Path) -> Self {
         Self {
             runs: Mutex::new(HashMap::new()),
+            starting: Mutex::new(Default::default()),
             dir: home.join("loops"),
         }
+    }
+
+    /// Claim `session_id`'s next start before anything is saved for it.
+    /// Refused with `LOOP_IN_FLIGHT` while the session has a live run or
+    /// another start holds its claim. `starting` is taken before `runs`, and
+    /// nothing takes them in the other order.
+    pub fn reserve(&self, session_id: &str) -> Result<StartReservation<'_>> {
+        let mut starting = self.starting.lock().unwrap_or_else(|p| p.into_inner());
+        let live = self
+            .runs
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .values()
+            .any(|e| e.run.session_id == session_id && !e.run.state.terminal());
+        if live || !starting.insert(session_id.to_string()) {
+            return Err(HarnessError::new(
+                "LOOP_IN_FLIGHT",
+                "a loop run is already active for this session",
+            ));
+        }
+        Ok(StartReservation {
+            manager: self,
+            session_id: session_id.to_string(),
+        })
     }
 
     /// The owner's live (non-terminal) run for `session_id`, when one exists.
@@ -460,14 +506,22 @@ fn persist_blocking(dir: &std::path::Path, run: &LoopRun) {
         tracing::warn!(error = %e, "loop run persistence directory could not be created");
         return;
     }
+    // The record carries the goal and a reply preview, which can hold pasted
+    // secrets: owner-only, as session files are (`sessions.rs` pins 0600).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)) {
+            tracing::warn!(error = %e, "loop run persistence directory could not be made owner-only");
+        }
+    }
     let path = dir.join(format!("{}.json", run.run_id));
     let Ok(text) = serde_json::to_string_pretty(run) else {
         return;
     };
     // A torn write must never leave a run file the operator cannot read.
-    let tmp = dir.join(format!(".{}.json.tmp", run.run_id));
-    if std::fs::write(&tmp, text).is_ok() {
-        let _ = std::fs::rename(&tmp, path);
+    if let Err(e) = crate::common::atomic::write_atomic(&path, text.as_bytes(), Some(0o600)) {
+        tracing::warn!(error = %e.message, "loop run record could not be written");
     }
 }
 
@@ -744,6 +798,62 @@ async fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A second start for a session is refused while the first holds its
+    /// claim (before either saves a goal), and again once its run is live.
+    #[test]
+    fn a_racing_start_is_refused_before_it_can_save_a_goal() {
+        let dir = tempfile::tempdir().unwrap();
+        let manager = LoopManager::new(dir.path());
+        let first = manager.reserve("session").expect("first claim");
+        let refused = manager.reserve("session").err().expect("second claim refused");
+        assert_eq!(refused.code, "LOOP_IN_FLIGHT");
+        assert!(manager.reserve("other").is_ok(), "another session is unaffected");
+        drop(first);
+        let again = manager
+            .reserve("session")
+            .expect("a refused or finished start releases its claim");
+        let (events, _) = tokio::sync::broadcast::channel(1);
+        let mut run = LoopRun {
+            run_id: "run".into(),
+            session_id: "session".into(),
+            goal: "goal".into(),
+            web_mode: "all".into(),
+            config: LoopLimits {
+                max_turns: 2,
+                max_total_completion_tokens: 4096,
+                max_failures: 2,
+                cooldown_ms: 0,
+            },
+            state: LoopRunState::Running,
+            reason: String::new(),
+            stats: Default::default(),
+        };
+        let entry = |run: LoopRun, events: tokio::sync::broadcast::Sender<Value>| LoopEntry {
+            run,
+            cancel: CancellationToken::new(),
+            events,
+            owner: "alice".into(),
+            user: None,
+            web_evidence: Default::default(),
+        };
+        manager
+            .runs
+            .lock()
+            .unwrap()
+            .insert("run".into(), entry(run.clone(), events.clone()));
+        drop(again);
+        assert_eq!(
+            manager.reserve("session").err().expect("live run").code,
+            "LOOP_IN_FLIGHT"
+        );
+        run.state = LoopRunState::Stopped;
+        manager.runs.lock().unwrap().insert("run".into(), entry(run, events));
+        assert!(
+            manager.reserve("session").is_ok(),
+            "a finished run does not block a new start"
+        );
+    }
 
     #[test]
     fn web_references_belong_only_to_the_active_owner_run_and_goal() {
