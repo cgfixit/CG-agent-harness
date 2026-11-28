@@ -80,7 +80,13 @@ pub(super) fn canonical_http_url(raw: &str, admit_private: bool) -> Result<Url> 
         .split(['?', '#'])
         .next()
         .unwrap_or("");
-    if path.split('/').any(|s| matches!(s, "." | "..")) {
+    // A dot segment stays one with a path parameter after it: servlet
+    // containers (Tomcat, Jetty) drop `;…` before resolving, so `/public/..;/x`
+    // is `/x` there, outside a `/public/*` rule.
+    if path
+        .split('/')
+        .any(|s| matches!(s.split(';').next().unwrap_or(s), "." | ".."))
+    {
         return Err(bad());
     }
     // Percent escapes retain their identity (including query order). Refuse
@@ -187,10 +193,18 @@ pub fn valid_group(group: &str) -> bool {
 
 /// The form block rules match: escapes of unreserved characters decoded
 /// (RFC 3986 6.2.2.2 makes `%61` and `a` the same URL) in the path and query,
-/// and runs of `/` in the path merged, as nginx and Apache do by default.
-/// Only matching uses it: a read still sends the URL as written. Case is kept,
-/// so a case-insensitive server's `/PRIVATE/` is not covered by `/private/*`.
+/// path parameters (`;…` up to the segment's end) dropped, as servlet
+/// containers (Tomcat, Jetty) do before mapping a path, and runs of `/` in the
+/// path merged, as nginx and Apache do by default. Only matching uses it: a
+/// read still sends the URL as written. Case is kept, so a case-insensitive
+/// server's `/PRIVATE/` is not covered by `/private/*`.
 fn block_match_form(url: &Url) -> Url {
+    fn strip_path_params(path: &str) -> String {
+        path.split('/')
+            .map(|segment| segment.split_once(';').map_or(segment, |(kept, _)| kept))
+            .collect::<Vec<_>>()
+            .join("/")
+    }
     fn decode_unreserved(text: &str, merge_slashes: bool) -> String {
         let bytes = text.as_bytes();
         let mut out = String::with_capacity(text.len());
@@ -217,7 +231,8 @@ fn block_match_form(url: &Url) -> Url {
         out
     }
     let mut form = url.clone();
-    form.set_path(&decode_unreserved(url.path(), true));
+    // Parameters go first: `/;x/private/` is `//private/`, then `/private/`.
+    form.set_path(&decode_unreserved(&strip_path_params(url.path()), true));
     if let Some(query) = url.query() {
         form.set_query(Some(&decode_unreserved(query, false)));
     }
@@ -837,6 +852,10 @@ mod tests {
             "https://u:p@example.com/a",
             "https://example.com./a",
             "https://example.com/a/../b",
+            // A dot segment behind a path parameter (Tomcat resolves `..;` as `..`).
+            "https://example.com/public/..;/private/a",
+            "https://example.com/public/..;x=1/b",
+            "https://example.com/a/.;/b",
             "https://example.com/%2e%2e/b",
             "https://example.com/a%2fb",
             "https://example.com/a%5cb",
@@ -1018,6 +1037,11 @@ mod tests {
             "https://docs.example.org//private/a",
             "https://docs.example.org///private//a",
             "http://docs.example.org//priv%61te/", // DevSkim: ignore DS137138 because a rule must cover both schemes
+            // Path parameters, which servlet containers drop before mapping.
+            "https://docs.example.org/private;jsessionid=1/a",
+            "https://docs.example.org/private/a;v=2",
+            "https://docs.example.org/;x/private/a",
+            "https://docs.example.org/priv%61te;x//a",
         ] {
             assert!(canonical_url(url).is_ok(), "{url}");
             assert!(policy.blocks(&canonical_url(url).unwrap()), "{url}");
