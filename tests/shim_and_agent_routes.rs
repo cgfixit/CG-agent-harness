@@ -300,9 +300,14 @@ fn decide_status_and_setup_budgets_exceed_child_bounds() {
     let mut retrieving = ctx(dir.path());
     retrieving.retrieval_enabled = true;
     let planner = 720;
-    for iterations in 1..=10u64 {
+    // An Ollama planner reads `/api/show` once before the clone and again
+    // before every request (`LocalProposerClient::invoke`), each under its own
+    // bound rather than the planner timeout. The fixed overhead's slack holds
+    // them up to the iteration ceiling.
+    let show = cgagentharness::agentic::proposer::OLLAMA_SHOW_TIMEOUT_SEC;
+    for iterations in 1..=cgagentharness::agentic::real_repo_loop::MAX_ITERATIONS {
         let budget = shim::real_repo_run_shape_budget_sec(&retrieving, planner, Some(iterations as i64), 1);
-        let child = setup_bounds + iterations * (planner + shim::REAL_REPO_RUN_CHECK_SEC + listing);
+        let child = setup_bounds + show + iterations * (show + planner + shim::REAL_REPO_RUN_CHECK_SEC + listing);
         if budget <= child {
             short.push(format!(
                 "real-repo-run with retrieval, {iterations} iteration(s): {budget}s <= child bounds {child}s"
