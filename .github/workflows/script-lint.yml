@@ -76,6 +76,8 @@ jobs:
                   compile(f.read(), path, "exec")
               print(path)
           '
+      - name: Offline research bakeoff checks
+        run: python3 -m unittest discover -s scripts/bakeoff -p 'test_bakeoff_*.py'
       - name: Git hook behavior in disposable repositories
         run: python3 scripts/test-githooks.py
       - name: cg-doc-sync trim report in disposable repositories

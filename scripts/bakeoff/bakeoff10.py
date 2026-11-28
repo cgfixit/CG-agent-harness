@@ -181,6 +181,8 @@ def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--models",default="gemma4-26b-a4b:ud-q4_k_xl-cg,qwen3.8:27b-mlx-cg,qwen3.6:35b-a3b-cg")
     ap.add_argument("--out",default=str(H/"out")); ap.add_argument("--dry-run",action="store_true")
+    ap.add_argument("--unload", action="store_true",
+                    help="stop each tested Ollama model after saving its summary (default: leave models loaded)")
     ap.add_argument("--quick",action="store_true",help="first model only, C0 only unless --cases, max_tokens 4000")
     ap.add_argument("--cases",help="comma list, e.g. C0,C1"); ap.add_argument("--max-tokens",type=int,default=8000)
     ap.add_argument("--score",metavar="DIR"); a=ap.parse_args()
@@ -215,5 +217,6 @@ def main():
         ps=subprocess.run(["ollama","ps"],capture_output=True,text=True).stdout
         (od/"summary.json").write_text(json.dumps({"label":lab,"model":m,"cases":summ,
             "route_ok":sum(1 for v in summ.values() if v["route_ok"]),"n":len(summ),"ollama_ps":ps},indent=1))
-        subprocess.run(["ollama","stop",m])
+        if a.unload and summ:
+            subprocess.run(["ollama", "stop", m], check=True)
 if __name__=="__main__": main()

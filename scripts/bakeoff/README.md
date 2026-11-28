@@ -14,10 +14,12 @@ Prior bakeoff open report: https://brush-monarch-slate-dove.grok.me
 - `results.json`, `report.md` last recorded run; `archive/` earlier runners.
 
 ## Run
+
+`--unload` stops each tested model.
+
 ```
-python3 bakeoff10.py --dry-run
-python3 bakeoff10.py --quick
-python3 bakeoff10.py --cases C1,C5 --models a,b --out out2
+python3 bakeoff10.py --quick --dry-run
+python3 bakeoff10.py --cases=C1,C5 --models=a,b --out=out2
 python3 bakeoff10.py --score out/A
 ```
 Writes `out/<label>/<case>.score.json` and `summary.json`.
