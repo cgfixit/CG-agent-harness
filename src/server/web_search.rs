@@ -100,6 +100,10 @@ pub struct Limits {
     /// `web.run_limits` (#772 D4, restart-only): web tool calls one run may
     /// make. Ships 0 (off) for both, a trial profile rather than a default.
     pub run_limits: super::web_run_budget::RunLimits,
+    /// `web.tool_offer` (#772, from #941; restart-only): ships `always`.
+    pub tool_offer: super::web_select::ToolOffer,
+    /// `web.typed_selection` (#772; literal true, restart-only): ships off.
+    pub typed_selection: bool,
 }
 
 impl Limits {
@@ -142,6 +146,12 @@ impl Limits {
                 searches: cfg.u64_in("web.run_limits.searches", 0, 0..=1000)?,
                 reads: cfg.u64_in("web.run_limits.reads", 0, 0..=1000)?,
             },
+            tool_offer: match cfg.get("web.tool_offer") {
+                None => super::web_select::ToolOffer::Always,
+                Some(serde_yaml_ng::Value::String(s)) => s.parse()?,
+                Some(_) => return Err(HarnessError::config("web.tool_offer must be always or when_asked")),
+            },
+            typed_selection: cfg.flag_is_true("web.typed_selection"),
             goal_web_default: match cfg.get("web.goal_web_default") {
                 None => super::sessions::GoalWebMode::All,
                 Some(serde_yaml_ng::Value::String(s)) => s

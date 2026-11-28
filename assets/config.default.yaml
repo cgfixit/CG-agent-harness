@@ -203,6 +203,8 @@ web:
   run_limits: # #772 D4 trial profile, restart-only: a server-run /loop counts across its turns, any other turn on its own
     searches: 0 # 0 (off) or 1–1000 web_search calls per run, each counted before it runs, failed or repeated included; spent: WEB_RUN_BUDGET
     reads: 0 # 0 (off) or 1–1000 web_fetch calls per run, counted the same way
+  tool_offer: always # always|when_asked; restart-only. #772 trial (#941): when_asked offers a typed chat turn web tools only if it has a URL, a question mark or an outside-source request
+  typed_selection: false # flag_is_true; restart-only. #772 trial: listings carry candidate ids, and web_select reads, skips or reports insufficient_signal
   stale_seconds: 604800 # 60–31536000; fetch age, not publication-date verification
   # Search backend, restart-only. auto follows the saved keys (operator decision,
   # 2026-11-10): an active Tavily key selects Tavily, else an active SerpAPI key selects

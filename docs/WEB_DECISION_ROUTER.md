@@ -7,14 +7,13 @@ Use `/goal --web off <goal>` to enforce no web, `fetch` for exact reads and
 `all` for search plus reads. The default is `web.goal_web_default`.
 A turn with uploaded-notes evidence withholds search unless its current
 message asks for outside, web or internet sources. A loop
-inherits its goal's mode. The model decides whether evidence is necessary and
-whether it answers the question. The server decides authority, provenance,
+inherits its goal's mode. The model decides whether evidence is needed and
+sufficient. The server decides authority, provenance,
 time and resource budgets. A prompt asking for no web is advisory. Standalone
 `/web research` is a separate bounded discovery-and-synthesis job.
 
 1. Use supplied or local context when sufficient. For external facts, search
-   only when discovery is needed. Treat results as ranked leads, never as
-   fetched source text.
+   only when discovery is needed. Results are ranked leads, not fetched text.
 2. Select relevant URLs and give `web_fetch` a focused query. Seek primary
    sources and qualifying or conflicting evidence. A small set of bounded
    passages can support a specific claim. Report gaps when coverage is weak.
@@ -122,9 +121,10 @@ minimal results before reads. `WEB_TOKEN_BUDGET` refuses a batch that cannot fit
 `WEB_TOOLS_WITHHELD` reserves room to answer after evidence.
 Tool hops can answer directly. The goal digest is separately bounded. First-call
 usage calibrates the estimate, restored evidence included. Auto-tuning
-tightens below 32,768. `web.run_limits.searches` and `.reads` (shipped 0,
-off) cap one run's calls, counted before each runs (a server `/loop` spans
-turns): `WEB_RUN_BUDGET`. Verify the loaded window in [Models](MODELS.md).
+tightens below 32,768. Trial settings ship off: `web.run_limits` caps a
+run's searches and reads, each counted before it runs (`WEB_RUN_BUDGET`);
+`web.tool_offer: when_asked` and `web.typed_selection` (`web_select`) are
+described in [config](../assets/config.default.yaml). Verify the loaded window in [Models](MODELS.md).
 Standalone research discovery (shipped 1,200 seconds) and synthesis
 (shipped 1,800 seconds) have separate deadlines; discovery also bounds
 pages, bytes, per-origin reads and time. Account, URL policy and

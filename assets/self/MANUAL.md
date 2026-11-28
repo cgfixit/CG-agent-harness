@@ -398,16 +398,18 @@ Bounds and failures: Request, response, rate, concurrency and deadline bounds ar
   - web.research_seconds: 10–3600 discovery and planning deadline
   - web.synthesis_seconds: 10–3600 answer deadline, started after discovery; missing keys use 300
   - web.run_limits: #772 D4 trial profile, restart-only: a server-run /loop counts across its turns, any other turn on its own
+  - web.tool_offer: always|when_asked; restart-only. #772 trial (#941): when_asked offers a typed chat turn web tools only if it…
+
+## config: sections and keys (values omitted) (part 6)
+
+- web.typed_selection: flag_is_true; restart-only. #772 trial: listings carry candidate ids, and web_select reads, skips or reports…
   - web.stale_seconds: 60–31536000; fetch age, not publication-date verification
   - web.search
   - web.firecrawl
 - browser
   - browser.enabled
   - browser.sidecar
-
-## config: sections and keys (values omitted) (part 6)
-
-- browser.max_turns: model turns per task, clamped to 1–40
+  - browser.max_turns: model turns per task, clamped to 1–40
   - browser.timeout_sec: whole task; the child tree is killed after it, clamped to 30–1800
   - browser.takeover
 - computer: Native computer use (issue #996; docs/Browser-Use.md#roadmap-computer-use). Nothing reads this key yet: no route, child or driver exists. It ships now so the gate is closed before any of them is…
@@ -417,14 +419,14 @@ Bounds and failures: Request, response, rate, concurrency and deadline bounds ar
   - notifications.schema_version
   - notifications.destinations: max 8: explicit id, owner, enabled, url, events, use_bearer, rate_per_minute
   - notifications.webhook_url: legacy global URL must be migrated explicitly; never invent an owner
-  - notifications.private_url_allowlist: exact URLs only; loopback/RFC1918/ULA require this grant
-  - notifications.queue_capacity: 1–512 retained deliveries; pressure evicts terminal rows before refusing pending work
-  - notifications.batch_size: 1–32 metadata events per POST
-  - notifications.batch_interval_sec: 1–3600; initial batching delay
 
 ## config: sections and keys (values omitted) (part 7)
 
-- notifications.poll_interval_sec: 1–60; durable outbox scan
+- notifications.private_url_allowlist: exact URLs only; loopback/RFC1918/ULA require this grant
+  - notifications.queue_capacity: 1–512 retained deliveries; pressure evicts terminal rows before refusing pending work
+  - notifications.batch_size: 1–32 metadata events per POST
+  - notifications.batch_interval_sec: 1–3600; initial batching delay
+  - notifications.poll_interval_sec: 1–60; durable outbox scan
   - notifications.max_attempts: 1–3 per delivery/replay; IDs remain stable
   - notifications.retry_delay_sec: 1–60; exponential backoff base
   - notifications.max_backoff_sec: 1–3600; before bounded jitter
@@ -435,16 +437,16 @@ Bounds and failures: Request, response, rate, concurrency and deadline bounds ar
 - mcp: External MCP tools. Off until an operator declares servers. Never auto-discover. SSE loopback is an explicit toggle and ships off. MCP tools never appear on /loop. stdio command[0] must be an…
   - mcp.server
   - mcp.enabled
-  - mcp.sse_allow_loopback: explicit permission for declared loopback SSE servers
+
+## config: sections and keys (values omitted) (part 8)
+
+- mcp.sse_allow_loopback: explicit permission for declared loopback SSE servers
   - mcp.timeout_sec: 1–60
   - mcp.max_result_bytes: 1024–262144
   - mcp.servers
 - security
   - security.api_key_optional: optional harness metadata key; account login remains required
-
-## config: sections and keys (values omitted) (part 8)
-
-- security.allow_plaintext_key_file: keep managed provider keys in the OS credential store
+  - security.allow_plaintext_key_file: keep managed provider keys in the OS credential store
 - tls
   - tls.enabled: newly seeded homes use HTTPS; existing configs are not rewritten
   - tls.auto_generate: unique local cert/key in a private atomic PEM bundle
@@ -462,7 +464,10 @@ Bounds and failures: Request, response, rate, concurrency and deadline bounds ar
   - logging.max_file_bytes: clamped to 64 KiB–64 MiB; oversized events are dropped
   - logging.audit_lease_wait_ms: clamped to 0–5000
   - logging.audit_lease_retry_ms: clamped to 1–1000
-  - logging.audit_queue_lines: 0, or clamped to 64–65536
+
+## config: sections and keys (values omitted) (part 9)
+
+- logging.audit_queue_lines: 0, or clamped to 64–65536
   - logging.audit_fields
 - policy
   - policy.prompt_filter
@@ -471,9 +476,6 @@ Bounds and failures: Request, response, rate, concurrency and deadline bounds ar
   - personality.soul_max_chars: clamped to 1–65536
   - personality.prompt_skill_max_chars: clamped to 1–32768
   - personality.prompt_skills_total_chars: clamped to 1–65536
-
-## config: sections and keys (values omitted) (part 9)
-
 - agentic
   - agentic.enabled: master switch; CLI no-ops (exit 0) while false
   - agentic.repo: set owner/name explicitly before enabling coding
@@ -489,15 +491,15 @@ Bounds and failures: Request, response, rate, concurrency and deadline bounds ar
 - unslop
   - unslop.enabled: opt-in planner probe: counts fixed filler phrases, may nudge the next iteration; never rewrites or gates
   - unslop.metrics_path
+
+## config: sections and keys (values omitted) (part 10)
+
 - diagnostics: Read-only /diag log inspection. New homes ship logs_enabled as literal true (quoted "true" is off); only admin and auditor accounts may read. An existing home config.yaml is not rewritten. Reads…
   - diagnostics.logs_enabled
   - diagnostics.logs_max_lines: 1–1000 per read
   - diagnostics.logs_max_bytes: 4096–262144 per read
   - diagnostics.logs_inject_max_chars: 512–24000 staged into one prompt
-
-## config: sections and keys (values omitted) (part 10)
-
-- diagnostics.logs_allowed_files: bare names [A-Za-z0-9._-]; unslop.metrics_path outside logs/ is not read
+  - diagnostics.logs_allowed_files: bare names [A-Za-z0-9._-]; unslop.metrics_path outside logs/ is not read
   - diagnostics.model_tool
   - diagnostics.self_knowledge
   - diagnostics.self_manual_max_chunks: 1–8 chunks per turn
@@ -508,7 +510,10 @@ Bounds and failures: Request, response, rate, concurrency and deadline bounds ar
   - memory.enabled
 - structured_memory
   - structured_memory.enabled
-  - structured_memory.episode_capture
+
+## config: sections and keys (values omitted) (part 11)
+
+- structured_memory.episode_capture
   - structured_memory.explicit_recall
   - structured_memory.retrieval
   - structured_memory.auto_retrieval
@@ -517,10 +522,7 @@ Bounds and failures: Request, response, rate, concurrency and deadline bounds ar
   - structured_memory.auto_suggest_chat
   - structured_memory.auto_suggest_coding
   - structured_memory.suggestion_mode: summaries | insights | both; invalid values disable suggestions
-
-## config: sections and keys (values omitted) (part 11)
-
-- structured_memory.suggestion_supported
+  - structured_memory.suggestion_supported
   - structured_memory.suggestion_max_input_chars: clamped to 256–32000; total across input/output, split equally
   - structured_memory.suggestion_max_queue: clamped to 1–32; queued inputs; one additional generation may be running
   - structured_memory.suggestion_queue_ttl_secs: clamped to 1–3600; volatile inputs expire; restart drops them
@@ -529,16 +531,16 @@ Bounds and failures: Request, response, rate, concurrency and deadline bounds ar
   - structured_memory.max_facts_per_owner: clamped to 1–256
   - structured_memory.max_fact_chars: clamped to 1–4000
   - structured_memory.max_category_chars: clamped to 1–64
-  - structured_memory.max_proposals_per_owner: clamped to 1–128
+
+## config: sections and keys (values omitted) (part 12)
+
+- structured_memory.max_proposals_per_owner: clamped to 1–128
   - structured_memory.max_reason_chars: clamped to 1–1000
   - structured_memory.max_episodes_per_owner: clamped to 1–1024
   - structured_memory.max_episode_summary_chars: clamped to 32–4000
   - structured_memory.max_episode_bytes_per_owner: clamped to 256–8 MiB
   - structured_memory.episode_ttl_secs: clamped to 60–31622400 (366 days)
-
-## config: sections and keys (values omitted) (part 12)
-
-- structured_memory.max_export_bytes: clamped to 1 KiB–8 MiB
+  - structured_memory.max_export_bytes: clamped to 1 KiB–8 MiB
   - structured_memory.max_selected_facts: clamped to 1–32
   - structured_memory.max_search_query_chars: clamped to 1–256
   - structured_memory.max_search_results: clamped to 1–64
@@ -549,15 +551,15 @@ Bounds and failures: Request, response, rate, concurrency and deadline bounds ar
   - structured_memory.pinned_prompt_chars: clamped to 1–3000
   - structured_memory.selected_fact_prompt_chars: clamped to 1–3000
   - structured_memory.max_consolidation_episodes: clamped to 1–16
-  - structured_memory.max_consolidation_candidates: clamped to 1–16
+
+## config: sections and keys (values omitted) (part 13)
+
+- structured_memory.max_consolidation_candidates: clamped to 1–16
   - structured_memory.min_consolidation_confidence: clamped to 0–1
   - structured_memory.auto_consolidation_idle_ms: clamped to 20–60000
 - netconnect: LAN observation. Every gate ships false. A tier is effective only when `enabled` and that tier's flag are both the literal boolean true; quoted "true" is off. `allowed_cidrs` is empty, so every…
   - netconnect.enabled
-
-## config: sections and keys (values omitted) (part 13)
-
-- netconnect.passive_listen
+  - netconnect.passive_listen
   - netconnect.discovery
   - netconnect.port_scan
   - netconnect.diagnostics
@@ -576,6 +578,9 @@ Bounds and failures: Request, response, rate, concurrency and deadline bounds ar
   - netconnect.ha_endpoint
   - netconnect.mqtt_endpoint
   - netconnect.untrusted_string_max_chars
+
+## config: sections and keys (values omitted) (part 14)
+
 - scheduling: Durable schedules: restart-only tuning, never execution/write authority. New interval and cron schedules require an owner-bound preview receipt.
   - scheduling.poll_interval_ms: 250–5000
   - scheduling.dispatch_grace_secs: 5–30; older occurrences are skipped

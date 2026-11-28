@@ -3504,19 +3504,9 @@ async fn run_limits_count_failed_and_repeated_calls_before_they_run() {
         );
     }
     let denied = r#"{"url":"http://denied.example/page"}"#; // DevSkim: ignore DS137138 because denied.example is never permitted or contacted.
-    let batch =
-        |calls: &[(&str, &str)]| {
-            let mut reply = tool_call_reply(calls[0].0, calls[0].1, "call_0");
-            for (index, (name, args)) in calls.iter().enumerate().skip(1) {
-                reply["choices"][0]["message"]["tool_calls"].as_array_mut().unwrap().push(
-                json!({"id":format!("call_{index}"),"type":"function","function":{"name":name,"arguments":args}}),
-            );
-            }
-            reply
-        };
     let search = r#"{"query":"listed page"}"#;
     model.set_reply(json!([
-        batch(&[
+        tool_batch(&[
             ("web_fetch", denied),
             ("web_fetch", LISTED_PAGE),
             ("web_search", search),
@@ -3657,6 +3647,178 @@ async fn a_server_loop_run_spends_its_run_limits_across_turns() {
     );
     task.abort();
     model_task.abort();
+}
+
+/// The tool calls of one model reply, `calls` as (name, arguments).
+fn tool_batch(calls: &[(&str, &str)]) -> Value {
+    let mut reply = tool_call_reply(calls[0].0, calls[0].1, "call_0");
+    for (index, (name, args)) in calls.iter().enumerate().skip(1) {
+        reply["choices"][0]["message"]["tool_calls"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":format!("call_{index}"),"type":"function","function":{"name":name,"arguments":args}}));
+    }
+    reply
+}
+
+/// #772 typed selection (`web.typed_selection: true`): each listed row carries
+/// a server-issued candidate id, and `web_select` `read` reads only the URL
+/// that id names. An id no listing this turn gave (invented, or from an
+/// earlier turn) is `WEB_CANDIDATE_UNKNOWN` and dispatches nothing; `skip`
+/// reads nothing. Shipped (off), `web_select` is not offered.
+#[tokio::test]
+async fn typed_selection_reads_only_a_candidate_this_turn_listed() {
+    let (address, reads, task) = listing_fixture().await;
+    let model = common::start_mock_model().await;
+    let s = listing_spawn(&model, address, legacy_options().with("web.typed_selection", "true")).await;
+    let search_rule = "http://google.fixture/*"; // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+    assert_eq!(s.post_json("/api/web/allow", json!({"url":search_rule})).await.0, 200);
+    let read = |id: &str| format!(r#"{{"decision":"read","candidate":"{id}"}}"#);
+    let (c1, c9) = (read("c1"), read("c9"));
+    let skip = r#"{"decision":"skip","candidate":"c1"}"#;
+    model.set_reply(json!([
+        tool_call_reply("web_search", r#"{"query":"listed page"}"#, "search"),
+        tool_batch(&[("web_select", &c9), ("web_select", skip), ("web_select", &c1)]),
+        common::ok_reply("Answered.", 20, 6)
+    ]));
+    let (status, reply) = s.post_json("/api/chat", json!({"message":"Search and read"})).await;
+    assert_eq!(status, 200, "{reply}");
+    let first = model.requests.lock().unwrap()[0].clone();
+    let offered: Vec<_> = first["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(offered.contains(&"web_select".to_string()), "{offered:?}");
+    let tools = reply["web_tools"].as_array().expect("web tools ran");
+    assert_eq!(tools[0]["result"]["results"][0]["candidate"], "c1", "{reply}");
+    assert_eq!(tools[1]["code"], "WEB_CANDIDATE_UNKNOWN", "an invented id: {reply}");
+    assert_eq!(tools[2]["result"]["decision"], "skip", "{reply}");
+    assert_eq!(tools[3]["ok"], true, "{reply}");
+    assert_eq!(
+        tools[3]["tool"], "web_fetch",
+        "a read runs as the listed URL's fetch: {reply}"
+    );
+    assert_eq!(tools[3]["target"], "http://docs.example/page", "{reply}"); // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+    assert_eq!(reads.load(Ordering::SeqCst), 1, "only the resolved candidate was read");
+    // Ids belong to the turn whose listing gave them.
+    model.set_reply(json!([
+        tool_call_reply("web_select", &c1, "stale"),
+        common::ok_reply("Nothing new.", 20, 6)
+    ]));
+    let (status, reply) = s.post_json("/api/chat", json!({"message":"Read c1 again"})).await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(reply["web_tools"][0]["code"], "WEB_CANDIDATE_UNKNOWN", "{reply}");
+    assert_eq!(reads.load(Ordering::SeqCst), 1, "a stale id read nothing");
+    let audit = s.audit_log();
+    assert_eq!(audit.matches(r#""event":"web_select""#).count(), 4, "{audit}");
+    task.abort();
+    // Shipped: no candidate ids and no web_select.
+    let (address, _reads, task) = listing_fixture().await;
+    let model = common::start_mock_model().await;
+    let s = listing_spawn(&model, address, legacy_options()).await;
+    model.set_reply(common::ok_reply("Plain.", 20, 3));
+    let (status, _) = s.post_json("/api/chat", json!({"message":"What is listed?"})).await;
+    assert_eq!(status, 200);
+    let tools = model.last_request().unwrap()["tools"].to_string();
+    assert!(tools.contains("web_search") && !tools.contains("web_select"), "{tools}");
+    task.abort();
+}
+
+/// #772: `insufficient_signal` is a legitimate stop. Nothing is read, the next
+/// model call offers no tools, and the turn's answer is saved.
+#[tokio::test]
+async fn insufficient_signal_ends_web_use_for_the_turn() {
+    let (address, reads, task) = listing_fixture().await;
+    let model = common::start_mock_model().await;
+    let s = listing_spawn(&model, address, legacy_options().with("web.typed_selection", "true")).await;
+    let search_rule = "http://google.fixture/*"; // DevSkim: ignore DS137138 because this synthetic URL resolves only to the loopback fixture.
+    assert_eq!(s.post_json("/api/web/allow", json!({"url":search_rule})).await.0, 200);
+    model.set_reply(json!([
+        tool_call_reply("web_search", r#"{"query":"listed page"}"#, "search"),
+        tool_call_reply("web_select", r#"{"decision":"insufficient_signal"}"#, "stop"),
+        common::ok_reply("The listing cannot answer this; nothing was read.", 20, 9)
+    ]));
+    let (status, reply) = s.post_json("/api/chat", json!({"message":"Search it"})).await;
+    assert_eq!(status, 200, "{reply}");
+    assert_eq!(
+        reply["web_tools"][1]["result"]["decision"], "insufficient_signal",
+        "{reply}"
+    );
+    assert!(
+        model.last_request().unwrap().get("tools").is_none(),
+        "the answer call offers no tools"
+    );
+    assert_eq!(reply["reply"], "The listing cannot answer this; nothing was read.");
+    assert_eq!(reads.load(Ordering::SeqCst), 0);
+    task.abort();
+}
+
+/// #772 (from #941): under `web.tool_offer: when_asked` a typed turn with no
+/// goal that names no URL, asks no question and asks for no outside source
+/// is sent without tools, the shape that made one MLX tag repeat itself. A
+/// question, a goal session or a loop turn is still offered them. Shipped
+/// (`always`), every turn is.
+#[tokio::test]
+async fn when_asked_offers_web_tools_only_to_turns_that_could_use_them() {
+    let (address, _reads, task) = listing_fixture().await;
+    for (offer, message, goal, loop_turn, expected) in [
+        (
+            "when_asked",
+            "Reply with exactly this single word: Juniper.",
+            false,
+            false,
+            false,
+        ),
+        ("when_asked", "What does the listed page say?", false, false, true),
+        (
+            "when_asked",
+            "Reply with exactly this single word: Juniper.",
+            true,
+            false,
+            true,
+        ),
+        (
+            "when_asked",
+            "Reply with exactly this single word: Juniper.",
+            true,
+            true,
+            true,
+        ),
+        (
+            "always",
+            "Reply with exactly this single word: Juniper.",
+            false,
+            false,
+            true,
+        ),
+    ] {
+        let model = common::start_mock_model().await;
+        let s = listing_spawn(&model, address, legacy_options().with("web.tool_offer", offer)).await;
+        let (_, session) = s.post_json("/api/sessions", json!({})).await;
+        let sid = session["session_id"].as_str().unwrap().to_string();
+        if goal {
+            let (status, body) = s
+                .post_json(
+                    &format!("/api/sessions/{sid}/goal"),
+                    json!({"goal":"answer in one word"}),
+                )
+                .await;
+            assert_eq!(status, 200, "{body}");
+        }
+        model.set_reply(common::ok_reply("Juniper", 20, 2));
+        let (status, reply) = s
+            .post_json(
+                "/api/chat",
+                json!({"message":message,"session_id":sid,"loop":loop_turn}),
+            )
+            .await;
+        assert_eq!(status, 200, "{offer} {message} goal={goal} loop={loop_turn}: {reply}");
+        let offered = model.last_request().unwrap().get("tools").is_some();
+        assert_eq!(offered, expected, "{offer} {message} goal={goal} loop={loop_turn}");
+    }
+    task.abort();
 }
 
 /// A server-run `/loop` carries its search-result grants from one turn to the

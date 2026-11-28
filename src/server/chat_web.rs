@@ -47,6 +47,12 @@ const OUTSIDE_SOURCE_PHRASES: &[&str] = &[
     "web sources",
 ];
 
+/// Whether `message` asks, in words, for a source outside this chat.
+pub(crate) fn asks_for_outside_source(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    OUTSIDE_SOURCE_PHRASES.iter().any(|phrase| lower.contains(phrase))
+}
+
 fn is_web_search_name(name: &str) -> bool {
     matches!(name, "web_search" | "search_web" | "websearch")
 }
@@ -59,10 +65,9 @@ struct StickyRoute {
 
 impl StickyRoute {
     fn from_user_message(message: &str) -> Self {
-        let lower = message.to_ascii_lowercase();
         Self {
             local_answered: false,
-            user_asked_outside: OUTSIDE_SOURCE_PHRASES.iter().any(|phrase| lower.contains(phrase)),
+            user_asked_outside: asks_for_outside_source(message),
         }
     }
 
@@ -802,10 +807,18 @@ async fn run_inner(
     let mut used_calls = 0;
     // `web.run_limits` spent by this turn when it is not a server-run loop's.
     let mut turn_spend = super::web_run_budget::RunSpend::default();
+    // Set by a `web_select` `insufficient_signal`; ends web use after the batch.
+    let mut insufficient_signal = false;
     let mut prompt_tokens = 0u64;
     let mut completion_tokens = 0u64;
     let mut initial_prompt_tokens = None;
-    let definitions = tools_for(web_mode);
+    let mut definitions = tools_for(web_mode);
+    // #772 typed selection (`web.typed_selection`, ships off): offered beside
+    // search, since only a listing gives candidates.
+    if web.limits.typed_selection && web_mode.allows("web_search") {
+        definitions.push(super::web_select::select_tool());
+    }
+    let mut candidates = super::web_select::Candidates::default();
     // Canonical URLs this turn already read from the origin with `refresh: true`.
     let mut refreshed = std::collections::HashSet::<String>::new();
     let question = if loop_turn && !goal.trim().is_empty() {
@@ -1254,13 +1267,21 @@ async fn run_inner(
                 closed_search = true;
                 continue;
             }
-            if !web_mode.allows(name) {
+            let permitted = if name == "web_select" {
+                web.limits.typed_selection && web_mode.allows("web_search")
+            } else {
+                web_mode.allows(name)
+            };
+            if !permitted {
                 return Err(error(
                     "WEB_TOOL_DENIED",
                     "model requested a tool excluded by the goal web mode",
                 ));
             }
             match name {
+                "web_select" => {
+                    super::web_select::SelectArgs::parse(args)?;
+                }
                 "web_search" => {
                     serde_json::from_str::<SearchArgs>(args)
                         .map_err(|_| error("WEB_TOOL_ARGUMENTS", "invalid search arguments"))?;
@@ -1330,16 +1351,66 @@ async fn run_inner(
                 .filter(|s| s.len() <= 4096)
                 .ok_or_else(|| error("WEB_TOOL_ARGUMENTS", "invalid tool arguments"))?;
             authorize_turn(state, owner, sign_in)?;
+            // #772 typed selection: only the server resolves a candidate. A
+            // `read` runs as that URL's `web_fetch`, so it meets the same policy,
+            // provenance, refresh and run-limit checks; `skip` and
+            // `insufficient_signal` dispatch nothing, and neither does an id no
+            // listing this turn gave.
+            let resolved;
+            let (name, args, selected_outcome) = if name == "web_select" {
+                use super::web_select::Decision;
+                let choice = super::web_select::SelectArgs::parse(args)?;
+                let candidate = choice.candidate.clone().unwrap_or_default();
+                let outcome = match choice.decision {
+                    Decision::Read => candidates.resolve(&candidate).map(|url| url.to_string()),
+                    Decision::Skip => candidates.resolve(&candidate).map(|_| String::new()),
+                    Decision::InsufficientSignal => Ok(String::new()),
+                };
+                let label = match choice.decision {
+                    Decision::Read => "read",
+                    Decision::Skip => "skip",
+                    Decision::InsufficientSignal => "insufficient_signal",
+                };
+                state.audit.log(
+                    json!({"event":"web_select","decision":label,"resolved":outcome.is_ok(),"loop_turn":loop_turn}),
+                );
+                match (choice.decision, outcome) {
+                    (Decision::Read, Ok(url)) => {
+                        resolved = json!({"url":url}).to_string();
+                        ("web_fetch", resolved.as_str(), None)
+                    }
+                    (_, Err(unknown)) => (name, args, Some(Err(unknown))),
+                    (Decision::Skip, Ok(_)) => (name, args, Some(Ok(json!({"decision":"skip","candidate":candidate})))),
+                    (_, Ok(_)) => {
+                        insufficient_signal = true;
+                        (
+                            name,
+                            args,
+                            Some(Ok(json!({"decision":"insufficient_signal",
+                                "notice":"Web use ends for this turn. Answer with what you have and say what is missing."}))),
+                        )
+                    }
+                }
+            } else {
+                (name, args, None)
+            };
             let argv = tool_argv(name, args);
             // The URL or query as asked, for the session's web ledger (`web_ledger`).
             let target = argv.first().cloned().unwrap_or_default();
             let call_args = tool_args_record(name, args);
             let mut selected = Vec::new();
-            assert_allowed(name, &argv, &chat_callable_names(web_mode), &state.audit)
-                .map_err(|e| error("WEB_TOOL_DENIED", &e.message))?;
+            if selected_outcome.is_none() {
+                assert_allowed(name, &argv, &chat_callable_names(web_mode), &state.audit)
+                    .map_err(|e| error("WEB_TOOL_DENIED", &e.message))?;
+            }
             // #772 D4: counted before it runs, whatever it returns.
-            let charged = charge_attempt(state, owner, run_id, goal, name, &mut turn_spend, web, loop_turn);
-            let result = if let Err(spent) = charged {
+            let charged = match &selected_outcome {
+                Some(_) => Ok(()),
+                None => charge_attempt(state, owner, run_id, goal, name, &mut turn_spend, web, loop_turn),
+            };
+            let result = if let Some(outcome) = selected_outcome {
+                outcome
+            } else if let Err(spent) = charged {
                 Err(spent)
             } else if is_web_search_name(name) && !route.allows_web_search() {
                 Err(error("WEB_TOOL_DENIED", WEB_SEARCH_CLOSED))
@@ -1395,6 +1466,9 @@ async fn run_inner(
                             if web.grants_search_results() {
                                 listing["notice"] = json!(GRANTED_SEARCH_NOTICE);
                                 web.mark_arxiv_pdfs(&mut listing);
+                            }
+                            if web.limits.typed_selection {
+                                candidates.assign(&mut listing);
                             }
                             listing
                         })
@@ -1549,6 +1623,11 @@ async fn run_inner(
                 events.push(json!({"tool":name,"ok":true,"target":target,"args":call_args,"result":result}));
             }
             messages.push(tool_message(id, &result)?);
+        }
+        if insufficient_signal {
+            // #772: a legitimate stop, not a failure: no further round is
+            // offered, and the model answers with what it has.
+            tools_withheld = true;
         }
         if batch_ok == 0 {
             // Every call in this batch failed. Each failure is already that

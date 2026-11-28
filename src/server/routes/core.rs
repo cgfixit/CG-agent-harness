@@ -1102,6 +1102,19 @@ pub(crate) async fn chat_inner(
     } else {
         session.chat_web_mode(settings.web_enabled && !state.chat_tools_unsupported(&model))
     };
+    // #772 (from #941): under `web.tool_offer: when_asked` a typed turn with no
+    // goal is offered web tools only when it could use them; a gated turn gets
+    // no other tools in their place.
+    let offer_gated = chat_web_mode.enabled()
+        && state.web.limits.tool_offer == crate::server::web_select::ToolOffer::WhenAsked
+        && !req.loop_turn
+        && session.goal.trim().is_empty()
+        && !crate::server::web_select::could_use_web(&req.message);
+    let chat_web_mode = if offer_gated {
+        crate::server::sessions::GoalWebMode::Off
+    } else {
+        chat_web_mode
+    };
     let chat_tools = chat_web_mode.enabled();
     // The read-only log-investigation tools attach to the plain local-chat
     // arm only: never a cloud, /loop or web-tool turn, and only for a role
@@ -1112,6 +1125,7 @@ pub(crate) async fn chat_inner(
     let diag_tools = !cloud_selected
         && !req.loop_turn
         && !chat_tools
+        && !offer_gated
         && state.diag.config.logs_enabled
         && state.diag.config.model_tool
         // A model auto_tune found declares no tools gets a plain turn, as the
