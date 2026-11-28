@@ -2511,6 +2511,33 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
             .to_string();
         Ok(guard_call(sidecar, lines, json!({"op":"click","target":{"ref": target}}))?.0)
     };
+    // The same click, with `verdicts` planned, repeated until the operator was
+    // asked about its request. On a slow runner the page's request can reach
+    // the sidecar after the click has answered; it is then the page's own,
+    // held without a question, and the case under test did not happen. The
+    // third try is returned as it is, so a request that is never asked about
+    // still fails the caller's check.
+    let click_asked = |sidecar: &mut Sidecar,
+                       lines: &mut Vec<String>,
+                       name: &str,
+                       verdicts: &dyn Fn() -> Vec<Verdict>|
+     -> Result<Value, String> {
+        for attempt in 1.. {
+            operator.plan(verdicts());
+            let before = operator.asked().len();
+            let page = click(sidecar, lines, name)?;
+            if operator.asked().len() > before || attempt == 3 {
+                return Ok(page);
+            }
+            // Let the late request arrive and be listed before the next try.
+            thread::sleep(Duration::from_secs(1));
+            guard_call(sidecar, lines, json!({"op":"observe"}))?;
+            lines.push(format!(
+                "try {attempt}: {name}'s request left after the click answered; clicking again"
+            ));
+        }
+        unreachable!("the loop returns on its third try")
+    };
     let save = format!("POST {base}/api/save");
     let order = format!("POST {base}/api/order");
     // Fixtures serve on 127.0.0.1: a private grant needs a test-support build.
@@ -2699,9 +2726,8 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
     // The sidecar said it withdrew the question, so the decision is closed on
     // this side at once: the next request is asked about while the first
     // question's approver has still not answered.
-    operator.plan([Verdict::Deny]);
     let asked_now = operator.asked().len();
-    let page = click(&mut sidecar, &mut lines, "Save")?;
+    let page = click_asked(&mut sidecar, &mut lines, "Save", &|| vec![Verdict::Deny])?;
     if operator.asked().len() != asked_now + 1 || rows(&page, "held") != [save.clone()] {
         return Err(format!(
             "a withdrawn question kept the one decision open: the next request was refused unasked: {page}"
@@ -2909,13 +2935,16 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         Some(takeover(Duration::from_secs(1))),
         false,
     )?;
-    operator.plan([Verdict::AllowAfter(Duration::from_secs(3))]);
-    let page = click(&mut sidecar, &mut lines, "Save")?;
-    if rows(&page, "held") != [save.clone()] {
-        return Err(format!("a POST whose wait ran out was not held: {page}"));
-    }
+    let page = click_asked(&mut sidecar, &mut lines, "Save", &|| {
+        vec![Verdict::AllowAfter(Duration::from_secs(3))]
+    })?;
     thread::sleep(Duration::from_secs(3));
-    guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    // The click can answer while its question is still open; the held row is
+    // then in the observation that follows.
+    let (later, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
+    if [rows(&page, "held"), rows(&later, "held")].concat() != [save.clone()] {
+        return Err(format!("a POST whose wait ran out was not held: {page} {later}"));
+    }
     if count("POST /api/save") != 2 {
         return Err("a yes that came after the wait sent the request".into());
     }
@@ -2937,10 +2966,14 @@ fn takeover_with_policy(script: &Path, headless: bool, policy_file: &Path) -> Re
         false,
     )?;
     let slow_yes = Duration::from_secs(4);
-    operator.plan([Verdict::AllowAfter(slow_yes), Verdict::AllowAfter(slow_yes)]);
-    let (asked_before, saves_before) = (operator.asked().len(), count("POST /api/save"));
-    let started = Instant::now();
-    let page = click(&mut sidecar, &mut lines, "Save twice")?;
+    // Counted and timed from the try that was asked about.
+    let saves_before = count("POST /api/save");
+    let begun = std::cell::Cell::new((operator.asked().len(), Instant::now()));
+    let page = click_asked(&mut sidecar, &mut lines, "Save twice", &|| {
+        begun.set((operator.asked().len(), Instant::now()));
+        vec![Verdict::AllowAfter(slow_yes), Verdict::AllowAfter(slow_yes)]
+    })?;
+    let (asked_before, started) = begun.get();
     let (later, _) = guard_call(&mut sidecar, &mut lines, json!({"op":"observe"}))?;
     let took = started.elapsed();
     let asked = operator.asked();
