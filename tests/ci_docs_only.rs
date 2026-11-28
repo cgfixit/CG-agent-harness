@@ -238,7 +238,7 @@ fn ci_changes_job_keeps_no_renames_and_fail_closed() {
 
     let jobs_map = jobs.as_mapping().unwrap_or_else(|| panic!("{name} jobs map"));
     for (job_name, job) in jobs_map {
-        if !needs_changes(job) || job_name.as_str() == Some(GATE) {
+        if !needs_changes(job) || matches!(job_name.as_str(), Some(GATE | "test")) {
             continue;
         }
         let gate = job.get("if").and_then(Value::as_str).unwrap_or("");
@@ -280,12 +280,14 @@ fn required_gate_needs_every_ci_job_and_always_runs() {
 
     let test = jobs.get("test").expect("test job");
     let matrix = test["strategy"]["matrix"]["os"].as_str().expect("test matrix");
-    assert!(
-        matrix.contains("needs.changes.outputs.windows_suite == 'false'"),
-        "{matrix}"
+    assert!(test.get("if").is_none(), "docs-only PRs still run the Windows suite");
+    let windows = jobs.get("windows-mcp-lifecycle").expect("Windows lifecycle job");
+    assert!(windows.get("if").is_none() && windows.get("needs").is_none());
+    assert_eq!(
+        matrix.split_whitespace().collect::<Vec<_>>().join(" "),
+        r#"${{ fromJSON(needs.changes.outputs.code == 'false' && '["windows-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}"#
     );
     for leg in ["ubuntu-latest", "macos-latest", "windows-latest"] {
-        assert!(matrix.contains(&format!("\"{leg}\"")), "{leg} missing from {matrix}");
         let expected = format!("${{{{ steps.leg.outputs.{leg} }}}}");
         assert_eq!(
             test["outputs"][leg].as_str(),
@@ -315,16 +317,16 @@ fn ok_need() -> serde_json::Value {
     serde_json::json!({"result": "success", "outputs": {}})
 }
 
-/// Every ci.yml job passed, with `code`, `windows_suite` and the given legs.
+/// Every ci.yml job passed, with the given classification and test legs.
 #[cfg(unix)]
-fn needs_with(code: &str, windows_suite: &str, legs: &[(&str, &str)]) -> serde_json::Value {
+fn needs_with(code: &str, legs: &[(&str, &str)]) -> serde_json::Value {
     let mut needs = serde_json::Map::new();
     for id in ci_jobs().keys().filter_map(Value::as_str).filter(|id| *id != GATE) {
         needs.insert(id.to_string(), ok_need());
     }
     needs.insert(
         "changes".into(),
-        serde_json::json!({"result": "success", "outputs": {"code": code, "windows_suite": windows_suite}}),
+        serde_json::json!({"result": "success", "outputs": {"code": code}}),
     );
     let legs: serde_json::Map<String, serde_json::Value> = legs
         .iter()
@@ -365,14 +367,12 @@ fn required_gate_fails_every_result_its_event_does_not_allow() {
         needs
     };
     let docs_only_pr = || {
-        let mut needs = needs_with("false", "false", &[]);
+        let mut needs = needs_with("false", &[W]);
         for job in [
             "browser-guards",
             "clippy",
-            "test",
             "linux-bwrap",
             "linux-mcp-lifecycle",
-            "windows-mcp-lifecycle",
             "bakeoff-self-test",
         ] {
             needs[job]["result"] = "skipped".into();
@@ -380,61 +380,69 @@ fn required_gate_fails_every_result_its_event_does_not_allow() {
         needs
     };
     let cases: Vec<(&str, &str, serde_json::Value, i32)> = vec![
+        ("PR missing Windows", "pull_request", needs_with("true", &[U, M]), 1),
+        ("PR with every leg", "pull_request", needs_with("true", &[U, M, W]), 0),
         (
-            "PR, switch off: no Windows leg",
+            "PR with failed Windows tests",
             "pull_request",
-            needs_with("true", "false", &[U, M]),
-            0,
-        ),
-        (
-            "PR, switch on: Windows leg due",
-            "pull_request",
-            needs_with("true", "true", &[U, M]),
+            needs_with("true", &[U, M, ("windows-latest", "failure")]),
             1,
         ),
         (
-            "PR, switch on, Windows passed",
+            "docs-only PR missing Windows",
             "pull_request",
-            needs_with("true", "true", &[U, M, W]),
-            0,
+            needs_with("false", &[]),
+            1,
+        ),
+        (
+            "docs-only PR skipped matrix",
+            "pull_request",
+            set(docs_only_pr(), "test", "skipped"),
+            1,
+        ),
+        (
+            "docs-only PR skipped Windows lifecycle",
+            "pull_request",
+            set(docs_only_pr(), "windows-mcp-lifecycle", "skipped"),
+            1,
         ),
         (
             "queue without the Windows leg",
             "merge_group",
-            needs_with("true", "false", &[U, M]),
+            needs_with("true", &[U, M]),
             1,
         ),
-        (
-            "queue with every leg",
-            "merge_group",
-            needs_with("true", "true", &[U, M, W]),
-            0,
-        ),
+        ("queue with every leg", "merge_group", needs_with("true", &[U, M, W]), 0),
         (
             "queue, Windows advisory outcome",
             "merge_group",
-            needs_with("true", "true", &[U, M, ("windows-latest", "failure")]),
+            needs_with("true", &[U, M, ("windows-latest", "failure")]),
             1,
         ),
         (
             "queue, macOS leg never finished",
             "merge_group",
-            needs_with("true", "true", &[U, W]),
+            needs_with("true", &[U, W]),
             1,
         ),
         (
             "main push, Windows advisory outcome",
             "push",
-            needs_with("true", "true", &[U, M, ("windows-latest", "failure")]),
+            needs_with("true", &[U, M, ("windows-latest", "failure")]),
             0,
         ),
         (
             "main push without the Windows leg",
             "push",
-            needs_with("true", "true", &[U, M]),
+            needs_with("true", &[U, M]),
             1,
         ),
-        ("docs-only PR skips code jobs", "pull_request", docs_only_pr(), 0),
+        (
+            "docs-only PR passes with Windows and skips eligible jobs",
+            "pull_request",
+            docs_only_pr(),
+            0,
+        ),
         (
             "docs-only PR, changes skipped",
             "pull_request",
@@ -450,29 +458,25 @@ fn required_gate_fails_every_result_its_event_does_not_allow() {
         (
             "code PR, skipped job",
             "pull_request",
-            set(needs_with("true", "false", &[U, M]), "linux-bwrap", "skipped"),
+            set(needs_with("true", &[U, M, W]), "linux-bwrap", "skipped"),
             1,
         ),
         (
             "queue, code=false skip",
             "merge_group",
-            set(needs_with("false", "true", &[U, M, W]), "clippy", "skipped"),
+            set(needs_with("false", &[U, M, W]), "clippy", "skipped"),
             1,
         ),
         (
             "queue, cancelled job",
             "merge_group",
-            set(
-                needs_with("true", "true", &[U, M, W]),
-                "windows-mcp-lifecycle",
-                "cancelled",
-            ),
+            set(needs_with("true", &[U, M, W]), "windows-mcp-lifecycle", "cancelled"),
             1,
         ),
         (
             "PR, failed test job",
             "pull_request",
-            set(needs_with("true", "false", &[U]), "test", "failure"),
+            set(needs_with("true", &[U]), "test", "failure"),
             1,
         ),
     ];
@@ -480,7 +484,7 @@ fn required_gate_fails_every_result_its_event_does_not_allow() {
         let (code, log) = gate_exit(event, &needs);
         assert_eq!(code, expected, "{name}\n{log}");
     }
-    let mut missing = needs_with("true", "true", &[U, M, W]);
+    let mut missing = needs_with("true", &[U, M, W]);
     missing.as_object_mut().unwrap().remove("test");
     assert_eq!(gate_exit("merge_group", &missing).0, 1, "a gate without test in needs");
 }
@@ -493,17 +497,17 @@ fn ruleset_contexts_have_one_unskippable_producer_on_prs_and_the_queue() {
         &std::fs::read_to_string(repo_root().join(".github/rulesets/main-protection.json")).expect("ruleset"),
     )
     .expect("ruleset json");
-    let contexts: Vec<String> = ruleset["rules"]
-        .as_array()
-        .expect("rules")
+    let rules = ruleset["rules"].as_array().expect("rules");
+    assert!(rules.iter().all(|rule| rule["type"] != "merge_queue"));
+    let checks = rules
         .iter()
-        .filter(|rule| rule["type"] == "required_status_checks")
-        .flat_map(|rule| {
-            rule["parameters"]["required_status_checks"]
-                .as_array()
-                .expect("checks")
-                .clone()
-        })
+        .find(|rule| rule["type"] == "required_status_checks")
+        .expect("required status checks");
+    assert_eq!(checks["parameters"]["strict_required_status_checks_policy"], true);
+    let contexts: Vec<String> = checks["parameters"]["required_status_checks"]
+        .as_array()
+        .expect("checks")
+        .iter()
         .map(|check| check["context"].as_str().expect("context").to_string())
         .collect();
     assert!(!contexts.is_empty());
