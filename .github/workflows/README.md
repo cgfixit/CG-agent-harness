@@ -6,25 +6,22 @@ Lint workflow edits with actionlint and zizmor. See [CI expectations](../../docs
 
 | File | Purpose and trigger |
 |---|---|
-| [`ci.yml`](ci.yml) | Rust formatting, Clippy, dependency policy, browser, sandbox and lifecycle tests; PR, main push, merge queue and release calls. Ruleset requires only `required gate` (fails unexpected skips); `WINDOWS_SUITE_ON_EVERY_PR` adds full Windows to PRs. |
+| [`ci.yml`](ci.yml) | Every PR gates full Windows and MCP/credential tests through `required gate`. Code PRs also test Linux and macOS. Main pushes and releases tolerate Windows Test failures. |
 | [`pr-template-check.yml`](pr-template-check.yml) | PR body and base branch checks; PR open/edit/sync/reopen/ready. |
-| [`docs-impact.yml`](docs-impact.yml) | Required `docs impact`: owning guides against the PR or queue-candidate diff. |
+| [`docs-impact.yml`](docs-impact.yml) | Required `docs impact` checks owning guides against the candidate diff. |
 | [`docs-impact-repair.yml`](docs-impact-repair.yml) | Repair missing guide updates on same-repository maintainer PRs (`pull_request_target`, base scripts only). |
-| [`review-gate-request.yml`](review-gate-request.yml) | Unprivileged wake-up signal from PR (body edits included), review and review-comment events, including forks. |
+| [`review-gate-request.yml`](review-gate-request.yml) | Unprivileged trigger for PRs (including forks and body edits), reviews and review comments. |
 | [`review-gate.yml`](review-gate.yml) | Trusted dispatcher; validates request-run identity or handles Codex summary comments, then calls the evaluator. |
 | [`review-gate-evaluate.yml`](review-gate-evaluate.yml) | Reusable advisory check: unresolved threads, running reviews and a PR body not edited since an operator's `@codex review` comment are neutral; evaluation errors fail. Re-run the dispatcher after resolving threads. |
 
-The [docs-only classifier](../../scripts/ci-docs-only.sh) keeps browser,
-formatting and invariant checks. Verify live settings against the
-[importable ruleset](../rulesets/main-protection.json).
+The [ruleset](../rulesets/main-protection.json) requires up-to-date squash PRs,
+`docs impact`, `required gate` and `check_otel`. Admins can bypass only through PRs. After merge, update `protect-main` and
+compare `gh api repos/{owner}/{repo}/rules/branches/main` with the file.
+Without bypass, verify failing and outdated PRs block and current passing PRs can merge.
 
-Enable hosted docs repair once with Actions secrets
-`DOCS_SYNC_OPENAI_API_KEY` and `DOCS_SYNC_GITHUB_TOKEN` (fine-grained token
-for this repository, Contents write). The worker sends a bounded diff
-and owning guides to OpenAI and can append a docs commit at the exact
-head. `DOCS_SYNC_MODEL` can select another structured-output model.
-Forks use the [author check](../../scripts/docs-impact.py). Docs-impact
-trailers bind unchanged-guide decisions to the production diff.
+Hosted [docs repair](docs-impact-repair.yml) uses `DOCS_SYNC_OPENAI_API_KEY` and
+`DOCS_SYNC_GITHUB_TOKEN` (repository Contents write). `DOCS_SYNC_MODEL` selects
+the model. The worker receives a bounded diff and guides and can commit to the exact head. Forks use the [author check](../../scripts/docs-impact.py). Trailers bind guide decisions to the diff.
 
 ## Packages and releases
 
@@ -32,7 +29,7 @@ trailers bind unchanged-guide decisions to the production diff.
 |---|---|
 | [`bundle.yml`](bundle.yml) | CLI archives and universal macOS app artifacts on main pushes; does not publish releases. |
 | [`desktop.yml`](desktop.yml) | Reusable universal macOS build, dependency policy and bundle verification; Bundle, release or manual. |
-| [`desktop-check.yml`](desktop-check.yml) | Desktop crate fmt, Clippy, tests and dependency policy when `desktop/`, `local_tls.rs`, `start-web.sh`, `package-desktop.sh`, `prepare-cargo.py` or the workflow change; PR, merge queue and manual dispatch, skipped otherwise; advisory until required. |
+| [`desktop-check.yml`](desktop-check.yml) | Advisory desktop fmt, Clippy, tests and dependency policy for changes to `desktop/`, `local_tls.rs`, `start-web.sh`, `package-desktop.sh`, `prepare-cargo.py` or this workflow; manual dispatch also supported. |
 | [`release.yml`](release.yml) | Plan, probe release permission, verify, package and publish; stable tags, each green Bundle on main, or manual preview/publish. Only `publish` uses the `release` environment (wait timer). |
 
 ## Lint, security and targeted checks
@@ -40,7 +37,7 @@ trailers bind unchanged-guide decisions to the production diff.
 | File | Purpose and trigger |
 |---|---|
 | [`workflow-lint.yml`](workflow-lint.yml) | actionlint, zizmor and release/review fixtures; pushes/PRs touching workflow or lint config, or manual. |
-| [`diff-lint.yml`](diff-lint.yml) | [`lint-diff.py`](../../scripts/lint-diff.py) checks DevSkim annotations, self-manual drift, docs caps, config prose and assertion patterns; PR or manual. |
+| [`diff-lint.yml`](diff-lint.yml) | [`lint-diff.py`](../../scripts/lint-diff.py) is advisory. Checks DevSkim annotations, self-manual drift, docs caps, config prose and assertion patterns; PR or manual. |
 | [`telemetry-contract.yml`](telemetry-contract.yml) | [`check_otel.py`](../../.claude/skills/cgagentharness-otel-hardening/check_otel.py) and its mutation self-test: child-environment opt-outs, telemetry-free lock graphs, classified dependencies and spawn files; every PR, merge queue, main push, weekly (dated inventory review) or manual; a required check in the importable ruleset. |
 | [`script-lint.yml`](script-lint.yml) | ShellCheck, Python compilation, Node syntax, and disposable-repository Git-hook and `cg-doc-sync` trim-report checks; filtered pushes/PRs or manual. |
 | [`clippy-sarif.yml`](clippy-sarif.yml) | Clippy findings in Security; separate from CI's Clippy gate; main push, PR, weekly or manual. |
