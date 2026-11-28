@@ -1362,6 +1362,71 @@ async fn a_job_registered_after_its_account_was_disabled_refuses_to_run() {
     assert_eq!(refused[0]["job_id"], job.as_str());
 }
 
+/// A scheduled occurrence is audited as started before its job exists. Two ways
+/// it could end with no end record beside that start: its account loses coding
+/// access before the job's own recheck (the job is refused), and a cancel that
+/// aborts the task before it is first polled.
+#[tokio::test]
+async fn a_scheduled_occurrence_refused_or_cancelled_before_it_runs_still_audits_its_end() {
+    use cgagentharness::server::routes::agent::start_scheduled_job_for_owner;
+    let model = start_mock_model().await;
+    model.set_delay_ms(30_000);
+    let s = spawn_server(
+        &model.base_url(),
+        ServerOptions::default()
+            .with("auth.enabled", "true")
+            .with("agentic.enabled", "true")
+            .with("agentic.deepagent_github.enabled", "true"),
+    )
+    .await;
+    let auth = s.state.auth.as_ref().unwrap();
+    for name in ["worker", "keeper"] {
+        auth.create_user(name, &cgagentharness::common::random_urlsafe(24), "operator")
+            .unwrap();
+    }
+    let worker = auth.get_user("worker").unwrap().user_id;
+    let keeper = auth.get_user("keeper").unwrap().user_id;
+    let req = || serde_json::from_value(run_body()).unwrap();
+    let ends = |schedule: &str| -> Vec<serde_json::Value> {
+        s.audit_log()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|line| line["event"] == "agent_schedule_failed" && line["schedule_id"] == schedule)
+            .collect()
+    };
+
+    // Refused: the disable lands between the schedule's gate and the job's recheck.
+    auth.disable_user("worker").unwrap();
+    let (status, created) = start_scheduled_job_for_owner(s.state.clone(), req(), worker.clone(), "sched-refused")
+        .unwrap_or_else(|err| panic!("refused: {}", err.code));
+    assert_eq!(status.as_u16(), 202);
+    let refused_job = created["job_id"].as_str().unwrap().to_string();
+    for _ in 0..100 {
+        if s.state.jobs.get(&worker, &refused_job).unwrap()["status"] != "running" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    s.state.audit.flush_async().await;
+    let ended = ends("sched-refused");
+    assert_eq!(ended.len(), 1, "one end record for the refused occurrence: {ended:?}");
+    assert_eq!(ended[0]["job_id"], refused_job.as_str());
+    assert_eq!(ended[0]["status"], "failed");
+
+    // Cancelled before the task is first polled: nothing awaits between the
+    // start and the cancel, so the task is aborted where it was spawned.
+    let (_, created) = start_scheduled_job_for_owner(s.state.clone(), req(), keeper.clone(), "sched-cancelled")
+        .unwrap_or_else(|err| panic!("refused: {}", err.code));
+    let cancelled_job = created["job_id"].as_str().unwrap().to_string();
+    s.state.jobs.cancel(&keeper, &cancelled_job);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    s.state.audit.flush_async().await;
+    let ended = ends("sched-cancelled");
+    assert_eq!(ended.len(), 1, "one end record for the cancelled occurrence: {ended:?}");
+    assert_eq!(ended[0]["job_id"], cancelled_job.as_str());
+    assert_eq!(ended[0]["status"], "cancelled");
+}
+
 /// The console's cloud planner choice crosses the route, the shim and into the
 /// real child, which applies its own gates; malformed choices stop at parsing.
 #[tokio::test]
