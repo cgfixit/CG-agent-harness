@@ -2,6 +2,7 @@
 """bakeoff10: research-routing bakeoff. Private notes (corpus/) vs frozen local web (web_fixture/).
 C0 = original stuffed HTML infographic. C1..C5 = tool-loop cases from cases.json.
 Wire: Ollama /v1/chat/completions, temp 0.2, reasoning_effort "none" (matches CG-agent-harness local_llm); strip think/channel leaks."""
+import tempfile
 import argparse,json,re,time,pathlib,urllib.request,subprocess
 H=pathlib.Path(__file__).parent
 CORPUS=H/"corpus"; WEB=H/"web_fixture"
@@ -164,17 +165,52 @@ def run_tools(case,model,mt):
         msgs.append({"role":"user","content":"TOOL RESULT "+name+":\n"+json.dumps(run_tool(name,args),indent=1)})
     return {"finish_args":fa,"tools_used":tools,"transcript":msgs,"err":err,"wall_s":round(time.time()-t,1),"usage":usage}
 
-def rescore(d,cases):
-    """--score: legacy flat X.html dirs, plus label dirs holding C*.html / C*.transcript.json."""
-    d=pathlib.Path(d); score_dir(d); byid={c["id"]:c for c in cases}
-    for sub in [d]+sorted(p for p in d.iterdir() if p.is_dir()):
-        summ={}
-        for f in sorted(sub.glob("C*.html"))+sorted(sub.glob("C*.transcript.json")):
-            cid=f.name.split(".")[0]
-            if cid not in byid: continue
-            rec={"html":f.read_text()} if f.suffix==".html" else json.loads(f.read_text())
-            s=score_case(byid[cid],rec); (sub/f"{cid}.score.json").write_text(json.dumps(s,indent=1)); summ[cid]=brief(s)
-        if summ: (sub/"summary.json").write_text(json.dumps(summ,indent=1)); print(sub.name,json.dumps(summ,indent=1))
+def saved_json(path):
+    return json.loads(path.read_text()) if path.is_file() else {}
+
+
+def rescore(d, cases):
+    """Write one derived file per label. The original run stays available for other scorers."""
+    root = pathlib.Path(d)
+    score_dir(root)  # Legacy flat HTML directories also have a console report.
+    labels = sorted(path for path in root.iterdir() if not path.is_symlink() and path.is_dir())
+    for label in [root, *labels]:
+        scores = {}
+        for case in cases:
+            cid = case["id"]
+            if case["mode"] == "stuffed_html":
+                html = label / f"{cid}.html"
+                if not html.is_file():
+                    continue
+                record = {"html": html.read_text()}
+            else:
+                transcript = label / f"{cid}.transcript.json"
+                if not transcript.is_file():
+                    continue
+                record = json.loads(transcript.read_text())
+
+            original = saved_json(label / f"{cid}.score.json")
+            for field in ("model", "wall_s", "usage", "err"):
+                if field in original:
+                    record.setdefault(field, original[field])
+            score = score_case(case, record)
+            for field in ("model", "err"):
+                if field in record:
+                    score[field] = record[field]
+            scores[cid] = score
+
+        if scores:
+            summary = saved_json(label / "summary.json")
+            report = {"format_version": 1, "label": summary.get("label", label.name),
+                      "model": summary.get("model"), "cases": scores}
+            # Readers see a complete report even if a retry fails or two scorers overlap.
+            with tempfile.TemporaryDirectory(dir=label) as stage:
+                temporary = pathlib.Path(stage) / "rescore.json"
+                temporary.write_text(json.dumps(report, indent=2) + "\n")
+                temporary.replace(label / "rescore.json")
+            print(label.name, json.dumps({cid: brief(score) for cid, score in scores.items()}, indent=1))
+
+
 def brief(s): return {k:s.get(k) for k in("route_gold","route_pred","route_ok","leak","cite_ok","fact_ok","tools_used","wall_s")}
 
 def main():
