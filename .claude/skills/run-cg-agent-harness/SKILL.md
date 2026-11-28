@@ -41,7 +41,7 @@ node scripts/browse-console-acceptance.mjs target/debug/cgagentharness
 ```
 
 A smoke home with a hand-written `config.yaml` reads every omitted ship-true
-key as off; `serve` logs one WARN naming them.
+key as off (except `config::MISSING_MEANS_ON`); `serve` logs one WARN naming them.
 
 For a real disposable Chrome/model coding workflow, follow
 `docs/CODING_PIPELINE.md` and `scripts/browser-fixture.py`. That fixture explicitly
