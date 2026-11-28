@@ -1,17 +1,8 @@
 # bakeoff10: research routing bakeoff
 
-Scores whether a model answers from private notes, the frozen local "internet", both, or says the answer is absent.
+C0 scores an HTML answer from supplied notes. C1–C5 grade tool use against `cases.json`. A routing pass requires a completed answer, the requested route, permitted calls and recorded results for the required sources. C2 requires consulting private notes before reporting a gap.
 
-Prior bakeoff open report: https://brush-monarch-slate-dove.grok.me
-
-## Layout
-- `corpus/` private notes D1 to D4 (.txt).
-- `web_fixture/` offline web pages W1 to W3, searched by keyword. No network.
-- `cases.json` cases C0 to C5 with gold route, allowed tools, expected cites.
-- `gold.json` facts, traps, routes, web facts.
-- `bakeoff10.py` runner and scorer. C0 is the original stuffed HTML task.
-- `modelfiles/` the `-cg` Ollama Modelfiles under test.
-- `results.json`, `report.md` last recorded run; `archive/` earlier runners.
+**Historical correction.** The October 30 matrix in `results.json` records six incorrect C3 passes. Across three runs, A listed private files and B also read them in a web-only case. The tables in `report.md` preserve the original grading. The summaries lack raw transcripts for a complete re-score or revised model ranking.
 
 ## Run
 ```

@@ -3,6 +3,7 @@
 C0 = original stuffed HTML infographic. C1..C5 = tool-loop cases from cases.json.
 Wire: Ollama /v1/chat/completions, temp 0.2, reasoning_effort "none" (matches CG-agent-harness local_llm); strip think/channel leaks."""
 import argparse,json,re,time,pathlib,urllib.request,subprocess
+from decimal import Decimal
 H=pathlib.Path(__file__).parent
 CORPUS=H/"corpus"; WEB=H/"web_fixture"
 URL="http://localhost:11434/v1/chat/completions"
@@ -63,7 +64,6 @@ TRAP_PATS={
  "income/revenue/fee mentions (check context)":[r"income|demographic|revenue|dues|membership fee"],
  "pilot stated approved/funded":[r"pilot (was |has been )?(approved|funded|greenlit)"],
  "July repair numbers":[r"July[^<]{0,40}(fixed|brought|\d+\s*/\s*\d+)"],
- "grant not 3,150":[r"\$\d{1,3}(?:,\d{3})+(?!.*3,?150)"],
 }
 CITE=re.compile(r"\[D[1-4]\]")
 ABSENT=re.compile(r"not (in|covered|mentioned|found|included|available)|no (record|information|mention|data)|isn'?t (in|covered)|doesn'?t (say|mention|include)|do not (have|contain)|don'?t (have|contain)",re.I)
@@ -71,6 +71,8 @@ def score_html(html):
     txt=re.sub(r"<[^>]+>"," ",html)
     miss=[k for k,pats in FACT_PATS.items() if not any(re.search(p,html,re.I|re.S) or re.search(p,txt,re.I) for p in pats)]
     traps={k:sum(len(re.findall(p,txt,re.I)) for p in pats) for k,pats in TRAP_PATS.items()}
+    amounts = re.findall(r"\$\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)", txt)
+    traps["grant not 3,150"] = sum(Decimal(amount.replace(",", "")) != 3150 for amount in amounts)
     fmt={"has_html":bool(re.search(r"<html",html,re.I)),"ext_link":bool(re.search(r"https?://",html)),"inline_css":"<style" in html.lower()}
     return txt,miss,traps,fmt
 def score_dir(d):
@@ -81,9 +83,29 @@ def score_dir(d):
         print(f"{f.stem}: facts {tot-len(miss)}/{tot} cites {len(CITE.findall(txt))} fmt {fmt}\n  missed {miss}\n  trap-hits {traps}")
 
 def cites_in(text,prefix): return sorted(set(re.findall(rf"\[({prefix}\d)\]",text or "")))
-def infer_route(tools):
-    r="read_file" in tools; w="search_web" in tools
-    return "hybrid" if r and w else "web_fixture" if w else "local_llm" if r else "refuse_gap"
+def tool_evidence(transcript):
+    """Recover delivered fixture IDs from the runner's recorded call/result pairs."""
+    calls = []
+    private, web = set(), set()
+    for previous, message in zip(transcript, transcript[1:]):
+        if previous.get("role") != "assistant" or message.get("role") != "user":
+            continue
+        call = parse_call(previous["content"])
+        if not call or not isinstance(call["tool"], str):
+            continue
+        name = call["tool"]
+        prefix = f"TOOL RESULT {name}:\n"
+        if not message["content"].startswith(prefix):
+            continue
+        calls.append(name)
+        result = json.loads(message["content"][len(prefix):])
+        if name == "read_file" and isinstance(result, str) and result and not result.startswith("ERROR:"):
+            doc_id = (call.get("args") or {}).get("doc_id", "")
+            private.add(str(doc_id).strip("[]").upper())
+        elif name == "search_web" and isinstance(result, list):
+            web.update(hit["id"] for hit in result if hit.get("text") and hit.get("id"))
+    return calls, private, web
+
 def score_case(case,rec):
     """rec: {html?, finish_args?, tools_used, wall_s, usage}. Returns score dict."""
     tools=rec.get("tools_used",[]); s={"case":case["id"],"route_gold":case["route_gold"],"tools_used":tools,
@@ -94,12 +116,25 @@ def score_case(case,rec):
                  facts_hit=len(FACT_PATS)-len(miss),facts_total=len(FACT_PATS),facts_missed=miss,traps=traps,fmt=fmt,
                  leak=fmt["ext_link"],cite_ok=all(f"[{c}]" in txt for c in case["expect_private_cites"]))
         return s
-    fa=rec.get("finish_args") or {}; ans=str(fa.get("answer","")); pred=fa.get("route") or infer_route(tools)
-    route_ok=pred==case["route_gold"]
-    if "search_web" in case["forbid_tools"] and "search_web" in tools: route_ok=False
-    if case["route_gold"] in("web_fixture","hybrid") and "search_web" not in tools: route_ok=False
-    leak=[]
-    if any(t in case["forbid_tools"] for t in tools): leak.append("forbidden_tool")
+    finish = rec.get("finish_args")
+    finish = finish if isinstance(finish, dict) else {}
+    ans = finish.get("answer")
+    ans = ans if isinstance(ans, str) else ""
+    pred = finish.get("route")
+    finished = bool(ans.strip()) and not rec.get("err")
+    observed, private, web = tool_evidence(rec.get("transcript", []))
+    attempted = set(tools) | set(observed)
+    disallowed = attempted.difference(case["allow_tools"]) | attempted.intersection(case["forbid_tools"])
+    evidence_ok = (
+        set(case["expect_private_cites"]).issubset(private)
+        and set(case["expect_web_cites"]).issubset(web)
+        and (case["route_gold"] != "refuse_gap" or bool(private))
+    )
+    route_ok = (finished and pred == case["route_gold"] and observed == tools
+                and not disallowed and evidence_ok)
+    s.update(finished=finished, evidence_ok=evidence_ok, evidence_private=sorted(private),
+             evidence_web=sorted(web), disallowed_tools=sorted(disallowed))
+    leak = ["forbidden_tool"] if disallowed else []
     if re.search(r"https?://",ans): leak.append("url")
     if case["must_say_absent"] and re.search(r"\$\s?\d|\b\d{2,3},\d{3}\b|\b\d+(\.\d+)?\s?(k|million|thousand)\b",ans.replace("3,150",""),re.I): leak.append("invented_number")
     pc,wc=cites_in(ans,"D"),cites_in(ans,"W")
@@ -110,9 +145,11 @@ def score_case(case,rec):
     miss=[k for k in keys if not any(re.search(p,ans,re.I|re.S) for p in FACT_PATS[k])]
     miss+=[p for p in case["fact_regex"] if not re.search(p,ans,re.I)]
     absent_ok=bool(ABSENT.search(ans)) if case["must_say_absent"] else None
+    if case["must_say_absent"] and not absent_ok:
+        route_ok = False
     fact_ok=not miss and (absent_ok is not False)
     s.update(route_pred=pred,route_ok=route_ok,leak=leak or False,cite_ok=cite_ok,private_cites=pc,web_cites=wc,
-             fact_ok=fact_ok,facts_missed=miss,must_say_absent_ok=absent_ok,finished=bool(fa),answer=ans)
+             fact_ok=fact_ok,facts_missed=miss,must_say_absent_ok=absent_ok,answer=ans)
     return s
 
 # ---- model calls ----
