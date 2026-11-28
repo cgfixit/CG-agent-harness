@@ -703,16 +703,38 @@ pub fn run_real_repo_loop(
             }
         }
 
+        let nothing_applied = || super::edits::Proposal {
+            files: BTreeMap::new(),
+            originals: BTreeMap::new(),
+        };
         let (proposal, parse_error) =
             match super::edits::parse(&response, &read_context, ctx.acfg.deepagent.max_handoff_chars) {
-                Ok(proposal) => (proposal, None),
-                Err(error) => (
-                    super::edits::Proposal {
-                        files: BTreeMap::new(),
-                        originals: BTreeMap::new(),
-                    },
-                    Some(error.message),
-                ),
+                // A cloud planner was sent redacted file text, so a label in
+                // what it returns stands where the clone holds the value.
+                Ok(proposal) => match proposal
+                    .writes_redaction_label()
+                    .filter(|_| client.is_cloud())
+                    .map(str::to_string)
+                {
+                    Some(path) => {
+                        ctx.audit.log(json!({
+                            "event": "agentic_real_repo_redaction_label_refused",
+                            "provider": client.provider(),
+                            "path": crate::common::clip_chars(&path, 200),
+                        }));
+                        (
+                            nothing_applied(),
+                            Some(format!(
+                                "proposal refused: {path} would be written with a redaction placeholder \
+                                 ([REDACTED_...]) where the file holds the real value. You were shown redacted \
+                                 text. Use exact edits on other lines and leave every line that shows a \
+                                 placeholder as it is; no files applied"
+                            )),
+                        )
+                    }
+                    None => (proposal, None),
+                },
+                Err(error) => (nothing_applied(), Some(error.message)),
             };
         let proposed_files = &proposal.files;
         let unslop_result = p
