@@ -302,6 +302,8 @@ async fn a_refused_account_change_keeps_the_staged_excerpt() {
     );
 }
 
+// Staging requires a successful log read. Windows covers its refusal above.
+#[cfg(unix)]
 #[tokio::test]
 async fn a_staged_excerpt_reaches_one_local_turn_and_is_refused_elsewhere() {
     let model = start_mock_model().await;

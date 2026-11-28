@@ -175,11 +175,9 @@ not runtime `/api/skills` plugins.
 
 ## 12. PR CI is not main CI
 
-- **Symptom:** A green PR turns `main` red on `test (windows-latest)` or the
-  next bundle.
-- **Right fix:** A PR's green run is not Windows or desktop evidence. On
-  `pull_request` the matrix is Ubuntu and macOS plus one focused Windows job;
-  the full Windows leg runs on `main` pushes and the merge queue. A
+- **Symptom:** A green PR is mistaken for desktop or packaged-app evidence.
+- **Right fix:** Every PR requires full Windows and the focused lifecycle
+  and credential job. Docs-only PRs skip the Linux and macOS test legs. A
   Unix-sandbox test carries `#[cfg(unix)]`; cross-check with `--target
   x86_64-pc-windows-gnu` and a `CARGO_TARGET_DIR` outside the repo. `desktop/`
   compiles only on macOS, and only when `desktop-check.yml`'s classify regex
