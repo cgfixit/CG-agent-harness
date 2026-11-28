@@ -2942,6 +2942,7 @@ async fn listing_fixture() -> (std::net::SocketAddr, Arc<AtomicUsize>, tokio::ta
             get(|| async { "<a href='/url?q=http%3A%2F%2Fdocs.example%2Fpage'><h3>Listed page</h3></a>" }),
         )
         .route("/page", get(page.clone()))
+        .route("/wiki/Set_(x)", get(page.clone()))
         .route("/other", get(page));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
     let address = listener.local_addr().unwrap();
@@ -3352,6 +3353,40 @@ async fn a_listed_url_is_not_composed_without_a_result_reads_grant() {
         audit.matches(r#""event":"web_fetch_provenance""#).count(),
         1,
         "only the unlisted URL is judged composed: {audit}"
+    );
+    task.abort();
+}
+
+/// #901: a URL the operator pasted in backticks is the operator's, even when
+/// its own last character is one a wrapper uses (`Set_(x)` before the closing
+/// backtick). The model's read of exactly that URL is not composed: it needs
+/// no confirmation, which a JSON turn could not give.
+#[tokio::test]
+async fn a_wrapped_operator_url_ending_in_a_paren_is_not_composed() {
+    let (address, reads, task) = listing_fixture().await;
+    let model = common::start_mock_model().await;
+    let options = common::ServerOptions::default()
+        .with("web.carry_forward_sources", "0")
+        .with("web.search.result_reads.enabled", "false");
+    let s = listing_spawn(&model, address, options).await;
+    let page_rule = "http://docs.example/*"; // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+    assert_eq!(s.post_json("/api/web/allow", json!({"url":page_rule})).await.0, 200);
+    let pasted = r#"{"url":"http://docs.example/wiki/Set_(x)"}"#; // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+    model.set_reply(json!([
+        tool_call_reply("web_fetch", pasted, "pasted_fetch"),
+        common::ok_reply("Answered.", 20, 6)
+    ]));
+    let message = "Read `http://docs.example/wiki/Set_(x)` and summarise it"; // DevSkim: ignore DS137138 because docs.example resolves only to the loopback fixture.
+    let (status, reply) = s.post_json("/api/chat", json!({ "message": message })).await;
+    assert_eq!(status, 200, "{reply}");
+    let tools = reply["web_tools"].as_array().expect("web tools ran");
+    assert_eq!(tools[0]["ok"], true, "the pasted URL is read: {reply}");
+    assert_eq!(reads.load(Ordering::SeqCst), 1, "the pasted page was contacted");
+    let audit = std::fs::read_to_string(s.home.join("logs/audit.jsonl")).unwrap();
+    assert_eq!(
+        audit.matches(r#""event":"web_fetch_provenance""#).count(),
+        0,
+        "the operator's URL is not judged composed: {audit}"
     );
     task.abort();
 }
