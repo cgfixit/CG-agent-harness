@@ -134,6 +134,10 @@ pub struct AppState {
     pub structured_memory: Option<StructuredMemoryStore>,
     /// Home-local administrator overrides for structured-memory sub-gates.
     pub structured_gates: Mutex<crate::server::structured_memory::OperatorGates>,
+    /// Orders gate writers (`routes::structured_memory::commit_gates`) across
+    /// copy, save and publish, so `structured_gates` is never held across the
+    /// fsync'd save and readers (every chat reply) never wait for one.
+    pub structured_gates_save: Mutex<()>,
     /// Test hook: when set, replaces the closed tool allowlists (empty = deny all).
     /// Compiled only with `test-support`.
     #[cfg(any(test, feature = "test-support"))]

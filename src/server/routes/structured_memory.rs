@@ -690,6 +690,27 @@ pub async fn search_facts(
     .await
 }
 
+/// Change the operator gates the way `panels::commit_setting` changes a
+/// setting: mutate a copy, save it, and publish it only after the save
+/// succeeded, so a refused change or a failed save leaves the live gates
+/// unchanged. `structured_gates_save` orders the writers, so concurrent posts
+/// cannot save out of order or lose one another's change; `structured_gates` is
+/// held only to copy and to publish, never across the fsync'd write, so readers
+/// (`current_gates` on every chat reply and status read) never wait for a save.
+/// Blocking: callers run it off the async workers.
+fn commit_gates(
+    state: &AppState,
+    change: impl FnOnce(&mut crate::server::structured_memory::OperatorGates) -> crate::common::errors::Result<()>,
+) -> ApiResult<crate::server::structured_memory::OperatorGates> {
+    let _order = state.structured_gates_save.lock().unwrap_or_else(|p| p.into_inner());
+    let mut next = current_gates(state);
+    change(&mut next).map_err(|e| store_err(&e))?;
+    next.save(&state.home)
+        .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
+    *state.structured_gates.lock().unwrap_or_else(|p| p.into_inner()) = next.clone();
+    Ok(next)
+}
+
 pub async fn set_gates(
     State(state): State<Arc<AppState>>,
     user: Option<axum::Extension<UserSummary>>,
@@ -698,18 +719,7 @@ pub async fn set_gates(
     off_worker(move || {
         let _store = require_store(&state)?;
         let owner = owner(user);
-        // Set a copy, save it under the lock, then publish: a failed save leaves
-        // the live gate unchanged and concurrent posts cannot save out of order
-        // (the save-then-publish rule `panels::commit_setting` follows).
-        let snapshot = {
-            let mut gates = state.structured_gates.lock().unwrap_or_else(|p| p.into_inner());
-            let mut next = gates.clone();
-            next.set(&req.gate, req.enabled).map_err(|e| store_err(&e))?;
-            next.save(&state.home)
-                .map_err(|e| ApiError::from_err(StatusCode::BAD_GATEWAY, &e))?;
-            *gates = next.clone();
-            next
-        };
+        let snapshot = commit_gates(&state, |gates| gates.set(&req.gate, req.enabled))?;
         if req.gate == "retrieval" && req.enabled {
             if let Some(store) = state.structured_memory.as_ref() {
                 if let Err(err) = store.rebuild_facts_fts() {
@@ -1042,4 +1052,88 @@ pub async fn cancel_consolidation(
         Ok(Json(run.to_json()))
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn state_in(dir: &std::path::Path) -> Arc<AppState> {
+        let home = crate::common::home::Home::at(dir.to_path_buf());
+        crate::server::build_app(crate::server::AppOptions::new(home))
+            .await
+            .unwrap()
+            .1
+    }
+
+    /// A gate save holds the save order, not the gates lock: a reader on
+    /// another thread gets the current gates while the save is in flight.
+    /// `change` stands in for the fsync'd write, which runs in the same window.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn gate_readers_do_not_wait_for_a_save_in_flight() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_in(dir.path()).await;
+        let before = current_gates(&state).retrieval;
+        let (entered, in_save) = std::sync::mpsc::channel::<()>();
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let save = std::thread::spawn({
+            let state = state.clone();
+            move || {
+                commit_gates(&state, move |gates| {
+                    entered.send(()).unwrap();
+                    held.recv().unwrap();
+                    gates.set("retrieval", !before)
+                })
+                .map(|gates| gates.retrieval)
+                .map_err(|_| "commit failed")
+            }
+        });
+        in_save.recv().unwrap();
+        let (read_tx, read_rx) = std::sync::mpsc::channel();
+        let reader = state.clone();
+        std::thread::spawn(move || {
+            let _ = read_tx.send(current_gates(&reader).retrieval);
+        });
+        let read = read_rx.recv_timeout(std::time::Duration::from_secs(2));
+        release.send(()).unwrap();
+        assert_eq!(save.join().unwrap(), Ok(!before));
+        assert_eq!(read.ok(), Some(before), "a reader waited for the save");
+        assert_eq!(current_gates(&state).retrieval, !before, "published after the save");
+    }
+
+    /// Writers are still ordered, and a refused change publishes nothing:
+    /// concurrent flips of two gates all land, in memory and on disk.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_gate_changes_are_not_lost_and_a_refusal_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state_in(dir.path()).await;
+        let mut writers = Vec::new();
+        for _ in 0..10 {
+            for gate in ["retrieval", "consolidation"] {
+                let state = state.clone();
+                writers.push(std::thread::spawn(move || {
+                    commit_gates(&state, |gates| {
+                        let on = match gate {
+                            "retrieval" => gates.retrieval,
+                            _ => gates.consolidation,
+                        };
+                        gates.set(gate, !on)
+                    })
+                    .is_ok()
+                }));
+            }
+        }
+        for writer in writers {
+            assert!(writer.join().unwrap());
+        }
+        // Ten flips each from false: back to false, only if no flip was lost.
+        let live = current_gates(&state);
+        assert_eq!((live.retrieval, live.consolidation), (false, false));
+        let home = crate::common::home::Home::at(dir.path().to_path_buf());
+        let saved = crate::server::structured_memory::OperatorGates::load(&home).unwrap();
+        assert_eq!(saved, live, "the saved gates match the published ones");
+
+        assert!(commit_gates(&state, |gates| gates.set("no_such_gate", true)).is_err());
+        assert_eq!(current_gates(&state), live, "a refused change is not published");
+    }
 }

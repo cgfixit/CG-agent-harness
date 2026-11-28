@@ -453,6 +453,7 @@ pub async fn build_app_with_sources(
         notes: MemoryNotes::new(&home.memory_dir()),
         structured_memory,
         structured_gates: Mutex::new(structured_gates),
+        structured_gates_save: Mutex::new(()),
         web,
         chat_owner: web_research::ResearchState::default(),
         shutdown: tokio_util::sync::CancellationToken::new(),
