@@ -20,8 +20,8 @@ python3 bakeoff10.py --quick
 python3 bakeoff10.py --cases C1,C5 --models a,b --out out2
 python3 bakeoff10.py --score out/A
 ```
-Writes `out/<label>/<case>.score.json` and `summary.json`.
+Runs write scores and `summary.json`. Re-scoring writes only `rescore.json` per label.
 
-Judge on route_ok and leak first, then cites and facts. Wall time is secondary.
+Judge routing and leaks before citation and fact scores.
 
-CI self-test invokes the archived harness runner at `scripts/bakeoff/archive/bakeoff_harness.py`.
+CI exercises `archive/bakeoff_harness.py`.
