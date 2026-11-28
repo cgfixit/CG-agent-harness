@@ -88,6 +88,14 @@ impl<'a> LocalProposerClient<'a> {
         Ok(())
     }
 
+    /// `real-repo-run`'s one check before the clone and the run record: the
+    /// planner endpoint is a plain loopback Ollama origin and its model is
+    /// shown local. `invoke` still checks before every request.
+    pub fn refuse_unless_local_ollama_model(&mut self) -> Result<()> {
+        self.refuse_remote_ollama_models()?;
+        self.refuse_unless_shown_local()
+    }
+
     /// Ollama routes by the remote host stored in the model's config, not its
     /// name: a Modelfile `FROM glm-4.6:cloud` alias forwards like the tag.
     fn refuse_unless_shown_local(&self) -> Result<()> {

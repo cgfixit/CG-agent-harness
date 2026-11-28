@@ -1758,6 +1758,79 @@ async fn a_sync_coding_run_stops_when_its_password_is_reset_mid_run() {
     .await;
 }
 
+/// A push is not killed mid-flight (a slow remote ends in the child's own
+/// INDETERMINATE record), but an account disabled while it runs gets no
+/// result: 401 AUTH_REQUIRED once the child exits, audited `withheld`.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_run_step_is_withheld_when_its_account_is_disabled_while_it_runs() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let (exe, pidfile, starts) = (
+        dir.path().join("slow-shim"),
+        dir.path().join("child.pid"),
+        dir.path().join("starts"),
+    );
+    std::fs::write(
+        &exe,
+        format!(
+            "#!/bin/sh\necho x >> '{}'\necho $$ > '{}'\nsleep 2\nprintf '{{\"status\":\"pushed\"}}\\n'\n",
+            starts.display(),
+            pidfile.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let model = start_mock_model().await;
+    let opts = ServerOptions {
+        shim_exe: Some(exe),
+        ..Default::default()
+    }
+    .with("auth.enabled", "true");
+    let server = spawn_server(&model.base_url(), opts).await;
+    let auth = server.state.auth.as_ref().unwrap();
+    let secret = cgagentharness::common::random_urlsafe(24);
+    auth.create_user("worker", &secret, "operator").unwrap();
+    let session = login(&server, "worker", &secret).await;
+    let push = format!("/api/agent/runs/{}/push", "0".repeat(32));
+    let body = json!({"reason": "ship", "confirm": true});
+    let started = std::time::Instant::now();
+    let step = request(&server, &session, Method::POST, &push, body.clone());
+    let disable = async {
+        for _ in 0..200 {
+            if pidfile.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        assert!(pidfile.exists(), "the child started");
+        auth.disable_user("worker").unwrap();
+    };
+    let (response, ()) = tokio::join!(step, disable);
+    assert_eq!(response.status(), 401, "the result is withheld");
+    let reply: Value = response.json().await.unwrap();
+    assert_eq!(reply["detail"]["code"], "AUTH_REQUIRED");
+    assert!(
+        started.elapsed() >= std::time::Duration::from_secs(2),
+        "the push was left to finish, not killed"
+    );
+    let rows: Vec<Value> = server
+        .audit_log()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|line| line["event"] == "agent_run_withheld")
+        .collect();
+    assert!(
+        rows.iter().any(|line| line["outcome"] == "withheld"),
+        "audited as withheld"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&starts).unwrap().lines().count(),
+        1,
+        "one child ran"
+    );
+}
+
 /// Starts `POST /api/agent/run` for operator `worker` against a child that
 /// sleeps 20 seconds, applies `change` once the child runs, and checks the
 /// run stopped early, its child is gone and the stop was audited.

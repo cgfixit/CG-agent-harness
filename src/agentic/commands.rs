@@ -495,6 +495,25 @@ fn cmd_real_repo_run(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
     } else {
         Some(crate::common::sha256_hex(&plan))
     };
+    // An Ollama planner whose endpoint is not plain loopback Ollama, or whose
+    // `/api/show` names a remote host (a Modelfile alias of a cloud model), is
+    // refused as config before the clone and the run record, as a cloud tag is
+    // above. The loop's own per-request check stays for a model changed mid-run.
+    if provider.is_none() && ctx.acfg.deepagent.provider == "ollama" {
+        let preflight = LocalProposerClient::new(
+            &ctx.audit,
+            &ctx.acfg.deepagent.base_url,
+            &ctx.acfg.deepagent.model,
+            planner_timeout_sec,
+            &std::env::var("DEEPAGENT_API_KEY").unwrap_or_default(),
+            None,
+        )
+        .and_then(|mut client| client.refuse_unless_local_ollama_model());
+        if let Err(e) = preflight {
+            err(&e.message);
+            return Ok(EXIT_ENV);
+        }
+    }
     let runs_dir = ctx.runs_dir();
     let run_id = new_run_id();
     let tools = match RepoWorkspace::clone(ctx) {
@@ -937,7 +956,14 @@ fn cmd_real_repo_run_decide(ctx: &AgenticCtx, opts: &Opts) -> Result<u8> {
             // A durable branch with an unfinished checkout must not stay pending:
             // approve cannot succeed again and reject would delete the clone and
             // the branch. Failed keeps the clone, names the commit, and allows discard.
-            if decision == "approve" && e.details.get("indeterminate").and_then(Value::as_bool) == Some(true) {
+            // Only that failure names a `commit`: a git timeout, spawn failure or
+            // capture overflow before the branch exists is indeterminate too, but
+            // nothing durable exists, so the run stays pending and approvable (a
+            // stranded `update-ref` is adopted by the next approve).
+            if decision == "approve"
+                && e.details.get("indeterminate").and_then(Value::as_bool) == Some(true)
+                && e.details.get("commit").is_some()
+            {
                 settle_failed(&runs_dir, &mut record, &e);
             }
             err(&e.message);

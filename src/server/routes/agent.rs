@@ -492,6 +492,28 @@ fn run_withheld(state: &AppState, owner: &str, outcome: &str) -> ApiError {
     )
 }
 
+/// Decide, push, publish and discard act on a run the account already holds.
+/// The account is rechecked after the audit flush, just before the child
+/// starts, and again once it exits: a disable, deletion, loss of `RunCoding`
+/// or revoked sign-in refuses the step, or withholds its result (audited
+/// `agent_run_withheld`). The child is not stopped mid-flight: these steps are
+/// sized so a slow remote ends in the child's own INDETERMINATE record rather
+/// than a kill (`shim::REAL_REPO_RUN_WRITE_SEC`).
+async fn run_step_call(state: &Arc<AppState>, user: Caller, ops: OpsRequest) -> ApiResult<Json<Value>> {
+    let account = user.as_ref().map(|user| user.0.clone());
+    let owner = super::auth::context_owner(user);
+    let account = asking_account(state, account).await;
+    state.audit.flush_async().await;
+    if !owner_still_may_run(state, &owner, &account).await {
+        return Err(run_withheld(state, &owner, "refused"));
+    }
+    let outcome = agentic_call(state, ops).await;
+    if !owner_still_may_run(state, &owner, &account).await {
+        return Err(run_withheld(state, &owner, "withheld"));
+    }
+    outcome
+}
+
 // ---------------------------------------------------------------- detached jobs
 
 fn validated_job_id(job_id: &str) -> ApiResult<String> {
@@ -943,6 +965,7 @@ pub async fn agent_run_status(
 
 pub async fn agent_run_decision(
     State(state): State<Arc<AppState>>,
+    user: Caller,
     Path(run_id): Path<String>,
     ValidJson(req): ValidJson<AgentDecisionRequest>,
 ) -> ApiResult<Json<Value>> {
@@ -952,11 +975,12 @@ pub async fn agent_run_decision(
     ops.decision = Some(req.decision.as_str().to_string());
     ops.reason = Some(req.reason);
     ops.confirm = req.confirm;
-    agentic_call(&state, ops).await
+    run_step_call(&state, user, ops).await
 }
 
 pub async fn agent_run_push(
     State(state): State<Arc<AppState>>,
+    user: Caller,
     Path(run_id): Path<String>,
     ValidJson(req): ValidJson<AgentPushRequest>,
 ) -> ApiResult<Json<Value>> {
@@ -965,11 +989,12 @@ pub async fn agent_run_push(
     ops.run_id = Some(checked);
     ops.reason = Some(req.reason);
     ops.confirm = req.confirm;
-    agentic_call(&state, ops).await
+    run_step_call(&state, user, ops).await
 }
 
 pub async fn agent_run_publish(
     State(state): State<Arc<AppState>>,
+    user: Caller,
     Path(run_id): Path<String>,
     ValidJson(req): ValidJson<AgentPublishRequest>,
 ) -> ApiResult<Json<Value>> {
@@ -979,17 +1004,18 @@ pub async fn agent_run_publish(
     ops.reason = Some(req.reason.clone());
     ops.body = req.body;
     ops.confirm = req.confirm;
-    agentic_call(&state, ops).await
+    run_step_call(&state, user, ops).await
 }
 
 pub async fn agent_run_discard(
     State(state): State<Arc<AppState>>,
+    user: Caller,
     Path(run_id): Path<String>,
 ) -> ApiResult<Json<Value>> {
     let checked = validated_run_id(&run_id)?;
     let mut ops = OpsRequest::new("real-repo-run-discard");
     ops.run_id = Some(checked);
-    agentic_call(&state, ops).await
+    run_step_call(&state, user, ops).await
 }
 
 // Identity comes only from the guarded account extension.

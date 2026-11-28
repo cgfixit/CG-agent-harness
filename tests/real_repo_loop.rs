@@ -1446,6 +1446,82 @@ fn a_cloud_tag_local_planner_is_refused_before_the_clone_and_the_run_record() {
     }
 }
 
+/// A local planner model whose Ollama `/api/show` names a remote host (a
+/// Modelfile `FROM glm-4.6:cloud` alias, which no tag check can see) is
+/// refused like a cloud tag: as config (exit 3), before the clone, the run
+/// record or any planner request.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_remote_host_alias_planner_is_refused_before_the_clone() {
+    let shows = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = shows.clone();
+    let app = axum::Router::new().route(
+        "/api/show",
+        axum::routing::post(move || {
+            let seen = seen.clone();
+            async move {
+                seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                axum::Json(json!({"remote_host": "https://ollama.com:443", "remote_model": "glm-4.6"}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap(); // DevSkim: ignore DS162092 because the test fixture binds only an ephemeral loopback port.
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let dir = tempfile::tempdir().unwrap();
+    let bare = real_bare_repo_on(dir.path(), "trunk");
+    let path = path_with(&install_fake_gh(dir.path(), &bare));
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let base = format!("\"http://127.0.0.1:{port}/v1\""); // DevSkim: ignore DS137138 because this loopback URL is the test's own fixture.
+    config_with(
+        &home,
+        &[
+            ("agentic.enabled", "true"),
+            ("agentic.deepagent_github.enabled", "true"),
+            ("agentic.deepagent_github.allow_git_write_tools", "true"),
+            ("agentic.deepagent_github.model", "\"glm-alias\""),
+            ("agentic.deepagent_github.base_url", &base),
+        ],
+    );
+    let checks = home.join("checks.json");
+    std::fs::write(
+        &checks,
+        json!({"checks": [{"name": "true", "argv": ["true"]}]}).to_string(),
+    )
+    .unwrap();
+    let (code, out, err) = tokio::task::block_in_place(|| {
+        run_agentic(
+            &home.join("config.yaml"),
+            &[
+                "real-repo-run",
+                "--instruction=x",
+                "--checks-file",
+                checks.to_str().unwrap(),
+                "--branch=claude/alias",
+                "--commit-message=m",
+                "--reason=r",
+                "--confirm",
+            ],
+            &[("PATH", &path), ("GROK_API_KEY", ""), ("ANTHROPIC_API_KEY", "")],
+            &home,
+        )
+    });
+    assert_eq!(code, 3, "stdout={out} stderr={err}");
+    assert!(err.contains("refused"), "stdout={out} stderr={err}");
+    assert!(
+        shows.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+        "the model was shown"
+    );
+    let audit = std::fs::read_to_string(home.join("logs/audit.jsonl")).unwrap_or_default();
+    assert!(
+        !audit.contains("agentic_repo_workspace_cloned") && !audit.contains("agentic_harness_proposer_model_invoked"),
+        "cloned or called the planner before the refusal"
+    );
+    let entries = |sub: &str| std::fs::read_dir(home.join(sub)).map(|rd| rd.count()).unwrap_or(0);
+    assert_eq!(entries("data/agentic/workspaces"), 0, "a clone was left or made");
+}
+
 /// An operator `--read-file` on the deny-list is refused from the selector
 /// alone: before the clone, and before a run record exists.
 #[cfg(unix)]
@@ -1877,16 +1953,19 @@ exit 1
 
 /// A run that fails after the clone but before its record exists (here: the
 /// origin check) must not leave the clone behind: no run id means
-/// `real-repo-run-discard` can never reach it.
+/// `real-repo-run-discard` can never reach it. The planner is a local mock,
+/// so the pre-clone `/api/show` check passes and the failure is the origin's.
 #[cfg(unix)]
-#[test]
-fn real_repo_run_removes_the_clone_when_it_fails_before_a_record_exists() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_repo_run_removes_the_clone_when_it_fails_before_a_record_exists() {
     let dir = tempfile::tempdir().unwrap();
     let bare = real_bare_repo(dir.path());
     let bin = install_fake_gh_foreign_origin(dir.path(), &bare);
     let path = path_with(&bin);
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
+    let model = start_mock_model().await;
+    let base = format!("\"{}\"", model.base_url());
     config_with(
         &home,
         &[
@@ -1894,6 +1973,7 @@ fn real_repo_run_removes_the_clone_when_it_fails_before_a_record_exists() {
             ("agentic.deepagent_github.enabled", "true"),
             ("agentic.deepagent_github.allow_git_write_tools", "true"),
             ("agentic.deepagent_github.model", "\"mock-model\""),
+            ("agentic.deepagent_github.base_url", &base),
         ],
     );
     let config = home.join("config.yaml");
@@ -1904,21 +1984,23 @@ fn real_repo_run_removes_the_clone_when_it_fails_before_a_record_exists() {
     )
     .unwrap();
     let env: Vec<(&str, &str)> = vec![("PATH", &path), ("GROK_API_KEY", ""), ("ANTHROPIC_API_KEY", "")];
-    let (code, out, err) = run_agentic(
-        &config,
-        &[
-            "real-repo-run",
-            "--instruction=x",
-            "--checks-file",
-            checks.to_str().unwrap(),
-            "--branch=claude/foreign-origin",
-            "--commit-message=m",
-            "--reason=r",
-            "--confirm",
-        ],
-        &env,
-        &home,
-    );
+    let (code, out, err) = tokio::task::block_in_place(|| {
+        run_agentic(
+            &config,
+            &[
+                "real-repo-run",
+                "--instruction=x",
+                "--checks-file",
+                checks.to_str().unwrap(),
+                "--branch=claude/foreign-origin",
+                "--commit-message=m",
+                "--reason=r",
+                "--confirm",
+            ],
+            &env,
+            &home,
+        )
+    });
     assert_eq!(code, 2, "stdout={out} stderr={err}");
     assert!(err.contains("origin does not match"), "stdout={out} stderr={err}");
     let workspace_root = home.join("data").join("agentic").join("workspaces");
@@ -2229,6 +2311,130 @@ async fn an_indeterminate_approve_settles_the_run_record() {
     std::fs::remove_file(dest.join(".git/HEAD.lock")).unwrap();
     let (code, _, err) = ra(&["real-repo-run-discard", &format!("--run-id={run_id}")]);
     assert_eq!(code, 0, "{err}");
+}
+
+/// An approve whose git call fails before the branch exists (here `check-attr`
+/// overflows the capture cap, which, like a timeout or a spawn failure, is
+/// indeterminate) leaves nothing durable: the run stays pending, so it can
+/// still be approved once git works, instead of being settled as failed.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pre_branch_git_failure_keeps_the_run_pending() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let bare = real_bare_repo_on(dir.path(), "trunk");
+    let bin = install_fake_gh(dir.path(), &bare);
+    let path = path_with(&bin);
+    let model = start_mock_model().await;
+    model.set_reply(ok_reply(
+        "Rationale.\n=== FILE target.txt ===\ngoodbye\n=== END FILE ===\n",
+        1,
+        1,
+    ));
+    let base = format!("\"{}\"", model.base_url());
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    config_with(
+        &home,
+        &[
+            ("agentic.enabled", "true"),
+            ("agentic.deepagent_github.enabled", "true"),
+            ("agentic.deepagent_github.allow_git_write_tools", "true"),
+            ("agentic.deepagent_github.base_url", &base),
+            ("agentic.deepagent_github.model", "\"mock-model\""),
+            ("agentic.deepagent_github.planner_timeout_sec", "30"),
+        ],
+    );
+    let config = home.join("config.yaml");
+    let checks = home.join("checks.json");
+    std::fs::write(
+        &checks,
+        json!({"checks": [{"name": "says-goodbye", "argv": ["grep", "-q", "goodbye", "target.txt"]}]}).to_string(),
+    )
+    .unwrap();
+    let env: Vec<(&str, &str)> = vec![("PATH", &path), ("GROK_API_KEY", ""), ("ANTHROPIC_API_KEY", "")];
+    if let Err(e) = cgagentharness::agentic::executor::production_sandbox(false) {
+        if std::env::var_os("CGAH_REQUIRE_CHECK_SANDBOX").is_some() {
+            panic!("hard check sandbox required; cannot skip: {}", e.message);
+        }
+        eprintln!("SKIP a_pre_branch_git_failure: no hard sandbox on this host (fail-closed by design)");
+        return;
+    }
+    let ra =
+        |args: &[&str], env: &[(&str, &str)]| tokio::task::block_in_place(|| run_agentic(&config, args, env, &home));
+    let (code, out, err) = ra(
+        &[
+            "real-repo-run",
+            "--instruction=x",
+            "--read-file=target.txt",
+            "--checks-file",
+            checks.to_str().unwrap(),
+            "--branch=claude/prebranch",
+            "--commit-message=m",
+            "--reason=r",
+            "--confirm",
+            "--max-iterations=1",
+        ],
+        &env,
+    );
+    assert_eq!(code, 0, "stdout={out} stderr={err}");
+    let record: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(record["status"], "pending_decision", "the run reaches its decision");
+    let run_id = record["run_id"].as_str().unwrap().to_string();
+    let dest = std::path::PathBuf::from(record["dest"].as_str().unwrap());
+    // A git whose `check-attr` floods past the capture cap; every other call is real git.
+    let real = String::from_utf8(
+        std::process::Command::new("sh")
+            .args(["-c", "command -v git"])
+            .env("PATH", &path)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let wrap = dir.path().join("floodgit");
+    std::fs::create_dir_all(&wrap).unwrap();
+    std::fs::write(
+        wrap.join("git"),
+        format!(
+            "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = check-attr ] && exec head -c 6000000 /dev/zero; done\nexec {} \"$@\"\n",
+            real.trim()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(wrap.join("git"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let flood_path = format!("{}:{path}", wrap.display());
+    let flood: Vec<(&str, &str)> = vec![("PATH", &flood_path), ("GROK_API_KEY", ""), ("ANTHROPIC_API_KEY", "")];
+    let decide = [
+        "real-repo-run-decide",
+        &format!("--run-id={run_id}"),
+        "--decision",
+        "approve",
+        "--reason=reviewed",
+        "--confirm",
+    ];
+    let (code, _, err) = ra(&decide, &flood);
+    assert_ne!(code, 0, "the flooded approve fails: {err}");
+    assert!(
+        git(&["for-each-ref", "refs/heads/claude/prebranch"], &dest)
+            .trim()
+            .is_empty(),
+        "no branch was created"
+    );
+    let saved: Value = serde_json::from_slice(
+        &std::fs::read(home.join("data/agentic/workspaces/runs").join(format!("{run_id}.json"))).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        saved["status"], "pending_decision",
+        "nothing durable: the run stays approvable"
+    );
+    // Once git works again, the same reviewed candidate is approved.
+    let (code, out, err) = ra(&decide, &env);
+    assert_eq!(code, 0, "stdout={out} stderr={err}");
+    assert!(!git(&["rev-parse", "refs/heads/claude/prebranch"], &dest)
+        .trim()
+        .is_empty());
 }
 
 /// An approve killed by the shim after `update-ref` (the branch is committed,
