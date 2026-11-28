@@ -116,19 +116,19 @@ succeeded. Per-call failures stay visible. A counted loop uses its last turn for
 ### Budgets and verification
 
 At the shipped 32,768-token profile, `web.total_tokens` is 28,000,
-`web.evidence_tokens` is 6,000 and `web.chat_tool_calls` is 30. Plan for local
-reply reservation and restored evidence inside the total.
-The tool loop reserves room for definitions, a reply and minimal results
-before reads. `WEB_TOKEN_BUDGET` refuses a batch that cannot fit.
+`web.evidence_tokens` is 6,000 and `web.chat_tool_calls` is 30.
+The tool loop reserves room for definitions, a reply, restored evidence and
+minimal results before reads. `WEB_TOKEN_BUDGET` refuses a batch that cannot fit.
 `WEB_TOOLS_WITHHELD` reserves room to answer after evidence.
-Tool hops can answer directly. The goal digest is a separate bounded
-operation. The first-call usage calibrates the estimate against actual
-prompt size, including restored evidence. Auto-tuning
-tightens below 32,768. Verify the loaded window in [Models](MODELS.md).
+Tool hops can answer directly. The goal digest is separately bounded. First-call
+usage calibrates the estimate, restored evidence included. Auto-tuning
+tightens below 32,768. `web.run_limits.searches` and `.reads` (shipped 0,
+off) cap one run's calls, counted before each runs (a server `/loop` spans
+turns): `WEB_RUN_BUDGET`. Verify the loaded window in [Models](MODELS.md).
 Standalone research discovery (shipped 1,200 seconds) and synthesis
-(shipped 1,800 seconds) have separate deadlines. Discovery budgets also
-bound pages, bytes, per-origin reads and time. Account, URL policy and
-web enablement rechecks after waits limit both dispatch and delivery. See
+(shipped 1,800 seconds) have separate deadlines; discovery also bounds
+pages, bytes, per-origin reads and time. Account, URL policy and
+web rechecks after waits limit dispatch and delivery. See
 [config](../assets/config.default.yaml) for active defaults and ranges.
 
 Fixtures exercise provider fallback, malformed batches, policy revocation,
