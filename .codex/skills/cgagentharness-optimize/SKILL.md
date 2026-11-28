@@ -12,24 +12,21 @@ delivery. Read the affected invariant and production callers.
 
 - Agentic pipeline: compare exact-edit, reviewed-tree and lifecycle behavior
   along the same command path.
-- Research: trace `src/server/chat_web/evidence.rs`, `src/common/pdf_text.rs`
-  and `src/llm`. Separate cache hits, refreshes, worker runs and digest
-  inference. Check retained passages and citations.
+- Research: separate policy parses from URL checks, and cache hits from
+  fetches, PDF workers and digest inference. Compare retained citations.
+- Session search: measure cold build and warm reconciliation in
+  `src/server/session_search.rs`. Exercise edits, deletes and owner isolation.
 - Browser: compare `browser/sidecar.mjs` observation latency at equal field
   coverage; keep input classification fail closed.
 - Desktop: trace ownership, sidecar identity and packaging provenance.
 - Workflows: check platform coverage and trigger on the candidate SHA.
 - Guidance: route readers to owning code. Check references and Markdown caps.
 
-Record each finding's trigger, location, impact and verification. Measure
-equivalent baseline and candidate workloads at the bottleneck before claiming
-a speedup. Diagnose baseline failures and report a verified no-op when the
-evidence supports it.
+Measure equivalent workloads at the bottleneck. Record trigger, impact
+and evidence. Diagnose any baseline failure before claiming improvement.
 
 ## Implement and deliver
 
-Reuse existing helpers and exercise affected success and refusal paths. Use
-`cgagentharness-verify` for applicable runtime surfaces. Keep each draft to one
-concern. When a prerequisite lands, refresh `origin/main`, recheck overlap and
-verify against the new base. Leave broad regression coverage to hosted CI.
-Follow the exact head to terminal checks when requested.
+Exercise affected success and refusal paths with `cgagentharness-verify`.
+When a prerequisite lands, refresh `origin/main`, recheck overlap and verify
+against the new base. Follow the exact head to terminal checks when requested.
