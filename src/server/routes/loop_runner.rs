@@ -124,15 +124,13 @@ fn start_blocking(
         cooldown_ms: override_limit("cooldown_ms", req.cooldown_ms, 0, 300_000)?.unwrap_or(base.cooldown_ms),
     };
     // Refuse before persisting anything: a goal saved for a start that then
-    // meets a live run would end that run with LOOP_GOAL_CHANGED. `start`
-    // still re-checks under its lock for a racing start.
-    if state.loops.active_for_session(&owner, &session.session_id).is_some() {
-        return Err(ApiError::new(
-            StatusCode::CONFLICT,
-            "LOOP_IN_FLIGHT",
-            "a loop run is already active for this session",
-        ));
-    }
+    // meets a live run would end that run with LOOP_GOAL_CHANGED. The claim
+    // also refuses a racing start for the same session until this one has
+    // registered its run or been refused; `start` still re-checks under its lock.
+    let _reservation = state
+        .loops
+        .reserve(&session.session_id)
+        .map_err(|e| ApiError::from_err(StatusCode::CONFLICT, &e))?;
     // Every turn of a run uses the selected model, and a cloud selection
     // refuses loop turns: such a run could only fail, so the start refuses
     // with the turn's own code before the goal is saved. `chat_inner` still

@@ -250,6 +250,58 @@ fn system_prompt(request: &Value) -> String {
 
 // Windows builds refuse every read (`DIAG_UNSUPPORTED`); see the windows test below.
 #[cfg(unix)]
+/// A refused account change changes nothing: the last enabled administrator's
+/// staged excerpt survives its own refused disable and role change.
+#[tokio::test]
+async fn a_refused_account_change_keeps_the_staged_excerpt() {
+    let model = start_mock_model().await;
+    let s = server(&model, true).await;
+    let admin = account(&s, "ops-admin", "admin").await;
+    let auth = s.state.auth.as_ref().unwrap();
+    for other in auth.list_users() {
+        if other.username != "ops-admin" && other.role == "admin" {
+            auth.disable_user(&other.username).unwrap();
+        }
+    }
+    let (_, session) = json_call(&s, &admin, Method::POST, "/api/sessions", Some(json!({"title":"diag"}))).await;
+    let sid = session["session_id"].as_str().unwrap().to_string();
+    let (status, _) = json_call(&s, &admin, Method::GET, "/api/diag/read?file=audit.jsonl&last=3", None).await;
+    assert_eq!(status, 200, "the log read");
+    let (status, staged) = json_call(
+        &s,
+        &admin,
+        Method::POST,
+        "/api/diag/inject",
+        Some(json!({"session_id": sid})),
+    )
+    .await;
+    assert_eq!(status, 200, "the excerpt is staged");
+    for (path, body) in [
+        ("/api/auth/users/ops-admin/disabled", json!({"disabled": true})),
+        ("/api/auth/users/ops-admin/role", json!({"role": "operator"})),
+    ] {
+        let (status, refused) = json_call(&s, &admin, Method::POST, path, Some(body)).await;
+        assert_eq!(
+            (status, code(&refused).as_str()),
+            (403, "AUTH_LAST_ADMIN"),
+            "{path} is refused as the last admin"
+        );
+    }
+    let (status, preview) = json_call(
+        &s,
+        &admin,
+        Method::POST,
+        "/api/prompt/preview",
+        Some(json!({"session_id": sid})),
+    )
+    .await;
+    assert_eq!(status, 200, "the prompt preview");
+    assert_eq!(
+        preview["diag"]["sha256"], staged["sha256"],
+        "the refused changes kept the excerpt"
+    );
+}
+
 #[tokio::test]
 async fn a_staged_excerpt_reaches_one_local_turn_and_is_refused_elsewhere() {
     let model = start_mock_model().await;

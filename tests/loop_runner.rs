@@ -732,6 +732,16 @@ async fn loop_start_status_stop_round_trip() {
             .any(|e| e.file_name().to_string_lossy() == format!("{run_id}.json")),
         "run state persisted under loops/"
     );
+    // The record carries the goal and a reply preview: owner-only, as
+    // session files are.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |path: &std::path::Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let record = s.home.join("loops").join(format!("{run_id}.json"));
+        assert_eq!(mode(&record), 0o600, "loop record mode");
+        assert_eq!(mode(&s.home.join("loops")), 0o700, "loops/ mode");
+    }
     // A new run for the session replaces the finished one in memory; the old
     // run's record stays on disk.
     let (status, body) = s
@@ -743,6 +753,68 @@ async fn loop_start_status_stop_round_trip() {
     assert!(s.home.join("loops").join(format!("{run_id}.json")).is_file());
     let next = body["run"]["run_id"].as_str().unwrap().to_string();
     s.post_json("/api/loop/stop", json!({"run_id": next})).await;
+}
+
+/// Two starts for one session with different goals: the second is refused
+/// before it saves its goal, so the first run keeps the goal it started with
+/// (a saved second goal would end it with LOOP_GOAL_CHANGED). Session writes
+/// are parked so the first start is held between its claim and its run.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_racing_loop_start_is_refused_before_it_saves_its_goal() {
+    let (url, _count) = start_counting_mock().await;
+    let s = spawn_server(
+        &url,
+        ServerOptions::default()
+            .with("loop.cooldown_ms", "0")
+            .with("api.harness_loop_rate_limit.max_requests", "1000"),
+    )
+    .await;
+    let sid = session_with_goal(&s).await;
+    let (held_tx, held_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let holder = {
+        let state = s.state.clone();
+        std::thread::spawn(move || {
+            let _writes = state.store.hold_writes();
+            held_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+        })
+    };
+    held_rx.recv().unwrap();
+    let start = |goal: &'static str| {
+        let request = s
+            .req(reqwest::Method::POST, "/api/loop/start")
+            .json(&json!({"session_id": sid, "goal": goal, "max_turns": 50}));
+        tokio::spawn(async move {
+            let response = request.send().await.unwrap();
+            (response.status().as_u16(), response.json::<Value>().await.unwrap())
+        })
+    };
+    let first = start("first goal");
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let second = tokio::time::timeout(std::time::Duration::from_secs(5), start("second goal"))
+        .await
+        .expect("the racing start is answered while the first still holds its claim")
+        .unwrap();
+    release_tx.send(()).unwrap();
+    holder.join().unwrap();
+    assert_eq!(second.0, 409, "the racing start is refused");
+    assert_eq!(
+        code(&second.1),
+        "LOOP_IN_FLIGHT",
+        "the racing start is refused as in flight"
+    );
+    let (status, body) = first.await.unwrap();
+    assert_eq!(status, 200, "the first start runs");
+    let run_id = body["run"]["run_id"].as_str().unwrap().to_string();
+    let run = wait_for(&s, &run_id, "the first loop turn", |run| {
+        run["stats"]["turns_completed"].as_u64().unwrap_or(0) >= 1
+    })
+    .await;
+    assert_eq!(run["goal"], "first goal", "the run keeps its goal");
+    let (_, session) = s.get_json(&format!("/api/sessions/{sid}")).await;
+    assert_eq!(session["goal"], "first goal", "the refused start saved nothing");
+    s.post_json("/api/loop/stop", json!({"run_id": run_id})).await;
 }
 
 /// A server-run loop sends the full framing (turn, goal reminder, rules) but

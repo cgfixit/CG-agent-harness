@@ -457,9 +457,6 @@ pub async fn set_disabled(
         let mgr = manager(&state)?;
         require_current_admin(mgr, &account)?;
         let owner_id = mgr.get_user(&username).map(|user| user.user_id);
-        if let Some(owner) = &owner_id {
-            state.diag.forget_owner(owner);
-        }
         // Fail closed: last-admin refusal is unchanged (no audit line). The
         // flag flips only after the record is queued.
         if body.disabled && mgr.is_last_enabled_admin_account(&username) {
@@ -473,6 +470,11 @@ pub async fn set_disabled(
                 &user.username,
                 json!({"disabled": body.disabled}),
             )?;
+        }
+        // After every refusal, before the change: a refused change keeps the
+        // target's staged /diag excerpt, an applied one never outlives it.
+        if let Some(owner) = &owner_id {
+            state.diag.forget_owner(owner);
         }
         (if body.disabled {
             mgr.disable_user(&username)
@@ -717,7 +719,6 @@ pub async fn set_role(
         let manager = manager(&state)?;
         require_current_admin(manager, &account)?;
         if let Some(user) = manager.get_user(&username) {
-            state.diag.forget_owner(&user.user_id);
             let new_role = validate_role(&body.role).map_err(|e| map_auth_error(&e))?;
             // Fail closed: a last-admin refusal still writes no account event.
             // The role changes only after the record is queued.
@@ -731,6 +732,8 @@ pub async fn set_role(
                 &user.username,
                 json!({"role": new_role}),
             )?;
+            // After every refusal, before the change (as `set_disabled`).
+            state.diag.forget_owner(&user.user_id);
         }
         manager
             .set_role(&username, &body.role)
@@ -776,9 +779,6 @@ pub async fn delete_user(
         // (last enabled admin, persistence failure) must not lose user data.
         let doomed = manager.get_user(&username);
         let owner = doomed.as_ref().map(|summary| summary.user_id.clone());
-        if let Some(owner) = &owner {
-            state.diag.forget_owner(owner);
-        }
         // Fail closed: a missing user or the last admin is refused with no
         // audit line. The delete runs only after the record is queued.
         if doomed.is_none() {
@@ -795,6 +795,10 @@ pub async fn delete_user(
                 &user.username,
                 json!({}),
             )?;
+        }
+        // After every refusal, before the change (as `set_disabled`).
+        if let Some(owner) = &owner {
+            state.diag.forget_owner(owner);
         }
         manager.delete_user(&username).map_err(|e| map_auth_error(&e))?;
         // Cleanup is reported, never swallowed: a blob or uploaded note whose
